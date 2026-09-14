@@ -125,7 +125,7 @@ interface SelfHoldWhere {
     };
   };
   consultation?: { consultationPlanId?: string };
-  slotsOfAppointment?: { some?: { startsAt?: Date } };
+  occurrences?: { some?: { startsAt?: Date } };
 }
 
 /**
@@ -152,7 +152,7 @@ const tx = {
   // requested window's start. Exact coverage is decided by the helper itself.
   appointment: {
     findMany: async ({ where }: { where: SelfHoldWhere }) => {
-      const wantedStart = where.slotsOfAppointment?.some?.startsAt;
+      const wantedStart = where.occurrences?.some?.startsAt;
       if (where.payment?.some?.userId !== HOLD_OWNER) return [];
       // #1465-triage — the resume gate's own scope, and therefore this
       // exclusion's: a hold on another gateway or another org is not adoptable.
@@ -168,7 +168,7 @@ const tx = {
       return [
         {
           id: HOLD_APPOINTMENT_ID,
-          slotsOfAppointment: heldSlots.map((s) => ({
+          occurrences: heldSlots.map((s) => ({
             startsAt: s.startsAt,
             endsAt: s.endsAt,
           })),
@@ -176,7 +176,7 @@ const tx = {
       ];
     },
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findFirst: async ({ where }: { where: { AND: SlotWhereTerm[] } }) =>
       heldSlots.find((slot) =>
         where.AND.every((term) => termMatches(slot, term)),

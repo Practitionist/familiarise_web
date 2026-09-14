@@ -23,7 +23,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn(),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
@@ -65,7 +65,7 @@ import { expireStaleRequests } from "../../scripts/appointments/expire-stale-req
 const rfaRoute = require("fs").readFileSync(
   require("path").resolve(
     __dirname,
-    "../../app/api/slots/request-for-approval/route.ts",
+    "../../app/api/scheduling/request-for-approval/route.ts",
   ),
   "utf8",
 );
@@ -133,7 +133,7 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
       count: 3,
     });
     (
-      prisma.slotOfAppointment.updateManyAndReturn as jest.Mock
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
     ).mockResolvedValueOnce(
       Array.from({ length: 5 }, (_, i) => ({ id: `slot-${i}` })),
     );
@@ -158,10 +158,12 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
       );
     }
     // c3 is a slot-less placeholder, so only two releases run.
-    expect(prisma.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledTimes(
-      2,
-    );
-    expect(prisma.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(
+      prisma.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledTimes(2);
+    expect(
+      prisma.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           appointmentId: "apt-1",
@@ -185,8 +187,9 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
     // assert the CONSULTATION-expiry release was NOT the one that ran. Both
     // arms now carry a completionStatus from-set, so the consultation arm is
     // identified by its appointmentId scope instead.
-    const calls = (prisma.slotOfAppointment.updateManyAndReturn as jest.Mock)
-      .mock.calls;
+    const calls = (
+      prisma.appointmentOccurrence.updateManyAndReturn as jest.Mock
+    ).mock.calls;
     const consultationRelease = calls.find(
       ([args]) =>
         (args as { where?: { appointmentId?: unknown } })?.where

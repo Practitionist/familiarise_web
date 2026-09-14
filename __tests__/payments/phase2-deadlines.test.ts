@@ -47,7 +47,7 @@ const webhookTx = {
     findUnique: jest.fn(),
     update: jest.fn(),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findMany: jest.fn(),
     findFirst: jest.fn(),
     updateMany: jest.fn(),
@@ -56,6 +56,7 @@ const webhookTx = {
   appointmentParticipant: {
     createMany: jest.fn().mockResolvedValue({ count: 2 }),
     updateMany: jest.fn().mockResolvedValue({ count: 2 }),
+    findMany: jest.fn().mockResolvedValue([]),
   },
 };
 
@@ -74,7 +75,7 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => baseAppointmentFindUnique(...a),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: (...a: unknown[]) => baseSlotFindFirst(...a),
     },
     class: {
@@ -175,10 +176,10 @@ function primePhase1() {
     id: "cons-1",
     status: "PENDING",
   });
-  webhookTx.slotOfAppointment.findMany.mockResolvedValue([]);
-  webhookTx.slotOfAppointment.findFirst.mockResolvedValue(null);
-  webhookTx.slotOfAppointment.updateMany.mockResolvedValue({ count: 2 });
-  webhookTx.slotOfAppointment.update.mockResolvedValue({});
+  webhookTx.appointmentOccurrence.findMany.mockResolvedValue([]);
+  webhookTx.appointmentOccurrence.findFirst.mockResolvedValue(null);
+  webhookTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 2 });
+  webhookTx.appointmentOccurrence.update.mockResolvedValue({});
   webhookTx.payment.findUnique.mockResolvedValue({
     id: "pay1",
     paymentIntent: "order1",
@@ -203,7 +204,7 @@ function primePhase1() {
   });
   webhookAppointmentCreate.mockResolvedValue({
     id: "appt-1",
-    slotsOfAppointment: [{ id: "slot-0" }],
+    occurrences: [{ id: "slot-0" }],
   });
   webhookTx.appointment.findUnique.mockResolvedValue({
     id: "appt-1",
@@ -211,7 +212,7 @@ function primePhase1() {
     subscription: null,
     webinar: null,
     class: null,
-    slotsOfAppointment: [],
+    occurrences: [],
   });
   // Phase 2's notification read + the session time the template needs.
   baseAppointmentFindUnique.mockResolvedValue({

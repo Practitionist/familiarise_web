@@ -205,7 +205,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
   const appointments = await prisma.appointment.findMany({
     where: {
       OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
-      slotsOfAppointment: {
+      occurrences: {
         some: { endsAt: { lt: now, gte: lookbackFrom } },
       },
     },
@@ -215,7 +215,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
       webinar: { select: { id: true, chatFrozenAt: true } },
       class: { select: { id: true, chatFrozenAt: true } },
       organization: { select: { streamRecordingRetentionDays: true } },
-      slotsOfAppointment: {
+      occurrences: {
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
         take: 1,
@@ -228,7 +228,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
   // would cut off a channel whose later sessions are still running.
   const byChannel = new Map<string, EventRow>();
   for (const appointment of appointments) {
-    const endsAt = appointment.slotsOfAppointment[0]?.endsAt;
+    const endsAt = appointment.occurrences[0]?.endsAt;
     if (!endsAt) continue;
 
     const channelId = appointment.webinar
@@ -335,7 +335,7 @@ async function loadDmPairs(): Promise<{
         appointment: {
           select: {
             organizationId: true,
-            slotsOfAppointment: {
+            occurrences: {
               select: { endsAt: true },
               orderBy: { endsAt: "desc" },
               take: 1,
@@ -356,10 +356,10 @@ async function loadDmPairs(): Promise<{
             consultantProfile: { select: { user: { select: { id: true } } } },
           },
         },
-        appointments: {
+        appointment: {
           select: {
             organizationId: true,
-            slotsOfAppointment: {
+            occurrences: {
               select: { endsAt: true },
               orderBy: { endsAt: "desc" },
               take: 1,
@@ -436,19 +436,14 @@ async function loadDmPairs(): Promise<{
       c.consultationPlan?.consultantProfile?.user?.id,
       c.requestedBy?.user?.id,
       bookingOrgId(c),
-      c.appointment?.slotsOfAppointment[0]?.endsAt ?? null,
+      c.appointment?.occurrences[0]?.endsAt ?? null,
       c.chatFrozenAt,
     );
   }
 
   for (const sub of subscriptions) {
-    // A subscription holds many appointments; the pair is as active as the
-    // latest slot across all of them.
-    let latest: Date | null = null;
-    for (const appt of sub.appointments) {
-      const endsAt = appt.slotsOfAppointment[0]?.endsAt;
-      if (endsAt && (!latest || latest < endsAt)) latest = endsAt;
-    }
+    // #1554 — one wrapper; the pair is as active as its latest occurrence.
+    const latest: Date | null = sub.appointment?.occurrences[0]?.endsAt ?? null;
     add(
       "subscription",
       sub.id,

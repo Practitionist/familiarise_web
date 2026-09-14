@@ -17,8 +17,8 @@ import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
-import { TSlotTiming } from "@/types/slots";
-import { breakDownSlotsPreservingStatus } from "@/utils/timeSlotsProcessing";
+import { TIntervalTiming } from "@/types/slots";
+import { breakDownSlotsPreservingStatus } from "@/utils/scheduling-engine/intervals";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
 import {
   consumePurchaseIntent,
@@ -45,14 +45,14 @@ interface ConsultationPricingToggleProps {
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
   renderCalendar: () => JSX.Element[];
-  slotTimings: TSlotTiming[];
-  selectedSlot: TSlotTiming | null;
-  setSelectedSlot: (slot: TSlotTiming | null) => void;
+  slotTimings: TIntervalTiming[];
+  selectedSlot: TIntervalTiming | null;
+  setSelectedSlot: (slot: TIntervalTiming | null) => void;
   timezone: string;
   onRefreshSlots?: () => void;
 }
 
-type SlotWithStatus = TSlotTiming & {
+type SlotWithStatus = TIntervalTiming & {
   isAllocated: boolean;
   bookingStatus: "available" | "partially-booked" | "fully-booked";
   _isPast: boolean;
@@ -195,11 +195,11 @@ export default function ConsultationPricingToggle({
           startsAt: selectedSlot.startsAt,
           endsAt: selectedSlot.endsAt,
           type: (
-            selectedSlot as TSlotTiming & { type?: "WEEKLY" | "CUSTOM" }
+            selectedSlot as TIntervalTiming & { type?: "WEEKLY" | "CUSTOM" }
           ).type,
-          slotOfAvailabilityId: (
-            selectedSlot as TSlotTiming & { slotOfAvailabilityId?: string }
-          ).slotOfAvailabilityId,
+          availabilityWindowId: (
+            selectedSlot as TIntervalTiming & { availabilityWindowId?: string }
+          ).availabilityWindowId,
         },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
@@ -227,8 +227,8 @@ export default function ConsultationPricingToggle({
         startsAt: string;
         endsAt: string;
         consultationPlanId: string;
-        slotOfAvailabilityWeeklyId?: string;
-        slotOfAvailabilityCustomId?: string;
+        availabilityWindowWeeklyId?: string;
+        availabilityWindowCustomId?: string;
       } = {
         consultantProfileId: consultantDetails.id,
         startsAt: selectedSlot.startsAt,
@@ -237,14 +237,14 @@ export default function ConsultationPricingToggle({
       };
 
       if (selectedSlot.type === "WEEKLY") {
-        requestBody.slotOfAvailabilityWeeklyId =
-          selectedSlot.slotOfAvailabilityId;
+        requestBody.availabilityWindowWeeklyId =
+          selectedSlot.availabilityWindowId;
       } else {
-        requestBody.slotOfAvailabilityCustomId =
-          selectedSlot.slotOfAvailabilityId;
+        requestBody.availabilityWindowCustomId =
+          selectedSlot.availabilityWindowId;
       }
 
-      const response = await fetch("/api/slots/request-for-approval", {
+      const response = await fetch("/api/scheduling/request-for-approval", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

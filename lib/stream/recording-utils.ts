@@ -4,6 +4,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { isPresenterRole } from "@/lib/collaborators/roles";
 import type { CollaboratorRole } from "@prisma/client";
 
@@ -86,21 +87,21 @@ export function isRecordingEnabledForAppointment(
 /**
  * Get ownership info from a recording with nested relations
  *
- * @param recording - Recording with meetingSession -> slotOfAppointment -> appointment relations
+ * @param recording - Recording with meeting -> occurrence -> appointment relations
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
 export function getRecordingOwnershipInfo(
   recording: {
-    meetingSession?: {
-      slotOfAppointment?: {
+    meeting?: {
+      occurrence?: {
         appointment?: AppointmentWithOwnership | null;
       } | null;
     } | null;
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = recording?.meetingSession?.slotOfAppointment?.appointment;
+  const appointment = recording?.meeting?.occurrence?.appointment;
 
   return {
     isOwner: isAppointmentOwner(appointment, consultantProfileId),
@@ -111,7 +112,7 @@ export function getRecordingOwnershipInfo(
 /**
  * Get ownership info from a meeting session with nested relations
  *
- * @param meetingSession - MeetingSession with slotOfAppointment -> appointment relations
+ * @param meeting - Meeting with occurrence -> appointment relations
  * @param consultantProfileId - The consultant's profile ID to check against
  * @returns Object with isOwner and recordingEnabled flags
  */
@@ -155,52 +156,44 @@ export function generateRecordingTitle(
 }
 
 /**
- * Get all attendee user IDs for a webinar or class event — everyone connected
- * to one of the event's slots.
+ * Every live seat holder of the meeting's booking (#1554): the event's whole
+ * roster for a webinar or class, the two sides for a 1:1.
  */
 export async function getEventAttendeeIds(
   appointment:
     | {
+        id: string;
         webinar?: { id: string } | null;
         class?: { id: string } | null;
       }
     | null
     | undefined,
-  existingUserIds: string[] = [],
 ): Promise<string[]> {
-  if (!appointment) return existingUserIds;
+  if (!appointment) return [];
 
-  let eventFilter: { webinarId: string } | { classId: string } | null = null;
-  if (appointment.webinar) {
-    eventFilter = { webinarId: appointment.webinar.id };
-  } else if (appointment.class) {
-    eventFilter = { classId: appointment.class.id };
-  }
+  const scope = appointment.webinar
+    ? { appointment: { webinarId: appointment.webinar.id } }
+    : appointment.class
+      ? { appointment: { classId: appointment.class.id } }
+      : { appointmentId: appointment.id };
 
-  if (!eventFilter) return existingUserIds;
-
-  const slotUsers = await prisma.slotOfAppointment.findMany({
-    where: { appointment: eventFilter },
-    select: { user: { select: { id: true } } },
+  const seats = await prisma.appointmentParticipant.findMany({
+    where: { ...scope, ...liveParticipant() },
+    select: { userId: true },
   });
 
-  return Array.from(
-    new Set([
-      ...existingUserIds,
-      ...slotUsers.flatMap((s) => s.user.map((u) => u.id)),
-    ]),
-  );
+  return Array.from(new Set(seats.map((seat) => seat.userId)));
 }
 
-export function getMeetingSessionOwnershipInfo(
-  meetingSession: {
-    slotOfAppointment?: {
+export function getMeetingOwnershipInfo(
+  meeting: {
+    occurrence?: {
       appointment?: AppointmentWithOwnership | null;
     } | null;
   } | null,
   consultantProfileId: string | null | undefined,
 ): { isOwner: boolean; recordingEnabled: boolean } {
-  const appointment = meetingSession?.slotOfAppointment?.appointment;
+  const appointment = meeting?.occurrence?.appointment;
 
   return {
     isOwner: isAppointmentOwner(appointment, consultantProfileId),

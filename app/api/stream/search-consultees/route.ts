@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 
 import { getSession } from "@/lib/auth-server";
 import { dmEligibleStatusFilter } from "@/lib/stream/dm-eligibility-statuses";
@@ -158,15 +159,11 @@ export async function GET(req: NextRequest) {
       include: {
         appointment: {
           select: {
-            slotsOfAppointment: {
+            participants: {
+              where: liveParticipant(),
               select: {
                 user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
+                  select: { id: true, name: true, email: true, image: true },
                 },
               },
             },
@@ -176,9 +173,9 @@ export async function GET(req: NextRequest) {
     });
 
     for (const webinar of webinars) {
-      const webinarAttendees = (
-        webinar.appointment?.slotsOfAppointment ?? []
-      ).flatMap((slot) => slot.user);
+      const webinarAttendees = (webinar.appointment?.participants ?? []).map(
+        (seat) => seat.user,
+      );
       for (const attendeeUser of webinarAttendees) {
         if (
           attendeeUser &&
@@ -210,17 +207,13 @@ export async function GET(req: NextRequest) {
         },
       },
       include: {
-        appointments: {
+        appointment: {
           select: {
-            slotsOfAppointment: {
+            participants: {
+              where: liveParticipant(),
               select: {
                 user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
+                  select: { id: true, name: true, email: true, image: true },
                 },
               },
             },
@@ -230,9 +223,8 @@ export async function GET(req: NextRequest) {
     });
 
     for (const classItem of classes) {
-      const classAttendees = classItem.appointments.flatMap((apt) =>
-        apt.slotsOfAppointment.flatMap((slot) => slot.user),
-      );
+      const classAttendees =
+        classItem.appointment?.participants.map((seat) => seat.user) ?? [];
       for (const attendeeUser of classAttendees) {
         if (
           attendeeUser &&

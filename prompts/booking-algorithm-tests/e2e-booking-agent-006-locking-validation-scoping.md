@@ -75,7 +75,7 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - `Account` -> table: `"accounts"` (@@map)
 - `Session` -> table: `"sessions"` (@@map)
 - All others -> table name = Prisma model name
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**
 - `priceCurrency` (not `currency`) on plan tables
 
 ### Step 0.1 — Domain + SubDomain
@@ -206,7 +206,7 @@ WHERE u.email = 'testconsultee006@familiarise.com';
 
 ```sql
 -- Consultant A: Mon-Fri 04:00-11:30 UTC (9:30-17:00 IST)
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -219,7 +219,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Consultant B: IDENTICAL Mon-Fri 04:00-11:30 UTC
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -326,8 +326,8 @@ ON CONFLICT (id) DO NOTHING;
 
 ```sql
 SELECT id, headline FROM "ConsultantProfile" WHERE id IN ('test-consultant-profile-006a', 'test-consultant-profile-006b');
-SELECT COUNT(*) as slots_a FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006a';
-SELECT COUNT(*) as slots_b FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006b';
+SELECT COUNT(*) as slots_a FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006a';
+SELECT COUNT(*) as slots_b FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006b';
 SELECT id, title FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-006a';
 SELECT id, status FROM "Webinar" WHERE id IN ('test-webinar-006a', 'test-webinar-006a-wl');
 SELECT id, status FROM "Class" WHERE id = 'test-class-006a';
@@ -511,7 +511,7 @@ async () => {
 ```
 
 **Expected:** **400** — not 404, and not 500. `AllocationNotFoundError` fixes
-`httpStatus = 400` (`utils/slotAllocation/errors.ts`) and the allocate routes
+`httpStatus = 400` (`utils/scheduling-engine/errors.ts`) and the allocate routes
 mint no 404 of their own, so a 404 here is a contract change, not a pass.
 
 ---
@@ -524,7 +524,7 @@ All as CONSULTANT A.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -545,7 +545,7 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -566,7 +566,7 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -588,7 +588,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/availability/weekly/test-w006a-mon",
+    "/api/scheduling/availability/weekly/test-w006a-mon",
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -608,7 +608,7 @@ async () => {
 ```javascript
 async () => {
   // Create a slot with boundary values
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -623,7 +623,7 @@ async () => {
 
   // Clean up if created
   if (response.status === 201 && body.data?.id) {
-    await fetch(`/api/slots/availability/weekly/${body.data.id}`, {
+    await fetch(`/api/scheduling/availability/weekly/${body.data.id}`, {
       method: "DELETE",
     });
   }
@@ -649,7 +649,7 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 21);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const createResp = await fetch("/api/slots/availability/custom", {
+  const createResp = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -664,7 +664,7 @@ async () => {
   if (!slotId) return { error: "Failed to create custom slot", created };
 
   // Try PUT with invalid date
-  const putResp = await fetch(`/api/slots/availability/custom/${slotId}`, {
+  const putResp = await fetch(`/api/scheduling/availability/custom/${slotId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -674,7 +674,9 @@ async () => {
   });
 
   // Clean up
-  await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
+  await fetch(`/api/scheduling/availability/custom/${slotId}`, {
+    method: "DELETE",
+  });
 
   return {
     createStatus: createResp.status,
@@ -694,7 +696,7 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 22);
   baseDate.setUTCHours(14, 0, 0, 0);
 
-  const createResp = await fetch("/api/slots/availability/custom", {
+  const createResp = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -708,15 +710,20 @@ async () => {
 
   if (!slotId) return { error: "Failed to create", created };
 
-  const patchResp = await fetch(`/api/slots/availability/custom/${slotId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startsAt: "2026-13-45T99:99:99Z",
-    }),
-  });
+  const patchResp = await fetch(
+    `/api/scheduling/availability/custom/${slotId}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startsAt: "2026-13-45T99:99:99Z",
+      }),
+    },
+  );
 
-  await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
+  await fetch(`/api/scheduling/availability/custom/${slotId}`, {
+    method: "DELETE",
+  });
 
   return { patchStatus: patchResp.status, patchBody: await patchResp.json() };
 };
@@ -732,7 +739,7 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 23);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const createResp = await fetch("/api/slots/availability/custom", {
+  const createResp = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -746,7 +753,7 @@ async () => {
 
   if (!slotId) return { error: "Failed to create", created };
 
-  const putResp = await fetch(`/api/slots/availability/custom/${slotId}`, {
+  const putResp = await fetch(`/api/scheduling/availability/custom/${slotId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -755,7 +762,9 @@ async () => {
     }),
   });
 
-  await fetch(`/api/slots/availability/custom/${slotId}`, { method: "DELETE" });
+  await fetch(`/api/scheduling/availability/custom/${slotId}`, {
+    method: "DELETE",
+  });
 
   return { putStatus: putResp.status };
 };
@@ -816,7 +825,7 @@ async () => {
   nextSat.setDate(nextSat.getDate() + 5);
 
   const response = await fetch(
-    `/api/slots/availability-with-allocation/test-consultant-profile-006b?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
+    `/api/scheduling/availability-with-allocation/test-consultant-profile-006b?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
   );
   const body = await response.json();
 
@@ -839,7 +848,7 @@ async () => {
   nextSat.setDate(nextSat.getDate() + 5);
 
   const response = await fetch(
-    `/api/slots/availability-with-allocation/test-consultant-profile-006a?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
+    `/api/scheduling/availability-with-allocation/test-consultant-profile-006a?startDate=${nextMon.toISOString().split("T")[0]}&endDate=${nextSat.toISOString().split("T")[0]}`,
   );
   const body = await response.json();
 
@@ -970,10 +979,10 @@ FROM "Appointment" WHERE "webinarId" = 'test-webinar-006a-wl';
 SELECT
   'Consultant A Weekly Slots' AS label,
   COUNT(*) AS count
-FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006a'
+FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006a'
 UNION ALL
 SELECT 'Consultant B Weekly Slots', COUNT(*)
-FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006b'
+FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-006b'
 UNION ALL
 SELECT 'Webinar Appointments', COUNT(*)
 FROM "Appointment" WHERE "webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
@@ -993,9 +1002,9 @@ Run cleanup in dependency order ONLY after all tests pass:
 
 ```sql
 -- M2M links
-DELETE FROM "_SlotOfAppointmentToUser"
+DELETE FROM "_AppointmentParticipant"
 WHERE "A" IN (
-  SELECT s.id FROM "SlotOfAppointment" s
+  SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
      OR a."webinarId" IN ('test-webinar-006a', 'test-webinar-006a-wl')
@@ -1003,7 +1012,7 @@ WHERE "A" IN (
 );
 
 -- Slots
-DELETE FROM "SlotOfAppointment"
+DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-006a')
@@ -1038,7 +1047,7 @@ DELETE FROM "WebinarPlan" WHERE id IN ('test-webinar-plan-006a', 'test-webinar-p
 DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-006a';
 
 -- Availability
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" IN ('test-consultant-profile-006a', 'test-consultant-profile-006b');
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" IN ('test-consultant-profile-006a', 'test-consultant-profile-006b');
 
 -- Profiles + Users
 UPDATE users SET "consultantProfileId" = NULL

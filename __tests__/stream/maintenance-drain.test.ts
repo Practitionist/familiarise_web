@@ -35,13 +35,13 @@ const mockRedisDel = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingSession: {
+    meeting: {
       findMany: (...a: unknown[]) => mockFindMany(...a),
       // The drain builds the transaction array by CALLING these, so they have
       // to exist before `$transaction` is even reached.
       update: jest.fn((args: unknown) => args),
     },
-    slotOfAppointment: { update: jest.fn((args: unknown) => args) },
+    appointmentOccurrence: { update: jest.fn((args: unknown) => args) },
     $transaction: (...a: unknown[]) => mockTransaction(...a),
   },
 }));
@@ -118,12 +118,11 @@ function session(id: string, appointmentId: string) {
   return {
     id,
     streamCallId: `slot-${id}`,
-    slotOfAppointmentId: `slot-row-${id}`,
+    appointmentOccurrenceId: `slot-row-${id}`,
     isRecording: false,
-    slotOfAppointment: {
+    occurrence: {
       appointmentId,
-      user: [{ id: `u-${id}` }],
-      appointment: {},
+      appointment: { participants: [{ userId: `u-${id}` }] },
     },
   };
 }
@@ -239,7 +238,7 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
     mockRedisGet.mockResolvedValue("1"); // a previous drain marked it incomplete
     mockSmembers.mockResolvedValue(["webinar-recorded"]);
     mockFindMany.mockResolvedValue([
-      { slotOfAppointment: { appointmentId: "appt-b" } },
+      { occurrence: { appointmentId: "appt-b" } },
     ]);
     mockGetEventChannelIds.mockResolvedValue(["webinar-unrecorded"]);
 
@@ -277,7 +276,7 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
     mockRedisGet.mockRejectedValue(new Error("redis down"));
     mockSmembers.mockResolvedValue(["webinar-1"]);
     mockFindMany.mockResolvedValue([
-      { slotOfAppointment: { appointmentId: "appt-b" } },
+      { occurrence: { appointmentId: "appt-b" } },
     ]);
     mockGetEventChannelIds.mockResolvedValue(["webinar-2"]);
 
@@ -327,7 +326,7 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
   it("falls back to the derived set when the ledger is empty", async () => {
     mockSmembers.mockResolvedValue([]);
     mockFindMany.mockResolvedValue([
-      { slotOfAppointment: { appointmentId: "appt-1" } },
+      { occurrence: { appointmentId: "appt-1" } },
     ]);
     mockGetEventChannelIds.mockResolvedValue(["webinar-1"]);
 
@@ -342,7 +341,7 @@ describe("unfreezeChannelsAfterMaintenance — reverse what was frozen, not what
   it("falls back to the derived set when Redis is unreachable", async () => {
     mockSmembers.mockRejectedValue(new Error("redis down"));
     mockFindMany.mockResolvedValue([
-      { slotOfAppointment: { appointmentId: "appt-1" } },
+      { occurrence: { appointmentId: "appt-1" } },
     ]);
     mockGetEventChannelIds.mockResolvedValue(["webinar-1"]);
 

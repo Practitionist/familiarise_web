@@ -26,7 +26,7 @@ function makeDb(opts: {
         })),
       ),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: jest.fn().mockImplementation(({ where }) => {
         // Each commitment clause names a consultantProfileId via one of six
         // shapes (consultation/subscription/webinar/class owner, plus webinar/
@@ -74,7 +74,7 @@ describe("assertCollaboratorsAvailable", () => {
     await expect(
       assertCollaboratorsAvailable(db as never, base),
     ).resolves.toBeUndefined();
-    expect(db.slotOfAppointment.findFirst).not.toHaveBeenCalled();
+    expect(db.appointmentOccurrence.findFirst).not.toHaveBeenCalled();
   });
 
   it("resolves when accepted co-hosts have no overlapping commitment", async () => {
@@ -110,7 +110,7 @@ describe("assertCollaboratorsAvailable", () => {
       ...base,
       excludeAppointmentId: "appt-self",
     });
-    const where = db.slotOfAppointment.findFirst.mock.calls[0][0].where;
+    const where = db.appointmentOccurrence.findFirst.mock.calls[0][0].where;
     // #1319 — the guard now excludes a set (a class allocation carries every
     // session of the event), so a single exclusion is a one-element notIn.
     expect(where.appointmentId).toEqual({ notIn: ["appt-self"] });
@@ -129,7 +129,7 @@ describe("assertCollaboratorsAvailable", () => {
       collaborators: [{ name: "Alice", consultantProfileId: "p1" }],
     });
     await assertCollaboratorsAvailable(db as never, base);
-    const where = db.slotOfAppointment.findFirst.mock.calls[0][0].where;
+    const where = db.appointmentOccurrence.findFirst.mock.calls[0][0].where;
 
     // A PENDING direct-checkout request: live while its payment window is open,
     // dead once its only PENDING payment is past expiresAt.

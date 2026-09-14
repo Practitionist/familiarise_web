@@ -4,8 +4,9 @@
  * ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
- * the ten latency-sensitive `/api/cleanup/*` routes every five minutes
- * instead of waiting on Actions. It never writes money state itself: every
+ * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
+ * sweeps and, since #1633, the ledger reconcile backstop) instead of waiting
+ * on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -30,7 +31,12 @@ const TARGETS = [
   "dispatch-outbound-webhooks",
   "sync-payment-earnings",
   "release-earnings",
+  // #1633 — the backstop for the ledger reconcile driver: one chunk per tick
+  // of whatever full-scope run is in flight, IDLE otherwise.
+  "reconcile-ledgers",
 ] as const;
+
+type Target = (typeof TARGETS)[number];
 
 /** The batch size a target gets when it is not listed in {@link TARGET_LIMITS}. */
 const DEFAULT_LIMIT = 50;
@@ -42,12 +48,42 @@ const DEFAULT_LIMIT = 50;
  * inside {@link PER_TARGET_TIMEOUT_MS} on any tick. The unbounded GitHub Actions
  * run is the backstop for whatever a small bite leaves behind.
  */
-const TARGET_LIMITS: Partial<Record<(typeof TARGETS)[number], number>> = {
+const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
+  // null — send no `limit`; a chunk is bounded by the route's own soft deadline.
+  "reconcile-ledgers": null,
+};
+
+/** Extra query a target needs beyond `limit`. */
+const TARGET_QUERIES: Partial<Record<Target, string>> = {
+  "reconcile-ledgers": "resume=1",
 };
 
 /** Well under the 26 s Next function ceiling and the 30 s scheduled-function cap. */
 const PER_TARGET_TIMEOUT_MS = 6_000;
+
+/** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */
+const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
+  "reconcile-ledgers": 20_000,
+};
+
+/** The request one target gets; exported so a test can pin it without a Netlify runtime. */
+export function targetRequest(
+  baseUrl: string,
+  name: Target,
+): { url: string; timeoutMs: number } {
+  const limit = name in TARGET_LIMITS ? TARGET_LIMITS[name] : DEFAULT_LIMIT;
+  const query = [
+    limit === null || limit === undefined ? null : `limit=${limit}`,
+    TARGET_QUERIES[name] ?? null,
+  ]
+    .filter((q): q is string => q !== null)
+    .join("&");
+  return {
+    url: `${baseUrl}/api/cleanup/${name}${query ? `?${query}` : ""}`,
+    timeoutMs: TARGET_TIMEOUTS_MS[name] ?? PER_TARGET_TIMEOUT_MS,
+  };
+}
 
 interface TickBody {
   event: "cron-tick";
@@ -72,13 +108,13 @@ function jsonResponse(body: unknown, status: number): Response {
 async function hitTarget(
   baseUrl: string,
   secret: string,
-  name: (typeof TARGETS)[number],
+  name: Target,
 ): Promise<{ name: string; status: number }> {
+  const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PER_TARGET_TIMEOUT_MS);
-  const limit = TARGET_LIMITS[name] ?? DEFAULT_LIMIT;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl}/api/cleanup/${name}?limit=${limit}`, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${secret}` },
       signal: controller.signal,

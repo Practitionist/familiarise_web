@@ -28,7 +28,7 @@ export const createMockPrisma = () => ({
     findMany: jest.fn(),
     findFirst: jest.fn(),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findFirst: jest.fn(),
     findMany: jest.fn(),
   },

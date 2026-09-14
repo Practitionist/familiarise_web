@@ -778,11 +778,11 @@ Subscription Cancelled — {{payload.planTitle}}
 ### 9. trial-session-requested
 
 **Workflow ID**: `trial-session-requested`
-**Trigger function**: `notifyTrialSessionRequested(consultantUserId, payload)`
+**Trigger function**: `notifyTrialRequested(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `trials`
 
-**Payload variables** (`TrialSessionPayload`):
+**Payload variables** (`TrialPayload`):
 
 ```
 {{payload.consultantName}}    - Consultant display name
@@ -849,11 +849,11 @@ New Trial Request — {{payload.planTitle}}
 ### 10. trial-session-scheduled
 
 **Workflow ID**: `trial-session-scheduled`
-**Trigger function**: `notifyTrialSessionScheduled(consulteeUserId, payload)`
+**Trigger function**: `notifyTrialScheduled(consulteeUserId, payload)`
 **Recipient**: Consultee only
 **Preference category**: `trials`
 
-**Payload variables** (`TrialSessionPayload`):
+**Payload variables** (`TrialPayload`):
 
 ```
 {{payload.consultantName}}    - Consultant display name
@@ -920,11 +920,11 @@ Trial Scheduled — {{payload.planTitle}} with {{payload.consultantName}}
 ### 11. trial-session-completed
 
 **Workflow ID**: `trial-session-completed`
-**Trigger function**: `notifyTrialSessionCompleted(userIds[], payload)`
+**Trigger function**: `notifyTrialCompleted(userIds[], payload)`
 **Recipient**: Both parties
 **Preference category**: `trials`
 
-**Payload variables** (`TrialSessionPayload`):
+**Payload variables** (`TrialPayload`):
 
 ```
 {{payload.consultantName}}    - Consultant display name
@@ -982,11 +982,11 @@ Trial Completed — {{payload.planTitle}}
 ### 12. trial-session-cancelled
 
 **Workflow ID**: `trial-session-cancelled`
-**Trigger function**: `notifyTrialSessionCancelled(userIds[], payload)`
+**Trigger function**: `notifyTrialCancelled(userIds[], payload)`
 **Recipient**: Both parties
 **Preference category**: `trials`
 
-**Payload variables** (`TrialSessionPayload`):
+**Payload variables** (`TrialPayload`):
 
 ```
 {{payload.consultantName}}    - Consultant display name

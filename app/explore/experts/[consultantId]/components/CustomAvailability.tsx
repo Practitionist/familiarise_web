@@ -7,12 +7,12 @@ import {
 } from "lucide-react";
 import { roundTime, timeToMinutes } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
-import type { ProcessedSlot } from "../types";
-import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/slot-status-tokens";
+import type { PickerInterval } from "../types";
+import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
 
 interface DayWithSlots {
   date: Date;
-  slots: ProcessedSlot[];
+  slots: PickerInterval[];
 }
 
 interface CustomAvailabilityProps {
@@ -54,7 +54,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
   }, [mergedDays]);
 
   // Get the date for booked slots in user timezone
-  const getBookedSlotDate = (slot: ProcessedSlot) => {
+  const getBookedSlotDate = (slot: PickerInterval) => {
     if (!slot.startsAt) return "";
     const date = new Date(slot.startsAt);
     return date.toLocaleDateString(undefined, {

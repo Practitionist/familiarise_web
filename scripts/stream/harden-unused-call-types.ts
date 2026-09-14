@@ -14,7 +14,7 @@
  * call type in the app.
  *
  * #1285 closed the exploit route at the webhook boundary: a call minted on a
- * foreign type can no longer collide with a real MeetingSession. This closes
+ * foreign type can no longer collide with a real Meeting. This closes
  * the other half — the ability to mint one at all, and with it the billable
  * capabilities (`start-recording`, `start-transcription`, broadcasting) that a
  * participant could otherwise trigger on the account.

@@ -33,7 +33,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findMany: jest.fn() },
     subscription: { findMany: jest.fn() },
     payment: { findMany: jest.fn() },
-    trialSession: { findMany: jest.fn() },
+    trial: { findMany: jest.fn() },
   },
 }));
 
@@ -41,7 +41,7 @@ const mockedAuth = requireApiAuth as jest.Mock;
 const mockedConsultations = prisma.consultation.findMany as jest.Mock;
 const mockedSubscriptions = prisma.subscription.findMany as jest.Mock;
 const mockedGatewayPayments = prisma.payment.findMany as jest.Mock;
-const mockedTrials = prisma.trialSession.findMany as jest.Mock;
+const mockedTrials = prisma.trial.findMany as jest.Mock;
 
 function frozenPayment(amount: number, currency = "INR") {
   return [{ amount, currency }];
@@ -130,12 +130,10 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
         id: "sub-1",
         updatedAt: new Date("2026-08-01T10:00:00Z"),
         pendingPaymentUrl: "order_456",
-        appointments: [
-          {
-            id: "appt-s1",
-            payment: frozenPayment(1_250_000),
-          },
-        ],
+        appointment: {
+          id: "appt-s1",
+          payment: frozenPayment(1_250_000),
+        },
         subscriptionPlan: {
           title: "Weekly Mentoring",
           price: 999_999, // repriced down after acceptance

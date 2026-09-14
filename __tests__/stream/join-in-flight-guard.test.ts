@@ -12,7 +12,7 @@
  * reads the stale value and runs the whole chain again.
  *
  * Two concurrent runs mint the call twice. `useLazyJoinMeeting`'s
- * `joinableSlot ?? appointment.slotsOfAppointment?.[0]` fallback reads an
+ * `joinableSlot ?? appointment.occurrences?.[0]` fallback reads an
  * UNSORTED array, so the two runs can resolve two different anchor rows and put
  * the two sides of one booking into two different rooms — which is #1061.
  */

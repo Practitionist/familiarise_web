@@ -6,8 +6,8 @@ export const RequestForApprovalSchema = z
     startsAt: z.string().min(1, "Slot start time is required"),
     endsAt: z.string().min(1, "Slot end time is required"),
     consultationPlanId: z.string().min(1, "Consultation plan ID is required"),
-    slotOfAvailabilityWeeklyId: z.string().optional(),
-    slotOfAvailabilityCustomId: z.string().optional(),
+    availabilityWindowWeeklyId: z.string().optional(),
+    availabilityWindowCustomId: z.string().optional(),
     // #1166 ORG-9 — an org member may request a sponsored booking; validated
     // against an ACTIVE membership of a canSponsor org in the route. min(1)
     // because "" would skip that check and then be written as the FK.
@@ -15,18 +15,18 @@ export const RequestForApprovalSchema = z
   })
   .refine(
     (data) =>
-      !(data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+      !(data.availabilityWindowWeeklyId && data.availabilityWindowCustomId),
     {
       message: "Cannot provide both weekly and custom slot availability IDs",
-      path: ["slotOfAvailabilityWeeklyId"],
+      path: ["availabilityWindowWeeklyId"],
     },
   )
   .refine(
     (data) =>
-      data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId,
+      data.availabilityWindowWeeklyId || data.availabilityWindowCustomId,
     {
       message: "Must provide either weekly or custom slot availability ID",
-      path: ["slotOfAvailabilityWeeklyId"],
+      path: ["availabilityWindowWeeklyId"],
     },
   )
   .refine(

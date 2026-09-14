@@ -230,7 +230,7 @@ function webinarRow() {
     },
     appointment: {
       id: "appt-w",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "slot-1",
           endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
@@ -261,7 +261,7 @@ function openSibling(overrides: Record<string, any> = {}) {
       webinarId: "evt-1",
       // Window gate reads the first slot (WEBINAR flow skips it, but keep the
       // shape faithful for the direct unit cases below).
-      slotsOfAppointment: [
+      occurrences: [
         {
           startsAt: new Date("2026-09-01T10:00:00Z"),
           endsAt: new Date("2026-09-01T11:00:00Z"),
@@ -295,7 +295,7 @@ beforeEach(() => {
       })),
     },
     webinar: { findUnique: jest.fn(async () => webinarRow()) },
-    slotOfAppointment: { update: jest.fn(async ({ where }: any) => where) },
+    appointmentOccurrence: { update: jest.fn(async ({ where }: any) => where) },
     appointmentParticipant: {
       createMany: jest.fn().mockResolvedValue({ count: 1 }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -439,7 +439,7 @@ describe("#1220-triage — reuse gates", () => {
     const row = openSibling({
       appointment: {
         consultationId: "cons_1",
-        slotsOfAppointment: [OTHER_SLOT],
+        occurrences: [OTHER_SLOT],
       },
     });
     const { reusable, supersede } = await findReusablePendingOrderPayment(
@@ -462,7 +462,7 @@ describe("#1220-triage — reuse gates", () => {
 
   test("CONSULTATION: identical slot window resumes", async () => {
     const row = openSibling({
-      appointment: { consultationId: "cons_1", slotsOfAppointment: [SLOT] },
+      appointment: { consultationId: "cons_1", occurrences: [SLOT] },
     });
     const { reusable, supersede } = await findReusablePendingOrderPayment(
       gateDb([row]) as never,
@@ -503,12 +503,12 @@ describe("#1220-triage — reuse gates", () => {
       id: "pay-period",
       appointment: {
         subscriptionId: "sub_1",
-        slotsOfAppointment: [SLOT],
+        occurrences: [SLOT],
       },
     });
     const withoutPeriod = openSibling({
       id: "pay-noperiod",
-      appointment: { subscriptionId: "sub_2", slotsOfAppointment: [] },
+      appointment: { subscriptionId: "sub_2", occurrences: [] },
     });
 
     // Request WITH a period must not resume a period-less hold.

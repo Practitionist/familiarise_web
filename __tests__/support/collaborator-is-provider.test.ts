@@ -37,7 +37,7 @@ beforeEach(() => {
     appointmentType: "WEBINAR",
     organizationId: null,
     cancellationPolicy: null,
-    slotsOfAppointment: [
+    occurrences: [
       {
         id: "slot-a",
         startsAt: PAST_START,

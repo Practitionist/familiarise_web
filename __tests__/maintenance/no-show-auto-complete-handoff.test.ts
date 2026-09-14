@@ -78,8 +78,8 @@ jest.mock("../../lib/prisma", () => {
     webinar: { findMany: jest.fn(), updateMany: jest.fn() },
     class: { findMany: jest.fn(), updateMany: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
-    trialSession: { findMany: jest.fn() },
-    slotOfAppointment: { findMany: jest.fn(), updateMany: jest.fn() },
+    trial: { findMany: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), updateMany: jest.fn() },
     supportTicket: { findFirst: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),
@@ -130,10 +130,10 @@ function consultation(endedMinutesAgo: number, attendees: string[]) {
           paymentStatus: "SUCCEEDED",
         },
       ],
-      slotsOfAppointment: [
+      occurrences: [
         {
           endsAt: minutesAgo(endedMinutesAgo),
-          meetingSession: {
+          meeting: {
             streamCallId: "call-1",
             attendances: attendees.map((userId) => ({ userId })),
           },
@@ -150,8 +150,8 @@ beforeEach(() => {
     "webinar",
     "class",
     "subscription",
-    "trialSession",
-    "slotOfAppointment",
+    "trial",
+    "appointmentOccurrence",
   ]) {
     db[model].findMany.mockResolvedValue([]);
     db[model].updateMany?.mockResolvedValue({ count: 1 });
@@ -238,7 +238,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     };
     const slots = (attendees: string[]) => [
       {
-        meetingSession: {
+        meeting: {
           attendances: attendees.map((userId) => ({ userId })),
         },
       },
@@ -255,8 +255,8 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     expect(classifyConsultantAttendance(slots([]), parties)).toBe(
       "inconclusive",
     );
-    expect(
-      classifyConsultantAttendance([{ meetingSession: null }], parties),
-    ).toBe("inconclusive");
+    expect(classifyConsultantAttendance([{ meeting: null }], parties)).toBe(
+      "inconclusive",
+    );
   });
 });

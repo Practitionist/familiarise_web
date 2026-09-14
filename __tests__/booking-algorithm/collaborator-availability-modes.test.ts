@@ -4,7 +4,7 @@
  * `assertCollaboratorsAvailable` used to be called from exactly one place (the
  * webinar crud-with-plan PATCH), so a class scheduled through the allocator
  * could be committed onto a time an ACCEPTED co-host was already busy for.
- * Co-hosts are not slot participants, so neither slot_no_confirmed_overlap nor
+ * Co-hosts are not slot participants, so neither occurrence_no_confirmed_overlap nor
  * the owner-scoped validators can see the clash.
  */
 
@@ -41,16 +41,18 @@ jest.mock("../../utils/appointmentlock", () => ({
 
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual(
+    "../../utils/scheduling-engine/ScheduleValidationService",
+  ),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
 /** One weekly availability row, in the shape ConsultantAllocationData wants. */
@@ -106,20 +108,18 @@ function makeMockTx() {
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: {
+      // #1569 — the earnings-hold recompute reads the wrapper; none paid here.
+      findUnique: jest.fn().mockResolvedValue(null),
       findMany: jest.fn().mockResolvedValue([]),
       // #1499 — createAppointments reads the originating appointment to
       // inherit the policy version the booking was sold under. Null here:
       // these fixtures predate the FK, so the created rows carry no policy.
       findFirst: jest.fn().mockResolvedValue(null),
-      create: jest
-        .fn()
-        .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
-      update: jest
-        .fn()
-        .mockResolvedValue({ id: "apt-1", slotsOfAppointment: [] }),
+      create: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
+      update: jest.fn().mockResolvedValue({ id: "apt-1", occurrences: [] }),
       deleteMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findFirst: jest.fn().mockResolvedValue(null),
       update: jest.fn(),
       updateMany: jest.fn(),
@@ -134,8 +134,8 @@ function makeConsultantProfile() {
   return {
     user: { id: "consultant-user-1", timezone: "UTC" },
     scheduleType: ScheduleType.WEEKLY,
-    slotsOfAvailabilityWeekly: [weeklyRow(DayOfWeek.MONDAY, 9, 11)],
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsWeekly: [weeklyRow(DayOfWeek.MONDAY, 9, 11)],
+    availabilityWindowsCustom: [],
   };
 }
 
@@ -181,7 +181,9 @@ function busyCoHost(mockTx: ReturnType<typeof makeMockTx>) {
       consultantProfile: { user: { name: "Priya" } },
     },
   ]);
-  mockTx.slotOfAppointment.findFirst.mockResolvedValue({ id: "busy-slot-1" });
+  mockTx.appointmentOccurrence.findFirst.mockResolvedValue({
+    id: "busy-slot-1",
+  });
 }
 
 let mockTx: ReturnType<typeof makeMockTx>;
@@ -221,7 +223,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
   it("rejects AUTO allocation with a typed 409", async () => {
     busyCoHost(mockTx);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "auto",
@@ -238,7 +240,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
   it("rejects MANUAL allocation with a typed 409", async () => {
     busyCoHost(mockTx);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -264,7 +266,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-req-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(MON_0900),
@@ -276,7 +278,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "requested",
@@ -285,12 +287,12 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("No requested slots found");
     // Nothing was confirmed, so no co-host could be double-booked either way.
-    expect(mockTx.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
 
     // The guard IS wired into the requested transaction, between validation
     // and the isTentative flip that confirms the stored times.
     const source = fs.readFileSync(
-      path.join(process.cwd(), "utils/slotAllocation/SlotAllocationService.ts"),
+      path.join(process.cwd(), "utils/scheduling-engine/SchedulingService.ts"),
       "utf8",
     );
     const requestedBody = source.slice(
@@ -298,7 +300,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       source.indexOf("private static isWithinAvailability("),
     );
     expect(requestedBody).toContain(
-      "SlotAllocationService.assertCollaboratorsFree(",
+      "SchedulingService.assertCollaboratorsFree(",
     );
     expect(requestedBody.indexOf("assertCollaboratorsFree(")).toBeLessThan(
       requestedBody.indexOf("await this.updateEventStatus("),
@@ -314,7 +316,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "class",
       eventId: "class-1",
       mode: "manual",
@@ -322,7 +324,8 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
     });
 
     expect(result.success).toBe(true);
-    const where = mockTx.slotOfAppointment.findFirst.mock.calls[0][0].where as {
+    const where = mockTx.appointmentOccurrence.findFirst.mock.calls[0][0]
+      .where as {
       OR: { startsAt: { lt: Date }; endsAt: { gt: Date } }[];
       isTentative?: boolean;
     };
@@ -339,7 +342,7 @@ describe("AE-2 (#784) — a busy co-host blocks a class in every mode", () => {
 
 describe("AE-2 — the webinar path is unchanged", () => {
   it("allocates a webinar with no co-hosts without probing for clashes", async () => {
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -348,13 +351,13 @@ describe("AE-2 — the webinar path is unchanged", () => {
     expect(result.success).toBe(true);
     // No accepted collaborators → the guard short-circuits before any probe.
     expect(mockTx.collaborator.findMany).toHaveBeenCalledTimes(1);
-    expect(mockTx.slotOfAppointment.findFirst).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.findFirst).not.toHaveBeenCalled();
   });
 
   it("still blocks a webinar whose co-host is busy", async () => {
     busyCoHost(mockTx);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "webinar",
       eventId: "webinar-1",
       mode: "auto",
@@ -382,7 +385,7 @@ describe("AE-2 — non-collaborative event types skip the guard", () => {
       appointment: null,
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "consultation",
       eventId: "consult-1",
       mode: "auto",

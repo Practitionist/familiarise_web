@@ -23,8 +23,9 @@ import {
 import { getAppUrl } from "@/lib/url";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { reportSentryError } from "@/lib/observability/report";
-import { PRESENTER_ROLES } from "@/lib/collaborators/roles";
+import { PRESENTER_ROLES, tierForRole } from "@/lib/collaborators/roles";
 import {
+  liveParticipant,
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
@@ -95,27 +96,17 @@ function asPlanRole(planType: PlanType, role: string): CollaboratorRole | null {
 /**
  * Invite a collaborator to a webinar or class plan.
  */
-// #768 lockdown #12 — capability booleans, set from invite input. Default
-// false so an unspecified permission is never silently granted.
-// Enforced: canSeeAttendees (participant-roster GET).
-// TODO #1319 — enforce canApprovePayment / canViewAnalytics / canEditEvent
-// once collaborator-facing payment-approval, analytics, and event-edit
-// surfaces exist; today they have no endpoint to gate, so only the SET lands.
-export interface CollaboratorPermissions {
-  canApprovePayment?: boolean;
-  canViewAnalytics?: boolean;
-  canEditEvent?: boolean;
-  canSeeAttendees?: boolean;
-}
+// #1580 — what a seat grants is its `tier`, derived from the role: a PRESENTER
+// (CO_HOST / CO_INSTRUCTOR) sees the roster and holds host controls, CREW does
+// not. The four per-invite capability booleans (#768) are gone with the reset;
+// nothing but the roster read ever enforced one.
 
-function normalizePermissions(permissions?: CollaboratorPermissions) {
-  return {
-    canApprovePayment: permissions?.canApprovePayment ?? false,
-    canViewAnalytics: permissions?.canViewAnalytics ?? false,
-    canEditEvent: permissions?.canEditEvent ?? false,
-    canSeeAttendees: permissions?.canSeeAttendees ?? false,
-  };
-}
+/** Statuses a seat cannot come back from without a fresh invite. */
+const RETIRED_STATUSES: CollaboratorStatus[] = [
+  "REMOVED",
+  "DECLINED",
+  "WITHDRAWN",
+];
 
 /** #1580 §6 — the invite transaction refuses a fourth seat or a second presenter. */
 export class CollaboratorCapError extends Error {
@@ -197,8 +188,8 @@ async function assertNotAttendee(
     planType,
     planId,
   );
-  const seat = await db.slotOfAppointment.findFirst({
-    where: { deletedAt: null, user: { some: { id: userId } }, appointment },
+  const seat = await db.appointmentParticipant.findFirst({
+    where: { ...liveParticipant(userId), appointment },
     select: { id: true },
   });
   if (seat) {
@@ -240,7 +231,6 @@ export async function inviteCollaborator(
   role: string,
   revenueSharePercentage: number,
   invitedById: string,
-  permissions?: CollaboratorPermissions,
 ): Promise<Collaborator | null> {
   // Validate percentage range
   if (revenueSharePercentage <= 0 || revenueSharePercentage > 90) {
@@ -249,8 +239,6 @@ export async function inviteCollaborator(
 
   const planRole = asPlanRole(planType, role);
   if (!planRole) return null;
-
-  const perms = normalizePermissions(permissions);
 
   // #1580 C-P1-9 — the plan must be open and the invitee in good standing,
   // and they must not already sit in the audience of this plan's events.
@@ -273,16 +261,13 @@ export async function inviteCollaborator(
         );
         if (!valid) return null;
 
-        // FIX #6: Check for ANY existing collaboration (including REMOVED/DECLINED).
-        // If REMOVED/DECLINED, re-activate instead of creating to respect unique constraint.
+        // FIX #6: Check for ANY existing collaboration (including a retired one).
+        // A REMOVED / DECLINED / WITHDRAWN row is re-activated instead of
+        // created, to respect the unique constraint.
         const existing = await tx.collaborator.findFirst({
           where: { ...planWhere(planType, planId), consultantProfileId },
         });
-        if (
-          existing &&
-          existing.status !== "REMOVED" &&
-          existing.status !== "DECLINED"
-        ) {
+        if (existing && !RETIRED_STATUSES.includes(existing.status)) {
           // PENDING or ACCEPTED — already active
           return null;
         }
@@ -297,11 +282,11 @@ export async function inviteCollaborator(
             where: { id: existing.id },
             data: {
               role: planRole,
+              tier: tierForRole(planRole),
               revenueShareBps: pctToBps(revenueSharePercentage),
               status: "PENDING",
               invitedById,
               respondedAt: null,
-              ...perms,
             },
           });
         }
@@ -311,10 +296,10 @@ export async function inviteCollaborator(
             consultantProfileId,
             ...planScope(planType, planId),
             role: planRole,
+            tier: tierForRole(planRole),
             revenueShareBps: pctToBps(revenueSharePercentage),
             status: "PENDING",
             invitedById,
-            ...perms,
           },
         });
       },
@@ -619,11 +604,12 @@ export async function removeCollaborator(
   });
   if (!collab) return null;
 
-  // CAS in the WHERE: a lost race (already REMOVED or DECLINED) writes nothing
-  // and, for a withdrawal, sends no notice to the host.
+  // CAS in the WHERE: a lost race (already retired) writes nothing and, for a
+  // withdrawal, sends no notice to the host. #1580 — the collaborator's own
+  // exit is WITHDRAWN; REMOVED stays the host's act.
   const moved = await prisma.collaborator.updateMany({
     where: { id: collaborationId, status: { in: ["PENDING", "ACCEPTED"] } },
-    data: { status: "REMOVED" },
+    data: { status: opts.withdrawnByProfileId ? "WITHDRAWN" : "REMOVED" },
   });
   if (moved.count === 0) return null;
   const result = await prisma.collaborator.findUniqueOrThrow({
@@ -941,7 +927,7 @@ export async function updateCollaborator(
             ...(updates.revenueSharePercentage !== undefined && {
               revenueShareBps: pctToBps(updates.revenueSharePercentage),
             }),
-            ...(planRole && { role: planRole }),
+            ...(planRole && { role: planRole, tier: tierForRole(planRole) }),
           },
         });
       },
@@ -1095,12 +1081,15 @@ export async function getMyCollaborations(consultantProfileId: string) {
               include: {
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
+                    // #1554 — enrolment is the live participant count on the appointment.
+                    _count: {
+                      select: { participants: { where: liveParticipant() } },
+                    },
+                    occurrences: {
                       select: {
                         startsAt: true,
                         endsAt: true,
                         isTentative: true,
-                        _count: { select: { user: true } },
                       },
                     },
                   },
@@ -1160,14 +1149,17 @@ export async function getMyCollaborations(consultantProfileId: string) {
             classes: {
               where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
               include: {
-                appointments: {
+                appointment: {
                   include: {
-                    slotsOfAppointment: {
+                    // #1554 — enrolment is the live participant count on the appointment.
+                    _count: {
+                      select: { participants: { where: liveParticipant() } },
+                    },
+                    occurrences: {
                       select: {
                         startsAt: true,
                         endsAt: true,
                         isTentative: true,
-                        _count: { select: { user: true } },
                       },
                       orderBy: { startsAt: "asc" },
                     },
@@ -1240,12 +1232,15 @@ export async function getHostedCollaborations(
           include: {
             appointment: {
               include: {
-                slotsOfAppointment: {
+                // #1554 — enrolment is the live participant count on the appointment.
+                _count: {
+                  select: { participants: { where: liveParticipant() } },
+                },
+                occurrences: {
                   select: {
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
-                    _count: { select: { user: true } },
                   },
                 },
               },
@@ -1287,14 +1282,17 @@ export async function getHostedCollaborations(
         classes: {
           where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
           include: {
-            appointments: {
+            appointment: {
               include: {
-                slotsOfAppointment: {
+                // #1554 — enrolment is the live participant count on the appointment.
+                _count: {
+                  select: { participants: { where: liveParticipant() } },
+                },
+                occurrences: {
                   select: {
                     startsAt: true,
                     endsAt: true,
                     isTentative: true,
-                    _count: { select: { user: true } },
                   },
                   orderBy: { startsAt: "asc" },
                 },

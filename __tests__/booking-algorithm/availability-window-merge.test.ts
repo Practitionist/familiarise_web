@@ -14,18 +14,18 @@ import {
   coalesceAndResolve,
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
-} from "../../utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "../../utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
   windowAtoms,
-} from "../../utils/slotAllocation/availabilityCoverage";
+} from "../../utils/scheduling-engine/availabilityCoverage";
 import type { Tx } from "../../lib/prisma";
 import {
   breakDownSlotsPreservingStatus,
   mergeConsecutiveSlots,
-} from "../../utils/timeSlotsProcessing";
-import type { TSlotTiming } from "../../types/slots";
+} from "../../utils/scheduling-engine/intervals";
+import type { TIntervalTiming } from "../../types/slots";
 
 // The live rows from the report: Monday 10:00–11:00 and 11:00–12:00 UTC
 // (15:30–17:30 IST), stored as two 60-minute rows.
@@ -165,7 +165,7 @@ function atom(
   startHourUtc: number,
   half: 0 | 1,
   rowId: string,
-): TSlotTiming & { isAllocated: boolean; bookingStatus: "available" } {
+): TIntervalTiming & { isAllocated: boolean; bookingStatus: "available" } {
   const start = new Date(Date.UTC(2026, 8, 7, startHourUtc, half * 30));
   const end = new Date(start.getTime() + 30 * 60 * 1000);
   return {
@@ -174,8 +174,8 @@ function atom(
     dayOfWeek: "MONDAY",
     startsAt: start.toISOString(),
     endsAt: end.toISOString(),
-    slotOfAvailabilityId: rowId,
-    slotOfAppointmentId: "",
+    availabilityWindowId: rowId,
+    appointmentOccurrenceId: "",
     localStartTime: "",
     localEndTime: "",
     type: "WEEKLY",
@@ -196,8 +196,8 @@ describe("mergeConsecutiveSlots (#1320)", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].startsAt).toBe(ATOMS[0].startsAt);
     expect(merged[0].endsAt).toBe(ATOMS[3].endsAt);
-    expect(merged[0].slotOfAvailabilityId).toBe("rowA");
-    expect(merged[0].slotOfAvailabilityIds).toEqual(["rowA", "rowB"]);
+    expect(merged[0].availabilityWindowId).toBe("rowA");
+    expect(merged[0].availabilityWindowIds).toEqual(["rowA", "rowB"]);
   });
 
   it("does not merge across a booked atom or a time gap", () => {
@@ -228,11 +228,11 @@ describe("mergeConsecutiveSlots (#1320)", () => {
     const alreadyMerged = {
       ...ATOMS[0],
       endsAt: ATOMS[3].endsAt,
-      slotOfAvailabilityIds: ["rowA", "rowB"],
+      availabilityWindowIds: ["rowA", "rowB"],
     };
     const merged = mergeConsecutiveSlots([earlier, alreadyMerged]);
     expect(merged).toHaveLength(1);
-    expect(merged[0].slotOfAvailabilityIds).toEqual(["rowZ", "rowA", "rowB"]);
+    expect(merged[0].availabilityWindowIds).toEqual(["rowZ", "rowA", "rowB"]);
   });
 });
 
@@ -302,17 +302,20 @@ describe("checkout coverage rule (#1320)", () => {
       expect(src).toContain("mergeAdjacentCustomRows(");
     }
     for (const [f, helper] of [
-      ["app/api/slots/availability/weekly/route.ts", "coalesceAndResolve("],
       [
-        "app/api/slots/availability/weekly/[id]/route.ts",
+        "app/api/scheduling/availability/weekly/route.ts",
         "coalesceAndResolve(",
       ],
       [
-        "app/api/slots/availability/custom/route.ts",
+        "app/api/scheduling/availability/weekly/[id]/route.ts",
+        "coalesceAndResolve(",
+      ],
+      [
+        "app/api/scheduling/availability/custom/route.ts",
         "coalesceAndResolveCustom(",
       ],
       [
-        "app/api/slots/availability/custom/[id]/route.ts",
+        "app/api/scheduling/availability/custom/[id]/route.ts",
         "coalesceAndResolveCustom(",
       ],
     ]) {
@@ -356,7 +359,7 @@ describe("coalesceAndResolve resolves the edited row (#1320)", () => {
 
   function weeklyDb(rows: StoredRow[]) {
     return {
-      slotOfAvailabilityWeekly: {
+      availabilityWindowWeekly: {
         findMany: async () => rows,
         deleteMany: async () => ({ count: 0 }),
         createMany: async () => ({ count: 0 }),
@@ -380,7 +383,7 @@ describe("coalesceAndResolve resolves the edited row (#1320)", () => {
               r.endTimeUtc >= where.endTimeUtc.gte,
           ) ?? null,
       },
-    } as unknown as Pick<Tx, "slotOfAvailabilityWeekly">;
+    } as unknown as Pick<Tx, "availabilityWindowWeekly">;
   }
 
   it("answers an overnight edit with the overnight row, not a same-day one", async () => {
@@ -404,13 +407,13 @@ describe("loadPublishedCoverage (#1320)", () => {
       consultantProfile: {
         findUnique: async () => ({ scheduleType: "WEEKLY", deletedAt }),
       },
-      slotOfAvailabilityWeekly: { findMany: async () => [ROW_A, ROW_B] },
-      slotOfAvailabilityCustom: { findMany: async () => [] },
+      availabilityWindowWeekly: { findMany: async () => [ROW_A, ROW_B] },
+      availabilityWindowCustom: { findMany: async () => [] },
     } as unknown as Pick<
       Tx,
       | "consultantProfile"
-      | "slotOfAvailabilityWeekly"
-      | "slotOfAvailabilityCustom"
+      | "availabilityWindowWeekly"
+      | "availabilityWindowCustom"
     >;
   }
   const start = new Date(Date.UTC(2026, 8, 7, 10, 0));

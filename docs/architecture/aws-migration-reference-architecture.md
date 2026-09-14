@@ -211,7 +211,7 @@ CURRENT STACK → AWS EQUIVALENT MAPPING
 │  │    AdminProfile, Organization,              │   │  • API response cache                  │ │
 │  │    OrgMember, Consultation,                 │   │  • Consultant availability cache       │ │
 │  │    Subscription, Payment, Payout,           │   │  • User online presence                │ │
-│  │    Recording, MeetingSession,               │   │                                        │ │
+│  │    Recording, Meeting,               │   │                                        │ │
 │  │    ...51+ entities (JPA @Entity)            │   │  Spring Boot integration:              │ │
 │  │                                             │   │    spring-boot-starter-data-redis      │ │
 │  │  "cms" schema (Directus):                   │   │    @Cacheable, @CacheEvict             │ │
@@ -267,7 +267,7 @@ CURRENT STACK → AWS EQUIVALENT MAPPING
 │   │              │   │  (Event handlers) │   │  (Replaces cron jobs)                 │       │
 │   │  email-queue │   │                  │   │                                       │       │
 │   │  push-queue  │   │  Formats event   │   │  Every 15m: auto-complete-appointments│       │
-│   │  chat-queue  │   │  data into       │   │  Every 30m: cleanup-tentative-slots   │       │
+│   │  chat-queue  │   │  data into       │   │  Every 30m: cleanup-tentative-occurrences   │       │
 │   │              │   │  channel-specific │   │  Every 1h:  reconcile-earnings        │       │
 │   │  DLQ for     │   │  payloads        │   │  Every 6h:  transfer-recordings       │       │
 │   │  failures    │   │                  │   │  Every 24h: cleanup-stale-pending     │       │
@@ -444,7 +444,7 @@ Browser (React SPA on CloudFront)
   │      → Validate JWT + extract userId, consulteeProfileId                      │
   │      → ConsultationService.book()                                             │
   │        → ElastiCache: acquire distributed lock on slot                        │
-  │        → Aurora: create Consultation + Appointment + SlotOfAppointment        │
+  │        → Aurora: create Consultation + Appointment + AppointmentOccurrence        │
   │        → Stripe/Razorpay: create payment intent                               │
   │        → EventBridge: publish "consultation.booked" event                     │
   │        → Release lock                                                         │

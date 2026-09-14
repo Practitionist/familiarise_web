@@ -16,6 +16,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { AppointmentsType, Prisma } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -173,9 +174,9 @@ export async function getStaffAppointments(
     baseWhere.appointmentType = type;
   }
 
-  // Filter by date at the database level using slotsOfAppointment
+  // Filter by date at the database level using occurrences
   if (dateFrom || dateTo) {
-    baseWhere.slotsOfAppointment = {
+    baseWhere.occurrences = {
       some: {
         ...(dateFrom && { startsAt: { gte: new Date(dateFrom) } }),
         ...(dateTo && { startsAt: { lte: new Date(dateTo) } }),
@@ -269,7 +270,7 @@ export async function getStaffAppointments(
     prisma.appointment.findMany({
       where: listWhere,
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           orderBy: { startsAt: "asc" },
           take: 1,
           select: {
@@ -277,11 +278,10 @@ export async function getStaffAppointments(
             startsAt: true,
             endsAt: true,
             isTentative: true,
-            // Group events share their slots across every registrant, so one
-            // slot's user count is the attendee count.
-            _count: { select: { user: true } },
           },
         },
+        // #1554 — the attendee count is the live participant roster.
+        _count: { select: { participants: { where: liveParticipant() } } },
         consultation: {
           select: {
             id: true,
@@ -451,7 +451,7 @@ export async function getStaffAppointments(
     let title = "";
     let aptStatus = null;
     let duration = 0;
-    const attendeeCount = apt.slotsOfAppointment[0]?._count.user ?? 0;
+    const attendeeCount = apt._count.participants;
 
     switch (apt.appointmentType) {
       case "CONSULTATION":
@@ -499,7 +499,7 @@ export async function getStaffAppointments(
         break;
     }
 
-    const slot = apt.slotsOfAppointment[0];
+    const slot = apt.occurrences[0];
     const payment = apt.payment[0];
 
     // Determine status for display

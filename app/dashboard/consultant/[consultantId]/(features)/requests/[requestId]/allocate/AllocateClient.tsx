@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { SlotPicker } from "@/components/scheduling/SlotPicker";
+import { TimePicker } from "@/components/scheduling/TimePicker";
 import {
   allocatePolicy,
-  type SlotPickerSubject,
-} from "@/components/scheduling/slot-picker-policy";
+  type TimePickerSubject,
+} from "@/components/scheduling/time-picker-policy";
 import { toast } from "@/components/ui/use-toast";
 import { allocatedElsewhere } from "@/lib/scheduling/allocationMessages";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
@@ -21,7 +21,7 @@ export function AllocateClient({
   backHref,
   title,
 }: Readonly<{
-  subject: SlotPickerSubject;
+  subject: TimePickerSubject;
   backHref: string;
   title: string;
 }>) {
@@ -51,7 +51,7 @@ export function AllocateClient({
   });
 
   return (
-    <SlotPicker
+    <TimePicker
       className="min-h-0 flex-1"
       policy={policy}
       subject={subject}

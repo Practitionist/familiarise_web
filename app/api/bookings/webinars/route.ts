@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
       startDateStr && endDateStr
         ? {
             appointment: {
-              slotsOfAppointment: {
+              occurrences: {
                 some: {
                   startsAt: {
                     gte: new Date(startDateStr),
@@ -117,15 +118,10 @@ export async function GET(request: NextRequest) {
             // Get webinars where consultee is registered through appointments
             {
               appointment: {
-                slotsOfAppointment: {
+                participants: {
                   some: {
-                    user: {
-                      some: {
-                        consulteeProfile: {
-                          id: consulteeProfileId,
-                        },
-                      },
-                    },
+                    ...liveParticipant(),
+                    user: { consulteeProfile: { id: consulteeProfileId } },
                   },
                 },
               },
@@ -154,19 +150,7 @@ export async function GET(request: NextRequest) {
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                      consulteeProfileId: true,
-                    },
-                  },
-                },
-              },
+              occurrences: true,
               payment: true,
             },
           },
@@ -182,7 +166,7 @@ export async function GET(request: NextRequest) {
 
       if (startDateStr && endDateStr) {
         whereClause.appointment = {
-          slotsOfAppointment: {
+          occurrences: {
             some: {
               startsAt: {
                 gte: new Date(startDateStr),
@@ -204,11 +188,7 @@ export async function GET(request: NextRequest) {
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
+              occurrences: true,
             },
           },
         },
@@ -228,11 +208,7 @@ export async function GET(request: NextRequest) {
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: true,
-                },
-              },
+              occurrences: true,
             },
           },
         },
@@ -313,11 +289,7 @@ export async function POST(request: Request) {
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true,
-              },
-            },
+            occurrences: true,
           },
         },
       },

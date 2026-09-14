@@ -9,12 +9,12 @@
  * because it raced the access check: any signed-in visitor to `/meetings/<x>`
  * minted a billable Stream call and became its `created_by` before being shown
  * "Access Denied". Removing it was right. What it also removed was the only
- * thing repairing a `MeetingSession` row whose Stream call does not exist — and
+ * thing repairing a `Meeting` row whose Stream call does not exist — and
  * rows like that are not hypothetical:
  *
  *   - the seeds write them with `faker.string.uuid()` ids and no Stream object
  *     at all (75–800 rows depending on size, no production guard)
- *   - `createDbMeetingSession` is a `"use server"` action whose id validator is
+ *   - `createDbMeeting` is a `"use server"` action whose id validator is
  *     `z.string().min(1)`, so any entitled caller can persist any string
  *   - maintenance drain ends the Stream call and keeps the row
  *
@@ -103,9 +103,10 @@ jest.mock("../../lib/observability/report", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingSession: { findUnique: jest.fn() },
+    meeting: { findUnique: jest.fn() },
     user: { findUnique: jest.fn() },
-    slotOfAppointment: { findMany: jest.fn(), findFirst: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), findFirst: jest.fn() },
+    appointmentParticipant: { findFirst: jest.fn() },
     collaborator: { findFirst: jest.fn() },
   },
 }));
@@ -297,9 +298,10 @@ const { resolveMeetingAccess } = jest.requireActual<
 import prismaClient from "../../lib/prisma";
 
 const db = prismaClient as unknown as {
-  meetingSession: { findUnique: jest.Mock };
+  meeting: { findUnique: jest.Mock };
   user: { findUnique: jest.Mock };
-  slotOfAppointment: { findMany: jest.Mock; findFirst: jest.Mock };
+  appointmentOccurrence: { findMany: jest.Mock; findFirst: jest.Mock };
+  appointmentParticipant: { findFirst: jest.Mock };
   collaborator: { findFirst: jest.Mock };
 };
 
@@ -313,26 +315,31 @@ function seedAccess(
   const startsAt = new Date(Date.now() - 5 * MINUTE);
   const endsAt = new Date(Date.now() + (opts.slotEndsInMs ?? 25 * MINUTE));
 
-  db.meetingSession.findUnique.mockResolvedValue({
+  // #1554 — the gate evaluates the meeting's OWN occurrence, which the
+  // resolver's include already carries; no separate occurrence read.
+  db.meeting.findUnique.mockResolvedValue({
     id: "ms-1",
     streamCallId: "slot-abc",
-    slotOfAppointment: {
-      user: opts.joinerIsParticipant === false ? [] : [{ id: "user_1" }],
-      appointment: { id: "appt-1", deletedAt: null, ...appointment },
-    },
-  });
-  db.slotOfAppointment.findMany.mockResolvedValue([
-    {
+    endedAt: null,
+    endedReason: null,
+    occurrence: {
       id: "slot-1",
       startsAt,
       endsAt,
       isTentative: false,
       completionStatus: "SCHEDULED",
+      deletedAt: null,
       appointmentId: "appt-1",
-      meetingSession: { id: "ms-1", endedAt: null },
+      appointment: { id: "appt-1", deletedAt: null, ...appointment },
     },
-  ]);
-  db.slotOfAppointment.findFirst.mockResolvedValue(null);
+  });
+  // #1554 — the roster probe: a live seat for the joiner unless the case
+  // says otherwise.
+  db.appointmentParticipant.findFirst.mockResolvedValue(
+    opts.joinerIsParticipant === false ? null : { id: "seat-1" },
+  );
+  db.appointmentOccurrence.findMany.mockResolvedValue([]);
+  db.appointmentOccurrence.findFirst.mockResolvedValue(null);
   db.collaborator.findFirst.mockResolvedValue(null);
   db.user.findUnique.mockResolvedValue({ consultantProfileId: null });
 }
@@ -345,7 +352,7 @@ const consultation = (status: string) => ({
   subscription: null,
   webinar: null,
   class: null,
-  trialSession: null,
+  trial: null,
 });
 
 const trial = (status: string) => ({
@@ -353,7 +360,7 @@ const trial = (status: string) => ({
   subscription: null,
   webinar: null,
   class: null,
-  trialSession: { consultantProfileId: "cp-1", status },
+  trial: { consultantProfileId: "cp-1", status },
 });
 
 const webinar = (status: string) => ({
@@ -368,7 +375,7 @@ const webinar = (status: string) => ({
     },
   },
   class: null,
-  trialSession: null,
+  trial: null,
 });
 
 describe("resolveMeetingAccess refuses a booking that is not joinable", () => {
@@ -443,15 +450,23 @@ describe("resolveMeetingAccess still admits a live session", () => {
     );
   });
 
-  it("admits an attendee joined to a different slot of the same webinar", async () => {
-    // Group events hang the meeting off the consultant's allocation row while
-    // the attendee sits on their own enrollment row, so the direct membership
-    // check misses them and the enrollment probe has to answer.
-    seedAccess(webinar("SCHEDULED"), { joinerIsParticipant: false });
-    db.slotOfAppointment.findFirst.mockResolvedValue({ id: "enrolment-1" });
+  it("admits a webinar attendee through the roster probe (#1554)", async () => {
+    // Group events hang the meeting off the consultant's allocation row; the
+    // attendee's seat is their AppointmentParticipant row, and one existence
+    // probe on it answers for a 1:1 and a 200-attendee webinar alike.
+    seedAccess(webinar("SCHEDULED"), { joinerIsParticipant: true });
 
     expect((await resolveMeetingAccess("slot-abc", "user_1")).hasAccess).toBe(
       true,
+    );
+    expect(db.appointmentParticipant.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointmentId: "appt-1",
+          userId: "user_1",
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        }),
+      }),
     );
   });
 
@@ -504,5 +519,44 @@ describe("resolveMeetingAccess still admits a live session", () => {
 
     expect(access.hasAccess).toBe(false);
     expect(access.message).toBe("This session has ended.");
+  });
+
+  it("gates on the meeting's OWN call, not the wrapper's next one (#1554)", async () => {
+    // A subscription wrapper holds many calls. This room belongs to a call
+    // that ended 45 minutes ago; the wrapper's next call is live right now.
+    // Evaluating "the current or next occurrence" would admit the visitor
+    // into the wrong room — the gate must read the meeting's occurrence.
+    seedAccess(
+      {
+        ...consultation("APPROVED"),
+        consultation: null,
+        subscription: {
+          status: "SCHEDULED",
+          subscriptionPlan: {
+            consultantProfileId: "cp-1",
+            recordingEnabled: false,
+          },
+        },
+      },
+      { slotEndsInMs: -45 * MINUTE },
+    );
+    db.appointmentOccurrence.findMany.mockResolvedValue([
+      {
+        id: "slot-live",
+        startsAt: new Date(Date.now() - 5 * MINUTE),
+        endsAt: new Date(Date.now() + 25 * MINUTE),
+        isTentative: false,
+        completionStatus: "SCHEDULED",
+        appointmentId: "appt-1",
+        meeting: null,
+      },
+    ]);
+
+    const access = await resolveMeetingAccess("slot-abc", "user_1");
+
+    expect(access.hasAccess).toBe(false);
+    expect(access.message).toBe("This session has ended.");
+    // And nothing enumerated the wrapper's other calls to decide it.
+    expect(db.appointmentOccurrence.findMany).not.toHaveBeenCalled();
   });
 });

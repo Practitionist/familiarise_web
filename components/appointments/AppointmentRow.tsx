@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventUnionStatusBadge } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/slots";
+import { getProximityLabel } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { cn } from "@/utils/tailwind";
@@ -57,7 +57,7 @@ export function AppointmentRow({
 
   const timeLabel = vm.nextAt ? format(vm.nextAt, "h:mm a") : "Not scheduled";
   const endOfAnchor = vm.nextAt
-    ? vm.sessions.find(
+    ? vm.occurrences.find(
         (s) => s.startsAt.getTime() === vm.nextAt?.getTime() && s.endsAt,
       )?.endsAt
     : null;

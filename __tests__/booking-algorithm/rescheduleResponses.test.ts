@@ -20,7 +20,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: jest.fn(),
     appointment: { findUnique: jest.fn() },
-    slotOfAppointment: { findMany: jest.fn(), deleteMany: jest.fn() },
+    appointmentOccurrence: { findMany: jest.fn(), deleteMany: jest.fn() },
     // #1008 — reschedule/cancel routes read prisma.dispute.findFirst.
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
     $disconnect: jest.fn(),
@@ -100,7 +100,7 @@ function makeConsultationAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: {
       id: "cons-1",
       consultationPlan: {
@@ -121,7 +121,7 @@ function makeSubscriptionAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: {
       id: "sub-1",
@@ -142,7 +142,7 @@ function makeWebinarAppointment(slotOverrides?: any[]) {
   return {
     id: "apt-1",
     appointmentType: "WEBINAR",
-    slotsOfAppointment: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
+    occurrences: slotOverrides || [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: {
@@ -193,9 +193,9 @@ function makeMockTx(appointmentData: any) {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    // transitionSlotCompletion reads the from-status, then moves the cohort
+    // transitionOccurrenceCompletion reads the from-status, then moves the cohort
     // with updateManyAndReturn so each moved id gets its history row.
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([{ id: "slot-1" }]),
       deleteMany: jest.fn(),
@@ -371,7 +371,7 @@ describe("Reschedule — derivedType fallback when no ?type param", () => {
     // For subscription entire reschedule, the route calls findMany twice
     mockTx.appointment.findMany
       .mockResolvedValueOnce([
-        { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
+        { id: "apt-1", occurrences: appointment.occurrences },
       ])
       .mockResolvedValueOnce([{ id: "apt-1" }]);
     (prisma.$transaction as jest.Mock).mockImplementation(
@@ -443,10 +443,6 @@ describe("Reschedule — 24-hour policy", () => {
       makeSlot("slot-2", NEAR_DATE), // 12h out — too close
     ]);
     const mockTx = makeMockTx(appointment);
-    // For subscription, route fetches all slots
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
@@ -519,9 +515,6 @@ describe("Reschedule — Response shape", () => {
   it("should return individual_session for single slotId in subscription", async () => {
     const appointment = makeSubscriptionAppointment();
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: appointment.slotsOfAppointment },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
@@ -536,46 +529,36 @@ describe("Reschedule — Response shape", () => {
     expect(body.slotsAffected).toBe(1);
   });
 
-  // #448 — a one-hour session is 2 × 30-min slots of the SAME appointment, so
-  // rescheduling it is ONE session (individual_session), not multiple_sessions.
-  it("should return individual_session for a one-hour (2-slot) session — #448", async () => {
-    const twoSlots = [
-      makeSlot("slot-1", FUTURE_DATE),
-      makeSlot("slot-2", new Date(FUTURE_DATE.getTime() + 30 * 60 * 1000)),
-    ];
-    const appointment = makeSubscriptionAppointment(twoSlots);
+  // #448 / #1554 — a one-hour session is ONE occurrence row, so rescheduling
+  // it is ONE session (individual_session), not multiple_sessions.
+  it("should return individual_session for a one-hour session — #448", async () => {
+    const oneRow = [makeSlot("slot-1", FUTURE_DATE)];
+    const appointment = makeSubscriptionAppointment(oneRow);
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: twoSlots },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
     const req = makeRequest("apt-1", "SUBSCRIPTION", {
-      slotIds: ["slot-1", "slot-2"],
+      slotIds: ["slot-1"],
     });
     const res = await rescheduleHandler(req, makeParams("apt-1"));
     const body = await res.json();
 
     expect(body.rescheduleType).toBe("individual_session");
     expect(body.sessionsAffected).toBe(1);
-    expect(body.slotsAffected).toBe(2);
+    expect(body.slotsAffected).toBe(1);
   });
 
-  it("should return multiple_sessions when slots span multiple appointments", async () => {
+  it("should return multiple_sessions when several rows of the wrapper are named", async () => {
     const slotA = makeSlot("slot-1", FUTURE_DATE, "apt-1");
     const slotB = makeSlot(
       "slot-2",
       new Date(FUTURE_DATE.getTime() + 24 * 60 * 60 * 1000),
-      "apt-2",
+      "apt-1",
     );
-    const appointment = makeSubscriptionAppointment([slotA]);
+    const appointment = makeSubscriptionAppointment([slotA, slotB]);
     const mockTx = makeMockTx(appointment);
-    mockTx.appointment.findMany.mockResolvedValueOnce([
-      { id: "apt-1", slotsOfAppointment: [slotA] },
-      { id: "apt-2", slotsOfAppointment: [slotB] },
-    ]);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );

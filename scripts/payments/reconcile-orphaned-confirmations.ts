@@ -112,7 +112,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
       updatedAt: { lt: cutoff },
       appointmentId: { not: null },
       appointment: {
-        slotsOfAppointment: { some: { isTentative: true } },
+        occurrences: { some: { isTentative: true } },
       },
     },
     select: { id: true, appointmentId: true, userId: true },
@@ -142,7 +142,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
       // Live holds only: the tentative sweeps release by status now, so a
       // released row keeps isTentative and an unfiltered count would report a
       // successful re-drive as still blocked.
-      const remaining = await prisma.slotOfAppointment.count({
+      const remaining = await prisma.appointmentOccurrence.count({
         where: {
           appointmentId: orphan.appointmentId!,
           isTentative: true,
@@ -186,7 +186,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
       deletedAt: null,
       createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
       payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
-      slotsOfAppointment: { none: { isTentative: true, deletedAt: null } },
+      occurrences: { none: { isTentative: true, deletedAt: null } },
     },
     select: {
       id: true,

@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 
 /**
  * Slot transitions from the sweeps run in bounded transactions. The helper
@@ -14,7 +14,7 @@ export const SLOT_TRANSITION_TX_OPTIONS = {
   timeout: 30_000,
 } as const;
 
-type SlotTransitionArgs = Parameters<typeof transitionSlotCompletion>[1];
+type SlotTransitionArgs = Parameters<typeof transitionOccurrenceCompletion>[1];
 
 export function chunk<T>(
   items: readonly T[],
@@ -27,7 +27,7 @@ export function chunk<T>(
 }
 
 /**
- * Runs `transitionSlotCompletion` once per chunk of ids, each chunk in its own
+ * Runs `transitionOccurrenceCompletion` once per chunk of ids, each chunk in its own
  * transaction, and returns the total moved. `build` must re-state every guard
  * the cohort read used (rule 1: the WHERE is the state machine) and scope the
  * status through `fromIn`, never through `where.completionStatus`.
@@ -40,7 +40,7 @@ export async function transitionSlotsInChunks(
   let moved = 0;
   for (const idChunk of chunk(ids, size)) {
     moved += await prisma.$transaction(
-      (tx) => transitionSlotCompletion(tx, build(idChunk)),
+      (tx) => transitionOccurrenceCompletion(tx, build(idChunk)),
       SLOT_TRANSITION_TX_OPTIONS,
     );
   }

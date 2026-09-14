@@ -3,20 +3,13 @@
  */
 
 /**
- * #705 — a rating belongs to the MEETING, and a meeting is a contiguous RUN of
- * 30-minute rows (#1061), not any single row.
- *
- * The client sends the run's anchor because that is what `SessionVM.slotId`
- * carries, so the video path was safe by accident: only the anchor holds a
- * MeetingSession, so `heldSlot`'s attendance arm rejects every other row of the
- * run on its own. The OFFLINE path had no such backstop. An in-person 90-minute
- * session is three UNVERIFIED rows, each of which satisfies `heldSlot`
- * independently, so three separate ratings could be stored for one conversation
- * and the org quality aggregate would count all three.
- *
- * The route now resolves whatever row it is given back to its run's anchor,
- * which is already "the only row the video room may ever be keyed to". These
- * pin that the unique key is the anchor no matter which row is submitted.
+ * #705 / #1554 — a rating belongs to the MEETING, and since the reset the
+ * occurrence row IS the meeting: one row per held call, so the client posts
+ * that row's id and there is no run anchor to resolve to. An in-person
+ * 90-minute session is one UNVERIFIED row, which satisfies `heldOccurrence`
+ * once, so one conversation can only ever take one rating per person per
+ * level — and the whole-booking level is a second, separate row (NULL
+ * occurrence), guarded by the `appointment_feedback_level_key` sidecar.
  */
 
 jest.mock("@sentry/nextjs", () => ({
@@ -42,13 +35,16 @@ jest.mock("../../lib/data/appointment-detail", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findFirst: jest.fn(), findMany: jest.fn() },
+    appointmentOccurrence: { findFirst: jest.fn(), findMany: jest.fn() },
+    // #1580 — the co-presenter lookup; no collaborator on these fixtures.
+    collaborator: { findFirst: jest.fn(async () => null) },
     appointmentFeedback: {
-      upsert: jest.fn(),
+      create: jest.fn(async () => ({ id: "fb1" })),
+      update: jest.fn(async () => ({ id: "fb1" })),
       findMany: jest.fn(),
-      // #1300 — the route reads the stored row before the upsert, so it can stamp
+      // #1300 — the route reads the stored row before writing, so it can stamp
       // `updatedAt` only when the opinion actually changed. No prior row here.
-      findUnique: jest.fn(async () => null),
+      findFirst: jest.fn(async () => null),
     },
   },
 }));
@@ -64,48 +60,41 @@ import {
 
 const mockedAuthorize = authorizeAppointment as jest.Mock;
 const mockedRaterRole = appointmentRaterRole as jest.Mock;
-const mockedFindFirst = prisma.slotOfAppointment.findFirst as jest.Mock;
-const mockedFindMany = prisma.slotOfAppointment.findMany as jest.Mock;
-const mockedUpsert = prisma.appointmentFeedback.upsert as jest.Mock;
+const mockedFindFirst = prisma.appointmentOccurrence.findFirst as jest.Mock;
+const mockedFindMany = prisma.appointmentOccurrence.findMany as jest.Mock;
+const mockedCreate = prisma.appointmentFeedback.create as jest.Mock;
+const mockedUpdate = prisma.appointmentFeedback.update as jest.Mock;
 const mockedFeedbackFindMany = prisma.appointmentFeedback.findMany as jest.Mock;
-const mockedFeedbackFindUnique = prisma.appointmentFeedback
-  .findUnique as jest.Mock;
+const mockedFeedbackFindFirst = prisma.appointmentFeedback
+  .findFirst as jest.Mock;
 
 const APPT = "appt-offline-90";
 
-/** An in-person 90-minute session: three back-to-back UNVERIFIED rows. */
+/** An in-person 90-minute session: ONE UNVERIFIED occurrence row (#1554). */
 const RUN = [
   {
     id: "slot-a",
     appointmentId: APPT,
     startsAt: new Date("2026-08-01T10:00:00.000Z"),
-    endsAt: new Date("2026-08-01T10:30:00.000Z"),
-    isTentative: false,
-    completionStatus: "UNVERIFIED",
-  },
-  {
-    id: "slot-b",
-    appointmentId: APPT,
-    startsAt: new Date("2026-08-01T10:30:00.000Z"),
-    endsAt: new Date("2026-08-01T11:00:00.000Z"),
-    isTentative: false,
-    completionStatus: "UNVERIFIED",
-  },
-  {
-    id: "slot-c",
-    appointmentId: APPT,
-    startsAt: new Date("2026-08-01T11:00:00.000Z"),
     endsAt: new Date("2026-08-01T11:30:00.000Z"),
     isTentative: false,
     completionStatus: "UNVERIFIED",
   },
 ];
 
-function post(slotId: string, rating = 4, comment?: string): NextRequest {
+function post(
+  occurrenceId: string | null,
+  rating = 4,
+  comment?: string,
+): NextRequest {
   return new NextRequest(`https://x.test/api/appointments/${APPT}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rating, slotId, ...(comment ? { comment } : {}) }),
+    body: JSON.stringify({
+      rating,
+      ...(occurrenceId ? { occurrenceId } : {}),
+      ...(comment ? { comment } : {}),
+    }),
   });
 }
 
@@ -119,19 +108,21 @@ beforeEach(() => {
   });
   mockedRaterRole.mockReturnValue("CONSULTEE");
   mockedFindMany.mockResolvedValue(RUN);
-  mockedUpsert.mockResolvedValue({ id: "fb1" });
+  // jest.clearAllMocks keeps the factory implementations; only per-test
+  // overrides (mockResolvedValue) need resetting between cases.
+  mockedFeedbackFindFirst.mockResolvedValue(null);
+  mockedCreate.mockResolvedValue({ id: "fb1" });
+  mockedUpdate.mockResolvedValue({ id: "fb1" });
 });
 
 describe("#1540 — one read for the whole booking", () => {
-  /** The subscription shape: the page's appointment plus two child appointments,
-   *  which is what `authorizeAppointment` already loaded to answer at all. */
+  /** #1554 — the subscription shape is ONE wrapper; there are no siblings. */
   const withSiblings = {
     userId: "u1",
     isOrgParty: false,
     organizationId: null,
     detail: {
       appointment: { id: APPT },
-      siblings: [{ id: "appt-child-1" }, { id: "appt-child-2" }],
     },
   };
 
@@ -146,13 +137,12 @@ describe("#1540 — one read for the whole booking", () => {
     mockedFindMany.mockResolvedValue([]);
   });
 
-  it("covers the booking and its siblings under scope=booking", async () => {
-    // This is the whole fix: the timeline renders sessions belonging to child
-    // appointments, and fanning out one request per child cost ~100 Prisma
-    // operations for one page — serialised, because PG_POOL_MAX=1.
+  it("covers the whole booking under scope=booking with one row", async () => {
+    // #1554 — the booking IS the one appointment, so the widened scope reads
+    // the same id; the parameter is still accepted for older callers.
     await get(`http://x/api/appointments/${APPT}/feedback?scope=booking`);
 
-    const ids = { in: [APPT, "appt-child-1", "appt-child-2"] };
+    const ids = { in: [APPT] };
     expect(mockedFindMany.mock.calls[0][0].where.appointmentId).toEqual(ids);
     expect(mockedFeedbackFindMany.mock.calls[0][0].where.appointmentId).toEqual(
       ids,
@@ -184,75 +174,129 @@ describe("#1540 — one read for the whole booking", () => {
   });
 });
 
-describe("a rating identifies the meeting, not the row it was clicked on", () => {
-  it.each(["slot-a", "slot-b", "slot-c"])(
-    "keys on the run's anchor when %s is submitted",
-    async (submitted) => {
-      // The submitted row passes the ownership/held gate on its own — which is
-      // exactly the offline case that made three ratings reachable.
-      mockedFindFirst.mockResolvedValue({ id: submitted });
-
-      const res = await POST(post(submitted), {
-        params: Promise.resolve({ appointmentId: APPT }),
-      });
-      expect(res.status).toBe(200);
-
-      const args = mockedUpsert.mock.calls[0][0];
-      expect(args.where.slotOfAppointmentId_userId.slotOfAppointmentId).toBe(
-        "slot-a",
-      );
-      expect(args.create.slotOfAppointmentId).toBe("slot-a");
-    },
-  );
-
-  it("a second row of the same run UPDATES rather than adding a rating", async () => {
-    mockedFindFirst.mockResolvedValue({ id: "slot-c" });
-    await POST(post("slot-c"), {
-      params: Promise.resolve({ appointmentId: APPT }),
-    });
-    mockedFindFirst.mockResolvedValue({ id: "slot-b" });
-    await POST(post("slot-b"), {
-      params: Promise.resolve({ appointmentId: APPT }),
+describe("a rating identifies the meeting — the occurrence row (#1554)", () => {
+  it("keys the rating on the submitted occurrence", async () => {
+    mockedFindFirst.mockResolvedValue({
+      id: "slot-a",
+      consultantProfileId: "cp-1",
     });
 
-    // Same unique key both times, so the upsert collapses them into one row.
-    const keys = mockedUpsert.mock.calls.map(
-      (c) => c[0].where.slotOfAppointmentId_userId.slotOfAppointmentId,
+    const res = await POST(post("slot-a"), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    expect(res.status).toBe(200);
+
+    // The prior-row read is by the (appointment, occurrence, user) triple —
+    // the sidecar unique's key — and the create names the occurrence.
+    expect(mockedFeedbackFindFirst.mock.calls[0][0].where).toEqual({
+      appointmentId: APPT,
+      appointmentOccurrenceId: "slot-a",
+      userId: "u1",
+    });
+    const created = mockedCreate.mock.calls[0][0].data;
+    expect(created.appointmentOccurrenceId).toBe("slot-a");
+    // #1550 — the consultant rides on the row for the org rollup.
+    expect(created.consultantProfileId).toBe("cp-1");
+  });
+
+  it("a re-submission for the same occurrence UPDATES rather than adding a rating", async () => {
+    mockedFindFirst.mockResolvedValue({
+      id: "slot-a",
+      consultantProfileId: "cp-1",
+    });
+    await POST(post("slot-a"), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    mockedFeedbackFindFirst.mockResolvedValueOnce({
+      id: "fb1",
+      rating: 4,
+      comment: null,
+    });
+    await POST(post("slot-a"), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "fb1" } }),
     );
-    expect(keys).toEqual(["slot-a", "slot-a"]);
   });
 
   it("leaves a genuinely separate meeting on its own key", async () => {
-    // A second, non-contiguous session in the same booking is a DIFFERENT
-    // meeting and must not be folded into the first one's rating.
-    const later = {
+    // A second occurrence in the same booking is a DIFFERENT meeting and must
+    // not be folded into the first one's rating.
+    mockedFindFirst.mockResolvedValue({
       id: "slot-z",
-      appointmentId: APPT,
-      startsAt: new Date("2026-08-08T10:00:00.000Z"),
-      endsAt: new Date("2026-08-08T10:30:00.000Z"),
-      isTentative: false,
-      completionStatus: "UNVERIFIED",
-    };
-    mockedFindMany.mockResolvedValue([...RUN, later]);
-    mockedFindFirst.mockResolvedValue({ id: "slot-z" });
+      consultantProfileId: "cp-1",
+    });
 
     await POST(post("slot-z"), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
 
-    const args = mockedUpsert.mock.calls[0][0];
-    expect(args.where.slotOfAppointmentId_userId.slotOfAppointmentId).toBe(
+    expect(mockedFeedbackFindFirst.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({ appointmentOccurrenceId: "slot-z" }),
+    );
+    expect(mockedCreate.mock.calls[0][0].data.appointmentOccurrenceId).toBe(
       "slot-z",
     );
+  });
+});
+
+describe("a rating is about one call or the whole booking (#1554)", () => {
+  beforeEach(() =>
+    mockedFindFirst.mockResolvedValue({
+      id: "slot-a",
+      consultantProfileId: "cp-1",
+    }),
+  );
+
+  it("lets one user hold an occurrence-level and an appointment-level row", async () => {
+    await POST(post("slot-a"), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    // No occurrenceId: the whole booking. The prior-row read looks for a NULL
+    // occurrence, so the call-level row above is not what it updates.
+    const res = await POST(post(null), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    expect(res.status).toBe(200);
+
+    expect(mockedFeedbackFindFirst.mock.calls[1][0].where).toEqual({
+      appointmentId: APPT,
+      appointmentOccurrenceId: null,
+      userId: "u1",
+    });
+    const levels = mockedCreate.mock.calls.map(
+      (c) => c[0].data.appointmentOccurrenceId,
+    );
+    expect(levels).toEqual(["slot-a", null]);
+  });
+
+  it("refuses a second appointment-level row from the same user", async () => {
+    // The sidecar unique is NULLS NOT DISTINCT, so a racing second create for
+    // the whole booking surfaces as P2002 and answers 409 rather than 500.
+    mockedCreate.mockRejectedValueOnce(
+      Object.assign(new Error("unique"), { code: "P2002" }),
+    );
+    const res = await POST(post(null), {
+      params: Promise.resolve({ appointmentId: APPT }),
+    });
+    expect(res.status).toBe(409);
   });
 });
 
 describe("#1300 — only a changed opinion is an edit", () => {
   /** The stored row a re-submission lands on. */
   const stored = (rating: number, comment: string | null = null) =>
-    mockedFeedbackFindUnique.mockResolvedValue({ rating, comment });
+    mockedFeedbackFindFirst.mockResolvedValue({ id: "fb1", rating, comment });
 
-  beforeEach(() => mockedFindFirst.mockResolvedValue({ id: "slot-a" }));
+  beforeEach(() =>
+    mockedFindFirst.mockResolvedValue({
+      id: "slot-a",
+      consultantProfileId: "cp-1",
+    }),
+  );
 
   it("does not stamp updatedAt when the same rating is re-submitted", async () => {
     // `@updatedAt` was the original spelling and it could not express this at all:
@@ -263,9 +307,7 @@ describe("#1300 — only a changed opinion is an edit", () => {
     await POST(post("slot-a", 4), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    expect(mockedUpsert.mock.calls[0][0].update).not.toHaveProperty(
-      "updatedAt",
-    );
+    expect(mockedUpdate.mock.calls[0][0].data).not.toHaveProperty("updatedAt");
   });
 
   it("stamps updatedAt when the rating moves", async () => {
@@ -276,7 +318,7 @@ describe("#1300 — only a changed opinion is an edit", () => {
     await POST(post("slot-a", 1), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    expect(mockedUpsert.mock.calls[0][0].update.updatedAt).toBeInstanceOf(Date);
+    expect(mockedUpdate.mock.calls[0][0].data.updatedAt).toBeInstanceOf(Date);
   });
 
   it("stamps updatedAt when only the comment is rewritten", async () => {
@@ -284,20 +326,16 @@ describe("#1300 — only a changed opinion is an edit", () => {
     await POST(post("slot-a", 4, "Actually the call never connected."), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    expect(mockedUpsert.mock.calls[0][0].update.updatedAt).toBeInstanceOf(Date);
+    expect(mockedUpdate.mock.calls[0][0].data.updatedAt).toBeInstanceOf(Date);
   });
 
   it("never stamps updatedAt on a first rating", async () => {
     // Nothing was edited: there was no previous opinion to change.
-    mockedFeedbackFindUnique.mockResolvedValue(null);
+    mockedFeedbackFindFirst.mockResolvedValue(null);
     await POST(post("slot-a", 4), {
       params: Promise.resolve({ appointmentId: APPT }),
     });
-    expect(mockedUpsert.mock.calls[0][0].update).not.toHaveProperty(
-      "updatedAt",
-    );
-    expect(mockedUpsert.mock.calls[0][0].create).not.toHaveProperty(
-      "updatedAt",
-    );
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    expect(mockedCreate.mock.calls[0][0].data).not.toHaveProperty("updatedAt");
   });
 });

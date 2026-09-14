@@ -67,40 +67,27 @@ describe("bookingOrgId — the one resolver every DM key goes through", () => {
     expect(
       bookingOrgId({
         subscriptionPlan: { organizationId: null },
-        appointments: [{ organizationId: null }],
+        appointment: { organizationId: null },
       }),
     ).toBeNull();
   });
 
-  // THE regression this helper exists to close. `createSubscriptionChannel`
-  // reads `where: { organizationId: { not: null } }, take: 1`, so it saw the
-  // org-tagged row and minted `dmo-…`. Every consumer read `appointments[0]`
-  // from a result with no `where` and no `orderBy`, so a mixed subscription
-  // resolved `null` and looked for `dm-…`. Same pair, two channels, and the
-  // reconciler then treated the real one as stale.
-  it("finds the org-tagged appointment even when it is not first", () => {
+  // The regression this helper was written for: `createSubscriptionChannel`
+  // filtered a subscription's many appointments to the org-tagged row while
+  // every consumer read an unordered `[0]`, so one relationship minted two
+  // channels. #1554 made a subscription ONE appointment, so the org tag is a
+  // single column and the helper carries no list arm to diverge over.
+  it("has no plural arm left to disagree over", () => {
     expect(
       bookingOrgId({
         subscriptionPlan: { organizationId: null },
-        appointments: [
-          { organizationId: null },
-          { organizationId: "org_funded" },
-        ],
+        appointment: { organizationId: "org_funded" },
       }),
     ).toBe("org_funded");
   });
 
-  it("agrees with the creator's filtered read on a mixed subscription", () => {
-    const mixed = [{ organizationId: null }, { organizationId: "org_funded" }];
-    // What the creator's query hands it: org-tagged rows only, capped at one.
-    const creatorSaw = mixed.filter((a) => a.organizationId).slice(0, 1);
-    expect(bookingOrgId({ appointments: mixed })).toBe(
-      bookingOrgId({ appointments: creatorSaw }),
-    );
-  });
-
-  it("ignores an empty appointment list", () => {
-    expect(bookingOrgId({ appointments: [] })).toBeNull();
+  it("ignores a missing appointment", () => {
+    expect(bookingOrgId({ appointment: null })).toBeNull();
     expect(bookingOrgId({})).toBeNull();
   });
 });
@@ -143,23 +130,13 @@ describe("no site re-types the precedence chain", () => {
       "subscription approval",
       "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
     ],
-  ])("%s reads appointments in a deterministic order", (_label, rel) => {
-    // Filtering alone is not enough. `take: 1` over an unordered result, or a
-    // `find` over one, can hand two callers different rows if a subscription
-    // ever carries two org-tagged appointments — the same divergence this whole
-    // file exists to close, one layer down.
-    expect(read(rel)).toContain('orderBy: [{ createdAt: "asc" }, { id: "asc" }]');
-  });
-
-  it.each([
-    ["creators", "actions/stream/chat/channel.action.ts"],
-    ["reconcile", "actions/stream/chat/event-channel.action.ts"],
-    ["search", "app/api/stream/channels/search-appointments/route.ts"],
-  ])("%s filters its take:1 appointment read", (_label, rel) => {
-    // `take: 1` truncates server-side, before bookingOrgId's `find` can run. A
-    // site that caps without filtering hands the helper a personal row and
-    // resolves `null` for a subscription that IS org-funded.
-    expect(read(rel)).toContain("where: { organizationId: { not: null } }");
+  ])("%s reads the one wrapper, not a list", (_label, rel) => {
+    // #1554 — a subscription is ONE appointment. The old `take: 1` over a
+    // filtered, ordered list was how two callers could see two rows; a site
+    // that grows a plural read back reopens that divergence one layer down.
+    const src = read(rel);
+    expect(src).toMatch(/\bappointment: \{/);
+    expect(src).not.toContain("appointments: {");
   });
 });
 

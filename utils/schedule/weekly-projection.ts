@@ -4,7 +4,7 @@ import { resolveOvernightStatus } from "@/utils/schedule/overnight";
 /**
  * Projecting a weekly availability row onto real dates (#1342, #1343).
  *
- * `SlotOfAvailabilityWeekly.startDay` is the day the CONSULTANT published, in
+ * `AvailabilityWindowWeekly.startDay` is the day the CONSULTANT published, in
  * their own local calendar; `startTimeUtc`/`endTimeUtc` are minutes since
  * midnight UTC and `utcOffsetMinutes` is the offset frozen at write time. The
  * UTC weekday a row lands on is therefore derived, never stored and never

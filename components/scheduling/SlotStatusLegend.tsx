@@ -13,7 +13,7 @@ import { cn } from "@/utils/tailwind";
 import {
   SLOT_STATUS_TOKENS,
   type SlotStatusKey,
-} from "@/lib/scheduling/slot-status-tokens";
+} from "@/lib/scheduling/interval-status-tokens";
 
 interface SlotStatusLegendProps {
   keys: SlotStatusKey[];

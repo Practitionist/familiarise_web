@@ -24,7 +24,7 @@ interface RequestRow {
   id: string;
   status: string;
   initiatedById: string;
-  releasedSlotIds: string[];
+  releasedOccurrenceIds: string[];
   appointmentId: string;
   openForAppointmentId: string | null;
   appointment: {
@@ -48,7 +48,7 @@ interface StatusCas {
   where: { id: string; status?: { in: string[] } };
   data: Data;
 }
-/** transitionSlotCompletion's shape: the from-set is an `in` list. */
+/** transitionOccurrenceCompletion's shape: the from-set is an `in` list. */
 interface SlotCas {
   where: { id: { in: string[] }; completionStatus: { in: string[] } };
   data: Data;
@@ -78,7 +78,7 @@ function makeTx() {
         return { count: 1 };
       }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn(async ({ where }: SlotCas) =>
         matchSlots(where).map((s) => ({
           id: s.id,
@@ -171,7 +171,7 @@ function seed(
       id: "req-1",
       status: overrides.status ?? "PENDING_REVIEW",
       initiatedById: INITIATOR,
-      releasedSlotIds: slots.map((s) => s.id),
+      releasedOccurrenceIds: slots.map((s) => s.id),
       appointmentId: "appt-1",
       openForAppointmentId: "appt-1",
       appointment: {

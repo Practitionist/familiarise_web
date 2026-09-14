@@ -23,7 +23,7 @@
 // alias resolves to a different module instance and the mock silently does not
 // bind.
 import { resolveMaxCallDurationSeconds } from "../../lib/meetings/duration-cap";
-import { CONSULTANT_JOIN_WINDOW_MS } from "../../lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "../../lib/appointments/occurrences";
 
 const MIN = 60;
 const start = new Date("2026-09-01T10:00:00Z");

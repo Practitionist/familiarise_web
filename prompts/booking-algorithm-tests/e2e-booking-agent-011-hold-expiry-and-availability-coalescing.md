@@ -39,9 +39,9 @@ All test data uses the `-011` suffix.
 
 The rule lives in two places asserted to agree by
 `__tests__/booking-algorithm/hold-expiry-predicate.test.ts`:
-`isOccupiedByLiveAppointment` (`utils/slotAllocation/SlotValidationService.ts`)
+`isOccupiedByLiveAppointment` (`utils/scheduling-engine/ScheduleValidationService.ts`)
 for callers that already loaded appointments, and `buildDeadHoldFilter`
-(`utils/slotAllocation/occupancyPolicy.ts`) for callers that select slots —
+(`utils/scheduling-engine/occupancyPolicy.ts`) for callers that select slots —
 checkout's first step and the trial route.
 
 A payment row is **dead** when it is `EXPIRED`, `FAILED`, or still `PENDING`
@@ -81,7 +81,7 @@ SELECT p.id, p."paymentStatus", p."expiresAt", c.status, c."bookingSource",
 FROM "Payment" p
 JOIN "Appointment" a ON a.id = p."appointmentId"
 JOIN "Consultation" c ON c.id = a."consultationId"
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 WHERE c."consultationPlanId" = 'test-consultation-plan-011';
 -- Expected: paymentStatus PENDING, expiresAt ≈ now + 30 min,
 -- Consultation.status PENDING, bookingSource DIRECT_CHECKOUT, isTentative true.
@@ -94,7 +94,7 @@ WHERE c."consultationPlanId" = 'test-consultation-plan-011';
 
 While `expiresAt` is still in the future, assert 11:00–11:30 on D+4 is blocked:
 
-1. **Grid.** `GET /api/slots/availability-with-allocation/test-consultant-profile-011?startDateInUtc=<D+4T00:00Z>&endDateInUtc=<D+5T00:00Z>&timezone=UTC`
+1. **Grid.** `GET /api/scheduling/availability-with-allocation/test-consultant-profile-011?startDateInUtc=<D+4T00:00Z>&endDateInUtc=<D+5T00:00Z>&timezone=UTC`
    → the 11:00 slot is present but marked allocated/occupied.
 2. **Validate.** `POST /api/bookings/consultations/<OTHER_CONSULTATION_ID>/validate`
    with `{ "slots": ["<D+4T11:00Z>"] }` → 200, and the slot appears under
@@ -119,7 +119,7 @@ auto-allocate is willing to place there. The row itself has not moved:
 
 ```sql
 SELECT "isTentative", "deletedAt", "completionStatus"
-FROM "SlotOfAppointment" WHERE id = '<SLOT_ID>';
+FROM "AppointmentOccurrence" WHERE id = '<SLOT_ID>';
 -- Expected: unchanged — the slot is freed by the payment rule, not by a write.
 ```
 
@@ -138,10 +138,10 @@ touching the payment:
 ```sql
 SELECT a.id AS appointment_id, s.id AS slot_id, s."startsAt"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 JOIN "Consultation" c ON c.id = a."consultationId"
 WHERE c."consultationPlanId" = 'test-consultation-plan-011'
-  AND a.id <> (SELECT "appointmentId" FROM "SlotOfAppointment"
+  AND a.id <> (SELECT "appointmentId" FROM "AppointmentOccurrence"
                 WHERE id = '<SLOT_ID>');
 -- Expected: the replacement the auto-allocate probe wrote. Delete these rows
 -- (slots first), then re-probe the grid: 11:00 must still read free.
@@ -177,7 +177,7 @@ Now expire the retry too.
 
 ## Phase 5 — `REQUEST_SUBMITTED` is a different animal
 
-Create a second consultation through `POST /api/slots/request-for-approval` so
+Create a second consultation through `POST /api/scheduling/request-for-approval` so
 it lands `PENDING` with `bookingSource = 'REQUEST_SUBMITTED'`, on D+4 at 14:00
 UTC. Give it a payment row and expire it.
 
@@ -192,7 +192,7 @@ one:
 ```javascript
 async () => {
   const post = (startsAt, endsAt) =>
-    fetch("/api/slots/availability/custom", {
+    fetch("/api/scheduling/availability/custom", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -213,7 +213,7 @@ async () => {
 fold in SQL:
 
 ```sql
-SELECT id, "startsAt", "endsAt" FROM "SlotOfAvailabilityCustom"
+SELECT id, "startsAt", "endsAt" FROM "AvailabilityWindowCustom"
 WHERE "consultantProfileId" = 'test-consultant-profile-011'
 ORDER BY "startsAt";
 -- Expected: ONE row spanning 09:00–13:00 on D+8, not two.
@@ -270,7 +270,7 @@ lost race.
 
 There is a second, distinct 409 on this route, so do not conflate them when
 triaging. Scheduling claims the trial through
-`transitionTrialSession(tx, { …, fromIn: [existingTrial.status] })`; if the CAS
+`transitionTrial(tx, { …, fromIn: [existingTrial.status] })`; if the CAS
 matches no row because a sibling request already moved the trial, the route
 throws `TrialStateChangedError` and answers 409 with "This trial was already
 updated by another request." That is the trial state having moved, not the slot

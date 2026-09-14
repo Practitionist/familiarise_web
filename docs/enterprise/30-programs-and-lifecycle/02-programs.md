@@ -64,7 +64,7 @@ The cap on a `LicensedSeatConfig` is denominated in engagements, where one engag
 | 12-call SUBSCRIPTION  | 1 per consultant allocation (lazy)    | slot allocation   |
 
 The term **engagement** was picked to avoid collision with BetterAuth
-`Session` and Stream's `MeetingSession` (which is a video-call record,
+`Session` and Stream's `Meeting` (which is a video-call record,
 not a billing unit).
 
 ## Booking → cap → overage
@@ -87,7 +87,7 @@ flowchart TD
 
 The counter increment + ledger twin are written atomically in one transaction; see [concurrency & idempotency](01-concurrency-and-idempotency.md). `CREDIT_POOL` programs apply the same shape with the cap denominated in credits (1 credit = ₹1) — the meter is `consumedPaise` against `creditBudgetPerCycle × 100`. The pre-checkout preview (`lib/payments/billing/overage-preview.ts`, route `GET /api/organizations/[orgId]/checkout/overage-preview`) is **advisory only** — it reuses the same `computeOverageForBooking` mapper over the assignment's *current* usage so preview and the checkout recorder can't drift, then the authoritative `OverageEvent` is persisted at checkout. The `base`/`surcharge` split lives on the `OverageEvent` (`marginalPaise == basePaise + surchargePaise`); the CHARGE_MEMBER timeout wall (14 days → `FAILED`) is the [timeout cron](01-concurrency-and-idempotency.md).
 
-> 🟡 **Gap (SUBSCRIPTION lazy-debit crosses the cap silently).** SUBSCRIPTION engagements debit at slot-allocation time, and `SlotAllocationService` discards `recordBookingUtilization`'s result — a `wasOverage=true` crossing on a `CHARGE_*` program at allocation never reaches `recordOverageAtCheckout`, so no `OverageEvent`, side-payment, or accrual leg is created while `overageCount` still increments (a silent under-charge; the reconciler's `OVERAGE_COUNT_DRIFT` fires on exactly these rows). Wiring it needs a #715-style design decision first, because follow-on allocations pass `priceAtBookingPaise: 0` and the marginal price basis is undefined on that path. Found in the 2026-06-10 overage architecture audit.
+> 🟡 **Gap (SUBSCRIPTION lazy-debit crosses the cap silently).** SUBSCRIPTION engagements debit at slot-allocation time, and `SchedulingService` discards `recordBookingUtilization`'s result — a `wasOverage=true` crossing on a `CHARGE_*` program at allocation never reaches `recordOverageAtCheckout`, so no `OverageEvent`, side-payment, or accrual leg is created while `overageCount` still increments (a silent under-charge; the reconciler's `OVERAGE_COUNT_DRIFT` fires on exactly these rows). Wiring it needs a #715-style design decision first, because follow-on allocations pass `priceAtBookingPaise: 0` and the marginal price basis is undefined on that path. Found in the 2026-06-10 overage architecture audit.
 
 ### The `OverageEvent` charge-status machine
 

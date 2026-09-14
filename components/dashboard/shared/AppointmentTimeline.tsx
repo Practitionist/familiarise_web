@@ -36,7 +36,7 @@ const ENTITY_LABEL: Record<string, string> = {
   CLASS: "Class",
   TRIAL: "Trial",
   RESCHEDULE_REQUEST: "Reschedule",
-  SLOT: "Slot",
+  OCCURRENCE: "Session",
 };
 
 function entityLabel(entity: string): string {

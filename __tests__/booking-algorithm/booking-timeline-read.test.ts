@@ -38,8 +38,8 @@ function appointmentRow() {
     subscriptionId: null,
     webinarId: null,
     classId: null,
-    trialSession: null,
-    slotsOfAppointment: [{ id: "slot-1" }],
+    trial: null,
+    occurrences: [{ id: "slot-1" }],
     rescheduleRequests: [
       {
         id: "resched-1",
@@ -51,7 +51,7 @@ function appointmentRow() {
         createdAt: new Date("2026-09-02T11:00:00.000Z"),
         resolvedAt: new Date("2026-09-02T12:00:00.000Z"),
         initiatedBy: { id: "user-1", name: "Asha" },
-        _count: { proposedSlots: 3 },
+        _count: { proposedTimes: 3 },
       },
     ],
   };
@@ -61,7 +61,7 @@ function historyRows() {
   return [
     {
       id: "hist-2",
-      entity: "SLOT",
+      entity: "OCCURRENCE",
       entityId: "slot-1",
       fromStatus: "SCHEDULED",
       toStatus: "RESCHEDULED",
@@ -101,7 +101,7 @@ describe("getBookingTimeline", () => {
     const [slotMove, proposal, approval] = timeline!.entries;
     expect(slotMove).toMatchObject({
       kind: "status",
-      entity: "SLOT",
+      entity: "OCCURRENCE",
       from: "SCHEDULED",
       to: "RESCHEDULED",
       actor: null,
@@ -128,7 +128,7 @@ describe("getBookingTimeline", () => {
     expect(call.where.OR).toEqual([
       { appointmentId: "appt-1" },
       { entity: "CONSULTATION", entityId: { in: ["consult-1"] } },
-      { entity: "SLOT", entityId: { in: ["slot-1"] } },
+      { entity: "OCCURRENCE", entityId: { in: ["slot-1"] } },
       { entity: "RESCHEDULE_REQUEST", entityId: { in: ["resched-1"] } },
     ]);
     // The window is cut in the database, so equal timestamps need a second key.
@@ -141,7 +141,7 @@ describe("getBookingTimeline", () => {
     historyFindMany.mockResolvedValue(
       Array.from({ length: 200 }, (_, index) => ({
         id: `hist-${String(index).padStart(3, "0")}`,
-        entity: "SLOT",
+        entity: "OCCURRENCE",
         entityId: "slot-1",
         fromStatus: "SCHEDULED",
         toStatus: "COMPLETED",

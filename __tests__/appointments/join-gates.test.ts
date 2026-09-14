@@ -28,13 +28,13 @@ import path from "path";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
   CONSULTEE_JOIN_WINDOW_MS,
-  getJoinableSlot,
-  getSessionVMJoinState,
-  isSessionOver,
-  type SessionSlotLike,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+  getOccurrenceVMJoinState,
+  isOccurrenceOver,
+  type JoinableOccurrence,
+} from "@/lib/appointments/occurrences";
 import { isConfirmedStatus } from "@/lib/appointments/status";
-import type { SessionVM } from "@/lib/appointments/view-model";
+import type { OccurrenceVM } from "@/lib/appointments/view-model";
 
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
@@ -42,20 +42,12 @@ const read = (rel: string) =>
 /** All fixtures live on one day so the clock reads like a real timeline. */
 const at = (hhmm: string) => new Date(`2026-08-01T${hhmm}:00.000Z`);
 
-/** A 10:00–11:00 consultation as the booking engine actually stores it. */
-const oneHour = (): SessionSlotLike[] => [
+/** A 10:00–11:00 consultation as the booking engine stores it (#1554). */
+const oneHour = (): JoinableOccurrence[] => [
   {
     id: "A",
     appointmentId: "appt-1",
     startsAt: at("10:00"),
-    endsAt: at("10:30"),
-    isTentative: false,
-    completionStatus: "SCHEDULED",
-  },
-  {
-    id: "B",
-    appointmentId: "appt-1",
-    startsAt: at("10:30"),
     endsAt: at("11:00"),
     isTentative: false,
     completionStatus: "SCHEDULED",
@@ -65,14 +57,14 @@ const oneHour = (): SessionSlotLike[] => [
 /** The whole gate, as every join surface now composes it. */
 const consultantMayJoin = (status: string, now: Date) =>
   isConfirmedStatus(status) &&
-  getJoinableSlot(oneHour(), {
+  getJoinableOccurrence(oneHour(), {
     joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
     now,
   }) !== null;
 
-function session(extra: Partial<SessionVM> = {}): SessionVM {
+function session(extra: Partial<OccurrenceVM> = {}): OccurrenceVM {
   return {
-    slotId: "A",
+    occurrenceId: "A",
     appointmentId: "appt-1",
     startsAt: at("10:00"),
     endsAt: at("11:00"),
@@ -127,7 +119,7 @@ describe("#1270 — a consultant needs a CONFIRMED booking, not just an open win
     // the one place the two constants are allowed to disagree.
     expect(consultantMayJoin("SCHEDULED", at("09:47"))).toBe(true);
     expect(
-      getJoinableSlot(oneHour(), {
+      getJoinableOccurrence(oneHour(), {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("09:47"),
       }),
@@ -135,10 +127,10 @@ describe("#1270 — a consultant needs a CONFIRMED booking, not just an open win
   });
 });
 
-describe("#1270 — a SessionVM row knows when its session has ended", () => {
+describe("#1270 — a OccurrenceVM row knows when its session has ended", () => {
   it("is joinable mid-session while the call is still open", () => {
     expect(
-      getSessionVMJoinState(session(), {
+      getOccurrenceVMJoinState(session(), {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("10:20"),
       }),
@@ -152,7 +144,7 @@ describe("#1270 — a SessionVM row knows when its session has ended", () => {
 
     for (const now of ["10:11", "10:25", "10:45", "10:59"]) {
       expect(
-        getSessionVMJoinState(ended, {
+        getOccurrenceVMJoinState(ended, {
           joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
           now: at(now),
         }),
@@ -177,20 +169,20 @@ describe("#1270 — a SessionVM row knows when its session has ended", () => {
       meetingEndedReason: "call_ended",
     });
 
-    expect(isSessionOver(timedOut, at("10:20"))).toBe(false);
-    expect(isSessionOver(endedEarly, at("10:20"))).toBe(false);
-    expect(isSessionOver(closed, at("10:20"))).toBe(true);
+    expect(isOccurrenceOver(timedOut, at("10:20"))).toBe(false);
+    expect(isOccurrenceOver(endedEarly, at("10:20"))).toBe(false);
+    expect(isOccurrenceOver(closed, at("10:20"))).toBe(true);
   });
 
   it("counts down before the window opens and ends after the session", () => {
     expect(
-      getSessionVMJoinState(session(), {
+      getOccurrenceVMJoinState(session(), {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("09:00"),
       }),
     ).toBe("countdown");
     expect(
-      getSessionVMJoinState(session(), {
+      getOccurrenceVMJoinState(session(), {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("11:30"),
       }),
@@ -204,7 +196,7 @@ describe("#1270 — a SessionVM row knows when its session has ended", () => {
       { completionStatus: "RESCHEDULED" },
     ]) {
       expect(
-        getSessionVMJoinState(session(extra), {
+        getOccurrenceVMJoinState(session(extra), {
           joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
           now: at("10:20"),
         }),
@@ -216,13 +208,13 @@ describe("#1270 — a SessionVM row knows when its session has ended", () => {
     const open = session({ endsAt: null });
 
     expect(
-      getSessionVMJoinState(open, {
+      getOccurrenceVMJoinState(open, {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("10:45"),
       }),
     ).toBe("joinable");
     expect(
-      getSessionVMJoinState(open, {
+      getOccurrenceVMJoinState(open, {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
         now: at("11:01"),
       }),
@@ -270,7 +262,7 @@ describe("#1270 — the surfaces are wired to those predicates", () => {
   });
 
   it("routes the timeline's row status through the shared join state", () => {
-    expect(timeline).toContain("getSessionVMJoinState(");
+    expect(timeline).toContain("getOccurrenceVMJoinState(");
     // The hand-rolled comparison that could not see an ended call.
     expect(timeline).not.toContain("now >= start - joinWindowMs");
   });
@@ -295,7 +287,7 @@ describe("#1270 — there is one join window per role, imported everywhere", () 
     "lib/data/org-member-arrangement.ts",
   ];
 
-  it("declares the window nowhere but lib/appointments/slots.ts", () => {
+  it("declares the window nowhere but lib/appointments/occurrences.ts", () => {
     for (const rel of surfaces) {
       const src = read(rel);
       expect(src).toMatch(/(CONSULTEE|CONSULTANT)_JOIN_WINDOW_MS/);

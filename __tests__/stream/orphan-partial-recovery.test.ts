@@ -24,7 +24,7 @@ const mockSync = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingSession: {
+    meeting: {
       findMany: (...a: unknown[]) => mockFindMany(...a),
       count: (...a: unknown[]) => mockCount(...a),
     },

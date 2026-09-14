@@ -1,6 +1,6 @@
 ---
 name: booking-availability
-description: How a consultant's published availability becomes bookable slots — weekly versus custom rows, the scheduleType discriminator, coalescing on save, the 30-minute atom, union coverage validation, the grid endpoint, the occupancy and dead-hold rules, and the three allocation modes with partial allocation and the collaborator guard. Load when working on availability rows, the booking calendar grid, slot generation, conflict detection, or anything under utils/slotAllocation/, utils/timeSlotsProcessing.ts, app/api/slots/, or the allocate routes.
+description: How a consultant's published availability becomes bookable slots — weekly versus custom rows, the scheduleType discriminator, coalescing on save, the 30-minute atom, union coverage validation, the grid endpoint, the occupancy and dead-hold rules, and the three allocation modes with partial allocation and the collaborator guard. Load when working on availability rows, the booking calendar grid, slot generation, conflict detection, or anything under utils/scheduling-engine/, utils/timeSlotsProcessing.ts, app/api/scheduling/, or the allocate routes.
 ---
 
 # Booking Availability
@@ -18,7 +18,7 @@ relations exist side by side, so rows from the dormant mode can persist from a
 previous schedule — which is why every reader must gate on the discriminator
 rather than unioning both tables.
 
-`SlotOfAvailabilityWeekly` holds recurring rows as `startDay`/`endDay`
+`AvailabilityWindowWeekly` holds recurring rows as `startDay`/`endDay`
 (`DayOfWeek`) plus `startTimeUtc`/`endTimeUtc` as minutes since midnight UTC
 (0–1439), with `utcOffsetMinutes` as the live source of truth. `startDay` is the
 **consultant's local** day (ADR B4): the UTC weekday is derived per row from
@@ -36,7 +36,7 @@ representation; they are dual-written from 2026-09-05 by `weeklyRowLocalColumns`
 on every write path and read by nothing until the #872 reader flip, so write
 them only through that helper and carry them through any path that recreates
 rows.
-`SlotOfAvailabilityCustom` holds date-specific rows as `startsAt`/`endsAt` and
+`AvailabilityWindowCustom` holds date-specific rows as `startsAt`/`endsAt` and
 has no `isAvailable`, so a custom row is purely additive and can never express a
 blackout. Both models gained a `deletedAt` tombstone in wave 5 (#1322, schema
 hygiene), but no reader filters on it yet — availability rows are still removed
@@ -44,9 +44,9 @@ by a hard delete, so treat the column as frozen-in, not live.
 
 ## 2. Rows coalesce on save
 
-As of wave 5 (#1323), `utils/slotAllocation/mergeAdjacentWeeklyRows.ts` folds
+As of wave 5 (#1323), `utils/scheduling-engine/mergeAdjacentWeeklyRows.ts` folds
 adjacent rows on every availability write, across all four write routes under
-`app/api/slots/availability/` (`weekly`, `weekly/[id]`, `custom`,
+`app/api/scheduling/availability/` (`weekly`, `weekly/[id]`, `custom`,
 `custom/[id]`). Each of those routes runs its overlap check, its write and the
 coalescing pass inside **one** Serializable transaction under
 `withSerializableRetry`, so the check-then-act window is closed and the row ids
@@ -66,7 +66,7 @@ Custom rows merge on adjacency **or overlap**, keeping the later `endsAt`, and
 the folded rows, because a booking names a custom row. That asymmetry is
 load-bearing; do not "simplify" it.
 
-Both folds stop at `MAX_DURATION_MINUTES` (`utils/timeSlotValidation.ts`, twelve
+Both folds stop at `MAX_DURATION_MINUTES` (`utils/timeScheduleValidation.ts`, twelve
 hours). A merge that would cross that bound starts a new row instead, because
 `isValidTimeRange` rejects anything longer and the settings loader filters its
 rows through that validator — a thirteen-hour merged row would vanish from the
@@ -76,10 +76,10 @@ form and the next save would delete it.
 
 Every slot is uniformly 30 minutes (ADR B1), but there is no single canonical
 constant — the value is redeclared under at least six names, of which the
-exported forms are `SLOT_DURATION_MS` (`lib/appointments/contiguous-slot-run.ts`)
+exported forms are `SCHEDULING_INTERVAL_MS` (`lib/appointments/occurrences.ts`)
 and `THIRTY_MIN_MS` (`utils/timeSlotsProcessing.ts`). Do not add a seventh.
 
-`utils/slotAllocation/availabilityCoverage.ts` is the write-time gate.
+`utils/scheduling-engine/availabilityCoverage.ts` is the write-time gate.
 `windowAtoms(start, end)` chops the half-open window into atoms and
 `findUncoveredAtom` returns the first atom that **no** row covers, so no single
 row need cover the whole window — coverage is per-atom across the union.
@@ -106,10 +106,10 @@ whose 10:30 atom no row publishes, which checkout's union coverage then rejects.
 
 ## 4. Generation and the grid endpoint
 
-`SlotCalculationService` is a static date and duration utility, **not** the
+`ScheduleCalculationService` is a static date and duration utility, **not** the
 generator. Generation happens in two places that must agree:
 `processAvailabilitySlots` (`utils/timeSlotsProcessing.ts`) for the grid and the
-private `SlotAllocationService.findAvailableSlots` for the allocator.
+private `SchedulingService.findAvailableSlots` for the allocator.
 
 What makes them agree is that both project weekly rows through the same
 generator, `weeklyRowOccurrencesInRange` (`utils/schedule/weekly-projection.ts`),
@@ -133,7 +133,7 @@ up to local midnight otherwise lost its last slot (#1415). Both merge functions
 require exact adjacency, and differ only in which atoms are eligible; a
 tolerance on either side advertises a seam no row publishes (#1416).
 
-The grid is `GET /api/slots/availability-with-allocation/[consultantId]` with
+The grid is `GET /api/scheduling/availability-with-allocation/[consultantId]` with
 `startDateInUtc`, `endDateInUtc` and `timezone`, public in `middleware.ts`.
 There is no polling interval on it and none should be added: ADR 16
 (`docs/enterprise/70-design-decisions/16-slot-freshness-without-realtime.md`)
@@ -142,7 +142,7 @@ per-query refetch on focus and invalidate-on-mutation.
 
 ## 5. Occupancy, and when a hold is dead
 
-`utils/slotAllocation/occupancyPolicy.ts` answers "what blocks this slot".
+`utils/scheduling-engine/occupancyPolicy.ts` answers "what blocks this slot".
 `OCCUPIED_REQUEST_STATUSES` is `PENDING`, `APPROVED`, `APPROVED_PENDING_PAYMENT`
 and `SCHEDULED`; `OCCUPIED_EVENT_STATUSES` is `SCHEDULED` and `IN_PROGRESS`;
 trials occupy at `SCHEDULED` and `AWAITING_PAYMENT`, because a paid trial's slot
@@ -153,7 +153,7 @@ plans.
 
 A hold that is no longer live must stop blocking, and the rule lives in two
 places asserted to agree by `hold-expiry-predicate.test.ts`:
-`isOccupiedByLiveAppointment` (`utils/slotAllocation/SlotValidationService.ts`)
+`isOccupiedByLiveAppointment` (`utils/scheduling-engine/ScheduleValidationService.ts`)
 is the JS predicate, and `buildDeadHoldFilter` (`occupancyPolicy.ts`) is its SQL
 twin, added in wave 5 (#1328) for callers that select slots and so cannot run
 the predicate — checkout's first step and the trial route.
@@ -177,7 +177,7 @@ There is one endpoint per event type — `PATCH
 and the mode comes from the body, not the URL: `useRequestedSlots` wins, else
 `isAuto` (a required field), else manual, which needs a non-empty `slots` array
 of ISO datetimes. `AllocationMode` is the union `"auto" | "manual" |
-"requested"` in `utils/slotAllocation/types.ts`.
+"requested"` in `utils/scheduling-engine/types.ts`.
 
 As of wave 5 (#1329), `allowPartial` lets the consultant say "place what fits
 now, the rest later". It defaults to false, is honoured only for the event's
@@ -190,7 +190,7 @@ so the client can offer the partial option instead of a dead end. The consultee
 learns of it through the Novu workflow `appointment-partially-scheduled`.
 
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
-`SlotAllocationService.assertCollaboratorsFree` calls
+`SchedulingService.assertCollaboratorsFree` calls
 `assertCollaboratorsAvailableForWindows` (`lib/collaborators/availability.ts`)
 from all three paths, short-circuits for anything that is not a webinar or
 class, checks only `ACCEPTED` collaborators against live slots on a half-open

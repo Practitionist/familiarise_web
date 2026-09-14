@@ -116,7 +116,7 @@ async function loadConsultationCandidates(
       // that is exactly the collision the nullable-unique exists to prevent.
       rescheduleRequests: { none: {} },
       consultation: { status: "APPROVED" },
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           deletedAt: null,
           completionStatus: "SCHEDULED",
@@ -127,7 +127,7 @@ async function loadConsultationCandidates(
     select: {
       id: true,
       organizationId: true,
-      slotsOfAppointment: slotWindow(cutoff),
+      occurrences: slotWindow(cutoff),
       consultation: {
         select: {
           requestedBy: { select: { userId: true } },
@@ -145,7 +145,7 @@ async function loadConsultationCandidates(
     const consultantUserId =
       appointment.consultation?.consultationPlan.consultantProfile.userId;
     if (!consulteeUserId || !consultantUserId) return [];
-    if (appointment.slotsOfAppointment.length === 0) return [];
+    if (appointment.occurrences.length === 0) return [];
 
     return [
       {
@@ -154,7 +154,7 @@ async function loadConsultationCandidates(
         consulteeUserId,
         consultantUserId,
         // A consultation is one session, so the whole booking moves.
-        slots: appointment.slotsOfAppointment.slice(0, 1),
+        slots: appointment.occurrences.slice(0, 1),
       },
     ];
   });
@@ -170,7 +170,7 @@ async function loadSubscriptionCandidates(
       deletedAt: null,
       rescheduleRequests: { none: {} },
       subscription: { status: "APPROVED" },
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           deletedAt: null,
           completionStatus: "SCHEDULED",
@@ -181,7 +181,7 @@ async function loadSubscriptionCandidates(
     select: {
       id: true,
       organizationId: true,
-      slotsOfAppointment: slotWindow(cutoff),
+      occurrences: slotWindow(cutoff),
       subscription: {
         select: {
           requestedBy: { select: { userId: true } },
@@ -199,7 +199,7 @@ async function loadSubscriptionCandidates(
     const consultantUserId =
       appointment.subscription?.subscriptionPlan.consultantProfile.userId;
     if (!consulteeUserId || !consultantUserId) return [];
-    if (appointment.slotsOfAppointment.length === 0) return [];
+    if (appointment.occurrences.length === 0) return [];
 
     return [
       {
@@ -208,7 +208,7 @@ async function loadSubscriptionCandidates(
         consulteeUserId,
         consultantUserId,
         // A subscription moves individual sessions, not the whole plan.
-        slots: appointment.slotsOfAppointment.slice(
+        slots: appointment.occurrences.slice(
           0,
           faker.number.int({ min: 1, max: 2 }),
         ),
@@ -258,7 +258,7 @@ async function openProposal(
       : [];
 
   await prisma.$transaction(async (tx) => {
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: { id: { in: candidate.slots.map((slot) => slot.id) } },
       data: { isTentative: true, completionStatus: "RESCHEDULED" },
     });
@@ -274,12 +274,12 @@ async function openProposal(
           args.round > 1
             ? faker.helpers.arrayElement(COUNTER_REASONS)
             : faker.helpers.arrayElement(REASONS),
-        releasedSlotIds: candidate.slots.map((slot) => slot.id),
+        releasedOccurrenceIds: candidate.slots.map((slot) => slot.id),
         expiresAt,
         // Reserves the appointment for as long as the request is open.
         openForAppointmentId: candidate.appointmentId,
         organizationId: candidate.organizationId,
-        proposedSlots: {
+        proposedTimes: {
           create: [
             ...openingRound.map((time) => ({
               ...time,
@@ -359,7 +359,7 @@ async function resolvedProposal(
       status,
       round: 1,
       reason: faker.helpers.arrayElement(REASONS),
-      releasedSlotIds: candidate.slots.map((slot) => slot.id),
+      releasedOccurrenceIds: candidate.slots.map((slot) => slot.id),
       expiresAt: new Date(createdAt.getTime() + 72 * HOUR_MS),
       // Terminal rows MUST leave this NULL — a resolved request holds no claim
       // on its appointment, and a non-null value here would collide with the
@@ -369,7 +369,7 @@ async function resolvedProposal(
       resolvedById,
       organizationId: candidate.organizationId,
       createdAt,
-      proposedSlots: {
+      proposedTimes: {
         create: proposed.map((time) => ({
           ...time,
           round: 1,

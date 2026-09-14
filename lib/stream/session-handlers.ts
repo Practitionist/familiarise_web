@@ -8,8 +8,8 @@
  */
 
 import prisma from "@/lib/prisma";
-import { isDeliberateEnd } from "@/lib/appointments/slots";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { isDeliberateEnd } from "@/lib/appointments/occurrences";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -70,7 +70,7 @@ export interface StreamSessionParticipantLeftEvent {
  * Triggered when the call session naturally ends (last participant leaves + inactivity timeout)
  *
  * Actions:
- * - Update MeetingSession with endedAt timestamp
+ * - Update Meeting with endedAt timestamp
  * - Set endedReason to "session_timeout"
  * - Log session duration
  */
@@ -89,14 +89,14 @@ export async function handleSessionEnded(
 
   try {
     // Find meeting session by streamCallId
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: true,
+        occurrence: true,
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn("Meeting session not found for session ended event", {
         streamCallId,
       });
@@ -109,13 +109,13 @@ export async function handleSessionEnded(
     // host's call.ended must not downgrade `call_ended` to a timeout that a
     // later join could clear.
     if (
-      isDeliberateEnd(meetingSession) ||
-      !supersedesRecordedEnd(meetingSession.endedAt, endedAt)
+      isDeliberateEnd(meeting) ||
+      !supersedesRecordedEnd(meeting.endedAt, endedAt)
     ) {
       streamLogger.info("Stale end event — a later end is already recorded", {
-        sessionId: meetingSession.id,
+        sessionId: meeting.id,
         streamCallId,
-        previousEndedAt: meetingSession.endedAt,
+        previousEndedAt: meeting.endedAt,
       });
       return;
     }
@@ -131,12 +131,12 @@ export async function handleSessionEnded(
     // did; `endedReason` distinguishes it from a host closing the room, and
     // `isDeliberateEnd` is what the join gates read. The SLOT only completes
     // once its booked time is actually over.
-    const slotEndsAt = meetingSession.slotOfAppointment.endsAt;
+    const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
     await prisma.$transaction(async (tx) => {
-      await tx.meetingSession.update({
-        where: { id: meetingSession.id },
+      await tx.meeting.update({
+        where: { id: meeting.id },
         data: {
           endedAt,
           endedReason: "session_timeout",
@@ -147,8 +147,8 @@ export async function handleSessionEnded(
       // CAS (#1319): a late webhook must not resurrect a CANCELLED slot as
       // COMPLETED. Zero rows is expected here, so log rather than throw; the
       // session row above still records the truth about the call.
-      const moved = await transitionSlotCompletion(tx, {
-        where: { id: meetingSession.slotOfAppointmentId },
+      const moved = await transitionOccurrenceCompletion(tx, {
+        where: { id: meeting.appointmentOccurrenceId },
         to: "COMPLETED",
         // Never lift UNVERIFIED: the maintenance drain parked it for a human.
         fromIn: ["SCHEDULED"],
@@ -159,7 +159,7 @@ export async function handleSessionEnded(
         streamLogger.info(
           "Slot not completable — already cancelled or completed",
           {
-            sessionId: meetingSession.id,
+            sessionId: meeting.id,
             streamCallId,
           },
         );
@@ -170,7 +170,7 @@ export async function handleSessionEnded(
       streamLogger.info(
         "Stream session ended before the booked window closed — slot left open",
         {
-          sessionId: meetingSession.id,
+          sessionId: meeting.id,
           streamCallId,
           endedAt: endedAt.toISOString(),
           slotEndsAt: slotEndsAt ? new Date(slotEndsAt).toISOString() : null,
@@ -179,19 +179,19 @@ export async function handleSessionEnded(
     }
 
     // Calculate session duration if we have a start reference
-    const slotStartTime = meetingSession.slotOfAppointment.startsAt;
+    const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
         (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),
       );
       streamLogger.info("Session duration calculated", {
-        sessionId: meetingSession.id,
+        sessionId: meeting.id,
         durationMinutes,
       });
     }
 
     streamLogger.info("Meeting session updated - session ended", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       streamCallId,
       endedAt: created_at,
       endedReason: "session_timeout",
@@ -209,7 +209,7 @@ export async function handleSessionEnded(
  * Triggered when a call is explicitly ended (not just session timeout)
  *
  * Actions:
- * - Update MeetingSession with endedAt timestamp
+ * - Update Meeting with endedAt timestamp
  * - Set endedReason to "call_ended", or "ended_early" before the booked start
  * - Log who ended the call if available
  */
@@ -229,14 +229,14 @@ export async function handleCallEnded(
 
   try {
     // Find meeting session by streamCallId
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { streamCallId },
       include: {
-        slotOfAppointment: true,
+        occurrence: true,
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       streamLogger.warn("Meeting session not found for call ended event", {
         streamCallId,
       });
@@ -245,11 +245,11 @@ export async function handleCallEnded(
 
     const endedAt = new Date(created_at);
 
-    if (!supersedesRecordedEnd(meetingSession.endedAt, endedAt)) {
+    if (!supersedesRecordedEnd(meeting.endedAt, endedAt)) {
       streamLogger.info("Stale end event — a later end is already recorded", {
-        sessionId: meetingSession.id,
+        sessionId: meeting.id,
         streamCallId,
-        previousEndedAt: meetingSession.endedAt,
+        previousEndedAt: meeting.endedAt,
       });
       return;
     }
@@ -257,14 +257,14 @@ export async function handleCallEnded(
     // #1607 — "End for everyone" during the pre-start device check is not the
     // session ending. `ended_early` is not a deliberate end, so every join gate
     // re-lights and the slot stays SCHEDULED for the real call.
-    const slotStartsAt = meetingSession.slotOfAppointment.startsAt;
+    const slotStartsAt = meeting.occurrence.startsAt;
     const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
     const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
     // Update meeting session and mark slot as completed atomically
     await prisma.$transaction(async (tx) => {
-      await tx.meetingSession.update({
-        where: { id: meetingSession.id },
+      await tx.meeting.update({
+        where: { id: meeting.id },
         data: {
           endedAt,
           endedReason,
@@ -273,8 +273,8 @@ export async function handleCallEnded(
       });
       if (endedBeforeStart) return;
       // CAS (#1319) — see the session_timeout arm above.
-      const moved = await transitionSlotCompletion(tx, {
-        where: { id: meetingSession.slotOfAppointmentId },
+      const moved = await transitionOccurrenceCompletion(tx, {
+        where: { id: meeting.appointmentOccurrenceId },
         to: "COMPLETED",
         // Never lift UNVERIFIED: the maintenance drain parked it for a human.
         fromIn: ["SCHEDULED"],
@@ -285,7 +285,7 @@ export async function handleCallEnded(
         streamLogger.info(
           "Slot not completable — already cancelled or completed",
           {
-            sessionId: meetingSession.id,
+            sessionId: meeting.id,
             streamCallId,
           },
         );
@@ -293,20 +293,20 @@ export async function handleCallEnded(
     });
 
     // Calculate session duration if we have a start reference
-    const slotStartTime = meetingSession.slotOfAppointment.startsAt;
+    const slotStartTime = meeting.occurrence.startsAt;
     if (slotStartTime) {
       const durationMinutes = Math.round(
         (endedAt.getTime() - new Date(slotStartTime).getTime()) / (1000 * 60),
       );
       streamLogger.info("Session duration calculated", {
-        sessionId: meetingSession.id,
+        sessionId: meeting.id,
         durationMinutes,
         endedByUserId: ended_by_user_id,
       });
     }
 
     streamLogger.info("Meeting session updated - call ended", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       streamCallId,
       endedAt: created_at,
       endedReason,
@@ -321,14 +321,20 @@ export async function handleCallEnded(
 }
 
 /**
- * Resolve the MeetingSession for a Stream call_cid (format "type:callId").
+ * Resolve the Meeting for a Stream call_cid (format "type:callId").
  * Returns null (not throw) when no session matches — Stream emits participant
  * events for ad-hoc calls that may never have been persisted; those are skipped.
  */
-async function resolveMeetingSession(streamCallId: string) {
-  return prisma.meetingSession.findUnique({
+async function resolveMeeting(streamCallId: string) {
+  return prisma.meeting.findUnique({
     where: { streamCallId },
-    select: { id: true, endedAt: true, endedReason: true },
+    // #1554 — attendance rows carry the call they belong to.
+    select: {
+      id: true,
+      endedAt: true,
+      endedReason: true,
+      appointmentOccurrenceId: true,
+    },
   });
 }
 
@@ -358,45 +364,46 @@ export async function handleSessionParticipantJoined(
   }
 
   try {
-    const meetingSession = await resolveMeetingSession(streamCallId);
-    if (!meetingSession) {
-      streamLogger.warn("Meeting session not found for participant joined", {
+    const meeting = await resolveMeeting(streamCallId);
+    if (!meeting) {
+      streamLogger.warn("Meeting not found for participant joined", {
         streamCallId,
         userId,
       });
       return;
     }
-    const meetingSessionId = meetingSession.id;
+    const meetingId = meeting.id;
 
     const joinedAt = new Date(created_at);
 
     // #1607 — Stream reuses the call id across sessions, so a join after a
     // timeout or a pre-start end means the room is live again: clear the
-    // non-deliberate end so heldSlot and the maintenance drain see it open.
+    // non-deliberate end so heldOccurrence and the maintenance drain see it open.
     // Only a join AFTER that end counts (a late-delivered older join must not
     // reopen it); CAS on the end we read, so a concurrent real end is never
     // clobbered.
     if (
-      meetingSession.endedAt &&
-      joinedAt > meetingSession.endedAt &&
-      !isDeliberateEnd(meetingSession)
+      meeting.endedAt &&
+      joinedAt > meeting.endedAt &&
+      !isDeliberateEnd(meeting)
     ) {
-      await prisma.meetingSession.updateMany({
-        where: { id: meetingSessionId, endedAt: meetingSession.endedAt },
+      await prisma.meeting.updateMany({
+        where: { id: meetingId, endedAt: meeting.endedAt },
         data: { endedAt: null, endedReason: null },
       });
     }
 
     // Idempotent: a duplicate webhook for the same join must not inflate the
-    // count, so the unique [meetingSessionId, userId] row is the dedup key.
+    // count, so the unique [meetingId, userId] row is the dedup key.
     // First join → create with firstJoinedAt; rejoin → bump joinCount only
     // (firstJoinedAt is immutable so #471 reads the genuine first arrival).
     await prisma.meetingAttendance.upsert({
       where: {
-        meetingSessionId_userId: { meetingSessionId, userId },
+        meetingId_userId: { meetingId, userId },
       },
       create: {
-        meetingSessionId,
+        meetingId,
+        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
         userId,
         firstJoinedAt: joinedAt,
       },
@@ -407,7 +414,7 @@ export async function handleSessionParticipantJoined(
 
     streamLogger.info("Recorded participant join", {
       streamCallId,
-      meetingSessionId,
+      meetingId,
       userId,
       userSessionId: participant.user_session_id,
     });
@@ -441,14 +448,15 @@ export async function handleSessionParticipantLeft(
   }
 
   try {
-    const meetingSessionId = (await resolveMeetingSession(streamCallId))?.id;
-    if (!meetingSessionId) {
-      streamLogger.warn("Meeting session not found for participant left", {
+    const meeting = await resolveMeeting(streamCallId);
+    if (!meeting) {
+      streamLogger.warn("Meeting not found for participant left", {
         streamCallId,
         userId,
       });
       return;
     }
+    const meetingId = meeting.id;
 
     const leftAt = new Date(created_at);
 
@@ -456,10 +464,11 @@ export async function handleSessionParticipantLeft(
     // creates the row, with firstJoinedAt defensively set to the leave time.
     await prisma.meetingAttendance.upsert({
       where: {
-        meetingSessionId_userId: { meetingSessionId, userId },
+        meetingId_userId: { meetingId, userId },
       },
       create: {
-        meetingSessionId,
+        meetingId,
+        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
         userId,
         firstJoinedAt: leftAt,
         lastLeftAt: leftAt,
@@ -471,7 +480,7 @@ export async function handleSessionParticipantLeft(
 
     streamLogger.info("Recorded participant leave", {
       streamCallId,
-      meetingSessionId,
+      meetingId,
       userId,
       durationSeconds: event.duration_seconds,
     });

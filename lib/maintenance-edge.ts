@@ -202,10 +202,10 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/verification/documents", // Block verification document uploads
   "/api/verification/submit", // Block verification submission
   "/api/verification/resubmit", // Block verification resubmission
-  "/api/slots/request-for-approval", // Block new approval-rail bookings
+  "/api/scheduling/request-for-approval", // Block new approval-rail bookings
   // Weekly, custom and per-id availability writes; the sibling
-  // /api/slots/availability-with-allocation is a different prefix and is GET.
-  "/api/slots/availability",
+  // /api/scheduling/availability-with-allocation is a different prefix and is GET.
+  "/api/scheduling/availability",
   "/api/waitlist", // Block newsletter signups
   "/api/referrals", // Block referral code creation
   "/api/collaborators", // Block collaborator management

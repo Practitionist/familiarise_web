@@ -62,7 +62,7 @@ flowchart TD
 ```mermaid
 flowchart TD
   CRON["nightly cron (full scope)<br/>jobs/reconcile/reconcile-ledgers.ts"] --> RUN["runReconcileLedgers"]
-  ADMIN["POST /api/admin/reconcile-ledgers<br/>(on-demand, org-scoped)"] --> RUN
+  ADMIN["POST /api/admin/reconcile-ledgers<br/>(on-demand; org-scoped sync, full-scope via background driver)"] --> RUN
   RUN --> G1
   RUN --> G2
   RUN --> G3
@@ -114,8 +114,18 @@ Each `Finding` is a compact row: `{ kind, organizationId?, billingAccountId?, bi
 
 - **Library:** `runReconcileLedgers({ scope, organizationId?, triggeredById? })` → `ReconcileReport`. Scope is `"full"` or `"org:<id>"`; passing `organizationId` limits every per-row check to one org and **skips the three global journal sweeps** (`LEDGER_TXN_IMBALANCE`, `LEDGER_BALANCE_SNAPSHOT_DRIFT`, `REFUND_BOOKING_COHERENCE`), which run full-scope only.
 - **Nightly cron:** `jobs/reconcile/reconcile-ledgers.ts` calls it with `scope: "full"`, persists a `LedgerReconciliationReport`, and exits **0** (clean), **2** (discrepancies — page ops), or **1** (fatal error). Scheduled via `.github/workflows/reconcile-ledgers.yml`.
-- **On-demand:** `POST /api/admin/reconcile-ledgers` runs the same auditor, optionally scoped to one org via the request body — for incident triage without waiting for the nightly run.
+- **On-demand:** `POST /api/admin/reconcile-ledgers` runs the same auditor. With `{ organizationId }` in the body it runs synchronously and returns the org-scoped report; with no body it starts a full-scope run in the background and answers `202 { reportId }` at once (see [Resumable runs](#31-resumable-runs-1454) below), because a full-scope run takes longer than the Netlify edge will wait for a Route Handler.
 - **Report storage:** every run writes a `LedgerReconciliationReport { scope, ok, durationMs, summary, findings, triggeredById }`. The history is the audit trail of integrity over time.
+
+### 3.1 Resumable runs (#1454)
+
+The auditor is a sequence of twenty-two named steps, and a run's state lives on its own `LedgerReconciliationReport` row rather than in memory. The row is created when the run opens, with `ok = false`, `durationMs = 0`, `findings = []` and `summary.status = "RUNNING"`; `summary.progress` holds the index of the next step, a keyset cursor into that step, the number of chunk calls so far, and the `startedAt` timestamp that every time-scoped check (`periodEnd >= now`) uses as its `now`, so a chunked run judges rows exactly as a single-process run would. The five steps that walk a table row by row (wallet balances, assignment meters, payment legs, seat counts, and the booking-earnings drift check) page by `id`; the other seventeen are single set-based queries that complete in one call.
+
+`advanceReconcileRun({ runId, limit })` runs one bounded chunk under the shared `reconcile-ledgers` cron lock: at most `limit` rows of the paged steps (default 100, cap 500), and it also stops at a soft wall-clock deadline of `RECONCILE_CHUNK_BUDGET_MS` (default 12 s) checked between rows and between steps. The deadline is the real bound, because the cost of one row is several serialised database round trips — on the 2026-09-13 dataset the full run is 139 queries and the deployed reports record 22–25 s for it, roughly 170 ms per query, so a row limit alone could not keep a chunk under the edge's wait. Each chunk writes its progress and the findings it produced in a single `UPDATE`, so a chunk that is killed before that write is simply redone by the next call and never double-counts a finding. The last chunk applies the known-drift baseline, sets `ok` and `durationMs`, and flips `summary.status` to `"COMPLETED"` with `summary.calls` recording how many chunks it took. A run that could not be handed to its driver is closed as `"FAILED"` with `summary.error`; a run left `"RUNNING"` for longer than 45 minutes is treated as stuck and no longer blocks a new full-scope kick. Rows written before this change carry no `status` and are read as complete.
+
+There is one aggregated report per run, never one per chunk. That is what keeps every existing reader correct: the runbook's `?onlyDirty=true` query, the baseline generator (which now skips a row whose run is still in flight), and anyone reading `ok` as "this audit found no active drift". A row that is still `"RUNNING"` reads as dirty on purpose: an abandoned run must never look like a clean audit.
+
+`runReconcileLedgers()` — the nightly GitHub Actions path and the org-scoped admin path — is the same machinery driven in one process with no row cap and no deadline, and it still returns the finished report. The full-scope admin path instead opens the row, POSTs the run id to the Netlify Background Function `reconcile-ledgers-background`, which loops the CRON_SECRET-gated twin `POST /api/cleanup/reconcile-ledgers?runId=…&limit=…` until the row is terminal; `GET /api/admin/reconcile-ledgers?id=<reportId>` is the poll. The operational detail — budgets, retries, how to observe a run — is in [docs/maintenance/04-cron-jobs-reference.md](../../maintenance/04-cron-jobs-reference.md).
 
 ---
 

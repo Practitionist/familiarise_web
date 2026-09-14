@@ -4,7 +4,7 @@ import {
   UserRole,
   Gender,
   CareerStage,
-  SessionType,
+  OfferingFormat,
   AchievementType,
 } from "@prisma/client";
 import { experienceValidation } from "@/schemas/shared";
@@ -65,7 +65,7 @@ const consultantScalarFields = ConsultantProfileSchema.pick({
   languages: true,
   toolsAndTechnologies: true,
   mentoringStyle: true,
-  sessionTypes: true,
+  offeringFormats: true,
   qualifications: true,
   specialization: true,
   scheduleType: true,
@@ -99,10 +99,10 @@ const prismaRelationsSchema = z.object({
       set: z.array(z.object({ id: z.string() })).optional(),
     })
     .optional(),
-  slotsOfAvailabilityWeekly: z
+  availabilityWindowsWeekly: z
     .object({ create: z.array(WeeklySlotSchema).optional() })
     .optional(),
-  slotsOfAvailabilityCustom: z
+  availabilityWindowsCustom: z
     .object({ create: z.array(CustomSlotSchema).optional() })
     .optional(),
 });
@@ -349,7 +349,7 @@ const consultantFormFields = sharedFormFields.extend({
   // Make array defaults optional for form state
   languages: z.array(z.string()).optional(),
   toolsAndTechnologies: z.array(z.string()).optional(),
-  sessionTypes: z.array(z.nativeEnum(SessionType)).optional(),
+  offeringFormats: z.array(z.nativeEnum(OfferingFormat)).optional(),
   // Verification
   verificationLinkedinUrl: z.string().url().optional().or(z.literal("")),
   verificationNotes: z.string().max(500).optional(),
@@ -511,10 +511,10 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
             .map((t) => ({ id: t.id })),
         }
       : undefined,
-    slotsOfAvailabilityWeekly: formData.weeklySlots?.length
+    availabilityWindowsWeekly: formData.weeklySlots?.length
       ? { create: formData.weeklySlots }
       : undefined,
-    slotsOfAvailabilityCustom: formData.customSlots?.length
+    availabilityWindowsCustom: formData.customSlots?.length
       ? {
           create: formData.customSlots.map((slot) => ({
             startsAt: new Date(slot.startsAt).toISOString(),
@@ -529,7 +529,7 @@ function buildConsultantServerProfile(formData: OnboardingFormData) {
     languages: formData.languages ?? [],
     toolsAndTechnologies: formData.toolsAndTechnologies ?? [],
     mentoringStyle: formData.mentoringStyle,
-    sessionTypes: formData.sessionTypes ?? [],
+    offeringFormats: formData.offeringFormats ?? [],
   };
 }
 
@@ -686,10 +686,10 @@ export function transformFrontendToServerData(
             tags: p.tags?.length
               ? { connect: p.tags.map((t) => ({ id: t.id })) }
               : undefined,
-            slotsOfAvailabilityWeekly: p.weeklySlots?.length
+            availabilityWindowsWeekly: p.weeklySlots?.length
               ? { create: p.weeklySlots }
               : undefined,
-            slotsOfAvailabilityCustom: p.customSlots?.length
+            availabilityWindowsCustom: p.customSlots?.length
               ? { create: p.customSlots }
               : undefined,
             websiteUrl: p.websiteUrl,
@@ -699,7 +699,7 @@ export function transformFrontendToServerData(
             languages: p.languages ?? [],
             toolsAndTechnologies: p.toolsAndTechnologies ?? [],
             mentoringStyle: p.mentoringStyle,
-            sessionTypes: p.sessionTypes ?? [],
+            offeringFormats: p.offeringFormats ?? [],
           },
         },
         consulteeProfile: undefined,

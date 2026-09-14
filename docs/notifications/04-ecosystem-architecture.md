@@ -109,7 +109,7 @@ flowchart TB
     %% Trigger → Pipeline 2 (Novu)
     T_BOOK -->|"notifyAppointmentBooked\nnotifyPaymentSuccess/Failed\nnotifyAppointmentCancelled"| P2_SVC
     T_SUPPORT -->|"notifySupportTicketCreated\nnotifyNewReview"| P2_SVC
-    T_TRIAL -->|"notifyTrialSessionRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
+    T_TRIAL -->|"notifyTrialRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
     T_ADMIN -->|"notifyGeneralAnnouncement"| P2_SVC
     T_CRON -->|"notifyAppointmentReminder\nnotifyAppointmentCompleted"| P2_SVC
     T_STREAM -->|"notifyRecordingAvailable"| P2_SVC
@@ -219,9 +219,9 @@ flowchart TB
 | `app/api/appointments/[id]/reschedule/route.ts`             | appointmentRescheduled                                         |
 | `app/api/cleanup/appointment-reminders/route.ts`            | appointmentReminder (cron)                                     |
 | `scripts/appointments/auto-complete-appointments.ts`        | appointmentCompleted (cron)                                    |
-| `app/api/slots/request-for-approval/route.ts`               | newBookingRequest                                              |
+| `app/api/scheduling/request-for-approval/route.ts`               | newBookingRequest                                              |
 | `app/api/bookings/subscriptions/`                           | subscriptionStarted, subscriptionCancelled                     |
-| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trialSession\* (4)                                             |
+| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trial\* (4)                                             |
 | `app/api/user/support-tickets/route.ts`                     | supportTicketCreated                                           |
 | `app/api/staff/support-tickets/[id]/responses/route.ts`     | supportTicketResponse                                          |
 | `app/api/user/reviews/route.ts`                             | newReview                                                      |
@@ -328,11 +328,11 @@ flowchart LR
 
     subgraph HANDLERS["Webhook Handlers"]
         H1["app/api/stream/webhooks/route.ts\n8 event types\nHMAC signature verification"]
-        H2["app/api/webhooks/stream/recording/route.ts\ncall.recording.ready\nLooks up MeetingSession → Slot → Users"]
+        H2["app/api/webhooks/stream/recording/route.ts\ncall.recording.ready\nLooks up Meeting → Slot → Users"]
     end
 
     subgraph ACTIONS["Notification Actions"]
-        A1["Update MeetingSession\nrecording state in DB"]
+        A1["Update Meeting\nrecording state in DB"]
         A2["notifyRecordingAvailable()\nAll participants via Novu"]
     end
 
@@ -343,7 +343,7 @@ flowchart LR
 ```
 
 **Data path for recording notification:**
-`Stream.io call.recording.ready` → `route.ts` → `prisma.meetingSession.findFirst({where: {streamCallId}})` → `include: slotOfAppointment → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
+`Stream.io call.recording.ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
 
 ---
 

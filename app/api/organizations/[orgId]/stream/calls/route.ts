@@ -3,7 +3,7 @@
  *
  * Org-scoped Stream call + recording metadata export. MANAGER+ gate
  * because the call log is a compliance surface (who met with whom,
- * when, for how long). Reads from local MeetingSession (indexed by
+ * when, for how long). Reads from local Meeting (indexed by
  * organizationId, #674) rather than Stream's API — every page load
  * would otherwise re-do the join over the network.
  *
@@ -61,8 +61,8 @@ export async function GET(
   const where = { organizationId: orgId };
 
   const [totalResults, sessions] = await prisma.$transaction([
-    prisma.meetingSession.count({ where }),
-    prisma.meetingSession.findMany({
+    prisma.meeting.count({ where }),
+    prisma.meeting.findMany({
       where,
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * perPage,

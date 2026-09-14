@@ -11,7 +11,7 @@
  * The whole block is guarded by `if (appointmentForChannel && consultantUserId)`,
  * and `consultantUserId` was resolved from four relations — consultation,
  * subscription, webinar, class. A trial appointment has none of them: the
- * consultant hangs off `TrialSession.consultantProfile`, a REQUIRED relation on
+ * consultant hangs off `Trial.consultantProfile`, a REQUIRED relation on
  * a model the query did not include at all. So `consultantProfile` came back
  * undefined for exactly the appointments the new branch existed to serve, the
  * guard failed, and the DM was never minted.
@@ -34,7 +34,7 @@ interface AppointmentShape {
   subscription?: { subscriptionPlan?: { consultantProfile?: Owner } } | null;
   webinar?: { webinarPlan?: { consultantProfile?: Owner } } | null;
   class?: { classPlan?: { consultantProfile?: Owner } } | null;
-  trialSession?: { consultantProfile?: Owner } | null;
+  trial?: { consultantProfile?: Owner } | null;
 }
 
 /**
@@ -50,20 +50,20 @@ function resolveConsultantUserId(
     appointment?.subscription?.subscriptionPlan?.consultantProfile ||
     appointment?.webinar?.webinarPlan?.consultantProfile ||
     appointment?.class?.classPlan?.consultantProfile ||
-    appointment?.trialSession?.consultantProfile;
+    appointment?.trial?.consultantProfile;
   return consultantProfile?.userId;
 }
 
 const owner = (userId: string): Owner => ({ userId });
 
 describe("consultant resolution for the payment-success DM", () => {
-  it("resolves a trial from TrialSession, which owns the relation", () => {
+  it("resolves a trial from Trial, which owns the relation", () => {
     const appointment: AppointmentShape = {
       consultation: null,
       subscription: null,
       webinar: null,
       class: null,
-      trialSession: { consultantProfile: owner("consultant-1") },
+      trial: { consultantProfile: owner("consultant-1") },
     };
 
     // Undefined before the fix — and undefined fails the guard that wraps the
@@ -72,11 +72,11 @@ describe("consultant resolution for the payment-success DM", () => {
   });
 
   it("still prefers the paid relation when both are present", () => {
-    // A trial that converted keeps its TrialSession row. The appointment being
+    // A trial that converted keeps its Trial row. The appointment being
     // paid for is the subscription, so the subscription's consultant wins.
     const appointment: AppointmentShape = {
       subscription: { subscriptionPlan: { consultantProfile: owner("sub") } },
-      trialSession: { consultantProfile: owner("trial") },
+      trial: { consultantProfile: owner("trial") },
     };
 
     expect(resolveConsultantUserId(appointment)).toBe("sub");
@@ -114,29 +114,29 @@ describe("the handler actually does this", () => {
     "utf8",
   );
 
-  it("includes trialSession in the query", () => {
+  it("includes trial in the query", () => {
     // Without the include, the rung below reads a relation Prisma never
     // loaded — always undefined, and no type error to say so.
-    expect(source).toContain("trialSession: {");
+    expect(source).toContain("trial: {");
     // #1446 narrowed the read to a `select` of the ids the step uses, so the
     // relation is now loaded with its own `select` rather than `: true`. The
-    // contract the pin states is unchanged: trialSession is loaded, WITH its
+    // contract the pin states is unchanged: trial is loaded, WITH its
     // consultant.
     expect(source).toMatch(
-      /trialSession:\s*\{\s*(?:include|select):\s*\{\s*consultantProfile:/,
+      /trial:\s*\{\s*(?:include|select):\s*\{\s*consultantProfile:/,
     );
   });
 
   it("has the trial rung in the resolution chain", () => {
-    expect(source).toContain("appointment.trialSession?.consultantProfile");
+    expect(source).toContain("appointment.trial?.consultantProfile");
   });
 
-  it("uses TrialSession's own consultant, not the plan author's", () => {
-    // `TrialSession` also has a required `subscriptionPlan`, and
+  it("uses Trial's own consultant, not the plan author's", () => {
+    // `Trial` also has a required `subscriptionPlan`, and
     // `meeting.action.ts` reads the consultant through THAT. The two can
     // differ, and the person running the trial is the one on the trial row.
     expect(source).not.toContain(
-      "trialSession?.subscriptionPlan?.consultantProfile",
+      "trial?.subscriptionPlan?.consultantProfile",
     );
   });
 });

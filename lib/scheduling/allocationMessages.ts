@@ -1,14 +1,14 @@
 /**
  * Single catalog for every user-facing message in the slot-allocation flow so
  * the week view, month view, and requests table never drift in wording.
- * Limits bucket by the event's scheduling timezone (SlotCalculationService,
+ * Limits bucket by the event's scheduling timezone (ScheduleCalculationService,
  * ADR B9), which for a viewer in a different timezone is not always the
  * calendar day they see on the grid. #1076 — the cap messages used to hide
  * behind a vague "this day/this week"; when the zones differ they now name
  * the scheduling bucket and translate its span onto the viewer's clock.
  */
 
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 export interface AllocationToast {
   title: string;
@@ -53,11 +53,12 @@ export function schedulingDayBucket(
   schedulingTimezone?: string,
 ): LimitBucket {
   const timeZone =
-    schedulingTimezone ?? SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
-  const start = SlotCalculationService.startOfDayInTz(at, timeZone);
+    schedulingTimezone ??
+    ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
+  const start = ScheduleCalculationService.startOfDayInTz(at, timeZone);
   // +26h lands inside the NEXT bucket whatever DST did (a day is 23-25h),
   // then snaps back to its start — so the end is exact, not start+24h.
-  const end = SlotCalculationService.startOfDayInTz(
+  const end = ScheduleCalculationService.startOfDayInTz(
     new Date(start.getTime() + 26 * 3_600_000),
     timeZone,
   );
@@ -65,7 +66,7 @@ export function schedulingDayBucket(
     kind: "day",
     start,
     end,
-    label: formatDayKey(SlotCalculationService.dayKey(at, timeZone)),
+    label: formatDayKey(ScheduleCalculationService.dayKey(at, timeZone)),
     timeZone,
   };
 }
@@ -75,10 +76,11 @@ export function schedulingWeekBucket(
   schedulingTimezone?: string,
 ): LimitBucket {
   const timeZone =
-    schedulingTimezone ?? SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
-  const start = SlotCalculationService.startOfWeekSundayInTz(at, timeZone);
+    schedulingTimezone ??
+    ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
+  const start = ScheduleCalculationService.startOfWeekSundayInTz(at, timeZone);
   // 7 days + 2h: early into the following Sunday across any DST shift.
-  const end = SlotCalculationService.startOfWeekSundayInTz(
+  const end = ScheduleCalculationService.startOfWeekSundayInTz(
     new Date(start.getTime() + 170 * 3_600_000),
     timeZone,
   );
@@ -86,7 +88,7 @@ export function schedulingWeekBucket(
     kind: "week",
     start,
     end,
-    label: formatWeekKey(SlotCalculationService.weekKey(at, timeZone)),
+    label: formatWeekKey(ScheduleCalculationService.weekKey(at, timeZone)),
     timeZone,
   };
 }
@@ -337,7 +339,7 @@ export const invalidEventId = (): AllocationToast => ({
  * #1132 — server 409 messages that must render AS THEMSELVES instead of
  * being relabeled "already allocated in another tab". A slot conflict
  * ("Slot taken during allocation: [CONFLICT] Slot already booked: …",
- * SlotValidationService/SlotAllocationService) means the SLOT went to
+ * ScheduleValidationService/SchedulingService) means the SLOT went to
  * someone else — the request is still allocatable with different times, so
  * the honest message keeps the dialog open instead of kicking the
  * consultant back to the list.

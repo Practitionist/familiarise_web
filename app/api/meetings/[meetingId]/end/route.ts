@@ -36,7 +36,7 @@ import { reportSentryError } from "@/lib/observability/report";
  * single `custom.consultantUserId`; a collaborator sees no button and would
  * have to call this deliberately.
  *
- * `MeetingSession.endedAt` is deliberately not written here. The `call.ended`
+ * `Meeting.endedAt` is deliberately not written here. The `call.ended`
  * webhook owns it, and it also sets the slot's completionStatus and the
  * session's actual duration — writing `endedAt` first would make that handler
  * treat the event as a duplicate and skip all of it.

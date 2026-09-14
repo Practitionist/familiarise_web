@@ -28,7 +28,7 @@ All test data uses the `-005` suffix to avoid collisions with existing seed data
 
 ## Background: Overnight Slot Model
 
-`SlotOfAvailabilityWeekly` supports cross-midnight slots:
+`AvailabilityWindowWeekly` supports cross-midnight slots:
 
 - `startDay` !== `endDay` (e.g., FRIDAY -> SATURDAY)
 - `startTimeUtc` > `endTimeUtc` (e.g., 1380 -> 120 = 23:00 -> 02:00)
@@ -36,9 +36,9 @@ All test data uses the `-005` suffix to avoid collisions with existing seed data
 
 **Critical source files:**
 
-- `utils/slotAllocation/slotTimeUtils.ts` — `validateWeeklySlotTimeOrder()`, `buildWeeklyOverlapWhere()`, `slotsOverlap()`, `isMinuteWithinWeeklySlot()`
-- `app/api/slots/availability/weekly/route.ts` — POST with overlap check
-- `app/api/slots/availability/weekly/[id]/route.ts` — PUT/PATCH/DELETE with overlap check
+- `utils/scheduling-engine/slotTimeUtils.ts` — `validateWeeklySlotTimeOrder()`, `buildWeeklyOverlapWhere()`, `slotsOverlap()`, `isMinuteWithinWeeklySlot()`
+- `app/api/scheduling/availability/weekly/route.ts` — POST with overlap check
+- `app/api/scheduling/availability/weekly/[id]/route.ts` — PUT/PATCH/DELETE with overlap check
 - `app/api/user/consultants/[id]/route.ts` — bulk settings with pairwise overlap check
 
 ---
@@ -53,8 +53,8 @@ Run all SQL blocks via `execute_sql` in order. Use `ON CONFLICT (id) DO NOTHING`
 - `Account` -> table: `"accounts"` (@@map)
 - `Session` -> table: `"sessions"` (@@map)
 - All others -> table name = Prisma model name
-- `SlotOfAvailabilityWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**
-- `SlotOfAvailabilityCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()`
+- `AvailabilityWindowWeekly.startTimeUtc` / `endTimeUtc` are `Int @db.SmallInt` — **minutes since midnight UTC (0-1439)**
+- `AvailabilityWindowCustom.startsAt` / `endsAt` are `DateTime @db.Timestamptz()`
 
 ### Step 0.1 — Domain + SubDomain
 
@@ -144,7 +144,7 @@ WHERE u.email = 'testconsultee005@familiarise.com';
 ```sql
 -- Overnight weekly slot: Mon 23:00 -> Tue 01:00 UTC
 -- startTimeUtc=1380 (23*60), endTimeUtc=60 (1*60)
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -154,7 +154,7 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Same-day weekly slot: Wed 09:00-17:00 UTC
 -- startTimeUtc=540, endTimeUtc=1020
-INSERT INTO "SlotOfAvailabilityWeekly" (
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -163,7 +163,7 @@ VALUES
 ON CONFLICT (id) DO NOTHING;
 
 -- Custom overnight slot: next Friday 23:00 -> Saturday 02:00
-INSERT INTO "SlotOfAvailabilityCustom" (
+INSERT INTO "AvailabilityWindowCustom" (
   id, "startsAt", "endsAt",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -234,9 +234,9 @@ ON CONFLICT (id) DO NOTHING;
 ```sql
 SELECT id, headline FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-005';
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-  FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
+  FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
 SELECT id, "startsAt", "endsAt"
-  FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';
+  FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';
 SELECT id, title FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-005';
 SELECT id, status, "schedulingPeriodEndsAt" FROM "Class" WHERE id = 'test-class-005';
 ```
@@ -266,7 +266,7 @@ As CONSULTANT:
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -287,7 +287,7 @@ DB verify:
 
 ```sql
 SELECT id, "startDay", "startTimeUtc", "endDay", "endTimeUtc"
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
   AND "startDay" = 'FRIDAY';
 -- Expected: startDay=FRIDAY, endDay=SATURDAY, startTimeUtc=1380, endTimeUtc=120
@@ -299,7 +299,7 @@ Save the returned slot ID for later tests as `FRIDAY_OVERNIGHT_ID`.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -320,7 +320,7 @@ async () => {
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -344,16 +344,19 @@ Use `FRIDAY_OVERNIGHT_ID` from Test 2.1:
 ```javascript
 async () => {
   const slotId = "<FRIDAY_OVERNIGHT_ID>";
-  const response = await fetch(`/api/slots/availability/weekly/${slotId}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      startDay: "FRIDAY",
-      endDay: "SATURDAY",
-      startTimeUtc: 1320, // 22:00 (shifted earlier)
-      endTimeUtc: 90, // 01:30
-    }),
-  });
+  const response = await fetch(
+    `/api/scheduling/availability/weekly/${slotId}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        startDay: "FRIDAY",
+        endDay: "SATURDAY",
+        startTimeUtc: 1320, // 22:00 (shifted earlier)
+        endTimeUtc: 90, // 01:30
+      }),
+    },
+  );
   return { status: response.status, body: await response.json() };
 };
 ```
@@ -363,7 +366,7 @@ async () => {
 DB verify:
 
 ```sql
-SELECT "startTimeUtc", "endTimeUtc" FROM "SlotOfAvailabilityWeekly"
+SELECT "startTimeUtc", "endTimeUtc" FROM "AvailabilityWindowWeekly"
 WHERE id = '<FRIDAY_OVERNIGHT_ID>';
 -- Expected: startTimeUtc=1320, endTimeUtc=90
 ```
@@ -374,7 +377,7 @@ WHERE id = '<FRIDAY_OVERNIGHT_ID>';
 SELECT id, "startDay", "endDay", "startTimeUtc", "endTimeUtc",
        ("startDay" != "endDay") AS is_overnight,
        ("startTimeUtc" > "endTimeUtc") AS crosses_midnight
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
   AND "startDay" != "endDay";
 -- Expected: all overnight rows have is_overnight=true AND crosses_midnight=true
@@ -395,7 +398,7 @@ Two overlapping same-day Wednesday slots:
 async () => {
   // Existing: Wed 09:00-17:00 UTC (540-1020)
   // New: Wed 10:00-12:00 UTC (600-720) — entirely inside existing
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -419,7 +422,7 @@ New same-day: Tue 00:30-02:00 (30-120) — overlaps the carry-over portion.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -443,7 +446,7 @@ New same-day: Mon 22:30-23:30 (1350-1410) — overlaps the starting portion.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -467,7 +470,7 @@ New overnight: Mon 22:00 -> Tue 03:00 (1320 -> 180) — wider overnight on same 
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -491,7 +494,7 @@ New overnight: Wed 23:00 -> Thu 01:00 — completely different days.
 
 ```javascript
 async () => {
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -511,7 +514,7 @@ async () => {
 Save the returned ID as `WED_OVERNIGHT_ID` and clean it up after:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE id = '<WED_OVERNIGHT_ID>';
+DELETE FROM "AvailabilityWindowWeekly" WHERE id = '<WED_OVERNIGHT_ID>';
 ```
 
 ### Test 3.6 — Midnight Boundary: slot ending at endTimeUtc=0
@@ -521,7 +524,7 @@ Test an overnight slot that ends exactly at midnight (endTimeUtc=0):
 ```javascript
 async () => {
   // Sat 23:00 -> Sun 00:00 (1380 -> 0)
-  const response = await fetch("/api/slots/availability/weekly", {
+  const response = await fetch("/api/scheduling/availability/weekly", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -541,7 +544,7 @@ async () => {
 If it succeeds, clean up:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityWeekly"
+DELETE FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
   AND "startDay" = 'SATURDAY' AND "endDay" = 'SUNDAY';
 ```
@@ -684,7 +687,7 @@ DB verify:
 
 ```sql
 SELECT id, "startDay", "endDay", "startTimeUtc", "endTimeUtc"
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
 ORDER BY "startDay";
 -- Expected: 2 rows (Mon->Tue overnight + Wed same-day)
@@ -693,8 +696,8 @@ ORDER BY "startDay";
 Then restore original seed slots:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
-INSERT INTO "SlotOfAvailabilityWeekly" (
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
+INSERT INTO "AvailabilityWindowWeekly" (
   id, "startDay", "startTimeUtc", "endDay", "endTimeUtc",
   "consultantProfileId", "createdAt", "updatedAt"
 )
@@ -822,7 +825,7 @@ After the successful bookings in Phase 5:
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/unallocated/weekly?consultantProfileId=test-consultant-profile-005",
+    "/api/scheduling/unallocated/weekly?consultantProfileId=test-consultant-profile-005",
   );
   return { status: response.status, body: await response.json() };
 };
@@ -835,7 +838,7 @@ async () => {
 ```javascript
 async () => {
   const response = await fetch(
-    "/api/slots/unallocated/test-consultant-profile-005",
+    "/api/scheduling/unallocated/test-consultant-profile-005",
   );
   return { status: response.status, body: await response.json() };
 };
@@ -872,17 +875,11 @@ async () => {
         slotsOfAvailabilityCustom: [
           {
             startsAt: baseDate.toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 4 * 3600000,
-            ).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 4 * 3600000).toISOString(),
           },
           {
-            startsAt: new Date(
-              baseDate.getTime() + 3 * 3600000,
-            ).toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 6 * 3600000,
-            ).toISOString(),
+            startsAt: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 6 * 3600000).toISOString(),
           },
         ],
       }),
@@ -917,17 +914,11 @@ async () => {
         slotsOfAvailabilityCustom: [
           {
             startsAt: baseDate.toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 3 * 3600000,
-            ).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 3 * 3600000).toISOString(),
           },
           {
-            startsAt: new Date(
-              baseDate.getTime() + 4 * 3600000,
-            ).toISOString(),
-            endsAt: new Date(
-              baseDate.getTime() + 7 * 3600000,
-            ).toISOString(),
+            startsAt: new Date(baseDate.getTime() + 4 * 3600000).toISOString(),
+            endsAt: new Date(baseDate.getTime() + 7 * 3600000).toISOString(),
           },
         ],
       }),
@@ -987,7 +978,7 @@ async () => {
   baseDate.setDate(baseDate.getDate() + 21);
   baseDate.setUTCHours(10, 0, 0, 0);
 
-  const r1 = await fetch("/api/slots/availability/custom", {
+  const r1 = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -999,7 +990,7 @@ async () => {
   const slot1 = await r1.json();
 
   // Create slot 2 (non-overlapping)
-  const r2 = await fetch("/api/slots/availability/custom", {
+  const r2 = await fetch("/api/scheduling/availability/custom", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1014,7 +1005,7 @@ async () => {
   const slotId = slot2.data?.id;
   if (!slotId) return { error: "Failed to create slot 2", slot2 };
 
-  const r3 = await fetch(`/api/slots/availability/custom/${slotId}`, {
+  const r3 = await fetch(`/api/scheduling/availability/custom/${slotId}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1037,7 +1028,7 @@ async () => {
 Clean up custom slots created:
 
 ```sql
-DELETE FROM "SlotOfAvailabilityCustom"
+DELETE FROM "AvailabilityWindowCustom"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
   AND id != 'test-c005-fri-night';
 ```
@@ -1128,15 +1119,15 @@ async () => {
 SELECT
   'Overnight Weekly Slots' AS label,
   COUNT(*) AS count
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005' AND "startDay" != "endDay"
 UNION ALL
 SELECT 'Same-Day Weekly Slots', COUNT(*)
-FROM "SlotOfAvailabilityWeekly"
+FROM "AvailabilityWindowWeekly"
 WHERE "consultantProfileId" = 'test-consultant-profile-005' AND "startDay" = "endDay"
 UNION ALL
 SELECT 'Custom Slots', COUNT(*)
-FROM "SlotOfAvailabilityCustom"
+FROM "AvailabilityWindowCustom"
 WHERE "consultantProfileId" = 'test-consultant-profile-005'
 UNION ALL
 SELECT 'Consultations Booked', COUNT(*)
@@ -1154,15 +1145,15 @@ Run cleanup in dependency order ONLY after all tests pass:
 
 ```sql
 -- Appointment slots
-DELETE FROM "_SlotOfAppointmentToUser"
+DELETE FROM "_AppointmentParticipant"
 WHERE "A" IN (
-  SELECT s.id FROM "SlotOfAppointment" s
+  SELECT s.id FROM "AppointmentOccurrence" s
   JOIN "Appointment" a ON a.id = s."appointmentId"
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
      OR a."classId" = 'test-class-005'
 );
 
-DELETE FROM "SlotOfAppointment"
+DELETE FROM "AppointmentOccurrence"
 WHERE "appointmentId" IN (
   SELECT a.id FROM "Appointment" a
   WHERE a."consultationId" IN (SELECT id FROM "Consultation" WHERE "consultationPlanId" = 'test-consultation-plan-005')
@@ -1186,8 +1177,8 @@ DELETE FROM "Class" WHERE id = 'test-class-005';
 DELETE FROM "ConsultationPlan" WHERE id = 'test-consultation-plan-005';
 DELETE FROM "ClassPlan" WHERE id = 'test-class-plan-005';
 
-DELETE FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
-DELETE FROM "SlotOfAvailabilityCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';
+DELETE FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005';
+DELETE FROM "AvailabilityWindowCustom" WHERE "consultantProfileId" = 'test-consultant-profile-005';
 
 UPDATE users SET "consultantProfileId" = NULL WHERE email = 'testconsultant005@familiarise.com';
 
@@ -1209,7 +1200,7 @@ DELETE FROM "Domain" WHERE id = 'test-domain-005';
 SELECT
   (SELECT COUNT(*) FROM users WHERE email LIKE 'test%005%@familiarise.com') AS users,
   (SELECT COUNT(*) FROM "ConsultantProfile" WHERE id = 'test-consultant-profile-005') AS profiles,
-  (SELECT COUNT(*) FROM "SlotOfAvailabilityWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005') AS weekly;
+  (SELECT COUNT(*) FROM "AvailabilityWindowWeekly" WHERE "consultantProfileId" = 'test-consultant-profile-005') AS weekly;
 -- Expected: all zeros
 ```
 

@@ -30,7 +30,7 @@ interface Collaborator {
   role: string;
   // #772 B5 — basis points (3000 = 30%); divide by 100 for display.
   revenueShareBps: number;
-  status: "PENDING" | "ACCEPTED" | "DECLINED" | "REMOVED";
+  status: "PENDING" | "ACCEPTED" | "DECLINED" | "REMOVED" | "WITHDRAWN";
   consultantProfile: {
     id: string;
     user: {
@@ -247,7 +247,9 @@ export function CollaboratorsTab({
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={config.variant}>{config.label}</Badge>
-                  {isOwner && collab.status !== "REMOVED" && (
+                  {isOwner &&
+                  collab.status !== "REMOVED" &&
+                  collab.status !== "WITHDRAWN" && (
                     <Button
                       type="button"
                       variant="ghost"

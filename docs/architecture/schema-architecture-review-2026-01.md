@@ -94,7 +94,7 @@ Yes, duplication is worth the safety.
 
 ---
 
-### 2.3 `SlotOfAvailabilityWeekly` time modeling is odd
+### 2.3 `AvailabilityWindowWeekly` time modeling is odd
 
 ```prisma
 dayOfWeekForStartsAt DayOfWeek
@@ -119,10 +119,10 @@ Then materialize concrete slots when needed.
 
 ---
 
-### 2.4 `SlotOfAppointment.user User[]` is vague
+### 2.4 `AppointmentOccurrence.user User[]` is vague
 
 ```prisma
-user User[] @relation("SlotOfAppointmentToUser")
+user User[] @relation("AppointmentParticipant")
 ```
 
 **Problem**
@@ -374,7 +374,7 @@ Enums like:
 
 * CareerStage
 * BudgetPreference
-* SessionType
+* OfferingFormat
 
 These are fine, but:
 

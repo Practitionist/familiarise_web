@@ -20,7 +20,7 @@ reading is not enough. Before claiming anything works:
 ```text
 mcp__streamio__video_query_calls    {"ended_at": {"$exists": false}}
 mcp__streamio__chat_query_channels  {"type": {"$eq": "messaging"}}
-mcp__supabase__execute_sql          -- count MeetingSession/MeetingAttendance/WebhookEvent
+mcp__supabase__execute_sql          -- count Meeting/MeetingAttendance/WebhookEvent
 netlify env:list --json | jq -r 'if type=="object" then keys[] else .[].key end'  -- keys only, never values
 ```
 
@@ -100,7 +100,7 @@ under `script-src`.
 | Media teardown                                         | `lib/stream/media-teardown.ts`                                                                                                                                                                                                     |
 | Crons                                                  | `.github/workflows/stream-sync.yml`, `mark-expired-recordings.yml`, `transfer-expiring-recordings.yml`, `cleanup-old-stream-recordings.yml`                                                                                        |
 
-Prisma: `MeetingSession` (1:1 with `SlotOfAppointment`, `streamCallId` unique),
+Prisma: `Meeting` (1:1 with `AppointmentOccurrence`, `streamCallId` unique),
 `MeetingAttendance` (unique on session+user), `Recording`. **No chat state is stored in Postgres** —
 channels live only on Stream, which is why a bad channel-ID derivation is unrecoverable data loss.
 

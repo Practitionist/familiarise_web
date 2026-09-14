@@ -163,7 +163,7 @@ gate a concurrent writer walked through:
   re-check. It subtracts `buildDeadHoldFilter(new Date())` from the occupancy
   query so a lapsed hold no longer blocks, and the consultee-side conflict reads
   beside it use the same subtraction for parity. (`revalidateConflicts` on
-  `SlotValidationService` is the allocator's equivalent, not checkout's — do not
+  `ScheduleValidationService` is the allocator's equivalent, not checkout's — do not
   cite it here.)
 - The lock grant, renewed at the top of every Serializable attempt; lost
   ownership aborts the attempt.

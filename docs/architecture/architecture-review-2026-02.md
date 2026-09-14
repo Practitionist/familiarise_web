@@ -16,7 +16,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
 ### What I Like
 
-- **Polymorphic Appointment model is clever.** The `Appointment` model with nullable FK columns (`consultationId`, `subscriptionId`, `webinarId`, `classId`) and an `AppointmentsType` enum is a pragmatic choice. It avoids the complexity of table-per-type inheritance while keeping queries simple. The `SlotOfAppointment` many-to-many with `User` is the right call for group events.
+- **Polymorphic Appointment model is clever.** The `Appointment` model with nullable FK columns (`consultationId`, `subscriptionId`, `webinarId`, `classId`) and an `AppointmentsType` enum is a pragmatic choice. It avoids the complexity of table-per-type inheritance while keeping queries simple. The `AppointmentOccurrence` many-to-many with `User` is the right call for group events.
 
 - **Cancellation tracking is thorough.** Both `Consultation` and `Subscription` have `cancellationReason`, `cancellationNotes`, `cancelledAt`, `cancelledBy`. This is production-grade audit trail thinking.
 
@@ -30,7 +30,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
    ```
    User → consultantProfile, consulteeProfile, staffProfile, adminProfile,
-          slotsOfAppointment, payments, feedbacks, supportTickets, accounts,
+          appointmentOccurrences, payments, feedbacks, supportTickets, accounts,
           sessions, members, referralCode, referral, referralCredits,
           reportsSubmitted, reportsReceived, moderationActions,
           workExperiences, certifications, education, cookiePreferences,
@@ -39,10 +39,10 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
    Every query that touches `User` risks pulling in this entire relation graph. At 10K+ users with eager loading mistakes, this becomes a performance cliff. The `consultantProfileId` and `consulteeProfileId` stored directly on `User` (with `@unique`) means a user can only ever be ONE consultant and ONE consultee. That's fine semantically but creates tight coupling.
 
-2. **The `SlotOfAvailabilityWeekly` time representation is a nightmare waiting to happen.**
+2. **The `AvailabilityWindowWeekly` time representation is a nightmare waiting to happen.**
 
    ```prisma
-   model SlotOfAvailabilityWeekly {
+   model AvailabilityWindowWeekly {
      dayOfWeekForStartsAt DayOfWeek
      availabilityStartsAt DateTime  @db.Timestamptz()
      dayOfWeekForEndsAt   DayOfWeek
@@ -58,9 +58,9 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 
    This should be time columns (just HH:MM) + day-of-week, or at minimum a `@db.Time` type. The current approach is the #1 source of bugs in your validation code (the `validateMatchesSchedule` function has 170+ lines of workaround logic for this).
 
-3. **No composite unique constraint on `SlotOfAppointment` to prevent duplicates.**
+3. **No composite unique constraint on `AppointmentOccurrence` to prevent duplicates.**
 
-   There's no `@@unique([appointmentId, startsAt])` on `SlotOfAppointment`. This means the same appointment can have two identical 30-minute slots at the same time, and only application-level checks prevent it. At scale with concurrent requests, this is a data integrity gap.
+   There's no `@@unique([appointmentId, startsAt])` on `AppointmentOccurrence`. This means the same appointment can have two identical 30-minute slots at the same time, and only application-level checks prevent it. At scale with concurrent requests, this is a data integrity gap.
 
 4. **The `Appointment` model has no status field.**
 
@@ -68,7 +68,7 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
    model Appointment {
      id                 String              @id @default(uuid())
      appointmentType    AppointmentsType
-     slotsOfAppointment SlotOfAppointment[]
+     appointmentOccurrences AppointmentOccurrence[]
      // ... FK relations ...
      // NO status field!
    }
@@ -111,8 +111,8 @@ For a pre-launch platform built by a 2-3 person team, this is genuinely impressi
 The 5-layer validation architecture is excellent:
 
 1. Zod schema validation (type safety)
-2. `SlotValidationService` (business rules — 7 independent checks)
-3. `SlotAllocationService` (allocation logic)
+2. `ScheduleValidationService` (business rules — 7 independent checks)
+3. `SchedulingService` (allocation logic)
 4. Distributed locking (Redis via Upstash)
 5. Database transactions (120s timeout)
 
@@ -120,11 +120,11 @@ The 5-layer validation architecture is excellent:
 
 - **The tentative slot mechanism is well-designed.** `isTentative: true` during checkout/reschedule, confirmed after payment, cleaned up by cron jobs. This prevents the classic double-booking-during-payment race condition.
 
-- **The `SlotCalculationService` as single source of truth** for all calculations prevents the classic bug where frontend and backend calculate slot counts differently.
+- **The `ScheduleCalculationService` as single source of truth** for all calculations prevents the classic bug where frontend and backend calculate slot counts differently.
 
 ### What I Don't Like
 
-1. **`SlotAllocationService.autoAllocate()` has NO distributed lock.**
+1. **`SchedulingService.autoAllocate()` has NO distributed lock.**
 
    This is the single most dangerous bug in the entire codebase.
 
@@ -137,12 +137,12 @@ The 5-layer validation architecture is excellent:
    Both transactions commit → DOUBLE BOOKING
    ```
 
-   Prisma transactions use READ COMMITTED isolation by default, NOT SERIALIZABLE. Two concurrent transactions can both read the same slot as "available" and both write to it. The `reconcile-slot-availability` cron job will DETECT this, but by then both consultees have confirmed appointments.
+   Prisma transactions use READ COMMITTED isolation by default, NOT SERIALIZABLE. Two concurrent transactions can both read the same slot as "available" and both write to it. The `reconcile-occurrence-availability` cron job will DETECT this, but by then both consultees have confirmed appointments.
 
 2. **The weekly schedule matching has a hardcoded timezone cutoff.**
 
    ```typescript
-   // SlotValidationService.ts line 369
+   // ScheduleValidationService.ts line 369
    const nextDayFromSlot = (slotDay + 1) % 7;
    if (nextDayFromSlot === availDay && slotHours >= 18) {
    ```
@@ -302,7 +302,7 @@ The 5-step checkout flow is well-engineered:
 
 ### What I Don't Like
 
-1. **No job scheduling framework.** All 26 jobs are triggered via API endpoints with `CRON_SECRET` auth. There's no centralized scheduler showing what runs when, no dependency management, no execution history dashboard. If the tentative-slots job fails silently for a week, no one knows until slots pile up.
+1. **No job scheduling framework.** All 26 jobs are triggered via API endpoints with `CRON_SECRET` auth. There's no centralized scheduler showing what runs when, no dependency management, no execution history dashboard. If the tentative-occurrences job fails silently for a week, no one knows until slots pile up.
 
 2. **The `cleanup-invalid-appointments` job uses heuristic duplicate detection.**
 
@@ -314,7 +314,7 @@ The 5-step checkout flow is well-engineered:
 
 3. **No cleanup for activity logs.** `ActivityLog` has no TTL, no archival. At 1000 consultants generating 10 events/day, that's 3.6M rows/year with no pruning. The `@@index([consultantProfileId, createdAt(sort: Desc)])` index helps query performance but the table size will still impact backup times and migrations.
 
-4. **Double-booking detection doesn't auto-fix.** The `reconcile-slot-availability` job detects double bookings and returns HTTP 207, but leaves them in place for manual resolution. At 3 AM with 10 double bookings, someone needs to wake up and decide which booking to cancel. There should be an automated policy (e.g., cancel the later-created booking and issue a refund).
+4. **Double-booking detection doesn't auto-fix.** The `reconcile-occurrence-availability` job detects double bookings and returns HTTP 207, but leaves them in place for manual resolution. At 3 AM with 10 double bookings, someone needs to wake up and decide which booking to cancel. There should be an automated policy (e.g., cancel the later-created booking and issue a refund).
 
 ---
 

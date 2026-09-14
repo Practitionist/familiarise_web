@@ -8,7 +8,7 @@ import {
   planContentInclude,
 } from "@/lib/api/plans/content";
 import { findOrCreateTopics, transformTopicsToStrings } from "@/lib/topics";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { marketplaceVisibilityWhere } from "@/lib/api/plans/visibility";
 import { getMinTrialPriceInPaise } from "@/lib/trials/pricing-config";
 
@@ -137,7 +137,7 @@ export async function POST(request: NextRequest) {
     metricEndDate.setMonth(
       metricEndDate.getMonth() + validatedData.durationInMonths,
     );
-    const estimatedWeeks = SlotCalculationService.countWeeks(
+    const estimatedWeeks = ScheduleCalculationService.countWeeks(
       metricStartDate,
       metricEndDate,
     );

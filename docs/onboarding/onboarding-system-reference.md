@@ -32,7 +32,7 @@ userId)` upserts one on first consumer action. It is invoked from:
 
 - `lib/payments/operations/checkout.ts` (checkout path +
   `revalidateInsideLock`)
-- `app/api/slots/request-for-approval/route.ts`
+- `app/api/scheduling/request-for-approval/route.ts`
 - `app/api/organizations/invitations/accept/route.ts` (LEARNER branch)
 - The existing `/form/onboarding` path continues to work because
   `utils/onboarding-server.ts::upsertConsulteeProfile` is
@@ -519,7 +519,7 @@ This is an intersection, not a union — it has ALL possible fields. The discrim
       },
       languages: [],
       toolsAndTechnologies: [],
-      sessionTypes: [],
+      offeringFormats: [],
     }
   },
   consulteeProfile: undefined,
@@ -710,8 +710,8 @@ Runs **after** the main transaction commits. If verification fails, the user pro
 | `ConsulteeProfile` | Consultee | Upsert (occupation, aboutMe, goals, etc.) |
 | `StaffProfile` | Staff | Upsert (department, position, permissions, etc.) |
 | `AdminProfile` | Admin | Upsert (adminLevel, accessScope, etc.) |
-| `SlotOfAvailabilityWeekly` | Consultant | Delete all + create new |
-| `SlotOfAvailabilityCustom` | Consultant | Delete all + create new |
+| `AvailabilityWindowWeekly` | Consultant | Delete all + create new |
+| `AvailabilityWindowCustom` | Consultant | Delete all + create new |
 | `WorkExperience` | All roles | Delete all + create new (keyed by userId) |
 | `Education` | All roles | Delete all + create new (keyed by userId) |
 | `Certification` | All roles | Delete all + create new (keyed by userId) |
@@ -755,7 +755,7 @@ videoIntroUrl       String?
 languages           String[]  @default([])
 toolsAndTechnologies String[] @default([])
 mentoringStyle      String?   @db.Text
-sessionTypes        SessionType[]  @default([])
+offeringFormats        OfferingFormat[]  @default([])
 scheduleType        ScheduleType
 domainId            String    (FK → Domain)
 userId              String    @unique (FK → User)
@@ -805,7 +805,7 @@ notes           String?    @db.Text
 userId          String     @unique
 ```
 
-#### SlotOfAvailabilityWeekly
+#### AvailabilityWindowWeekly
 ```
 id                    String     @id @default(uuid())
 startDay              DayOfWeek
@@ -816,7 +816,7 @@ utcOffsetMinutes      Int        @default(0) @db.SmallInt  // e.g. 330 for IST, 
 consultantProfileId   String     (FK)
 ```
 
-#### SlotOfAvailabilityCustom
+#### AvailabilityWindowCustom
 ```
 id                    String     @id @default(uuid())
 startsAt              DateTime   @db.Timestamptz
@@ -925,7 +925,7 @@ uploadedAt       DateTime  @default(now())
 | `Gender` | `MALE`, `FEMALE`, `NON_BINARY`, `PREFER_NOT_TO_SAY` |
 | `CareerStage` | `STUDENT`, `EARLY_CAREER`, `MID_CAREER`, `SENIOR`, `EXECUTIVE` |
 | `BudgetPreference` | `BUDGET`, `MODERATE`, `PREMIUM`, `FLEXIBLE` |
-| `SessionType` | `ONE_ON_ONE`, `GROUP`, `ASYNC_REVIEW` |
+| `OfferingFormat` | `ONE_ON_ONE`, `GROUP`, `ASYNC_REVIEW` |
 | `AdminLevel` | `SUPER_ADMIN`, `ADMIN`, `MODERATOR` |
 | `AchievementType` | `AWARD`, `PUBLICATION`, `PROJECT`, `TALK`, `OPEN_SOURCE`, `OTHER` |
 | `ConsultantVerificationStatus` | `PENDING_VERIFICATION`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED` |
@@ -1086,7 +1086,7 @@ whole design.
 |------|---------|
 | `components/verification/VerificationDocumentUpload.tsx` | Drag & drop file upload with progress |
 | `components/ui/company-logo.tsx` | Auto-detect company logos from name (Logo.dev) |
-| `utils/slotAllocation/slotTimeUtils.ts` | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()` |
-| `utils/timeSlotValidation.ts` | `isValidTimeRange()` — duration bounds (30min–12h) |
+| `utils/scheduling-engine/slotTimeUtils.ts` | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()` |
+| `utils/timeScheduleValidation.ts` | `isValidTimeRange()` — duration bounds (30min–12h) |
 | `lib/novu.ts` | `notifyNewConsultantApplication()` — admin notifications |
 | `prisma/schema.prisma` | All model definitions |

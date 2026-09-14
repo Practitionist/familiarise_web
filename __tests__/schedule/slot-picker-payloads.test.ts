@@ -58,10 +58,7 @@ function pollutedSlot(id: string, startsAt: string) {
     deletedAt: null,
     createdAt: new Date("2026-01-01T00:00:00Z"),
     updatedAt: new Date("2026-01-01T00:00:00Z"),
-    user: [
-      { id: "user-1", name: ATTENDEE_NAME, image: "https://img.example/p.png" },
-    ],
-    meetingSession: {
+    meeting: {
       id: "session-1",
       endedAt: null,
       recordings: [
@@ -92,14 +89,16 @@ describe("readManageTimingsTarget slot payload", () => {
           schedulingPeriodEndsAt: new Date("2026-11-01T00:00:00Z"),
           classPlan: { title: "Pottery", totalSessions: 24 },
         },
-        slotsOfAppointment: [pollutedSlot("s1", "2026-08-03T05:00:00Z")],
+        // #1554 — the roster rides on the wrapper, not the rows.
+        participants: [
+          { userId: "user-1", role: "CONSULTEE", user: { name: ATTENDEE_NAME } },
+        ],
+        // #1554 — the whole programme is the one wrapper's rows.
+        occurrences: [
+          pollutedSlot("s1", "2026-08-03T05:00:00Z"),
+          pollutedSlot("s2", "2026-08-10T05:00:00Z"),
+        ],
       },
-      siblings: [
-        {
-          id: "appt-2",
-          slotsOfAppointment: [pollutedSlot("s2", "2026-08-10T05:00:00Z")],
-        },
-      ],
       // The read only ever touches the fields above; the real payload is far
       // wider and irrelevant to what this asserts.
     } as unknown as Awaited<ReturnType<typeof readAppointmentDetail>>);
@@ -148,7 +147,7 @@ describe("readAllocationRequest slot payload", () => {
         durationInHours: 1,
       },
       appointment: {
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             appointmentId: "appt-1",
@@ -174,7 +173,7 @@ describe("readAllocationRequest slot payload", () => {
     await readAllocationRequest("consultation-1", "consultation");
 
     const { select } = findUnique.mock.calls[0][0];
-    const slotArgs = select.appointment.select.slotsOfAppointment;
+    const slotArgs = select.appointment.select.occurrences;
 
     expect(Object.keys(slotArgs.select).sort()).toEqual(ALLOWED_SLOT_KEYS);
     expect(slotArgs.include).toBeUndefined();

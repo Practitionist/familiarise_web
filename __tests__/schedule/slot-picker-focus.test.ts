@@ -3,7 +3,7 @@
 // surface hands the resolver a different set of sessions, so these cases are
 // written as the shapes those subjects actually arrive in.
 
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import {
   FOCUS_LEAD_ROWS,
   earliestAvailabilityRow,
@@ -11,15 +11,15 @@ import {
   focusScrollRow,
   focusTargetRow,
   resolveFocusTarget,
-} from "@/lib/scheduling/slot-picker-focus";
+} from "@/lib/scheduling/time-picker-focus";
 
 const NOW = new Date("2026-08-01T09:00:00Z");
 
 function session(
   id: string,
   startsAt: string,
-  overrides: Partial<SlotLike> = {},
-): SlotLike {
+  overrides: Partial<OccurrenceLike> = {},
+): OccurrenceLike {
   return {
     id,
     appointmentId: `appt-${id}`,

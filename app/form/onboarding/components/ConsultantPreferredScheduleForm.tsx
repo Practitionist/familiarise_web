@@ -20,8 +20,8 @@ import {
   OnboardingFormData,
   PreferredScheduleFormSchema,
 } from "@/utils/onboarding";
-import { validateTimeSlot } from "@/utils/timeSlotValidation";
-import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
+import { validateTimeSlot } from "@/utils/scheduling-engine/interval-validation";
+import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   SlotValidationFeedback,
   useSlotValidationFeedback,

@@ -41,11 +41,10 @@ export async function GET(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -159,11 +158,10 @@ export async function PUT(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -228,9 +226,7 @@ export async function DELETE(
     const hasActivePayments = !!(await prisma.class.findFirst({
       where: {
         id: classId,
-        appointments: {
-          some: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
-        },
+        appointment: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
       },
       select: { id: true },
     }));
@@ -244,9 +240,7 @@ export async function DELETE(
     const hasUpcomingSlots = !!(await prisma.class.findFirst({
       where: {
         id: classId,
-        appointments: {
-          some: { slotsOfAppointment: { some: { endsAt: { gt: now } } } },
-        },
+        appointment: { occurrences: { some: { endsAt: { gt: now } } } },
       },
       select: { id: true },
     }));
@@ -286,11 +280,10 @@ export async function DELETE(
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },

@@ -26,7 +26,7 @@ import {
  * Everything a public review surface is allowed to see.
  *
  * Deliberately absent: `consulteeProfileId` (an enumerable id nothing renders),
- * `revisionNo`, `ratedSessionAt`, `ratingCause`, `excludedFromAggregateAt`,
+ * `revisionNo`, `ratedOccurrenceAt`, `ratingCause`, `excludedFromAggregateAt`,
  * `removedBy`, `replyRemovedBy` (staff moderation material), and
  * `updatedAt` (which moves when the consultant replies, so it cannot be read as
  * "the review changed" — that is what `editedAt` is for).

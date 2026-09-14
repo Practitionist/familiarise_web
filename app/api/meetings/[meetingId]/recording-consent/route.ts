@@ -51,7 +51,7 @@ export async function GET(
 
 
     const notice = await getRecordingNotice(
-      access.meetingSessionId,
+      access.meetingId,
       session.user.id,
       access.appointment,
     );
@@ -102,7 +102,7 @@ export async function POST(
 
     const appointment = access.appointment;
     const notice = await getRecordingNotice(
-      access.meetingSessionId,
+      access.meetingId,
       session.user.id,
       appointment,
     );
@@ -140,7 +140,7 @@ export async function POST(
     // SCOPE note on `getRecordingBlock`: stopping a live recording on decline is
     // a product decision and is deliberately not done here.
     await recordRecordingConsent(
-      access.meetingSessionId,
+      access.meetingId,
       session.user.id,
       parsed.data.decision,
     );

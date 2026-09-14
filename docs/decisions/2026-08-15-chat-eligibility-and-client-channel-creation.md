@@ -203,3 +203,7 @@ there was no unban path — #1270 gave it one, see
 `docs/decisions/2026-08-30-moderation-truthfulness.md`; and dev, preview and
 production still share one
 Stream app (#1134 P0-6), which is why the grants script defaults to a dry run.
+
+---
+
+Addendum (2026-09-14): `SlotOfAppointment` is `AppointmentOccurrence` since #1554.

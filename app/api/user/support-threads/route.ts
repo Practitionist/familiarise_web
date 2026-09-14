@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
         appointment: {
           select: {
             appointmentType: true,
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { startsAt: "asc" },
               take: 1,
               select: { startsAt: true, endsAt: true },
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
         : null,
       appointment: {
         appointmentType: t.appointment.appointmentType,
-        startsAt: t.appointment.slotsOfAppointment[0]?.startsAt ?? null,
+        startsAt: t.appointment.occurrences[0]?.startsAt ?? null,
         organizationName: t.appointment.organization?.name ?? null,
         planTitle:
           t.appointment.consultation?.consultationPlan?.title ??

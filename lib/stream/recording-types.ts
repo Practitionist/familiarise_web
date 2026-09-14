@@ -5,6 +5,7 @@
 
 import { Prisma, type Recording } from "@prisma/client";
 import type { Db } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 
 // #780 — payload types derive from the extended client (Prisma.Result), not
 // Prisma.RecordingGetPayload, so BigInt columns (fileSize, plan.price) type
@@ -22,15 +23,17 @@ export type RecordingRow = Omit<Recording, "fileSize" | "listPricePaise"> & {
 
 export const consultantRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
-            user: {
-              select: { name: true },
-            },
             appointment: {
               include: {
+                // #1554 — the roster is the appointment's live participants.
+                participants: {
+                  where: liveParticipant(),
+                  select: { user: { select: { name: true } } },
+                },
                 webinar: {
                   include: {
                     webinarPlan: {
@@ -72,9 +75,9 @@ export type ConsultantRecordingWithDetails = Prisma.Result<
 
 export const recordingWithAccessControlInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -109,9 +112,9 @@ export type RecordingWithAccessControl = Prisma.Result<
 
 export const webinarPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -141,9 +144,9 @@ export type WebinarPlanRecordingWithDetails = Prisma.Result<
 
 export const classPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -173,9 +176,9 @@ export type ClassPlanRecordingWithDetails = Prisma.Result<
 
 export const consulteeRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
-    meetingSession: {
+    meeting: {
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {

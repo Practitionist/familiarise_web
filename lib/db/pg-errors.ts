@@ -9,7 +9,7 @@
  *
  * Exclusion constraints are the one unavoidable exception. Prisma has a
  * documented gap (prisma/prisma#25562, #26366): a violation of a constraint it
- * does not model — like the `slot_no_confirmed_overlap` btree_gist EXCLUDE that
+ * does not model — like the `occurrence_no_confirmed_overlap` btree_gist EXCLUDE that
  * lives in the raw-SQL sidecar — surfaces as a `PrismaClientUnknownRequestError`
  * with no `.code` and an undefined `.cause`. The SQLSTATE is then only present in
  * the message text, so a NARROW text probe (the SQLSTATE token and the constraint
@@ -44,7 +44,7 @@ export function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
- * Postgres 23P01 — exclusion-constraint violation (e.g. `slot_no_confirmed_overlap`).
+ * Postgres 23P01 — exclusion-constraint violation (e.g. `occurrence_no_confirmed_overlap`).
  * Structured SQLSTATE first; narrow text probe second, only for Prisma's
  * unmodelled-constraint gap (see the module note).
  */
@@ -52,5 +52,7 @@ export function isExclusionViolation(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   if (sqlState(error) === "23P01") return true;
   const msg = message(error);
-  return msg.includes("23P01") || msg.includes("slot_no_confirmed_overlap");
+  return (
+    msg.includes("23P01") || msg.includes("occurrence_no_confirmed_overlap")
+  );
 }

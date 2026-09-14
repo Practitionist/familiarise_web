@@ -4,13 +4,14 @@ import {
 } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
 import type { Tx } from "@/lib/prisma";
+import { releaseParticipant } from "@/lib/booking/participants";
 import { Prisma, type PaymentGateway } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import {
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { cancelPaymentIntent } from "@/scripts/payments/cleanup-abandoned-payments";
@@ -58,10 +59,10 @@ const CANCEL_NOTE = "Cancelled by user during checkout";
 /**
  * Give back whatever the buyer was holding.
  *
- * Group events never mint a per-buyer slot: registration connects the buyer to
- * the event's shared session slots, so releasing the seat means disconnecting
- * them. Deleting the slot would take every other attendee's session with it,
- * and webinar slots are non-tentative anyway — which is why the old
+ * Group events never mint a per-buyer occurrence: registration adds the buyer
+ * to the event's roster, so releasing the seat means releasing that row.
+ * Deleting the occurrence would take every other attendee's call with it,
+ * and webinar occurrences are non-tentative anyway — which is why the old
  * `deleteMany({ isTentative: true })` released nothing at all.
  */
 async function releaseSlots(
@@ -77,7 +78,7 @@ async function releaseSlots(
     // Doctrine rule 2: freed by status, not by DELETE. The buyer keeps a
     // record of the hold they abandoned, and occupancy already ignores a
     // soft-cancelled row.
-    return transitionSlotCompletion(tx, {
+    return transitionOccurrenceCompletion(tx, {
       where: { appointmentId: appt.id, isTentative: true, deletedAt: null },
       to: "CANCELLED",
       data: { deletedAt: new Date() },
@@ -89,19 +90,8 @@ async function releaseSlots(
     ? { appointment: { classId: appt.class.id } }
     : { appointmentId: appt.id };
 
-  const seatSlots = await tx.slotOfAppointment.findMany({
-    where: { ...seatFilter, user: { some: { id: userId } } },
-    select: { id: true },
-  });
-
-  for (const slot of seatSlots) {
-    await tx.slotOfAppointment.update({
-      where: { id: slot.id },
-      data: { user: { disconnect: { id: userId } } },
-    });
-  }
-
-  return seatSlots.length;
+  // #1554 — the seat is the participant row; releasing it is a status flip.
+  return releaseParticipant(tx, { ...seatFilter, userId });
 }
 
 export async function cancelPendingCheckout(args: {

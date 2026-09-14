@@ -235,11 +235,15 @@ Run these during release rollouts to confirm nothing regressed:
 # Webhook smoke test (Razorpay)
 node scripts/razorpay-test-webhook.ts --event payment.captured --org $ORG_ID
 
-# Reconciler dry-run against production
-curl -X POST "$PROD/api/admin/reconcile-ledgers" \
+# Reconciler run against production — a full-scope POST answers 202 with the
+# report id and finishes in the background (#1454); poll the row until
+# summary.status is COMPLETED, then read ok.
+REPORT_ID=$(curl -s -X POST "$PROD/api/admin/reconcile-ledgers" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{}' | jq '.report.ok'
+  -d '{}' | jq -r '.data.reportId')
+curl -s "$PROD/api/admin/reconcile-ledgers?id=$REPORT_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq '.data | {status: .summary.status, ok}'
 
 # MSME alert dry-run
 MSME_ALERT_EMAIL=dev-null@familiarise.com npx tsx jobs/compliance/msme-payment-alerts.ts

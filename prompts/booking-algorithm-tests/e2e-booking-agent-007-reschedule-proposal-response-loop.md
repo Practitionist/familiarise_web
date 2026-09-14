@@ -59,7 +59,7 @@ the loop. The invariants this case pins are stated in the code:
   permitted counter. There is no round 3.
 - **Expiry**: `expiresAt = min(now + 72h, earliest released slot start − 24h)`
   (`computeProposalExpiry`).
-- **Released slots** are held as `releasedSlotIds` and flipped to
+- **Released slots** are held as `releasedOccurrenceIds` and flipped to
   `completionStatus = 'RESCHEDULED'` on the appointment; acceptance re-confirms
   them in place at the proposed times.
 
@@ -82,7 +82,7 @@ UTC** via `POST /api/checkout` (`isMockPayment: true`). Verify and record ids:
 SELECT a.id AS appointment_id, a.status, s.id AS slot_id, s."startsAt",
        s."isTentative", s."completionStatus"
 FROM "Appointment" a
-JOIN "SlotOfAppointment" s ON s."appointmentId" = a.id
+JOIN "AppointmentOccurrence" s ON s."appointmentId" = a.id
 JOIN "Consultation" c ON c.id = a."consultationId"
 WHERE c."consultationPlanId" = 'test-consultation-plan-007';
 -- Expected: 1 confirmed slot (isTentative=false, completionStatus='SCHEDULED'),
@@ -106,7 +106,7 @@ async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         // The REQUEST field is `slotIds` (legacy single `slotId` also accepted).
-        // `releasedSlotIds` is the COLUMN the route writes from the slots it
+        // `releasedOccurrenceIds` is the COLUMN the route writes from the slots it
         // resolved — sending it here does nothing, and because
         // RescheduleProposalSchema is `.passthrough()` it is silently ignored
         // rather than rejected, so the whole booking would be released.
@@ -129,7 +129,7 @@ DB verify:
 
 ```sql
 SELECT id, "initiatorRole", status, round, "openForAppointmentId",
-       "expiresAt", "releasedSlotIds", "resolvedAt"
+       "expiresAt", "releasedOccurrenceIds", "resolvedAt"
 FROM "RescheduleRequest"
 WHERE "appointmentId" = '<APPOINTMENT_ID>'
 ORDER BY "createdAt" DESC LIMIT 1;
@@ -138,7 +138,7 @@ ORDER BY "createdAt" DESC LIMIT 1;
 -- expiresAt = now()+72h (the released slot is 6 days out, so the lifetime cap
 -- binds, not the session-margin bound). Save PROPOSAL_ID.
 
-SELECT "completionStatus" FROM "SlotOfAppointment" WHERE id = '<ORIGINAL_SLOT_ID>';
+SELECT "completionStatus" FROM "AppointmentOccurrence" WHERE id = '<ORIGINAL_SLOT_ID>';
 -- Expected: 'RESCHEDULED' — the original slot is released, not deleted.
 ```
 
@@ -179,7 +179,7 @@ FROM "RescheduleRequest" WHERE id = '<PROPOSAL_ID>';
 -- Expected: status='ACCEPTED', resolvedAt NOT NULL, openForAppointmentId IS NULL.
 
 SELECT id, "startsAt", "endsAt", "isTentative", "completionStatus"
-FROM "SlotOfAppointment"
+FROM "AppointmentOccurrence"
 WHERE "appointmentId" = '<APPOINTMENT_ID>' AND "deletedAt" IS NULL
 ORDER BY "startsAt";
 -- Expected: exactly ONE live confirmed slot at the PROPOSED time
@@ -225,7 +225,7 @@ FROM "RescheduleRequest" WHERE id = '<PROPOSAL_2_ID>';
 -- Expected: status='DECLINED', resolvedAt NOT NULL, openForAppointmentId IS NULL.
 
 SELECT "startsAt", "isTentative", "completionStatus"
-FROM "SlotOfAppointment"
+FROM "AppointmentOccurrence"
 WHERE "appointmentId" = '<APPOINTMENT_ID>' AND "deletedAt" IS NULL
   AND "completionStatus" = 'SCHEDULED';
 -- Expected: ONE confirmed slot at the PRE-PROPOSAL time (14:00) — the released

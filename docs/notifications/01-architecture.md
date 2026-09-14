@@ -187,10 +187,10 @@ notifySupportTicketUpdate(userId, payload)            -> triggerWorkflow
 notifySupportTicketResponse(userId, payload)          -> triggerWorkflow
 notifyFeedbackReceived(adminUserIds[], payload)   -> triggerForMultiple
 notifyNewReview(consultantUserId, payload)        -> triggerWorkflow
-notifyTrialSessionRequested(consultantUserId, payload)  -> triggerWorkflow
-notifyTrialSessionScheduled(consulteeUserId, payload)   -> triggerWorkflow
-notifyTrialSessionCompleted(userIds[], payload)         -> triggerForMultiple
-notifyTrialSessionCancelled(userIds[], payload)         -> triggerForMultiple
+notifyTrialRequested(consultantUserId, payload)  -> triggerWorkflow
+notifyTrialScheduled(consulteeUserId, payload)   -> triggerWorkflow
+notifyTrialCompleted(userIds[], payload)         -> triggerForMultiple
+notifyTrialCancelled(userIds[], payload)         -> triggerForMultiple
 notifySubscriptionStarted(userId, payload)        -> triggerWorkflow
 notifySubscriptionCancelled(userIds[], payload)   -> triggerForMultiple
 notifySubscriptionRenewed(userId, payload)        -> triggerWorkflow

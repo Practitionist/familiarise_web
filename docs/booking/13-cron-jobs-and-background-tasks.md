@@ -28,11 +28,11 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 | Job                                 | Cron Expression | Human-Readable          | Source Script                                                 | API Route                                  |
 | ----------------------------------- | --------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------ |
 | Auto-complete appointments          | `7 * * * *`     | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`  |
-| Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-slots.ts`             | `/api/cleanup/tentative-slots`             |
+| Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`             | `/api/cleanup/tentative-occurrences`             |
 | Cleanup stale pending consultations | `30 * * * *`    | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
 | Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
 | Expire stale requests               | `10 * * * *`    | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
-| Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-slot-availability.ts`         | `/api/cleanup/reconcile-slot-availability` |
+| Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts`         | `/api/cleanup/reconcile-occurrence-availability` |
 | Detect consultant no-shows          | `57 * * * *`    | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                  |
 
 ---
@@ -56,8 +56,8 @@ The value covers the job's database-active window (the `tsx` step), not the
 whole workflow — checkout, `npm ci`, and `prisma generate` never touch the
 pool. Jobs without an annotation default to **2 minutes**, which is right for
 the quick sweeps. The heaviest jobs are annotated:
-`reconcile-slot-availability: 8`, `auto-complete-appointments: 6`,
-`cleanup-tentative-slots: 5`, `cleanup-invalid-appointments: 5`.
+`reconcile-occurrence-availability: 8`, `auto-complete-appointments: 6`,
+`cleanup-tentative-occurrences: 5`, `cleanup-invalid-appointments: 5`.
 
 **The budget.** For each start-minute shared by recurring jobs, the guard sums
 the declared runtimes and fails when the total exceeds
@@ -100,7 +100,7 @@ real numbers whenever a heavy one wants in.
 | Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
 | Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)             |
 | Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
-| TrialSession | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
+| Trial | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 
@@ -110,7 +110,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 **Safety**: Per-record `try/catch`. A failure on one record does not prevent processing of others. All errors are collected into a result array and returned. The activity log write for trial sessions has its own nested `try/catch` so a logging failure does not block the completion update.
 
-**Trial sessions have no separate job.** A second endpoint, `/api/cleanup/auto-complete-trials`, used to complete trials on its own. It had no `jobs/` wrapper, no GitHub Actions workflow and no Netlify schedule, so nothing ever invoked it, and it completed a trial as soon as any one of its slot rows had ended, with no buffer. It was a redundant twin of the TrialSession row in the table above and was deleted in #1278. Trials are completed here, by the hourly job, which requires the full one-hour buffer and an `every` clause over the appointment's slots, so a multi-slot trial only closes once all of its slots have ended.
+**Trial sessions have no separate job.** A second endpoint, `/api/cleanup/auto-complete-trials`, used to complete trials on its own. It had no `jobs/` wrapper, no GitHub Actions workflow and no Netlify schedule, so nothing ever invoked it, and it completed a trial as soon as any one of its slot rows had ended, with no buffer. It was a redundant twin of the Trial row in the table above and was deleted in #1278. Trials are completed here, by the hourly job, which requires the full one-hour buffer and an `every` clause over the appointment's slots, so a multi-slot trial only closes once all of its slots have ended.
 
 ---
 
@@ -119,9 +119,9 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 | Field              | Value                                             |
 | ------------------ | ------------------------------------------------- |
 | **Schedule**       | `0 */2 * * *` -- every 2 hours                    |
-| **Source**         | `scripts/appointments/cleanup-tentative-slots.ts` |
-| **API**            | `app/api/cleanup/tentative-slots/route.ts`        |
-| **GitHub Actions** | `.github/workflows/cleanup-tentative-slots.yml`   |
+| **Source**         | `scripts/appointments/cleanup-tentative-occurrences.ts` |
+| **API**            | `app/api/cleanup/tentative-occurrences/route.ts`        |
+| **GitHub Actions** | `.github/workflows/cleanup-tentative-occurrences.yml`   |
 | **HTTP Methods**   | `GET`, `POST`                                     |
 
 **Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
@@ -130,7 +130,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 **Criteria**: Slot has `isTentative = true`, `createdAt` older than 24 hours, AND the associated appointment has no payment with `paymentStatus = SUCCEEDED`. Users can also release their own holds immediately via `DELETE /api/checkout/pending/[paymentId]` (#849) instead of waiting for this cron.
 
-**Action**: Deletes the stale `SlotOfAppointment` records using `deleteMany`. This frees the time range for new bookings.
+**Action**: Deletes the stale `AppointmentOccurrence` records using `deleteMany`. This frees the time range for new bookings.
 
 **Safety**: Single top-level `try/catch` around the entire operation. The query and delete use the same filter criteria, preventing TOCTOU race conditions. Logs user and payment information for each affected slot before deletion.
 
@@ -155,7 +155,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 **Action**: Within a Prisma `$transaction`:
 
 1. Updates consultation to `status = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
-2. Deletes tentative `SlotOfAppointment` records tied to the appointment.
+2. Deletes tentative `AppointmentOccurrence` records tied to the appointment.
 
 **Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
 
@@ -184,7 +184,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 | Invalid duration consultations          | Total slot duration does not match `consultationPlan.durationInHours` (1% tolerance) | N/A -- cancels |
 | Invalid duration subscriptions          | Scheduling period months does not match `subscriptionPlan.durationInMonths`          | N/A -- cancels |
 
-**Action**: Sets `status = CANCELLED` on affected records. Also deletes associated `SlotOfAppointment` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
+**Action**: Sets `status = CANCELLED` on affected records. Also deletes associated `AppointmentOccurrence` records to free availability. Records already in terminal states (`CANCELLED`, `REJECTED`, `EXPIRED`) are excluded from processing.
 
 **Safety**: Each of the four sub-tasks has its own `try/catch`. The API route uses `crypto.timingSafeEqual` for authorization header comparison, preventing timing-based attacks. The `runAllCleanupTasks` function handles database disconnection in a `finally` block.
 
@@ -225,9 +225,9 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 | Field              | Value                                                  |
 | ------------------ | ------------------------------------------------------ |
 | **Schedule**       | `15 * * * *` -- every hour, at :15                     |
-| **Source**         | `scripts/appointments/reconcile-slot-availability.ts`  |
-| **API**            | `app/api/cleanup/reconcile-slot-availability/route.ts` |
-| **GitHub Actions** | `.github/workflows/reconcile-slot-availability.yml`    |
+| **Source**         | `scripts/appointments/reconcile-occurrence-availability.ts`  |
+| **API**            | `app/api/cleanup/reconcile-occurrence-availability/route.ts` |
+| **GitHub Actions** | `.github/workflows/reconcile-occurrence-availability.yml`    |
 | **HTTP Methods**   | `GET`, `POST`                                          |
 
 **Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
@@ -356,6 +356,6 @@ Each job adds additional fields specific to its operation (e.g., `webinarsComple
 | Code  | Meaning                                                                 |
 | ----- | ----------------------------------------------------------------------- |
 | `200` | Job completed successfully                                              |
-| `207` | Partial success (reconcile-slot-availability: double bookings detected) |
+| `207` | Partial success (reconcile-occurrence-availability: double bookings detected) |
 | `401` | Missing or invalid `CRON_SECRET`                                        |
 | `500` | Job failed or returned errors                                           |

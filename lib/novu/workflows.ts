@@ -450,7 +450,7 @@ export type ReviewPayload = {
   dashboardUrl: string;
 };
 
-export type TrialSessionPayload = {
+export type TrialPayload = {
   consultantName: string;
   consulteeName: string;
   /** The parent subscription plan's title — never its id (#536). */
@@ -461,16 +461,13 @@ export type TrialSessionPayload = {
   dateTimeIso?: string;
   /** Sentence-ready status label, e.g. "awaiting payment". */
   status: string;
-  /** The raw `TrialSessionStatus` member. */
+  /** The raw `TrialStatus` member. */
   statusCode?: string;
   dashboardUrl: string;
 };
 
-/** Callers pass an ISO instant and the raw status; see {@link TrialSessionPayload}. */
-export type TrialSessionInput = Omit<
-  TrialSessionPayload,
-  "dateTimeIso" | "statusCode"
->;
+/** Callers pass an ISO instant and the raw status; see {@link TrialPayload}. */
+export type TrialInput = Omit<TrialPayload, "dateTimeIso" | "statusCode">;
 
 export type SubscriptionPayload = {
   subscriptionId?: string;

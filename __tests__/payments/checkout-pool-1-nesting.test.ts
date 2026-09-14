@@ -32,7 +32,7 @@ const mockTxClient = {
   consentArtifact: {
     findFirst: jest.fn(async () => ({ id: "consent-artifact-1" })),
   },
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findFirst: jest.fn(async () => null),
   },
   // #1463 — the self-hold lookup is a fourth read on this helper's path, and

@@ -13,7 +13,7 @@ jest.mock("../../lib/prisma", () => ({
     webinar: { findUnique: jest.fn() },
     class: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn(), findFirst: jest.fn() },
-    slotOfAppointment: { count: jest.fn() },
+    appointmentOccurrence: { count: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
@@ -21,9 +21,9 @@ jest.mock("../../lib/prisma", () => ({
 
 const mockValidateFn = jest.fn();
 const mockRevalidateConflictsFn = jest.fn();
-jest.mock("../../utils/slotAllocation/SlotValidationService", () => ({
-  ...jest.requireActual("../../utils/slotAllocation/SlotValidationService"),
-  SlotValidationService: jest.fn().mockImplementation(() => ({
+jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
+  ...jest.requireActual("../../utils/scheduling-engine/ScheduleValidationService"),
+  ScheduleValidationService: jest.fn().mockImplementation(() => ({
     validate: mockValidateFn,
     revalidateConflicts: mockRevalidateConflictsFn,
   })),
@@ -45,13 +45,13 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
   subscription: { findUnique: jest.Mock };
   appointment: { findMany: jest.Mock; findFirst: jest.Mock };
-  slotOfAppointment: { count: jest.Mock };
+  appointmentOccurrence: { count: jest.Mock };
 };
 
 const FUTURE_SLOTS = [
@@ -65,8 +65,8 @@ const richSubscription = {
     consultantProfile: {
       user: { id: "consultant-user-1" },
       scheduleType: "WEEKLY",
-      slotsOfAvailabilityWeekly: [],
-      slotsOfAvailabilityCustom: [],
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [],
     },
     durationInMonths: 1,
     sessionsPerWeek: 1,
@@ -84,25 +84,21 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.subscription.findUnique.mockResolvedValue(richSubscription);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
-  mockPrisma.slotOfAppointment.count.mockResolvedValue(0);
+  mockPrisma.appointmentOccurrence.count.mockResolvedValue(0);
 });
 
 describe("#1012 expectedTentativeSlotCount", () => {
   it("returns 409 when the page's tentative count no longer matches", async () => {
-    // First tab already finished: zero tentative, two confirmed.
+    // First tab already finished: zero tentative, one confirmed hour (#1554 —
+    // one occurrence row per held call, so the count is in rows, not atoms).
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: false,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
@@ -110,13 +106,13 @@ describe("#1012 expectedTentativeSlotCount", () => {
       },
     ]);
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      // Stale tab still thinks the reschedule has 2 tentative slots.
-      expectedTentativeSlotCount: 2,
+      // Stale tab still thinks the reschedule has 1 tentative occurrence.
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.success).toBe(false);
@@ -129,16 +125,11 @@ describe("#1012 expectedTentativeSlotCount", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: true,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: true,
           },
@@ -154,12 +145,12 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      expectedTentativeSlotCount: 2,
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.httpStatus).not.toBe(409);
@@ -170,11 +161,11 @@ describe("#1012 expectedTentativeSlotCount", () => {
     mockPrisma.appointment.findMany.mockResolvedValue([
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
+            endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
         ],
@@ -186,7 +177,7 @@ describe("#1012 expectedTentativeSlotCount", () => {
       warnings: [],
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
@@ -197,21 +188,16 @@ describe("#1012 expectedTentativeSlotCount", () => {
   });
 
   it("re-asserts the tentative count inside the write transaction", async () => {
-    // Pre-txn view still matches (2 tentative) so we enter the write txn;
+    // Pre-txn view still matches (1 tentative) so we enter the write txn;
     // inside the txn another tab already confirmed — in-txn re-read 409s.
     const matchingTentative = [
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: true,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: true,
           },
@@ -221,16 +207,11 @@ describe("#1012 expectedTentativeSlotCount", () => {
     const confirmedAfterRace = [
       {
         id: "appt-1",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "s1",
+            ordinal: 1,
             startsAt: new Date(FUTURE_SLOTS[0]),
-            endsAt: new Date("2026-08-03T09:30:00.000Z"),
-            isTentative: false,
-          },
-          {
-            id: "s2",
-            startsAt: new Date(FUTURE_SLOTS[1]),
             endsAt: new Date("2026-08-03T10:00:00.000Z"),
             isTentative: false,
           },
@@ -256,19 +237,19 @@ describe("#1012 expectedTentativeSlotCount", () => {
           findMany: jest.fn().mockResolvedValue(confirmedAfterRace),
           findFirst: jest.fn().mockResolvedValue(null),
         },
-        slotOfAppointment: {
+        appointmentOccurrence: {
           count: jest.fn().mockResolvedValue(0),
         },
       };
       return fn(tx);
     });
 
-    const result = await SlotAllocationService.allocate({
+    const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
       mode: "manual",
       slots: FUTURE_SLOTS,
-      expectedTentativeSlotCount: 2,
+      expectedTentativeSlotCount: 1,
     });
 
     expect(result.success).toBe(false);

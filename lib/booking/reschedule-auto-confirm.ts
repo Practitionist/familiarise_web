@@ -19,8 +19,8 @@
 
 import { reportSentryError } from "@/lib/observability/report";
 import prisma from "@/lib/prisma";
-import type { EventType } from "@/utils/slotAllocation/types";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
+import type { EventType } from "@/utils/scheduling-engine/types";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { mayAutoConfirm } from "@/lib/booking/reschedule-proposals";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -51,8 +51,8 @@ export async function tryAutoConfirmProposal(
       appointmentId: true,
       initiatorRole: true,
       status: true,
-      releasedSlotIds: true,
-      proposedSlots: {
+      releasedOccurrenceIds: true,
+      proposedTimes: {
         orderBy: { startsAt: "asc" },
         select: { startsAt: true, endsAt: true },
       },
@@ -79,7 +79,7 @@ export async function tryAutoConfirmProposal(
   // this is the only holder — no nesting, same lock order as accept.
   try {
     return await withAppointmentLock(request.appointmentId, async () => {
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType,
         eventId,
         // The proposed times go STRAIGHT to the allocator. Nothing is written until
@@ -99,7 +99,7 @@ export async function tryAutoConfirmProposal(
         // exactly the released ones — so confirmed sessions elsewhere in the
         // booking survive untouched.
         mode: "manual",
-        slots: request.proposedSlots.map((p) => p.startsAt.toISOString()),
+        slots: request.proposedTimes.map((p) => p.startsAt.toISOString()),
         // Consultant-wide lock: these times were not picked per-day by a human, so
         // the day-sharded manual key would let two concurrent confirmations each
         // pass the per-week cap on a stale count (#860 shards for throughput; GiST

@@ -356,7 +356,7 @@ __tests__/enterprise/   cap, overage, credit-pool, reachable-paths, billing-admi
 **Code:** `[orgId]/{appointments,trials,waitlist,reimbursements,documents,recordings}/route.ts`
 - [ ] `Appointment.organizationId` stamped on org-sponsored bookings `✅` #768
 - [ ] Org appointments list `✅`; expert "Join" affordance `❌` #748
-- [ ] Trials org-tagged (`TrialSession.organizationId`) `✅`; trial→paid conversion / expiry `❌` #779 §J
+- [ ] Trials org-tagged (`Trial.organizationId`) `✅`; trial→paid conversion / expiry `❌` #779 §J
 - [ ] Waitlist org-context `✅`; promotion re-checks cap/funding `❌` #779 §D
 - [ ] Reimbursements (PERSONAL orgs) + CSV export `✅` — `reimbursements/export`
 - [ ] Org documents + recordings `✅`; KYB/contract document lifecycle `❌` #776 §J

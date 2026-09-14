@@ -534,13 +534,22 @@ const connectServices = useCallback(async () => {
 
     setConnectionAttempts(0); // Reset on success
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Connection failed";
-    setError(errorMessage);
+    const failure = classifyConnectFailure(error);
+    setError(failure.detail); // raw SDK text, for the debug dialog only
+    setFailure(failure); // what the surfaces render
 
-    // Implement exponential backoff retry
     const newAttempts = connectionAttempts + 1;
     setConnectionAttempts(newAttempts);
+
+    // Stream says a non-retryable code cannot succeed as-is (a deactivated
+    // user is code 16). Report once, with a stable fingerprint, and stop.
+    if (failure.kind !== "retryable") {
+      Sentry.captureException(error, {
+        level: failure.kind === "account-disabled" ? "warning" : "error",
+        fingerprint: ["stream-connect", failure.kind, String(failure.code)],
+      });
+      return;
+    }
 
     if (newAttempts < 5) {
       const delay = getRetryDelay(newAttempts);
@@ -591,10 +600,27 @@ interface StreamConnectionState {
   chatConnected: boolean; // Chat WebSocket active
   videoConnected: boolean; // Video client initialized
   isConnecting: boolean; // Connection in progress
-  error: string | null; // Last error message
+  error: string | null; // Raw SDK message — debug dialog only
+  failure: ConnectFailure | null; // Classified: kind, title, description, action
   retryConnection: () => void; // Manual retry function
 }
 ```
+
+### What a failed connect shows
+
+The SDKs reject `connectUser` with an `Error` whose message is a JSON blob, for example `{"code":16,"StatusCode":404,"message":"WS failed with code 16 and reason - the user … was deactivated","isWSFailure":false}`. The provider used to render that string verbatim and retry it five times with backoff for both clients on every dashboard page, so one deactivated account produced three Sentry error shapes per page load and a Retry button that could never succeed.
+
+`lib/stream/connect-failure.ts` classifies the rejection before it is shown or retried. It reads the code from the error object or from the JSON in its message, then maps it with a copy of the SDK's `APIErrorCodes` table, which `stream-chat` declares but does not export at runtime; `__tests__/stream/connect-failure.test.ts` reads the shipped bundle and fails if the two sets drift. The result carries a `kind`, the human `title` and `description`, and the `action` the empty state should offer.
+
+| Kind               | When                                                                                                                                                                         | The surface offers                                                                                                 |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `account-disabled` | code 16, `DoesNotExistError`: the user id cannot connect because it is deactivated, deleted, or was never created (the upsert was refused, for example on withdrawn consent) | "Messaging is turned off for this account" with a **Contact support** button that opens the platform support sheet |
+| `not-retryable`    | any other code Stream marks `retryable: false` (a bad or expired token, a suspended app, a wrong region)                                                                     | "Chat is unavailable" with **Reload**, which re-mints tokens                                                       |
+| `retryable`        | a network failure, a timeout, a rate limit, or anything without a code                                                                                                       | the previous copy with **Retry**, and the five-attempt backoff continues                                           |
+
+A non-retryable failure is reported to Sentry once at `warning` level for an account state and `error` otherwise, fingerprinted on `["stream-connect", kind, code]` and tagged `stream.failure` and `stream.code`, and no retry is scheduled. The video client is constructed without a `user` and `connectUser` is awaited with `maxConnectUserRetries: 1`: the constructor's auto-connect used to retry five times inside the SDK and leak one unhandled rejection per attempt to Sentry's global handler, while the provider reported the video side as connected without ever awaiting it. A failed video client is disconnected before the error propagates, so the global ref only ever holds a client that connected. On the server, `upsertUserToStream` returns `{ refused: "account-disabled" }` for the code 16 / 404 shape instead of throwing, because `@sentry/nextjs` captures anything a server action throws and an account state is not an infrastructure failure; both event-channel callers treat the refusal like the consent gate and skip.
+
+`ChatUnavailable` takes the classified `failure` and never a raw string. A moderation ban deactivates the Stream user permanently; lifting it must go through `POST /api/staff/moderation/reports/[reportId]/unban`, which clears the ban columns **and** calls `restoreStreamAccess`. Editing `users.banned` by hand leaves the Stream side deactivated and is exactly how this surface was first seen.
 
 **Implementation (Lines 28-46):**
 
@@ -1055,13 +1081,22 @@ const connectServices = useCallback(async () => {
     await Promise.all(promises);
     setConnectionAttempts(0); // Reset on success
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Connection failed";
-    setError(errorMessage);
+    const failure = classifyConnectFailure(error);
+    setError(failure.detail); // raw SDK text, for the debug dialog only
+    setFailure(failure); // what the surfaces render
 
-    // Implement exponential backoff retry
     const newAttempts = connectionAttempts + 1;
     setConnectionAttempts(newAttempts);
+
+    // Stream says a non-retryable code cannot succeed as-is (a deactivated
+    // user is code 16). Report once, with a stable fingerprint, and stop.
+    if (failure.kind !== "retryable") {
+      Sentry.captureException(error, {
+        level: failure.kind === "account-disabled" ? "warning" : "error",
+        fingerprint: ["stream-connect", failure.kind, String(failure.code)],
+      });
+      return;
+    }
 
     if (newAttempts < 5) {
       // Max 5 attempts

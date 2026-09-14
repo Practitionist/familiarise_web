@@ -43,7 +43,7 @@ export const consultantPublicScalars = {
   languages: true,
   toolsAndTechnologies: true,
   mentoringStyle: true,
-  sessionTypes: true,
+  offeringFormats: true,
   profileCompletionPercentage: true,
   isVerified: true,
   verificationStatus: true,
@@ -93,11 +93,10 @@ export const CONSULTANT_PII_FIELDS = [
  * of the allowlist for a product reason and rejected here for the same one.
  */
 export const CONSULTANT_INTERNAL_SCORE_FIELDS = [
-  // #1300 — the raw, unshrunk, unsuppressed mean. Staff read it; a public payload
-  // must not, because it is 5.0 for a consultant with one review and 0 for one
-  // with none — the two outcomes the publication threshold exists to prevent. Kept
-  // out of the allowlist AND rejected here, so a producer that reintroduces it by
-  // hand fails closed instead of rendering a number nobody vetted.
+  // #1300 — the raw, unshrunk, unsuppressed mean: 5.0 for a consultant with one
+  // review and 0 for one with none, the two outcomes the publication threshold
+  // exists to prevent. #1554 dropped the column; the name stays rejected here so
+  // a producer that reintroduces it by hand fails closed.
   "rating",
 ] as const;
 
@@ -150,7 +149,7 @@ export const consultantPublicApiSchema = z
     languages: z.array(z.string()).optional(),
     toolsAndTechnologies: z.array(z.string()).optional(),
     mentoringStyle: z.string().nullish(),
-    sessionTypes: z.array(z.string()).optional(),
+    offeringFormats: z.array(z.string()).optional(),
     profileCompletionPercentage: z.number().nullish(),
     isVerified: z.boolean().nullish(),
     verificationStatus: z.string().nullish(),

@@ -36,11 +36,11 @@ describe("org appointment detail binds both ids", () => {
   });
 
   it("checks the caller is a party to the appointment", () => {
-    // Requester, trial consultee, or attached to a slot — the same test the
-    // consultee detail page applies.
+    // Requester, trial consultee, or a live seat holder (#1554) — the same
+    // test the consultee detail page applies.
     expect(src).toContain("requestedBy?.id === profile.id");
-    expect(src).toContain("trialSession?.consulteeProfile?.id === profile.id");
-    expect(src).toContain("slotsOfAppointment.some");
+    expect(src).toContain("trial?.consulteeProfile?.id === profile.id");
+    expect(src).toContain("participants.some");
   });
 
   it("fails closed on every branch", () => {

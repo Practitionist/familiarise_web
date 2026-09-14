@@ -27,7 +27,7 @@ export default async function WebinarDetailsPage({
 
   const firstWebinarInstance = webinarData.webinars?.[0];
   const nextSession =
-    firstWebinarInstance?.appointment?.slotsOfAppointment?.[0]?.startsAt;
+    firstWebinarInstance?.appointment?.occurrences?.[0]?.startsAt;
 
   return (
     <WebinarDetails

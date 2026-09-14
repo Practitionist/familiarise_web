@@ -30,7 +30,7 @@ export const APPOINTMENT_LIST_SELECT = {
   select: {
     id: true,
     organizationId: true,
-    slotsOfAppointment: {
+    occurrences: {
       select: {
         id: true,
         startsAt: true,
@@ -74,7 +74,7 @@ export const APPOINTMENT_LIST_SELECT = {
         // complaint that motivated proposals in the first place.
         preferredTimeOfDay: true,
         preferredDays: true,
-        proposedSlots: {
+        proposedTimes: {
           orderBy: { startsAt: "asc" },
           // `round` is selected so the consultant sees the CURRENT offer only.
           // A countered request carries both the consultee's round-1 times and

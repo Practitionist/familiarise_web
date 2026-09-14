@@ -12,7 +12,7 @@
 
 jest.mock("../../lib/prisma", () => {
   const client: Record<string, unknown> = {
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn(),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
@@ -36,10 +36,13 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
+import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
 
 const mocked = prisma as unknown as {
-  slotOfAppointment: { findMany: jest.Mock; updateManyAndReturn: jest.Mock };
+  appointmentOccurrence: {
+    findMany: jest.Mock;
+    updateManyAndReturn: jest.Mock;
+  };
 };
 
 const STALE_SLOT = {
@@ -57,15 +60,17 @@ beforeEach(() => jest.clearAllMocks());
 
 describe("#829 — cleanup release re-states the tentative + unpaid guards", () => {
   it("carries isTentative + no-SUCCEEDED-payment in the CAS WHERE", async () => {
-    mocked.slotOfAppointment.findMany.mockResolvedValue([STALE_SLOT]);
-    mocked.slotOfAppointment.updateManyAndReturn.mockResolvedValue([
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([STALE_SLOT]);
+    mocked.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
       { id: "slot-1" },
     ]);
 
-    const result = await cleanupTentativeSlots();
+    const result = await cleanupTentativeOccurrences();
 
     expect(result.slotsReleased).toBe(1);
-    expect(mocked.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(
+      mocked.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
           id: { in: ["slot-1"] },
@@ -88,25 +93,27 @@ describe("#829 — cleanup release re-states the tentative + unpaid guards", () 
     );
     // Freed by status, with the row left behind for support.
     const [{ data }] =
-      mocked.slotOfAppointment.updateManyAndReturn.mock.calls[0];
+      mocked.appointmentOccurrence.updateManyAndReturn.mock.calls[0];
     expect(data.deletedAt).toBeInstanceOf(Date);
   });
 
   it("excludes already-released rows from the cohort read", async () => {
     // Without this the sweep re-collects its own soft-cancelled rows every
     // run and a backlog fills the per-run cap with dead slots forever.
-    mocked.slotOfAppointment.findMany.mockResolvedValue([]);
-    await cleanupTentativeSlots();
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
+    await cleanupTentativeOccurrences();
 
-    const [cohortRead] = mocked.slotOfAppointment.findMany.mock.calls[0];
+    const [cohortRead] = mocked.appointmentOccurrence.findMany.mock.calls[0];
     expect(cohortRead.where).toEqual(
       expect.objectContaining({ isTentative: true, deletedAt: null }),
     );
   });
 
   it("releases nothing when the scan finds nothing", async () => {
-    mocked.slotOfAppointment.findMany.mockResolvedValue([]);
-    await cleanupTentativeSlots();
-    expect(mocked.slotOfAppointment.updateManyAndReturn).not.toHaveBeenCalled();
+    mocked.appointmentOccurrence.findMany.mockResolvedValue([]);
+    await cleanupTentativeOccurrences();
+    expect(
+      mocked.appointmentOccurrence.updateManyAndReturn,
+    ).not.toHaveBeenCalled();
   });
 });

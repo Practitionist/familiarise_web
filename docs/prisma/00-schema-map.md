@@ -75,12 +75,12 @@ flowchart TD
         Subscription
         Webinar
         Class
-        TrialSession
+        Trial
     end
     subgraph Core["Appointment Core"]
         Appointment
-        SlotOfAppointment
-        MeetingSession
+        AppointmentOccurrence
+        Meeting
         Recording
     end
     subgraph Docs["Documents"]
@@ -577,7 +577,7 @@ erDiagram
     ConsultantProfile {
         string id
     }
-    SlotOfAvailabilityWeekly {
+    AvailabilityWindowWeekly {
         string id
         string consultantProfileId
         DayOfWeek startDay
@@ -586,22 +586,22 @@ erDiagram
         int endTimeUtc
         int utcOffsetMinutes
     }
-    SlotOfAvailabilityCustom {
+    AvailabilityWindowCustom {
         string id
         string consultantProfileId
         datetime startsAt
         datetime endsAt
     }
-    SlotOfAppointment {
+    AppointmentOccurrence {
         string id
         string appointmentId
         datetime startsAt
         datetime endsAt
         boolean isTentative
-        SlotCompletionStatus completionStatus
+        OccurrenceCompletionStatus completionStatus
         datetime completedAt
     }
-    MeetingSession {
+    Meeting {
         string id
         string slotOfAppointmentId
         string streamCallId
@@ -612,7 +612,7 @@ erDiagram
     }
     Recording {
         string id
-        string meetingSessionId
+        string meetingId
         RecordingStorageType storageType
         RecordingStatus status
         string streamRecordingId
@@ -621,10 +621,10 @@ erDiagram
         datetime transferredAt
     }
 
-    ConsultantProfile ||--o{ SlotOfAvailabilityWeekly : "weekly windows"
-    ConsultantProfile ||--o{ SlotOfAvailabilityCustom : "custom windows"
-    SlotOfAppointment ||--o| MeetingSession : "live session"
-    MeetingSession ||--o{ Recording : "recordings"
+    ConsultantProfile ||--o{ AvailabilityWindowWeekly : "weekly windows"
+    ConsultantProfile ||--o{ AvailabilityWindowCustom : "custom windows"
+    AppointmentOccurrence ||--o| Meeting : "live session"
+    Meeting ||--o{ Recording : "recordings"
 ```
 
 > **Key invariant**: `startTimeUtc` and `endTimeUtc` are stored as **integer minutes since midnight UTC** (0–1439). The 30-minute atomic slot is the fundamental booking unit.
@@ -674,7 +674,7 @@ erDiagram
         datetime schedulingPeriodStartsAt
         datetime schedulingPeriodEndsAt
     }
-    TrialSession {
+    Trial {
         string id
         string consulteeProfileId
         string consultantProfileId
@@ -684,7 +684,7 @@ erDiagram
         string organizationId
         string pendingPaymentUrl
         string paymentId
-        TrialSessionStatus status
+        TrialStatus status
     }
     PlatformPricingConfig {
         string id
@@ -695,9 +695,9 @@ erDiagram
     ConsultationPlan ||--o{ Consultation : "booked under"
     ConsulteeProfile ||--o{ Subscription : "requests"
     SubscriptionPlan ||--o{ Subscription : "booked under"
-    ConsulteeProfile ||--o{ TrialSession : "trial"
-    SubscriptionPlan ||--o{ TrialSession : "trialled"
-    TrialSession ||--o| Subscription : "converts to"
+    ConsulteeProfile ||--o{ Trial : "trial"
+    SubscriptionPlan ||--o{ Trial : "trialled"
+    Trial ||--o| Subscription : "converts to"
 ```
 
 ---
@@ -778,18 +778,18 @@ erDiagram
         string id
         ClassStatus status
     }
-    TrialSession {
+    Trial {
         string id
-        TrialSessionStatus status
+        TrialStatus status
         string appointmentId
     }
-    SlotOfAppointment {
+    AppointmentOccurrence {
         string id
         string appointmentId
         datetime startsAt
         datetime endsAt
         boolean isTentative
-        SlotCompletionStatus completionStatus
+        OccurrenceCompletionStatus completionStatus
     }
     Payment {
         string id
@@ -809,8 +809,8 @@ erDiagram
     Subscription ||--o{ Appointment : "1-to-many sessions"
     Webinar ||--o| Appointment : "shared by all registrants"
     Class ||--o{ Appointment : "one per session"
-    TrialSession ||--o| Appointment : "free session"
-    Appointment ||--|{ SlotOfAppointment : "1+ time slots"
+    Trial ||--o| Appointment : "free session"
+    Appointment ||--|{ AppointmentOccurrence : "1+ time slots"
     Appointment ||--o{ Payment : "paid via"
     Appointment ||--o{ AppointmentDocument : "docs"
 ```
@@ -823,11 +823,11 @@ The Stream.io video layer and dual-storage recording system.
 
 ```mermaid
 erDiagram
-    SlotOfAppointment {
+    AppointmentOccurrence {
         string id
-        SlotCompletionStatus completionStatus
+        OccurrenceCompletionStatus completionStatus
     }
-    MeetingSession {
+    Meeting {
         string id
         string slotOfAppointmentId
         string streamCallId
@@ -840,7 +840,7 @@ erDiagram
     }
     Recording {
         string id
-        string meetingSessionId
+        string meetingId
         string organizationId
         string title
         RecordingStorageType storageType
@@ -855,8 +855,8 @@ erDiagram
         datetime transferredAt
     }
 
-    SlotOfAppointment ||--o| MeetingSession : "one session"
-    MeetingSession ||--o{ Recording : "recordings"
+    AppointmentOccurrence ||--o| Meeting : "one session"
+    Meeting ||--o{ Recording : "recordings"
 ```
 
 > **Dual storage**: `STREAM_S3` = temporary 2-week storage (free tier). `SUPABASE` = permanent (premium). `RecordingStatus` lifecycle: RECORDING → PROCESSING → READY → TRANSFERRING → AVAILABLE.
@@ -1926,9 +1926,9 @@ Every enum in the schema and its values.
 | `PayoutArrangement`            | DIRECT, AOR, EOR                                                                                                                                                                                                                                                                       |
 | `AppointmentStatus`            | PENDING, APPROVED, APPROVED_PENDING_PAYMENT, SCHEDULED, COMPLETED, REJECTED, CANCELLED, EXPIRED                                                                                                                                                                                        |
 | `AppointmentsType`             | CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS, TRIAL                                                                                                                                                                                                                                      |
-| `SlotCompletionStatus`         | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED                                                                                                                                                                                                                               |
+| `OccurrenceCompletionStatus`         | SCHEDULED, COMPLETED, UNVERIFIED, CANCELLED, RESCHEDULED                                                                                                                                                                                                                               |
 | `BookingSource`                | DIRECT_CHECKOUT, REQUEST_SUBMITTED                                                                                                                                                                                                                                                     |
-| `TrialSessionStatus`           | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                                          |
+| `TrialStatus`           | PENDING, SCHEDULED, COMPLETED, CONVERTED, CANCELLED, REJECTED                                                                                                                                                                                                                          |
 | `WaitlistStatus`               | PENDING, SUBSCRIBED, UNSUBSCRIBED, BOUNCED (newsletter list)                                                                                                                                                                                                                           |
 | `WaitlistSource`               | LANDING_PAGE, FOOTER, BLOG, USE_CASE_PAGE, EVENT_SOLD_OUT, IMPORT                                                                                                                                                                                                                      |
 | `WebinarStatus`                | SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED                                                                                                                                                                                                                                           |
@@ -1962,7 +1962,7 @@ Every enum in the schema and its values.
 | `AchievementType`              | AWARD, PUBLICATION, PROJECT, TALK, OPEN_SOURCE, OTHER                                                                                                                                                                                                                                  |
 | `CareerStage`                  | SCHOOL_STUDENT, STUDENT, EARLY_CAREER, MID_CAREER, SENIOR, EXECUTIVE                                                                                                                                                                                                                   |
 | `BudgetPreference`             | BUDGET, MODERATE, PREMIUM, FLEXIBLE                                                                                                                                                                                                                                                    |
-| `SessionType`                  | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
+| `OfferingFormat`                  | ONE_ON_ONE, GROUP, ASYNC_REVIEW                                                                                                                                                                                                                                                        |
 | `ActivityType`                 | CONSULTATION_BOOKED, CONSULTATION_COMPLETED, CONSULTATION_CANCELLED, SUBSCRIPTION_REQUESTED, SUBSCRIPTION_APPROVED, SUBSCRIPTION_CANCELLED, WEBINAR_REGISTERED, CLASS_ENROLLED, TRIAL_REQUESTED, TRIAL_SCHEDULED, TRIAL_COMPLETED, TRIAL_CONVERTED, REVIEW_SUBMITTED, MESSAGE_RECEIVED |
 | `FeedbackStatus`               | PENDING, ACKNOWLEDGED, IN_PROGRESS, RESOLVED, CLOSED                                                                                                                                                                                                                                   |
 | `SupportTicketStatus`          | OPEN, IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED                                                                                                                                                                                                                                           |

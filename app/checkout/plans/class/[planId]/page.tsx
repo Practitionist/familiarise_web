@@ -49,7 +49,7 @@ import type {
   Class as PrismaClass,
   Tag as PrismaTag,
   Topic as PrismaTopic,
-  SlotOfAppointment,
+  AppointmentOccurrence,
   SubDomain,
   User,
 } from "@prisma/client";
@@ -73,7 +73,7 @@ export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
     | null;
   classes: (PrismaClass & {
     appointments: (Appointment & {
-      slotsOfAppointment: SlotOfAppointment[];
+      occurrences: AppointmentOccurrence[];
     })[];
   })[];
   topics: PrismaTopic[];
@@ -466,7 +466,7 @@ export default function ClassCheckoutPage({
   const userDetails = consultantDetails?.user;
 
   const nextClassSession =
-    planDetails?.classes?.[0]?.appointments?.[0]?.slotsOfAppointment?.[0];
+    planDetails?.classes?.[0]?.appointments?.[0]?.occurrences?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (

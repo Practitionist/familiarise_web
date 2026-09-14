@@ -21,22 +21,23 @@ import {
 
 /** Verbatim output of
  *  `prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --script`
- *  run on `dev` while the live database carried #1268's schema. */
+ *  run on `dev` while the live database carried #1268's schema, with the
+ *  identifiers rewritten to the #1554 vocabulary so the fixture reads as current. */
 const REAL_REVERTING_PLAN = `
 -- DropForeignKey
-ALTER TABLE "AppointmentFeedback" DROP CONSTRAINT "AppointmentFeedback_slotOfAppointmentId_fkey";
+ALTER TABLE "AppointmentFeedback" DROP CONSTRAINT "AppointmentFeedback_appointmentOccurrenceId_fkey";
 
 -- DropIndex
 DROP INDEX "AppointmentFeedback_appointmentId_userId_idx";
 
 -- DropIndex
-DROP INDEX "AppointmentFeedback_slotOfAppointmentId_userId_key";
+DROP INDEX "AppointmentFeedback_appointmentOccurrenceId_userId_key";
 
 -- DropIndex
 DROP INDEX "ConsultantReview_consultantProfileId_consulteeProfileId_key";
 
 -- AlterTable
-ALTER TABLE "AppointmentFeedback" DROP COLUMN "slotOfAppointmentId";
+ALTER TABLE "AppointmentFeedback" DROP COLUMN "appointmentOccurrenceId";
 
 -- AlterTable
 ALTER TABLE "ConsultantReview" DROP COLUMN "isAnonymous";

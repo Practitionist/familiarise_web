@@ -38,7 +38,7 @@ export default async function AppointmentDetailPage({
     appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
     appointment.class?.classPlan?.consultantProfile?.id,
-    appointment.trialSession?.subscriptionPlan?.consultantProfile?.id,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.id,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.id,
     ),

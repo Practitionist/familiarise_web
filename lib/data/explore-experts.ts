@@ -186,14 +186,20 @@ export function orderByForSort(
       return { user: { name: "desc" } };
     case "reviewCount":
       // The number the card prints is the 1:1 client count, so "Most Reviews"
-      // orders on it — the order and the number shown agree.
-      return { ratedClientsOneToOne: "desc" };
+      // orders on it — the order and the number shown agree — with rated
+      // events as the tie-break so a group-only expert ranks by their events
+      // rather than sinking with every other zero (#1554).
+      return [{ ratedClientsOneToOne: "desc" }, { ratedEventsGroup: "desc" }];
     case "trending":
-      // #705 — the denormalized count, which excludes soft-deleted reviews.
-      // `{ reviews: { _count: "desc" } }` counted them: Prisma cannot filter a
-      // relation _count inside orderBy, so a moderated-away review kept
-      // pushing its consultant up the trending list.
-      return { reviewCount: "desc" };
+      // #1554 — "trending" is recent review ACTIVITY: `ratingAggregatedAt` is
+      // stamped by every recompute, i.e. every review mutation, and excludes
+      // moderated-away rows the same way the retired count did (Prisma cannot
+      // filter a relation _count inside orderBy). Distinct from "Most
+      // Reviews", which is volume.
+      return [
+        { ratingAggregatedAt: { sort: "desc", nulls: "last" } },
+        { ratedClientsOneToOne: "desc" },
+      ];
     case "rating":
       // The same two-track policy as the card's star, so the order and the
       // number shown agree. Sorting on the raw mean let a 5.0 from a single
@@ -271,12 +277,12 @@ export async function fetchExpertsMetadata() {
         }),
         // #1485 — the real "sessions completed" figure, replacing a hardcoded
         // "50K+". The unit is the SLOT, not the appointment: a slot is one
-        // meeting, and COMPLETED means it was actually held (a MeetingSession
+        // meeting, and COMPLETED means it was actually held (a Meeting
         // ended, or a consultant marked it). `Appointment` carries no status
         // of its own, and a subscription appointment spans many meetings.
         // UNVERIFIED (past, no meeting record) is deliberately excluded — it
         // may well have happened offline, but "may have" is not a claim.
-        prisma.slotOfAppointment.count({
+        prisma.appointmentOccurrence.count({
           where: { completionStatus: "COMPLETED", deletedAt: null },
         }),
       ]);

@@ -7,11 +7,11 @@
  * eligibility and refund % definitions from drifting.
  */
 
-import type { Prisma, SlotCompletionStatus } from "@prisma/client";
+import type { Prisma, OccurrenceCompletionStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 
 /** Mutable list — Prisma's `notIn` rejects `readonly` tuples from `as const`. */
-const DEAD_COMPLETION_STATUSES: SlotCompletionStatus[] = [
+const DEAD_COMPLETION_STATUSES: OccurrenceCompletionStatus[] = [
   "CANCELLED",
   "RESCHEDULED",
 ];
@@ -28,13 +28,13 @@ export async function findLiveEventSlot(
     startsAtGte?: Date;
   },
 ): Promise<{ startsAt: Date } | null> {
-  const where: Prisma.SlotOfAppointmentWhereInput = {
+  const where: Prisma.AppointmentOccurrenceWhereInput = {
     appointment,
     deletedAt: null,
     completionStatus: { notIn: DEAD_COMPLETION_STATUSES },
     ...(opts.startsAtGte ? { startsAt: { gte: opts.startsAtGte } } : {}),
   };
-  return prisma.slotOfAppointment.findFirst({
+  return prisma.appointmentOccurrence.findFirst({
     where,
     orderBy: { startsAt: opts.order },
     select: { startsAt: true },

@@ -11,42 +11,42 @@ export interface SessionInfo {
 }
 
 /**
- * Consolidate appointment slots into session rows.
- *
- * Each appointment represents one class session — its slots are consecutive
- * time blocks (e.g. 3×30 min = 1.5 hr). This function merges them into a
- * single start→end range per appointment and assigns a global session number.
+ * One session row per occurrence of the class's wrapper (#1554), in start
+ * order, with a global session number.
  */
 interface AppointmentSlot {
   startsAt: string | Date;
   endsAt: string | Date;
+  completionStatus?: string | null;
+  deletedAt?: string | Date | null;
 }
 
 interface AppointmentWithSlots {
   id: string;
-  slotsOfAppointment: AppointmentSlot[];
+  occurrences: AppointmentSlot[];
 }
 
-export function buildSessionsFromAppointments(
-  appointments: AppointmentWithSlots[],
+export function buildSessionsFromAppointment(
+  appointment: AppointmentWithSlots | null | undefined,
 ): SessionInfo[] {
   const now = new Date();
+  if (!appointment) return [];
 
-  const sorted = [...appointments]
-    .filter((a) => a.slotsOfAppointment?.length > 0)
-    .sort((a, b) => {
-      const aStart = new Date(a.slotsOfAppointment[0].startsAt).getTime();
-      const bStart = new Date(b.slotsOfAppointment[0].startsAt).getTime();
-      return aStart - bStart;
-    });
-
-  return sorted.map((appointment, idx) => {
-    const slots = [...appointment.slotsOfAppointment].sort(
+  const sorted = [...appointment.occurrences]
+    .filter(
+      (o) =>
+        !o.deletedAt &&
+        o.completionStatus !== "CANCELLED" &&
+        o.completionStatus !== "RESCHEDULED",
+    )
+    .sort(
       (a, b) =>
         new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
     );
-    const sessionStart = new Date(slots[0].startsAt);
-    const sessionEnd = new Date(slots[slots.length - 1].endsAt);
+
+  return sorted.map((occurrence, idx) => {
+    const sessionStart = new Date(occurrence.startsAt);
+    const sessionEnd = new Date(occurrence.endsAt);
 
     let status: SessionStatus = "Upcoming";
     if (now > sessionEnd) status = "Completed";

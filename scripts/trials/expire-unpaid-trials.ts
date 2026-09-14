@@ -21,7 +21,7 @@
  * Schedule: Hourly
  */
 
-import { TrialSessionStatus } from "@prisma/client";
+import { TrialStatus } from "@prisma/client";
 
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import prisma from "../../lib/prisma";
@@ -53,16 +53,16 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
   console.log("🧹 Starting unpaid trial expiry...");
 
   try {
-    const result = await prisma.trialSession.updateMany({
+    const result = await prisma.trial.updateMany({
       where: {
-        status: TrialSessionStatus.AWAITING_PAYMENT,
+        status: TrialStatus.AWAITING_PAYMENT,
         // A null paymentDueAt means the pay-link was never minted — the gateway
         // call failed after acceptance. Sweep those too: holding a slot for a
         // trial nobody can pay for is the worst case of all.
         OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
       },
       data: {
-        status: TrialSessionStatus.CANCELLED,
+        status: TrialStatus.CANCELLED,
         // The link is dead once cancelled; leaving it would let a stale
         // dashboard row send someone to a checkout for a released slot.
         pendingPaymentUrl: null,

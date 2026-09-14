@@ -26,7 +26,7 @@ const mockPrisma = {
   user: { findUnique: jest.fn() },
   consultation: { findFirst: jest.fn(), findMany: jest.fn() },
   subscription: { findFirst: jest.fn(), findMany: jest.fn() },
-  slotOfAppointment: { findFirst: jest.fn() },
+  appointmentOccurrence: { findFirst: jest.fn() },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -52,7 +52,7 @@ const DUAL = {
 function noRelationships() {
   mockPrisma.consultation.findFirst.mockResolvedValue(null);
   mockPrisma.subscription.findFirst.mockResolvedValue(null);
-  mockPrisma.slotOfAppointment.findFirst.mockResolvedValue(null);
+  mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue(null);
 }
 
 function bothUsersExist(a: unknown, b: unknown) {
@@ -95,14 +95,14 @@ describe("canDirectMessage", () => {
     // peer DM, which the moderation ADR forbids. Host↔attendee DMs are not
     // offered by any surface either — event rows open the team channel.
     bothUsersExist(CONSULTEE, CONSULTEE);
-    mockPrisma.slotOfAppointment.findFirst.mockResolvedValue({ id: "slot-1" });
+    mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue({ id: "slot-1" });
 
     const { canDirectMessage } = await load();
     await expect(canDirectMessage("attendee-a", "attendee-b")).resolves.toBe(
       false,
     );
     // The slot table is no longer consulted at all.
-    expect(mockPrisma.slotOfAppointment.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.appointmentOccurrence.findFirst).not.toHaveBeenCalled();
   });
 
   it("refuses two strangers", async () => {
