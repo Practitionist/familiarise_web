@@ -16,6 +16,7 @@
  */
 
 import type { PrismaLike } from "@/lib/prisma";
+import type { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
@@ -294,7 +295,23 @@ export async function replaceOccurrence(
 // Predicates
 // ---------------------------------------------------------------------------
 
-const DEAD_COMPLETION_STATUSES = new Set(["CANCELLED", "RESCHEDULED"]);
+// A mutable array: Prisma's `notIn` rejects a readonly tuple.
+const DEAD_COMPLETION_STATUS_LIST: OccurrenceCompletionStatus[] = [
+  "CANCELLED",
+  "RESCHEDULED",
+];
+const DEAD_COMPLETION_STATUSES = new Set<string>(DEAD_COMPLETION_STATUS_LIST);
+
+/**
+ * Prisma `where` twin of `isDeadOccurrence` — a live row on the appointment.
+ * A reschedule releases a row IN PLACE (`isTentative: true` + RESCHEDULED),
+ * so any `isTentative` filter that omits this re-selects or resurrects it
+ * (FAMILIARISE_WEB-46).
+ */
+export const liveOccurrenceWhere = {
+  deletedAt: null,
+  completionStatus: { notIn: DEAD_COMPLETION_STATUS_LIST },
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
 
 /**
  * Non-live for planner rewrites and join math.
