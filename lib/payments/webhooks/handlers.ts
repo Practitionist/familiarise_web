@@ -2168,6 +2168,7 @@ async function sendPaymentSuccessNotification(
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,
+      paymentReference: payment.id,
     });
 
     console.log(

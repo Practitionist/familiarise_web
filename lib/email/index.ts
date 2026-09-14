@@ -192,6 +192,7 @@ export async function sendPaymentSuccessEmail({
   currency,
   receiptUrl,
   dashboardUrl = `${getAppUrl()}/dashboard`,
+  paymentReference,
 }: {
   email: string;
   name: string;
@@ -201,7 +202,10 @@ export async function sendPaymentSuccessEmail({
   currency: string;
   receiptUrl?: string;
   dashboardUrl?: string;
+  paymentReference?: string;
 }) {
+  // #1298 — the reference is part of the rendered body, so two same-amount
+  // receipts to one customer within 24 h get distinct idempotency keys.
   return send(
     "PAYMENT_SUCCESS",
     PaymentSuccessEmail({
@@ -212,6 +216,7 @@ export async function sendPaymentSuccessEmail({
       currency,
       receiptUrl,
       dashboardUrl,
+      paymentReference,
     }),
     {
       from: SENDERS.payments,

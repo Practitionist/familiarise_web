@@ -24,6 +24,8 @@ interface PaymentSuccessEmailProps {
   currency: string;
   receiptUrl?: string;
   dashboardUrl?: string;
+  /** Shown to the customer and quoted to support; also keeps two same-amount receipts distinct (#1298). */
+  paymentReference?: string;
 }
 
 export const PaymentSuccessEmail = ({
@@ -34,6 +36,7 @@ export const PaymentSuccessEmail = ({
   currency = "USD",
   receiptUrl,
   dashboardUrl = `${getAppUrl()}/dashboard`,
+  paymentReference,
 }: PaymentSuccessEmailProps) => {
   const previewText = `Payment confirmed! Your ${appointmentType} with ${consultantName} is scheduled`;
 
@@ -77,6 +80,12 @@ export const PaymentSuccessEmail = ({
                     <td style={detailLabel}>Consultant:</td>
                     <td style={detailValue}>{consultantName}</td>
                   </tr>
+                  {paymentReference && (
+                    <tr>
+                      <td style={detailLabel}>Reference:</td>
+                      <td style={detailValue}>{paymentReference}</td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </Section>

@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
+import { createHash } from "node:crypto";
 import { companyPostalAddress } from "@/lib/email/config";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
@@ -37,6 +38,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     const { subject, htmlBody, textBody } = parsed.data;
+
+    // #1298 — a marketing send without a postal address is not compliant
+    // (CAN-SPAM §5(a)(5)); refuse in production rather than ship it bare.
+    if (process.env.NODE_ENV === "production" && !companyPostalAddress()) {
+      return NextResponse.json(
+        {
+          error:
+            "NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS is not set; newsletter sends need a postal address in the footer",
+        },
+        { status: 412 },
+      );
+    }
 
     const resend = getResendClient();
     if (!resend) {
@@ -131,8 +144,11 @@ async function sendBatch(
   emails: BroadcastMessage[],
 ): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
   try {
-    // #1298 — no idempotency key: the batch endpoint takes one per request.
-    const result = await resend.batch.send(emails);
+    // #1298 — one key per batch request, derived from its content like the
+    // single-send path, so an admin re-submit inside 24 h cannot double-send.
+    const result = await resend.batch.send(emails, {
+      idempotencyKey: batchIdempotencyKey(emails),
+    });
     if (result.error) {
       throw new Error(result.error.message || "Resend batch error");
     }
@@ -180,6 +196,16 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   if (html.includes("</html>"))
     return html.replace("</html>", `${footer}</html>`);
   return html + footer;
+}
+
+function batchIdempotencyKey(emails: BroadcastMessage[]): string {
+  const first = emails[0];
+  const digest = createHash("sha256")
+    .update(
+      [first.subject, first.html, ...emails.map((e) => e.to).sort()].join("\n"),
+    )
+    .digest("hex");
+  return `WAITLIST_BROADCAST/${digest.slice(0, 48)}`;
 }
 
 function escapeHtml(value: string): string {
