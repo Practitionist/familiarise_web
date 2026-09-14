@@ -10,7 +10,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { getResendClient, recordFailedEmail } from "@/lib/email";
+import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -21,7 +21,6 @@ const sendSchema = z.object({
 });
 
 const BATCH_SIZE = 100;
-const FROM_ADDRESS = "Familiarise <newsletter@familiarise.com>";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -109,7 +108,7 @@ function buildMessage(
 ) {
   const unsubscribeUrl = buildUnsubscribeUrl(email);
   return {
-    from: FROM_ADDRESS,
+    from: SENDERS.newsletter,
     to: email,
     subject,
     html: appendUnsubscribeFooter(htmlBody, unsubscribeUrl),
@@ -131,6 +130,7 @@ async function sendBatch(
   emails: BroadcastMessage[],
 ): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
   try {
+    // #1298 — no idempotency key: the batch endpoint takes one per request.
     const result = await resend.batch.send(emails);
     if (result.error) {
       throw new Error(result.error.message || "Resend batch error");

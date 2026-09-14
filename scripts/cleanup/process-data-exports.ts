@@ -33,7 +33,6 @@
  * Schedule: every 10 minutes via `.github/workflows/process-data-exports.yml`.
  */
 
-import { Resend } from "resend";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { recordSystemError } from "../../lib/enterprise/system-events";
@@ -41,6 +40,7 @@ import { checkConsentBatch } from "../../lib/compliance/dpdp";
 import { PURPOSE_CODES } from "../../lib/compliance/purpose-codes";
 import { notifyOrgDataExportReady } from "../../lib/novu/org-workflows";
 import { getAppUrl } from "../../lib/url";
+import { deliver, SENDERS } from "../../lib/email";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 
 export interface DataExportResult {
@@ -238,29 +238,45 @@ async function emailRequester(params: {
   });
   if (!membership?.user?.email) return;
 
-  const resend = new Resend(resendKey);
-  await resend.emails.send({
-    from: "Familiarise <noreply@familiarise.work>",
-    to: membership.user.email,
-    subject: "Your organization data export is ready",
-    text: [
-      `Hi ${membership.user.name ?? ""},`,
-      "",
-      `Your data export bundle is ready. Download it within 7 days:`,
-      params.downloadUrl,
-      "",
-      `Expires: ${params.expiresAt.toISOString()}`,
-      "",
-      "If you didn't request this, contact your org admin.",
-    ].join("\n"),
-  });
+  const lines = [
+    `Hi ${membership.user.name ?? ""},`,
+    "",
+    `Your data export bundle is ready. Download it within 7 days:`,
+    params.downloadUrl,
+    "",
+    `Expires: ${params.expiresAt.toISOString()}`,
+    "",
+    "If you didn't request this, contact your org admin.",
+  ];
+  const esc = (v: string) =>
+    v.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // #1298 — through deliver() so a failed send dead-letters and replays.
+  await deliver(
+    {
+      from: SENDERS.noreply,
+      to: membership.user.email,
+      subject: "Your organization data export is ready",
+      text: lines.join("\n"),
+      html: lines
+        .filter((line) => line !== "")
+        .map((line) =>
+          line === params.downloadUrl
+            ? `<p><a href="${esc(line)}">${esc(line)}</a></p>`
+            : `<p>${esc(line)}</p>`,
+        )
+        .join(""),
+    },
+    "DATA_EXPORT_READY",
+  );
 }
 
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-open: repeat-safe side effects, lock is belt-and-braces.
 export async function processDataExports(): Promise<DataExportResult> {
-  return withCronLock("process-data-exports", { failMode: "open", ttlMs: LONG_JOB_TTL_MS }, () =>
-    processDataExportsUnlocked(),
+  return withCronLock(
+    "process-data-exports",
+    { failMode: "open", ttlMs: LONG_JOB_TTL_MS },
+    () => processDataExportsUnlocked(),
   );
 }
 

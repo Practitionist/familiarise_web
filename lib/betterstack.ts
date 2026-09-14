@@ -8,6 +8,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { SENDERS } from "@/lib/email/config";
 
 const BETTERSTACK_API_URL = "https://uptime.betterstack.com/api/v2";
 
@@ -55,7 +56,7 @@ export async function createIncident(
     const res = await betterstackRequest("/incidents", {
       method: "POST",
       body: JSON.stringify({
-        requester_email: "system@familiarise.com",
+        requester_email: SENDERS.system,
         name,
         summary: summary || "Scheduled platform maintenance",
         call: false,
@@ -81,7 +82,10 @@ export async function createIncident(
     return incidentId ?? null;
   } catch (error) {
     console.error("[BetterStack] Failed to create incident:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "betterstack" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "betterstack" } },
+    );
     return null;
   }
 }
@@ -108,7 +112,10 @@ export async function resolveIncident(incidentId: string): Promise<boolean> {
     return res.ok;
   } catch (error) {
     console.error("[BetterStack] Failed to resolve incident:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "betterstack" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "betterstack" } },
+    );
     return false;
   }
 }

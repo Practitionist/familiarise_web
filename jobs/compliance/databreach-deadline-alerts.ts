@@ -37,7 +37,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
-import { Resend } from "resend";
+import { deliver, SENDERS } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -116,7 +116,6 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
   let emailSent = false;
   if (to && apiKey) {
     try {
-      const resend = new Resend(apiKey);
       const rowsToShow = candidates.slice(0, MAX_ROWS_IN_EMAIL);
       const truncated = candidates.length > MAX_ROWS_IN_EMAIL;
       const appUrl = getAppUrl();
@@ -139,24 +138,29 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
           );
         })
         .join("");
-      await resend.emails.send({
-        from: "Familiarise DPDP <dpdp@familiarise.com>",
-        to,
-        subject: `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdue > 0 ? ` — ${overdue} OVERDUE` : ""}`,
-        html:
-          `<p>The DPDP DataBreach cron found <strong>${atRisk}</strong> ` +
-          `unreported breaches approaching or past the 72-hour DPB ` +
-          `reporting deadline (Section 8(6), DPDP Act). Overdue rows ` +
-          `are highlighted in red.</p>` +
-          `<table border="1" cellpadding="6" cellspacing="0">` +
-          `<thead><tr><th>Detected</th><th>Age</th><th>Affected users</th>` +
-          `<th>Root cause</th><th>DPB ref</th><th></th></tr></thead>` +
-          `<tbody>${tableHtml}</tbody></table>` +
-          (truncated
-            ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the ` +
-              `admin dashboard for the full list.</p>`
-            : ""),
-      });
+      // #1298 — through deliver() so a failed alert dead-letters and replays.
+      const outcome = await deliver(
+        {
+          from: SENDERS.dpdp,
+          to,
+          subject: `[DPDP] ${atRisk} breach(es) approaching 72h deadline${overdue > 0 ? ` — ${overdue} OVERDUE` : ""}`,
+          html:
+            `<p>The DPDP DataBreach cron found <strong>${atRisk}</strong> ` +
+            `unreported breaches approaching or past the 72-hour DPB ` +
+            `reporting deadline (Section 8(6), DPDP Act). Overdue rows ` +
+            `are highlighted in red.</p>` +
+            `<table border="1" cellpadding="6" cellspacing="0">` +
+            `<thead><tr><th>Detected</th><th>Age</th><th>Affected users</th>` +
+            `<th>Root cause</th><th>DPB ref</th><th></th></tr></thead>` +
+            `<tbody>${tableHtml}</tbody></table>` +
+            (truncated
+              ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the ` +
+                `admin dashboard for the full list.</p>`
+              : ""),
+        },
+        "DATABREACH_DEADLINE_ALERT",
+      );
+      if (!outcome.success) throw outcome.error;
       emailSent = true;
       console.log(`[DataBreach] alert email sent to ${to}`);
     } catch (err) {

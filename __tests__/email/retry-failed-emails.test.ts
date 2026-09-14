@@ -13,6 +13,9 @@
  *     attempt 5 is exhausted (operator-replayable; verbatim message preserved).
  *   - the stored fields are replayed verbatim (no re-render, no dispatcher),
  *     falling back to the app default `from` only when fromAddress is null.
+ *   - #1298: the replay carries the content-derived idempotency key, a
+ *     terminal error dead-letters on attempt 1, and an expired verification
+ *     row is dead-lettered without a send.
  */
 
 import {
@@ -20,6 +23,7 @@ import {
   BACKOFF_MS,
   type FailedEmailStore,
 } from "@/jobs/email/retry-failed-emails";
+import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import type { FailedEmail, Prisma } from "@prisma/client";
 import type { Resend, CreateEmailResponse } from "resend";
 
@@ -27,7 +31,7 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
   return {
     id: "fe-1",
     recipient: "user@example.com",
-    fromAddress: "Familiarise Payments <payments@familiarise.com>",
+    fromAddress: "Familiarise Payments <payments@mail.familiarisenow.com>",
     replyTo: null,
     subject: "Payment Confirmed",
     htmlBody: "<p>Thanks</p>",
@@ -144,7 +148,10 @@ describe("runEmailRetryTick — backoff schedule", () => {
 describe("runEmailRetryTick — success path", () => {
   it("marks SENT with sentAt and replays the stored fields verbatim", async () => {
     const stub = makePrismaStub(
-      makeRow({ textBody: "Thanks (text)", replyTo: "support@familiarise.com" }),
+      makeRow({
+        textBody: "Thanks (text)",
+        replyTo: "support@familiarisenow.com",
+      }),
     );
     const resend = mockResend(async () => ({
       data: { id: "re-1" },
@@ -159,15 +166,28 @@ describe("runEmailRetryTick — success path", () => {
     });
 
     expect(result.sent).toBe(1);
-    // Verbatim replay — exactly the persisted rendered fields.
-    expect(resend.send).toHaveBeenCalledWith({
-      from: "Familiarise Payments <payments@familiarise.com>",
-      to: "user@example.com",
-      subject: "Payment Confirmed",
-      html: "<p>Thanks</p>",
-      text: "Thanks (text)",
-      replyTo: "support@familiarise.com",
-    });
+    // Verbatim replay — exactly the persisted rendered fields — under the
+    // same content-derived key the sender used, so Resend dedupes a replay.
+    expect(resend.send).toHaveBeenCalledWith(
+      {
+        from: "Familiarise Payments <payments@mail.familiarisenow.com>",
+        to: "user@example.com",
+        subject: "Payment Confirmed",
+        html: "<p>Thanks</p>",
+        text: "Thanks (text)",
+        replyTo: "support@familiarisenow.com",
+      },
+      {
+        idempotencyKey: idempotencyKeyFor(
+          {
+            to: "user@example.com",
+            subject: "Payment Confirmed",
+            html: "<p>Thanks</p>",
+          },
+          "PAYMENT_SUCCESS",
+        ),
+      },
+    );
     expect(stub.updates[0].data).toMatchObject({
       status: "SENT",
       attempts: 1,
@@ -194,10 +214,11 @@ describe("runEmailRetryTick — success path", () => {
 
     expect(resend.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: "Familiarise <onboarding@familiarise.com>",
+        from: "Familiarise <onboarding@mail.familiarisenow.com>",
         text: undefined,
         replyTo: undefined,
       }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
   });
 
@@ -227,6 +248,62 @@ describe("runEmailRetryTick — success path", () => {
       status: "RETRY",
       lastError: "rate_limited",
     });
+  });
+});
+
+describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
+  it("dead-letters a terminal error on attempt 1 instead of walking the backoff", async () => {
+    const stub = makePrismaStub(makeRow());
+    const resend = mockResend(async () => ({
+      data: null,
+      error: {
+        message: "API key is invalid",
+        name: "validation_error",
+        statusCode: 401,
+      },
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.retried).toBe(0);
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      attempts: 1,
+      lastError: "API key is invalid",
+    });
+  });
+
+  it("dead-letters an expired verification row without sending", async () => {
+    const stub = makePrismaStub(
+      makeRow({
+        emailType: "EMAIL_VERIFICATION",
+        createdAt: new Date(FROZEN_NOW_MS - 61 * 60_000),
+      }),
+    );
+    const resend = mockResend(async () => ({
+      data: { id: "re-never" },
+      error: null,
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({ status: "DEAD_LETTER" });
+    expect((stub.updates[0].data as { lastError: string }).lastError).toContain(
+      "expired before delivery",
+    );
   });
 });
 
