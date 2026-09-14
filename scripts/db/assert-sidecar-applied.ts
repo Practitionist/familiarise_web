@@ -5,7 +5,7 @@
  * The schema is `db push`-managed and the sidecar (prisma/sql/
  * check-constraints.sql) is applied by hand via `npm run db:sidecars` — no
  * deploy step runs it, so a push or restore can silently drop
- * `slot_no_confirmed_overlap` and every CHECK with it, removing the last line
+ * `occurrence_no_confirmed_overlap` and every CHECK with it, removing the last line
  * of defence against double-booking with no visible symptom. This script makes
  * that drift LOUD: run it after every push (`npm run db:assert-sidecars`) and
  * from any recurring health check.

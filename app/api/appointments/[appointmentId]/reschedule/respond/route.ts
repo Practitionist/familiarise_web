@@ -15,7 +15,7 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import type { EventType } from "@/utils/slotAllocation/types";
+import type { EventType } from "@/utils/scheduling-engine/types";
 
 const RespondSchema = z.object({ action: z.enum(["accept", "decline"]) });
 

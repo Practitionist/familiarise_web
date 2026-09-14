@@ -5,7 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
+import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 const futureStart = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 const futureEnd = new Date(futureStart.getTime() + 60 * 60 * 1000);
@@ -23,7 +23,7 @@ function consultationDetail(
     appointment: {
       id: "appt-uuid-1",
       appointmentType: "CONSULTATION",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "slot-1",
           startsAt: futureStart,
@@ -32,7 +32,7 @@ function consultationDetail(
           completionStatus: "SCHEDULED",
           appointmentId: "appt-uuid-1",
           user: [],
-          meetingSession: null,
+          meeting: null,
         },
       ],
       consultation: {
@@ -55,7 +55,7 @@ function consultationDetail(
       subscription: null,
       webinar: null,
       class: null,
-      trialSession: null,
+      trial: null,
     },
     siblings: [],
   } as unknown as TAppointmentDetail;
@@ -66,7 +66,7 @@ function subscriptionDetail(): TAppointmentDetail {
     appointment: {
       id: "appt-sub-1",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "slot-s1",
           startsAt: futureStart,
@@ -75,7 +75,7 @@ function subscriptionDetail(): TAppointmentDetail {
           completionStatus: "SCHEDULED",
           appointmentId: "appt-sub-1",
           user: [],
-          meetingSession: null,
+          meeting: null,
         },
       ],
       consultation: null,
@@ -98,7 +98,7 @@ function subscriptionDetail(): TAppointmentDetail {
       },
       webinar: null,
       class: null,
-      trialSession: null,
+      trial: null,
     },
     siblings: [],
   } as unknown as TAppointmentDetail;

@@ -14,6 +14,7 @@ import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { streamLogger } from "@/lib/stream-logger";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 
 // Only allow in development or with explicit production flag
 const ALLOW_IN_PRODUCTION = process.env.ALLOW_DEBUG_IN_PRODUCTION === "true";
@@ -154,9 +155,7 @@ export async function GET(req: NextRequest) {
         : prisma.webinar.count({
             where: {
               appointment: {
-                slotsOfAppointment: {
-                  some: { user: { some: { id: userId } } },
-                },
+                participants: { some: liveParticipant(userId) },
               },
             },
           }),
@@ -168,12 +167,8 @@ export async function GET(req: NextRequest) {
           })
         : prisma.class.count({
             where: {
-              appointments: {
-                some: {
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
-                },
+              appointment: {
+                participants: { some: liveParticipant(userId) },
               },
             },
           }),

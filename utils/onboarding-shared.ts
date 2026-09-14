@@ -56,7 +56,7 @@ export function buildConsultantScalarData(data: ConsultantProfileCreateData) {
     languages: data.languages ?? [],
     toolsAndTechnologies: data.toolsAndTechnologies ?? [],
     mentoringStyle: data.mentoringStyle ?? null,
-    sessionTypes: data.sessionTypes ?? [],
+    offeringFormats: data.offeringFormats ?? [],
   };
 }
 

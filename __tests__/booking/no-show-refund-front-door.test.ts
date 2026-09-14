@@ -69,7 +69,7 @@ jest.mock("../../lib/prisma", () => {
         appointment: { id: "appt-1" },
       }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     bookingStatusHistory: {
@@ -136,9 +136,9 @@ function noShowCandidate(payment: {
           ...payment,
         },
       ],
-      slotsOfAppointment: [
+      occurrences: [
         {
-          meetingSession: {
+          meeting: {
             // #1280 — the detector now asks Stream to corroborate before any
             // money moves, so the session needs a call id for it to ask about.
             // Without one it refuses, which is the correct behaviour and not
@@ -249,7 +249,7 @@ describe("consultant no-show refunds", () => {
 
   it("leaves a session the consultant actually attended alone", async () => {
     const attended = noShowCandidate({ id: "pay-1", amount: 150000 });
-    attended.appointment.slotsOfAppointment[0].meetingSession.attendances = [
+    attended.appointment.occurrences[0].meeting.attendances = [
       { userId: CONSULTEE_USER },
       { userId: CONSULTANT_USER },
     ];

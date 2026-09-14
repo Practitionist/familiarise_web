@@ -19,11 +19,11 @@
  * Action: Marks invalid records as CANCELLED (preserves audit trail)
  */
 
-import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
+import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 import {
   CANCELLABLE_FROM,
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -64,7 +64,7 @@ async function cancelRequestsAndReleaseSlots(
         if (!(error instanceof IllegalTransitionError)) throw error;
         return { cancelled: false as const, slotsCancelled: 0 };
       }
-      const slotsCancelled = await transitionSlotCompletion(tx, {
+      const slotsCancelled = await transitionOccurrenceCompletion(tx, {
         where: {
           appointment:
             kind === "consultation"
@@ -72,7 +72,7 @@ async function cancelRequestsAndReleaseSlots(
               : { subscription: { id } },
           deletedAt: null,
         },
-        to: SlotCompletionStatus.CANCELLED,
+        to: OccurrenceCompletionStatus.CANCELLED,
         data: { deletedAt: new Date() },
         allowZero: true,
       });
@@ -157,7 +157,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
         createdAt: true,
         appointment: {
           select: {
-            slotsOfAppointment: {
+            occurrences: {
               select: { startsAt: true, endsAt: true },
               orderBy: { startsAt: "asc" },
             },
@@ -174,7 +174,7 @@ export async function cleanupDuplicateConsultations(): Promise<{
     const slotFingerprint = (
       c: (typeof consultations)[number],
     ): string | null => {
-      const slots = c.appointment?.slotsOfAppointment;
+      const slots = c.appointment?.occurrences;
       if (!slots || slots.length === 0) return null;
       return slots
         .map((s) => `${s.startsAt.getTime()}-${s.endsAt.getTime()}`)
@@ -388,7 +388,7 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
         consultationPlan: { select: { durationInHours: true } },
         appointment: {
           include: {
-            slotsOfAppointment: { select: { startsAt: true, endsAt: true } },
+            occurrences: { select: { startsAt: true, endsAt: true } },
           },
         },
       },
@@ -397,11 +397,11 @@ export async function cleanupInvalidDurationConsultations(): Promise<{
     const invalidIds: string[] = [];
 
     for (const c of consultations) {
-      if (!c.appointment?.slotsOfAppointment?.length) continue;
+      if (!c.appointment?.occurrences?.length) continue;
 
       const expectedHours = c.consultationPlan.durationInHours;
       // Sum duration of ALL slots (not just the first one)
-      const totalSlotMillis = c.appointment.slotsOfAppointment.reduce(
+      const totalSlotMillis = c.appointment.occurrences.reduce(
         (total, slot) =>
           total + (slot.endsAt.getTime() - slot.startsAt.getTime()),
         0,

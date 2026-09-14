@@ -2,7 +2,7 @@
 
 import { useToast } from "@/components/ui/use-toast";
 import type { ConsultantDetailData } from "./types";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { TUserWithProfessionalBackground } from "@/types/user";
 import type {
   TPublicConsultantReview,
@@ -48,8 +48,10 @@ export function ExpertProfileClient({
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TSlotTiming[]>([]);
-  const [selectedSlot, setSelectedSlot] = useState<TSlotTiming | null>(null);
+  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
+  const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
+    null,
+  );
 
   const timezone = browserTimezone || userDetails?.timezone;
 
@@ -80,7 +82,7 @@ export function ExpertProfileClient({
         endDateInUtc.setHours(23, 59, 59, 999);
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${
+          `/api/scheduling/availability-with-allocation/${
             consultantDetails.id
           }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
@@ -139,17 +141,17 @@ export function ExpertProfileClient({
       const endsAt = new Date(selectedSlot.endsAt);
 
       if (
-        (selectedSlot as TSlotTiming & { type: "WEEKLY" | "CUSTOM" }).type ===
-        "WEEKLY"
+        (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
+          .type === "WEEKLY"
       ) {
         params.append(
-          "slotOfAvailabilityWeeklyId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowWeeklyId",
+          selectedSlot.availabilityWindowId,
         );
       } else {
         params.append(
-          "slotOfAvailabilityCustomId",
-          selectedSlot.slotOfAvailabilityId,
+          "availabilityWindowCustomId",
+          selectedSlot.availabilityWindowId,
         );
       }
       params.append("startsAt", startsAt.toISOString());
@@ -303,7 +305,7 @@ export function ExpertProfileClient({
               <ProfileHeader
                 userDetails={userDetails}
                 consultantDetails={consultantDetails}
-                reviewCount={consultantDetails.reviewCount}
+                reviewCount={consultantDetails._count.reviews}
               />
 
               <AboutSection
@@ -384,7 +386,7 @@ export function ExpertProfileClient({
             <ReviewsSection
               reviews={reviews}
               reviewTracks={reviewTracks}
-              reviewCount={consultantDetails.reviewCount}
+              reviewCount={consultantDetails._count.reviews}
               publishedRatingOneToOne={
                 consultantDetails.publishedRatingOneToOne
               }

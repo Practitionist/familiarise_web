@@ -56,7 +56,7 @@ export async function GET(req: NextRequest) {
                 classPlan: true,
               },
             },
-            slotsOfAppointment: true,
+            occurrences: true,
           },
         },
       },
@@ -166,7 +166,7 @@ export async function GET(req: NextRequest) {
         ? {
             id: payment.appointment.id,
             type: payment.appointment.appointmentType,
-            slots: payment.appointment.slotsOfAppointment,
+            slots: payment.appointment.occurrences,
             consultation: payment.appointment.consultation,
             subscription: payment.appointment.subscription,
             webinar: payment.appointment.webinar,

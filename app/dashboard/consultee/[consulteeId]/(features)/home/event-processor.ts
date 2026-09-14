@@ -16,10 +16,9 @@ import type {
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
-  getCurrentOrNextSession,
-  groupSlotsIntoRuns,
-  type SessionRun,
-} from "@/lib/appointments/slots";
+  getCurrentOrNextOccurrence,
+  liveOccurrencesOf,
+} from "@/lib/appointments/occurrences";
 
 /**
  * Unified event type for display in the dashboard
@@ -48,10 +47,10 @@ export interface ProcessedEvent {
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
-  // #1061 — the whole run `joinableSlot` anchors, so the card can ask
-  // getSessionJoinState for a real state (including `ended`) instead of
-  // re-deriving a time window from one row.
-  joinableSession?: SessionRun<ProcessedSlot> | null;
+  // The occurrence `joinableSlot` names, so the card can ask
+  // getOccurrenceJoinState for a real state (including `ended`) instead of
+  // re-deriving a time window (#1554).
+  joinableOccurrence?: ProcessedOccurrence | null;
   // Registration state for webinars/classes. There is no queue any more —
   // either the consultee holds a seat or the row is a plain event card.
   bookingStatus?: BookingStatus;
@@ -64,15 +63,15 @@ export interface ProcessedEvent {
 }
 
 /**
- * A slot row as this tab carries it: `MeetingSlot` (what the join helper
- * needs) plus the two fields the session helpers read. Dropping them made
- * `groupSlotsIntoRuns` treat cancelled rows as live and left the card unable
- * to see that the host had ended the call — both silently, because they are
- * optional on `SessionSlotLike` (#1061).
+ * An occurrence row as this tab carries it: `MeetingSlot` (what the join
+ * helper needs) plus the two fields the join helpers read. Dropping them made
+ * cancelled rows read as live and left the card unable to see that the host
+ * had ended the call — both silently, because they are optional on
+ * `JoinableOccurrence` (#1061).
  */
-export type ProcessedSlot = MeetingSlot & {
+export type ProcessedOccurrence = MeetingSlot & {
   completionStatus?: string | null;
-  meetingSession?: {
+  meeting?: {
     id: string;
     endedAt: Date | string | null;
     endedReason: string | null;
@@ -85,7 +84,7 @@ export type ProcessedSlot = MeetingSlot & {
 interface SlotWithContext {
   startsAt: Date;
   endsAt: Date;
-  rawSlot: ProcessedSlot;
+  rawSlot: ProcessedOccurrence;
   appointmentId: string;
 }
 
@@ -117,9 +116,9 @@ function toEventSlot(slot: SlotWithContext): ProcessedEventSlot {
   };
 }
 
-/** A picked session: the run, plus its anchor row in list-item shape. */
+/** A picked call: the occurrence, in list-item shape. */
 interface SessionPick extends SlotWithContext {
-  run: SessionRun<ProcessedSlot> | null;
+  run: ProcessedOccurrence | null;
 }
 
 /**
@@ -140,15 +139,13 @@ function findNextSlot(slots: SlotWithContext[]): SessionPick | null {
     (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
   );
 
-  const run = getCurrentOrNextSession(
+  const run = getCurrentOrNextOccurrence(
     slots.map((s) => ({ ...s.rawSlot, appointmentId: s.appointmentId })),
     now,
   );
-  const anchor = run
-    ? slots.find((s) => s.rawSlot.id === run.anchor.id)
-    : undefined;
+  const anchor = run ? slots.find((s) => s.rawSlot.id === run.id) : undefined;
   if (run && anchor) {
-    return { ...anchor, startsAt: run.startsAt, endsAt: run.endsAt, run };
+    return { ...anchor, run: anchor.rawSlot };
   }
 
   // Every row was cancelled/rescheduled: keep the old shape so the card still
@@ -168,7 +165,7 @@ function toSlotContexts(
     isTentative: boolean;
     appointmentId: string | null;
     completionStatus?: string | null;
-    meetingSession?: {
+    meeting?: {
     id: string;
     endedAt: Date | string | null;
     endedReason: string | null;
@@ -187,9 +184,9 @@ function toSlotContexts(
       appointmentId: slot.appointmentId,
       // Both are already selected by the events read
       // (lib/data/consultee-events-read.ts): the slot include is unfiltered,
-      // and `meetingSession: { id, endedAt }` is explicit on all four types.
+      // and `meeting: { id, endedAt }` is explicit on all four types.
       completionStatus: slot.completionStatus ?? null,
-      meetingSession: slot.meetingSession ?? null,
+      meeting: slot.meeting ?? null,
     },
     appointmentId,
   }));
@@ -201,7 +198,7 @@ function toSlotContexts(
 function processConsultation(
   consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
-  const slots = consultation.appointment?.slotsOfAppointment;
+  const slots = consultation.appointment?.occurrences;
   if (!slots || slots.length === 0) return null;
 
   const appointmentId = consultation.appointment?.id ?? "";
@@ -215,7 +212,7 @@ function processConsultation(
   const joinableAppointment: MeetingAppointment = {
     id: appointmentId,
     appointmentType: "CONSULTATION",
-    slotsOfAppointment: slots.map((s) => ({
+    occurrences: slots.map((s) => ({
       id: s.id,
       startsAt: s.startsAt,
       endsAt: s.endsAt,
@@ -251,7 +248,7 @@ function processConsultation(
     appointmentId,
     joinableAppointment,
     joinableSlot,
-    joinableSession: session.run,
+    joinableOccurrence: session.run,
     organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
@@ -262,30 +259,23 @@ function processConsultation(
 function processSubscription(
   subscription: TSubscriptionWithPlan,
 ): ProcessedEvent | null {
-  const allSlots: SlotWithContext[] = [];
-
-  subscription.appointments?.forEach((appointment) => {
-    allSlots.push(
-      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
-    );
-  });
+  // #1554 — one wrapper per subscription, N occurrences.
+  const nextAppointment = subscription.appointment;
+  const allSlots: SlotWithContext[] = nextAppointment
+    ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
+    : [];
 
   if (allSlots.length === 0) return null;
 
   const nextSlot = findNextSlot(allSlots);
   if (!nextSlot) return null;
 
-  // Find the appointment that contains the next slot
-  const nextAppointment = subscription.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId,
-  );
-
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
     id: nextSlot.appointmentId,
     appointmentType: "SUBSCRIPTION",
-    slotsOfAppointment:
-      nextAppointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      nextAppointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -319,7 +309,7 @@ function processSubscription(
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
-    joinableSession: nextSlot.run,
+    joinableOccurrence: nextSlot.run,
     organizationId: nextAppointment?.organizationId ?? null,
   };
 }
@@ -334,7 +324,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   // Get slots from the appointment
   allSlots.push(
     ...toSlotContexts(
-      webinar.appointment?.slotsOfAppointment ?? [],
+      webinar.appointment?.occurrences ?? [],
       appointmentId,
     ),
   );
@@ -348,8 +338,8 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
   const joinableAppointment: MeetingAppointment = {
     id: appointmentId,
     appointmentType: "WEBINAR",
-    slotsOfAppointment:
-      webinar.appointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      webinar.appointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -365,7 +355,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 
   // Registered = the consultee is connected to at least one session slot.
   const bookingStatus: BookingStatus =
-    (webinar.appointment?.slotsOfAppointment?.length ?? 0) > 0
+    (webinar.appointment?.occurrences?.length ?? 0) > 0
       ? "CONFIRMED"
       : null;
 
@@ -392,7 +382,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
     appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
-    joinableSession: nextSlot.run,
+    joinableOccurrence: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: webinar.appointment?.organizationId ?? null,
@@ -403,30 +393,23 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
  * Process a class into a ProcessedEvent
  */
 function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
-  const allSlots: SlotWithContext[] = [];
-
-  classEvent.appointments?.forEach((appointment) => {
-    allSlots.push(
-      ...toSlotContexts(appointment.slotsOfAppointment ?? [], appointment.id),
-    );
-  });
+  // #1554 — one wrapper per class, N occurrences.
+  const nextAppointment = classEvent.appointment;
+  const allSlots: SlotWithContext[] = nextAppointment
+    ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
+    : [];
 
   if (allSlots.length === 0) return null;
 
   const nextSlot = findNextSlot(allSlots);
   if (!nextSlot) return null;
 
-  // Find the appointment that contains the next slot
-  const nextAppointment = classEvent.appointments?.find(
-    (a) => a.id === nextSlot.appointmentId,
-  );
-
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
     id: nextSlot.appointmentId,
     appointmentType: "CLASS",
-    slotsOfAppointment:
-      nextAppointment?.slotsOfAppointment?.map((s) => ({
+    occurrences:
+      nextAppointment?.occurrences?.map((s) => ({
         id: s.id,
         startsAt: s.startsAt,
         endsAt: s.endsAt,
@@ -441,9 +424,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   };
 
   const bookingStatus: BookingStatus =
-    (classEvent.appointments?.some(
-      (a) => (a.slotsOfAppointment?.length ?? 0) > 0,
-    ) ?? false)
+    (classEvent.appointment?.occurrences?.length ?? 0) > 0
       ? "CONFIRMED"
       : null;
 
@@ -470,7 +451,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
-    joinableSession: nextSlot.run,
+    joinableOccurrence: nextSlot.run,
     bookingStatus,
     collaborators,
     organizationId: nextAppointment?.organizationId ?? null,
@@ -494,24 +475,20 @@ export interface SessionGroup {
  *
  * #1199 — this grouped by appointmentId alone, which says a booking is one
  * session no matter when its rows sit. A subscription's Tuesday 09:00 and
- * Thursday 16:00 sittings therefore merged into a single phantom session
- * running from Tuesday morning to Thursday afternoon, and the "Sessions
- * Completed" stat counted the pair as one. `groupSlotsIntoRuns` is the
- * definition every other surface uses: contiguous rows, same appointment, same
- * tentative flag, with cancelled and rescheduled rows dropped rather than left
- * to bridge two runs that never touched.
+ * Thursday 16:00 sittings therefore merged into a single phantom session.
+ * #1554 — one row is one call, so the live rows are the sessions.
  */
 export function groupSlotsIntoSessions(
   slots: ProcessedEvent["slots"],
 ): SessionGroup[] {
   const now = new Date();
-  // Already sorted by start time by groupSlotsIntoRuns.
-  return groupSlotsIntoRuns(slots).map((run) => ({
-    id: run.anchor.id,
-    appointmentId: run.anchor.appointmentId,
-    startTime: run.startsAt,
-    endTime: run.endsAt,
-    status: (run.endsAt < now ? "completed" : "upcoming") as
+  // #1554 — one row is one call; live rows, chronological.
+  return liveOccurrencesOf(slots).map((row) => ({
+    id: row.id,
+    appointmentId: row.appointmentId,
+    startTime: row.startsAt,
+    endTime: row.endsAt,
+    status: (row.endsAt < now ? "completed" : "upcoming") as
       | "completed"
       | "upcoming",
   }));

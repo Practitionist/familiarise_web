@@ -124,17 +124,9 @@ export function getDmChannelId(
  *
  * This lived privately in event-channel.action.ts while eight sites hand-rolled
  * the same `??` chain (#1134 P0-8). The chain was identical everywhere; what
- * diverged was the SELECTION. `createSubscriptionChannel` reads the first
- * appointment carrying an org (`where: { organizationId: { not: null } }`),
- * while every consumer read `appointments[0]` from an unordered result — so a
- * subscription mixing org-funded and personal appointments got `dmo-…` from the
- * creator and `dm-…` from approval and the reconciler. Hence `find`, not `[0]`:
- * it converges every caller on the creator's semantics without those callers
- * having to remember the filter. Queries that additionally `take: 1` still need
- * the `where`, because the truncation happens server-side before `find` runs.
- *
- * A subscription carries many appointments but is funded once, so the first
- * org-tagged one is representative.
+ * diverged was the SELECTION over a subscription's many appointments (#1304).
+ * #1554 closed that structurally: a booking is ONE `Appointment`, so there is
+ * exactly one row to read and nothing left to order or filter.
  */
 export function bookingOrgId(booking: {
   consultationPlan?: { organizationId: string | null } | null;
@@ -147,7 +139,6 @@ export function bookingOrgId(booking: {
   webinarPlan?: { organizationId: string | null } | null;
   classPlan?: { organizationId: string | null } | null;
   appointment?: { organizationId: string | null } | null;
-  appointments?: { organizationId: string | null }[];
 }): string | null {
   return (
     booking.consultationPlan?.organizationId ??
@@ -155,42 +146,8 @@ export function bookingOrgId(booking: {
     booking.webinarPlan?.organizationId ??
     booking.classPlan?.organizationId ??
     booking.appointment?.organizationId ??
-    smallestOrgId(booking.appointments) ??
     null
   );
-}
-
-/**
- * The org id a set of appointments resolves to, deterministically.
- *
- * #1304 review — `find()` returns whichever tagged row the relation happened to
- * yield first, and Prisma relations come back unordered. If two appointments
- * carry DIFFERENT orgs the answer changes between reads, and since the DM
- * channel id is a function of the org, one relationship would mint
- * `dmo-<digest(A)>` on one path and `dmo-<digest(B)>` on another — two channels,
- * split history. That is the same shape as the `[0]`-vs-`find` bug this helper
- * was written to fix; `find` closed the null-versus-org half and left this one.
- *
- * Fixed here rather than by adding `orderBy` to each query, because there are
- * several callers and the ones that forgot would keep the bug. Code-unit
- * ordering, never `localeCompare` — the same rule as the channel ids, and for
- * the same reason: an ICU-dependent comparison would make the derived channel
- * id environment-dependent.
- *
- * A booking is funded once, so in a well-formed dataset there is at most one
- * distinct org here and any choice is the same choice. This only decides what
- * happens when that invariant is violated, and a stable wrong answer is
- * recoverable where an unstable one is not.
- */
-function smallestOrgId(
-  appointments: { organizationId: string | null }[] | undefined,
-): string | undefined {
-  let smallest: string | undefined;
-  for (const appointment of appointments ?? []) {
-    const org = appointment.organizationId;
-    if (org && (smallest === undefined || org < smallest)) smallest = org;
-  }
-  return smallest;
 }
 
 /**

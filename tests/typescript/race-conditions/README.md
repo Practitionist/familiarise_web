@@ -165,7 +165,7 @@ If tests fail and leave orphaned data:
 
 ```sql
 -- Find orphaned tentative appointments
-SELECT * FROM "SlotOfAppointment" WHERE "isTentative" = true;
+SELECT * FROM "AppointmentOccurrence" WHERE "isTentative" = true;
 
 -- Find pending payments older than 30 minutes
 SELECT * FROM "Payment"

@@ -31,7 +31,7 @@ export function DesktopOnlyNotice({
     // the theme, and the alternative is measuring on every resize.
     const query = window.matchMedia("(min-width: 1024px)");
     // Latches: once true it never goes back. Unmounting on a shrink would
-    // destroy the calendar's own slot selection while SlotPicker keeps its
+    // destroy the calendar's own slot selection while TimePicker keeps its
     // copy, so a resize, a split screen or a browser zoom leaves the footer
     // claiming "N slots selected" over a grid showing none — and submitting
     // sends times the user can no longer see. The CSS gate still hides the

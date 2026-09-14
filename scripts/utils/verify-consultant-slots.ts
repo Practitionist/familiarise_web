@@ -13,7 +13,7 @@
 
 import "dotenv/config";
 import prisma from "@/lib/prisma";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 
@@ -59,7 +59,6 @@ async function verifyConsultantSlots() {
     console.log("Name:", consultant.user.name);
     console.log("Email:", consultant.user.email);
     console.log("Schedule Type:", consultant.scheduleType);
-    console.log("Rating:", consultant.rating);
     console.log("\n");
 
     // 2. Get subscription plans
@@ -76,7 +75,7 @@ async function verifyConsultantSlots() {
 
     // 3. Get availability slots based on schedule type
     if (consultant.scheduleType === "WEEKLY") {
-      const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+      const weeklySlots = await prisma.availabilityWindowWeekly.findMany({
         where: { consultantProfileId: CONSULTANT_ID },
         orderBy: [{ startDay: "asc" }, { startTimeUtc: "asc" }],
       });
@@ -98,7 +97,7 @@ async function verifyConsultantSlots() {
         );
       });
     } else {
-      const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+      const customSlots = await prisma.availabilityWindowCustom.findMany({
         where: {
           consultantProfileId: CONSULTANT_ID,
           startsAt: {
@@ -141,9 +140,9 @@ async function verifyConsultantSlots() {
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               where: {
                 startsAt: {
                   gte: START_DATE,
@@ -168,7 +167,8 @@ async function verifyConsultantSlots() {
       );
       console.log(`  Start: ${sub.schedulingPeriodStartsAt.toISOString()}`);
       console.log(`  End: ${sub.schedulingPeriodEndsAt.toISOString()}`);
-      console.log(`  Appointments: ${sub.appointments.length}`);
+      const wrappers = sub.appointment ? [sub.appointment] : [];
+      console.log(`  Appointments: ${wrappers.length}`);
 
       // Check if date range is in the future relative to subscription end date
       if (START_DATE > sub.schedulingPeriodEndsAt) {
@@ -182,10 +182,10 @@ async function verifyConsultantSlots() {
       }
 
       // Show slots for this subscription in the date range
-      sub.appointments.forEach((appt, apptIdx) => {
-        if (appt.slotsOfAppointment.length > 0) {
+      wrappers.forEach((appt, apptIdx) => {
+        if (appt.occurrences.length > 0) {
           console.log(`\n  Appointment ${apptIdx + 1} (${appt.id}):`);
-          appt.slotsOfAppointment.forEach((slot) => {
+          appt.occurrences.forEach((slot) => {
             console.log(
               `    📅 ${slot.startsAt.toISOString()} - ${slot.endsAt.toISOString()}`,
             );
@@ -199,7 +199,7 @@ async function verifyConsultantSlots() {
     // 5. Get all appointments in the date range for this consultant
     const appointments = await prisma.appointment.findMany({
       where: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: {
               gte: START_DATE,
@@ -239,7 +239,7 @@ async function verifyConsultantSlots() {
         ],
       },
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: START_DATE,
@@ -275,8 +275,8 @@ async function verifyConsultantSlots() {
         console.log(`  Plan: ${appt.subscription.subscriptionPlan.title}`);
       }
 
-      console.log(`  Slots in range: ${appt.slotsOfAppointment.length}`);
-      appt.slotsOfAppointment.forEach((slot) => {
+      console.log(`  Slots in range: ${appt.occurrences.length}`);
+      appt.occurrences.forEach((slot) => {
         const day = slot.startsAt.toLocaleDateString("en-US", {
           weekday: "short",
           month: "short",

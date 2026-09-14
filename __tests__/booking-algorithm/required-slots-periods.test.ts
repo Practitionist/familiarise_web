@@ -12,7 +12,7 @@ process.env.TZ = "Asia/Kolkata";
 
 import "./setup";
 
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 
 // ─── countWeeks across month lengths ────────────────────────────────────────
 
@@ -20,7 +20,7 @@ describe("countWeeks month-length permutations", () => {
   it("28-day February 2027 (starts Monday) spans 5 Sunday weeks", () => {
     // Feb 1 2027 is a Monday, Feb 28 a Sunday → weeks of Jan 31, Feb 7, 14, 21, 28.
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2027-02-01T00:00:00.000Z"),
         new Date("2027-02-28T23:59:59.000Z"),
       ),
@@ -30,7 +30,7 @@ describe("countWeeks month-length permutations", () => {
   it("29-day leap February 2028 (starts Tuesday) spans 5 Sunday weeks", () => {
     // Feb 1 2028 is a Tuesday, Feb 29 a Tuesday → weeks of Jan 30, Feb 6, 13, 20, 27.
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2028-02-01T00:00:00.000Z"),
         new Date("2028-02-29T23:59:59.000Z"),
       ),
@@ -39,7 +39,7 @@ describe("countWeeks month-length permutations", () => {
 
   it("30-day June 2026 (starts Monday) spans 5 Sunday weeks", () => {
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2026-06-01T00:00:00.000Z"),
         new Date("2026-06-30T23:59:59.000Z"),
       ),
@@ -49,7 +49,7 @@ describe("countWeeks month-length permutations", () => {
   it("31-day August 2026 starting on a Saturday spans 6 Sunday weeks", () => {
     // Aug 1 2026 is a Saturday → weeks of Jul 26, Aug 2, 9, 16, 23, 30.
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2026-08-01T00:00:00.000Z"),
         new Date("2026-08-31T23:59:59.000Z"),
       ),
@@ -59,7 +59,7 @@ describe("countWeeks month-length permutations", () => {
   it("an exact Sunday-to-Saturday 28-day window spans exactly 4 weeks", () => {
     // Jun 21 2026 is a Sunday; Jul 18 2026 is a Saturday.
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2026-06-21T00:00:00.000Z"),
         new Date("2026-07-18T23:59:59.000Z"),
       ),
@@ -69,7 +69,7 @@ describe("countWeeks month-length permutations", () => {
   it("a mid-week 30-day rolling window (like the checkout default) spans 5 weeks", () => {
     // Jun 21 → Jul 21 2026 (the screenshot scenario): Sun-start through Tue.
     expect(
-      SlotCalculationService.countWeeks(
+      ScheduleCalculationService.countWeeks(
         new Date("2026-06-21T15:19:00.000Z"),
         new Date("2026-07-21T15:19:00.000Z"),
       ),
@@ -86,7 +86,7 @@ describe("calculateRequiredSlots per event type", () => {
     "consultation of %sh needs ceil(d/0.5) slots",
     (duration) => {
       expect(
-        SlotCalculationService.calculateRequiredSlots("consultation", {
+        ScheduleCalculationService.calculateRequiredSlots("consultation", {
           durationInHours: duration,
         }),
       ).toBe(Math.ceil(duration / 0.5));
@@ -95,7 +95,7 @@ describe("calculateRequiredSlots per event type", () => {
 
   it.each(durations)("webinar of %sh needs ceil(d/0.5) slots", (duration) => {
     expect(
-      SlotCalculationService.calculateRequiredSlots("webinar", {
+      ScheduleCalculationService.calculateRequiredSlots("webinar", {
         durationInHours: duration,
       }),
     ).toBe(Math.ceil(duration / 0.5));
@@ -108,7 +108,7 @@ describe("calculateRequiredSlots per event type", () => {
       for (const sessionDurationInHours of durations) {
         const slotsPerCall = Math.ceil(sessionDurationInHours / 0.5);
         expect(
-          SlotCalculationService.calculateRequiredSlots("subscription", {
+          ScheduleCalculationService.calculateRequiredSlots("subscription", {
             schedulingPeriodStartsAt,
             schedulingPeriodEndsAt,
             sessionsPerWeek,
@@ -126,7 +126,7 @@ describe("calculateRequiredSlots per event type", () => {
       for (const sessionDurationInHours of durations) {
         const slotsPerSession = Math.ceil(sessionDurationInHours / 0.5);
         expect(
-          SlotCalculationService.calculateRequiredSlots("class", {
+          ScheduleCalculationService.calculateRequiredSlots("class", {
             schedulingPeriodStartsAt,
             schedulingPeriodEndsAt,
             sessionsPerWeek,
@@ -141,7 +141,7 @@ describe("calculateRequiredSlots per event type", () => {
     // Rolling 28-day window that touches 5 Sunday weeks — the plan's 4
     // sessions win over 5 × sessionsPerWeek.
     expect(
-      SlotCalculationService.calculateRequiredSlots("subscription", {
+      ScheduleCalculationService.calculateRequiredSlots("subscription", {
         schedulingPeriodStartsAt: new Date("2026-06-24T00:00:00.000Z"), // Wednesday
         schedulingPeriodEndsAt: new Date("2026-07-21T23:59:59.000Z"),
         sessionsPerWeek: 1,
@@ -153,7 +153,7 @@ describe("calculateRequiredSlots per event type", () => {
 
   it("subscription without a scheduling period throws (no silent 4-weeks/month guess)", () => {
     expect(() =>
-      SlotCalculationService.calculateRequiredSlots("subscription", {
+      ScheduleCalculationService.calculateRequiredSlots("subscription", {
         sessionsPerWeek: 1,
         sessionDurationInHours: 1,
         durationInMonths: 1,
@@ -163,7 +163,7 @@ describe("calculateRequiredSlots per event type", () => {
 
   it("class without a scheduling period throws", () => {
     expect(() =>
-      SlotCalculationService.calculateRequiredSlots("class", {
+      ScheduleCalculationService.calculateRequiredSlots("class", {
         sessionsPerWeek: 1,
         sessionDurationInHours: 1,
       }),

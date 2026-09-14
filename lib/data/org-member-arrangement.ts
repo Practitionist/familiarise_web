@@ -15,7 +15,7 @@ import type { PayoutRecipient } from "@prisma/client";
 // is the expert's own per-org view and used to hold a local 10-minute copy, so
 // the consultant saw Join appear five minutes later here than on the dashboard
 // the page links them to.
-import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTANT_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 
 export async function getMyArrangementData(params: {
   orgId: string;
@@ -103,7 +103,7 @@ export async function getMyArrangementData(params: {
     ? await prisma.appointment.findMany({
         where: {
           organizationId: orgId,
-          slotsOfAppointment: { some: { endsAt: { gte: now } } },
+          occurrences: { some: { endsAt: { gte: now } } },
           OR: [
             {
               consultation: {
@@ -117,13 +117,13 @@ export async function getMyArrangementData(params: {
             },
             { webinar: { webinarPlan: { consultantProfileId } } },
             { class: { classPlan: { consultantProfileId } } },
-            { trialSession: { consultantProfileId } },
+            { trial: { consultantProfileId } },
           ],
         },
         select: {
           id: true,
           appointmentType: true,
-          slotsOfAppointment: {
+          occurrences: {
             where: { endsAt: { gte: now } },
             orderBy: { startsAt: "asc" },
             take: 1,
@@ -145,7 +145,7 @@ export async function getMyArrangementData(params: {
               requestedBy: { select: { user: { select: { name: true } } } },
             },
           },
-          trialSession: {
+          trial: {
             select: {
               consulteeProfile: {
                 select: { user: { select: { name: true } } },
@@ -160,14 +160,14 @@ export async function getMyArrangementData(params: {
 
   const upcomingSessions = hostedSessions
     .filter(
-      (a) => a.slotsOfAppointment.length > 0 && !a.consultation?.cancelledAt,
+      (a) => a.occurrences.length > 0 && !a.consultation?.cancelledAt,
     )
     .map((a) => {
-      const slot = a.slotsOfAppointment[0];
+      const slot = a.occurrences[0];
       const learner =
         a.consultation?.requestedBy?.user?.name ??
         a.subscription?.requestedBy?.user?.name ??
-        a.trialSession?.consulteeProfile?.user?.name ??
+        a.trial?.consulteeProfile?.user?.name ??
         "—";
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();

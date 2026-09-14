@@ -242,7 +242,7 @@ describe("Event Channel Actions", () => {
           consultantProfile: { user: { id: "consultant-1" } },
         },
         appointment: {
-          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+          participants: [{ userId: "user-3" }],
         },
       });
 
@@ -282,7 +282,7 @@ describe("Event Channel Actions", () => {
           consultantProfile: { user: { id: "consultant-1" } },
         },
         appointment: {
-          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+          participants: [{ userId: "user-3" }],
         },
       });
 
@@ -322,7 +322,7 @@ describe("Event Channel Actions", () => {
           },
         },
         appointment: {
-          slotsOfAppointment: [{ user: [{ id: "user-3" }] }],
+          participants: [{ userId: "user-3" }],
         },
       });
 
@@ -411,11 +411,7 @@ describe("Event Channel Actions", () => {
           },
         },
         appointments: [
-          {
-            slotsOfAppointment: [
-              { user: [{ id: "user-2" }, { id: "user-3" }] },
-            ],
-          },
+          { participants: [{ userId: "user-2" }, { userId: "user-3" }] },
         ],
       });
 
@@ -1043,13 +1039,9 @@ describe("Event Channel Actions", () => {
           consultantProfile: { user: { id: "consultant-1" } },
         },
         appointment: {
-          slotsOfAppointment: [
-            {
-              user: Array.from({ length: seats }, (_, i) => ({
-                id: `attendee-${i}`,
-              })),
-            },
-          ],
+          participants: Array.from({ length: seats }, (_, i) => ({
+            userId: `attendee-${i}`,
+          })),
         },
       });
     };

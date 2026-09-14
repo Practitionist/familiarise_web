@@ -10,10 +10,10 @@
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
  * - cspReportLimiter:       120/min per IP   — POST /api/csp-report (browser-generated)
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
- * - requestApprovalLimiter: 10/hr per user   — POST /api/slots/request-for-approval
+ * - requestApprovalLimiter: 10/hr per user   — POST /api/scheduling/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
- * - availabilityLimiter:    30/min per IP    — GET /api/slots/availability/[consultantId]
+ * - availabilityLimiter:    30/min per IP    — GET /api/scheduling/availability/[consultantId]
  * - currencyLimiter:        30/min per IP    — GET /api/currency (protects the FX provider quota)
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
  * - streamRecordingSyncLimiter: 3/5min per user — POST /api/stream/recordings/sync (Stream fan-out)
@@ -107,8 +107,8 @@ export const cspReportLimiter = makeLimiter(120, "1 m", "rl:csp-report");
  * Two shapes, two budgets:
  *
  * `streamJoinLimiter` guards the meeting join gate. It is the enumeration
- * surface: call ids are deterministic (`slot-<anchorSlotId>`), so an attacker
- * who has one slot id can walk neighbours. Generous enough that a flaky network
+ * surface: call ids are deterministic (`occurrence-<occurrenceId>`), so an attacker
+ * who has one occurrence id can walk neighbours. Generous enough that a flaky network
  * retrying a join never trips it, tight enough that scanning is useless.
  *
  * `streamApiLimiter` guards the search / channel-create / block routes, which
@@ -142,7 +142,7 @@ export const streamRecordingSyncLimiter = makeLimiter(
 /** 3 per 24 hours — POST /api/trials (prevents flooding consultant inboxes) */
 export const trialRequestLimiter = makeLimiter(3, "24 h", "rl:trial-request");
 
-/** 10 per hour — POST /api/slots/request-for-approval */
+/** 10 per hour — POST /api/scheduling/request-for-approval */
 export const requestApprovalLimiter = makeLimiter(
   10,
   "1 h",
@@ -155,7 +155,7 @@ export const searchLimiter = makeLimiter(60, "1 m", "rl:search");
 /** 20 per minute — GET /api/trials/check-eligibility */
 export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
 
-/** 30 per minute — GET /api/slots/availability/[consultantId] (IP-based, public booking flow) */
+/** 30 per minute — GET /api/scheduling/availability/[consultantId] (IP-based, public booking flow) */
 export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 
 /**

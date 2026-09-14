@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { RequestSlotAllocationTab } from "@/components/dashboard/shared/requests/RequestSlotAllocationTab";
+import { RequestSchedulingTab } from "@/components/dashboard/shared/requests/RequestSchedulingTab";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 
 /**
@@ -28,7 +28,7 @@ export function RequestsClient({
 
   return (
     <DashboardErrorBoundary>
-      <RequestSlotAllocationTab
+      <RequestSchedulingTab
         type="all"
         onUpdate={() => setRefreshToken((n) => n + 1)}
         consultantProfileId={consultantProfileId}

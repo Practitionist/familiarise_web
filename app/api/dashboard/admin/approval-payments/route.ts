@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
+import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 
 /**
@@ -112,7 +112,7 @@ export async function GET() {
                 },
               },
             },
-            appointments: {
+            appointment: {
               include: {
                 payment: {
                   where: {
@@ -126,7 +126,6 @@ export async function GET() {
                   take: 1,
                 },
               },
-              take: 1,
             },
           },
           orderBy: {
@@ -138,8 +137,8 @@ export async function GET() {
         // Paid trials the consultant accepted but the learner hasn't paid for.
         // Support needs these alongside consultations/subscriptions — the failure
         // mode is identical (accepted, slot held, money not collected).
-        prisma.trialSession.findMany({
-          where: { status: TrialSessionStatus.AWAITING_PAYMENT },
+        prisma.trial.findMany({
+          where: { status: TrialStatus.AWAITING_PAYMENT },
           include: {
             subscriptionPlan: {
               include: {

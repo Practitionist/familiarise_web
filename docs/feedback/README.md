@@ -18,7 +18,7 @@ The table below lists the files the feedback rail is built from.
 | `app/api/organizations/[orgId]/feedback-summary/route.ts` | The organisation's aggregate, per consultant, floored and suppressed                                                          |
 | `lib/enterprise/quality-thresholds.ts`                    | `ORG_QUALITY_MIN_RESPONDENTS`, `ORG_QUALITY_MIN_RESPONDENTS_FOR_COMMENTS`, `applyCohortSuppression`, `suppressNarrowerWindow` |
 | `lib/data/appointment-detail.ts`                          | `appointmentRaterRole`, which side of the session a user is on                                                                |
-| `lib/reviews.ts`                                          | `heldSlot`, the shared "did this session happen, and were you there" predicate                                                |
+| `lib/reviews.ts`                                          | `heldOccurrence`, the shared "did this session happen, and were you there" predicate                                                |
 | `hooks/useSessionFeedback.ts`                             | The timeline's read hook, keyed by `bookingFeedbackKey`                                                                       |
 | `components/reviews/SessionRatingRow.tsx`                 | The star row rendered inline on each session of the timeline                                                                  |
 | `__tests__/reviews/feedback-rates-the-meeting.test.ts`    | Pins that a rating lands on the run anchor, never on an interior slot                                                         |

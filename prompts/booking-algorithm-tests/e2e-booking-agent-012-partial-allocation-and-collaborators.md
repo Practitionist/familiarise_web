@@ -39,7 +39,7 @@ Every allocate route is `PATCH
 /api/bookings/{consultations|subscriptions|webinars|classes}/[<type>Id]/allocate`
 and derives its mode from the body, not the URL: `useRequestedSlots` wins, else
 `isAuto`, else manual. `AllocationMode` is the union `"auto" | "manual" |
-"requested"` (`utils/slotAllocation/types.ts`).
+"requested"` (`utils/scheduling-engine/types.ts`).
 
 `allowPartial` is `z.boolean().optional().default(false)` in
 `schemas/slotAllocation/validationSchemas.ts`. Each route honours it only as
@@ -49,7 +49,7 @@ reaches only the `auto` path, and inside the service it applies only to
 recurring event types and never on a reschedule: a consultation or webinar is
 one session, so it either fits or it does not.
 
-The co-host guard is `SlotAllocationService.assertCollaboratorsFree`, which
+The co-host guard is `SchedulingService.assertCollaboratorsFree`, which
 calls `assertCollaboratorsAvailableForWindows`
 (`lib/collaborators/availability.ts`). It short-circuits for anything that is
 not a webinar or class, considers only collaborators whose status is
@@ -124,7 +124,7 @@ number the client can only say "not enough free slots".
 The side-effect to check is that **nothing was written**:
 
 ```sql
-SELECT COUNT(*) FROM "SlotOfAppointment" s
+SELECT COUNT(*) FROM "AppointmentOccurrence" s
 JOIN "Appointment" a ON a.id = s."appointmentId"
 WHERE a."subscriptionId" = '<SUBSCRIPTION_ID>' AND s."deletedAt" IS NULL;
 -- Expected: 0

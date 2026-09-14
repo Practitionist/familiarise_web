@@ -78,7 +78,7 @@ The audit-series issues were executed across the v0–v4 trains and verified her
 | Issue | What shipped here |
 | --- | --- |
 | #709 cron de-collision + alerting | All 54 scheduled workflows re-mapped to a collision-free minute grid (verified by simulating a full month — zero same-minute starts); Slack failure alerts wired into `msme-payment-alerts`, `irp-uploader`, and `expire-contracts` via the existing `notify-ops-failure.sh` pattern. |
-| #727 schema future-proofing | `Referral.organizationId` added (attribution-only, mirroring `TrialSession.organizationId`); trial column already existed; collaborator org-awareness intentionally stays plan-level (derivable via `WebinarPlan.organizationId`). |
+| #727 schema future-proofing | `Referral.organizationId` added (attribution-only, mirroring `Trial.organizationId`); trial column already existed; collaborator org-awareness intentionally stays plan-level (derivable via `WebinarPlan.organizationId`). |
 | #747 partial-unique invitation index | `invitations_org_email_pending_key` ships via the `prisma/sql/check-constraints.sql` sidecar; the Serializable transaction stays as the first line of defense. |
 | #685 (duplicate of #747) | Same index; closed by the same change. |
 | #269 dispute assignment | `Dispute.assignedToUserId` + `Dispute.internalNotes` columns added pre-freeze; the assignment UI is a residual. |

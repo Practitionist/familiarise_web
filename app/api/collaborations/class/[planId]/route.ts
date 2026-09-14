@@ -88,15 +88,7 @@ export async function POST(
       );
     }
 
-    const {
-      consultantProfileId,
-      role,
-      revenueSharePercentage,
-      canApprovePayment,
-      canViewAnalytics,
-      canEditEvent,
-      canSeeAttendees,
-    } = parsed.data;
+    const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
 
     if (consultantProfileId === ownerProfile.id) {
       return NextResponse.json(
@@ -109,7 +101,7 @@ export async function POST(
       where: {
         classPlanId: planId,
         consultantProfileId,
-        status: { notIn: ["REMOVED", "DECLINED"] },
+        status: { notIn: ["REMOVED", "DECLINED", "WITHDRAWN"] },
       },
     });
     if (existingCollab) {
@@ -129,7 +121,6 @@ export async function POST(
       role,
       revenueSharePercentage,
       ownerProfile.id,
-      { canApprovePayment, canViewAnalytics, canEditEvent, canSeeAttendees },
     );
 
     if (!collab) {

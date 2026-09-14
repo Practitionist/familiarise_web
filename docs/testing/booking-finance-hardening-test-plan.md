@@ -195,11 +195,11 @@ npx tsx -e "
 import p from '@/lib/prisma';
 (async () => {
   const appt = await p.appointment.findFirst({
-    where: { consultation: { isNot: null }, slotsOfAppointment: { some: {} } },
+    where: { consultation: { isNot: null }, appointmentOccurrences: { some: {} } },
     select: { id: true, consultation: { select: { id: true, requestedBy: { select: { user: { select: { id: true, email: true } } } } } } },
   });
   await p.consultation.update({ where: { id: appt!.consultation!.id }, data: { status: 'APPROVED_PENDING_PAYMENT' } });
-  await p.slotOfAppointment.updateMany({ where: { appointmentId: appt!.id }, data: { isTentative: true } });
+  await p.appointmentOccurrence.updateMany({ where: { appointmentId: appt!.id }, data: { isTentative: true } });
   const pay = await p.payment.create({ data: {
     amount: 10000, originalAmount: 10000, paymentMethod: 'card',
     paymentIntent: 'order_manual_race_' + Date.now(), paymentGateway: 'RAZORPAY',
@@ -238,7 +238,7 @@ Pick a seeded webinar with 1 remaining seat (or shrink capacity via Prisma).
 Fire N≥10 concurrent checkouts from different seeded consultees.
 
 **Invariants**: at most one enrollment wins the seat; losers get a clean
-4xx/waitlist path, never 5xx; `SlotOfAppointment` user-join rows ≤ capacity;
+4xx/waitlist path, never 5xx; `AppointmentOccurrence` user-join rows ≤ capacity;
 no duplicate Payment rows per user (idempotency keys).
 
 ### 4.4 Waitlist-expire vs booking (Agent E)

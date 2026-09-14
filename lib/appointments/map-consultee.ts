@@ -1,7 +1,7 @@
 /**
  * Consultee mapper: TConsulteeEventsResponse (the 5-type grouped union from
  * readConsulteeEvents) → AppointmentVM[]. Subscriptions and classes collapse
- * to ONE group row each; their per-session detail lives in vm.sessions.
+ * to ONE group row each; their per-session detail lives in vm.occurrences.
  */
 
 import type { TAppointment } from "@/types/appointment";
@@ -16,16 +16,20 @@ import type {
   TTrialWithPlan,
 } from "@/hooks/useEvents";
 import { deriveBucket } from "./bucket";
-import { sessionsOfAppointment } from "./sessions-of";
-import { getAnchorTime, isSessionOver } from "./slots";
+import {
+  getAnchorTime,
+  isOccurrenceOver,
+  liveOccurrences,
+  occurrencesOfAppointment,
+} from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
-  sortSessions,
   toDate,
   type AppointmentVM,
   type PersonVM,
-  type SlotLike,
+  type OccurrenceLike,
+  type OccurrenceVM,
 } from "./view-model";
 
 interface ConsulteeCollaboratorLike {
@@ -60,7 +64,7 @@ function collaborators(
  * (useEventActions) receives — mirrors utils/scheduleHelpers.getActualSlots:
  * keep slots whose end hasn't passed, sorted ascending.
  */
-function actionableSlots(slots: SlotLike[], now: Date): SlotLike[] {
+function actionableSlots(slots: OccurrenceLike[], now: Date): OccurrenceLike[] {
   return slots
     .filter((slot) => {
       const end = slot.endsAt ? toDate(slot.endsAt) : toDate(slot.startsAt);
@@ -71,48 +75,21 @@ function actionableSlots(slots: SlotLike[], now: Date): SlotLike[] {
     );
 }
 
-/** Group progress in calculateSessionProgress semantics: only slot-carrying
- *  child appointments are sessions; completed = all its slots elapsed. */
+/** Group progress over the wrapper's live occurrences (#1554): one row is
+ *  one session; completed = the row has elapsed. */
 function groupProgress(
-  children: Array<{ id: string; slotsOfAppointment?: SlotLike[] }>,
+  occurrences: OccurrenceVM[],
   now: Date,
 ): { total: number; completed: number } {
-  const withSlots = children.filter(
-    (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
-  );
-  // Per SESSION, not per row: a four-hour booking is not three-quarters
-  // complete an hour in.
-  const completed = withSlots.filter((c) =>
-    sessionsOfAppointment(c).every((s) => isSessionOver(s, now)),
-  ).length;
-  return { total: withSlots.length, completed };
-}
-
-/** The child appointment the action hook should target: the next one with a
- *  live/future slot, else the first slot-carrying child, else the first. */
-function nextActionableChild<
-  T extends { id: string; slotsOfAppointment?: SlotLike[] },
->(children: T[], now: Date): T | undefined {
-  const sorted = [...children].sort((a, b) => {
-    const aStart = a.slotsOfAppointment?.[0]
-      ? toDate(a.slotsOfAppointment[0].startsAt).getTime()
-      : Infinity;
-    const bStart = b.slotsOfAppointment?.[0]
-      ? toDate(b.slotsOfAppointment[0].startsAt).getTime()
-      : Infinity;
-    return aStart - bStart;
-  });
-  return (
-    sorted.find((c) =>
-      sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
-    ) ??
-    sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
-    sorted[0]
-  );
+  const live = liveOccurrences(occurrences);
+  return {
+    total: live.length,
+    completed: live.filter((s) => isOccurrenceOver(s, now)).length,
+  };
 }
 
 function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
-  const sessions = sessionsOfAppointment(c.appointment);
+  const occurrences = occurrencesOfAppointment(c.appointment);
   const status = normalizeStatus(c.status?.toString());
   return {
     id: `consultation-${c.id}`,
@@ -122,9 +99,9 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     counterpart: person(c.consultationPlan.consultantProfile?.user),
     consultantProfileId: c.consultationPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: null,
     meta: null,
     organizationId: c.appointment?.organizationId ?? null,
@@ -133,19 +110,17 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (c.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(c.appointment?.slotsOfAppointment ?? [], now),
+      rawOccurrences: actionableSlots(c.appointment?.occurrences ?? [], now),
       source: c,
     },
   };
 }
 
 function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
-  const children = s.appointments ?? [];
-  const sessions = sortSessions(
-    children.flatMap((child) => sessionsOfAppointment(child)),
-  );
+  // #1554 — one wrapper per subscription, N occurrences.
+  const target = s.appointment ?? undefined;
+  const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(s.status?.toString());
-  const target = nextActionableChild(children, now);
   return {
     id: `subscription-${s.id}`,
     appointmentId: target?.id ?? null,
@@ -154,29 +129,26 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     counterpart: person(s.subscriptionPlan.consultantProfile?.user),
     consultantProfileId: s.subscriptionPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
-    group: groupProgress(children, now),
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
+    group: groupProgress(occurrences, now),
     meta: null,
-    organizationId: children[0]?.organizationId ?? null,
+    organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
     collaborators: [],
     collaboratorRole: null,
     raw: {
       appointment: target as TAppointment | undefined,
-      rawSlots: actionableSlots(
-        children.flatMap((child) => child.slotsOfAppointment ?? []),
-        now,
-      ),
-      groupAppointments: children as TAppointment[],
+      rawOccurrences: actionableSlots(target?.occurrences ?? [], now),
+      groupAppointments: target ? [target as TAppointment] : [],
       source: s,
     },
   };
 }
 
 function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
-  const sessions = sessionsOfAppointment(w.appointment);
+  const occurrences = occurrencesOfAppointment(w.appointment);
   const status = normalizeStatus(w.status?.toString());
   return {
     id: `webinar-${w.id}`,
@@ -186,9 +158,9 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
     counterpart: person(w.webinarPlan.consultantProfile?.user),
     consultantProfileId: w.webinarPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: null,
     meta: null,
     organizationId: w.appointment?.organizationId ?? null,
@@ -197,19 +169,17 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (w.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(w.appointment?.slotsOfAppointment ?? [], now),
+      rawOccurrences: actionableSlots(w.appointment?.occurrences ?? [], now),
       source: w,
     },
   };
 }
 
 function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
-  const children = c.appointments ?? [];
-  const sessions = sortSessions(
-    children.flatMap((child) => sessionsOfAppointment(child)),
-  );
+  // #1554 — one wrapper per class, N occurrences.
+  const target = c.appointment ?? undefined;
+  const occurrences = occurrencesOfAppointment(target);
   const status = normalizeStatus(c.status?.toString());
-  const target = nextActionableChild(children, now);
   return {
     id: `class-${c.id}`,
     appointmentId: target?.id ?? null,
@@ -218,29 +188,26 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
     counterpart: person(c.classPlan.consultantProfile?.user),
     consultantProfileId: c.classPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
-    group: groupProgress(children, now),
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
+    group: groupProgress(occurrences, now),
     meta: null,
-    organizationId: children[0]?.organizationId ?? null,
+    organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
     collaborators: collaborators(c.classPlan.collaborators),
     collaboratorRole: null,
     raw: {
-      appointment: target as TAppointment | undefined,
-      rawSlots: actionableSlots(
-        children.flatMap((child) => child.slotsOfAppointment ?? []),
-        now,
-      ),
-      groupAppointments: children as TAppointment[],
+      appointment: target as unknown as TAppointment | undefined,
+      rawOccurrences: actionableSlots(target?.occurrences ?? [], now),
+      groupAppointments: target ? [target as unknown as TAppointment] : [],
       source: c,
     },
   };
 }
 
 function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
-  const sessions = sessionsOfAppointment(t.appointment);
+  const occurrences = occurrencesOfAppointment(t.appointment);
   const status = normalizeStatus(t.status);
   return {
     id: `trial-${t.id}`,
@@ -250,9 +217,9 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     counterpart: person(t.subscriptionPlan.consultantProfile?.user),
     consultantProfileId: t.subscriptionPlan.consultantProfile?.id ?? null,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: null,
     meta: trialMeta(
       t.subscriptionPlan.trialPriceInPaise,
@@ -265,7 +232,7 @@ function mapTrial(t: TTrialWithPlan, now: Date): AppointmentVM {
     collaboratorRole: null,
     raw: {
       appointment: (t.appointment ?? undefined) as TAppointment | undefined,
-      rawSlots: actionableSlots(t.appointment?.slotsOfAppointment ?? [], now),
+      rawOccurrences: actionableSlots(t.appointment?.occurrences ?? [], now),
       source: t,
     },
   };

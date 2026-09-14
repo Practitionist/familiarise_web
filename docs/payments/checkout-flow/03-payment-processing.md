@@ -743,7 +743,7 @@ async function confirmExistingAppointment(
   appointmentId: string,
 ) {
   // 1. Confirm all slots (make non-tentative)
-  await tx.slotOfAppointment.updateMany({
+  await tx.appointmentOccurrence.updateMany({
     where: { appointmentId },
     data: { isTentative: false },
   });
@@ -883,7 +883,7 @@ async function cleanupFailedPaymentAppointment(
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
-      slotsOfAppointment: true,
+      appointmentOccurrences: true,
       consultation: true,
       subscription: true,
     },
@@ -892,19 +892,19 @@ async function cleanupFailedPaymentAppointment(
   if (!appointment) return;
 
   // Find tentative slots
-  const tentativeSlots = appointment.slotsOfAppointment.filter(
+  const tentativeSlots = appointment.appointmentOccurrences.filter(
     (slot) => slot.isTentative,
   );
 
   if (tentativeSlots.length > 0) {
     // Delete tentative slots
-    await tx.slotOfAppointment.deleteMany({
+    await tx.appointmentOccurrence.deleteMany({
       where: { appointmentId, isTentative: true },
     });
 
     // For consultation/subscription, check if appointment should be deleted
     if (appointment.consultation || appointment.subscription) {
-      const remainingSlots = await tx.slotOfAppointment.count({
+      const remainingSlots = await tx.appointmentOccurrence.count({
         where: { appointmentId },
       });
 
@@ -1010,7 +1010,7 @@ stateDiagram-v2
 
 ```typescript
 {
-  slotsOfAppointment: [{
+  appointmentOccurrences: [{
     isTentative: true,  // Slot is reserved but not confirmed
     startsAt: "2025-11-07T10:00:00Z",
     endsAt: "2025-11-07T11:00:00Z",
@@ -1047,7 +1047,7 @@ stateDiagram-v2
 
 ```typescript
 {
-  slotsOfAppointment: [{
+  appointmentOccurrences: [{
     isTentative: false, // Slot is confirmed
     startsAt: "2025-11-07T10:00:00Z",
     endsAt: "2025-11-07T11:00:00Z",
@@ -1085,7 +1085,7 @@ stateDiagram-v2
 ```typescript
 // Either deleted, or:
 {
-  slotsOfAppointment: [], // Tentative slots removed
+  appointmentOccurrences: [], // Tentative slots removed
   consultation: null,     // Event deleted if no confirmed slots
 }
 ```
@@ -1101,9 +1101,9 @@ Two separate expiration windows exist — do not conflate them:
 | TTL                        | What it governs                                                                             | Value                                            | Source                                                          |
 | -------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
 | `Payment.expiresAt`        | Gateway checkout session lifetime — the window in which the user must complete payment      | **30 minutes**                                   | `lib/payments/operations/checkout.ts` line ≈ 2307               |
-| `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-slots.ts` line 28, #833 |
+| `isTentative` slot cleanup | Belt-and-braces sweep that frees orphaned tentative slots in case the webhook never arrived | **24 hours** (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts` line 28, #833 |
 
-The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-slots` job is a separate belt-and-braces sweep running every 2 hours.
+The 24-hour slot-cleanup window replaced an earlier 7-day hold (#833 rationale: "gateway orders expire well inside a day, so a 7-day hold locked users out of rebooking for most of a week"). The `cleanup-abandoned-payments` job keys off `Payment.expiresAt` (30 min); the `cleanup-tentative-occurrences` job is a separate belt-and-braces sweep running every 2 hours.
 
 ### 7.1 30-Minute Timeout Policy
 
@@ -1165,7 +1165,7 @@ const abandonedAppointments = await prisma.appointment.findMany({
         ],
       },
     },
-    slotsOfAppointment: {
+    appointmentOccurrences: {
       some: {
         isTentative: true,
       },
@@ -1613,7 +1613,7 @@ SET paymentStatus = 'FAILED'
 WHERE id = '<payment-id>';
 
 -- Clean up tentative slots
-DELETE FROM SlotOfAppointment
+DELETE FROM AppointmentOccurrence
 WHERE appointmentId = '<appointment-id>'
   AND isTentative = true;
 ```

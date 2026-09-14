@@ -10,7 +10,7 @@ import {
   Gender,
   Prisma,
   ScheduleType,
-  SessionType,
+  OfferingFormat,
   StaffProfile,
   User,
   UserRole,
@@ -69,7 +69,7 @@ const BUDGET_PREFERENCES: BudgetPreference[] = [
 ];
 
 // Session type enum values
-const SESSION_TYPES: SessionType[] = ["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"];
+const SESSION_TYPES: OfferingFormat[] = ["ONE_ON_ONE", "GROUP", "ASYNC_REVIEW"];
 
 // Curated name pools for realistic, consistent seed data
 const FIRST_NAMES = [
@@ -376,12 +376,12 @@ async function createConsultantProfileData() {
   });
 
   // Generate session types (at least ONE_ON_ONE, possibly more)
-  const sessionTypes = faker.helpers.arrayElements(SESSION_TYPES, {
+  const offeringFormats = faker.helpers.arrayElements(SESSION_TYPES, {
     min: 1,
     max: 3,
   });
-  if (!sessionTypes.includes("ONE_ON_ONE")) {
-    sessionTypes.push("ONE_ON_ONE");
+  if (!offeringFormats.includes("ONE_ON_ONE")) {
+    offeringFormats.push("ONE_ON_ONE");
   }
 
   // Calculate profile completion percentage based on filled fields
@@ -407,7 +407,6 @@ async function createConsultantProfileData() {
   );
 
   return {
-    rating: faker.number.float({ min: 3.5, max: 5, multipleOf: 0.1 }),
     experience,
     description: sanitizeString(faker.lorem.paragraph()),
     domain: { connect: { id: domain.id } },
@@ -439,7 +438,7 @@ async function createConsultantProfileData() {
     languages: generateLanguages(),
     toolsAndTechnologies: generateToolsAndTechnologies(domain.name),
     mentoringStyle: generateMentoringStyle(),
-    sessionTypes,
+    offeringFormats,
     profileCompletionPercentage,
     isVerified,
     verificationStatus,

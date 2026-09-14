@@ -8,8 +8,8 @@ import {
   Platform,
   Prisma,
   AppointmentStatus,
-  SlotOfAvailabilityCustom,
-  SlotOfAvailabilityWeekly,
+  AvailabilityWindowCustom,
+  AvailabilityWindowWeekly,
   SubscriptionPlan,
   WebinarPlan,
   WebinarStatus,
@@ -139,17 +139,17 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
 type SlotData =
   | {
       type: "weekly";
-      slot: SlotOfAvailabilityWeekly;
+      slot: AvailabilityWindowWeekly;
     }
   | {
       type: "custom";
-      slot: SlotOfAvailabilityCustom;
+      slot: AvailabilityWindowCustom;
     };
 
-// --- Helper function to create MeetingSession data ---
-const createMeetingSessionData = (
+// --- Helper function to create Meeting data ---
+const createMeetingData = (
   isPastAppointment: boolean,
-): Prisma.MeetingSessionCreateNestedOneWithoutSlotOfAppointmentInput => {
+): Prisma.MeetingCreateNestedOneWithoutOccurrenceInput => {
   return {
     create: {
       streamCallId: faker.string.uuid(),
@@ -206,17 +206,13 @@ const createConsultationAppointment = (
           : []),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: {
-        user: {
-          connect: consultantUserId
-            ? [{ id: consultantUserId }, { id: consultee.id }]
-            : [{ id: consultee.id }],
-        },
+        ordinal: 1,
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: defaultStatus === AppointmentStatus.PENDING,
-        meetingSession: createMeetingSessionData(isPastAppointment),
+        meeting: createMeetingData(isPastAppointment),
       },
     },
     consultation: {
@@ -242,7 +238,7 @@ const createConsultationAppointment = (
 const createSubscriptionAppointment = (
   consultee: UserWithProfiles,
   subscriptionPlans: PlanRead<SubscriptionPlan>[],
-  consultantWeeklySlots: SlotOfAvailabilityWeekly[],
+  consultantWeeklySlots: AvailabilityWindowWeekly[],
   defaultStatus: AppointmentStatus,
   isPastAppointment: boolean,
   startDate: Date,
@@ -324,13 +320,11 @@ const createSubscriptionAppointment = (
         // Ensure slot is within subscription period
         if (slotStart >= startDate && slotEnd <= endDate) {
           slots.push({
-            user: {
-              connect: [{ id: consultee.id }],
-            },
+            ordinal: slots.length + 1,
             startsAt: slotStart,
             endsAt: slotEnd,
             isTentative: defaultStatus === AppointmentStatus.PENDING,
-            meetingSession: createMeetingSessionData(
+            meeting: createMeetingData(
               isPastAppointment && slotStart < new Date(),
             ),
           });
@@ -362,15 +356,11 @@ const createSubscriptionAppointment = (
     );
 
     slots.push({
-      user: {
-        connect: consultantUserId
-          ? [{ id: consultantUserId }, { id: consultee.id }]
-          : [{ id: consultee.id }],
-      },
+      ordinal: slots.length + 1,
       startsAt: slotStart,
       endsAt: slotEnd,
       isTentative: defaultStatus === AppointmentStatus.PENDING,
-      meetingSession: createMeetingSessionData(isPastAppointment),
+      meeting: createMeetingData(isPastAppointment),
     });
   }
 
@@ -395,7 +385,7 @@ const createSubscriptionAppointment = (
           : []),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: slots,
     },
     subscription: {
@@ -461,19 +451,13 @@ const createWebinarAppointment = async (
         })),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: {
-        user: {
-          connect: [
-            ...(consultantUserId ? [{ id: consultantUserId }] : []),
-            { id: consultee.id },
-            ...additionalParticipants.map((c) => ({ id: c.id })),
-          ],
-        },
+        ordinal: 1,
         startsAt: startsAt,
         endsAt: endsAt,
         isTentative: false,
-        meetingSession: createMeetingSessionData(isPastAppointment),
+        meeting: createMeetingData(isPastAppointment),
       },
     },
     webinar: {
@@ -534,7 +518,7 @@ const createClassAppointment = async (
         })),
       ],
     },
-    slotsOfAppointment: {
+    occurrences: {
       create: Array.from({ length: limitedSlots }, (_, index) => {
         const slotStart = new Date(
           startDate.getTime() + index * 7 * 24 * 60 * 60 * 1000,
@@ -548,17 +532,11 @@ const createClassAppointment = async (
         const slotEnd = new Date(slotStart.getTime() + 60 * 60 * 1000);
 
         return {
-          user: {
-            connect: [
-              ...(consultantUserId ? [{ id: consultantUserId }] : []),
-              { id: consultee.id },
-              ...additionalParticipants.map((c) => ({ id: c.id })),
-            ],
-          },
+          ordinal: index + 1,
           startsAt: slotStart,
           endsAt: slotEnd,
           isTentative: false,
-          meetingSession: createMeetingSessionData(
+          meeting: createMeetingData(
             isPastAppointment && index === limitedSlots - 1,
           ),
         };
@@ -592,7 +570,7 @@ async function createAppointmentBatch(
   subscriptionPlans: PlanRead<SubscriptionPlan>[],
   webinarPlans: PlanRead<WebinarPlan>[],
   classPlans: PlanRead<ClassPlan>[],
-  weeklySlots: SlotOfAvailabilityWeekly[],
+  weeklySlots: AvailabilityWindowWeekly[],
   startIndex: number,
   batchSize: number,
   consultantUserMap: Record<string, string>,
@@ -796,10 +774,10 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   );
 
   // Fetch all required data upfront
-  const weeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+  const weeklySlots = await prisma.availabilityWindowWeekly.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
-  const customSlots = await prisma.slotOfAvailabilityCustom.findMany({
+  const customSlots = await prisma.availabilityWindowCustom.findMany({
     take: NUM_APPOINTMENTS / 2,
   });
   const consultationPlans = await prisma.consultationPlan.findMany();
@@ -808,7 +786,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const classPlans = await prisma.classPlan.findMany();
 
   // Build a map of consultantProfileId -> consultantUserId so we can connect
-  // the consultant user to every SlotOfAppointment. Without this, the
+  // the consultant user to every AppointmentOccurrence. Without this, the
   // validateNoConflicts query (which filters by user.some.id = consultantUserId)
   // cannot detect conflicts against seed-generated appointments.
   const consultantProfiles = await prisma.consultantProfile.findMany({
@@ -864,4 +842,17 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   console.log(
     `Finished creating appointments. Successfully created ${totalCreated} out of ${NUM_APPOINTMENTS} requested.`,
   );
+
+  // #1554 — what the auto-complete sweep does on a live database: a confirmed
+  // call that has ended is UNVERIFIED, so the review seed (7b) has held calls.
+  const held = await prisma.appointmentOccurrence.updateMany({
+    where: {
+      endsAt: { lt: new Date() },
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+    },
+    data: { completionStatus: "UNVERIFIED" },
+  });
+  console.log(`Marked ${held.count} past occurrences UNVERIFIED (held).`);
 }

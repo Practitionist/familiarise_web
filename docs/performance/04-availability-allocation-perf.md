@@ -2,13 +2,13 @@
 
 ## Summary
 
-The **subscription slot-allocation calendar** (consultant → Requests → "Allocate Slots") can hang on "Loading calendar…" for minutes and intermittently 429s. Root cause: `GET /api/slots/availability-with-allocation/[consultantId]` is **O(window width)** and very slow for wide date ranges, and the allocation flow requests the **entire subscription scheduling period** (1 / 6 / 12 months).
+The **subscription slot-allocation calendar** (consultant → Requests → "Allocate Slots") can hang on "Loading calendar…" for minutes and intermittently 429s. Root cause: `GET /api/scheduling/availability-with-allocation/[consultantId]` is **O(window width)** and very slow for wide date ranges, and the allocation flow requests the **entire subscription scheduling period** (1 / 6 / 12 months).
 
 This is **production-impacting**: a cold 1-month query measured **~28s**, which exceeds Netlify's serverless function timeout (~26s). For 6- and 12-month subscriptions it is dramatically worse, so consultants would be **unable to allocate** and subscriptions would stay stuck in `PENDING_ALLOCATION`.
 
 ## Measurements (dev, local app → remote Supabase, warm-compiled route)
 
-`GET /api/slots/availability-with-allocation/{id}?startDateInUtc=…&endDateInUtc=…&timezone=Asia/Calcutta`
+`GET /api/scheduling/availability-with-allocation/{id}?startDateInUtc=…&endDateInUtc=…&timezone=Asia/Calcutta`
 
 | Window width | Time |
 |---|---|
@@ -27,7 +27,7 @@ Narrow windows are fine; cost explodes with width. The allocation dialog opened 
 
 ## Root cause
 
-`app/api/slots/availability-with-allocation/[consultantId]/route.ts` calls `processAvailabilitySlots()` (`utils/timeSlotsProcessing.ts`) over the full requested range. That pipeline:
+`app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` calls `processAvailabilitySlots()` (`utils/timeSlotsProcessing.ts`) over the full requested range. That pipeline:
 
 - `processWeeklySlots()` iterates day-by-day across the whole window.
 - `convertToSlotTimings()` runs `getSlotBookingStatus()` **per slot**, which is `O(appointments)` each.

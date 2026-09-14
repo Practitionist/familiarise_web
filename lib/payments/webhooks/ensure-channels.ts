@@ -105,23 +105,9 @@ export async function ensureChannelsForAppointment(
               consultantProfile: { select: { userId: true } },
             },
           },
-          // The org-tagged sibling, not the appointment being paid for.
-          // `appointment` is one appointment of many under a subscription and
-          // may be the personal one, while createSubscriptionChannel resolves
-          // the first ORG-tagged row — so without this the creator mints
-          // `dmo-…` and this path looks for `dm-…`. Filtered in the query
-          // because `take: 1` truncates server-side, before bookingOrgId's
-          // `find` can choose.
-          appointments: {
-            where: { organizationId: { not: null } },
-            select: { organizationId: true },
-            // Deterministic, not just filtered: `take: 1` over an unordered
-            // result can hand different callers different rows if a
-            // subscription ever carries two org-tagged appointments, which is
-            // the same divergence one layer down.
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-            take: 1,
-          },
+          // #1554 — one wrapper per subscription carries the org tag, the same
+          // row createSubscriptionChannel resolves, so the two cannot drift.
+          appointment: { select: { organizationId: true } },
         },
       },
       webinar: {
@@ -141,10 +127,10 @@ export async function ensureChannelsForAppointment(
         },
       },
       // A trial appointment has none of the four relations above — the
-      // consultant hangs off TrialSession directly. Without this the
+      // consultant hangs off Trial directly. Without this the
       // resolution below yields undefined, the guard fails, and the TRIAL
       // branch never executes for the only appointments that can reach it.
-      trialSession: {
+      trial: {
         select: { consultantProfile: { select: { userId: true } } },
       },
     },
@@ -159,10 +145,10 @@ export async function ensureChannelsForAppointment(
     appointment.subscription?.subscriptionPlan?.consultantProfile ||
     appointment.webinar?.webinarPlan?.consultantProfile ||
     appointment.class?.classPlan?.consultantProfile ||
-    // `TrialSession.consultantProfile` is the required, authoritative
-    // relation — not `trialSession.subscriptionPlan.consultantProfile`,
+    // `Trial.consultantProfile` is the required, authoritative
+    // relation — not `trial.subscriptionPlan.consultantProfile`,
     // which is the plan author and can differ.
-    appointment.trialSession?.consultantProfile;
+    appointment.trial?.consultantProfile;
 
   const consultantUserId = consultantProfile?.userId;
   if (!consultantUserId) {
@@ -190,7 +176,6 @@ export async function ensureChannelsForAppointment(
   const dmOrgId = bookingOrgId({
     consultationPlan: consultation?.consultationPlan,
     subscriptionPlan: subscription?.subscriptionPlan,
-    appointments: subscription?.appointments,
     appointment,
   });
 

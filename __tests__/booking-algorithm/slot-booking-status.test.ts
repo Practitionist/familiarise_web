@@ -13,7 +13,7 @@ import {
   buildAppointmentIndex,
   getSlotBookingStatus,
   type AppointmentSlot,
-} from "../../utils/timeSlotsProcessing";
+} from "../../utils/scheduling-engine/intervals";
 
 const at = (iso: string) => new Date(iso);
 const booking = (startIso: string, endIso: string): AppointmentSlot => ({

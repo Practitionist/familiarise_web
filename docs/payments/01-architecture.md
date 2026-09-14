@@ -115,7 +115,7 @@ The system handles four appointment types:
 
 ```
 +----------------------+       +----------------------+
-|     Appointment      |       |   SlotOfAppointment  |
+|     Appointment      |       |   AppointmentOccurrence  |
 +----------------------+       +----------------------+
 | id                   |       | id                   |
 | appointmentType      |       | startsAt             |
@@ -124,7 +124,7 @@ The system handles four appointment types:
 | webinarId -----------|--|    | appointmentId        |
 | classId -------------|--|    | user[] --------------|---> User[] (many-to-many)
 +----------------------+  |    +----------------------+
-| slotsOfAppointment[] |--|--> SlotOfAppointment[]
+| appointmentOccurrences[] |--|--> AppointmentOccurrence[]
 | payment[]            |  |
 | documents[]          |  |
 +----------------------+  |
@@ -287,7 +287,7 @@ AppointmentStatus:
 |  CHECKOUT PAGE: /checkout/plans/[type]/[planId]                                   |
 |  ------------------------------------------------------------------------------   |
 |  URL Search Params:                                                               |
-|  - CONSULTATION: startsAt, endsAt, slotOfAvailability*Id                          |
+|  - CONSULTATION: startsAt, endsAt, availabilityWindow*Id                          |
 |  - SUBSCRIPTION: schedulingPeriodStartsAt, schedulingPeriodEndsAt                 |
 |  - WEBINAR/CLASS: eventId                                                         |
 |  - Optional: discountCode, notes                                                  |
@@ -425,7 +425,7 @@ AppointmentStatus:
 |  |  handleConsultationCheckout()                                           |      |
 |  |  - Creates Consultation record                                          |      |
 |  |  - Creates Appointment with type=CONSULTATION                           |      |
-|  |  - Creates SlotOfAppointment with isTentative=true                      |      |
+|  |  - Creates AppointmentOccurrence with isTentative=true                      |      |
 |  +-------------------------------------------------------------------------+      |
 |  |  handleSubscriptionCheckout()                                           |      |
 |  |  - Creates Subscription record                                          |      |
@@ -434,7 +434,7 @@ AppointmentStatus:
 |  +-------------------------------------------------------------------------+      |
 |  |  handleWebinarCheckout()                                                |      |
 |  |  - Finds existing Webinar + Appointment                                 |      |
-|  |  - Adds user to SlotOfAppointment with isTentative=true                 |      |
+|  |  - Adds user to AppointmentOccurrence with isTentative=true                 |      |
 |  +-------------------------------------------------------------------------+      |
 |  |  handleClassCheckout()                                                  |      |
 |  |  - Finds existing Class + all Appointments                              |      |
@@ -637,7 +637,7 @@ AppointmentStatus:
 |  FIND PAYMENT BY paymentIntent ID                                                 |
 |  ------------------------------------------------------------------------------   |
 |  Include: appointment -> consultation/subscription/webinar/class                  |
-|           appointment -> slotsOfAppointment -> user                               |
+|           appointment -> appointmentOccurrences -> user                               |
 +-----------------------------------------------------------------------------------+
                                         |
                                         v
@@ -712,7 +712,7 @@ AppointmentStatus:
 +-----------------------------------------------------------------------------------+
 |  FIND PAYMENT WITH FULL APPOINTMENT TREE                                          |
 |  ------------------------------------------------------------------------------   |
-|  Include: appointment -> slotsOfAppointment                                       |
+|  Include: appointment -> appointmentOccurrences                                       |
 |           appointment -> consultation/subscription                                |
 +-----------------------------------------------------------------------------------+
                                         |

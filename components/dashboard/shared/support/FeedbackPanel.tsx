@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 
 
 import {
-  FeedbackStatus,
+  PlatformFeedbackStatus,
   SupportTicketStatus,
 } from "@prisma/client";
 import { useFeedbackSupport } from "./useFeedbackSupport";
@@ -42,7 +42,7 @@ export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
 
   // Semantic status colors kept (amber=in progress, green=resolved); the
   // off-brand blue OPEN/PENDING accent collapses to neutral monochrome.
-  const getStatusColor = (status: FeedbackStatus | SupportTicketStatus) => {
+  const getStatusColor = (status: PlatformFeedbackStatus | SupportTicketStatus) => {
     switch (status) {
       case "PENDING":
       case "OPEN":
@@ -58,7 +58,7 @@ export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
     }
   };
 
-  const getStatusIcon = (status: FeedbackStatus | SupportTicketStatus) => {
+  const getStatusIcon = (status: PlatformFeedbackStatus | SupportTicketStatus) => {
     switch (status) {
       case "PENDING":
       case "OPEN":
@@ -212,9 +212,9 @@ export function FeedbackPanel({ profileId }: FeedbackPanelProps) {
                       </h4>
                       <Badge
                         variant="outline"
-                        className={`${getStatusColor(feedback.status as FeedbackStatus)} flex items-center gap-1.5 shrink-0`}
+                        className={`${getStatusColor(feedback.status as PlatformFeedbackStatus)} flex items-center gap-1.5 shrink-0`}
                       >
-                        {getStatusIcon(feedback.status as FeedbackStatus)}
+                        {getStatusIcon(feedback.status as PlatformFeedbackStatus)}
                         {feedback.status}
                       </Badge>
                     </div>

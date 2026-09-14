@@ -215,12 +215,12 @@ sequenceDiagram
 
 | Workflow ID               | Trigger Function                                         | Recipients   | Payload Type          |
 | ------------------------- | -------------------------------------------------------- | ------------ | --------------------- |
-| `trial-session-requested` | `notifyTrialSessionRequested(consultantUserId, payload)` | Consultant   | `TrialSessionPayload` |
-| `trial-session-scheduled` | `notifyTrialSessionScheduled(consulteeUserId, payload)`  | Consultee    | `TrialSessionPayload` |
-| `trial-session-completed` | `notifyTrialSessionCompleted(userIds[], payload)`        | Both parties | `TrialSessionPayload` |
-| `trial-session-cancelled` | `notifyTrialSessionCancelled(userIds[], payload)`        | Both parties | `TrialSessionPayload` |
+| `trial-session-requested` | `notifyTrialRequested(consultantUserId, payload)` | Consultant   | `TrialPayload` |
+| `trial-session-scheduled` | `notifyTrialScheduled(consulteeUserId, payload)`  | Consultee    | `TrialPayload` |
+| `trial-session-completed` | `notifyTrialCompleted(userIds[], payload)`        | Both parties | `TrialPayload` |
+| `trial-session-cancelled` | `notifyTrialCancelled(userIds[], payload)`        | Both parties | `TrialPayload` |
 
-**TrialSessionPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`. Callers pass `TrialSessionInput`.
+**TrialPayload**: `consultantName`, `consulteeName`, `planTitle`, `dateTime?` (recipient-zone), `dateTimeIso?`, `status` (label), `statusCode?`, `dashboardUrl`. Callers pass `TrialInput`.
 
 ---
 

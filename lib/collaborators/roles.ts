@@ -1,4 +1,4 @@
-import type { CollaboratorRole } from "@prisma/client";
+import type { CollaboratorRole, CollaboratorTier } from "@prisma/client";
 
 // #1580 §6 — the one co-presenter a plan may carry (CO_HOST / CO_INSTRUCTOR).
 // Its own module so call, recording and access code can read it without the
@@ -11,4 +11,9 @@ export const PRESENTER_ROLES: readonly CollaboratorRole[] = [
 /** #1580 C-P1-4 — host controls (end for everyone, record) reach presenters only. */
 export function isPresenterRole(role: CollaboratorRole): boolean {
   return PRESENTER_ROLES.includes(role);
+}
+
+/** #1580 — the tier a role grants; written on every create and re-role. */
+export function tierForRole(role: CollaboratorRole): CollaboratorTier {
+  return isPresenterRole(role) ? "PRESENTER" : "CREW";
 }

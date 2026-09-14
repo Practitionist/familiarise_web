@@ -1,7 +1,7 @@
 /**
  * #1162 / #1169 PR 3 — the maintenance freeze follows the cancellation
  * doctrine. These contracts pin the rewrite:
- * 1. NOTHING is deleted — no appointment.delete, no slotOfAppointment
+ * 1. NOTHING is deleted — no appointment.delete, no appointmentOccurrence
  *    .deleteMany; slots soft-cancel and trials tombstone via their helper.
  * 2. Every status write is CAS-guarded through lib/booking/transitions (a
  *    COMPLETED booking cannot resurrect to CANCELLED).
@@ -24,7 +24,7 @@ const freezeSource = fs.readFileSync(
 describe("freeze-appointments doctrine (#1162)", () => {
   it("deletes nothing", () => {
     expect(freezeSource).not.toContain(".appointment.delete");
-    expect(freezeSource).not.toContain("slotOfAppointment.deleteMany");
+    expect(freezeSource).not.toContain("appointmentOccurrence.deleteMany");
   });
 
   it("soft-cancels slots with the cancel route's status guard", () => {
@@ -53,7 +53,7 @@ describe("freeze-appointments doctrine (#1162)", () => {
   it("guards the trial status flip and tombstones via the domain helper", () => {
     expect(freezeSource).toContain("softCancelTrialAppointment(");
     expect(freezeSource).toMatch(
-      /trialSession\.updateMany\(\{\s*where:\s*\{\s*id: trial\.id,\s*status: \{ in:/,
+      /trial\.updateMany\(\{\s*where:\s*\{\s*id: trial\.id,\s*status: \{ in:/,
     );
   });
 

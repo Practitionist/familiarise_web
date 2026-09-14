@@ -161,7 +161,7 @@ export const getHomeStats = unstable_cache(
         }),
         // Meetings actually held. The unit is the SLOT: an Appointment carries
         // no status of its own and a subscription spans many meetings.
-        prisma.slotOfAppointment.count({
+        prisma.appointmentOccurrence.count({
           where: { completionStatus: "COMPLETED", deletedAt: null },
         }),
         prisma.domain.findMany({

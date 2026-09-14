@@ -25,7 +25,7 @@
  * STREAM VIDEO CALLS
  * ------------------
  * TODO: Backfilling video calls is more involved — Stream Video's query API
- * takes a `MeetingSession.streamCallId` lookup per slot. Skipping for now;
+ * takes a `Meeting.streamCallId` lookup per slot. Skipping for now;
  * new calls created after this commit get tagged via `lib/meeting.ts`.
  *
  * EXTERNAL API CALLS

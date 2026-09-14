@@ -9,7 +9,7 @@
 import "dotenv/config";
 import { DayOfWeek } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 
 const CONSULTANT_ID = "31e2e9f4-c9d5-4c4c-b281-e8531da623dd";
 const SUBSCRIPTION_ID = "cmgflwuvk03nymf4gysztdb19"; // Extended subscription with Aug dates
@@ -19,7 +19,7 @@ async function investigateSundaySlots() {
 
   try {
     // 1. Check for any Sunday slots for this consultant
-    const sundaySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+    const sundaySlots = await prisma.availabilityWindowWeekly.findMany({
       where: {
         consultantProfileId: CONSULTANT_ID,
         startDay: DayOfWeek.SUNDAY,
@@ -59,9 +59,9 @@ async function investigateSundaySlots() {
             },
           },
         },
-        appointments: {
+        appointment: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { startsAt: "asc" },
             },
           },
@@ -94,13 +94,14 @@ async function investigateSundaySlots() {
 
     // 3. Check all appointment slots for this subscription
     console.log("=== ALL APPOINTMENT SLOTS FOR THIS SUBSCRIPTION ===");
-    console.log(`Total Appointments: ${subscription.appointments.length}\n`);
+    const wrappers = subscription.appointment ? [subscription.appointment] : [];
+    console.log(`Total Appointments: ${wrappers.length}\n`);
 
-    subscription.appointments.forEach((appt, idx) => {
+    wrappers.forEach((appt, idx) => {
       console.log(`Appointment ${idx + 1} (${appt.id}):`);
-      console.log(`  Total slots: ${appt.slotsOfAppointment.length}`);
+      console.log(`  Total slots: ${appt.occurrences.length}`);
 
-      appt.slotsOfAppointment.forEach((slot) => {
+      appt.occurrences.forEach((slot) => {
         const startDate = new Date(slot.startsAt);
         const dayOfWeek = startDate.toLocaleDateString("en-US", {
           weekday: "long",
@@ -153,7 +154,7 @@ async function investigateSundaySlots() {
             consultantProfileId: CONSULTANT_ID,
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             startsAt: {
               gte: augustStart,
@@ -177,7 +178,7 @@ async function investigateSundaySlots() {
             },
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           where: {
             startsAt: {
               gte: augustStart,
@@ -203,9 +204,9 @@ async function investigateSundaySlots() {
         console.log(
           `  Subscription Period: ${appt.subscription.schedulingPeriodStartsAt.toISOString()} to ${appt.subscription.schedulingPeriodEndsAt.toISOString()}`,
         );
-        console.log(`  August Slots: ${appt.slotsOfAppointment.length}`);
+        console.log(`  August Slots: ${appt.occurrences.length}`);
 
-        appt.slotsOfAppointment.forEach((slot) => {
+        appt.occurrences.forEach((slot) => {
           const dayOfWeek = new Date(slot.startsAt).toLocaleDateString(
             "en-US",
             { weekday: "short" },

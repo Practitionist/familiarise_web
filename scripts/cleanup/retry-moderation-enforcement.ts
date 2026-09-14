@@ -30,6 +30,7 @@ import type {
 } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   applyStreamEnforcement,
@@ -52,6 +53,8 @@ export interface ModerationRetryResult {
   skipped: number;
   /** #1580 — collaborator Stream revocations that landed on this attempt. */
   collaboratorRecovered: number;
+  /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
+  erasureRevocationsRecovered: number;
   errors: string[];
 }
 
@@ -203,6 +206,7 @@ async function retryModerationEnforcementUnlocked(
     gaveUp: 0,
     skipped: 0,
     collaboratorRecovered: 0,
+    erasureRevocationsRecovered: 0,
     errors: [],
   };
 
@@ -216,11 +220,76 @@ async function retryModerationEnforcementUnlocked(
     }
   }
 
+  // #1593 — the erasure scrub records the Stream revocations it could not
+  // land; there is no erasure sweep of its own, so this one drains them.
+  await drainErasureRevocations(result, limit);
+
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
   result.success = result.errors.length === 0 && result.gaveUp === 0;
 
   return result;
+}
+
+async function drainErasureRevocations(
+  result: ModerationRetryResult,
+  limit: number,
+): Promise<void> {
+  const now = new Date();
+  // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
+  // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
+  const rows = await prisma.streamRevocationRetry.findMany({
+    where: {
+      status: { in: ["PENDING", "FAILED"] },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      planType: true,
+      planId: true,
+      attempts: true,
+      erasureRequest: { select: { userId: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+  if (rows.length === 0) return;
+
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  for (const row of rows) {
+    const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+    let error: string | null = null;
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        row.planId,
+        row.erasureRequest.userId,
+        { notify: false },
+      );
+      if (!success) error = "Collaborator Stream access not fully revoked";
+    } catch (caught) {
+      error = errMsg(caught);
+    }
+    const attempts = row.attempts + 1;
+    await prisma.streamRevocationRetry.update({
+      where: { id: row.id },
+      data: error
+        ? {
+            status: "FAILED",
+            attempts,
+            lastError: error,
+            nextRetryAt: nextRetryAt(attempts, now),
+          }
+        : { status: "SUCCEEDED", attempts, completedAt: now },
+    });
+    if (error) {
+      result.stillFailing++;
+      result.errors.push(`erasure-revoke ${row.id}: ${error}`);
+    } else {
+      result.erasureRevocationsRecovered++;
+    }
+  }
 }
 
 type Budget = { maxAttempts: number; giveUpOlderThan: Date };

@@ -1,18 +1,18 @@
-import type { ProcessedSlot } from "../types";
+import type { PickerInterval } from "../types";
 
 /**
  * Merge consecutive slots with the same booking status for display purposes.
  * E.g., "3:30-4:00" + "4:00-4:30" + "4:30-5:00" (all available) → "3:30-5:00 PM"
  *
  * The only difference from `mergeConsecutiveSlots()` in
- * utils/timeSlotsProcessing.ts is which slots are eligible: that one merges
+ * utils/scheduling-engine/intervals.ts is which slots are eligible: that one merges
  * available slots only, because it feeds booking; this one merges any run that
  * shares a status, because it feeds the expert page's availability card. The
  * adjacency rule is identical in both.
  */
 export function mergeConsecutiveSlotsForDisplay(
-  slots: ProcessedSlot[],
-): ProcessedSlot[] {
+  slots: PickerInterval[],
+): PickerInterval[] {
   if (!slots || slots.length === 0) return [];
 
   const sorted = [...slots].sort((a, b) => {
@@ -21,7 +21,7 @@ export function mergeConsecutiveSlotsForDisplay(
     return aStart - bStart;
   });
 
-  const merged: ProcessedSlot[] = [];
+  const merged: PickerInterval[] = [];
   let current = { ...sorted[0] };
 
   for (let i = 1; i < sorted.length; i++) {
@@ -55,7 +55,7 @@ export function mergeConsecutiveSlotsForDisplay(
 }
 
 /** Derive a single status key that accounts for isAllocated + bookingStatus */
-function getEffectiveStatus(slot: ProcessedSlot): string {
+function getEffectiveStatus(slot: PickerInterval): string {
   if (slot.bookingStatus === "fully-booked") return "fully-booked";
   if (slot.bookingStatus === "partially-booked") return "partially-booked";
   if (slot.isAllocated) return "allocated";

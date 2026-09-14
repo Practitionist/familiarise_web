@@ -19,8 +19,8 @@ import {
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
   OCCUPIED_EVENT_STATUSES,
-} from "@/utils/slotAllocation/occupancyPolicy";
-import { AppointmentStatus, TrialSessionStatus } from "@prisma/client";
+} from "@/utils/scheduling-engine/occupancyPolicy";
+import { AppointmentStatus, TrialStatus } from "@prisma/client";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // buildOccupiedAppointmentFilter
@@ -89,16 +89,16 @@ describe("buildOccupiedAppointmentFilter", () => {
     const filters = buildOccupiedAppointmentFilter("cp-001");
     const trialFilter = filters[4] as any;
 
-    expect(trialFilter.trialSession).toBeDefined();
-    expect(trialFilter.trialSession.is.consultantProfileId).toBe("cp-001");
+    expect(trialFilter.trial).toBeDefined();
+    expect(trialFilter.trial.is.consultantProfileId).toBe("cp-001");
     // AWAITING_PAYMENT occupies too: a paid trial reserves its slot the moment
     // the consultant accepts and holds it while the learner pays. Matching only
     // SCHEDULED let someone else book the slot mid-payment, after which the
     // capture webhook would confirm the trial into a double booking.
-    expect(trialFilter.trialSession.is.status.in).toEqual(
+    expect(trialFilter.trial.is.status.in).toEqual(
       expect.arrayContaining([
-        TrialSessionStatus.SCHEDULED,
-        TrialSessionStatus.AWAITING_PAYMENT,
+        TrialStatus.SCHEDULED,
+        TrialStatus.AWAITING_PAYMENT,
       ]),
     );
   });
@@ -116,13 +116,13 @@ describe("buildOccupiedAppointmentFilter", () => {
     const filters = buildOccupiedAppointmentFilter();
     const trialFilter = filters[4] as any;
 
-    expect(trialFilter.trialSession.is.status.in).toEqual(
+    expect(trialFilter.trial.is.status.in).toEqual(
       expect.arrayContaining([
-        TrialSessionStatus.SCHEDULED,
-        TrialSessionStatus.AWAITING_PAYMENT,
+        TrialStatus.SCHEDULED,
+        TrialStatus.AWAITING_PAYMENT,
       ]),
     );
-    expect(trialFilter.trialSession.is.consultantProfileId).toBeUndefined();
+    expect(trialFilter.trial.is.consultantProfileId).toBeUndefined();
   });
 });
 

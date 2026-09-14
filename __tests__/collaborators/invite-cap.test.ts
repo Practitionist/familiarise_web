@@ -56,7 +56,7 @@ jest.mock("../../lib/prisma", () => ({
     classPlan: {
       findUnique: jest.fn(async () => ({ title: "T", archivedAt: null })),
     },
-    slotOfAppointment: { findFirst: jest.fn(async () => null) },
+    appointmentParticipant: { findFirst: jest.fn(async () => null) },
     $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) =>
       fn(tx),
     ),

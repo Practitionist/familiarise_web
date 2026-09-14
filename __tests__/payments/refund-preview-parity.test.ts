@@ -68,9 +68,9 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-  // transitionSlotCompletion reads the from-status, then moves the cohort with
+  // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findMany: jest.fn().mockResolvedValue([]),
     updateManyAndReturn: jest
       .fn()
@@ -95,6 +95,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+      // #1554 — the refund context reads the ONE wrapper.
+      findFirst: async (...a: unknown[]) =>
+        (await mockAppointmentFindMany(...a))[0] ?? null,
     },
     payment: {
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
@@ -180,7 +183,7 @@ function appointmentRow(kind: "consultation" | "subscription") {
     classId: null,
     webinar: null,
     class: null,
-    slotsOfAppointment: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
+    occurrences: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
   };
 
   if (kind === "subscription") {
@@ -286,7 +289,7 @@ function bookingRows(c: Case) {
           disputes: [],
         },
       ],
-      slotsOfAppointment: [...done, ...live],
+      occurrences: [...done, ...live],
     },
   ];
 }
@@ -501,8 +504,8 @@ beforeEach(() => {
   txCommitted = false;
   txStub.consultation.updateMany.mockResolvedValue({ count: 1 });
   txStub.subscription.updateMany.mockResolvedValue({ count: 1 });
-  txStub.slotOfAppointment.findMany.mockResolvedValue([]);
-  txStub.slotOfAppointment.updateManyAndReturn.mockResolvedValue([
+  txStub.appointmentOccurrence.findMany.mockResolvedValue([]);
+  txStub.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
     { id: "slot-1" },
     { id: "slot-2" },
   ]);

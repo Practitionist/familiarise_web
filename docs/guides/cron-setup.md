@@ -187,7 +187,7 @@ Check for abandoned appointments:
 SELECT a.id, a.createdAt, p.paymentStatus, s.isTentative
 FROM "Appointment" a
 JOIN "Payment" p ON p.appointmentId = a.id
-JOIN "SlotOfAppointment" s ON s.appointmentId = a.id
+JOIN "AppointmentOccurrence" s ON s.appointmentId = a.id
 WHERE a.createdAt < NOW() - INTERVAL '30 minutes'
   AND p.paymentStatus = 'PENDING'
   AND s.isTentative = true;

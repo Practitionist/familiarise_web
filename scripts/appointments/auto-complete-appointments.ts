@@ -29,8 +29,8 @@ import {
   WebinarStatus,
   ClassStatus,
   AppointmentStatus,
-  SlotCompletionStatus,
-  TrialSessionStatus,
+  OccurrenceCompletionStatus,
+  TrialStatus,
   Prisma,
 } from "@prisma/client";
 import { notifyAppointmentCompleted } from "../../lib/novu/service";
@@ -40,7 +40,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
-  transitionTrialSession,
+  transitionTrial,
 } from "@/lib/booking/transitions";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 import {
@@ -85,7 +85,7 @@ async function completeWebinars(): Promise<{
     where: {
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
       appointment: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             endsAt: { lt: bufferTime },
           },
@@ -99,7 +99,7 @@ async function completeWebinars(): Promise<{
       webinarPlan: { select: { title: true } },
       appointment: {
         include: {
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
           },
@@ -112,7 +112,7 @@ async function completeWebinars(): Promise<{
 
   for (const webinar of webinarsToComplete) {
     try {
-      const lastSlot = webinar.appointment?.slotsOfAppointment[0];
+      const lastSlot = webinar.appointment?.occurrences[0];
       console.log(`\nCompleting webinar ${webinar.id}`);
       console.log(`   Title: ${webinar.webinarPlan.title}`);
       console.log(`   Previous status: ${webinar.status}`);
@@ -161,28 +161,19 @@ async function completeClasses(): Promise<{
   const classesToComplete = await prisma.class.findMany({
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
-      appointments: {
-        some: {
-          slotsOfAppointment: {
-            some: {
-              endsAt: { lt: bufferTime },
-            },
-          },
-        },
-        every: {
-          slotsOfAppointment: {
-            every: {
-              endsAt: { lt: bufferTime },
-            },
-          },
+      // #1554 — one wrapper: at least one occurrence, and every one ended.
+      appointment: {
+        occurrences: {
+          some: { endsAt: { lt: bufferTime } },
+          every: { endsAt: { lt: bufferTime } },
         },
       },
     },
     include: {
       classPlan: { select: { title: true } },
-      appointments: {
+      appointment: {
         include: {
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
           },
@@ -195,14 +186,9 @@ async function completeClasses(): Promise<{
 
   for (const cls of classesToComplete) {
     try {
-      // Find the latest slot end time across all appointments
-      let latestEnd: Date | null = null;
-      for (const apt of cls.appointments) {
-        const slot = apt.slotsOfAppointment[0];
-        if (slot && (!latestEnd || slot.endsAt > latestEnd)) {
-          latestEnd = slot.endsAt;
-        }
-      }
+      // The latest occurrence end on the wrapper
+      const latestEnd: Date | null =
+        cls.appointment?.occurrences[0]?.endsAt ?? null;
 
       console.log(`\nCompleting class ${cls.id}`);
       console.log(`   Title: ${cls.classPlan.title}`);
@@ -252,7 +238,7 @@ async function completeConsultations(): Promise<{
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       appointment: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             endsAt: { lt: bufferTime },
           },
@@ -280,10 +266,10 @@ async function completeConsultations(): Promise<{
           // handoff below is decided from the attendance rows across all of
           // this booking's sessions. Still ordered newest-first, so `[0]` is
           // the last slot the logging and the deadline both want.
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             include: {
-              meetingSession: {
+              meeting: {
                 select: { attendances: { select: { userId: true } } },
               },
             },
@@ -299,7 +285,7 @@ async function completeConsultations(): Promise<{
 
   for (const consultation of consultationsToComplete) {
     try {
-      const lastSlot = consultation.appointment?.slotsOfAppointment[0];
+      const lastSlot = consultation.appointment?.occurrences[0];
       const consultantUserId =
         consultation.consultationPlan?.consultantProfile?.userId;
       const consulteeUserId = consultation.requestedBy?.userId;
@@ -321,7 +307,7 @@ async function completeConsultations(): Promise<{
       // all) cannot be stranded live forever.
       if (consultantUserId && consulteeUserId) {
         const verdict = classifyConsultantAttendance(
-          consultation.appointment?.slotsOfAppointment ?? [],
+          consultation.appointment?.occurrences ?? [],
           { consultantUserId, consulteeUserId },
         );
         if (
@@ -404,20 +390,11 @@ async function completeSubscriptions(): Promise<{
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointments: {
-        some: {
-          slotsOfAppointment: {
-            some: {
-              endsAt: { lt: bufferTime },
-            },
-          },
-        },
-        every: {
-          slotsOfAppointment: {
-            every: {
-              endsAt: { lt: bufferTime },
-            },
-          },
+      // #1554 — one wrapper: at least one occurrence, and every one ended.
+      appointment: {
+        occurrences: {
+          some: { endsAt: { lt: bufferTime } },
+          every: { endsAt: { lt: bufferTime } },
         },
       },
     },
@@ -433,9 +410,9 @@ async function completeSubscriptions(): Promise<{
       requestedBy: {
         select: { userId: true, user: { select: { name: true } } },
       },
-      appointments: {
+      appointment: {
         include: {
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
           },
@@ -450,14 +427,9 @@ async function completeSubscriptions(): Promise<{
 
   for (const subscription of subscriptionsToComplete) {
     try {
-      // Find the latest slot end time across all appointments
-      let latestEnd: Date | null = null;
-      for (const apt of subscription.appointments) {
-        const slot = apt.slotsOfAppointment[0];
-        if (slot && (!latestEnd || slot.endsAt > latestEnd)) {
-          latestEnd = slot.endsAt;
-        }
-      }
+      // The latest occurrence end on the wrapper
+      const latestEnd: Date | null =
+        subscription.appointment?.occurrences[0]?.endsAt ?? null;
 
       console.log(`\nCompleting subscription ${subscription.id}`);
       console.log(`   Title: ${subscription.subscriptionPlan.title}`);
@@ -492,7 +464,7 @@ async function completeSubscriptions(): Promise<{
       );
       if (userIds.length > 0) {
         void notifyAppointmentCompleted(userIds, {
-          ...notificationScope(subscription.appointments[0]?.organizationId),
+          ...notificationScope(subscription.appointment?.organizationId),
           appointmentType: "subscription",
           consultantName:
             subscription.subscriptionPlan?.consultantProfile?.user?.name ??
@@ -500,7 +472,7 @@ async function completeSubscriptions(): Promise<{
           consulteeName: subscription.requestedBy?.user?.name ?? "Consultee",
           planTitle: subscription.subscriptionPlan.title,
           dashboardUrl: notificationHref(
-            subscription.appointments[0]?.organizationId,
+            subscription.appointment?.organizationId,
             "appointments",
           ),
         }).catch((error) =>
@@ -535,11 +507,11 @@ async function completeTrials(): Promise<{
   );
 
   // Find SCHEDULED trials where the appointment slot has ended
-  const trialsToComplete = await prisma.trialSession.findMany({
+  const trialsToComplete = await prisma.trial.findMany({
     where: {
-      status: TrialSessionStatus.SCHEDULED,
+      status: TrialStatus.SCHEDULED,
       appointment: {
-        slotsOfAppointment: {
+        occurrences: {
           some: {
             endsAt: { lt: bufferTime },
           },
@@ -560,7 +532,7 @@ async function completeTrials(): Promise<{
       },
       appointment: {
         include: {
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { endsAt: "desc" },
             take: 1,
           },
@@ -573,7 +545,7 @@ async function completeTrials(): Promise<{
 
   for (const trial of trialsToComplete) {
     try {
-      const lastSlot = trial.appointment?.slotsOfAppointment[0];
+      const lastSlot = trial.appointment?.occurrences[0];
       console.log(`\nCompleting trial ${trial.id}`);
       console.log(`   Plan: ${trial.subscriptionPlan.title}`);
       console.log(`   Consultee: ${trial.consulteeProfile.user.name}`);
@@ -584,9 +556,9 @@ async function completeTrials(): Promise<{
 
       // CAS (#1319): a trial cancelled or converted since the read stays put.
       try {
-        await transitionTrialSession(prisma, {
+        await transitionTrial(prisma, {
           where: { id: trial.id },
-          to: TrialSessionStatus.COMPLETED,
+          to: TrialStatus.COMPLETED,
           data: { completedAt: new Date() },
         });
       } catch (error) {
@@ -605,7 +577,7 @@ async function completeTrials(): Promise<{
             actorName: trial.consulteeProfile.user.name,
             actorImage: trial.consulteeProfile.user.image,
             consultantProfileId: trial.consultantProfileId,
-            trialSessionId: trial.id,
+            trialId: trial.id,
             metadata: {
               planTitle: trial.subscriptionPlan.title,
               autoCompleted: true,
@@ -629,11 +601,11 @@ async function completeTrials(): Promise<{
 }
 
 /**
- * Mark individual SlotOfAppointment records with per-slot completion status.
+ * Mark individual AppointmentOccurrence records with per-slot completion status.
  * Runs BEFORE parent-level completion so that parent logic can rely on slot statuses.
  *
- * - Slots past buffer WITH MeetingSession.endedAt → COMPLETED
- * - Slots past buffer WITHOUT MeetingSession → UNVERIFIED (may be offline sessions)
+ * - Slots past buffer WITH Meeting.endedAt → COMPLETED
+ * - Slots past buffer WITHOUT Meeting → UNVERIFIED (may be offline sessions)
  */
 async function completeIndividualSlots(): Promise<{
   completed: number;
@@ -659,7 +631,7 @@ async function completeIndividualSlots(): Promise<{
   // The from-set is SCHEDULED only, narrower than the maps' defaults: this
   // cron is a fallback for a missed webhook and must never lift a slot a
   // human parked at UNVERIFIED or pulled back from COMPLETED.
-  const fromScheduled = [SlotCompletionStatus.SCHEDULED];
+  const fromScheduled = [OccurrenceCompletionStatus.SCHEDULED];
 
   try {
     // One transaction for the three passes: the helper writes the status and
@@ -669,15 +641,15 @@ async function completeIndividualSlots(): Promise<{
     // moves it in chunked transactions, so a backlog can never outlive one
     // transaction's timeout and roll back with its history rows.
     const runPass = async (
-      predicate: Prisma.SlotOfAppointmentWhereInput,
-      to: SlotCompletionStatus,
+      predicate: Prisma.AppointmentOccurrenceWhereInput,
+      to: OccurrenceCompletionStatus,
       data?: { completedAt: Date },
     ): Promise<number> => {
-      const cohort = await prisma.slotOfAppointment.findMany({
+      const cohort = await prisma.appointmentOccurrence.findMany({
         where: {
           ...liveHeldSlot,
           ...predicate,
-          completionStatus: SlotCompletionStatus.SCHEDULED,
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
         },
         select: { id: true },
         orderBy: { endsAt: "asc" },
@@ -695,17 +667,17 @@ async function completeIndividualSlots(): Promise<{
       );
     };
     const completedCount = await runPass(
-      { meetingSession: { endedAt: { not: null } } },
-      SlotCompletionStatus.COMPLETED,
+      { meeting: { endedAt: { not: null } } },
+      OccurrenceCompletionStatus.COMPLETED,
       { completedAt: new Date() },
     );
     const unverifiedCount = await runPass(
-      { meetingSession: null },
-      SlotCompletionStatus.UNVERIFIED,
+      { meeting: null },
+      OccurrenceCompletionStatus.UNVERIFIED,
     );
     const orphanedCount = await runPass(
-      { meetingSession: { endedAt: null } },
-      SlotCompletionStatus.UNVERIFIED,
+      { meeting: { endedAt: null } },
+      OccurrenceCompletionStatus.UNVERIFIED,
     );
     if (completedCount > 0 || unverifiedCount > 0 || orphanedCount > 0) {
       console.log(

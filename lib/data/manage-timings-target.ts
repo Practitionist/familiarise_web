@@ -2,7 +2,12 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
-import { toSlotLike } from "@/lib/appointments/view-model";
+import { toOccurrenceLike } from "@/lib/appointments/view-model";
+import {
+  isOccurrenceOver,
+  liveOccurrences,
+  occurrencesOfAppointment,
+} from "@/lib/appointments/occurrences";
 import type { ManageTimingsAppointmentLike } from "@/lib/scheduling/manage-timings-subject";
 
 /**
@@ -30,16 +35,10 @@ export interface ManageTimingsTarget {
   appointment: ManageTimingsAppointmentLike;
   /** Plan owner + ACCEPTED collaborators — the page's ownership check. */
   planOwnerIds: string[];
-  /** Program progress; only set when this id groups several sessions
-   *  (subscription/class with siblings). */
+  /** Program progress; only set when this wrapper carries several sessions
+   *  (subscription/class, #1554). */
   completedSessions?: number;
   groupTotalSessions?: number;
-}
-
-function isCompleted(slots: { endsAt: string | Date }[]): boolean {
-  if (slots.length === 0) return false;
-  const now = Date.now();
-  return slots.every((slot) => new Date(slot.endsAt).getTime() < now);
 }
 
 function ownerIds(...ids: (string | null | undefined)[]): string[] {
@@ -104,7 +103,8 @@ export async function readManageTimingsTarget(
   // use, so eligibility and the ownership shape stay in one place.
   const detail = await readAppointmentDetail(targetId);
   if (!detail) return null;
-  const { appointment, siblings } = detail;
+  const { appointment } = detail;
+  const now = new Date();
 
   // TRIAL sessions never open this surface — the appointments list never
   // renders a "Timings" action for one — but the type is wider than the
@@ -120,22 +120,18 @@ export async function readManageTimingsTarget(
 
   const planOwnerIds = resolvePlanOwnerIds(appointment);
 
-  // A subscription/class session is one Appointment among several; progress
-  // is only meaningful across the whole program, same as the consultant
+  // #1554 — a subscription/class is one Appointment whose occurrence rows are
+  // its sessions; progress is counted over those rows, same as the consultant
   // appointments list's group card (map-consultant.ts's mapGroup).
   const program =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS"
-      ? [appointment, ...siblings]
+      ? liveOccurrences(occurrencesOfAppointment(appointment))
       : null;
-  const scheduled = program?.filter(
-    (row) => row.slotsOfAppointment.length > 0,
-  );
 
-  // The PLAN's count, not the number of Appointment rows that happen to carry
-  // slots. Siblings are real appointments, not session placeholders, so an
-  // unscheduled one is simply absent — counting rows made the total shrink to
-  // whatever was already scheduled, and "remaining" then folded completed
+  // The PLAN's count, not the number of occurrence rows: an unscheduled
+  // session is simply absent, and counting rows made the total shrink to
+  // whatever was already scheduled, so "remaining" then folded completed
   // sessions in with future ones.
   const groupTotalSessions =
     appointment.appointmentType === "SUBSCRIPTION"
@@ -147,7 +143,7 @@ export async function readManageTimingsTarget(
   return {
     // Narrowed shape only: the guard above already ruled out TRIAL, but Prisma's
     // enum comparison doesn't narrow `appointment.appointmentType` for TS, and
-    // this also keeps payment/organization/trialSession off a type this route
+    // this also keeps payment/organization/trial off a type this route
     // never reads.
     appointment: {
       appointmentType: appointment.appointmentType as
@@ -159,21 +155,18 @@ export async function readManageTimingsTarget(
       // session still awaiting a time, and falls back to the last one that
       // ran when everything is over (#1073).
       //
-      // Through `toSlotLike`, never spread: these rows arrive from an
+      // Through `toOccurrenceLike`, never spread: these rows arrive from an
       // `include` and carry the attendee list and recording URLs with them,
       // which this route has no business shipping to the client.
-      slots: [
-        ...appointment.slotsOfAppointment,
-        ...siblings.flatMap((sibling) => sibling.slotsOfAppointment),
-      ].map(toSlotLike),
+      slots: appointment.occurrences.map(toOccurrenceLike),
       consultation: appointment.consultation,
       subscription: appointment.subscription,
       webinar: appointment.webinar,
       class: appointment.class,
     },
     planOwnerIds,
-    completedSessions: scheduled
-      ? scheduled.filter((row) => isCompleted(row.slotsOfAppointment)).length
+    completedSessions: program
+      ? program.filter((row) => isOccurrenceOver(row, now)).length
       : undefined,
     groupTotalSessions,
   };

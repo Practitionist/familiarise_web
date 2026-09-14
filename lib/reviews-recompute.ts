@@ -21,10 +21,6 @@ const SCORE_COLUMNS = {
   publishedRatingGroup: true,
   ratedClientsOneToOne: true,
   ratedEventsGroup: true,
-  rating: true,
-  publishedRating: true,
-  ratingUnitCount: true,
-  reviewCount: true,
 } as const;
 
 type StoredScore = Record<keyof typeof SCORE_COLUMNS, number | null>;

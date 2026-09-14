@@ -52,11 +52,11 @@ import {
   Mail,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { FeedbackStatus } from "@prisma/client";
-import type { Feedback, FeedbackCounts } from "@/types/feedback";
+import { PlatformFeedbackStatus } from "@prisma/client";
+import type { PlatformFeedback, FeedbackCounts } from "@/types/feedback";
 
 interface FeedbackListResponse {
-  feedbacks: Feedback[];
+  feedbacks: PlatformFeedback[];
   counts: FeedbackCounts;
   pagination: { totalPages: number };
 }
@@ -70,7 +70,10 @@ const EMPTY_COUNTS: FeedbackCounts = {
   closed: 0,
 };
 
-const STATUS_OPTIONS: { value: FeedbackStatus | "all"; label: string }[] = [
+const STATUS_OPTIONS: {
+  value: PlatformFeedbackStatus | "all";
+  label: string;
+}[] = [
   { value: "all", label: "All Status" },
   { value: "PENDING", label: "Pending" },
   { value: "ACKNOWLEDGED", label: "Acknowledged" },
@@ -79,7 +82,7 @@ const STATUS_OPTIONS: { value: FeedbackStatus | "all"; label: string }[] = [
   { value: "CLOSED", label: "Closed" },
 ];
 
-const getStatusColor = (status: FeedbackStatus) => {
+const getStatusColor = (status: PlatformFeedbackStatus) => {
   switch (status) {
     case "PENDING":
       return "bg-amber-100 text-amber-700 border-amber-200";
@@ -96,7 +99,7 @@ const getStatusColor = (status: FeedbackStatus) => {
   }
 };
 
-const getStatusIcon = (status: FeedbackStatus) => {
+const getStatusIcon = (status: PlatformFeedbackStatus) => {
   switch (status) {
     case "PENDING":
       return <AlertCircle className="h-4 w-4 text-amber-500" />;
@@ -146,9 +149,8 @@ export function FeedbackPage({
   const [page, setPage] = useState(1);
 
   // Detail view state
-  const [selectedFeedback, setSelectedFeedback] = useState<Feedback | null>(
-    null,
-  );
+  const [selectedFeedback, setSelectedFeedback] =
+    useState<PlatformFeedback | null>(null);
 
   // Debounced search
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -197,7 +199,7 @@ export function FeedbackPage({
       newStatus,
     }: {
       feedbackId: string;
-      newStatus: FeedbackStatus;
+      newStatus: PlatformFeedbackStatus;
     }) => {
       const response = await fetch(`${apiEndpoint}/${feedbackId}`, {
         method: "PATCH",
@@ -226,10 +228,12 @@ export function FeedbackPage({
     },
   });
 
-  const handleUpdateStatus = (feedbackId: string, newStatus: FeedbackStatus) =>
-    updateStatus.mutate({ feedbackId, newStatus });
+  const handleUpdateStatus = (
+    feedbackId: string,
+    newStatus: PlatformFeedbackStatus,
+  ) => updateStatus.mutate({ feedbackId, newStatus });
 
-  const renderRowActions = (feedback: Feedback) => (
+  const renderRowActions = (feedback: PlatformFeedback) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -273,7 +277,7 @@ export function FeedbackPage({
     </DropdownMenu>
   );
 
-  const columns: ResponsiveColumn<Feedback>[] = [
+  const columns: ResponsiveColumn<PlatformFeedback>[] = [
     {
       key: "id",
       header: "ID",
@@ -506,7 +510,7 @@ export function FeedbackPage({
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground/70" />
             </div>
           ) : (
-            <ResponsiveTable<Feedback>
+            <ResponsiveTable<PlatformFeedback>
               columns={columns}
               rows={feedbacks}
               getRowId={(f) => f.id}
@@ -634,7 +638,7 @@ export function FeedbackPage({
                     onValueChange={(value) =>
                       handleUpdateStatus(
                         selectedFeedback.id,
-                        value as FeedbackStatus,
+                        value as PlatformFeedbackStatus,
                       )
                     }
                     disabled={updateStatus.isPending}

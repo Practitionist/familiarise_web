@@ -94,3 +94,54 @@ The following four statements are the STAGED block. Each precondition must hold 
 ## Decisions recorded for the reset
 
 Two schema decisions are deferred to the reset day and must be settled in the same window: whether to unify the `uuid()` and `cuid()` id defaults across the booking aggregate (65 models use one, 59 the other), and whether the `#834` waitlist-to-slot unique constraint is added. Both are recorded in `docs/booking/00-architecture-decisions.md` under the A-series.
+
+## Cutover sequence (#1554)
+
+This is the ordered sequence for the vocabulary-reset cutover itself, distinct from the schema-reset steps above, and it governs how the branch reaches production without a window of half-renamed code talking to a half-renamed database.
+
+1. Merge the vocabulary-reset branch to `dev`.
+2. Open and merge the `dev`→`prod` release pull request, so the renamed code is what the next steps deploy.
+3. Set maintenance mode to `OFFLINE`. The Redis-backed maintenance flag serves the offline page without touching the database, so the site keeps answering requests while the reset runs underneath it.
+4. Take a `pg_dump` of the live database, the same backup discipline as step 1 of the schema-reset procedure above.
+5. Run `npx prisma db push --force-reset` against the live database.
+6. Run `npx prisma generate` immediately afterward. Prisma 7's `db push` no longer regenerates the client as a side effect, and skipping this step is not cosmetic: the 2026-09-14 rehearsal ran the seed against a stale client and it failed with `Unknown argument offeringFormats`, because the generated client still described the pre-reset shape.
+7. Run `npm run db:sidecars` to apply the raw-SQL sidecars (`prisma/sql/check-constraints.sql`, `prisma/sql/ledger-triggers.sql`, `prisma/sql/payment-legs-triggers.sql`) against the freshly reset schema.
+8. Run `npm run db:assert-sidecars` to confirm every sidecar object landed.
+9. Run `npm run db:seed`.
+10. Run `npx tsx scripts/ci/check-db-sidecars.ts && npx tsx scripts/ci/check-db-drift.ts` as the final guard before anything is declared live.
+11. Trigger the `dev` and `prod` deploys.
+12. Smoke test the deployed build against the reset database.
+13. Lift maintenance mode back from `OFFLINE`.
+14. Re-run CI on every open pull request, since the drift guard and the terminology guard both read the current schema and would otherwise report stale results against the pre-reset shape.
+
+### Measured on the 2026-09-14 rehearsal
+
+The table below records how long each step of the reset took on the rehearsal database (a scratch Supabase project on Postgres 17 in ap-south-1, run three times on 2026-09-14; these are the third, clean run's numbers). The seed dominates, so the offline window should be planned around ten minutes plus the two deploys.
+
+| Step     | Duration                                                 |
+| -------- | -------------------------------------------------------- |
+| push     | 46 s                                                     |
+| generate | 2 s                                                      |
+| sidecars | 27 s (138 statements)                                    |
+| assert   | 1 s                                                      |
+| seed     | 499 s (374 appointments, 1,076 occurrences, 122 reviews) |
+| guards   | 3 s                                                      |
+
+### Rehearsal findings
+
+Four findings from the 2026-09-14 rehearsal changed the branch ahead of the real cutover rather than being left for it. Prisma 7's `db push` no longer regenerates the client, so the sequence above runs `npx prisma generate` before the seed (the first rehearsal failed with `Unknown argument offeringFormats` without it). The review seed only produced rows on the live database because the auto-complete cron had run after the 2026-09-11 seed; seed 6a now stamps past confirmed occurrences `UNVERIFIED` itself, so a fresh reset ends with published scores. First, `ProgramAssignment.periodStart` and `periodEnd` had to become `timestamptz` columns for the staged `program_assignment_no_active_overlap` exclusion constraint to apply at all: the constraint's `tstzrange("periodStart", "periodEnd")` expression requires timezone-aware timestamps, and applying it against the prior plain-timestamp columns failed with Postgres error 42P17 ("exclusion constraint" data-type mismatch). Both columns carry `@db.Timestamptz` in the current schema, so this is no longer an open step, only a record of why the type is what it is.
+
+Second, the two idempotency-key `NOT NULL` constraints (`Payment.clientIdempotencyKey` and `OrganizationPayout.idempotencyKey`) were deferred again rather than applied at this rehearsal. The reasoning recorded in `prisma/sql/check-constraints.sql`, at the comment beginning "DEFERRED again at the #1554 reset rehearsal (2026-09-14)", is that the premise behind the original staging note — "writers mint since #1169 PR 9" — is false: the seed (8b), the overage side charge (`lib/payments/billing/overage-settlement.ts`) and the approval payment (`lib/payments/operations/approval-payment.ts`) never write `Payment.clientIdempotencyKey`, checkout writes `?? null`, and the Zod key is optional. The note also observes that a sidecar `NOT NULL` disagrees with the nullable Prisma column, so the next `db push` would drop it, and that the fix is to do it as schema (`String @unique`) once every writer mints a key, as its own money pull request.
+
+## CI while a branch's schema is ahead of the live database
+
+A pull request that renames tables cannot pass the sidecar and drift guards or `next build` against the live database, because the objects it declares do not exist there until the reset. Skipping those steps would leave exactly the riskiest pull request unverified, so `ci.yaml` does something else: when the pull request carries the `db-reset` label, one step rewrites `DATABASE_URL` and `DIRECT_URL` in the job's `.env` from the `REHEARSAL_DATABASE_URL` and `REHEARSAL_DIRECT_URL` secrets, which point at the rehearsal project, and the same guards and build run against the schema they belong to. The label also re-runs the job when it is added or removed. The recipe for a reset-riding branch is therefore: push the branch's schema to the rehearsal project (`db push`, `db:sidecars`, `db:assert-sidecars`, `db:seed`), set the two secrets, add the label. After the cutover, remove the label, delete the two secrets, and delete the rehearsal project.
+
+## Rollback
+
+The reset is reversible for as long as the platform holds only mock data, and the plan below assumes that. Decide to roll back if the post-reset smoke (`/`, `/api/health`, a booking, a join) fails and the cause is not obvious within fifteen minutes; do not debug on a broken production.
+
+1. Before the reset, `pg_dump --format=custom` of the live database to a dated file outside every git tree (the runbook's `pg_dump` step). This is the point-in-time copy; the free Supabase plan keeps no backups of its own.
+2. Code first: on Netlify, publish the previous production deploy and the previous `dev` deploy (Deploys → the last green deploy before the release → "Publish deploy"); both read the same database, so both go back together. On GitHub, revert the release merge on `prod` and the reset merge on `dev` (`git revert -m 1 <merge sha>`) so the next push does not redeploy the new code by accident.
+3. Database second: with maintenance still OFFLINE, restore the dump (`pg_restore --clean --if-exists --no-owner` into the live project), then `npm run db:assert-sidecars` from the **reverted** checkout to confirm the old objects are back. If the dump is unusable, the equivalent is a reset backwards: `db push --force-reset` from the reverted checkout, then its `db:sidecars` and `db:seed` — the same runbook, run from the old schema.
+4. Smoke the old deploys, lift OFFLINE, and re-run CI on the open pull requests. The reset PR stays merged-and-reverted until the cause is fixed on its branch; a second attempt repeats this runbook from the top, including the rehearsal.

@@ -11,19 +11,19 @@ import prisma from "../../lib/prisma";
 import {
   coalesceConsultantWeeklyRows,
   mergeAdjacentWeeklyRows,
-} from "../../utils/slotAllocation/mergeAdjacentWeeklyRows";
+} from "../../utils/scheduling-engine/mergeAdjacentWeeklyRows";
 
 async function main() {
   const apply = process.argv.includes("--apply");
   const profiles = await prisma.consultantProfile.findMany({
-    where: { slotsOfAvailabilityWeekly: { some: {} } },
-    select: { id: true, slotsOfAvailabilityWeekly: true },
+    where: { availabilityWindowsWeekly: { some: {} } },
+    select: { id: true, availabilityWindowsWeekly: true },
   });
   let candidates = 0;
   let foldedRows = 0;
   for (const p of profiles) {
-    const merged = mergeAdjacentWeeklyRows(p.slotsOfAvailabilityWeekly);
-    const delta = p.slotsOfAvailabilityWeekly.length - merged.length;
+    const merged = mergeAdjacentWeeklyRows(p.availabilityWindowsWeekly);
+    const delta = p.availabilityWindowsWeekly.length - merged.length;
     if (delta === 0) continue;
     candidates++;
     foldedRows += delta;
@@ -31,7 +31,7 @@ async function main() {
       JSON.stringify({
         event: apply ? "coalesce_apply" : "coalesce_dry_run",
         consultantProfileId: p.id,
-        before: p.slotsOfAvailabilityWeekly.length,
+        before: p.availabilityWindowsWeekly.length,
         after: merged.length,
       }),
     );

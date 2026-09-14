@@ -42,10 +42,10 @@ export {
   notifyFeedbackReceived,
   notifyNewReview,
   // Trials
-  notifyTrialSessionRequested,
-  notifyTrialSessionScheduled,
-  notifyTrialSessionCompleted,
-  notifyTrialSessionCancelled,
+  notifyTrialRequested,
+  notifyTrialScheduled,
+  notifyTrialCompleted,
+  notifyTrialCancelled,
   // Subscriptions
   notifySubscriptionStarted,
   notifySubscriptionCancelled,

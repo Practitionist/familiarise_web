@@ -16,9 +16,9 @@
 import {
   allowsManageTimings,
   allowsUnschedule,
-  slotsAllowReschedule,
-  upcomingSlots,
-} from "@/lib/appointments/slots";
+  occurrencesAllowReschedule,
+  upcomingOccurrences,
+} from "@/lib/appointments/occurrences";
 import type { AppointmentKind } from "@/lib/appointments/view-model";
 
 type TestSlot = {
@@ -35,7 +35,7 @@ const nothingAllocated: TestSlot[] = [];
 /** Mirrors ConsultantAppointmentsAdapter's two guards, minus the status checks. */
 function offered(kind: AppointmentKind, slots: TestSlot[]) {
   const timings = allowsManageTimings(kind, slots);
-  return { timings, reschedule: !timings && slotsAllowReschedule(slots) };
+  return { timings, reschedule: !timings && occurrencesAllowReschedule(slots) };
 }
 
 /** All three menu gates together, which is how a consultant actually meets them. */
@@ -255,7 +255,7 @@ describe("allowsUnschedule", () => {
   });
 });
 
-describe("upcomingSlots", () => {
+describe("upcomingOccurrences", () => {
   const now = new Date("2026-08-01T12:00:00Z");
   const hoursFromNow = (h: number) =>
     new Date(now.getTime() + h * 3_600_000).toISOString();
@@ -266,7 +266,7 @@ describe("upcomingSlots", () => {
       { startsAt: hoursFromNow(-48), endsAt: hoursFromNow(-47) },
       { startsAt: hoursFromNow(24), endsAt: hoursFromNow(25) },
     ];
-    expect(upcomingSlots(slots, now).map((s) => s.startsAt)).toEqual([
+    expect(upcomingOccurrences(slots, now).map((s) => s.startsAt)).toEqual([
       hoursFromNow(24),
       hoursFromNow(48),
     ]);
@@ -290,8 +290,8 @@ describe("upcomingSlots", () => {
         completionStatus: null,
       },
     ];
-    expect(allowsManageTimings("SUBSCRIPTION", upcomingSlots(slots, now))).toBe(
-      true,
-    );
+    expect(
+      allowsManageTimings("SUBSCRIPTION", upcomingOccurrences(slots, now)),
+    ).toBe(true);
   });
 });

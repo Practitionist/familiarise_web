@@ -11,19 +11,18 @@
  * 1. Capacity is per event *instance*. `Webinar.maxParticipants` /
  *    `Class.maxParticipants` override the plan's value; null inherits it. The
  *    plan number is the default for newly created instances.
- * 2. Every user connected to a slot occupies a seat, including one whose
- *    payment is still PENDING. Registration connects the buyer to the event's
- *    shared slots, so tentativeness is a property of the slot rather than of
- *    the individual registrant and cannot be filtered per user. A seat is
- *    released when the abandoned-checkout cleanup disconnects the buyer.
+ * 2. Every live participant row occupies a seat, including one whose payment
+ *    is still PENDING (a HELD seat). Registration adds the buyer to the event's
+ *    roster (#1554); a seat is released when the abandoned-checkout cleanup or
+ *    a removal flips the row to CANCELLED/REFUNDED.
  *
  * Pure functions only — no Prisma import — so client components can call this
  * on data handed down from a server component.
  */
 
 import {
-  countUniqueParticipants,
   countWebinarParticipants,
+  type SeatBearingAppointment,
 } from "@/lib/payments/utils/participants";
 
 export type CapacityInstance = { maxParticipants?: number | null };
@@ -64,28 +63,25 @@ function toCapacity(max: number, registered: number): EventCapacity {
 }
 
 /**
- * Webinar capacity. One shared appointment; every registrant is connected to
- * its slots.
+ * Webinar capacity. One shared appointment; every registrant holds a seat on
+ * its roster.
  *
  * `excludeUserIds` should carry the consultant's own user id — hosts do not
  * consume a seat.
  *
- * Callers MUST have included `slotsOfAppointment.user` in their query.
+ * Callers MUST have included `appointment.participants` in their query.
  * `countWebinarParticipants` silently returns 0 when the relation is missing,
  * which is exactly how the old in-lock recheck ended up dead.
  */
 export function getWebinarCapacity(params: {
   webinar: CapacityInstance & {
-    appointment?: { slotsOfAppointment?: Array<Record<string, unknown>> } | null;
+    appointment?: SeatBearingAppointment | null;
   };
   plan: CapacityPlan;
   excludeUserIds?: string[];
 }): EventCapacity {
   const { webinar, plan, excludeUserIds = [] } = params;
-  assertParticipantsIncluded(
-    webinar.appointment?.slotsOfAppointment,
-    "getWebinarCapacity",
-  );
+  assertParticipantsIncluded(webinar.appointment, "getWebinarCapacity");
   return toCapacity(
     effectiveMaxParticipants(webinar, plan),
     countWebinarParticipants(webinar.appointment ?? null, excludeUserIds),
@@ -93,44 +89,38 @@ export function getWebinarCapacity(params: {
 }
 
 /**
- * Class capacity. One appointment per session, and a student is connected to
- * every session's slots, so seats are unique users across all appointments.
+ * Class capacity. #1554 — one wrapper per class with N occurrences, so like a
+ * webinar the roster is the wrapper's live participant rows.
  */
 export function getClassCapacity(params: {
   classInstance: CapacityInstance & {
-    appointments?: Array<{
-      slotsOfAppointment: Array<Record<string, unknown>>;
-    }>;
+    appointment?: SeatBearingAppointment | null;
   };
   plan: CapacityPlan;
   excludeUserIds?: string[];
 }): EventCapacity {
   const { classInstance, plan, excludeUserIds = [] } = params;
-  for (const appointment of classInstance.appointments ?? []) {
-    assertParticipantsIncluded(appointment.slotsOfAppointment, "getClassCapacity");
-  }
+  assertParticipantsIncluded(classInstance.appointment, "getClassCapacity");
   return toCapacity(
     effectiveMaxParticipants(classInstance, plan),
-    countUniqueParticipants(classInstance.appointments ?? [], excludeUserIds),
+    countWebinarParticipants(classInstance.appointment ?? null, excludeUserIds),
   );
 }
 
 /**
- * A capacity call whose slots were loaded WITHOUT the `user` relation counts
+ * A capacity call whose appointment was loaded WITHOUT `participants` counts
  * zero registrants and reports a sold-out event as open — the exact way the
  * old in-lock recheck died. Loud failure beats a silently-wrong count on a
  * money gate, so this throws instead of returning 0 (#676 CN-4, #1169 PR 1).
  */
 function assertParticipantsIncluded(
-  slots: Array<Record<string, unknown>> | undefined | null,
+  appointment: SeatBearingAppointment | null | undefined,
   caller: string,
 ): void {
-  for (const slot of slots ?? []) {
-    if (!("user" in slot)) {
-      throw new Error(
-        `${caller}: slotsOfAppointment.user was not included in the query — the participant count would silently read 0. Include { slotsOfAppointment: { include: { user: true } } }.`,
-      );
-    }
+  if (appointment && !("participants" in appointment)) {
+    throw new Error(
+      `${caller}: appointment.participants was not included in the query — the participant count would silently read 0. Include { participants: { where: liveParticipant(), select: { userId: true } } }.`,
+    );
   }
 }
 

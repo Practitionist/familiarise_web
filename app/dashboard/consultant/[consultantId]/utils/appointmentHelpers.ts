@@ -1,6 +1,11 @@
 import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
-import { isDeadSlot } from "@/lib/appointments/slots";
+import {
+  isDeadOccurrence,
+  isOccurrenceOver,
+  liveOccurrences,
+  occurrencesOfAppointment,
+} from "@/lib/appointments/occurrences";
 
 /**
  * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
@@ -13,9 +18,9 @@ import { isDeadSlot } from "@/lib/appointments/slots";
  * these helpers — Today/Upcoming lists, HomeTab action items — inherits the
  * filter.
  */
-function liveSlotsOf(appointment: TAppointment): TAppointment["slotsOfAppointment"] {
-  return (appointment.slotsOfAppointment ?? []).filter(
-    (slot) => !isDeadSlot(slot) && !slot.isTentative,
+function liveSlotsOf(appointment: TAppointment): TAppointment["occurrences"] {
+  return (appointment.occurrences ?? []).filter(
+    (slot) => !isDeadOccurrence(slot) && !slot.isTentative,
   );
 }
 
@@ -208,18 +213,19 @@ export const getAppointmentTypeAndPlan = (
 
 // Get all slot times from appointment with proper type conversion
 export const getSlotTimes = (appointment: TAppointment): Date[] => {
-  if (!appointment?.slotsOfAppointment?.length) {
+  if (!appointment?.occurrences?.length) {
     return [];
   }
 
-  return appointment.slotsOfAppointment
+  return appointment.occurrences
     .map((slot) => new Date(slot.startsAt))
     .filter((date) => !isNaN(date.getTime()));
 };
 
 /**
  * Calculates session progress metrics for a group of appointments
- * @param groupAppointments - Array of appointments in the group (e.g., subscription sessions)
+ * @param groupAppointments - The group's wrapper(s); #1554 — a subscription or
+ * class is one Appointment whose live occurrence rows are its sessions
  * @param referenceDate - Optional reference date for comparison (defaults to now)
  * @returns Session progress metrics including total, completed, remaining sessions and percentage
  */
@@ -232,23 +238,14 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  // Exclude slot-less appointments (e.g. the zero-slot subscription checkout
-  // placeholder that carries the signup Payment — preserved by allocation, never
-  // deleted). A row with no slots is not a session, so counting it inflated
-  // totalSessions/remaining by 1 ("11 remaining" for a 10-session sub). This
-  // mirrors the completedSessions rule below, which already requires slots.
-  const appointmentsWithSlots = groupAppointments.filter(
-    (app) => getSlotTimes(app).length > 0,
+  const sessions = liveOccurrences(
+    groupAppointments.flatMap((app) => occurrencesOfAppointment(app)),
   );
 
-  const totalSessions = appointmentsWithSlots.length;
-  const completedSessions = appointmentsWithSlots.filter((app) => {
-    const slotTimes = getSlotTimes(app);
-    return (
-      slotTimes.length > 0 &&
-      slotTimes.every((time) => new Date(time) < referenceDate)
-    );
-  }).length;
+  const totalSessions = sessions.length;
+  const completedSessions = sessions.filter((session) =>
+    isOccurrenceOver(session, referenceDate),
+  ).length;
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
     totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
@@ -339,14 +336,14 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
   }
 
   // Check if a slot is currently in progress (not ended early)
-  const currentSlot = appointment?.slotsOfAppointment?.find((slot) => {
+  const currentSlot = appointment?.occurrences?.find((slot) => {
     if (slot.isTentative) return false;
     if (
       slot.completionStatus === "CANCELLED" ||
       slot.completionStatus === "RESCHEDULED"
     )
       return false;
-    if (slot.meetingSession?.endedAt) return false;
+    if (slot.meeting?.endedAt) return false;
     const start = new Date(slot.startsAt).getTime();
     const end = slot.endsAt
       ? new Date(slot.endsAt).getTime()
@@ -458,13 +455,13 @@ export const getTodayAppointments = (
       return liveSlots.map((slot) => ({
         ...appointment,
         id: `${appointment.id}-${slot.id}`,
-        slotsOfAppointment: [slot],
+        occurrences: [slot],
       }));
     }
 
     // Keep consultations and webinars as single appointments — but with only
     // their live rows, so a released reschedule slot cannot anchor "today".
-    return [{ ...appointment, slotsOfAppointment: liveSlots }];
+    return [{ ...appointment, occurrences: liveSlots }];
   });
 
   return expandedAppointments.filter((appointment) => {
@@ -493,10 +490,10 @@ export const getUpcomingAppointments = (
   // behavior (their liveness is decided by the checks below, not slots).
   const withLiveSlots = appointments.flatMap((appointment) => {
     const live = liveSlotsOf(appointment);
-    if (live.length === 0 && (appointment.slotsOfAppointment ?? []).length > 0) {
+    if (live.length === 0 && (appointment.occurrences ?? []).length > 0) {
       return [];
     }
-    return [{ ...appointment, slotsOfAppointment: live }];
+    return [{ ...appointment, occurrences: live }];
   });
 
   // First filter out completed appointments

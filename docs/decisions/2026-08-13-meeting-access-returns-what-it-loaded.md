@@ -183,3 +183,7 @@ caller to adopt a new idiom.
 - #1136 — introduced `resolveMeetingAccess` and the `reason` field.
 - #1149 — this change.
 - #1146 — the remaining-items tracker for the train.
+
+---
+
+Addendum (2026-09-14): `MeetingSession` (and `meetingSessionId`) is `Meeting` (and `meetingId`) since #1554.

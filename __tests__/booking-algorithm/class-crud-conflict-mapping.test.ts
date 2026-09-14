@@ -6,7 +6,7 @@
  * The class crud-with-plan arms must answer 409 for a slot overlap and 400 for
  * a frozen schedule — not 500.
  *
- * The webinar arms have mapped 23P01 (`slot_no_confirmed_overlap`) to a 409
+ * The webinar arms have mapped 23P01 (`occurrence_no_confirmed_overlap`) to a 409
  * since #784, but the class arms fell through to the generic catch, so a
  * consultant who double-booked themselves got "An error occurred" and a Sentry
  * page. The class POST was also the last crud-with-plan transaction still
@@ -21,7 +21,7 @@ const mockTx = {
   appointment: { findMany: jest.fn().mockResolvedValue([]) },
   payment: { count: jest.fn().mockResolvedValue(0) },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
-  slotOfAppointment: { findFirst: jest.fn().mockResolvedValue(null) },
+  appointmentOccurrence: { findFirst: jest.fn().mockResolvedValue(null) },
 };
 
 const transaction = jest.fn();
@@ -78,7 +78,7 @@ const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 /** Prisma's unmodelled-constraint shape: no `.code`, SQLSTATE in the message. */
 function exclusionViolation(): Error {
   return new Error(
-    'ERROR: conflicting key value violates exclusion constraint "slot_no_confirmed_overlap" (23P01)',
+    'ERROR: conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap" (23P01)',
   );
 }
 
@@ -133,7 +133,7 @@ beforeEach(() => {
 });
 
 describe("#784 — class POST maps an overlap to 409", () => {
-  it("returns 409 when the session write trips slot_no_confirmed_overlap", async () => {
+  it("returns 409 when the session write trips occurrence_no_confirmed_overlap", async () => {
     mockTx.class.create.mockRejectedValue(exclusionViolation());
 
     const response = await POST(request(VALID_POST_BODY));
@@ -235,7 +235,7 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
     expect(mockTx.class.update).not.toHaveBeenCalled();
   });
 
-  it("returns 409 when the update trips slot_no_confirmed_overlap", async () => {
+  it("returns 409 when the update trips occurrence_no_confirmed_overlap", async () => {
     mockTx.class.update.mockRejectedValue(exclusionViolation());
 
     const response = await PATCH(request(patchBody));

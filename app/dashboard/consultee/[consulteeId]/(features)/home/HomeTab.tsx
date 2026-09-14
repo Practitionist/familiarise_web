@@ -58,8 +58,8 @@ import {
 } from "@/lib/appointments/status-guards";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  getSessionJoinState,
-} from "@/lib/appointments/slots";
+  getOccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 
 // Webinars/classes carry WebinarStatus/ClassStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
@@ -149,12 +149,12 @@ function UpcomingSessionCard({
   const canShowJoin = !isTentative && isApproved && !isInactive;
 
   // #1061 — the same predicate the Appointments tabs and the planner use,
-  // over the whole run of slot rows rather than one of them. The hand-rolled
+  // over the occurrence's own bounds. The hand-rolled
   // time comparison this replaces could not see `ended`, so a session the host
   // had already closed still offered Join for the rest of the booked hour.
   const isWithinJoinWindow =
-    !!event.joinableSession &&
-    getSessionJoinState(event.joinableSession, {
+    !!event.joinableOccurrence &&
+    getOccurrenceJoinState(event.joinableOccurrence, {
       // #1270 — the shared constant, not a local 10-minute literal. This
       // page declared its own, which is how the product ended up with four
       // different answers to "when does Join light up?".

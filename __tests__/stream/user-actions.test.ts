@@ -358,7 +358,7 @@ describe("User Actions", () => {
       // Mock batched relationship queries (findMany + .then())
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
-      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");
@@ -425,7 +425,7 @@ describe("User Actions", () => {
         },
       ]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
-      mockPrisma.slotOfAppointment.findMany.mockResolvedValue([]);
+      mockPrisma.appointmentOccurrence.findMany.mockResolvedValue([]);
 
       const { searchUsersWithRelationships } =
         await import("../../actions/stream/chat/user.action");

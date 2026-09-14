@@ -77,7 +77,7 @@ jest.mock("../../lib/prisma", () => ({
     consultantProfile: { findUnique: jest.fn(async () => invitee) },
     webinarPlan: { findUnique: jest.fn(async () => plan) },
     classPlan: { findUnique: jest.fn(async () => plan) },
-    slotOfAppointment: { findFirst: jest.fn(async () => seat) },
+    appointmentParticipant: { findFirst: jest.fn(async () => seat) },
     appointment: {
       findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
     },

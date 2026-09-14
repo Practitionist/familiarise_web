@@ -1,4 +1,4 @@
-import { THIRTY_MIN_MS } from "@/utils/timeSlotsProcessing";
+import { THIRTY_MIN_MS } from "@/utils/scheduling-engine/intervals";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot. Only computed
  * (and only ever returned) when the caller is the owning consultant/staff —
@@ -16,7 +16,7 @@ export interface OverlapAppointmentMeta {
 export interface AppointmentForOverlapMeta {
   id: string;
   appointmentType: string;
-  slotsOfAppointment: { id: string; startsAt: Date; endsAt: Date }[];
+  occurrences: { id: string; startsAt: Date; endsAt: Date }[];
   consultation?: {
     consultationPlan?: { title?: string | null } | null;
     requestedBy?: { user?: { name?: string | null } | null } | null;
@@ -68,7 +68,7 @@ export function buildOverlapMetaIndex(
       title,
       with: withUser,
     };
-    for (const slot of appt.slotsOfAppointment) {
+    for (const slot of appt.occurrences) {
       if (!slot.startsAt || !slot.endsAt) continue;
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();

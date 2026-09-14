@@ -26,7 +26,7 @@ async function run() {
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: { status: { in: ["PENDING", "APPROVED"] } },
-      slotsOfAppointment: { some: { completionStatus: "SCHEDULED" } },
+      occurrences: { some: { completionStatus: "SCHEDULED" } },
     },
     select: { id: true, consultation: { select: { id: true } } },
     skip: 1, // avoid the fixture used by cancel-vs-reschedule
@@ -41,12 +41,12 @@ async function run() {
     where: { id: appointment.consultation!.id },
     select: { status: true },
   });
-  const originalSlots = await prisma.slotOfAppointment.findMany({
+  const originalSlots = await prisma.appointmentOccurrence.findMany({
     where: { appointmentId: appointment.id },
     select: { id: true, completionStatus: true, isTentative: true },
   });
 
-  const terminalBefore = await prisma.slotOfAppointment.count({
+  const terminalBefore = await prisma.appointmentOccurrence.count({
     where: {
       appointmentId: appointment.id,
       completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
@@ -79,7 +79,7 @@ async function run() {
     consultation,
   );
 
-  const terminalAfter = await prisma.slotOfAppointment.count({
+  const terminalAfter = await prisma.appointmentOccurrence.count({
     where: {
       appointmentId: appointment.id,
       completionStatus: { in: ["COMPLETED", "CANCELLED", "UNVERIFIED"] },
@@ -97,7 +97,7 @@ async function run() {
     data: { status: originalConsultation.status },
   });
   for (const slot of originalSlots) {
-    await prisma.slotOfAppointment.update({
+    await prisma.appointmentOccurrence.update({
       where: { id: slot.id },
       data: {
         completionStatus: slot.completionStatus,

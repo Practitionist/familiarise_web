@@ -29,7 +29,7 @@ import {
   AppointmentStatus,
   Currency,
   PaymentStatus,
-  TrialSessionStatus,
+  TrialStatus,
 } from "@prisma/client";
 
 const CUID = "clw0000000000000000000000";
@@ -44,7 +44,7 @@ interface State {
   appointmentPayments: Array<Record<string, unknown>>;
   /** Whether the consultation is still payable, which gates the re-mint. */
   consultationStatus: string;
-  /** What findExistingLivePayment's trial arm reads off TrialSession.payment. */
+  /** What findExistingLivePayment's trial arm reads off Trial.payment. */
   trialPayment?: Record<string, unknown> | null;
   trialStatus?: string;
 }
@@ -83,7 +83,7 @@ jest.mock("../../lib/prisma", () => ({
         }) => ({ ...where, ...data }),
       ),
     },
-    trialSession: {
+    trial: {
       // Hydrates the include shape findExistingLivePayment's trial arm walks.
       findUnique: jest.fn(async () => ({
         id: "trial-1",
@@ -144,7 +144,7 @@ function freshState(): State {
     },
     appointmentPayments: [],
     consultationStatus: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-    trialStatus: TrialSessionStatus.AWAITING_PAYMENT,
+    trialStatus: TrialStatus.AWAITING_PAYMENT,
   };
 }
 
@@ -317,7 +317,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
   });
 
   // CodeRabbit triage — the trial arm of findExistingLivePayment returned
-  // the TrialSession's payment UNFILTERED, so an EXPIRED order would have
+  // the Trial's payment UNFILTERED, so an EXPIRED order would have
   // been handed back as a "reusable" checkout link (a dead intent) instead
   // of minting fresh.
   it("trial arm: an EXPIRED trial payment is re-minted into its own row", async () => {
@@ -377,7 +377,7 @@ describe("approval routes thread the appointment (source contract)", () => {
     expect(fn).toContain("appointmentId: appointment?.id ?? undefined");
   });
 
-  it("the subscription route passes its first request-time appointment", () => {
+  it("the subscription route passes its one request-time appointment", () => {
     const src = read(
       "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
     );
@@ -385,7 +385,8 @@ describe("approval routes thread the appointment (source contract)", () => {
       src.indexOf("async function generatePaymentLinkForSubscription"),
     );
     expect(fn).toContain("appointmentId,");
-    expect(fn).toContain("subscription.appointments[0]?.id ?? undefined");
+    // #1554 — one wrapper per subscription, so there is no `[0]` to pick.
+    expect(fn).toContain("subscription.appointment?.id ?? undefined");
   });
 
   it('the metadata builder no longer carries the "pending" sentinel', () => {

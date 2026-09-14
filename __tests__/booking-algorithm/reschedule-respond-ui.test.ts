@@ -23,7 +23,7 @@ const eventActions = read(
   "components/appointments/consultee/useEventActions.ts",
 );
 const allocationTab = read(
-  "components/dashboard/shared/requests/RequestSlotAllocationTab.tsx",
+  "components/dashboard/shared/requests/RequestSchedulingTab.tsx",
 );
 const reschedulePage = read(
   "app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page.tsx",

@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const counts = await prisma.trialSession.groupBy({
+    const counts = await prisma.trial.groupBy({
       by: ["status"],
       where: { consultantProfileId },
       _count: { status: true },

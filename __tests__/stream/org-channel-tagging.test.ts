@@ -48,18 +48,6 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     }
   });
 
-  it("falls back to the first ORG-TAGGED appointment, not appointments[0]", () => {
-    // A class or subscription holds many appointments and is funded once, and
-    // the array arrives unordered. Reading `[0]` is what made one path mint
-    // `dmo-…` and another `dm-…` for the same relationship.
-    expect(
-      bookingOrgId({
-        classPlan: { organizationId: null },
-        appointments: [{ organizationId: null }, { organizationId: "org-3" }],
-      }),
-    ).toBe("org-3");
-  });
-
   it("resolves the appointment's org when the plan carries none", () => {
     // The arm that was missing. A personal plan booked under an organization
     // has its org on the APPOINTMENT, and the DM-eligibility path reads it —
@@ -76,42 +64,21 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     expect(
       bookingOrgId({
         subscriptionPlan: { organizationId: null },
-        appointments: [{ organizationId: null }, { organizationId: "org-5" }],
+        appointment: { organizationId: "org-5" },
       }),
     ).toBe("org-5");
   });
 
-  it("picks the SAME org whatever order the relation returns", () => {
-    // #1304 review — Prisma relations come back unordered, and `find()` took
-    // whichever tagged row arrived first. With two different orgs present the
-    // answer changed between reads, and because the DM channel id is a function
-    // of the org, one relationship would mint `dmo-<digest(A)>` on one path and
-    // `dmo-<digest(B)>` on another: two channels, split history.
-    const forwards = bookingOrgId({
-      classPlan: { organizationId: null },
-      appointments: [{ organizationId: "org-b" }, { organizationId: "org-a" }],
-    });
-    const backwards = bookingOrgId({
-      classPlan: { organizationId: null },
-      appointments: [{ organizationId: "org-a" }, { organizationId: "org-b" }],
-    });
-
-    expect(forwards).toBe(backwards);
-  });
-
-  it("ignores untagged appointments when choosing", () => {
-    // A mixed personal/org-funded set must still resolve to the org, not to
-    // null — which is the half `find()` already got right and must not regress.
+  it("has one row to read, so there is no order to disagree over (#1554)", () => {
+    // #1304 review found `find()` over an unordered relation minting two DM
+    // channels for one relationship. A booking is now ONE Appointment, so the
+    // org tag is a single column and the helper carries no list arm at all.
     expect(
       bookingOrgId({
-        subscriptionPlan: { organizationId: null },
-        appointments: [
-          { organizationId: null },
-          { organizationId: "org-z" },
-          { organizationId: null },
-        ],
+        classPlan: { organizationId: null },
+        appointment: { organizationId: "org-a" },
       }),
-    ).toBe("org-z");
+    ).toBe("org-a");
   });
 
   it("returns null for a wholly personal booking", () => {

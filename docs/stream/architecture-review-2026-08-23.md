@@ -19,7 +19,7 @@ Severity roll-up: **3 HIGH · 9 MED-HIGH/MED · 9 LOW/INFO**. All three HIGH fin
 
 ## 1. HLD — what the system is
 
-Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video** (participant-minute-billed). Postgres stores *no chat state and no call media* — Stream is the system of record for messages/calls; Postgres (`MeetingSession`, `MeetingAttendance`, `Recording`) is the system of record for *entitlements, scheduling truth, and recording metadata*. Everything else is projections.
+Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video** (participant-minute-billed). Postgres stores *no chat state and no call media* — Stream is the system of record for messages/calls; Postgres (`Meeting`, `MeetingAttendance`, `Recording`) is the system of record for *entitlements, scheduling truth, and recording metadata*. Everything else is projections.
 
 ```text
                     ┌──────────────────────────────────────────────┐
@@ -42,8 +42,8 @@ Stream hosts two products behind one API key: **Chat** (MAU-billed) and **Video*
   └ jobs/ + GH-Action crons: expire-event-channels (freeze→delete),
       webhook sweeper, orphaned-session reconciler, user sync, recordings
 
- Supabase Postgres (Prisma): Appointment/SlotOfAppointment (truth),
-   MeetingSession(1:1 slot, streamCallId unique), MeetingAttendance,
+ Supabase Postgres (Prisma): Appointment/AppointmentOccurrence (truth),
+   Meeting(1:1 slot, streamCallId unique), MeetingAttendance,
    Recording, WebhookEvent(outbox-ish), Webinar/Class.chatFrozenAt ledger
 ```text
 
@@ -77,7 +77,7 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 | Server actions | `upsertUserToStream` cached 5min; creators stamp `organization_id`; `removeUserFromEventChannel` returns `{success:false}` instead of throwing | Several exports have **no session gate** — F-HIGH-1/F-MED-6 |
 | Client store | Module snapshot + `useSyncExternalStore`; stable server snapshot; bail-on-no-op writes | Prevents SSR skip + element-type-change remounts |
 | Video join | Always `call_member` (a `host` role would lock out — zero grants exist); host-ness from `custom.consultantUserId` | Call type hardened: `user` has NO join-call; script refuses `--apply` until join route deployed |
-| Attendance | Sole writer = participant webhooks; `(meetingSessionId,userId)` upsert, immutable `firstJoinedAt` | No-show detection consumes it — webhook outage ⇒ attendance loss |
+| Attendance | Sole writer = participant webhooks; `(meetingId,userId)` upsert, immutable `firstJoinedAt` | No-show detection consumes it — webhook outage ⇒ attendance loss |
 
 ---
 
@@ -92,7 +92,7 @@ No room exists at booking. First Join mints deterministically: `slot-<anchorSlot
 `getWebinarIdsForUser/getClassIdsForUser` have no date/status filter, so after the retention cron hard-deletes a channel, the next dashboard sync re-creates it with the full historic roster — and because `chatFrozenAt` was stamped pre-delete, the ledger classifies the resurrected channel as already-frozen. It stays writable forever and its membership regrows unbounded. Fix: exclude events past retention from the sync expected-set (same window math as the cron), or clear `chatFrozenAt` on delete.
 
 **F-HIGH-3 · Concurrent first-join races produce duplicate-create failures that fail real user journeys.**
-Two simultaneous first joins both miss `addMembers`, both build roster and call `create()`; loser throws (payment-webhook path fails that attendee inline). Same shape in DM sync and `createCollaboratorChannel` (docstring claims idempotent; nothing enforces it). Fix: catch duplicate-create (Stream code 17?) and adopt the existing channel, mirroring `createDbMeetingSession`'s P2002 handling.
+Two simultaneous first joins both miss `addMembers`, both build roster and call `create()`; loser throws (payment-webhook path fails that attendee inline). Same shape in DM sync and `createCollaboratorChannel` (docstring claims idempotent; nothing enforces it). Fix: catch duplicate-create (Stream code 17?) and adopt the existing channel, mirroring `createDbMeeting`'s P2002 handling.
 
 ### MED-HIGH / MED
 

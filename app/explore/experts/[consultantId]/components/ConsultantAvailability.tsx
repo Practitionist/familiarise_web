@@ -1,24 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DayOfWeek } from "@prisma/client";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
 import { SlotStatusLegend } from "@/components/scheduling/SlotStatusLegend";
-import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/slot-status-tokens";
+import { BUYER_LEGEND_KEYS } from "@/lib/scheduling/interval-status-tokens";
 import { addDays, startOfDay, endOfDay } from "date-fns";
 import { toZonedTime, formatInTimeZone } from "date-fns-tz";
-import type { ConsultantDetailData, ProcessedSlot } from "../types";
+import type { ConsultantDetailData, PickerInterval } from "../types";
 
 interface ConsultantAvailabilityProps {
   consultantDetails: ConsultantDetailData;
   timezone: string;
 }
 
-type ProcessedSlotsByDay = Record<DayOfWeek, ProcessedSlot[]>;
+type PickerIntervalsByDay = Record<DayOfWeek, PickerInterval[]>;
 
 type DayWithSlots = {
   date: Date;
-  slots: ProcessedSlot[];
+  slots: PickerInterval[];
 };
 
 export function ConsultantAvailability({
@@ -28,7 +28,7 @@ export function ConsultantAvailability({
   const [availabilityData, setAvailabilityData] = useState<
     Record<
       string,
-      (TSlotTiming & {
+      (TIntervalTiming & {
         isAllocated: boolean;
         bookingStatus: "available" | "partially-booked" | "fully-booked";
       })[]
@@ -59,7 +59,7 @@ export function ConsultantAvailability({
         const endDateInUtc = endOfDay(addDays(windowStart, 6));
 
         const response = await fetch(
-          `/api/slots/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
+          `/api/scheduling/availability-with-allocation/${consultantDetails.id}?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
         );
 
         if (!response.ok) {
@@ -80,8 +80,8 @@ export function ConsultantAvailability({
   }, [consultantDetails?.id, timezone, weekOffset]);
 
   // Process data for WeeklyAvailability component (group by day of week)
-  const processedWeeklySlots = useMemo((): ProcessedSlotsByDay => {
-    const slotsByDay: ProcessedSlotsByDay = {
+  const processedWeeklySlots = useMemo((): PickerIntervalsByDay => {
+    const slotsByDay: PickerIntervalsByDay = {
       MONDAY: [],
       TUESDAY: [],
       WEDNESDAY: [],
@@ -101,7 +101,7 @@ export function ConsultantAvailability({
               localStartTime: slot.localStartTime,
               localEndTime: slot.localEndTime,
               originalSlot: {
-                id: slot.slotOfAvailabilityId,
+                id: slot.availabilityWindowId,
                 startsAt: slot.startsAt,
                 endsAt: slot.endsAt,
               },
@@ -110,7 +110,7 @@ export function ConsultantAvailability({
               startsAt: slot.startsAt,
               endsAt: slot.endsAt,
               type: "WEEKLY",
-            } as ProcessedSlot);
+            } as PickerInterval);
           });
       });
     }
@@ -127,14 +127,14 @@ export function ConsultantAvailability({
       const date = addDays(startOfDay(toZonedTime(windowStart, timezone)), i);
       const dateKey = formatInTimeZone(date, timezone, "yyyy-MM-dd");
 
-      const slots: ProcessedSlot[] = (availabilityData[dateKey] || [])
+      const slots: PickerInterval[] = (availabilityData[dateKey] || [])
         .filter((slot) => slot.type === "CUSTOM")
         .map((slot) => ({
           id: slot.slotId,
           localStartTime: slot.localStartTime,
           localEndTime: slot.localEndTime,
           originalSlot: {
-            id: slot.slotOfAvailabilityId,
+            id: slot.availabilityWindowId,
             startsAt: slot.startsAt,
             endsAt: slot.endsAt,
           },

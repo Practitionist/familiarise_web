@@ -13,16 +13,16 @@ import {
   isPendingStatus,
   normalizeStatus,
 } from "./status";
-import { activeSessions, allSessionsOver } from "./slots";
+import { liveOccurrences, allOccurrencesOver } from "./occurrences";
 import type {
   AppointmentBucket,
   NeedsActionReason,
-  SessionVM,
+  OccurrenceVM,
 } from "./view-model";
 
 export interface BucketInput {
   status: string | null | undefined;
-  sessions: SessionVM[];
+  occurrences: OccurrenceVM[];
   /** Consultant-side event with no Appointment rows yet — always needs scheduling. */
   isUnscheduled?: boolean;
   now?: Date;
@@ -34,7 +34,7 @@ export interface BucketResult {
 }
 
 export function deriveBucket(input: BucketInput): BucketResult {
-  const { sessions, isUnscheduled } = input;
+  const { occurrences, isUnscheduled } = input;
   const now = input.now ?? new Date();
   const status = normalizeStatus(input.status);
 
@@ -53,11 +53,11 @@ export function deriveBucket(input: BucketInput): BucketResult {
   if (isPendingStatus(status)) {
     return { bucket: "needsAction", needsActionReason: "PENDING_APPROVAL" };
   }
-  if (allSessionsOver(sessions, now)) {
+  if (allOccurrencesOver(occurrences, now)) {
     return { bucket: "past", needsActionReason: null };
   }
 
-  const active = activeSessions(sessions);
+  const active = liveOccurrences(occurrences);
   if (active.length > 0 && active.every((s) => s.isTentative)) {
     return { bucket: "needsAction", needsActionReason: "TENTATIVE" };
   }

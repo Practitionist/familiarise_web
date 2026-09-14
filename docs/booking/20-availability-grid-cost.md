@@ -5,7 +5,7 @@
 > below came from `EXPLAIN (ANALYZE, BUFFERS)` and from Prisma's own query
 > event log; nothing here is an estimate unless it says so.
 
-`GET /api/slots/availability-with-allocation/[consultantId]` is the busiest
+`GET /api/scheduling/availability-with-allocation/[consultantId]` is the busiest
 read in the booking subsystem, because ADR 16 decided that slot freshness is
 polled rather than pushed. Every calendar that is open anywhere in the product
 re-asks this endpoint once every sixty seconds
@@ -68,7 +68,7 @@ query costs the same whether it returns rows or not. Postgres seq-scans
 `Appointment` (1,091 rows), both copies of each event table and every plan
 table, because at this data size a scan genuinely is cheaper than an index
 probe. The consultant-selective work — the slot participation arm — is the one
-part that does use an index (`_SlotOfAppointmentToUser_B_index`, then a hash
+part that does use an index (`_AppointmentParticipant_B_index`, then a hash
 semi-join). In other words, the endpoint pays a fixed cost per poll that is
 almost independent of how busy the consultant is, and that fixed cost is a
 whole-table read of the booking core.
@@ -113,13 +113,13 @@ parameters into a strong ETag:
 1. `ConsultantProfile.updatedAt`, which covers `scheduleType` flipping between
    weekly and custom, and which doubles as the existence check that keeps the
    route's 404 reachable.
-2. The maximum `updatedAt` across the consultant's `SlotOfAvailabilityWeekly`
-   and `SlotOfAvailabilityCustom` rows, which covers every availability edit,
+2. The maximum `updatedAt` across the consultant's `AvailabilityWindowWeekly`
+   and `AvailabilityWindowCustom` rows, which covers every availability edit,
    including the coalescing that #1323 does on save, together with the count
    of those rows. The count is what catches a deletion: removing an older row
    leaves the maximum timestamp untouched, and without the count the grid
    would answer 304 for a calendar that just lost a window.
-3. The maximum `SlotOfAppointment.updatedAt` over the appointments that reach
+3. The maximum `AppointmentOccurrence.updatedAt` over the appointments that reach
    this consultant. Reachability is the union of the denormalized
    `consultantProfileId` (#440), the `user` edge to the consultant, and — when
    the request names one — the `user` edge to the consultee. The allocator
@@ -179,8 +179,8 @@ is the harmless direction.
 
 No new index was added, and none was needed. The marker's plan shows every
 consultant-scoped arm already served by an existing index:
-`SlotOfAppointment_consultantProfileId_startsAt_endsAt_idx` for the
-denormalized arm, `_SlotOfAppointmentToUser_B_index` for both participation
+`AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx` for the
+denormalized arm, `_AppointmentParticipant_B_index` for both participation
 arms, the four `*Plan_consultantProfileId_idx` indexes for the plan-ownership
 arms, `Payment_expiresAt_paymentStatus_idx` for the clock fold, and the primary
 keys for the profile and the event rows. The sequential scans that remain are
@@ -191,17 +191,17 @@ One index is worth revisiting later rather than now. Computing the maximum
 `updatedAt` for a consultant's slots currently reads all of that consultant's
 rows through the composite above — 73 rows, 0.06 ms, at today's scale. A
 `@@index([consultantProfileId, updatedAt])` would turn that into a one-row
-backward seek. It was not added because `SlotOfAppointment` is written on every
+backward seek. It was not added because `AppointmentOccurrence` is written on every
 allocation, and paying a write-path cost for 0.06 ms of read is not a trade
 worth making until a consultant's slot count is measured in thousands.
 
 ## A note on the data
 
 The database this was measured against is seeded, not organic: 1,795
-`SlotOfAppointment` rows, 1,091 appointments, 83 consultants, and no `PENDING`
+`AppointmentOccurrence` rows, 1,091 appointments, 83 consultants, and no `PENDING`
 payment with a future `expiresAt` anywhere. Most seeded slot rows also leave
 the denormalized `consultantProfileId` null, which real allocations never do —
-`SlotAllocationService` sets it on every slot it creates. The absolute
+`SchedulingService` sets it on every slot it creates. The absolute
 milliseconds are therefore a floor, and the plan shapes are what should be
 trusted: the occupancy query's cost is structural (fifteen joins, whole-table
 reads, planning heavier than execution) and will grow with the tables, while

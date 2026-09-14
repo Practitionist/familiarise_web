@@ -8,7 +8,7 @@ export const REDIS_KEYS = {
   /**
    * #1146 — the exact set of chat channels THIS maintenance window froze.
    *
-   * The unfreeze used to re-derive the set by querying `MeetingSession` rows
+   * The unfreeze used to re-derive the set by querying `Meeting` rows
    * stamped `endedReason: "maintenance"` inside a six-hour window. That was
    * approximate in three ways, and Stream grants `use-frozen-channel` to no
    * role, so a channel that stays frozen is unwritable by every user AND every

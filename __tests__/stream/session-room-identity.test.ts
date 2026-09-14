@@ -3,13 +3,13 @@
  */
 
 /**
- * #1061 — end-to-end pin on the room key. `getOrCreateAppointmentMeeting` used
- * to mint `slot-${clickedRow.id}`, so a one-hour booking (two `SlotOfAppointment`
- * rows) had capacity for two Stream calls and the two sides of the same session
- * could each sit alone in one of them.
+ * #1061 / #1554 — end-to-end pin on the room key. A held call is ONE
+ * `AppointmentOccurrence` row and `getOrCreateAppointmentMeeting` mints
+ * `occurrence-${row.id}`, so the two sides of the same session can only ever
+ * land in one Stream call.
  *
  * The Stream SDK and the database are stubbed; what is exercised for real is
- * the anchor resolution and the mint in
+ * the entitlement gate, the call profile and the mint in
  * `actions/stream/meetings/meeting.action.ts`.
  *
  * #1270 — the mint moved out of the browser, so the stub is now the SERVER
@@ -66,9 +66,10 @@ jest.mock("../../lib/auth-helpers", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    slotOfAppointment: { findUnique: jest.fn(), findMany: jest.fn() },
+    appointmentOccurrence: { findUnique: jest.fn(), findMany: jest.fn() },
+    appointmentParticipant: { findMany: jest.fn() },
     appointment: { findUnique: jest.fn() },
-    meetingSession: {
+    meeting: {
       findUnique: jest.fn(),
       create: jest.fn(),
       updateMany: jest.fn(),
@@ -80,12 +81,13 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getOrCreateAppointmentMeeting } from "@/lib/meeting";
-import { createDbMeetingSession } from "@/actions/stream/meetings/meeting.action";
+import { createDbMeeting } from "@/actions/stream/meetings/meeting.action";
 
 const db = prisma as unknown as {
-  slotOfAppointment: { findUnique: jest.Mock; findMany: jest.Mock };
+  appointmentOccurrence: { findUnique: jest.Mock; findMany: jest.Mock };
+  appointmentParticipant: { findMany: jest.Mock };
   appointment: { findUnique: jest.Mock };
-  meetingSession: {
+  meeting: {
     findUnique: jest.Mock;
     create: jest.Mock;
     updateMany: jest.Mock;
@@ -127,7 +129,8 @@ interface SlotRow {
   isTentative: boolean;
   completionStatus: string;
   deletedAt: Date | null;
-  /** Users connected to this row — both sides for a 1:1, attendees for a group. */
+  /** The fixture's roster spec: the appointment's live seats are the union of
+   *  these across its rows (#1554 — the real roster is AppointmentParticipant). */
   user: Array<{ id: string }>;
 }
 
@@ -177,7 +180,7 @@ const webinarAppointment = {
   },
 };
 
-/** Rows the fake DB serves, plus the MeetingSession table the test writes to. */
+/** Rows the fake DB serves, plus the Meeting table the test writes to. */
 let appointmentRow: Record<string, unknown> | null = consultationAppointment;
 let rows: SlotRow[] = [];
 let sessions: Array<{
@@ -202,34 +205,44 @@ function seed(
   mockCallPayloads = [];
   signIn(caller);
 
+  const seatsOf = (appointmentId: string) =>
+    Array.from(
+      new Set(
+        rows
+          .filter((r) => r.appointmentId === appointmentId)
+          .flatMap((r) => r.user.map((u) => u.id)),
+      ),
+    );
   // Both resolvers read a single row through the authorization gate, which
   // pulls the appointment's plan graph and — filtered to the caller — the
-  // slot rows they are connected to. An empty `slotsOfAppointment` is how the
-  // real query says "this caller does not participate".
-  db.slotOfAppointment.findUnique.mockImplementation(
+  // caller's own seat. An empty `participants` is how the real query says
+  // "this caller does not participate" (#1554).
+  db.appointmentOccurrence.findUnique.mockImplementation(
     async ({ where }: { where: { id: string } }) => {
       const row = rows.find((r) => r.id === where.id);
       if (!row) return null;
-      const participates = rows.some(
-        (r) =>
-          r.appointmentId === row.appointmentId &&
-          r.user.some((u) => u.id === caller?.id),
-      );
+      const participates =
+        !!caller && seatsOf(row.appointmentId).includes(caller.id);
       return {
         ...row,
         appointment: appointmentRow
           ? {
               ...appointmentRow,
-              slotsOfAppointment: participates ? [{ id: row.id }] : [],
+              participants: participates ? [{ id: "seat-caller" }] : [],
             }
           : null,
       };
     },
   );
-  db.slotOfAppointment.findMany.mockImplementation(
+  // The 1:1 attendee naming reads the roster with display fields.
+  db.appointmentParticipant.findMany.mockImplementation(
+    async ({ where }: { where: { appointmentId: string } }) =>
+      seatsOf(where.appointmentId).map((id) => ({ user: { id, name: id } })),
+  );
+  db.appointmentOccurrence.findMany.mockImplementation(
     // Cancelled/rescheduled rows are deliberately NOT filtered here: the query
-    // only excludes the soft-delete tombstone and leaves every session rule to
-    // groupSlotsIntoRuns, so this fake must hand those rows over too.
+    // only excludes the soft-delete tombstone and leaves every liveness rule
+    // to the occurrence helpers, so this fake must hand those rows over too.
     async ({ where }: { where: { appointmentId: string; deletedAt: null } }) =>
       rows
         .filter(
@@ -239,12 +252,12 @@ function seed(
         .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime()),
   );
   db.appointment.findUnique.mockResolvedValue({ organizationId: null });
-  db.meetingSession.findUnique.mockImplementation(
-    async ({ where }: { where: { slotOfAppointmentId: string } }) =>
-      sessions.find((s) => s.slotId === where.slotOfAppointmentId) ?? null,
+  db.meeting.findUnique.mockImplementation(
+    async ({ where }: { where: { appointmentOccurrenceId: string } }) =>
+      sessions.find((s) => s.slotId === where.appointmentOccurrenceId) ?? null,
   );
-  db.meetingSession.updateMany.mockReset();
-  db.meetingSession.updateMany.mockImplementation(
+  db.meeting.updateMany.mockReset();
+  db.meeting.updateMany.mockImplementation(
     async ({
       where,
       data,
@@ -260,19 +273,19 @@ function seed(
       return { count: 1 };
     },
   );
-  db.meetingSession.create.mockImplementation(
+  db.meeting.create.mockImplementation(
     async ({
       data,
     }: {
       data: {
         streamCallId: string;
-        slotOfAppointment: { connect: { id: string } };
+        occurrence: { connect: { id: string } };
       };
     }) => {
       const created = {
         id: `ms-${sessions.length + 1}`,
         streamCallId: data.streamCallId,
-        slotId: data.slotOfAppointment.connect.id,
+        slotId: data.occurrence.connect.id,
       };
       sessions.push(created);
       return created;
@@ -314,67 +327,57 @@ const join = (row: SlotRow) => getOrCreateAppointmentMeeting(meetingSlot(row));
 const startedAt = (payload: CallData) => payload.data?.starts_at?.toISOString();
 
 describe("room identity for a session longer than 30 minutes", () => {
-  const rowA = () => slotRow("A", "10:00", "10:30");
-  const rowB = () => slotRow("B", "10:30", "11:00");
+  const rowA = () => slotRow("A", "10:00", "11:00");
 
   it("puts the consultant and a later consultee in the same room", async () => {
-    const [a, b] = [rowA(), rowB()];
-    seed([a, b]);
+    const a = rowA();
+    seed([a]);
 
     // Appointments tab, five minutes in: hands over row A.
     const consultantRoom = await join(a);
     // Home tab, twenty-five minutes in: used to hand over row B.
-    const consulteeRoom = await join(b);
+    const consulteeRoom = await join(a);
 
-    expect(consultantRoom).toBe("slot-A");
-    expect(consulteeRoom).toBe("slot-A");
-    expect(mockStreamCallsCreated).toEqual(["slot-A"]);
+    expect(consultantRoom).toBe("occurrence-A");
+    expect(consulteeRoom).toBe("occurrence-A");
+    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
     expect(sessions).toHaveLength(1);
     expect(sessions[0].slotId).toBe("A");
   });
 
-  it("stamps the anchor into the call's metadata and start time", async () => {
-    const [a, b] = [rowA(), rowB()];
-    seed([a, b]);
+  it("stamps the occurrence into the call's metadata and start time", async () => {
+    const a = rowA();
+    seed([a]);
 
-    // Joined from row B, so an unanchored stamp would read "B" / 10:30.
-    await join(b);
+    await join(a);
 
     expect(mockCallPayloads).toHaveLength(1);
     const custom = mockCallPayloads[0].data?.custom;
     expect(custom?.slotId).toBe("A");
-    expect(custom?.anchorSlotId).toBe("A");
+    expect(custom?.occurrenceId).toBe("A");
     expect(custom?.appointmentId).toBe("appt-1");
     expect(startedAt(mockCallPayloads[0])).toBe(a.startsAt.toISOString());
   });
 
-  it("anchors to row A even when row B is the first to be joined", async () => {
-    const [a, b] = [rowA(), rowB()];
-    seed([a, b]);
-
-    expect(await join(b)).toBe("slot-A");
-    expect(sessions[0].slotId).toBe("A");
-  });
-
-  it("holds for every row of a two-hour session", async () => {
-    const all = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-      slotRow("C", "11:00", "11:30"),
-      slotRow("D", "11:30", "12:00"),
-    ];
-    seed(all);
+  it("holds across repeated joins of a two-hour session", async () => {
+    const two = slotRow("A", "10:00", "12:00");
+    seed([two]);
 
     const roomIds = [];
-    for (const row of all) roomIds.push(await join(row));
+    for (let i = 0; i < 4; i++) roomIds.push(await join(two));
 
-    expect(roomIds).toEqual(["slot-A", "slot-A", "slot-A", "slot-A"]);
-    expect(mockStreamCallsCreated).toEqual(["slot-A"]);
+    expect(roomIds).toEqual([
+      "occurrence-A",
+      "occurrence-A",
+      "occurrence-A",
+      "occurrence-A",
+    ]);
+    expect(mockStreamCallsCreated).toEqual(["occurrence-A"]);
   });
 
   it("reuses the stored call id rather than re-deriving it", async () => {
-    const [a, b] = [rowA(), rowB()];
-    seed([a, b]);
+    const a = rowA();
+    seed([a]);
     // A room minted before this fix, or by a seed, keeps its opaque id.
     sessions.push({
       id: "ms-legacy",
@@ -382,7 +385,7 @@ describe("room identity for a session longer than 30 minutes", () => {
       slotId: "A",
     });
 
-    expect(await join(b)).toBe("legacy-uuid");
+    expect(await join(a)).toBe("legacy-uuid");
     expect(mockStreamCallsCreated).toEqual([]);
   });
 });
@@ -393,13 +396,13 @@ describe("room identity for a session longer than 30 minutes", () => {
  * reason to mint.
  */
 describe("a room closed before the start is rebuilt on the next join", () => {
-  const rowA = () => slotRow("A", "10:00", "10:30");
+  const rowA = () => slotRow("A", "10:00", "11:00");
 
   it("mints a suffixed call and rebinds the row for an ended_early room", async () => {
     seed([rowA()]);
     sessions.push({
       id: "ms-1",
-      streamCallId: "slot-A",
+      streamCallId: "occurrence-A",
       slotId: "A",
       endedAt: at("09:48"),
       endedReason: "ended_early",
@@ -407,9 +410,9 @@ describe("a room closed before the start is rebuilt on the next join", () => {
 
     const room = await join(rowA());
 
-    expect(room).toMatch(/^slot-A-r[0-9a-z]+$/);
+    expect(room).toMatch(/^occurrence-A-r[0-9a-z]+$/);
     expect(mockStreamCallsCreated).toEqual([room]);
-    expect(db.meetingSession.updateMany).toHaveBeenCalledWith({
+    expect(db.meeting.updateMany).toHaveBeenCalledWith({
       where: { id: "ms-1", endedReason: "ended_early" },
       data: {
         streamCallId: room,
@@ -426,15 +429,15 @@ describe("a room closed before the start is rebuilt on the next join", () => {
     seed([rowA()]);
     sessions.push({
       id: "ms-1",
-      streamCallId: "slot-A",
+      streamCallId: "occurrence-A",
       slotId: "A",
       endedAt: at("10:05"),
       endedReason: "session_timeout",
     });
 
-    expect(await join(rowA())).toBe("slot-A");
+    expect(await join(rowA())).toBe("occurrence-A");
     expect(mockStreamCallsCreated).toEqual([]);
-    expect(db.meetingSession.updateMany).not.toHaveBeenCalled();
+    expect(db.meeting.updateMany).not.toHaveBeenCalled();
   });
 });
 
@@ -446,16 +449,11 @@ describe("the call describes the session it belongs to", () => {
   const custom = () => mockCallPayloads[0].data?.custom ?? {};
   const members = () => mockCallPayloads[0].data?.members ?? [];
 
-  it("reports the run's bounds, not the clicked row's", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
-    seed([a, b]);
+  it("reports the occurrence's bounds", async () => {
+    const [a] = [slotRow("A", "10:00", "11:00")];
+    seed([a]);
 
-    // Joined at the half hour: an unanchored call would claim a 10:30 start
-    // and a 30-minute meeting.
-    await join(b);
+    await join(a);
 
     expect(startedAt(mockCallPayloads[0])).toBe(at("10:00").toISOString());
     expect(custom().sessionStartsAt).toBe(at("10:00").toISOString());
@@ -464,7 +462,7 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("carries the offering title so a recording is legible", async () => {
-    seed([slotRow("A", "10:00", "10:30")]);
+    seed([slotRow("A", "10:00", "11:00")]);
 
     await join(rows[0]);
 
@@ -472,13 +470,10 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("names both sides call_member, and records the host in custom", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
-    seed([a, b]);
+    const [a] = [slotRow("A", "10:00", "11:00")];
+    seed([a]);
 
-    await join(b);
+    await join(a);
 
     // #1270 — the consultant used to be stamped `host` and the consultee
     // `user`. The live `default` call type has no `host` role at all, so that
@@ -496,14 +491,11 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("makes the consultant the call's author, not whoever clicked Join", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
+    const [a] = [slotRow("A", "10:00", "11:00")];
     // The consultee is the one joining, as they are for half of all sessions.
-    seed([a, b], consultationAppointment, { id: "user-consultee" });
+    seed([a], consultationAppointment, { id: "user-consultee" });
 
-    await join(b);
+    await join(a);
 
     expect(mockCallPayloads[0].data?.created_by_id).toBe("user-consultant");
   });
@@ -512,15 +504,12 @@ describe("the call describes the session it belongs to", () => {
     // The person clicking Join is an attendee; neither host is connected to
     // the slot, so anything that assumed "the caller hosts" would be wrong.
     seed(
-      [
-        slotRow("A", "10:00", "10:30", { user: [{ id: "user-attendee" }] }),
-        slotRow("B", "10:30", "11:00", { user: [{ id: "user-attendee" }] }),
-      ],
+      [slotRow("A", "10:00", "11:00", { user: [{ id: "user-attendee" }] })],
       webinarAppointment,
       { id: "user-attendee" },
     );
 
-    await join(rows[1]);
+    await join(rows[0]);
 
     expect(members()).toEqual([
       { user_id: "user-owner", role: "call_member" },
@@ -533,7 +522,7 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("never asks Stream to gate entry", async () => {
-    seed([slotRow("A", "10:00", "10:30")]);
+    seed([slotRow("A", "10:00", "11:00")]);
 
     await join(rows[0]);
 
@@ -580,7 +569,7 @@ describe("the call describes the session it belongs to", () => {
     // The cap counts from FIRST JOIN, not from `starts_at` (#1160 correcting
     // #1144). A 30-minute booking whose consultant arrives 15 minutes early
     // must still have the full booked window left when the clock starts.
-    seed([slotRow("A", "10:00", "10:30")]);
+    seed([slotRow("A", "10:00", "11:00")]);
 
     await join(rows[0]);
 
@@ -594,25 +583,20 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("still creates the call when only the profile fails", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
-    seed([a, b]);
-    // The anchor resolves; the profile's sibling read then falls over.
-    const working = db.slotOfAppointment.findMany.getMockImplementation()!;
-    db.slotOfAppointment.findMany
-      .mockImplementationOnce(working)
-      .mockImplementationOnce(async () => {
-        throw new Error("db down");
-      });
+    const [a] = [slotRow("A", "10:00", "11:00")];
+    seed([a]);
+    // The entitlement gate resolves; the profile's roster read then falls
+    // over.
+    db.appointmentParticipant.findMany.mockImplementationOnce(async () => {
+      throw new Error("db down");
+    });
 
     // Everything the profile feeds is optional, so a null profile must still
     // produce the anchored call this code produced before #1070.
-    expect(await join(b)).toBe("slot-A");
+    expect(await join(a)).toBe("occurrence-A");
     expect(mockCallPayloads[0].data?.members).toBeUndefined();
     expect(custom().sessionEndsAt).toBeUndefined();
-    expect(custom().anchorSlotId).toBe("A");
+    expect(custom().occurrenceId).toBe("A");
     expect(startedAt(mockCallPayloads[0])).toBe(at("10:00").toISOString());
 
     // #1305 review — and NO duration cap. The cap counts from first join, so a
@@ -624,21 +608,18 @@ describe("the call describes the session it belongs to", () => {
   });
 
   it("creates nothing at all when the slot resolves to no appointment", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
-    seed([a, b], null);
+    const [a] = [slotRow("A", "10:00", "11:00")];
+    seed([a], null);
 
     // No appointment means entitlement cannot be established at all. The
     // column is required in the schema, so this is a guard against corrupt
     // data, not a path any real booking takes.
     //
     // #1270 — the browser used to mint the call FIRST and only then call
-    // `createDbMeetingSession`, where the entitlement check lived. So a refused
+    // `createDbMeeting`, where the entitlement check lived. So a refused
     // join still left a real, billable Stream room behind that our database
     // would never point at. The check now runs before the mint.
-    await expect(join(b)).rejects.toThrow(
+    await expect(join(a)).rejects.toThrow(
       "You are not a participant in this session.",
     );
     expect(mockStreamCallsCreated).toEqual([]);
@@ -654,10 +635,7 @@ describe("the call describes the session it belongs to", () => {
  * title and the user ids and names on both sides.
  */
 describe("only people involved in the booking may resolve it", () => {
-  const twoRows = () => [
-    slotRow("A", "10:00", "10:30"),
-    slotRow("B", "10:30", "11:00"),
-  ];
+  const twoRows = () => [slotRow("A", "10:00", "11:00")];
 
   it("tells a stranger nothing about someone else's session", async () => {
     seed(twoRows(), consultationAppointment, { id: "user-stranger" });
@@ -665,7 +643,7 @@ describe("only people involved in the booking may resolve it", () => {
     // The join is refused outright, and — since #1270 moved the mint behind the
     // same gate — nothing reaches Stream on the way to that refusal either. It
     // used to leave a real room behind, undescribed but billable and joinable.
-    await expect(join(rows[1])).rejects.toThrow(
+    await expect(join(rows[0])).rejects.toThrow(
       "You are not a participant in this session.",
     );
     expect(mockStreamCallsCreated).toEqual([]);
@@ -676,7 +654,7 @@ describe("only people involved in the booking may resolve it", () => {
   it("gives a participating consultee the anchor and the profile", async () => {
     seed(twoRows(), consultationAppointment, { id: "user-consultee" });
 
-    expect(await join(rows[1])).toBe("slot-A");
+    expect(await join(rows[0])).toBe("occurrence-A");
     expect(mockCallPayloads[0].data?.members).toEqual([
       { user_id: "user-consultant", role: "call_member" },
       { user_id: "user-consultee", role: "call_member" },
@@ -687,15 +665,12 @@ describe("only people involved in the booking may resolve it", () => {
     // Not connected to any slot row, so participation cannot be what lets
     // this caller through — `resolvePlanOwnerIds` is.
     seed(
-      [
-        slotRow("A", "10:00", "10:30", { user: [{ id: "user-consultee" }] }),
-        slotRow("B", "10:30", "11:00", { user: [{ id: "user-consultee" }] }),
-      ],
+      [slotRow("A", "10:00", "11:00", { user: [{ id: "user-consultee" }] })],
       consultationAppointment,
       { id: "user-consultant", consultantProfileId: "cp-1" },
     );
 
-    expect(await join(rows[1])).toBe("slot-A");
+    expect(await join(rows[0])).toBe("occurrence-A");
     expect(mockCallPayloads[0].data?.custom?.offeringTitle).toBe(
       "Career strategy deep dive",
     );
@@ -707,7 +682,7 @@ describe("only people involved in the booking may resolve it", () => {
       consultantProfileId: "cp-999",
     });
 
-    await expect(join(rows[1])).rejects.toThrow(
+    await expect(join(rows[0])).rejects.toThrow(
       "You are not a participant in this session.",
     );
     expect(mockStreamCallsCreated).toEqual([]);
@@ -716,15 +691,12 @@ describe("only people involved in the booking may resolve it", () => {
 
   it("admits an ACCEPTED collaborator on a webinar", async () => {
     seed(
-      [
-        slotRow("A", "10:00", "10:30", { user: [{ id: "user-attendee" }] }),
-        slotRow("B", "10:30", "11:00", { user: [{ id: "user-attendee" }] }),
-      ],
+      [slotRow("A", "10:00", "11:00", { user: [{ id: "user-attendee" }] })],
       webinarAppointment,
       { id: "user-collab", consultantProfileId: "cp-collab" },
     );
 
-    expect(await join(rows[1])).toBe("slot-A");
+    expect(await join(rows[0])).toBe("occurrence-A");
     expect(mockCallPayloads[0].data?.custom?.offeringTitle).toBe(
       "Scaling past Series A",
     );
@@ -732,7 +704,7 @@ describe("only people involved in the booking may resolve it", () => {
 
   it("refuses a signed-out or banned caller", async () => {
     seed(twoRows(), consultationAppointment, null);
-    await expect(join(rows[1])).rejects.toThrow(
+    await expect(join(rows[0])).rejects.toThrow(
       "You are not a participant in this session.",
     );
 
@@ -740,63 +712,41 @@ describe("only people involved in the booking may resolve it", () => {
       id: "user-consultee",
       banned: true,
     });
-    await expect(join(rows[1])).rejects.toThrow(
+    await expect(join(rows[0])).rejects.toThrow(
       "You are not a participant in this session.",
     );
   });
 });
 
-describe("sessions that were never affected", () => {
-  it("leaves a 30-minute booking keyed to its own row", async () => {
+describe("every occurrence is keyed to its own row", () => {
+  it("keys a 30-minute booking to its row", async () => {
     const solo = slotRow("solo", "10:00", "10:30");
     seed([solo]);
 
-    expect(await join(solo)).toBe("slot-solo");
+    expect(await join(solo)).toBe("occurrence-solo");
   });
 
-  it("leaves a single full-duration row keyed to itself", async () => {
+  it("keys a single full-duration row to itself", async () => {
     const webinar = slotRow("webinar", "10:00", "12:00");
     seed([webinar]);
 
-    expect(await join(webinar)).toBe("slot-webinar");
+    expect(await join(webinar)).toBe("occurrence-webinar");
   });
 
-  it("gives a second, non-contiguous sitting its own room", async () => {
-    const morning = slotRow("A", "10:00", "10:30");
+  it("gives a second sitting its own room", async () => {
+    const morning = slotRow("A", "10:00", "11:00");
     const afternoon = slotRow("C", "14:00", "14:30");
     seed([morning, afternoon]);
 
-    expect(await join(morning)).toBe("slot-A");
-    expect(await join(afternoon)).toBe("slot-C");
-  });
-
-  it("does not walk back through a cancelled row", async () => {
-    seed([
-      slotRow("A", "10:00", "10:30", { completionStatus: "CANCELLED" }),
-      slotRow("B", "10:30", "11:00"),
-    ]);
-
-    expect(await join(rows[1])).toBe("slot-B");
-  });
-});
-
-describe("anchor resolution failure", () => {
-  it("falls back to the row it was given instead of blocking the join", async () => {
-    const [a, b] = [
-      slotRow("A", "10:00", "10:30"),
-      slotRow("B", "10:30", "11:00"),
-    ];
-    seed([a, b]);
-    db.slotOfAppointment.findMany.mockRejectedValue(new Error("db down"));
-
-    expect(await join(b)).toBe("slot-B");
+    expect(await join(morning)).toBe("occurrence-A");
+    expect(await join(afternoon)).toBe("occurrence-C");
   });
 });
 
 /**
- * #1077 — the maintenance gate lived at the top of `createDbMeetingSession`,
+ * #1077 — the maintenance gate lived at the top of `createDbMeeting`,
  * which runs AFTER `call.getOrCreate`. A blocked join therefore left a live
- * Stream call that no `MeetingSession` row points at, stamped with the bounds
+ * Stream call that no `Meeting` row points at, stamped with the bounds
  * and members computed at the blocked moment and never corrected, because only
  * the mint branch writes them.
  *
@@ -810,7 +760,7 @@ describe("a refused join creates nothing on Stream", () => {
   });
 
   it("does not mint a call when maintenance blocks it", async () => {
-    seed([slotRow("A", "10:00", "10:30")]);
+    seed([slotRow("A", "10:00", "11:00")]);
     mockedMaintenance.mockResolvedValue({ phase: "OFFLINE" });
 
     await expect(join(rows[0])).rejects.toThrow(
@@ -819,17 +769,17 @@ describe("a refused join creates nothing on Stream", () => {
 
     expect(mockStreamCallsCreated).toEqual([]);
     expect(mockCallPayloads).toEqual([]);
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("still lets both sides back into a room that already exists", async () => {
     // Maintenance refuses NEW calls only. Hoisting the gate must not put it in
     // front of the existence check, or it would cut off a session in progress.
-    seed([slotRow("A", "10:00", "10:30")]);
-    sessions.push({ id: "ms-0", streamCallId: "slot-A", slotId: "A" });
+    seed([slotRow("A", "10:00", "11:00")]);
+    sessions.push({ id: "ms-0", streamCallId: "occurrence-A", slotId: "A" });
     mockedMaintenance.mockResolvedValue({ phase: "OFFLINE" });
 
-    expect(await join(rows[0])).toBe("slot-A");
+    expect(await join(rows[0])).toBe("occurrence-A");
     expect(mockStreamCallsCreated).toEqual([]);
   });
 
@@ -886,7 +836,7 @@ describe("a refused join creates nothing on Stream", () => {
  * `readSlotForCaller` was added to gate the two RESOLVERS, and the exported
  * writer in the same `"use server"` module was left open. Any client can call
  * a server action with arguments of its choosing, so an unrelated caller could
- * write the `MeetingSession` row for someone else's slot with a
+ * write the `Meeting` row for someone else's slot with a
  * `streamCallId` of their choosing — and because that row is unique per slot,
  * never updated, and reused by every later join, both legitimate parties would
  * then be routed into a Stream call the attacker controls.
@@ -895,31 +845,31 @@ describe("only a participant may create a session", () => {
   const stranger: Caller = { id: "user-stranger" };
 
   it("refuses to write a session for a booking the caller is not in", async () => {
-    seed([slotRow("A", "10:00", "10:30")], consultationAppointment, stranger);
+    seed([slotRow("A", "10:00", "11:00")], consultationAppointment, stranger);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "slot-attacker-controlled"),
+      createDbMeeting(meetingSlot(rows[0]), "slot-attacker-controlled"),
     ).rejects.toThrow("You are not a participant in this session.");
 
     // The assertion that matters: no row exists to be reused by anyone.
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
     expect(sessions).toEqual([]);
   });
 
   it("refuses a signed-out caller too", async () => {
-    seed([slotRow("A", "10:00", "10:30")], consultationAppointment, null);
+    seed([slotRow("A", "10:00", "11:00")], consultationAppointment, null);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "slot-A"),
+      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
     ).rejects.toThrow("You are not a participant in this session.");
-    expect(db.meetingSession.create).not.toHaveBeenCalled();
+    expect(db.meeting.create).not.toHaveBeenCalled();
   });
 
   it("still lets a participant create their own session", async () => {
-    seed([slotRow("A", "10:00", "10:30")]);
+    seed([slotRow("A", "10:00", "11:00")]);
 
     await expect(
-      createDbMeetingSession(meetingSlot(rows[0]), "slot-A"),
-    ).resolves.toMatchObject({ streamCallId: "slot-A" });
+      createDbMeeting(meetingSlot(rows[0]), "occurrence-A"),
+    ).resolves.toMatchObject({ streamCallId: "occurrence-A" });
   });
 });

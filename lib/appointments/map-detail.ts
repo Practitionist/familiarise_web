@@ -1,5 +1,5 @@
 /**
- * Detail-payload mapper: readAppointmentDetail's { appointment, siblings }
+ * Detail-payload mapper: readAppointmentDetail's { appointment }
  * → one AppointmentVM (plus flattened recordings) so the detail page reuses
  * the shared timeline/badge/action machinery. Role decides the counterpart:
  * consultees see the consultant; consultants see the consultee (or the plan
@@ -12,16 +12,20 @@ import type {
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { getAnchorTime, isSessionOver } from "./slots";
-import { sessionsOfAppointment } from "./sessions-of";
+import {
+  getAnchorTime,
+  isOccurrenceOver,
+  liveOccurrences,
+} from "./occurrences";
+import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
-  sortSessions,
+  sortOccurrences,
   toDate,
   type AppointmentVM,
   type PersonVM,
-  type SlotLike,
+  type OccurrenceLike,
 } from "./view-model";
 
 type Role = "consultee" | "consultant";
@@ -57,7 +61,7 @@ function eventOf(appointment: TDetailAppointment): {
   const subscription = appointment.subscription;
   const webinar = appointment.webinar;
   const cls = appointment.class;
-  const trial = appointment.trialSession;
+  const trial = appointment.trial;
 
   if (trial) {
     return {
@@ -125,29 +129,28 @@ export function mapAppointmentDetail(
   role: Role,
   now: Date = new Date(),
 ): { vm: AppointmentVM; recordings: DetailRecordingVM[] } {
-  const { appointment, siblings } = detail;
+  const { appointment } = detail;
   const facts = eventOf(appointment);
-  const all = [appointment, ...siblings];
-  // Grouped PER APPOINTMENT before the flatten, or two sittings on different
-  // days would merge into one session.
-  const sessions = sortSessions(all.flatMap((a) => sessionsOfAppointment(a)));
+  // #1554 — one wrapper per purchase: the programme IS its occurrence rows.
+  const all = [appointment];
+  const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
 
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
     appointment.appointmentType === "CLASS";
-  const withSlots = all.filter((a) => a.slotsOfAppointment.length > 0);
-  const completed = withSlots.filter((a) =>
-    sessionsOfAppointment(a).every((s) => isSessionOver(s, now)),
-  ).length;
+  // #1554 — progress counts LIVE rows, exactly as map-consultee's
+  // groupProgress does, so "2 of 10" reads the same on the list and here.
+  const live = liveOccurrences(occurrences);
+  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
 
   const counterpart =
     role === "consultee"
       ? facts.consultant
       : (facts.consultee ?? facts.consultant);
 
-  const rawSlots: SlotLike[] = all
+  const rawOccurrences: OccurrenceLike[] = all
     .flatMap((a) =>
-      a.slotsOfAppointment.map((slot) => ({ ...slot }) as SlotLike),
+      a.occurrences.map((slot) => ({ ...slot }) as OccurrenceLike),
     )
     .filter((slot) => {
       const end = toDate(slot.endsAt ?? slot.startsAt);
@@ -165,15 +168,14 @@ export function mapAppointmentDetail(
     counterpart,
     consultantProfileId: facts.consultantProfileId,
     status: facts.status,
-    ...deriveBucket({ status: facts.status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
-    group: isGroup ? { total: withSlots.length, completed } : null,
-    meta: appointment.trialSession
+    ...deriveBucket({ status: facts.status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
+    group: isGroup ? { total: live.length, completed } : null,
+    meta: appointment.trial
       ? trialMeta(
-          appointment.trialSession.subscriptionPlan?.trialPriceInPaise ?? null,
-          appointment.trialSession.subscriptionPlan?.trialDurationMinutes ??
-            null,
+          appointment.trial.subscriptionPlan?.trialPriceInPaise ?? null,
+          appointment.trial.subscriptionPlan?.trialDurationMinutes ?? null,
         )
       : null,
     organizationId: appointment.organizationId ?? null,
@@ -182,15 +184,15 @@ export function mapAppointmentDetail(
     collaboratorRole: null,
     raw: {
       appointment: appointment as unknown as TAppointment,
-      rawSlots,
+      rawOccurrences,
       groupAppointments: all as unknown as TAppointment[],
       source: detail,
     },
   };
 
   const recordings: DetailRecordingVM[] = all.flatMap((a) =>
-    a.slotsOfAppointment.flatMap((slot) =>
-      (slot.meetingSession?.recordings ?? []).map((rec) => ({
+    a.occurrences.flatMap((slot) =>
+      (slot.meeting?.recordings ?? []).map((rec) => ({
         id: rec.id,
         title: rec.title,
         url: rec.storageUrl ?? rec.recordingUrl ?? null,

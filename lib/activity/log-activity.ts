@@ -15,7 +15,7 @@ interface LogActivityParams {
   subscriptionId?: string;
   webinarId?: string;
   classId?: string;
-  trialSessionId?: string;
+  trialId?: string;
 }
 
 /**
@@ -33,7 +33,7 @@ export async function logActivity({
   subscriptionId,
   webinarId,
   classId,
-  trialSessionId,
+  trialId,
 }: LogActivityParams) {
   try {
     return await prisma.activityLog.create({
@@ -49,7 +49,7 @@ export async function logActivity({
         subscriptionId,
         webinarId,
         classId,
-        trialSessionId,
+        trialId,
       },
     });
   } catch (error) {
@@ -235,7 +235,7 @@ export async function logClassEnrolled(
  */
 export async function logTrialRequested(
   consultantProfileId: string,
-  trialSessionId: string,
+  trialId: string,
   actor: ActivityActor,
   planTitle: string,
 ) {
@@ -246,7 +246,7 @@ export async function logTrialRequested(
     actorName: actor.name,
     actorImage: actor.image,
     consultantProfileId,
-    trialSessionId,
+    trialId,
     metadata: { planTitle },
   });
 }
@@ -256,7 +256,7 @@ export async function logTrialRequested(
  */
 export async function logTrialScheduled(
   consultantProfileId: string,
-  trialSessionId: string,
+  trialId: string,
   actor: ActivityActor,
   planTitle: string,
   scheduledTime: Date,
@@ -268,7 +268,7 @@ export async function logTrialScheduled(
     actorName: actor.name,
     actorImage: actor.image,
     consultantProfileId,
-    trialSessionId,
+    trialId,
     metadata: { planTitle, scheduledTime: scheduledTime.toISOString() },
   });
 }
@@ -278,7 +278,7 @@ export async function logTrialScheduled(
  */
 export async function logTrialCompleted(
   consultantProfileId: string,
-  trialSessionId: string,
+  trialId: string,
   actor: ActivityActor,
   planTitle: string,
 ) {
@@ -289,7 +289,7 @@ export async function logTrialCompleted(
     actorName: actor.name,
     actorImage: actor.image,
     consultantProfileId,
-    trialSessionId,
+    trialId,
     metadata: { planTitle },
   });
 }
@@ -299,7 +299,7 @@ export async function logTrialCompleted(
  */
 export async function logTrialConverted(
   consultantProfileId: string,
-  trialSessionId: string,
+  trialId: string,
   subscriptionId: string,
   actor: ActivityActor,
   planTitle: string,
@@ -311,7 +311,7 @@ export async function logTrialConverted(
     actorName: actor.name,
     actorImage: actor.image,
     consultantProfileId,
-    trialSessionId,
+    trialId,
     subscriptionId,
     metadata: { planTitle },
   });

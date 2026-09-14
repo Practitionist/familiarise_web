@@ -1,7 +1,7 @@
 /**
  * Orphaned Meeting Session Reconciliation Job
  *
- * Finds MeetingSession records where endedAt IS NULL and the linked
+ * Finds Meeting records where endedAt IS NULL and the linked
  * slot's endsAt is >1 hour ago. For each, queries Stream API to check
  * actual call status and reconciles accordingly.
  *
@@ -14,7 +14,7 @@
 // client fails to initialize. See
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
-import { transitionSlotCompletion } from "@/lib/booking/transitions";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
@@ -56,15 +56,15 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
   const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
   // Find orphaned sessions: endedAt is null and slot ended >1 hour ago
-  const orphanedSessions = await prisma.meetingSession.findMany({
+  const orphanedSessions = await prisma.meeting.findMany({
     where: {
       endedAt: null,
-      slotOfAppointment: {
+      occurrence: {
         endsAt: { lt: oneHourAgo },
       },
     },
     include: {
-      slotOfAppointment: true,
+      occurrence: true,
     },
     take: 100, // Process in batches to avoid overwhelming Stream API
   });
@@ -108,13 +108,13 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
             result.reconciled++;
           } else {
             // Call exists in Stream but no ended_at — use slot end time
-            endedAt = new Date(session.slotOfAppointment.endsAt);
+            endedAt = new Date(session.occurrence.endsAt);
             endedReason = "reconciled_no_end";
             result.reconciled++;
           }
         } catch (streamError) {
           // Stream API error or call not found — use slot end time
-          endedAt = new Date(session.slotOfAppointment.endsAt);
+          endedAt = new Date(session.occurrence.endsAt);
           endedReason = "stream_not_found";
           result.streamNotFound++;
 
@@ -127,7 +127,7 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
         }
       } else {
         // Stream not configured — use slot end time
-        endedAt = new Date(session.slotOfAppointment.endsAt);
+        endedAt = new Date(session.occurrence.endsAt);
         endedReason = "stream_not_configured";
         result.streamNotFound++;
       }
@@ -136,14 +136,14 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
         endedReason === "reconciled" ? "COMPLETED" : "UNVERIFIED";
 
       const moved = await prisma.$transaction(async (tx) => {
-        await tx.meetingSession.update({
+        await tx.meeting.update({
           where: { id: session.id },
           data: { endedAt, endedReason },
         });
         // CAS (#1319): never overwrite a CANCELLED slot; zero rows is a
         // legitimate outcome for a reconciler and is reported below.
-        return transitionSlotCompletion(tx, {
-          where: { id: session.slotOfAppointmentId },
+        return transitionOccurrenceCompletion(tx, {
+          where: { id: session.appointmentOccurrenceId },
           to: completionStatus,
           data: { completedAt: endedAt },
           allowZero: true,

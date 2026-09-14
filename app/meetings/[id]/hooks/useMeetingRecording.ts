@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 
 interface MeetingRecordingData {
-  meetingSessionId: string | null;
+  meetingId: string | null;
   recordingEnabled: boolean;
   isLoading: boolean;
   error: string | null;
@@ -17,7 +17,7 @@ export function useMeetingRecording(
   streamCallId: string | undefined,
 ): MeetingRecordingData {
   const [data, setData] = useState<MeetingRecordingData>({
-    meetingSessionId: null,
+    meetingId: null,
     recordingEnabled: false,
     isLoading: true,
     error: null,
@@ -29,7 +29,7 @@ export function useMeetingRecording(
       return;
     }
 
-    const fetchMeetingSession = async () => {
+    const fetchMeeting = async () => {
       try {
         const response = await fetch(
           `/api/stream/meetings/${encodeURIComponent(streamCallId)}/recording-info`,
@@ -39,7 +39,7 @@ export function useMeetingRecording(
           if (response.status === 404) {
             // Meeting session not found - recording not available
             setData({
-              meetingSessionId: null,
+              meetingId: null,
               recordingEnabled: false,
               isLoading: false,
               error: null,
@@ -52,7 +52,7 @@ export function useMeetingRecording(
         const result = await response.json();
 
         setData({
-          meetingSessionId: result.meetingSessionId,
+          meetingId: result.meetingId,
           recordingEnabled: result.recordingEnabled,
           isLoading: false,
           error: null,
@@ -60,7 +60,7 @@ export function useMeetingRecording(
       } catch (error) {
         console.error("Error fetching meeting recording info:", error);
         setData({
-          meetingSessionId: null,
+          meetingId: null,
           recordingEnabled: false,
           isLoading: false,
           error:
@@ -71,7 +71,7 @@ export function useMeetingRecording(
       }
     };
 
-    fetchMeetingSession();
+    fetchMeeting();
   }, [streamCallId]);
 
   return data;

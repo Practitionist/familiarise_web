@@ -12,7 +12,7 @@ import { ConsultantSkeletonLoader } from "./components/ConsultantSkeletonLoader"
 // ISR per consultantId, not force-dynamic. The cache key is the expert being
 // viewed, never the viewer: this page reads no session, and the layout above it
 // reads none either. Real-time bookability is NOT in this HTML — the client
-// fetches /api/slots/availability-with-allocation on mount, so a cached
+// fetches /api/scheduling/availability-with-allocation on mount, so a cached
 // document can't show a stale "free" slot.
 //
 // 5 minutes, and the read underneath is uncached (lib/data/consultant-detail.ts

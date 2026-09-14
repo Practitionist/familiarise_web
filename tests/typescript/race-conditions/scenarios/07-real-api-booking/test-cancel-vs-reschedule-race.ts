@@ -26,7 +26,7 @@ async function run() {
   const appointment = await prisma.appointment.findFirst({
     where: {
       consultation: { status: { in: ["PENDING", "APPROVED"] } },
-      slotsOfAppointment: { some: { completionStatus: "SCHEDULED" } },
+      occurrences: { some: { completionStatus: "SCHEDULED" } },
     },
     select: { id: true, consultation: { select: { id: true } } },
   });
@@ -40,7 +40,7 @@ async function run() {
     where: { id: appointment.consultation!.id },
     select: { status: true },
   });
-  const originalSlots = await prisma.slotOfAppointment.findMany({
+  const originalSlots = await prisma.appointmentOccurrence.findMany({
     where: { appointmentId: appointment.id },
     select: { id: true, completionStatus: true, isTentative: true },
   });
@@ -90,7 +90,7 @@ async function run() {
   );
 
   // Consistency: slots must not be a mix of CANCELLED and RESCHEDULED.
-  const slots = await prisma.slotOfAppointment.findMany({
+  const slots = await prisma.appointmentOccurrence.findMany({
     where: { appointmentId: appointment.id },
     select: { completionStatus: true, isTentative: true },
   });
@@ -113,7 +113,7 @@ async function run() {
     },
   });
   for (const slot of originalSlots) {
-    await prisma.slotOfAppointment.update({
+    await prisma.appointmentOccurrence.update({
       where: { id: slot.id },
       data: {
         completionStatus: slot.completionStatus,
