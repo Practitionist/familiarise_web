@@ -47,12 +47,14 @@ jest.mock("../../lib/novu/service", () => ({
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
   // matcher semantics.
-  withCronLock: (_key: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
+  withCronLock: (_key: string, _opts: unknown, fn: () => Promise<unknown>) =>
+    fn(),
   LONG_JOB_TTL_MS: 35 * 60_000,
 }));
 
 import prisma from "../../lib/prisma";
 import { listRefunds, getRefund } from "../../lib/payments";
+import { RefundError } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { reconcilePendingRefunds } from "../../scripts/refunds/reconcile-pending-refunds";
 
@@ -61,6 +63,7 @@ interface ReconcileRefundMock {
   findMany: jest.Mock;
   findUnique: jest.Mock;
   update: jest.Mock;
+  updateMany: jest.Mock;
   delete: jest.Mock;
 }
 interface ReconcilePrismaMock {
@@ -87,7 +90,9 @@ interface PlaceholderRow {
   ageHours?: number;
 }
 
-function placeholderRow(overrides: Partial<PlaceholderRow> = {}): PlaceholderRow {
+function placeholderRow(
+  overrides: Partial<PlaceholderRow> = {},
+): PlaceholderRow {
   const ageHours = overrides.ageHours ?? 2;
   const { ageHours: _ignored, ...rest } = overrides;
   void _ignored;
@@ -239,18 +244,16 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
   });
 
   test("a still-settling real-id refund is never aged out locally", async () => {
-    refundTable.findMany
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: "row_9",
-          refundId: "rfnd_real",
-          status: "PENDING",
-          amountPaise: 10_000,
-          createdAt: new Date(Date.now() - 72 * HOUR), // 3 days old
-          payment: { paymentGateway: "RAZORPAY" },
-        },
-      ]);
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "row_9",
+        refundId: "rfnd_real",
+        status: "PENDING",
+        amountPaise: 10_000,
+        createdAt: new Date(Date.now() - 72 * HOUR), // 3 days old
+        payment: { paymentGateway: "RAZORPAY" },
+      },
+    ]);
     mockGet.mockResolvedValueOnce({
       refundId: "rfnd_real",
       amount: 10_000,
@@ -263,6 +266,80 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
 
     expect(result.failedCount).toBe(0);
     expect(refundTable.update).not.toHaveBeenCalled();
+  });
+
+  // FAMILIARISE_WEB-3V — Razorpay answers an id it has never seen (or a
+  // test-mode id read with live keys) with 400 BAD_REQUEST_ERROR /
+  // input_validation_failed, never 404. Polling it again cannot help, so the
+  // row is FAILED through a CAS on PENDING; any other error keeps retrying.
+  test("an id the gateway has no record of is FAILED once via CAS; other errors keep polling", async () => {
+    const row = {
+      id: "row_ghost",
+      refundId: "rfnd_ghost00000001",
+      status: "PENDING",
+      amountPaise: 10_000,
+      createdAt: new Date(Date.now() - 3 * HOUR),
+      payment: { paymentGateway: "RAZORPAY" },
+    };
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([row]);
+    mockGet.mockRejectedValueOnce(
+      new RefundError(
+        "invalid request sent",
+        "BAD_REQUEST_ERROR",
+        "RAZORPAY",
+        undefined,
+        "input_validation_failed",
+      ),
+    );
+
+    const terminal = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "row_ghost", status: "PENDING" },
+        data: expect.objectContaining({ status: "FAILED" }),
+      }),
+    );
+    expect(terminal.failedUnknownId).toBe(1);
+    expect(terminal.failedCount).toBe(1);
+    expect(terminal.errors).toEqual([]);
+    expect(mockPage).toHaveBeenCalledTimes(1);
+
+    jest.clearAllMocks();
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([row]);
+    mockGet.mockRejectedValueOnce(
+      new RefundError("Failed to process refund", "UNKNOWN_ERROR", "RAZORPAY"),
+    );
+
+    const transient = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).not.toHaveBeenCalled();
+    expect(refundTable.update).not.toHaveBeenCalled();
+    expect(transient.failedUnknownId).toBe(0);
+    expect(transient.errors).toHaveLength(1);
+
+    // A webhook settled the row between the select and the CAS: the claim
+    // loses (count 0), so nothing is counted, paged, or errored.
+    jest.clearAllMocks();
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([row]);
+    refundTable.updateMany.mockResolvedValueOnce({ count: 0 });
+    mockGet.mockRejectedValueOnce(
+      new RefundError(
+        "invalid request sent",
+        "BAD_REQUEST_ERROR",
+        "RAZORPAY",
+        undefined,
+        "input_validation_failed",
+      ),
+    );
+
+    const lost = await reconcilePendingRefunds();
+
+    expect(refundTable.updateMany).toHaveBeenCalledTimes(1);
+    expect(lost.failedUnknownId).toBe(0);
+    expect(lost.failedCount).toBe(0);
+    expect(lost.errors).toEqual([]);
+    expect(mockPage).not.toHaveBeenCalled();
   });
 
   // #1458 — with STRIPE_ENABLED unset, the Stripe client is never built, so

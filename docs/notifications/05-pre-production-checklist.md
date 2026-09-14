@@ -308,7 +308,8 @@ Set these in **Netlify Dashboard → Site → Environment Variables**:
 | ------------------------- | ----------------------------------------- | --------------------------------------- |
 | `NEXT_PUBLIC_APP_URL`     | `https://familiarisenow.com`              | Yes                                     |
 | `RESEND_API_KEY`          | From Resend dashboard                     | Yes                                     |
-| `NOVU_SECRET_KEY`         | From Novu dashboard → Settings → API Keys | Yes                                     |
+| `NOVU_DEVELOPMENT_KEY`    | From Novu dashboard → Development → API Keys | Yes                                  |
+| `NOVU_PRODUCTION_KEY`     | From Novu dashboard → Production → API Keys; Netlify production context and GitHub Actions secrets only | Yes |
 | `NEXT_PUBLIC_NOVU_APP_ID` | From Novu dashboard → Settings → API Keys | Yes                                     |
 | `CRON_SECRET`             | Generate: `openssl rand -hex 32`          | Yes                                     |
 | `NEWSLETTER_HMAC_SECRET`  | Generate: `openssl rand -hex 32`          | Optional (falls back to RESEND_API_KEY) |
@@ -445,3 +446,7 @@ _Kit free tier covers 10K subscribers. Creator ($39/mo) only needed for drip seq
 - [Kit (ConvertKit) Pricing](https://kit.com/pricing)
 - [Kit Pricing Analysis 2026](https://www.emailtooltester.com/en/reviews/convertkit/pricing/)
 - [Resend SPF/DKIM/DMARC Setup Guide](https://dmarcdkim.com/setup/how-to-setup-resend-spf-dkim-and-dmarc-records)
+
+## Environments: Development and Production are separate tenants (2026-09-14)
+
+Novu's Development and Production environments are two fully separate tenants — separate workflows, subscribers, notification history and secret keys, and a key only works on its own tenant. Until 2026-09-14 the production site pointed at the Development identifier and every inbox showed Novu's "Development mode" banner; the 16 workflow families were promoted to Production that day with the per-workflow sync (`workflows.sync({ targetEnvironmentId })` from the Development side, because the environment publish endpoint refuses API keys), and the production context was switched to the Production identifier and key. The code now resolves the secret from `NEXT_PUBLIC_SENTRY_ENVIRONMENT`: `NOVU_PRODUCTION_KEY` when it is `production` (the Netlify production context and the GitHub Actions cron twins), otherwise `NOVU_DEVELOPMENT_KEY` (`lib/novu/secret-key.ts`), so a preview or a local shell can never reach a real user's inbox. The sync and purge scripts target Development unless run with `--env production`. Both environments hold 16 of the plan's 20 workflows, and all 69 events across the families have a trigger call site in code.

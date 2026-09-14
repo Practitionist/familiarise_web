@@ -33,7 +33,7 @@ jobs:
       UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
       DIRECT_URL: ${{ secrets.DIRECT_URL }}
       # Reminder notifications fan out through Novu; links built via getAppUrl
-      NOVU_SECRET_KEY: ${{ secrets.NOVU_SECRET_KEY }}
+      NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
       NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
 
     steps:
