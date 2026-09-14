@@ -34,6 +34,7 @@ import {
   queryChannelsPaged,
 } from "@/lib/stream/batch";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
+import { isUpsertRefusal } from "@/lib/stream/connect-failure";
 import {
   DEFAULT_RETENTION_DAYS,
   isPastRetention,
@@ -134,7 +135,13 @@ async function syncUserOrSkipOnConsent(
   channelId: string,
 ): Promise<boolean> {
   try {
-    await upsertUserToStream(userId);
+    if (isUpsertRefusal(await upsertUserToStream(userId))) {
+      streamLogger.info(
+        "Skipping event channel join — Stream refused the account",
+        { userId, channelId },
+      );
+      return false;
+    }
     return true;
   } catch (err) {
     if (err instanceof ConsentRequiredError) {
@@ -673,7 +680,18 @@ export async function syncUserEventChannels(
     // it bubble as an unhandled error through the dashboard-load path. The gate
     // is unchanged — we simply don't crash the page for a non-consenting user.
     try {
-      await upsertUserToStream(userId);
+      if (isUpsertRefusal(await upsertUserToStream(userId))) {
+        // Same shape as the consent gate below: nothing to sync for an
+        // account Stream will not connect, and nothing to retry per visit.
+        streamLogger.info(
+          "Skipping channel sync — Stream refused the account",
+          {
+            userId,
+          },
+        );
+        initialSyncCompletedUsers.add(userId);
+        return { success: true, skipped: true };
+      }
     } catch (err) {
       if (err instanceof ConsentRequiredError) {
         streamLogger.info(

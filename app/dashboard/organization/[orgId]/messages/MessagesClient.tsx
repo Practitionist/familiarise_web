@@ -23,10 +23,10 @@ import { useStreamConnection } from "@/providers/StreamProvider";
  * the participants.
  */
 export function MessagesClient() {
-  const { chatConnected, error, retryConnection } = useStreamConnection();
+  const { chatConnected, failure, retryConnection } = useStreamConnection();
 
-  if (error) {
-    return <ChatUnavailable description={error} onRetry={retryConnection} />;
+  if (failure) {
+    return <ChatUnavailable failure={failure} onRetry={retryConnection} />;
   }
 
   if (!chatConnected) {

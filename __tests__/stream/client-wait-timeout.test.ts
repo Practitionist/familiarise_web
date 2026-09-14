@@ -38,12 +38,11 @@ const provider = readFileSync(
 /** The ladder StreamProviderImpl actually walks, derived from its own source. */
 function providerBackoffMs(): number {
   const maxAttempts = Number(
-    /currentAttempts < (\d+)/.exec(provider)?.[1] ?? NaN,
+    /MAX_CONNECT_ATTEMPTS = (\d+)/.exec(provider)?.[1] ?? NaN,
   );
   const capMs = Number(
-    /Math\.min\(1000 \* Math\.pow\(2, attempt\), (\d+)\)/.exec(
-      provider,
-    )?.[1] ?? NaN,
+    /Math\.min\(1000 \* Math\.pow\(2, attempt\), (\d+)\)/.exec(provider)?.[1] ??
+      NaN,
   );
   expect(Number.isFinite(maxAttempts)).toBe(true);
   expect(Number.isFinite(capMs)).toBe(true);
@@ -79,9 +78,8 @@ describe("the bounded wait for the video client", () => {
 
   it("outlasts the provider's full retry ladder", () => {
     const timeout = Number(
-      /CLIENT_WAIT_TIMEOUT_MS = ([\d_]+)/
-        .exec(hook)?.[1]
-        .replace(/_/g, "") ?? NaN,
+      /CLIENT_WAIT_TIMEOUT_MS = ([\d_]+)/.exec(hook)?.[1].replace(/_/g, "") ??
+        NaN,
     );
     expect(Number.isFinite(timeout)).toBe(true);
 
