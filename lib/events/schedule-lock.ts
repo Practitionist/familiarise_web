@@ -17,5 +17,5 @@ export class ScheduleLockedError extends Error {
 export const WEBINAR_TIME_LOCKED_MESSAGE =
   "Cannot reschedule a webinar with confirmed bookings. Use the reschedule workflow instead.";
 
-export const CLASS_SCHEDULE_LOCKED_MESSAGE =
+export const COHORT_SCHEDULE_LOCKED_MESSAGE =
   "Cannot modify class schedule with enrolled participants. Use the reschedule workflow instead.";

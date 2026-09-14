@@ -1,6 +1,9 @@
 import type { TimePickerSubject } from "@/components/scheduling/time-picker-policy";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
-import { getClassPlanDefaults, type ClassPlanType } from "@/utils/classPlans";
+import {
+  getCohortPlanDefaults,
+  type CohortPlanType,
+} from "@/utils/cohortPlans";
 
 /**
  * Turns one of the four offering types into what the "manage timings" page
@@ -16,7 +19,7 @@ export type ManageTimingsAppointmentType =
   | "CONSULTATION"
   | "SUBSCRIPTION"
   | "WEBINAR"
-  | "CLASS";
+  | "COHORT";
 
 export interface ManageTimingsAppointmentLike {
   appointmentType: ManageTimingsAppointmentType;
@@ -52,11 +55,11 @@ export interface ManageTimingsAppointmentLike {
       title?: string | null;
     } | null;
   } | null;
-  class?: {
+  cohort?: {
     id?: string | null;
     schedulingPeriodStartsAt?: string | Date | null;
     schedulingPeriodEndsAt?: string | Date | null;
-    classPlan?: {
+    cohortPlan?: {
       title?: string | null;
       sessionsPerWeek?: number | null;
       durationInMonths?: number | null;
@@ -75,7 +78,7 @@ interface EventDetails {
   sessionDurationInHours?: number;
   totalSessions?: number;
   title: string;
-  planType?: ClassPlanType;
+  planType?: CohortPlanType;
 }
 
 function getEventDetails(
@@ -123,25 +126,25 @@ function getEventDetails(
           appointment.webinar?.webinarPlan?.durationInHours || 1,
         title: appointment.webinar?.webinarPlan?.title || "Webinar",
       };
-    case "CLASS": {
-      const classPlan = appointment.class?.classPlan;
-      // getClassPlanDefaults predates nullable Prisma fields — null and
+    case "COHORT": {
+      const cohortPlan = appointment.cohort?.cohortPlan;
+      // getCohortPlanDefaults predates nullable Prisma fields — null and
       // "not provided" mean the same thing here, so normalize to undefined.
-      const defaults = getClassPlanDefaults({
-        title: classPlan?.title ?? undefined,
-        sessionsPerWeek: classPlan?.sessionsPerWeek ?? undefined,
-        durationInMonths: classPlan?.durationInMonths ?? undefined,
-        sessionDurationInHours: classPlan?.sessionDurationInHours ?? undefined,
+      const defaults = getCohortPlanDefaults({
+        title: cohortPlan?.title ?? undefined,
+        sessionsPerWeek: cohortPlan?.sessionsPerWeek ?? undefined,
+        durationInMonths: cohortPlan?.durationInMonths ?? undefined,
+        sessionDurationInHours: cohortPlan?.sessionDurationInHours ?? undefined,
       });
       return {
         eventType: "class",
-        eventId: appointment.class?.id || "",
+        eventId: appointment.cohort?.id || "",
         sessionsPerWeek: defaults.classesPerWeek,
         durationInMonths: defaults.durationInMonths,
         durationInHours:
-          classPlan?.sessionDurationInHours ?? defaults.sessionDurationInHours,
-        totalSessions: classPlan?.totalSessions ?? undefined,
-        title: classPlan?.title || "Class",
+          cohortPlan?.sessionDurationInHours ?? defaults.sessionDurationInHours,
+        totalSessions: cohortPlan?.totalSessions ?? undefined,
+        title: cohortPlan?.title || "Class",
         planType: defaults.type,
       };
     }
@@ -156,8 +159,8 @@ function getSchedulingPeriod(appointment: ManageTimingsAppointmentLike): {
   const event =
     appointment.appointmentType === "SUBSCRIPTION"
       ? appointment.subscription
-      : appointment.appointmentType === "CLASS"
-        ? appointment.class
+      : appointment.appointmentType === "COHORT"
+        ? appointment.cohort
         : null;
   return {
     start: event?.schedulingPeriodStartsAt
@@ -200,14 +203,14 @@ function getDescription(
     }
     case "WEBINAR":
       return "Select consecutive time slots for your webinar session.";
-    case "CLASS": {
+    case "COHORT": {
       const sessionDuration = eventDetails.durationInHours || 1;
       const durationText =
         sessionDuration === 1 ? "1 hour" : `${sessionDuration} hours`;
       const sessionsPerWeek = eventDetails.sessionsPerWeek || 1;
-      const classBaseText = `Schedule ${sessionsPerWeek} session${sessionsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
+      const cohortBaseText = `Schedule ${sessionsPerWeek} session${sessionsPerWeek !== 1 ? "s" : ""} per week. Each session is ${durationText}.`;
       return appendProgressText(
-        classBaseText,
+        cohortBaseText,
         completedSessions,
         groupTotalSessions,
       );
@@ -215,8 +218,8 @@ function getDescription(
   }
 }
 
-export interface ManageTimingsClassInfo {
-  planType: ClassPlanType;
+export interface ManageTimingsCohortInfo {
+  planType: CohortPlanType;
   sessionsPerWeek: number;
   durationInMonths: number;
   durationInHours: number;
@@ -229,7 +232,7 @@ export interface ManageTimingsSubject {
   title: string;
   description: string;
   /** Only classes show the plan-type badge + scheduling tip. */
-  classInfo?: ManageTimingsClassInfo;
+  cohortInfo?: ManageTimingsCohortInfo;
 }
 
 export function buildManageTimingsSubject(
@@ -249,8 +252,8 @@ export function buildManageTimingsSubject(
       completedSessions,
       groupTotalSessions,
     ),
-    classInfo:
-      appointment.appointmentType === "CLASS"
+    cohortInfo:
+      appointment.appointmentType === "COHORT"
         ? {
             planType: eventDetails.planType ?? "Custom",
             sessionsPerWeek: eventDetails.sessionsPerWeek ?? 1,

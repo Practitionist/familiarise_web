@@ -15,7 +15,7 @@ import type { Tx } from "@/lib/prisma";
  */
 import type {
   BookingHistoryEntity,
-  ClassStatus,
+  CohortStatus,
   Prisma,
   AppointmentStatus,
   RescheduleRequestStatus,
@@ -229,7 +229,7 @@ export async function transitionSubscriptionRequest(
 
 //////////////////////////////////////////////// Webinar / Class ////////////////////////////////////////////////
 
-// WebinarStatus and ClassStatus are enum-identical; one map serves both.
+// WebinarStatus and CohortStatus are enum-identical; one map serves both.
 // SCHEDULED←SCHEDULED is reschedule re-entry. The sets are deliberately the
 // exact complement of the old `notIn: [CANCELLED, COMPLETED]` guards —
 // explicit allowed-from is robust against future enum additions (#837).
@@ -247,7 +247,7 @@ export const EVENT_ALLOWED_FROM: Record<WebinarStatus, WebinarStatus[]> = {
   CANCELLED: ["SCHEDULED", "IN_PROGRESS"],
 };
 // Type-level proof the two enums stay in lockstep.
-export const CLASS_EVENT_ALLOWED_FROM: Record<ClassStatus, ClassStatus[]> =
+export const COHORT_EVENT_ALLOWED_FROM: Record<CohortStatus, CohortStatus[]> =
   EVENT_ALLOWED_FROM;
 
 // Publishing is the only way out of DRAFT, and it is one-way: withdrawing a
@@ -282,33 +282,33 @@ export async function transitionWebinarEvent(
   });
 }
 
-export async function transitionClassEvent(
-  tx: Pick<Tx, "class" | "bookingStatusHistory">,
+export async function transitionCohortEvent(
+  tx: Pick<Tx, "cohort" | "bookingStatusHistory">,
   args: HistoryMeta & {
     where: { id: string };
-    to: ClassStatus;
-    data?: Omit<Prisma.ClassUncheckedUpdateManyInput, "status">;
-    fromIn?: ClassStatus[];
+    to: CohortStatus;
+    data?: Omit<Prisma.CohortUncheckedUpdateManyInput, "status">;
+    fromIn?: CohortStatus[];
   },
 ): Promise<void> {
   // #1554 — a class is one wrapper with N occurrences, so its id is the
   // history's anchor.
-  const before = await tx.class.findUnique({
+  const before = await tx.cohort.findUnique({
     where: args.where,
     select: {
       status: true,
       appointment: { select: { id: true, deletedAt: true } },
     },
   });
-  const res = await tx.class.updateMany({
+  const res = await tx.cohort.updateMany({
     where: {
       ...args.where,
-      status: { in: args.fromIn ?? CLASS_EVENT_ALLOWED_FROM[args.to] },
+      status: { in: args.fromIn ?? COHORT_EVENT_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
   });
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
-  await appendHistory(tx, "CLASS", args.where.id, before?.status, args.to, {
+  await appendHistory(tx, "COHORT", args.where.id, before?.status, args.to, {
     ...args,
     appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
   });

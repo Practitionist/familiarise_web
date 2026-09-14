@@ -28,7 +28,7 @@ export function consulteeDestructiveAction(
     case "TRIAL":
       return "cancel-trial";
     case "WEBINAR":
-    case "CLASS":
+    case "COHORT":
       return "leave-event";
     default:
       return "none";

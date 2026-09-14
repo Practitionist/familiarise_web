@@ -28,7 +28,7 @@
  * have made succeed. The sweep's seven-day window is what bounds the cost of
  * retrying it. #1391
  *
- * The stamp is per APPOINTMENT, and for a `WEBINAR` or `CLASS` — the two types
+ * The stamp is per APPOINTMENT, and for a `WEBINAR` or `COHORT` — the two types
  * many buyers share — that is not the same grain as the work. Once the sixth
  * buyer's capture stamps the row, a seventh buyer whose `addUserToEventChannel`
  * throws is no longer in the sweep's queue, because that queue selects on the
@@ -118,10 +118,10 @@ export async function ensureChannelsForAppointment(
           },
         },
       },
-      class: {
+      cohort: {
         select: {
           id: true,
-          classPlan: {
+          cohortPlan: {
             select: { consultantProfile: { select: { userId: true } } },
           },
         },
@@ -144,7 +144,7 @@ export async function ensureChannelsForAppointment(
     appointment.consultation?.consultationPlan?.consultantProfile ||
     appointment.subscription?.subscriptionPlan?.consultantProfile ||
     appointment.webinar?.webinarPlan?.consultantProfile ||
-    appointment.class?.classPlan?.consultantProfile ||
+    appointment.cohort?.cohortPlan?.consultantProfile ||
     // `Trial.consultantProfile` is the required, authoritative
     // relation — not `trial.subscriptionPlan.consultantProfile`,
     // which is the plan author and can differ.
@@ -164,7 +164,7 @@ export async function ensureChannelsForAppointment(
   const consultation = appointment.consultation;
   const subscription = appointment.subscription;
   const webinar = appointment.webinar;
-  const classEvent = appointment.class;
+  const cohortEvent = appointment.cohort;
 
   // #1134 P0-8 — the org MUST be threaded through. getDmPairsForUser
   // recomputes the expected id with plan-org-then-appointment-org precedence,
@@ -200,8 +200,8 @@ export async function ensureChannelsForAppointment(
       await createDirectMessageChannel(consultantUserId, userId, dmOrgId);
     } else if (eventType === "WEBINAR" && webinar) {
       await addUserToEventChannel("webinar", webinar.id, userId);
-    } else if (eventType === "CLASS" && classEvent) {
-      await addUserToEventChannel("class", classEvent.id, userId);
+    } else if (eventType === "COHORT" && cohortEvent) {
+      await addUserToEventChannel("class", cohortEvent.id, userId);
     } else {
       return { ensured: false, reason: "no_channel_branch_for_appointment" };
     }

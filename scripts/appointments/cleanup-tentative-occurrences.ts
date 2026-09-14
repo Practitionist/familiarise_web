@@ -131,9 +131,9 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
             },
             {
               OR: [
-                { class: null },
+                { cohort: null },
                 {
-                  class: {
+                  cohort: {
                     status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
                   },
                 },
@@ -273,9 +273,9 @@ async function cleanupTentativeSlotsUnlocked(): Promise<TentativeSlotCleanupResu
                 },
                 {
                   OR: [
-                    { class: null },
+                    { cohort: null },
                     {
-                      class: {
+                      cohort: {
                         status: { notIn: ["SCHEDULED", "IN_PROGRESS"] },
                       },
                     },

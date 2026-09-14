@@ -12,7 +12,7 @@ export type AppointmentKind =
   | "CONSULTATION"
   | "SUBSCRIPTION"
   | "WEBINAR"
-  | "CLASS"
+  | "COHORT"
   | "TRIAL";
 
 export type AppointmentBucket =

@@ -3,7 +3,7 @@
  *
  * The plan list and detail routes used to `include: { consultantProfile: … }`
  * bare, which serialised the whole ConsultantProfile row — PAN, bank account,
- * SWIFT, TDS certificate, MSME — into responses that `/api/plans/classes` and
+ * SWIFT, TDS certificate, MSME — into responses that `/api/plans/cohorts` and
  * `/api/plans/webinars` serve to anyone on the internet and the rest serve to
  * any signed-in user. #946 moved the detail pages to `consultantPublicScalars`;
  * these are the routes it missed. Every plan read goes through one of these two.

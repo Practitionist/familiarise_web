@@ -115,8 +115,8 @@ export interface CreateEarningsParams {
       webinar?: {
         webinarPlanId: string;
       } | null;
-      class?: {
-        classPlanId: string;
+      cohort?: {
+        cohortPlanId: string;
       } | null;
     } | null;
   };
@@ -152,7 +152,7 @@ const RATE_CARD_PLAN_TYPE: Record<AppointmentType, CoveredPlanType> = {
   CONSULTATION: "CONSULTATION",
   WEBINAR: "WEBINAR",
   SUBSCRIPTION: "SUBSCRIPTION",
-  CLASS: "CLASS",
+  COHORT: "COHORT",
 };
 
 /**
@@ -249,7 +249,7 @@ async function resolveOrgSplit(
               where: { id: plan.id },
               select: { organizationId: true },
             })
-          : tx.classPlan.findUnique({
+          : tx.cohortPlan.findUnique({
               where: { id: plan.id },
               select: { organizationId: true },
             }))
@@ -388,7 +388,7 @@ const EARNINGS_APPOINTMENT_TYPE_MAP: Record<string, AppointmentType> = {
   CONSULTATION: "CONSULTATION",
   SUBSCRIPTION: "SUBSCRIPTION",
   WEBINAR: "WEBINAR",
-  CLASS: "CLASS",
+  COHORT: "COHORT",
 };
 
 export interface ResolvedEarningsPayment {
@@ -438,11 +438,11 @@ export async function resolvePaymentForEarnings(
               },
             },
           },
-          class: {
+          cohort: {
             select: {
               id: true,
-              classPlanId: true,
-              classPlan: {
+              cohortPlanId: true,
+              cohortPlan: {
                 include: { consultantProfile: true },
               },
             },
@@ -461,7 +461,7 @@ export async function resolvePaymentForEarnings(
       ?.consultantProfile ||
     paymentWithAppointment.appointment.webinar?.webinarPlan
       ?.consultantProfile ||
-    paymentWithAppointment.appointment.class?.classPlan?.consultantProfile;
+    paymentWithAppointment.appointment.cohort?.cohortPlan?.consultantProfile;
 
   if (!consultantProfile) return null;
 
@@ -479,9 +479,10 @@ export async function resolvePaymentForEarnings(
               paymentWithAppointment.appointment.webinar.webinarPlanId,
           }
         : null,
-      class: paymentWithAppointment.appointment.class
+      cohort: paymentWithAppointment.appointment.cohort
         ? {
-            classPlanId: paymentWithAppointment.appointment.class.classPlanId,
+            cohortPlanId:
+              paymentWithAppointment.appointment.cohort.cohortPlanId,
           }
         : null,
     },
@@ -536,9 +537,9 @@ export async function createEarningsFromPayment({
   if (appointmentType === "WEBINAR" && payment.appointment?.webinar) {
     planType = "webinar";
     planId = payment.appointment.webinar.webinarPlanId;
-  } else if (appointmentType === "CLASS" && payment.appointment?.class) {
+  } else if (appointmentType === "COHORT" && payment.appointment?.cohort) {
     planType = "class";
-    planId = payment.appointment.class.classPlanId;
+    planId = payment.appointment.cohort.cohortPlanId;
   }
 
   // FIX #9: Wrap earnings creation + balance updates in a transaction for atomicity.

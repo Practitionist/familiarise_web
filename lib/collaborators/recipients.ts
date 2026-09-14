@@ -18,7 +18,7 @@ export async function collaboratorUserIds(
     where: {
       ...(planType === "webinar"
         ? { webinarPlanId: planId }
-        : { classPlanId: planId }),
+        : { cohortPlanId: planId }),
       status: "ACCEPTED",
       consultantProfile: { deletedAt: null },
     },
@@ -37,7 +37,7 @@ export async function collaboratorUserIdsForEvent(
     where: {
       ...(planType === "webinar"
         ? { webinarPlan: { webinars: { some: { id: eventId } } } }
-        : { classPlan: { classes: { some: { id: eventId } } } }),
+        : { cohortPlan: { cohorts: { some: { id: eventId } } } }),
       status: "ACCEPTED",
       consultantProfile: { deletedAt: null },
     },

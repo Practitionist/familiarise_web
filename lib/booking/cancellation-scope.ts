@@ -88,7 +88,7 @@ export type BookingRef = {
   appointmentId?: string;
   consultationId?: string | null;
   subscriptionId?: string | null;
-  classId?: string | null;
+  cohortId?: string | null;
   webinarId?: string | null;
 };
 
@@ -102,7 +102,7 @@ export function bookingAppointmentFilter(
 ): Prisma.AppointmentWhereInput {
   if (ref.appointmentId) return { id: ref.appointmentId };
   if (ref.subscriptionId) return { subscriptionId: ref.subscriptionId };
-  if (ref.classId) return { classId: ref.classId };
+  if (ref.cohortId) return { cohortId: ref.cohortId };
   if (ref.consultationId) return { consultationId: ref.consultationId };
   if (ref.webinarId) return { webinarId: ref.webinarId };
   throw new Error("bookingAppointmentFilter: no booking identifier given");
@@ -165,7 +165,7 @@ export async function resolveBookingRefundContext(
   // refunded less than they paid. #1554 — a class or webinar wrapper carries
   // one Payment per attendee, so the alarm is only meaningful once the lookup
   // is scoped to a payer (or the booking has exactly one: the 1:1 types).
-  const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
+  const singlePayer = !!payerUserId || (!ref.cohortId && !ref.webinarId);
   if (singlePayer && payments.length > 1) {
     void recordSystemError({
       organizationId: null,

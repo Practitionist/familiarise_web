@@ -21,7 +21,7 @@ export interface OwnedPlan {
 
 export interface AppointmentWithOwnership {
   webinar?: { webinarPlan?: OwnedPlan | null } | null;
-  class?: { classPlan?: OwnedPlan | null } | null;
+  cohort?: { cohortPlan?: OwnedPlan | null } | null;
   // #1134 P1-6 — 1:1 was simply absent here, which is why recording a
   // consultation or a subscription was impossible rather than merely disabled:
   // isAppointmentOwner returned false for the actual owner, so start-recording
@@ -42,7 +42,7 @@ export function resolveAppointmentPlan(
   if (!appointment) return null;
   return (
     appointment.webinar?.webinarPlan ??
-    appointment.class?.classPlan ??
+    appointment.cohort?.cohortPlan ??
     appointment.consultation?.consultationPlan ??
     appointment.subscription?.subscriptionPlan ??
     null
@@ -121,7 +121,7 @@ export function getRecordingOwnershipInfo(
  */
 interface AppointmentWithTitles {
   webinar?: { webinarPlan?: { title?: string } | null } | null;
-  class?: { classPlan?: { title?: string } | null } | null;
+  cohort?: { cohortPlan?: { title?: string } | null } | null;
   consultation?: { consultationPlan?: { title?: string } | null } | null;
   subscription?: { subscriptionPlan?: { title?: string } | null } | null;
 }
@@ -138,8 +138,8 @@ export function generateRecordingTitle(
 
   if (appointment?.webinar?.webinarPlan?.title) {
     title = `Webinar: ${appointment.webinar.webinarPlan.title}`;
-  } else if (appointment?.class?.classPlan?.title) {
-    title = `Class: ${appointment.class.classPlan.title}`;
+  } else if (appointment?.cohort?.cohortPlan?.title) {
+    title = `Class: ${appointment.cohort.cohortPlan.title}`;
   } else if (appointment?.consultation?.consultationPlan?.title) {
     title = `Consultation: ${appointment.consultation.consultationPlan.title}`;
   } else if (appointment?.subscription?.subscriptionPlan?.title) {
@@ -164,7 +164,7 @@ export async function getEventAttendeeIds(
     | {
         id: string;
         webinar?: { id: string } | null;
-        class?: { id: string } | null;
+        cohort?: { id: string } | null;
       }
     | null
     | undefined,
@@ -173,8 +173,8 @@ export async function getEventAttendeeIds(
 
   const scope = appointment.webinar
     ? { appointment: { webinarId: appointment.webinar.id } }
-    : appointment.class
-      ? { appointment: { classId: appointment.class.id } }
+    : appointment.cohort
+      ? { appointment: { cohortId: appointment.cohort.id } }
       : { appointmentId: appointment.id };
 
   const seats = await prisma.appointmentParticipant.findMany({

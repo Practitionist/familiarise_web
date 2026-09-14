@@ -95,7 +95,7 @@ export interface IExpertStatsInput {
 
 export interface IProgramStatsInput {
   /** Class plans a visitor can actually find and buy. */
-  publishedClassCount: number;
+  publishedCohortCount: number;
   /** Webinar plans a visitor can actually find and buy. */
   publishedWebinarCount: number;
   /** Distinct learners holding a confirmed or attended seat on an event. */
@@ -167,13 +167,13 @@ export function buildProgramHeroStats(
 ): IPublicStat<ProgramStatKey>[] {
   const stats: IPublicStat<ProgramStatKey>[] = [];
 
-  if (input.publishedClassCount > 0) {
+  if (input.publishedCohortCount > 0) {
     stats.push({
       key: "classes",
-      value: input.publishedClassCount,
-      display: formatCount(input.publishedClassCount),
+      value: input.publishedCohortCount,
+      display: formatCount(input.publishedCohortCount),
       label:
-        input.publishedClassCount === 1
+        input.publishedCohortCount === 1
           ? "Class Available"
           : "Classes Available",
     });

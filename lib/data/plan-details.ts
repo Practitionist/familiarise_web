@@ -102,10 +102,10 @@ export const getWebinarPlanDetail = cache(fetchWebinarPlanDetail);
 // ---------------------------------------------------------------------------
 
 /** Raw function — importable by API routes (no React.cache). */
-export async function fetchClassPlanDetail(classPlanId: string) {
-  const plan = await prisma.classPlan.findUnique({
+export async function fetchCohortPlanDetail(cohortPlanId: string) {
+  const plan = await prisma.cohortPlan.findUnique({
     where: {
-      id: classPlanId,
+      id: cohortPlanId,
       // #781 §B — soft-deleted profiles leave public surfaces; owner relation
       // is nullable, so only plans with a soft-deleted owner become not-found.
       OR: [
@@ -138,7 +138,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
           tags: true,
         },
       },
-      classes: {
+      cohorts: {
         include: {
           appointment: {
             include: {
@@ -153,7 +153,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
       },
       topics: true,
       faqs: { orderBy: { order: "asc" } },
-      classContents: { orderBy: { order: "asc" } },
+      cohortContents: { orderBy: { order: "asc" } },
       collaborators: {
         // A soft-deleted (erased) profile leaves the public co-host list even
         // if its row somehow stayed ACCEPTED (#1580).
@@ -179,7 +179,7 @@ export async function fetchClassPlanDetail(classPlanId: string) {
 }
 
 /** Cached wrapper for Server Components. */
-export const getClassPlanDetail = cache(fetchClassPlanDetail);
+export const getCohortPlanDetail = cache(fetchCohortPlanDetail);
 
 // ---------------------------------------------------------------------------
 // Subscription plan detail

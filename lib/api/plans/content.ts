@@ -1,7 +1,7 @@
 /**
  * Nested-write helpers for a plan's child content rows.
  *
- * `PlanFaq` and the two curriculum tables (`ClassContent`,
+ * `PlanFaq` and the two curriculum tables (`CohortContent`,
  * `SubscriptionContent`) are authored as a whole ordered list, not as
  * individually-addressable rows: the planner hands back the full array on every
  * save. Replacing the set is therefore the correct update semantic, and doing

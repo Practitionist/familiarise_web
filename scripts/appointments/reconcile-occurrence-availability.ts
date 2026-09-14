@@ -291,9 +291,9 @@ async function detectDoubleBookings(): Promise<{
                 },
               },
             },
-            class: {
+            cohort: {
               include: {
-                classPlan: {
+                cohortPlan: {
                   include: {
                     consultantProfile: {
                       include: {
@@ -337,7 +337,7 @@ async function detectDoubleBookings(): Promise<{
         consultation,
         subscription,
         webinar,
-        class: classEvent,
+        cohort: cohortEvent,
         trial,
       } = slot.appointment;
 
@@ -345,7 +345,7 @@ async function detectDoubleBookings(): Promise<{
         consultation?.consultationPlan.consultantProfile ||
         subscription?.subscriptionPlan.consultantProfile ||
         webinar?.webinarPlan.consultantProfile ||
-        classEvent?.classPlan.consultantProfile ||
+        cohortEvent?.cohortPlan.consultantProfile ||
         trial?.consultantProfile;
 
       if (!consultantProfile) continue;
@@ -599,7 +599,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
 
   cursor = undefined;
   for (let page = 0; page < TOP_UP_SCAN_PAGES; page++) {
-    const classes = await prisma.class.findMany({
+    const cohorts = await prisma.cohort.findMany({
       where: {
         // A class has no request to approve; SCHEDULED/IN_PROGRESS is the
         // occupancy policy's equivalent of an APPROVED request.
@@ -621,7 +621,7 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         updatedAt: true,
         schedulingPeriodStartsAt: true,
         schedulingPeriodEndsAt: true,
-        classPlan: {
+        cohortPlan: {
           select: {
             consultantProfileId: true,
             durationInMonths: true,
@@ -653,19 +653,19 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       ...pageArgs(cursor),
     });
 
-    for (const classRun of classes) {
-      const plan = classRun.classPlan;
+    for (const cohortRun of cohorts) {
+      const plan = cohortRun.cohortPlan;
       const required = requiredSessionsFor("class", {
         durationInMonths: plan.durationInMonths,
         sessionsPerWeek: plan.sessionsPerWeek,
         sessionDurationInHours: plan.sessionDurationInHours,
         totalSessions: plan.totalSessions,
         schedulingPeriodStartsAt:
-          classRun.schedulingPeriodStartsAt ?? undefined,
-        schedulingPeriodEndsAt: classRun.schedulingPeriodEndsAt ?? undefined,
+          cohortRun.schedulingPeriodStartsAt ?? undefined,
+        schedulingPeriodEndsAt: cohortRun.schedulingPeriodEndsAt ?? undefined,
       });
-      const confirmed = classRun.appointment?._count.occurrences ?? 0;
-      // `ClassPlan.consultantProfileId` is nullable; a plan with no consultant
+      const confirmed = cohortRun.appointment?._count.occurrences ?? 0;
+      // `CohortPlan.consultantProfileId` is nullable; a plan with no consultant
       // has no availability to search and the allocator would answer NOT_FOUND.
       if (
         required === null ||
@@ -675,15 +675,15 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
         continue;
       candidates.push({
         eventType: "class",
-        eventId: classRun.id,
+        eventId: cohortRun.id,
         consultantProfileId: plan.consultantProfileId,
-        updatedAt: classRun.updatedAt,
+        updatedAt: cohortRun.updatedAt,
         confirmedSessions: confirmed,
         requiredSessions: required,
       });
     }
-    if (classes.length < TOP_UP_SCAN_LIMIT) break;
-    cursor = nextCursor(classes);
+    if (cohorts.length < TOP_UP_SCAN_LIMIT) break;
+    cursor = nextCursor(cohorts);
   }
 
   return candidates;
@@ -861,7 +861,7 @@ async function touchTopUpMarker(candidate: TopUpCandidate): Promise<void> {
       data,
     });
   } else {
-    await prisma.class.update({ where: { id: candidate.eventId }, data });
+    await prisma.cohort.update({ where: { id: candidate.eventId }, data });
   }
 }
 

@@ -277,7 +277,7 @@ function findAbandonedAppointments(limit?: number) {
       OR: [
         { occurrences: { some: { isTentative: true } } },
         { webinar: { isNot: null } },
-        { class: { isNot: null } },
+        { cohort: { isNot: null } },
       ],
     },
     include: {
@@ -287,7 +287,7 @@ function findAbandonedAppointments(limit?: number) {
       consultation: true,
       subscription: true,
       webinar: true,
-      class: true,
+      cohort: true,
       occurrences: true,
     },
   });
@@ -497,8 +497,8 @@ async function releaseGroupSeats(
   const abandonedUserIds = Array.from(
     new Set(appointment.payment.map((p) => p.userId)),
   );
-  const seatFilter = appointment.class
-    ? { appointment: { classId: appointment.class.id } }
+  const seatFilter = appointment.cohort
+    ? { appointment: { cohortId: appointment.cohort.id } }
     : { appointmentId: appointment.id };
 
   for (const abandonedUserId of abandonedUserIds) {
@@ -631,7 +631,7 @@ async function cleanupAbandonedAppointment(
       await expirePendingPayments(tx, appointment.payment, failures);
       await restoreReferralCredits(tx, appointment.payment);
 
-      if (appointment.webinar || appointment.class) {
+      if (appointment.webinar || appointment.cohort) {
         await releaseGroupSeats(tx, appointment);
         return "cleaned" as const;
       }

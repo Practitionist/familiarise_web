@@ -52,9 +52,9 @@ export const MIN_GROUP_RESPONSES_PER_EVENT = 5;
  */
 export function trackForAppointment(row: {
   webinarId: string | null;
-  classId: string | null;
+  cohortId: string | null;
 }): ReviewTrack {
-  return row.webinarId || row.classId ? "GROUP" : "ONE_TO_ONE";
+  return row.webinarId || row.cohortId ? "GROUP" : "ONE_TO_ONE";
 }
 
 /**
@@ -343,13 +343,13 @@ function loadReviewableAppointments(
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
         {
-          classId: { not: null },
+          cohortId: { not: null },
           ...(consultantProfileId
-            ? { class: { classPlan: { consultantProfileId } } }
+            ? { cohort: { cohortPlan: { consultantProfileId } } }
             : {}),
           NOT: {
-            class: {
-              classPlan: {
+            cohort: {
+              cohortPlan: {
                 collaborators: {
                   some: { status: "ACCEPTED", consultantProfile: { userId } },
                 },
@@ -366,7 +366,7 @@ function loadReviewableAppointments(
       id: true,
       appointmentType: true,
       webinarId: true,
-      classId: true,
+      cohortId: true,
       organizationId: true,
       consultation: {
         select: {
@@ -413,9 +413,9 @@ function loadReviewableAppointments(
           },
         },
       },
-      class: {
+      cohort: {
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               title: true,
               consultantProfileId: true,
@@ -442,7 +442,7 @@ function loadReviewableAppointments(
  * Derive the consultant and the rating unit for one appointment.
  *
  * The unit is NOT a session-type discriminator: a WEBINAR shares one
- * Appointment across every attendee, but a CLASS mints one per enrolment, so
+ * Appointment across every attendee, but a COHORT mints one per enrolment, so
  * grouping by type alone would collapse every class a consultant ever ran into
  * a single data point — worse than the imbalance being fixed.
  */
@@ -465,7 +465,7 @@ function describe(
     row.subscription?.subscriptionPlan?.consultantProfileId ??
     row.trial?.consultantProfileId ??
     row.webinar?.webinarPlan?.consultantProfileId ??
-    row.class?.classPlan?.consultantProfileId ??
+    row.cohort?.cohortPlan?.consultantProfileId ??
     null;
   // Group plans may carry no consultant at all; there is nobody to review.
   if (!consultantProfileId) return null;
@@ -475,8 +475,8 @@ function describe(
   // key for it would be a column that always holds exactly one row.
   const ratingUnitId = row.webinarId
     ? `webinar:${row.webinarId}`
-    : row.classId
-      ? `class:${row.classId}`
+    : row.cohortId
+      ? `class:${row.cohortId}`
       : null;
 
   return {
@@ -487,7 +487,7 @@ function describe(
       row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
       row.trial?.consultantProfile?.user?.name ??
       row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-      row.class?.classPlan?.consultantProfile?.user?.name ??
+      row.cohort?.cohortPlan?.consultantProfile?.user?.name ??
       null,
     track,
     ratingUnitId,
@@ -496,7 +496,7 @@ function describe(
       row.consultation?.consultationPlan?.title ??
       row.subscription?.subscriptionPlan?.title ??
       row.webinar?.webinarPlan?.title ??
-      row.class?.classPlan?.title ??
+      row.cohort?.cohortPlan?.title ??
       "Session",
     heldAt: row.occurrences[0]?.endsAt ?? null,
     // Keyed on the CONSULTANT and the (track, event), not this appointment: a 1:1

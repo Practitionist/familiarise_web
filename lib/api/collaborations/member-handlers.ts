@@ -10,7 +10,7 @@ import {
   removeCollaborator,
 } from "@/lib/collaborators/service";
 import {
-  updateClassCollaboratorSchema,
+  updateCohortCollaboratorSchema,
   updateWebinarCollaboratorSchema,
 } from "@/schemas/collaborators";
 
@@ -24,7 +24,7 @@ type RouteContext = { params: Promise<{ planId: string; id: string }> };
 
 const UPDATE_SCHEMAS = {
   webinar: updateWebinarCollaboratorSchema,
-  class: updateClassCollaboratorSchema,
+  class: updateCohortCollaboratorSchema,
 } as const;
 
 const captureRouteError = (
@@ -56,7 +56,7 @@ async function resolveParties(
           where: { id: planId },
           select: { consultantProfileId: true },
         })
-      : prisma.classPlan.findUnique({
+      : prisma.cohortPlan.findUnique({
           where: { id: planId },
           select: { consultantProfileId: true },
         }),

@@ -5,7 +5,7 @@
  * importing from a dashboard route.
  *
  * The event union carries statuses from three enums (AppointmentStatus,
- * TrialStatus, Webinar/ClassStatus) plus legacy lowercase values,
+ * TrialStatus, Webinar/CohortStatus) plus legacy lowercase values,
  * so guards normalize case rather than typing against one enum.
  */
 
@@ -91,7 +91,7 @@ export function isConfirmedStatus(status: string | null | undefined): boolean {
 
 /**
  * Badge style for the event status UNION (consultations/subscriptions carry
- * AppointmentStatus, webinars/classes carry Webinar/ClassStatus, trials
+ * AppointmentStatus, webinars/classes carry Webinar/CohortStatus, trials
  * carry TrialStatus). Tries the maps in specificity order and falls
  * back to a neutral title-cased pill for legacy values.
  */

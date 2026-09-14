@@ -85,7 +85,7 @@ function parseArgs(): ScriptOptions {
 
 function getAppointmentTypeKey(
   type: AppointmentsType,
-): "CONSULTATION" | "WEBINAR" | "SUBSCRIPTION" | "CLASS" {
+): "CONSULTATION" | "WEBINAR" | "SUBSCRIPTION" | "COHORT" {
   switch (type) {
     case "CONSULTATION":
       return "CONSULTATION";
@@ -93,8 +93,8 @@ function getAppointmentTypeKey(
       return "WEBINAR";
     case "SUBSCRIPTION":
       return "SUBSCRIPTION";
-    case "CLASS":
-      return "CLASS";
+    case "COHORT":
+      return "COHORT";
     default:
       return "CONSULTATION";
   }
@@ -135,9 +135,9 @@ async function createEarningsForPayment(
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 include: { consultantProfile: true },
               },
             },
@@ -191,7 +191,7 @@ async function createEarningsForPayment(
     payment.appointment.consultation?.consultationPlan?.consultantProfile ||
     payment.appointment.subscription?.subscriptionPlan?.consultantProfile ||
     payment.appointment.webinar?.webinarPlan?.consultantProfile ||
-    payment.appointment.class?.classPlan?.consultantProfile;
+    payment.appointment.cohort?.cohortPlan?.consultantProfile;
 
   if (!consultantProfile) {
     return {

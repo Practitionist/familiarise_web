@@ -8,7 +8,7 @@
  * program shapes and an image-URL builder.
  */
 import {
-  ClassPlan as PrismaClassPlan,
+  CohortPlan as PrismaCohortPlan,
   WebinarPlan as PrismaWebinarPlan,
 } from "@prisma/client";
 
@@ -28,16 +28,16 @@ interface WebinarWithAppointment {
   } | null;
 }
 
-interface ClassAppointment {
+interface CohortAppointment {
   participants?: SeatHolder[];
 }
 
-export interface ClassInstance {
+export interface CohortInstance {
   id: string;
   schedulingPeriodStartsAt?: string | Date | null;
   /** Per-instance capacity override; null inherits the plan's value. */
   maxParticipants?: number | null;
-  appointment?: ClassAppointment | null;
+  appointment?: CohortAppointment | null;
 }
 
 type ProgramConsultantProfile = {
@@ -65,9 +65,9 @@ type ProgramCollaborator = {
 };
 
 // #780 — price reaches here as number (extended-client read → JSON), never bigint
-export type ClassPlanProgram = Omit<PrismaClassPlan, "price"> & {
+export type CohortPlanProgram = Omit<PrismaCohortPlan, "price"> & {
   price: number;
-  classes: ClassInstance[];
+  cohorts: CohortInstance[];
   type: "class";
   imageUrl: string;
   isRegistered?: boolean;
@@ -85,7 +85,7 @@ export type WebinarPlanProgram = Omit<PrismaWebinarPlan, "price"> & {
   collaborators?: ProgramCollaborator[];
 };
 
-export type Program = ClassPlanProgram | WebinarPlanProgram;
+export type Program = CohortPlanProgram | WebinarPlanProgram;
 
 export interface ApiMeta {
   page: number;
@@ -123,7 +123,9 @@ export function generateProgramImageUrl(
   return `https://picsum.photos/seed/${id}/${width}/${height}`;
 }
 
-export function isClassProgram(program: Program): program is ClassPlanProgram {
+export function isCohortProgram(
+  program: Program,
+): program is CohortPlanProgram {
   return program.type === "class";
 }
 

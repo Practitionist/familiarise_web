@@ -106,7 +106,7 @@ export const moneyResultExtensions = {
     trialPriceInPaise: f("trialPriceInPaise"),
   },
   webinarPlan: { price: f("price") },
-  classPlan: { price: f("price") },
+  cohortPlan: { price: f("price") },
   recording: {
     fileSize: fn("fileSize"),
     // #366 marketplace — nullable sale price (set only when listed).

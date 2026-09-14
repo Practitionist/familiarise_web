@@ -13,7 +13,7 @@ import type { Tx, PrismaLike } from "@/lib/prisma";
  *   - `coveredEngagementsPerCycle` is the cap per assignment in
  *     *engagement* units (one engagement = one Appointment row = one
  *     calendar occurrence). null = unlimited (was PREPAID_UNLIMITED).
- *     CONSULTATION/WEBINAR debit 1 at checkout; CLASS debits N at
+ *     CONSULTATION/WEBINAR debit 1 at checkout; COHORT debits N at
  *     enrolment (one per class day); SUBSCRIPTION debits 1 per
  *     consultant allocation. Per-engagement *price* is governed by
  *     `priceCapPerEngagementPaise` (separate concern).
@@ -170,7 +170,7 @@ export async function claimProgramAssignment(
  * Appointment row = one calendar occurrence), NOT slots and NOT bookings.
  * Callers:
  *   - CONSULTATION/WEBINAR: pass at checkout, always 1 (one Appointment).
- *   - CLASS: pass at checkout, equal to the count of distinct
+ *   - COHORT: pass at checkout, equal to the count of distinct
  *     Appointments the learner is being enrolled in (slots are
  *     pre-allocated by the consultant; all appointments are known then).
  *   - SUBSCRIPTION: pass at slot-allocation time
@@ -195,7 +195,7 @@ export async function recordBookingUtilization(
      * - alreadyTracked`. Re-allocation (delete + recreate) flows that pass
      *  the same appointment id twice become idempotent.
      *
-     * For CONSULTATION/WEBINAR/CLASS the caller knows all appointments
+     * For CONSULTATION/WEBINAR/COHORT the caller knows all appointments
      * up front, so passing them here turns the upsert into a true
      * idempotent operation. For SUBSCRIPTION the caller passes whatever
      * appointment ids are being added in this allocation batch.
@@ -413,7 +413,7 @@ export async function recordBookingUtilization(
   }
 
   // Upsert the BookingUtilization on paymentId (which is @unique).
-  //   - CONSULTATION/WEBINAR/CLASS: called once per Payment, so this is
+  //   - CONSULTATION/WEBINAR/COHORT: called once per Payment, so this is
   //     effectively an insert.
   //   - SUBSCRIPTION: called once per consultant allocation (lazy). The
   //     first allocation inserts the row; subsequent allocations

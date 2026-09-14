@@ -118,7 +118,7 @@ export async function readConsulteeEvents(
 
   // PERFORMANCE FIX: Use direct Prisma queries instead of internal HTTP fetches
   // This avoids network overhead and reduces response time from 11+ seconds to <1 second
-  const [consultations, subscriptions, webinars, classes, trials] =
+  const [consultations, subscriptions, webinars, cohorts, trials] =
     await Promise.all([
       prisma.consultation.findMany({
         where: {
@@ -272,7 +272,7 @@ export async function readConsulteeEvents(
         take: EVENTS_TAKE,
       }),
       // Classes the user enrolled in.
-      prisma.class.findMany({
+      prisma.cohort.findMany({
         where: {
           appointment: {
             // TTFB bound: the user must hold a seat AND a call must be in-window.
@@ -282,7 +282,7 @@ export async function readConsulteeEvents(
           },
         },
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: {
                 select: {
@@ -388,7 +388,7 @@ export async function readConsulteeEvents(
     consultations,
     subscriptions,
     webinars,
-    classes,
+    cohorts,
     trials,
   }) as unknown as TConsulteeEventsResponse;
 }

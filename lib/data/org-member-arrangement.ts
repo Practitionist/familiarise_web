@@ -116,7 +116,7 @@ export async function getMyArrangementData(params: {
               },
             },
             { webinar: { webinarPlan: { consultantProfileId } } },
-            { class: { classPlan: { consultantProfileId } } },
+            { cohort: { cohortPlan: { consultantProfileId } } },
             { trial: { consultantProfileId } },
           ],
         },

@@ -69,12 +69,12 @@ async function releaseSlots(
   tx: Tx,
   appt: {
     id: string;
-    class?: { id: string } | null;
+    cohort?: { id: string } | null;
     webinar?: { id: string } | null;
   },
   userId: string,
 ): Promise<number> {
-  if (!appt.class && !appt.webinar) {
+  if (!appt.cohort && !appt.webinar) {
     // Doctrine rule 2: freed by status, not by DELETE. The buyer keeps a
     // record of the hold they abandoned, and occupancy already ignores a
     // soft-cancelled row.
@@ -86,8 +86,8 @@ async function releaseSlots(
     });
   }
 
-  const seatFilter = appt.class
-    ? { appointment: { classId: appt.class.id } }
+  const seatFilter = appt.cohort
+    ? { appointment: { cohortId: appt.cohort.id } }
     : { appointmentId: appt.id };
 
   // #1554 — the seat is the participant row; releasing it is a status flip.
@@ -116,7 +116,7 @@ export async function cancelPendingCheckout(args: {
                 consultation: { select: { id: true } },
                 subscription: { select: { id: true } },
                 webinar: { select: { id: true } },
-                class: { select: { id: true } },
+                cohort: { select: { id: true } },
               },
             },
           },

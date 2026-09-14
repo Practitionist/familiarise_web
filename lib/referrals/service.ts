@@ -903,10 +903,10 @@ export async function processConsultantBookingReferral(
               },
             },
           },
-          class: {
+          cohort: {
             select: {
-              classPlanId: true,
-              classPlan: {
+              cohortPlanId: true,
+              cohortPlan: {
                 select: { consultantProfile: { select: { userId: true } } },
               },
             },
@@ -922,7 +922,7 @@ export async function processConsultantBookingReferral(
     payment?.appointment?.subscription?.subscriptionPlan?.consultantProfile
       ?.userId ||
     payment?.appointment?.webinar?.webinarPlan?.consultantProfile?.userId ||
-    payment?.appointment?.class?.classPlan?.consultantProfile?.userId;
+    payment?.appointment?.cohort?.cohortPlan?.consultantProfile?.userId;
 
   if (consultantUserId && consultantUserId !== buyerUserId) {
     await processQualifyingAction(
@@ -935,7 +935,7 @@ export async function processConsultantBookingReferral(
   // Collaborators earn revenue from these bookings and should trigger referral
   // qualification just like plan owners.
   const webinarPlanId = payment?.appointment?.webinar?.webinarPlanId;
-  const classPlanId = payment?.appointment?.class?.classPlanId;
+  const cohortPlanId = payment?.appointment?.cohort?.cohortPlanId;
 
   const collaboratorUserIds: string[] = [];
 
@@ -947,9 +947,9 @@ export async function processConsultantBookingReferral(
     collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));
   }
 
-  if (classPlanId) {
+  if (cohortPlanId) {
     const collabs = await prisma.collaborator.findMany({
-      where: { classPlanId, status: "ACCEPTED" },
+      where: { cohortPlanId, status: "ACCEPTED" },
       select: { consultantProfile: { select: { userId: true } } },
     });
     collaboratorUserIds.push(...collabs.map((c) => c.consultantProfile.userId));

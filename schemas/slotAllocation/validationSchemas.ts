@@ -160,7 +160,7 @@ export const validationRequestSchema = z.object({
  * Different Prisma models use different ID formats based on schema.prisma:
  * - UUID events: Consultation (@default(uuid()))
  * - CUID events: Subscription, Webinar, Class (all @default(cuid()))
- * - CUID plans: ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan
+ * - CUID plans: ConsultationPlan, SubscriptionPlan, WebinarPlan, CohortPlan
  *
  * Keep `isEventIdFormat` in sync — SSR timings gates and the allocate client
  * reuse that helper so a bad mock PK fails closed before the Zod 400 toast.

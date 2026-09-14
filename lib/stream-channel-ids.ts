@@ -54,7 +54,7 @@ export const SUBSCRIPTION_PREFIX = "subscription-";
  * Adding them there is the obvious move and it would be a serious bug. That
  * list makes the reconciler REMOVE a user from any channel carrying the prefix
  * that is absent from the expected set — and the expected set is built by
- * `getWebinarIdsForUser` / `getClassIdsForUser`, which emit `webinar-<id>`,
+ * `getWebinarIdsForUser` / `getCohortIdsForUser`, which emit `webinar-<id>`,
  * never `webinar_<id>`. Every one of the 351 would be classified stale on the
  * owner's next dashboard load and its members removed. That is #1134 P0-7
  * exactly, which is the bug the comment on that list exists to prevent.
@@ -81,7 +81,7 @@ export function isLegacyEventChannel(channelId: string | undefined): boolean {
  * Adding a prefix here makes the reconciler REMOVE the user from any channel
  * carrying it that is absent from `expectedChannelIds`. So a prefix only
  * belongs here once `getDmPairsForUser` / `getWebinarIdsForUser` /
- * `getClassIdsForUser` are guaranteed to produce every legitimate id under it —
+ * `getCohortIdsForUser` are guaranteed to produce every legitimate id under it —
  * otherwise the sweep deletes live conversations, which is #1134 P0-7 all over
  * again. `dmo-`/`dmh-` are safe here because `getDmPairsForUser` derives its
  * ids through the same `getDmChannelId` helper that mints them, over the same

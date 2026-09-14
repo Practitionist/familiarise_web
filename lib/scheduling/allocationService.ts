@@ -306,7 +306,7 @@ export class AllocationService {
       consultation: "consultations",
       subscription: "subscriptions",
       webinar: "webinars",
-      class: "classes",
+      class: "cohorts",
     } as const;
 
     const path = paths[eventType];
@@ -328,13 +328,13 @@ export class AllocationService {
   /**
    * Validates slots for classes
    */
-  static async validateClassSlots(
-    classId: string,
+  static async validateCohortSlots(
+    cohortId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
     try {
       const response = await fetch(
-        `/api/bookings/classes/${classId}/validate`,
+        `/api/bookings/cohorts/${cohortId}/validate`,
         {
           method: "POST",
           headers: {
@@ -435,7 +435,7 @@ export class AllocationService {
         return this.validateSubscriptionSlots(eventId, slotStrings);
 
       case "class":
-        return this.validateClassSlots(eventId, slotStrings);
+        return this.validateCohortSlots(eventId, slotStrings);
 
       case "webinar":
         return this.validateWebinarSlots(eventId, slotStrings);
@@ -645,7 +645,7 @@ export class AllocationService {
       if (eventType === "webinar") {
         params.append("webinarId", eventId);
       } else if (eventType === "class") {
-        params.append("classId", eventId);
+        params.append("cohortId", eventId);
       } else if (eventType === "subscription") {
         params.append("subscriptionId", eventId);
         if (slotsPerCall && slotsPerCall > 0) {

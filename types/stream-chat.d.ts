@@ -112,7 +112,7 @@ export type StreamChatUser = {
  */
 export type StreamChannelType =
   | "messaging" // DMs and general messaging
-  | "team"; // Team channels (webinars, classes)
+  | "team"; // Team channels (webinars, cohorts)
 
 /**
  * Event channel types for linking to app entities.

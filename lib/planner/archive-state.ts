@@ -10,7 +10,7 @@
  */
 
 import {
-  ClassEvent,
+  CohortEvent,
   ConsultationPlanEvent,
   Event,
   SubscriptionPlanEvent,
@@ -21,7 +21,7 @@ export function isWebinarEvent(event: Event): event is WebinarEvent {
   return event.type === "webinar";
 }
 
-export function isClassEvent(event: Event): event is ClassEvent {
+export function isCohortEvent(event: Event): event is CohortEvent {
   return event.type === "class";
 }
 
@@ -39,7 +39,7 @@ export function isSubscriptionPlanEvent(
 
 export function getPlanArchivedAt(event: Event): Date | null {
   if (isWebinarEvent(event)) return event.webinarPlan.archivedAt ?? null;
-  if (isClassEvent(event)) return event.classPlan.archivedAt ?? null;
+  if (isCohortEvent(event)) return event.cohortPlan.archivedAt ?? null;
   if (isConsultationPlanEvent(event))
     return event.consultationPlan.archivedAt ?? null;
   if (isSubscriptionPlanEvent(event))
@@ -51,7 +51,7 @@ export function getPlanArchivedAt(event: Event): Date | null {
 // the SESSION instance, so the plan id must be read from the nested plan.
 export function getPlanId(event: Event): string | undefined {
   if (isWebinarEvent(event)) return event.webinarPlan.id;
-  if (isClassEvent(event)) return event.classPlan.id;
+  if (isCohortEvent(event)) return event.cohortPlan.id;
   if (isConsultationPlanEvent(event)) return event.consultationPlan.id;
   if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.id;
   return undefined;

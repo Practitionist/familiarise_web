@@ -130,7 +130,7 @@ export function appointmentTypeToServiceType(
     case "SUBSCRIPTION":
       return "CONSULTING";
     case "WEBINAR":
-    case "CLASS":
+    case "COHORT":
       return "EDUCATION";
     default:
       return "CONSULTING";

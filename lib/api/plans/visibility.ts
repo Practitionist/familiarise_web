@@ -2,7 +2,7 @@
  * Shared visibility filter for plan-marketplace endpoints (#726).
  *
  * Org-owned plans (ConsultationPlan / SubscriptionPlan / WebinarPlan /
- * ClassPlan with `organizationId` set) carry an `OrgPlanVisibility`
+ * CohortPlan with `organizationId` set) carry an `OrgPlanVisibility`
  * enum that decides whether they're discoverable on `/explore/**` and
  * the public plan list APIs:
  *
@@ -48,7 +48,7 @@ export function marketplaceVisibilityWhere() {
 /**
  * Full discovery filter: publicly visible AND not withdrawn from sale.
  *
- * This used to apply only to WebinarPlan and ClassPlan, because they were the
+ * This used to apply only to WebinarPlan and CohortPlan, because they were the
  * only models with an `archivedAt` column and Prisma rejects a filter naming a
  * column the model lacks. ConsultationPlan and SubscriptionPlan now carry it
  * too, so this is the correct filter for all four and

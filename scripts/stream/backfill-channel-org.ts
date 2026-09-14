@@ -12,7 +12,7 @@
  * 1. Walk every `Appointment` whose `organizationId IS NOT NULL`.
  * 2. Map appointmentType → channel id pattern + channel type:
  *      - WEBINAR      → team `webinar-<webinarId>`
- *      - CLASS        → team `class-<classId>`
+ *      - COHORT        → team `class-<cohortId>`
  *      - CONSULTATION → messaging `dm-<sortedConsultantId>-<consulteeId>`
  *      - SUBSCRIPTION → messaging `dm-<sortedConsultantId>-<consulteeId>`
  *   Consultation/subscription DMs are pair-scoped, not event-scoped — the
@@ -105,7 +105,7 @@ async function resolveChannelTarget(appointment: {
   /** Non-null for every row this backfill walks; part of the DM channel key. */
   organizationId: string | null;
   webinarId: string | null;
-  classId: string | null;
+  cohortId: string | null;
   consultationId: string | null;
   subscriptionId: string | null;
 }): Promise<ChannelTarget | null> {
@@ -116,11 +116,11 @@ async function resolveChannelTarget(appointment: {
         channelType: "team",
         channelId: `webinar-${appointment.webinarId}`,
       };
-    case "CLASS":
-      if (!appointment.classId) return null;
+    case "COHORT":
+      if (!appointment.cohortId) return null;
       return {
         channelType: "team",
-        channelId: `class-${appointment.classId}`,
+        channelId: `class-${appointment.cohortId}`,
       };
     case "CONSULTATION": {
       if (!appointment.consultationId) return null;
@@ -222,7 +222,7 @@ export async function backfillChannelOrg(
       appointmentType: string;
       organizationId: string | null;
       webinarId: string | null;
-      classId: string | null;
+      cohortId: string | null;
       consultationId: string | null;
       subscriptionId: string | null;
     };
@@ -237,7 +237,7 @@ export async function backfillChannelOrg(
         appointmentType: true,
         organizationId: true,
         webinarId: true,
-        classId: true,
+        cohortId: true,
         consultationId: true,
         subscriptionId: true,
       },

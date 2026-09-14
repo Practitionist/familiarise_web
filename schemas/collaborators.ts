@@ -10,7 +10,7 @@ export const WEBINAR_COLLABORATOR_ROLES = [
   CollaboratorRole.TECHNICAL_SUPPORT,
 ] as const;
 
-export const CLASS_COLLABORATOR_ROLES = [
+export const COHORT_COLLABORATOR_ROLES = [
   CollaboratorRole.CO_INSTRUCTOR,
   CollaboratorRole.TEACHING_ASSISTANT,
   CollaboratorRole.GUEST_LECTURER,
@@ -18,7 +18,7 @@ export const CLASS_COLLABORATOR_ROLES = [
 ] as const;
 
 export const WebinarCollaboratorRoleEnum = z.enum(WEBINAR_COLLABORATOR_ROLES);
-export const ClassCollaboratorRoleEnum = z.enum(CLASS_COLLABORATOR_ROLES);
+export const CohortCollaboratorRoleEnum = z.enum(COHORT_COLLABORATOR_ROLES);
 
 // #1580 — what a seat grants is its `tier`, derived from the role on the
 // server; the invite carries no per-capability booleans any more.
@@ -34,8 +34,8 @@ export const inviteWebinarCollaboratorSchema = inviteCollaboratorSchema.extend({
   role: WebinarCollaboratorRoleEnum,
 });
 
-export const inviteClassCollaboratorSchema = inviteCollaboratorSchema.extend({
-  role: ClassCollaboratorRoleEnum,
+export const inviteCohortCollaboratorSchema = inviteCollaboratorSchema.extend({
+  role: CohortCollaboratorRoleEnum,
 });
 
 // #1580 C-P0-3 — the PATCH body was forwarded unvalidated. `updateCollaborator`
@@ -44,6 +44,6 @@ export const updateWebinarCollaboratorSchema = inviteWebinarCollaboratorSchema
   .omit({ consultantProfileId: true })
   .partial();
 
-export const updateClassCollaboratorSchema = inviteClassCollaboratorSchema
+export const updateCohortCollaboratorSchema = inviteCohortCollaboratorSchema
   .omit({ consultantProfileId: true })
   .partial();

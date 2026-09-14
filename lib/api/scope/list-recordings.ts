@@ -167,8 +167,8 @@ function buildWhere(
                 },
               },
               {
-                class: {
-                  classPlan: {
+                cohort: {
+                  cohortPlan: {
                     consultantProfile: { userId: params.scope.userId },
                   },
                 },

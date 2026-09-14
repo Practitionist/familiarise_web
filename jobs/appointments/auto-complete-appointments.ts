@@ -27,7 +27,7 @@ function outputToGitHubActions(result: AutoCompleteResult): void {
   if (outputFile) {
     const outputs = [
       `webinars_completed=${result.webinarsCompleted}`,
-      `classes_completed=${result.classesCompleted}`,
+      `classes_completed=${result.cohortsCompleted}`,
       `consultations_completed=${result.consultationsCompleted}`,
       `subscriptions_completed=${result.subscriptionsCompleted}`,
       `success=${result.success}`,
@@ -38,12 +38,12 @@ function outputToGitHubActions(result: AutoCompleteResult): void {
 
   const total =
     result.webinarsCompleted +
-    result.classesCompleted +
+    result.cohortsCompleted +
     result.consultationsCompleted +
     result.subscriptionsCompleted;
   if (total > 0) {
     console.log(
-      `::notice::Auto-completed ${total} appointments (${result.webinarsCompleted} webinars, ${result.classesCompleted} classes, ${result.consultationsCompleted} consultations, ${result.subscriptionsCompleted} subscriptions)`,
+      `::notice::Auto-completed ${total} appointments (${result.webinarsCompleted} webinars, ${result.cohortsCompleted} classes, ${result.consultationsCompleted} consultations, ${result.subscriptionsCompleted} subscriptions)`,
     );
   }
 
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
     console.log("\n📊 Job Results:");
     console.log(`   Webinars Completed: ${result.webinarsCompleted}`);
-    console.log(`   Classes Completed: ${result.classesCompleted}`);
+    console.log(`   Classes Completed: ${result.cohortsCompleted}`);
     console.log(`   Consultations Completed: ${result.consultationsCompleted}`);
     console.log(`   Subscriptions Completed: ${result.subscriptionsCompleted}`);
     console.log(`   Success: ${result.success}`);
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
 
     Sentry.logger.info("job:auto-complete-appointments finished", {
       webinarsCompleted: result.webinarsCompleted,
-      classesCompleted: result.classesCompleted,
+      cohortsCompleted: result.cohortsCompleted,
       consultationsCompleted: result.consultationsCompleted,
       subscriptionsCompleted: result.subscriptionsCompleted,
     });

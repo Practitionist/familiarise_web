@@ -175,7 +175,7 @@ export const trialStatusBadge = (
 ): StatusBadgeStyle => resolve(TRIAL_STATUS_BADGE, status);
 
 // ───────────────────────────── Webinar / Class status ─────────────────────────────
-// WebinarStatus and ClassStatus are enum-identical; one map serves both
+// WebinarStatus and CohortStatus are enum-identical; one map serves both
 // (same doctrine as EVENT_ALLOWED_FROM in lib/booking/transitions.ts).
 
 export const EVENT_STATUS_BADGE: Record<WebinarStatus, StatusBadgeStyle> = {

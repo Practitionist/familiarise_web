@@ -100,7 +100,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
         },
       },
       webinarPlans: true,
-      classPlans: true,
+      cohortPlans: true,
     },
   });
   if (!consultant) return null;

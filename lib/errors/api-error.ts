@@ -6,7 +6,7 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 
 interface IApiErrorOptions {
-  tag: string; // e.g. "[ClassPlan.GET]"
+  tag: string; // e.g. "[CohortPlan.GET]"
   error: unknown;
   userId?: string; // for debugging context
   fallbackMessage?: string;

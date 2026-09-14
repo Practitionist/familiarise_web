@@ -207,7 +207,7 @@ export async function scrubUser(
       await tx.streamRevocationRetry.createMany({
         data: collaborationsRemoved.map(({ planType, planId }) => ({
           erasureRequestId: erasureRequestId as string,
-          planType: planType === "webinar" ? "WEBINAR" : "CLASS",
+          planType: planType === "webinar" ? "WEBINAR" : "COHORT",
           planId,
         })),
         skipDuplicates: true,
@@ -287,7 +287,7 @@ export async function scrubUser(
         where: {
           erasureRequestId_planType_planId: {
             erasureRequestId,
-            planType: planType === "webinar" ? "WEBINAR" : "CLASS",
+            planType: planType === "webinar" ? "WEBINAR" : "COHORT",
             planId,
           },
         },

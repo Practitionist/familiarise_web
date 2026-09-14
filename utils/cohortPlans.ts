@@ -7,10 +7,10 @@
  * Used across the booking system to ensure consistent class configuration.
  */
 
-export type ClassPlanType = "Basic" | "Extended" | "Comprehensive" | "Custom";
+export type CohortPlanType = "Basic" | "Extended" | "Comprehensive" | "Custom";
 
-export interface ClassPlanDefaults {
-  type: ClassPlanType;
+export interface CohortPlanDefaults {
+  type: CohortPlanType;
   classesPerWeek: number;
   durationInMonths: number;
   sessionDurationInHours: number;
@@ -19,7 +19,7 @@ export interface ClassPlanDefaults {
 /**
  * Interface for class plan input data
  */
-export interface ClassPlan {
+export interface CohortPlan {
   title?: string;
   classesPerWeek?: number;
   sessionsPerWeek?: number;
@@ -30,9 +30,9 @@ export interface ClassPlan {
 /**
  * Class plan defaults based on plan type
  */
-const CLASS_PLAN_DEFAULTS: Record<
-  Exclude<ClassPlanType, "Custom">,
-  Omit<ClassPlanDefaults, "type">
+const COHORT_PLAN_DEFAULTS: Record<
+  Exclude<CohortPlanType, "Custom">,
+  Omit<CohortPlanDefaults, "type">
 > = {
   Basic: {
     classesPerWeek: 2,
@@ -56,7 +56,7 @@ const CLASS_PLAN_DEFAULTS: Record<
  * @param plan Class plan object with title field
  * @returns Detected class plan type
  */
-export function detectClassPlanType(plan: ClassPlan): ClassPlanType {
+export function detectCohortPlanType(plan: CohortPlan): CohortPlanType {
   const title: string = (plan?.title || "").toString().toLowerCase();
 
   if (title.includes("comprehens")) return "Comprehensive";
@@ -75,8 +75,8 @@ export function detectClassPlanType(plan: ClassPlan): ClassPlanType {
  * @param plan Class plan object
  * @returns Complete class plan configuration with defaults applied
  */
-export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
-  const type = detectClassPlanType(plan);
+export function getCohortPlanDefaults(plan: CohortPlan): CohortPlanDefaults {
+  const type = detectCohortPlanType(plan);
 
   // Extract values from plan
   const classesPerWeekFromPlan = plan?.classesPerWeek ?? plan?.sessionsPerWeek;
@@ -94,7 +94,7 @@ export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
     Number.isNaN(Number(classesPerWeek))
   ) {
     classesPerWeek =
-      type !== "Custom" ? CLASS_PLAN_DEFAULTS[type].classesPerWeek : 2; // Default for Custom
+      type !== "Custom" ? COHORT_PLAN_DEFAULTS[type].classesPerWeek : 2; // Default for Custom
   }
 
   if (
@@ -103,7 +103,7 @@ export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
     Number.isNaN(Number(durationInMonths))
   ) {
     durationInMonths =
-      type !== "Custom" ? CLASS_PLAN_DEFAULTS[type].durationInMonths : 1; // Default for Custom
+      type !== "Custom" ? COHORT_PLAN_DEFAULTS[type].durationInMonths : 1; // Default for Custom
   }
 
   return {
@@ -120,9 +120,9 @@ export function getClassPlanDefaults(plan: ClassPlan): ClassPlanDefaults {
  * @returns Default configuration for the plan type
  */
 export function getDefaultsForType(
-  type: Exclude<ClassPlanType, "Custom">,
-): Omit<ClassPlanDefaults, "type"> {
-  return CLASS_PLAN_DEFAULTS[type];
+  type: Exclude<CohortPlanType, "Custom">,
+): Omit<CohortPlanDefaults, "type"> {
+  return COHORT_PLAN_DEFAULTS[type];
 }
 
 /**
@@ -130,7 +130,7 @@ export function getDefaultsForType(
  * @param config Class plan configuration
  * @returns Validation result with errors if any
  */
-export function validateClassPlanConfig(config: ClassPlanDefaults): {
+export function validateCohortPlanConfig(config: CohortPlanDefaults): {
   isValid: boolean;
   errors: string[];
 } {

@@ -38,7 +38,7 @@ import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
 import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
 import {
-  MAX_CLASS_SESSIONS_PER_DAY,
+  MAX_COHORT_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
 } from "./sessionCaps";
 import { isMinuteWithinWeeklySlot } from "./slotTimeUtils";
@@ -258,7 +258,7 @@ export class ScheduleValidationService {
       case "class":
         // RV-5 — pass eventId + caller exclusions so the weekly-limit check can
         // seed from this class's existing confirmed slots, matching the allocator.
-        return this.validateClass(
+        return this.validateCohort(
           eventId,
           slots,
           config,
@@ -834,7 +834,7 @@ export class ScheduleValidationService {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Validate per-session consecutiveness (matches validateClass behavior)
+    // Validate per-session consecutiveness (matches validateCohort behavior)
     // Without this, non-adjacent slots (e.g., 09:00 and 11:00) could be
     // grouped into a single session, creating appointments with time gaps
     const sessionDuration = config.sessionDurationInHours || 1;
@@ -860,7 +860,7 @@ export class ScheduleValidationService {
       }
     }
 
-    // Reject incomplete sessions (matches validateClass behavior)
+    // Reject incomplete sessions (matches validateCohort behavior)
     if (slotsPerSession > 1 && slots.length % slotsPerSession !== 0) {
       errors.push(
         `[VALIDATION] Subscription requires slot count to be a multiple of ${slotsPerSession} ` +
@@ -998,8 +998,8 @@ export class ScheduleValidationService {
    *   slots" flow). Merged with this class's own tentative appointments so a
    *   tentative session being replaced is never counted toward the seed.
    */
-  private async validateClass(
-    classId: string,
+  private async validateCohort(
+    cohortId: string,
     slots: Date[],
     config: EventConfig,
     excludeAppointmentIds?: string[],
@@ -1086,9 +1086,9 @@ export class ScheduleValidationService {
     // exclude the tentative ones (and any caller exclusions) that are about
     // to be replaced, so the seed reflects exactly the calls the allocator
     // would also count.
-    const classOccurrences =
+    const cohortOccurrences =
       await this.prismaClient.appointmentOccurrence.findMany({
-        where: { appointment: { classId }, deletedAt: null },
+        where: { appointment: { cohortId }, deletedAt: null },
         select: {
           id: true,
           appointmentId: true,
@@ -1100,13 +1100,13 @@ export class ScheduleValidationService {
     const excludedAppointments = new Set(excludeAppointmentIds || []);
     const excludedOccurrences = new Set([
       ...(excludeOccurrenceIds || []),
-      ...classOccurrences.filter((o) => o.isTentative).map((o) => o.id),
+      ...cohortOccurrences.filter((o) => o.isTentative).map((o) => o.id),
     ]);
 
     // One live occurrence = one session, keyed by its week (same
     // scheduling-timezone key the allocator and groupSlotsByWeek use, ADR B9).
     const existingSessionsPerWeek = new Map<string, number>();
-    for (const row of classOccurrences) {
+    for (const row of cohortOccurrences) {
       if (
         !this.countsAsExistingSession(
           row,
@@ -1154,12 +1154,12 @@ export class ScheduleValidationService {
     // allocator (utils/scheduling-engine/sessionCaps.ts).
     errors.push(
       ...this.validatePerDaySessionCap(
-        classOccurrences,
+        cohortOccurrences,
         excludedAppointments,
         excludedOccurrences,
         slots,
         slotsPerSession,
-        MAX_CLASS_SESSIONS_PER_DAY,
+        MAX_COHORT_SESSIONS_PER_DAY,
         config.schedulingTimezone,
       ),
     );

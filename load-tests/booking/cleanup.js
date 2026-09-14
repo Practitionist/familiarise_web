@@ -160,7 +160,7 @@ function cancelAppointments(cookie, ids) {
 
 function releaseSeat(cookie, userId) {
   if (!EVENT_ID || !userId) return;
-  const kind = EVENT_TYPE === "CLASS" ? "class" : "webinar";
+  const kind = EVENT_TYPE === "COHORT" ? "class" : "webinar";
   const res = del(
     `/api/participants/${kind}/${EVENT_ID}?userId=${encodeURIComponent(userId)}`,
     { cookie, tag: "cleanup_seat" },

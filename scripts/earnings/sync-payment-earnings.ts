@@ -173,8 +173,8 @@ function mapAppointmentType(type: AppointmentsType): AppointmentType {
       return "CONSULTATION";
     case AppointmentsType.WEBINAR:
       return "WEBINAR";
-    case AppointmentsType.CLASS:
-      return "CLASS";
+    case AppointmentsType.COHORT:
+      return "COHORT";
     case AppointmentsType.SUBSCRIPTION:
       return "SUBSCRIPTION";
     default:
@@ -260,9 +260,9 @@ async function syncPaymentEarningsUnlocked(
                 },
               },
             },
-            class: {
+            cohort: {
               include: {
-                classPlan: {
+                cohortPlan: {
                   select: {
                     id: true,
                     consultantProfileId: true,
@@ -323,7 +323,7 @@ async function syncPaymentEarningsUnlocked(
         appointment?.consultation?.consultationPlan?.consultantProfileId ||
         appointment?.subscription?.subscriptionPlan?.consultantProfileId ||
         appointment?.webinar?.webinarPlan?.consultantProfileId ||
-        appointment?.class?.classPlan?.consultantProfileId;
+        appointment?.cohort?.cohortPlan?.consultantProfileId;
 
       if (!appointment || !consultantProfileId) {
         // #1319 — a booking that resolves no consultant will not heal on the
@@ -355,8 +355,8 @@ async function syncPaymentEarningsUnlocked(
               webinar: appointment.webinar
                 ? { webinarPlanId: appointment.webinar.webinarPlanId }
                 : null,
-              class: appointment.class
-                ? { classPlanId: appointment.class.classPlanId }
+              cohort: appointment.cohort
+                ? { cohortPlanId: appointment.cohort.cohortPlanId }
                 : null,
             },
           },

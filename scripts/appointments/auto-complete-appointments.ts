@@ -27,7 +27,7 @@
 import prisma from "../../lib/prisma";
 import {
   WebinarStatus,
-  ClassStatus,
+  CohortStatus,
   AppointmentStatus,
   OccurrenceCompletionStatus,
   TrialStatus,
@@ -58,7 +58,7 @@ const MAX_SLOT_COMPLETIONS_PER_RUN = 2000;
 export interface AutoCompleteResult {
   success: boolean;
   webinarsCompleted: number;
-  classesCompleted: number;
+  cohortsCompleted: number;
   consultationsCompleted: number;
   subscriptionsCompleted: number;
   trialsCompleted: number;
@@ -146,7 +146,7 @@ async function completeWebinars(): Promise<{
 /**
  * Auto-complete classes that have ended (all sessions done)
  */
-async function completeClasses(): Promise<{
+async function completeCohorts(): Promise<{
   completed: number;
   errors: string[];
 }> {
@@ -158,9 +158,9 @@ async function completeClasses(): Promise<{
   );
 
   // Find SCHEDULED or IN_PROGRESS classes where all slots have ended
-  const classesToComplete = await prisma.class.findMany({
+  const cohortsToComplete = await prisma.cohort.findMany({
     where: {
-      status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
+      status: { in: [CohortStatus.SCHEDULED, CohortStatus.IN_PROGRESS] },
       // #1554 — one wrapper: at least one occurrence, and every one ended.
       appointment: {
         occurrences: {
@@ -170,7 +170,7 @@ async function completeClasses(): Promise<{
       },
     },
     include: {
-      classPlan: { select: { title: true } },
+      cohortPlan: { select: { title: true } },
       appointment: {
         include: {
           occurrences: {
@@ -182,25 +182,25 @@ async function completeClasses(): Promise<{
     },
   });
 
-  console.log(`Found ${classesToComplete.length} classes to auto-complete`);
+  console.log(`Found ${cohortsToComplete.length} classes to auto-complete`);
 
-  for (const cls of classesToComplete) {
+  for (const cls of cohortsToComplete) {
     try {
       // The latest occurrence end on the wrapper
       const latestEnd: Date | null =
         cls.appointment?.occurrences[0]?.endsAt ?? null;
 
       console.log(`\nCompleting class ${cls.id}`);
-      console.log(`   Title: ${cls.classPlan.title}`);
+      console.log(`   Title: ${cls.cohortPlan.title}`);
       console.log(`   Previous status: ${cls.status}`);
       console.log(
         `   Last slot ended: ${latestEnd?.toISOString() || "Unknown"}`,
       );
 
       // CAS (#1319) — same reasoning as the webinar arm above.
-      const moved = await prisma.class.updateMany({
+      const moved = await prisma.cohort.updateMany({
         where: { id: cls.id, status: { in: EVENT_ALLOWED_FROM.COMPLETED } },
-        data: { status: ClassStatus.COMPLETED },
+        data: { status: CohortStatus.COMPLETED },
       });
       if (moved.count === 0) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
@@ -726,8 +726,8 @@ async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
   allErrors.push(...webinarResult.errors);
 
   // Complete classes
-  const classResult = await completeClasses();
-  allErrors.push(...classResult.errors);
+  const cohortResult = await completeCohorts();
+  allErrors.push(...cohortResult.errors);
 
   // Complete consultations
   const consultationResult = await completeConsultations();
@@ -747,7 +747,7 @@ async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
     `   Slots: ${slotResult.completed} completed, ${slotResult.unverified} unverified`,
   );
   console.log(`   Webinars completed: ${webinarResult.completed}`);
-  console.log(`   Classes completed: ${classResult.completed}`);
+  console.log(`   Classes completed: ${cohortResult.completed}`);
   console.log(`   Consultations completed: ${consultationResult.completed}`);
   console.log(`   Subscriptions completed: ${subscriptionResult.completed}`);
   console.log(`   Trials completed: ${trialResult.completed}`);
@@ -760,7 +760,7 @@ async function autoCompleteAppointmentsUnlocked(): Promise<AutoCompleteResult> {
   return {
     success: allErrors.length === 0,
     webinarsCompleted: webinarResult.completed,
-    classesCompleted: classResult.completed,
+    cohortsCompleted: cohortResult.completed,
     consultationsCompleted: consultationResult.completed,
     subscriptionsCompleted: subscriptionResult.completed,
     trialsCompleted: trialResult.completed,

@@ -2,7 +2,7 @@ import type {
   TConsultationWithPlan,
   TSubscriptionWithPlan,
   TWebinarWithPlan,
-  TClassWithPlan,
+  TCohortWithPlan,
   TTrialWithPlan,
 } from "@/hooks/useEvents";
 
@@ -30,8 +30,8 @@ export type TConsulteeWebinar = TWebinarWithPlan & {
 };
 
 // Extended class type with collaborators from the events API
-export type TConsulteeClass = TClassWithPlan & {
-  classPlan: {
+export type TConsulteeCohort = TCohortWithPlan & {
+  cohortPlan: {
     collaborators?: ConsulteeCollaborator[];
   };
 };
@@ -41,6 +41,6 @@ export interface TConsulteeEventsResponse {
   consultations: TConsultationWithPlan[];
   subscriptions: TSubscriptionWithPlan[];
   webinars: TConsulteeWebinar[];
-  classes: TConsulteeClass[];
+  cohorts: TConsulteeCohort[];
   trials: TTrialWithPlan[];
 }

@@ -8,7 +8,7 @@ import type { TAppointment } from "@/types/appointment";
 import type {
   TConsulteeEventsResponse,
   TConsulteeWebinar,
-  TConsulteeClass,
+  TConsulteeCohort,
 } from "@/types/consultee-events";
 import type {
   TConsultationWithPlan,
@@ -175,7 +175,7 @@ function mapWebinar(w: TConsulteeWebinar, now: Date): AppointmentVM {
   };
 }
 
-function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
+function mapCohort(c: TConsulteeCohort, now: Date): AppointmentVM {
   // #1554 — one wrapper per class, N occurrences.
   const target = c.appointment ?? undefined;
   const occurrences = occurrencesOfAppointment(target);
@@ -183,10 +183,10 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
   return {
     id: `class-${c.id}`,
     appointmentId: target?.id ?? null,
-    kind: "CLASS",
-    title: c.classPlan.title,
-    counterpart: person(c.classPlan.consultantProfile?.user),
-    consultantProfileId: c.classPlan.consultantProfile?.id ?? null,
+    kind: "COHORT",
+    title: c.cohortPlan.title,
+    counterpart: person(c.cohortPlan.consultantProfile?.user),
+    consultantProfileId: c.cohortPlan.consultantProfile?.id ?? null,
     status,
     ...deriveBucket({ status, occurrences, now }),
     nextAt: getAnchorTime(occurrences, now),
@@ -195,7 +195,7 @@ function mapClass(c: TConsulteeClass, now: Date): AppointmentVM {
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: null,
-    collaborators: collaborators(c.classPlan.collaborators),
+    collaborators: collaborators(c.cohortPlan.collaborators),
     collaboratorRole: null,
     raw: {
       appointment: target as unknown as TAppointment | undefined,
@@ -247,7 +247,7 @@ export function mapConsulteeEvents(
     ...(data.consultations ?? []).map((c) => mapConsultation(c, now)),
     ...(data.subscriptions ?? []).map((s) => mapSubscription(s, now)),
     ...(data.webinars ?? []).map((w) => mapWebinar(w, now)),
-    ...(data.classes ?? []).map((c) => mapClass(c, now)),
+    ...(data.cohorts ?? []).map((c) => mapCohort(c, now)),
     ...(data.trials ?? []).map((t) => mapTrial(t, now)),
   ];
 }

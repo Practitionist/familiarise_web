@@ -228,9 +228,9 @@ export async function handleRecordingReady(
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       include: {
                         consultantProfile: {
                           select: { user: { select: { name: true } } },
@@ -326,7 +326,7 @@ export async function handleRecordingReady(
     // with the function.
     const storagePolicy =
       appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
-      appointment?.class?.classPlan?.recordingStoragePolicy;
+      appointment?.cohort?.cohortPlan?.recordingStoragePolicy;
     if (storagePolicy === "PERMANENT") {
       after(() =>
         RecordingTransferService.queueRecordingTransfer(recording.id).catch(
@@ -360,10 +360,10 @@ export async function handleRecordingReady(
         consultantName =
           appointment.webinar.webinarPlan?.consultantProfile?.user?.name ??
           "Unknown Consultant";
-      } else if (appointment?.class) {
+      } else if (appointment?.cohort) {
         appointmentType = "class";
         consultantName =
-          appointment.class.classPlan?.consultantProfile?.user?.name ??
+          appointment.cohort.cohortPlan?.consultantProfile?.user?.name ??
           "Unknown Consultant";
       }
 
@@ -429,7 +429,7 @@ export async function handleRecordingFailed(
             appointment: {
               include: {
                 webinar: { select: { id: true } },
-                class: { select: { id: true } },
+                cohort: { select: { id: true } },
               },
             },
           },

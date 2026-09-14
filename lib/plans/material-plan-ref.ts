@@ -8,13 +8,13 @@ export type MaterialPlanType =
   | "CONSULTATION"
   | "SUBSCRIPTION"
   | "WEBINAR"
-  | "CLASS";
+  | "COHORT";
 
 export interface MaterialPlanRefInput {
   consultationPlan?: { id: string; title: string } | null;
   subscriptionPlan?: { id: string; title: string } | null;
   webinarPlan?: { id: string; title: string } | null;
-  classPlan?: { id: string; title: string } | null;
+  cohortPlan?: { id: string; title: string } | null;
 }
 
 export interface MaterialPlanRef {
@@ -47,11 +47,11 @@ export function resolveMaterialPlanRef(
       planType: "WEBINAR",
     };
   }
-  if (material.classPlan) {
+  if (material.cohortPlan) {
     return {
-      planId: material.classPlan.id,
-      title: material.classPlan.title,
-      planType: "CLASS",
+      planId: material.cohortPlan.id,
+      title: material.cohortPlan.title,
+      planType: "COHORT",
     };
   }
   return null;

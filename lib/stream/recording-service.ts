@@ -19,14 +19,14 @@ import type {
   ConsulteeRecordingWithDetails,
   RecordingWithAccessControl,
   WebinarPlanRecordingWithDetails,
-  ClassPlanRecordingWithDetails,
+  CohortPlanRecordingWithDetails,
 } from "./recording-types";
 import {
   consultantRecordingInclude,
   consulteeRecordingInclude,
   recordingWithAccessControlInclude,
   webinarPlanRecordingInclude,
-  classPlanRecordingInclude,
+  cohortPlanRecordingInclude,
 } from "./recording-types";
 
 /** One composite file per call, the shape every reader of `Recording` expects. */
@@ -256,19 +256,19 @@ export class RecordingService {
 
   /**
    * Get all recordings for a class plan
-   * @param classPlanId The class plan ID
+   * @param cohortPlanId The class plan ID
    */
-  static async getClassPlanRecordings(
-    classPlanId: string,
-  ): Promise<ClassPlanRecordingWithDetails[]> {
+  static async getCohortPlanRecordings(
+    cohortPlanId: string,
+  ): Promise<CohortPlanRecordingWithDetails[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
           meeting: {
             occurrence: {
               appointment: {
-                class: {
-                  classPlanId,
+                cohort: {
+                  cohortPlanId,
                 },
               },
             },
@@ -277,7 +277,7 @@ export class RecordingService {
             notIn: ["FAILED", "EXPIRED"],
           },
         },
-        include: classPlanRecordingInclude,
+        include: cohortPlanRecordingInclude,
         orderBy: {
           recordedAt: "desc",
         },
@@ -286,7 +286,7 @@ export class RecordingService {
       return recordings;
     } catch (error) {
       streamLogger.error("Failed to get class plan recordings", error, {
-        classPlanId,
+        cohortPlanId,
       });
       return [];
     }
@@ -357,8 +357,8 @@ export class RecordingService {
           meeting: {
             occurrence: {
               appointment: {
-                class: {
-                  classPlan: { consultantProfileId },
+                cohort: {
+                  cohortPlan: { consultantProfileId },
                 },
               },
             },
@@ -369,8 +369,8 @@ export class RecordingService {
           meeting: {
             occurrence: {
               appointment: {
-                class: {
-                  classPlan: {
+                cohort: {
+                  cohortPlan: {
                     collaborators: {
                       some: { consultantProfileId, status: "ACCEPTED" },
                     },
@@ -430,14 +430,14 @@ export class RecordingService {
    */
   static async getPaidPlanIds(userId: string): Promise<{
     webinarPlanIds: string[];
-    classPlanIds: string[];
+    cohortPlanIds: string[];
   }> {
     const enrolledAppointments = await prisma.payment.findMany({
       where: {
         userId,
         paymentStatus: "SUCCEEDED",
         appointment: {
-          OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
+          OR: [{ webinar: { isNot: null } }, { cohort: { isNot: null } }],
         },
       },
       select: {
@@ -446,7 +446,7 @@ export class RecordingService {
         appointment: {
           select: {
             webinar: { select: { webinarPlanId: true } },
-            class: { select: { classPlanId: true } },
+            cohort: { select: { cohortPlanId: true } },
           },
         },
       },
@@ -463,15 +463,15 @@ export class RecordingService {
           .filter((id): id is string => !!id),
       ),
     );
-    const classPlanIds = Array.from(
+    const cohortPlanIds = Array.from(
       new Set(
         entitled
-          .map((e) => e.appointment?.class?.classPlanId)
+          .map((e) => e.appointment?.cohort?.cohortPlanId)
           .filter((id): id is string => !!id),
       ),
     );
 
-    return { webinarPlanIds, classPlanIds };
+    return { webinarPlanIds, cohortPlanIds };
   }
 
   /**
@@ -486,7 +486,7 @@ export class RecordingService {
     },
   ): Promise<ConsulteeRecordingWithDetails[]> {
     try {
-      const { webinarPlanIds, classPlanIds } =
+      const { webinarPlanIds, cohortPlanIds } =
         await this.getPaidPlanIds(userId);
 
       // Build query based on type filter
@@ -511,14 +511,14 @@ export class RecordingService {
       }
 
       if (!filters?.type || filters.type === "class") {
-        if (classPlanIds.length > 0) {
+        if (cohortPlanIds.length > 0) {
           whereConditions.push({
             meeting: {
               occurrence: {
                 appointment: {
-                  class: {
-                    classPlanId: {
-                      in: classPlanIds,
+                  cohort: {
+                    cohortPlanId: {
+                      in: cohortPlanIds,
                     },
                   },
                 },
@@ -633,9 +633,9 @@ export class RecordingService {
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 select: {
                   recordingEnabled: true,
                 },
@@ -655,7 +655,7 @@ export class RecordingService {
       }
 
       // Check class recording setting
-      if (appointment.class?.classPlan?.recordingEnabled) {
+      if (appointment.cohort?.cohortPlan?.recordingEnabled) {
         return true;
       }
 
@@ -881,9 +881,9 @@ export class RecordingService {
                     webinarPlan: true,
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: true,
+                    cohortPlan: true,
                   },
                 },
               },
@@ -917,14 +917,14 @@ export class RecordingService {
                 },
                 // Owned classes
                 {
-                  class: {
-                    classPlan: { consultantProfileId },
+                  cohort: {
+                    cohortPlan: { consultantProfileId },
                   },
                 },
                 // Collaborated classes
                 {
-                  class: {
-                    classPlan: {
+                  cohort: {
+                    cohortPlan: {
                       collaborators: {
                         some: { consultantProfileId, status: "ACCEPTED" },
                       },
@@ -1001,7 +1001,7 @@ export class RecordingService {
           userId: effectiveUserId,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
+            OR: [{ webinar: { isNot: null } }, { cohort: { isNot: null } }],
           },
         },
         include: {
@@ -1032,9 +1032,9 @@ export class RecordingService {
                                   webinarPlan: true,
                                 },
                               },
-                              class: {
+                              cohort: {
                                 include: {
-                                  classPlan: true,
+                                  cohortPlan: true,
                                 },
                               },
                             },

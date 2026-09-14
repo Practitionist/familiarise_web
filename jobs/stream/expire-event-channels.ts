@@ -2,7 +2,7 @@
  * Post-event chat channel lifecycle (#1134 P1-17).
  *
  * Nothing ever ended a webinar or class chat. `getWebinarIdsForUser` and
- * `getClassIdsForUser` have no date or status filter, so the reconcile pass
+ * `getCohortIdsForUser` have no date or status filter, so the reconcile pass
  * could never mark a finished event stale and attendees stayed members forever.
  * Channel count and membership grew without bound on a product billed per MAU,
  * and there was no retention answer for a compliance review.
@@ -204,7 +204,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
   );
   const appointments = await prisma.appointment.findMany({
     where: {
-      OR: [{ webinar: { isNot: null } }, { class: { isNot: null } }],
+      OR: [{ webinar: { isNot: null } }, { cohort: { isNot: null } }],
       occurrences: {
         some: { endsAt: { lt: now, gte: lookbackFrom } },
       },
@@ -213,7 +213,7 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     orderBy: { createdAt: "desc" },
     select: {
       webinar: { select: { id: true, chatFrozenAt: true } },
-      class: { select: { id: true, chatFrozenAt: true } },
+      cohort: { select: { id: true, chatFrozenAt: true } },
       organization: { select: { streamRecordingRetentionDays: true } },
       occurrences: {
         select: { endsAt: true },
@@ -233,8 +233,8 @@ async function loadEndedEvents(): Promise<EventRow[]> {
 
     const channelId = appointment.webinar
       ? `${WEBINAR_PREFIX}${appointment.webinar.id}`
-      : appointment.class
-        ? `${CLASS_PREFIX}${appointment.class.id}`
+      : appointment.cohort
+        ? `${CLASS_PREFIX}${appointment.cohort.id}`
         : null;
     if (!channelId) continue;
 
@@ -243,9 +243,9 @@ async function loadEndedEvents(): Promise<EventRow[]> {
     if (appointment.webinar) {
       entity = { kind: "webinar", id: appointment.webinar.id };
       chatFrozenAt = appointment.webinar.chatFrozenAt;
-    } else if (appointment.class) {
-      entity = { kind: "class", id: appointment.class.id };
-      chatFrozenAt = appointment.class.chatFrozenAt;
+    } else if (appointment.cohort) {
+      entity = { kind: "class", id: appointment.cohort.id };
+      chatFrozenAt = appointment.cohort.chatFrozenAt;
     } else {
       continue;
     }
@@ -827,16 +827,16 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
         ),
       ),
     );
-    const stamped: { webinarIds: string[]; classIds: string[] } = {
+    const stamped: { webinarIds: string[]; cohortIds: string[] } = {
       webinarIds: [],
-      classIds: [],
+      cohortIds: [],
     };
     outcomes.forEach((outcome, i) => {
       const event = batch[i];
       if (outcome.status === "fulfilled") {
         result.frozen++;
         stamped[
-          event.entity.kind === "webinar" ? "webinarIds" : "classIds"
+          event.entity.kind === "webinar" ? "webinarIds" : "cohortIds"
         ].push(event.entity.id);
       } else {
         // A channel that was never created is the common case (chat is lazy),
@@ -858,9 +858,9 @@ async function expireEventChannelsUnlocked(): Promise<ExpireEventChannelsResult>
             where: { id: { in: stamped.webinarIds } },
             data: { chatFrozenAt: new Date() },
           }),
-        stamped.classIds.length > 0 &&
-          prisma.class.updateMany({
-            where: { id: { in: stamped.classIds } },
+        stamped.cohortIds.length > 0 &&
+          prisma.cohort.updateMany({
+            where: { id: { in: stamped.cohortIds } },
             data: { chatFrozenAt: new Date() },
           }),
       ]);

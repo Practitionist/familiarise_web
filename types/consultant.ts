@@ -11,7 +11,7 @@ import { Prisma } from "@prisma/client";
  * @property {Object[]} consultationPlans - Consultation plans offered by the consultant.
  * @property {Object[]} subscriptionPlans - Subscription plans offered by the consultant.
  * @property {Object[]} webinarPlans - Webinar plans offered by the consultant.
- * @property {Object[]} classPlans - Class plans offered by the consultant.
+ * @property {Object[]} cohortPlans - Class plans offered by the consultant.
  * @property {Object[]} reviews - Reviews received by the consultant.
  */
 export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
@@ -29,7 +29,7 @@ export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
       };
     };
     webinarPlans: true;
-    classPlans: true;
+    cohortPlans: true;
     reviews: true;
   };
 }>;

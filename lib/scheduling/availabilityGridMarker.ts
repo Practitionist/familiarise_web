@@ -136,7 +136,7 @@ export async function readAvailabilityGridMarker(
           UNION ALL
           SELECT max(cl."updatedAt")
             FROM "Class" cl
-            JOIN "Appointment" a ON a."classId" = cl.id
+            JOIN "Appointment" a ON a."cohortId" = cl.id
             JOIN reach r ON r.id = a.id
           UNION ALL
           SELECT max(ts."updatedAt")
@@ -160,7 +160,7 @@ export async function readAvailabilityGridMarker(
           UNION ALL
           SELECT max(cl."updatedAt")
             FROM "Class" cl
-            JOIN "ClassPlan" clp ON clp.id = cl."classPlanId"
+            JOIN "CohortPlan" clp ON clp.id = cl."cohortPlanId"
            WHERE clp."consultantProfileId" = ${consultantId}
           UNION ALL
           SELECT max(ts."updatedAt")

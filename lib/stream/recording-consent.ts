@@ -47,7 +47,7 @@ export interface RecordingNotice {
 export function consentRegimeFor(
   appointment: AppointmentWithOwnership | null | undefined,
 ): ConsentRegime {
-  const isGroup = Boolean(appointment?.webinar || appointment?.class);
+  const isGroup = Boolean(appointment?.webinar || appointment?.cohort);
   return isGroup ? "ACKNOWLEDGE" : "OPT_OUT";
 }
 

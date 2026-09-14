@@ -22,7 +22,7 @@ export async function getEventChannelIdsForAppointment(
     where: { id: { in: appointmentIds } },
     select: {
       webinar: { select: { id: true } },
-      class: { select: { id: true } },
+      cohort: { select: { id: true } },
     },
   });
 
@@ -31,8 +31,8 @@ export async function getEventChannelIdsForAppointment(
     if (appointment.webinar) {
       channelIds.add(`${WEBINAR_PREFIX}${appointment.webinar.id}`);
     }
-    if (appointment.class) {
-      channelIds.add(`${CLASS_PREFIX}${appointment.class.id}`);
+    if (appointment.cohort) {
+      channelIds.add(`${CLASS_PREFIX}${appointment.cohort.id}`);
     }
   }
   return Array.from(channelIds);

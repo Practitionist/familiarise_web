@@ -111,7 +111,7 @@ function buildStatusWhere(
         { consultation: { status: s } },
         { subscription: { status: s } },
         { webinar: { status: s } },
-        { class: { status: s } },
+        { cohort: { status: s } },
       ],
     };
   }
@@ -121,7 +121,7 @@ function buildStatusWhere(
         { consultation: { status: "CANCELLED" } },
         { subscription: { status: "CANCELLED" } },
         { webinar: { status: "CANCELLED" } },
-        { class: { status: "CANCELLED" } },
+        { cohort: { status: "CANCELLED" } },
         {
           AND: [
             { payment: { none: {} } },
@@ -130,7 +130,7 @@ function buildStatusWhere(
                 { consultation: { status: { not: "PENDING" } } },
                 { subscription: { status: { not: "PENDING" } } },
                 { webinarId: { not: null } },
-                { classId: { not: null } },
+                { cohortId: { not: null } },
               ],
             },
           ],
@@ -240,8 +240,8 @@ export async function getStaffAppointments(
       },
       // Class search
       {
-        class: {
-          classPlan: {
+        cohort: {
+          cohortPlan: {
             title: { contains: search, mode: "insensitive" },
           },
         },
@@ -386,11 +386,11 @@ export async function getStaffAppointments(
             },
           },
         },
-        class: {
+        cohort: {
           select: {
             id: true,
             status: true,
-            classPlan: {
+            cohortPlan: {
               select: {
                 id: true,
                 title: true,
@@ -484,17 +484,17 @@ export async function getStaffAppointments(
           aptStatus = apt.webinar.status;
         }
         break;
-      case "CLASS":
-        if (apt.class) {
-          consultant = apt.class.classPlan.consultantProfile?.user || null;
+      case "COHORT":
+        if (apt.cohort) {
+          consultant = apt.cohort.cohortPlan.consultantProfile?.user || null;
           consultee = {
             id: "",
             name: attendeeLabel(attendeeCount, "student"),
             email: "",
             image: null,
           };
-          title = apt.class.classPlan.title;
-          aptStatus = apt.class.status;
+          title = apt.cohort.cohortPlan.title;
+          aptStatus = apt.cohort.status;
         }
         break;
     }

@@ -1,6 +1,6 @@
 /**
  * Shared consultant-facing archive (withdraw) toggle for the four plan
- * families — ConsultationPlan, SubscriptionPlan, WebinarPlan, ClassPlan (#1494).
+ * families — ConsultationPlan, SubscriptionPlan, WebinarPlan, CohortPlan (#1494).
  *
  * The org-catalog bulk archive (`app/api/organizations/[orgId]/catalog/route.ts`)
  * was the only existing `archivedAt` writer; a sole-owner consultant (a plan

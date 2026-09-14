@@ -60,7 +60,7 @@ function eventOf(appointment: TDetailAppointment): {
   const consultation = appointment.consultation;
   const subscription = appointment.subscription;
   const webinar = appointment.webinar;
-  const cls = appointment.class;
+  const cls = appointment.cohort;
   const trial = appointment.trial;
 
   if (trial) {
@@ -108,7 +108,7 @@ function eventOf(appointment: TDetailAppointment): {
       collaborators: [],
     };
   }
-  const plan = webinar?.webinarPlan ?? cls?.classPlan;
+  const plan = webinar?.webinarPlan ?? cls?.cohortPlan;
   return {
     title: plan?.title ?? (webinar ? "Webinar" : "Class"),
     status: normalizeStatus((webinar?.status ?? cls?.status)?.toString()),
@@ -137,7 +137,7 @@ export function mapAppointmentDetail(
 
   const isGroup =
     appointment.appointmentType === "SUBSCRIPTION" ||
-    appointment.appointmentType === "CLASS";
+    appointment.appointmentType === "COHORT";
   // #1554 — progress counts LIVE rows, exactly as map-consultee's
   // groupProgress does, so "2 of 10" reads the same on the list and here.
   const live = liveOccurrences(occurrences);

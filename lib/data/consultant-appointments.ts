@@ -39,13 +39,13 @@ export interface GetConsultantAppointmentsArgs {
     consultation?: string;
     subscription?: string;
     webinar?: string;
-    class?: string;
+    cohort?: string;
   };
   startDate?: string | null;
   endDate?: string | null;
   eventIds?: {
     webinarId?: string | null;
-    classId?: string | null;
+    cohortId?: string | null;
     consultationId?: string | null;
     subscriptionId?: string | null;
   };
@@ -149,14 +149,14 @@ export async function getConsultantAppointments(
           },
         },
         {
-          class: {
-            classPlan: { consultantProfileId },
+          cohort: {
+            cohortPlan: { consultantProfileId },
           },
         },
         {
           // Collaborated classes (co-instructor, TA, etc.)
-          class: {
-            classPlan: {
+          cohort: {
+            cohortPlan: {
               collaborators: {
                 some: {
                   consultantProfileId,
@@ -210,8 +210,8 @@ export async function getConsultantAppointments(
   if (eventIds?.webinarId) {
     whereClause.webinar = { id: eventIds.webinarId };
   }
-  if (eventIds?.classId) {
-    whereClause.class = { id: eventIds.classId };
+  if (eventIds?.cohortId) {
+    whereClause.cohort = { id: eventIds.cohortId };
   }
   if (eventIds?.consultationId) {
     whereClause.consultation = { id: eventIds.consultationId };
@@ -240,9 +240,9 @@ export async function getConsultantAppointments(
       webinar: { status: statuses.webinar as Prisma.EnumWebinarStatusFilter },
     });
   }
-  if (statuses?.class) {
+  if (statuses?.cohort) {
     statusFilters.push({
-      class: { status: statuses.class as Prisma.EnumClassStatusFilter },
+      cohort: { status: statuses.cohort as Prisma.EnumCohortStatusFilter },
     });
   }
   if (statusFilters.length > 0) {
@@ -345,9 +345,9 @@ export async function getConsultantAppointments(
           },
         },
       },
-      class: {
+      cohort: {
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: {
                 include: {

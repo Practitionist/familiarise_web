@@ -114,7 +114,7 @@ export async function getMyProgramData(params: {
         select: { subscriptionPlan: { select: { title: true } } },
       },
       webinar: { select: { webinarPlan: { select: { title: true } } } },
-      class: { select: { classPlan: { select: { title: true } } } },
+      cohort: { select: { cohortPlan: { select: { title: true } } } },
     },
     orderBy: { createdAt: "desc" },
     take: 20,
@@ -130,7 +130,7 @@ export async function getMyProgramData(params: {
         a.consultation?.consultationPlan?.title ??
         a.subscription?.subscriptionPlan?.title ??
         a.webinar?.webinarPlan?.title ??
-        a.class?.classPlan?.title ??
+        a.cohort?.cohortPlan?.title ??
         a.appointmentType;
       const startMs = new Date(slot.startsAt).getTime();
       const endMs = new Date(slot.endsAt).getTime();

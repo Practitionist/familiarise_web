@@ -11,7 +11,7 @@ import {
 import type { RevenueSplit } from "@/types/collaborators";
 import {
   WEBINAR_COLLABORATOR_ROLES,
-  CLASS_COLLABORATOR_ROLES,
+  COHORT_COLLABORATOR_ROLES,
 } from "@/schemas/collaborators";
 import {
   notifyCollaboratorInvited,
@@ -57,11 +57,11 @@ const MAX_COLLAB_BPS = (100 - MIN_HOST_SHARE) * 100; // 9000
 // aren't Prisma-expressible, so the XOR is enforced here.
 export function assertCollaboratorPlanXor(target: {
   webinarPlanId?: string | null;
-  classPlanId?: string | null;
+  cohortPlanId?: string | null;
 }): void {
-  if (!target.webinarPlanId === !target.classPlanId) {
+  if (!target.webinarPlanId === !target.cohortPlanId) {
     throw new Error(
-      "Collaborator must reference exactly one of webinarPlanId or classPlanId (#784)",
+      "Collaborator must reference exactly one of webinarPlanId or cohortPlanId (#784)",
     );
   }
 }
@@ -71,7 +71,7 @@ function planScope(planType: PlanType, planId: string) {
   const scope =
     planType === "webinar"
       ? { collaboratorType: "WEBINAR" as const, webinarPlanId: planId }
-      : { collaboratorType: "CLASS" as const, classPlanId: planId };
+      : { collaboratorType: "COHORT" as const, cohortPlanId: planId };
   assertCollaboratorPlanXor(scope);
   return scope;
 }
@@ -79,14 +79,14 @@ function planScope(planType: PlanType, planId: string) {
 function planWhere(planType: PlanType, planId: string) {
   return planType === "webinar"
     ? { webinarPlanId: planId }
-    : { classPlanId: planId };
+    : { cohortPlanId: planId };
 }
 
 // #784 — the merged DB enum can't reject a class role on a webinar collab
 // (the old per-type enums did), so the subset check lives here.
 const ROLES_BY_PLAN_TYPE: Record<PlanType, readonly CollaboratorRole[]> = {
   webinar: WEBINAR_COLLABORATOR_ROLES,
-  class: CLASS_COLLABORATOR_ROLES,
+  class: COHORT_COLLABORATOR_ROLES,
 };
 
 function asPlanRole(planType: PlanType, role: string): CollaboratorRole | null {
@@ -212,7 +212,7 @@ async function assertPlanOpen(
           where: { id: planId },
           select: { archivedAt: true },
         })
-      : await db.classPlan.findUnique({
+      : await db.cohortPlan.findUnique({
           where: { id: planId },
           select: { archivedAt: true },
         });
@@ -326,7 +326,7 @@ export async function inviteCollaborator(
               })
             )?.title
           : (
-              await prisma.classPlan.findUnique({
+              await prisma.cohortPlan.findUnique({
                 where: { id: planId },
                 select: { title: true },
               })
@@ -380,7 +380,7 @@ export async function respondToInvitation(
   // #784 — merged table: a planType that doesn't match the record is the old
   // wrong-table lookup, which returned null.
   const planId =
-    planType === "webinar" ? collab.webinarPlanId : collab.classPlanId;
+    planType === "webinar" ? collab.webinarPlanId : collab.cohortPlanId;
   if (!planId) return null;
   if (collab.status !== "PENDING") return null;
 
@@ -447,8 +447,8 @@ function livePlanAppointmentsWhere(
           },
         }
       : {
-          class: {
-            classPlanId: planId,
+          cohort: {
+            cohortPlanId: planId,
             deletedAt: null,
             status: { not: "CANCELLED" },
           },
@@ -532,7 +532,7 @@ async function notifyHostOfResponse(
               consultantProfile: { select: { userId: true } },
             },
           })
-        : await prisma.classPlan.findUnique({
+        : await prisma.cohortPlan.findUnique({
             where: { id: planId },
             select: {
               title: true,
@@ -675,7 +675,7 @@ async function notifyHostOfWithdrawal(
               consultantProfile: { select: { userId: true } },
             },
           })
-        : await prisma.classPlan.findUnique({
+        : await prisma.cohortPlan.findUnique({
             where: { id: planId },
             select: {
               title: true,
@@ -722,7 +722,7 @@ export async function revokeCollaboratorAccess(
               where: { id: planId },
               select: { title: true },
             })
-          : await prisma.classPlan.findUnique({
+          : await prisma.cohortPlan.findUnique({
               where: { id: planId },
               select: { title: true },
             });
@@ -773,8 +773,8 @@ export async function revokeCollaboratorAccess(
             where: { webinarPlanId: planId },
             select: { id: true },
           })
-        : await prisma.class.findMany({
-            where: { classPlanId: planId },
+        : await prisma.cohort.findMany({
+            where: { cohortPlanId: planId },
             select: { id: true },
           });
     // `removeUserFromEventChannel` REPORTS its own failures by returning
@@ -984,7 +984,7 @@ export async function getCollaboratorsForUser(
           where: { id: planId },
           select: { consultantProfileId: true },
         })
-      : prisma.classPlan.findUnique({
+      : prisma.cohortPlan.findUnique({
           where: { id: planId },
           select: { consultantProfileId: true },
         });
@@ -1035,7 +1035,7 @@ export async function getCollaboratorsForUser(
  * Get all collaborations for a consultant.
  */
 export async function getMyCollaborations(consultantProfileId: string) {
-  const [webinarCollabs, classCollabs] = await Promise.all([
+  const [webinarCollabs, cohortCollabs] = await Promise.all([
     prisma.collaborator.findMany({
       where: {
         consultantProfileId,
@@ -1109,12 +1109,12 @@ export async function getMyCollaborations(consultantProfileId: string) {
     prisma.collaborator.findMany({
       where: {
         consultantProfileId,
-        collaboratorType: "CLASS",
+        collaboratorType: "COHORT",
         status: { in: ["PENDING", "ACCEPTED"] },
-        classPlan: { archivedAt: null },
+        cohortPlan: { archivedAt: null },
       },
       include: {
-        classPlan: {
+        cohortPlan: {
           select: {
             id: true,
             title: true,
@@ -1146,7 +1146,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
               },
               orderBy: { createdAt: "asc" },
             },
-            classes: {
+            cohorts: {
               where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
               include: {
                 appointment: {
@@ -1181,7 +1181,7 @@ export async function getMyCollaborations(consultantProfileId: string) {
 
   return {
     webinarCollaborations: webinarCollabs,
-    classCollaborations: classCollabs,
+    cohortCollaborations: cohortCollabs,
   };
 }
 
@@ -1200,7 +1200,7 @@ export async function getHostedCollaborations(
 ) {
   const orgFilter = scopeToWhereOrgId(scope);
 
-  const [webinarPlans, classPlans] = await Promise.all([
+  const [webinarPlans, cohortPlans] = await Promise.all([
     prisma.webinarPlan.findMany({
       where: {
         consultantProfileId,
@@ -1252,7 +1252,7 @@ export async function getHostedCollaborations(
       },
       orderBy: { createdAt: "desc" },
     }),
-    prisma.classPlan.findMany({
+    prisma.cohortPlan.findMany({
       where: {
         consultantProfileId,
         ...orgFilter,
@@ -1279,7 +1279,7 @@ export async function getHostedCollaborations(
           },
           orderBy: { createdAt: "asc" },
         },
-        classes: {
+        cohorts: {
           where: { status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
           include: {
             appointment: {
@@ -1307,7 +1307,7 @@ export async function getHostedCollaborations(
     }),
   ]);
 
-  return { webinarPlans, classPlans };
+  return { webinarPlans, cohortPlans };
 }
 
 /**
@@ -1428,7 +1428,7 @@ export async function calculateRevenueSplit(
     });
     ownerConsultantProfileId = plan?.consultantProfileId ?? null;
   } else {
-    const plan = await db.classPlan.findUnique({
+    const plan = await db.cohortPlan.findUnique({
       where: { id: planId },
       select: { consultantProfileId: true },
     });

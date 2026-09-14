@@ -118,7 +118,7 @@ function checkConsultantMinutes() {
 
 function checkEventCapacity() {
   if (!EVENT_ID) return;
-  const kind = EVENT_TYPE === "CLASS" ? "class" : "webinar";
+  const kind = EVENT_TYPE === "COHORT" ? "class" : "webinar";
   const res = get(`/api/participants/${kind}/${EVENT_ID}`, {
     cookie: VERIFY_COOKIE,
     tag: "verify_participants",
@@ -136,8 +136,8 @@ function checkEventCapacity() {
   }
 
   const body = json(res) || {};
-  const event = body.webinarEvent || body.classEvent || {};
-  const plan = event.webinarPlan || event.classPlan || {};
+  const event = body.webinarEvent || body.cohortEvent || {};
+  const plan = event.webinarPlan || event.cohortPlan || {};
   // The instance override wins and a null inherits the plan, which is what
   // `effectiveMaxParticipants` does server-side.
   const max = event.maxParticipants ?? plan.maxParticipants ?? EVENT_CAPACITY;

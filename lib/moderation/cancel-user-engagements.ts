@@ -24,7 +24,7 @@ import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
+  COHORT_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
 } from "@/lib/booking/transitions";
 
@@ -153,12 +153,12 @@ async function collectConsulteeWork(
       where: {
         ...futureSlot,
         appointment: {
-          OR: [{ webinarId: { not: null } }, { classId: { not: null } }],
+          OR: [{ webinarId: { not: null } }, { cohortId: { not: null } }],
           participants: { some: liveParticipant(targetUserId) },
         },
       },
       select: {
-        appointment: { select: { webinarId: true, classId: true } },
+        appointment: { select: { webinarId: true, cohortId: true } },
       },
     }),
   ]);
@@ -168,17 +168,17 @@ async function collectConsulteeWork(
     ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
   ];
   const webinarIds = new Set<string>();
-  const classIds = new Set<string>();
+  const cohortIds = new Set<string>();
   for (const slot of attendedSlots) {
     if (slot.appointment?.webinarId) webinarIds.add(slot.appointment.webinarId);
-    if (slot.appointment?.classId) classIds.add(slot.appointment.classId);
+    if (slot.appointment?.cohortId) cohortIds.add(slot.appointment.cohortId);
   }
   work.push(
     ...Array.from(webinarIds, (id) => ({
       kind: "webinar-attendance" as const,
       id,
     })),
-    ...Array.from(classIds, (id) => ({
+    ...Array.from(cohortIds, (id) => ({
       kind: "class-attendance" as const,
       id,
     })),
@@ -192,7 +192,7 @@ async function collectConsultantWork(
   consultantProfileId: string,
   futureSlot: FutureSlotFilter,
 ): Promise<WorkItem[]> {
-  const [consultations, subscriptions, webinars, classes] = await Promise.all([
+  const [consultations, subscriptions, webinars, cohorts] = await Promise.all([
     prisma.consultation.findMany({
       where: {
         consultationPlan: { consultantProfileId },
@@ -217,10 +217,10 @@ async function collectConsultantWork(
       },
       select: { id: true },
     }),
-    prisma.class.findMany({
+    prisma.cohort.findMany({
       where: {
-        classPlan: { consultantProfileId },
-        status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
+        cohortPlan: { consultantProfileId },
+        status: { in: COHORT_EVENT_ALLOWED_FROM.CANCELLED },
         appointment: { occurrences: { some: futureSlot } },
       },
       select: { id: true },
@@ -230,7 +230,7 @@ async function collectConsultantWork(
     ...consultations.map((c) => ({ kind: "consultation" as const, id: c.id })),
     ...subscriptions.map((s) => ({ kind: "subscription" as const, id: s.id })),
     ...webinars.map((w) => ({ kind: "webinar-event" as const, id: w.id })),
-    ...classes.map((c) => ({ kind: "class-event" as const, id: c.id })),
+    ...cohorts.map((c) => ({ kind: "class-event" as const, id: c.id })),
   ];
 }
 
@@ -497,17 +497,17 @@ async function cancelGroupEvent(
           where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.CANCELLED } },
           data: { status: "CANCELLED" },
         })
-      : await tx.class.updateMany({
+      : await tx.cohort.updateMany({
           where: {
             id: eventId,
-            status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
+            status: { in: COHORT_EVENT_ALLOWED_FROM.CANCELLED },
           },
           data: { status: "CANCELLED" },
         });
     if (res.count === 0) return 0;
     await tx.appointmentOccurrence.updateMany({
       where: {
-        appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
+        appointment: isWebinar ? { webinarId: eventId } : { cohortId: eventId },
         completionStatus: "SCHEDULED",
       },
       data: { completionStatus: "CANCELLED" },
@@ -519,7 +519,7 @@ async function cancelGroupEvent(
   ctx.summary.engagementsCancelled += 1;
 
   // Whole-event moderation cancel refunds EVERY attendee in full via the
-  // reversal engine (#776 §C): org-funded seats reverse in-ledger (CLASS_MULTI),
+  // reversal engine (#776 §C): org-funded seats reverse in-ledger (COHORT_MULTI),
   // card/mock seats credit the gateway. The old per-payment refundPayment loop
   // failed org-funded seats (createRefund → UNKNOWN_GATEWAY on a synthetic id).
   const eventRefund = await refundWholeEventPayments(
@@ -541,7 +541,7 @@ async function cancelGroupEvent(
   // Light query for attendee notification (the helper doesn't return userIds).
   const attendees = await prisma.payment.findMany({
     where: {
-      appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
+      appointment: isWebinar ? { webinarId: eventId } : { cohortId: eventId },
       paymentStatus: "SUCCEEDED",
       amount: { gt: 0 },
     },
@@ -567,19 +567,22 @@ async function cancelGroupEvent(
       attendees[0]?.appointment?.organizationId ??
       (
         await prisma.appointment.findFirst({
-          where: isWebinar ? { webinarId: eventId } : { classId: eventId },
+          where: isWebinar ? { webinarId: eventId } : { cohortId: eventId },
           select: { organizationId: true },
         })
       )?.organizationId ??
       null;
     void notifyAppointmentCancelled(attendeeIds, {
       ...notificationScope(eventOrgId),
-      appointmentType: isWebinar ? "WEBINAR" : "CLASS",
+      appointmentType: isWebinar ? "WEBINAR" : "COHORT",
       consultantName: "Consultant",
       consulteeName: "Attendee",
       // #536 — the event's own title is not loaded on this path, so the
       // session label stands in rather than a placeholder.
-      planTitle: planTitleOrSessionLabel(null, isWebinar ? "WEBINAR" : "CLASS"),
+      planTitle: planTitleOrSessionLabel(
+        null,
+        isWebinar ? "WEBINAR" : "COHORT",
+      ),
       dashboardUrl: notificationHref(eventOrgId, "appointments"),
       reason: "MODERATION",
       cancelledBy: "system",
@@ -594,7 +597,9 @@ async function removeAttendee(
   ctx: { initiatedByUserId: string; summary: BulkCancelSummary },
 ) {
   const isWebinar = kind === "webinar-attendance";
-  const eventFilter = isWebinar ? { webinarId: eventId } : { classId: eventId };
+  const eventFilter = isWebinar
+    ? { webinarId: eventId }
+    : { cohortId: eventId };
 
   // #1554 — a seat is released by status; the release matches zero rows when
   // the target is not (or no longer) on the roster, so nothing is refunded.

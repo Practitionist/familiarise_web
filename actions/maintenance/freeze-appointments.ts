@@ -20,7 +20,7 @@ import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
-  transitionClassEvent,
+  transitionCohortEvent,
   RESCHEDULE_OPEN_STATUSES,
   SLOT_RESCHEDULABLE_FROM,
 } from "@/lib/booking/transitions";
@@ -129,9 +129,9 @@ async function findAffectedSlots(maintenanceStart: Date, windowEnd: Date) {
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 select: {
                   title: true,
                   consultantProfile: {
@@ -354,16 +354,16 @@ async function freezeWebinar(
 }
 
 // Cancel class if applicable
-async function freezeClass(
+async function freezeCohort(
   tx: Tx,
   ctx: FreezeContext,
 ): Promise<FreezeStepResult> {
-  const classEvent = ctx.appointment.class;
-  if (!classEvent) return noEffects();
+  const cohortEvent = ctx.appointment.cohort;
+  if (!cohortEvent) return noEffects();
 
   try {
-    await transitionClassEvent(tx, {
-      where: { id: classEvent.id },
+    await transitionCohortEvent(tx, {
+      where: { id: cohortEvent.id },
       to: "CANCELLED",
     });
   } catch (err) {
@@ -374,10 +374,10 @@ async function freezeClass(
     buildCancellationNotification({
       appointmentId: ctx.appointment.id,
       organizationId: ctx.appointment.organizationId,
-      appointmentType: "CLASS",
-      consultantUser: classEvent.classPlan?.consultantProfile?.user,
+      appointmentType: "COHORT",
+      consultantUser: cohortEvent.cohortPlan?.consultantProfile?.user,
       participantIds: attendeeIds(ctx.slots),
-      planTitle: classEvent.classPlan?.title || "Class",
+      planTitle: cohortEvent.cohortPlan?.title || "Class",
       dateTime: ctx.earliestSlot.startsAt.toISOString(),
     }),
   );
@@ -431,7 +431,7 @@ const FREEZE_STEPS = [
   freezeConsultation,
   freezeSubscription,
   freezeWebinar,
-  freezeClass,
+  freezeCohort,
   freezeTrial,
 ];
 

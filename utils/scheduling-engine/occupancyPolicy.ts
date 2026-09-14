@@ -77,8 +77,8 @@ export function buildOccupiedAppointmentFilter(
       },
     },
     {
-      class: {
-        ...(consultantProfileId ? { classPlan: { consultantProfileId } } : {}),
+      cohort: {
+        ...(consultantProfileId ? { cohortPlan: { consultantProfileId } } : {}),
         status: { in: [...OCCUPIED_EVENT_STATUSES] },
       },
     },

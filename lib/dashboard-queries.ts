@@ -20,7 +20,7 @@ import type {
 } from "@/types/consultee";
 import type {
   PlannerWebinarEvent,
-  PlannerClassEvent,
+  PlannerCohortEvent,
 } from "@/types/planner-events";
 import type { RecordingData } from "@/types/recording";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
@@ -31,7 +31,7 @@ import { requireJsonResponse } from "@/lib/fetch-helpers";
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
-  classes: PlannerClassEvent[];
+  cohorts: PlannerCohortEvent[];
   participantCounts: Record<string, number>;
 }
 

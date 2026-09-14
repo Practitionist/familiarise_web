@@ -121,9 +121,9 @@ export async function buildSupportContext(
           },
         },
       },
-      class: {
+      cohort: {
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               consultantProfileId: true,
               title: true,
@@ -152,14 +152,14 @@ export async function buildSupportContext(
     appt.consultation?.consultationPlan?.consultantProfileId ??
     appt.subscription?.subscriptionPlan?.consultantProfileId ??
     appt.webinar?.webinarPlan?.consultantProfileId ??
-    appt.class?.classPlan?.consultantProfileId ??
+    appt.cohort?.cohortPlan?.consultantProfileId ??
     null;
   const providerProfileIds = [
     planConsultantId,
     ...(appt.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfileId,
     ),
-    ...(appt.class?.classPlan?.collaborators ?? []).map(
+    ...(appt.cohort?.cohortPlan?.collaborators ?? []).map(
       (c) => c.consultantProfileId,
     ),
   ];
@@ -268,7 +268,7 @@ export async function buildSupportContext(
       appt.consultation?.consultationPlan?.title ??
       appt.subscription?.subscriptionPlan?.title ??
       appt.webinar?.webinarPlan?.title ??
-      appt.class?.classPlan?.title ??
+      appt.cohort?.cohortPlan?.title ??
       null,
   };
 }

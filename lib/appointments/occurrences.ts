@@ -363,7 +363,7 @@ export function allowsManageTimings(
   // a time anyone negotiated, so the organiser keeps this surface even once
   // the instance is confirmed — there is no single counterparty to propose to,
   // and asking every attendee to accept is not a coherent flow.
-  if (kind === "WEBINAR" || kind === "CLASS") return true;
+  if (kind === "WEBINAR" || kind === "COHORT") return true;
   // Nothing placed: an offering that was never scheduled, or a booking whose
   // calls are not allocated yet. Still the consultant's own calendar.
   if (occurrences.length === 0) return true;
@@ -388,7 +388,7 @@ export function allowsUnschedule(
   kind: AppointmentKind,
   occurrences: Array<{ isTentative?: boolean | null }>,
 ): boolean {
-  if (kind !== "WEBINAR" && kind !== "CLASS") return false;
+  if (kind !== "WEBINAR" && kind !== "COHORT") return false;
   // Nothing placed yet — an offering that was never scheduled, or one already
   // unscheduled (the release leaves every row tentative). No date to withdraw,
   // and Timings is the surface for setting one.

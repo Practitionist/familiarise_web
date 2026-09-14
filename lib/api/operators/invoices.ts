@@ -156,9 +156,9 @@ export async function getOperatorInvoices(
                 },
               },
             },
-            class: {
+            cohort: {
               include: {
-                classPlan: {
+                cohortPlan: {
                   include: {
                     consultantProfile: {
                       include: { user: { select: { name: true } } },
@@ -193,7 +193,7 @@ export async function getOperatorInvoices(
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user
         ?.name ||
       appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ||
-      appointment.class?.classPlan?.consultantProfile?.user?.name ||
+      appointment.cohort?.cohortPlan?.consultantProfile?.user?.name ||
       undefined
     );
   };

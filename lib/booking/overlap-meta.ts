@@ -26,7 +26,7 @@ export interface AppointmentForOverlapMeta {
     requestedBy?: { user?: { name?: string | null } | null } | null;
   } | null;
   webinar?: { webinarPlan?: { title?: string | null } | null } | null;
-  class?: { classPlan?: { title?: string | null } | null } | null;
+  cohort?: { cohortPlan?: { title?: string | null } | null } | null;
 }
 
 export function extractOverlapTitleAndParticipant(
@@ -45,8 +45,8 @@ export function extractOverlapTitleAndParticipant(
       };
     case "WEBINAR":
       return { title: appt.webinar?.webinarPlan?.title || "Webinar" };
-    case "CLASS":
-      return { title: appt.class?.classPlan?.title || "Class" };
+    case "COHORT":
+      return { title: appt.cohort?.cohortPlan?.title || "Class" };
     default:
       return { title: appt.appointmentType || "Unknown" };
   }

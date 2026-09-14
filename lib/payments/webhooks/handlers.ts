@@ -28,7 +28,7 @@ import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupa
 import {
   REQUEST_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
+  COHORT_EVENT_ALLOWED_FROM,
   transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
@@ -963,8 +963,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         webinar: {
           select: { webinarPlan: planNotifSelect },
         },
-        class: {
-          select: { classPlan: planNotifSelect },
+        cohort: {
+          select: { cohortPlan: planNotifSelect },
         },
       },
     });
@@ -973,7 +973,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       appointmentForNotif?.consultation?.consultationPlan?.consultantProfile ||
       appointmentForNotif?.subscription?.subscriptionPlan?.consultantProfile ||
       appointmentForNotif?.webinar?.webinarPlan?.consultantProfile ||
-      appointmentForNotif?.class?.classPlan?.consultantProfile;
+      appointmentForNotif?.cohort?.cohortPlan?.consultantProfile;
 
     const consultantNameForNotif =
       consultantProfileData?.user?.name || "Consultant";
@@ -993,7 +993,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             appointmentForNotif?.consultation?.consultationPlan?.title ??
               appointmentForNotif?.subscription?.subscriptionPlan?.title ??
               appointmentForNotif?.webinar?.webinarPlan?.title ??
-              appointmentForNotif?.class?.classPlan?.title ??
+              appointmentForNotif?.cohort?.cohortPlan?.title ??
               null,
             metadata.appointmentType,
           );
@@ -1035,11 +1035,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     // #1580 C-P1-5 — a group event's accepted collaborators hear about the
     // booking too; a 1:1 plan has none.
     const webinarPlanId = appointmentForNotif?.webinar?.webinarPlan?.id;
-    const classPlanId = appointmentForNotif?.class?.classPlan?.id;
-    if (webinarPlanId || classPlanId) {
+    const cohortPlanId = appointmentForNotif?.cohort?.cohortPlan?.id;
+    if (webinarPlanId || cohortPlanId) {
       const collaboratorIds = webinarPlanId
         ? await collaboratorUserIds("webinar", webinarPlanId)
-        : await collaboratorUserIds("class", classPlanId as string);
+        : await collaboratorUserIds("class", cohortPlanId as string);
       for (const id of collaboratorIds) {
         if (!notifUserIds.includes(id)) notifUserIds.push(id);
       }
@@ -1378,8 +1378,8 @@ async function createAppointmentFromWebhook(
     case AppointmentsType.WEBINAR:
       appointment = await createWebinar(tx, { eventId, userId });
       break;
-    case AppointmentsType.CLASS:
-      appointment = await createClass(tx, { eventId, userId });
+    case AppointmentsType.COHORT:
+      appointment = await createCohort(tx, { eventId, userId });
       break;
     default:
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
@@ -1561,8 +1561,8 @@ async function createWebinar(tx: Tx, data: EventData) {
   return createdAppointment;
 }
 
-async function createClass(tx: Tx, data: EventData) {
-  const classInstance = await tx.class.findUnique({
+async function createCohort(tx: Tx, data: EventData) {
+  const cohortInstance = await tx.cohort.findUnique({
     where: { id: data.eventId },
     include: {
       appointment: {
@@ -1570,21 +1570,21 @@ async function createClass(tx: Tx, data: EventData) {
       },
     },
   });
-  if (!classInstance) throw new Error("Class not found");
+  if (!cohortInstance) throw new Error("Class not found");
 
   // #1319 / #1554 — enrol the payer on the class's one wrapper, exactly as
-  // handleClassCheckout does. This used to CREATE an appointment per buyer,
+  // handleCohortCheckout does. This used to CREATE an appointment per buyer,
   // holding one seat row spanning the scheduling period — months wide, with
   // no `consultantProfileId` — and every enrolment added a phantom session
   // to the class. A wrapper with no occurrences is an unscheduled class:
   // seating the payer on it enrols them in a class with no time on the
   // calendar, so it is refused like an unscheduled webinar.
-  const wrapper = classInstance.appointment;
+  const wrapper = cohortInstance.appointment;
   if (!wrapper || wrapper.occurrences.length === 0) {
     throw new Error("Class has not been scheduled. Cannot create booking.");
   }
 
-  // #1319 A9 — one participant row per purchase, matching handleClassCheckout.
+  // #1319 A9 — one participant row per purchase, matching handleCohortCheckout.
   // HELD for the same reason as the webinar arm: the B2 CAS in
   // confirmExistingAppointment, not this creator, decides whether a capture
   // on a terminal class is allowed to confirm anything.
@@ -1721,12 +1721,12 @@ async function confirmApprovalStatus(
 /**
  * Confirm appointment by making slots non-tentative and updating status
  *
- * FIX Issue #1 & #3: For multi-user events (WEBINAR, CLASS), only confirm
+ * FIX Issue #1 & #3: For multi-user events (WEBINAR, COHORT), only confirm
  * the paying user's slots, not all slots for the shared appointment.
  *
  * @param tx - Prisma transaction client
  * @param appointmentId - The appointment ID to confirm
- * @param userId - The paying user's ID (required for WEBINAR/CLASS to prevent confirming other users' slots)
+ * @param userId - The paying user's ID (required for WEBINAR/COHORT to prevent confirming other users' slots)
  */
 // Exported for the #827 regression tests; only handlePaymentSuccess calls it in prod.
 export async function confirmExistingAppointment(
@@ -1741,7 +1741,7 @@ export async function confirmExistingAppointment(
       consultation: true,
       subscription: true,
       webinar: true,
-      class: true,
+      cohort: true,
     },
   });
 
@@ -1835,7 +1835,7 @@ export async function confirmExistingAppointment(
     }
   }
 
-  // FIX Issue #3: For CLASS, confirm ALL user's slots across all sessions
+  // FIX Issue #3: For COHORT, confirm ALL user's slots across all sessions
   // Classes have multiple appointments (one per session), but payment only links to first
   //
   // B2 (booking-journey audit) — the status stamp and the slot flips are
@@ -1848,27 +1848,27 @@ export async function confirmExistingAppointment(
   // terminal (CANCELLED/DRAFT — refund via Phase 2, touch nothing).
   const BENIGN_EVENT_STATUSES = ["SCHEDULED", "IN_PROGRESS", "COMPLETED"];
 
-  if (appointment.class && userId) {
-    const classId = appointment.class.id;
-    const restamped = await tx.class.updateMany({
+  if (appointment.cohort && userId) {
+    const cohortId = appointment.cohort.id;
+    const restamped = await tx.cohort.updateMany({
       where: {
-        id: classId,
-        status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
+        id: cohortId,
+        status: { in: COHORT_EVENT_ALLOWED_FROM.SCHEDULED },
       },
       data: { status: "SCHEDULED" },
     });
     if (restamped.count === 0) {
-      const fresh = await tx.class.findUnique({
-        where: { id: classId },
+      const fresh = await tx.cohort.findUnique({
+        where: { id: cohortId },
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
         void recordSystemError({
           organizationId: null,
           category: "PAYMENT",
-          summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
+          summary: `Payment captured for class ${cohortId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
-          context: { entityType: "class", entityId: classId },
+          context: { entityType: "class", entityId: cohortId },
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }
@@ -1882,7 +1882,7 @@ export async function confirmExistingAppointment(
     await setParticipantStatus(
       tx,
       {
-        appointment: { classId: appointment.class.id },
+        appointment: { cohortId: appointment.cohort.id },
         userId,
         status: "HELD",
       },
@@ -1892,7 +1892,7 @@ export async function confirmExistingAppointment(
     console.log(
       JSON.stringify({
         event: "class_all_sessions_confirmed",
-        classId: appointment.class.id,
+        cohortId: appointment.cohort.id,
         userId,
         timestamp: new Date().toISOString(),
       }),
@@ -2104,9 +2104,9 @@ async function sendPaymentSuccessNotification(
             },
           },
         },
-        class: {
+        cohort: {
           include: {
-            classPlan: {
+            cohortPlan: {
               include: {
                 consultantProfile: {
                   include: { user: { select: { name: true } } },
@@ -2150,9 +2150,10 @@ async function sendPaymentSuccessNotification(
       consultantName =
         appointment.webinar.webinarPlan.consultantProfile.user.name ||
         "Consultant";
-    } else if (appointment.class?.classPlan?.consultantProfile?.user) {
+    } else if (appointment.cohort?.cohortPlan?.consultantProfile?.user) {
       consultantName =
-        appointment.class.classPlan.consultantProfile.user.name || "Consultant";
+        appointment.cohort.cohortPlan.consultantProfile.user.name ||
+        "Consultant";
     }
 
     // Send email

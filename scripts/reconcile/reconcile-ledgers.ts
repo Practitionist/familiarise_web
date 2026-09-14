@@ -977,7 +977,7 @@ async function stepLedgerSnapshots(ctx: StepCtx): Promise<void> {
 // leaks: the member got their money back but still consumes an
 // engagement). The inverse — a reversed utilization with no SUCCEEDED
 // refund — means a seat was released for free. The reversal engine keeps
-// these in lockstep; this catches a partial-failure or a CLASS multi-
+// these in lockstep; this catches a partial-failure or a COHORT multi-
 // booking refund that skipped a child.
 async function stepRefundCoherence(ctx: StepCtx): Promise<void> {
   const utilizations = await prisma.bookingUtilization.findMany({

@@ -44,9 +44,9 @@ export const consultantRecordingInclude =
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       select: {
                         id: true,
                         title: true,
@@ -86,9 +86,9 @@ export const recordingWithAccessControlInclude =
                     webinarPlan: true,
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: true,
+                    cohortPlan: true,
                   },
                 },
               },
@@ -139,10 +139,10 @@ export type WebinarPlanRecordingWithDetails = Prisma.Result<
 
 // ============================================================================
 // Class Plan Recordings Include Structure
-// Used by: RecordingService.getClassPlanRecordings()
+// Used by: RecordingService.getCohortPlanRecordings()
 // ============================================================================
 
-export const classPlanRecordingInclude =
+export const cohortPlanRecordingInclude =
   Prisma.validator<Prisma.RecordingInclude>()({
     meeting: {
       include: {
@@ -150,9 +150,9 @@ export const classPlanRecordingInclude =
           include: {
             appointment: {
               include: {
-                class: {
+                cohort: {
                   include: {
-                    classPlan: true,
+                    cohortPlan: true,
                   },
                 },
               },
@@ -163,9 +163,9 @@ export const classPlanRecordingInclude =
     },
   });
 
-export type ClassPlanRecordingWithDetails = Prisma.Result<
+export type CohortPlanRecordingWithDetails = Prisma.Result<
   Db["recording"],
-  { include: typeof classPlanRecordingInclude },
+  { include: typeof cohortPlanRecordingInclude },
   "findFirstOrThrow"
 >;
 
@@ -192,9 +192,9 @@ export const consulteeRecordingInclude =
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       select: {
                         id: true,
                         title: true,

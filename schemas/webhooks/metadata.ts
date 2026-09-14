@@ -70,8 +70,8 @@ export const webinarMetadataSchema = baseMetadataSchema.extend({
  * Class metadata schema
  * Requires eventId (class ID)
  */
-export const classMetadataSchema = baseMetadataSchema.extend({
-  appointmentType: z.literal(AppointmentsType.CLASS),
+export const cohortMetadataSchema = baseMetadataSchema.extend({
+  appointmentType: z.literal(AppointmentsType.COHORT),
   eventId: z.string().cuid(),
 });
 
@@ -156,8 +156,8 @@ export function validateWebhookMetadata(rawMetadata: Record<string, string>) {
       return subscriptionMetadataSchema.parse(metadata);
     case AppointmentsType.WEBINAR:
       return webinarMetadataSchema.parse(metadata);
-    case AppointmentsType.CLASS:
-      return classMetadataSchema.parse(metadata);
+    case AppointmentsType.COHORT:
+      return cohortMetadataSchema.parse(metadata);
     case AppointmentsType.TRIAL:
       return trialMetadataSchema.parse(metadata);
     default:

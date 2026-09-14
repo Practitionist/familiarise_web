@@ -7,7 +7,7 @@ import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import type {
   Program,
-  ClassPlanProgram,
+  CohortPlanProgram,
   WebinarPlanProgram,
   ProgramType,
   TopicWithCount,
@@ -84,11 +84,11 @@ const planCollaboratorsInclude = {
 };
 
 // #781 §B — soft-deleted profiles leave public surfaces. The owner relation is
-// nullable on Webinar/ClassPlan, so keep ownerless plans and drop only plans
+// nullable on Webinar/CohortPlan, so keep ownerless plans and drop only plans
 // whose owner is soft-deleted.
 const liveConsultantWhere = {
   OR: [{ consultantProfile: null }, { consultantProfile: { deletedAt: null } }],
-} satisfies Prisma.ClassPlanWhereInput & Prisma.WebinarPlanWhereInput;
+} satisfies Prisma.CohortPlanWhereInput & Prisma.WebinarPlanWhereInput;
 
 // ---------------------------------------------------------------------------
 // Curated programs (Featured / Trending / Newest sections)
@@ -138,26 +138,28 @@ function rankPlansByCount(
     .map((p) => p.id);
 }
 
-const getTrendingClassPlanIds = unstable_cache(
+const getTrendingCohortPlanIds = unstable_cache(
   async (): Promise<string[]> => {
     const [plans, slots] = await Promise.all([
-      prisma.classPlan.findMany({
+      prisma.cohortPlan.findMany({
         where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
         select: { id: true, createdAt: true },
       }),
       prisma.appointmentOccurrence.findMany({
         where: {
           ...recentSlotWindow(),
-          appointment: { deletedAt: null, classId: { not: null } },
+          appointment: { deletedAt: null, cohortId: { not: null } },
         },
         select: {
-          appointment: { select: { class: { select: { classPlanId: true } } } },
+          appointment: {
+            select: { cohort: { select: { cohortPlanId: true } } },
+          },
         },
       }),
     ]);
     return rankPlansByCount(
       plans,
-      slots.map((s) => s.appointment?.class?.classPlanId),
+      slots.map((s) => s.appointment?.cohort?.cohortPlanId),
     );
   },
   ["trending-class-plan-ids"],
@@ -210,7 +212,7 @@ export const getCuratedPrograms = unstable_cache(
 
     // Fetch class plans
     if (programType === "all" || programType === "class") {
-      let classPlans;
+      let cohortPlans;
 
       if (sort === "trending") {
         // Trending: rank by recent enrollment count (last 30 days) — the
@@ -218,12 +220,12 @@ export const getCuratedPrograms = unstable_cache(
         // The cache holds the FULL ranked list (no limit arg): unstable_cache
         // keys include fn args, so per-limit entries would each pay the scan;
         // slicing here lets every caller share one entry.
-        const sortedIds = (await getTrendingClassPlanIds()).slice(0, limit);
+        const sortedIds = (await getTrendingCohortPlanIds()).slice(0, limit);
 
         // No enrollments in the window means no ranked ids — see readByIds for
         // why that is not free. (#1121)
-        classPlans = await readByIds(sortedIds, () =>
-          prisma.classPlan.findMany({
+        cohortPlans = await readByIds(sortedIds, () =>
+          prisma.cohortPlan.findMany({
             where: {
               id: { in: sortedIds },
               ...eventPlanDiscoverableWhere(),
@@ -233,26 +235,26 @@ export const getCuratedPrograms = unstable_cache(
               consultantProfile: planConsultantInclude,
               collaborators: planCollaboratorsInclude,
               topics: true,
-              classContents: true,
-              classes: true,
+              cohortContents: true,
+              cohorts: true,
             },
           }),
         );
 
         // Re-sort to match ranking order
         const idOrder = new Map(sortedIds.map((id, i) => [id, i]));
-        classPlans.sort(
+        cohortPlans.sort(
           (a, b) => (idOrder.get(a.id) ?? 0) - (idOrder.get(b.id) ?? 0),
         );
       } else {
-        classPlans = await prisma.classPlan.findMany({
+        cohortPlans = await prisma.cohortPlan.findMany({
           where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
             collaborators: planCollaboratorsInclude,
             topics: true,
-            classContents: true,
-            classes: true,
+            cohortContents: true,
+            cohorts: true,
           },
           ...(orderBy && { orderBy }),
           take: limit,
@@ -260,10 +262,10 @@ export const getCuratedPrograms = unstable_cache(
       }
 
       programs.push(
-        ...classPlans.map(
-          (plan): ClassPlanProgram => ({
+        ...cohortPlans.map(
+          (plan): CohortPlanProgram => ({
             ...plan,
-            classes: plan.classes || [],
+            cohorts: plan.cohorts || [],
             type: "class",
             imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
           }),
@@ -354,7 +356,7 @@ export const getTopicsWithCount = unstable_cache(
             // #781 §B — and plans whose owner is soft-deleted
             ...(planType === "all" || planType === "class"
               ? {
-                  classPlans: {
+                  cohortPlans: {
                     where: {
                       ...eventPlanDiscoverableWhere(),
                       ...liveConsultantWhere,
@@ -383,11 +385,11 @@ export const getTopicsWithCount = unstable_cache(
         const count = topic._count;
         let programCount = 0;
         if (planType === "class") {
-          programCount = count.classPlans ?? 0;
+          programCount = count.cohortPlans ?? 0;
         } else if (planType === "webinar") {
           programCount = count.webinarPlans ?? 0;
         } else {
-          programCount = (count.classPlans ?? 0) + (count.webinarPlans ?? 0);
+          programCount = (count.cohortPlans ?? 0) + (count.webinarPlans ?? 0);
         }
         return { id: topic.id, name: topic.name, programCount };
       })

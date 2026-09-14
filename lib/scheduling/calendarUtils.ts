@@ -44,7 +44,7 @@ export interface Appointment {
   appointmentType: AppointmentsType;
   occurrences?: AppointmentSlot[];
   webinar?: { status: string; webinarPlan?: { title: string } };
-  class?: { status: string; classPlan?: { title: string } };
+  cohort?: { status: string; cohortPlan?: { title: string } };
   consultation?: {
     status: string;
     consultationPlan?: { title: string };
@@ -276,8 +276,8 @@ export function getSlotStatus(
           withUser = appointment.subscription?.requestedBy?.user?.name || "";
         } else if (appointment.appointmentType === AppointmentsType.WEBINAR) {
           title = appointment.webinar?.webinarPlan?.title || "Webinar";
-        } else if (appointment.appointmentType === AppointmentsType.CLASS) {
-          title = appointment.class?.classPlan?.title || "Class";
+        } else if (appointment.appointmentType === AppointmentsType.COHORT) {
+          title = appointment.cohort?.cohortPlan?.title || "Class";
         }
 
         overlappingAppointments.push({
@@ -555,8 +555,8 @@ export function getAppointmentTitle(appointment: Appointment): string {
       );
     case AppointmentsType.WEBINAR:
       return appointment.webinar?.webinarPlan?.title || "Webinar";
-    case AppointmentsType.CLASS:
-      return appointment.class?.classPlan?.title || "Class";
+    case AppointmentsType.COHORT:
+      return appointment.cohort?.cohortPlan?.title || "Class";
     case AppointmentsType.TRIAL:
       return "Trial Session";
     default:

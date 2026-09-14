@@ -129,9 +129,9 @@ const MEETING_SESSION_INCLUDE = {
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 select: {
                   id: true,
                   consultantProfileId: true,
@@ -358,7 +358,7 @@ export async function resolveMeetingAccess(
     appointment.consultation?.consultationPlan?.consultantProfileId ??
     appointment.subscription?.subscriptionPlan?.consultantProfileId ??
     appointment.webinar?.webinarPlan?.consultantProfileId ??
-    appointment.class?.classPlan?.consultantProfileId ??
+    appointment.cohort?.cohortPlan?.consultantProfileId ??
     appointment.trial?.consultantProfileId ??
     null;
 
@@ -380,7 +380,7 @@ export async function resolveMeetingAccess(
       appointment.consultation?.status ??
       appointment.subscription?.status ??
       appointment.webinar?.status ??
-      appointment.class?.status ??
+      appointment.cohort?.status ??
       appointment.trial?.status ??
       null;
     const statusRefusal = bookingStatusRefusal(bookingStatus);
@@ -442,14 +442,14 @@ export async function resolveMeetingAccess(
   // class for the whole room is the hazard #1270 closed for consultees.
   if (userProfile?.consultantProfileId) {
     const webinarPlanId = appointment.webinar?.webinarPlan?.id;
-    const classPlanId = appointment.class?.classPlan?.id;
+    const cohortPlanId = appointment.cohort?.cohortPlan?.id;
 
-    if (webinarPlanId || classPlanId) {
+    if (webinarPlanId || cohortPlanId) {
       const collab = await prisma.collaborator.findFirst({
         where: {
           consultantProfileId: userProfile.consultantProfileId,
           status: "ACCEPTED",
-          ...(webinarPlanId ? { webinarPlanId } : { classPlanId }),
+          ...(webinarPlanId ? { webinarPlanId } : { cohortPlanId }),
         },
         select: { id: true, role: true },
       });

@@ -92,18 +92,21 @@ export function getWebinarCapacity(params: {
  * Class capacity. #1554 — one wrapper per class with N occurrences, so like a
  * webinar the roster is the wrapper's live participant rows.
  */
-export function getClassCapacity(params: {
-  classInstance: CapacityInstance & {
+export function getCohortCapacity(params: {
+  cohortInstance: CapacityInstance & {
     appointment?: SeatBearingAppointment | null;
   };
   plan: CapacityPlan;
   excludeUserIds?: string[];
 }): EventCapacity {
-  const { classInstance, plan, excludeUserIds = [] } = params;
-  assertParticipantsIncluded(classInstance.appointment, "getClassCapacity");
+  const { cohortInstance, plan, excludeUserIds = [] } = params;
+  assertParticipantsIncluded(cohortInstance.appointment, "getCohortCapacity");
   return toCapacity(
-    effectiveMaxParticipants(classInstance, plan),
-    countWebinarParticipants(classInstance.appointment ?? null, excludeUserIds),
+    effectiveMaxParticipants(cohortInstance, plan),
+    countWebinarParticipants(
+      cohortInstance.appointment ?? null,
+      excludeUserIds,
+    ),
   );
 }
 

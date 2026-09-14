@@ -50,27 +50,27 @@ export async function readManageTimingsTarget(
 ): Promise<ManageTimingsTarget | null> {
   if (targetId.startsWith(UNSCHEDULED_CLASS_PREFIX)) {
     const id = targetId.slice(UNSCHEDULED_CLASS_PREFIX.length);
-    const classRow = await prisma.class.findUnique({
+    const cohortRow = await prisma.cohort.findUnique({
       where: { id },
       include: {
-        classPlan: { include: { collaborators: collaboratorsInclude } },
+        cohortPlan: { include: { collaborators: collaboratorsInclude } },
       },
     });
-    if (!classRow?.classPlan) return null;
+    if (!cohortRow?.cohortPlan) return null;
 
     return toPlain<ManageTimingsTarget>({
       appointment: {
-        appointmentType: "CLASS",
-        class: {
-          id: classRow.id,
-          schedulingPeriodStartsAt: classRow.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: classRow.schedulingPeriodEndsAt,
-          classPlan: classRow.classPlan,
+        appointmentType: "COHORT",
+        cohort: {
+          id: cohortRow.id,
+          schedulingPeriodStartsAt: cohortRow.schedulingPeriodStartsAt,
+          schedulingPeriodEndsAt: cohortRow.schedulingPeriodEndsAt,
+          cohortPlan: cohortRow.cohortPlan,
         },
       },
       planOwnerIds: ownerIds(
-        classRow.classPlan.consultantProfileId,
-        ...classRow.classPlan.collaborators.map((c) => c.consultantProfileId),
+        cohortRow.cohortPlan.consultantProfileId,
+        ...cohortRow.cohortPlan.collaborators.map((c) => c.consultantProfileId),
       ),
     });
   }
@@ -113,7 +113,7 @@ export async function readManageTimingsTarget(
     appointment.appointmentType !== "CONSULTATION" &&
     appointment.appointmentType !== "SUBSCRIPTION" &&
     appointment.appointmentType !== "WEBINAR" &&
-    appointment.appointmentType !== "CLASS"
+    appointment.appointmentType !== "COHORT"
   ) {
     return null;
   }
@@ -125,7 +125,7 @@ export async function readManageTimingsTarget(
   // appointments list's group card (map-consultant.ts's mapGroup).
   const program =
     appointment.appointmentType === "SUBSCRIPTION" ||
-    appointment.appointmentType === "CLASS"
+    appointment.appointmentType === "COHORT"
       ? liveOccurrences(occurrencesOfAppointment(appointment))
       : null;
 
@@ -136,8 +136,8 @@ export async function readManageTimingsTarget(
   const groupTotalSessions =
     appointment.appointmentType === "SUBSCRIPTION"
       ? (appointment.subscription?.subscriptionPlan?.totalSessions ?? undefined)
-      : appointment.appointmentType === "CLASS"
-        ? (appointment.class?.classPlan?.totalSessions ?? undefined)
+      : appointment.appointmentType === "COHORT"
+        ? (appointment.cohort?.cohortPlan?.totalSessions ?? undefined)
         : undefined;
 
   return {
@@ -150,7 +150,7 @@ export async function readManageTimingsTarget(
         | "CONSULTATION"
         | "SUBSCRIPTION"
         | "WEBINAR"
-        | "CLASS",
+        | "COHORT",
       // Program-wide, past sessions included: the picker opens on the earliest
       // session still awaiting a time, and falls back to the last one that
       // ran when everything is over (#1073).
@@ -162,7 +162,7 @@ export async function readManageTimingsTarget(
       consultation: appointment.consultation,
       subscription: appointment.subscription,
       webinar: appointment.webinar,
-      class: appointment.class,
+      cohort: appointment.cohort,
     },
     planOwnerIds,
     completedSessions: program

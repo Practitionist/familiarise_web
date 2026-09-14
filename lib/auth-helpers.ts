@@ -288,19 +288,19 @@ export async function authorizeEventAccess(
       }
     }
   } else if (eventType === "class") {
-    const event = await prisma.class.findUnique({
+    const event = await prisma.cohort.findUnique({
       where: { id: eventId },
       select: {
-        classPlan: { select: { id: true, consultantProfileId: true } },
+        cohortPlan: { select: { id: true, consultantProfileId: true } },
       },
     });
     if (event) {
       isAuthorized =
-        consultantProfileId === event.classPlan.consultantProfileId;
+        consultantProfileId === event.cohortPlan.consultantProfileId;
       if (!isAuthorized && consultantProfileId) {
         const collab = await prisma.collaborator.findFirst({
           where: {
-            classPlanId: event.classPlan.id,
+            cohortPlanId: event.cohortPlan.id,
             consultantProfileId,
             status: "ACCEPTED",
           },
@@ -604,11 +604,11 @@ export async function isEventConsultant(
       return event?.webinarPlan.consultantProfileId === consultantProfileId;
     }
     case "class": {
-      const event = await prisma.class.findUnique({
+      const event = await prisma.cohort.findUnique({
         where: { id: eventId },
-        select: { classPlan: { select: { consultantProfileId: true } } },
+        select: { cohortPlan: { select: { consultantProfileId: true } } },
       });
-      return event?.classPlan.consultantProfileId === consultantProfileId;
+      return event?.cohortPlan.consultantProfileId === consultantProfileId;
     }
   }
 }

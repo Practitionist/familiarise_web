@@ -166,7 +166,7 @@ export function getSlotLimits(
       const sessionSlots = Math.ceil(
         (options.sessionDurationInHours || 1) / 0.5,
       );
-      // maxTotalCalls (from classPlan.totalSessions) is authoritative when
+      // maxTotalCalls (from cohortPlan.totalSessions) is authoritative when
       // provided; otherwise fall back to the period-based calculation.
       const effectiveTotalSessions =
         options.maxTotalCalls && options.maxTotalCalls > 0
@@ -315,7 +315,7 @@ export function countSessionsForDay(
 /**
  * Validate max sessions per day for classes using slotsPerSession semantics.
  */
-export function validateClassSessionDistributionByCount(
+export function validateCohortSessionDistributionByCount(
   slots: CalendarInterval[],
   maxSessions: number,
   slotsPerSession: number,
@@ -646,7 +646,7 @@ function validateWebinarSelection(
   }
 }
 
-function validateClassSelection(
+function validateCohortSelection(
   slots: CalendarInterval[],
   constraints: EventConstraints,
   limits: SlotLimits,
@@ -674,7 +674,7 @@ function validateClassSelection(
       daySlots.length,
   );
 
-  const sessionsPerDayOk = validateClassSessionDistributionByCount(
+  const sessionsPerDayOk = validateCohortSessionDistributionByCount(
     slots,
     constraints.maxSessionsPerDay || 2,
     slotsPerSession,
@@ -857,7 +857,14 @@ export function validateEventSlots(
       validateWebinarSelection(slots, limits, result);
       break;
     case "class":
-      validateClassSelection(slots, constraints, limits, options, result, timeZone);
+      validateCohortSelection(
+        slots,
+        constraints,
+        limits,
+        options,
+        result,
+        timeZone,
+      );
       break;
     case "subscription":
       validateSubscriptionSelection(slots, options, limits, result);

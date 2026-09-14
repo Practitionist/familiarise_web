@@ -34,12 +34,12 @@ export async function removeCollaboratorStanding(
       status: { in: ["PENDING", "ACCEPTED"] },
     },
     data: { status: "REMOVED", respondedAt: new Date() },
-    select: { collaboratorType: true, webinarPlanId: true, classPlanId: true },
+    select: { collaboratorType: true, webinarPlanId: true, cohortPlanId: true },
   });
 
   return rows.flatMap((row) => {
     const planId =
-      row.collaboratorType === "WEBINAR" ? row.webinarPlanId : row.classPlanId;
+      row.collaboratorType === "WEBINAR" ? row.webinarPlanId : row.cohortPlanId;
     if (!planId) return [];
     const planType = row.collaboratorType === "WEBINAR" ? "webinar" : "class";
     return [{ planType, planId } as CollaborationRef];

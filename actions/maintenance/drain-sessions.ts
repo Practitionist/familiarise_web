@@ -128,9 +128,9 @@ export async function drainActiveSessions(): Promise<DrainResult> {
                   },
                 },
               },
-              class: {
+              cohort: {
                 include: {
-                  classPlan: {
+                  cohortPlan: {
                     select: {
                       consultantProfile: {
                         select: { user: { select: { id: true } } },
@@ -165,7 +165,7 @@ export async function drainActiveSessions(): Promise<DrainResult> {
       appointment.consultation?.consultationPlan?.consultantProfile?.user?.id ??
       appointment.subscription?.subscriptionPlan?.consultantProfile?.user?.id ??
       appointment.webinar?.webinarPlan?.consultantProfile?.user?.id ??
-      appointment.class?.classPlan?.consultantProfile?.user?.id;
+      appointment.cohort?.cohortPlan?.consultantProfile?.user?.id;
     if (consultantUserId) allUserIds.add(consultantUserId);
 
     // Collect consultee user ID (for 1:1 appointments)

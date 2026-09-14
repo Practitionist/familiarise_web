@@ -44,7 +44,7 @@ export function setup() {
 
 export function eventBody(key) {
   return {
-    appointmentType: EVENT_TYPE, // WEBINAR or CLASS
+    appointmentType: EVENT_TYPE, // WEBINAR or COHORT
     planId: EVENT_PLAN_ID,
     eventId: EVENT_ID,
     clientIdempotencyKey: key,

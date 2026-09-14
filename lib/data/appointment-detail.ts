@@ -119,9 +119,9 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      class: {
+      cohort: {
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: consultantProfileSelect,
               collaborators: collaboratorsInclude,
@@ -248,8 +248,8 @@ export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   viewerUserId: string,
   privileged = false,
 ): T {
-  const { webinarId, classId, payment } = detail.appointment;
-  const isGroup = !!webinarId || !!classId;
+  const { webinarId, cohortId, payment } = detail.appointment;
+  const isGroup = !!webinarId || !!cohortId;
   const everySeat =
     !isGroup ||
     privileged ||
@@ -298,12 +298,12 @@ function participantUserIds(detail: TAppointmentDetail) {
     appointment.consultation?.consultationPlan?.consultantProfile?.userId,
     appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
     appointment.webinar?.webinarPlan?.consultantProfile?.userId,
-    appointment.class?.classPlan?.consultantProfile?.userId,
+    appointment.cohort?.cohortPlan?.consultantProfile?.userId,
     appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.userId,
     ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
+    ...(appointment.cohort?.cohortPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.userId,
     ),
   ];

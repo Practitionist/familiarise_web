@@ -22,8 +22,8 @@ export const appointmentPlanArmsSelect = {
   webinar: {
     select: { webinarPlan: { select: listingPlanSelect } },
   },
-  class: {
-    select: { classPlan: { select: listingPlanSelect } },
+  cohort: {
+    select: { cohortPlan: { select: listingPlanSelect } },
   },
 } satisfies Prisma.AppointmentSelect;
 
@@ -37,11 +37,11 @@ type PlanArmShape = {
 
 interface AppointmentWithPlans {
   webinar?: { webinarPlan: PlanArmShape | null } | null;
-  class?: { classPlan: PlanArmShape | null } | null;
+  cohort?: { cohortPlan: PlanArmShape | null } | null;
 }
 
 export interface ResolvedListingPlan {
-  kind: "WEBINAR" | "CLASS";
+  kind: "WEBINAR" | "COHORT";
   plan: PlanArmShape;
 }
 
@@ -54,8 +54,8 @@ export function resolveListingPlan(
 ): ResolvedListingPlan | null {
   const webinarPlan = appointment.webinar?.webinarPlan;
   if (webinarPlan) return { kind: "WEBINAR", plan: webinarPlan };
-  const classPlan = appointment.class?.classPlan;
-  if (classPlan) return { kind: "CLASS", plan: classPlan };
+  const cohortPlan = appointment.cohort?.cohortPlan;
+  if (cohortPlan) return { kind: "COHORT", plan: cohortPlan };
   return null;
 }
 
@@ -86,9 +86,9 @@ export const appointmentStoragePolicySelect = {
       webinarPlan: { select: storagePolicyPlanSelect },
     },
   },
-  class: {
+  cohort: {
     select: {
-      classPlan: { select: storagePolicyPlanSelect },
+      cohortPlan: { select: storagePolicyPlanSelect },
     },
   },
 } satisfies Prisma.AppointmentSelect;
@@ -102,7 +102,7 @@ interface AppointmentWithAllPlans {
   consultation?: { consultationPlan: PolicyArm | null } | null;
   subscription?: { subscriptionPlan: PolicyArm | null } | null;
   webinar?: { webinarPlan: PolicyArm | null } | null;
-  class?: { classPlan: PolicyArm | null } | null;
+  cohort?: { cohortPlan: PolicyArm | null } | null;
 }
 
 /**
@@ -117,7 +117,7 @@ export function resolveAppointmentStoragePolicy(
     appointment.consultation?.consultationPlan ??
     appointment.subscription?.subscriptionPlan ??
     appointment.webinar?.webinarPlan ??
-    appointment.class?.classPlan;
+    appointment.cohort?.cohortPlan;
   return {
     policy: plan?.recordingStoragePolicy ?? "STREAM_ONLY",
     ownerProfileId: plan?.consultantProfileId ?? null,

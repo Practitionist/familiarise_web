@@ -126,7 +126,7 @@ const DEFAULT_LOCK_TTL = 60000; // 60 seconds
 // the LONG_JOB_TTL_MS precedent in lib/cron/with-cron-lock.ts); checkout
 // also renews once before the gateway call and aborts if ownership is lost.
 //
-// CLASS additionally carries the documented serverless-freeze worst case
+// COHORT additionally carries the documented serverless-freeze worst case
 // (bugs/finances/high-concurrency-and-spikes.md): a freeze suspends the
 // instance AFTER the single checked renewal while Redis keeps counting the
 // TTL down, so at 300s a frozen checkout could lose ownership mid-payment
@@ -141,7 +141,7 @@ export const CHECKOUT_LOCK_TTL_MS: Record<string, number> = {
   CONSULTATION: 60_000,
   SUBSCRIPTION: 120_000,
   WEBINAR: 120_000,
-  CLASS: 600_000,
+  COHORT: 600_000,
 };
 
 // ============================================================================
@@ -754,7 +754,7 @@ export async function unlockSlotBooking(locks: ApprovalLock[]): Promise<void> {
 /**
  * Lock event checkout to prevent concurrent booking attempts
  * Used for webinars, classes, and subscription scheduling periods
- * @param appointmentType - Type of appointment (WEBINAR, CLASS, SUBSCRIPTION)
+ * @param appointmentType - Type of appointment (WEBINAR, COHORT, SUBSCRIPTION)
  * @param eventOrPlanId - Event ID or plan ID to lock
  * @param ttl - Time to live in milliseconds (default 60 seconds)
  * @returns Lock instance (must be released with unlockEventCheckout)

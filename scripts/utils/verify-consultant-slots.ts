@@ -230,8 +230,8 @@ async function verifyConsultantSlots() {
             },
           },
           {
-            class: {
-              classPlan: {
+            cohort: {
+              cohortPlan: {
                 consultantProfileId: CONSULTANT_ID,
               },
             },

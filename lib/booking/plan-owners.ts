@@ -24,7 +24,7 @@ export interface AppointmentPlanOwnership {
   consultation?: { consultationPlan?: PlanOwner | null } | null;
   subscription?: { subscriptionPlan?: PlanOwner | null } | null;
   webinar?: { webinarPlan?: PlanWithCollaborators | null } | null;
-  class?: { classPlan?: PlanWithCollaborators | null } | null;
+  cohort?: { cohortPlan?: PlanWithCollaborators | null } | null;
   trial?: { subscriptionPlan?: PlanOwner | null } | null;
 }
 
@@ -35,12 +35,12 @@ export function resolvePlanOwnerIds(
     appointment.consultation?.consultationPlan?.consultantProfile?.id,
     appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
-    appointment.class?.classPlan?.consultantProfile?.id,
+    appointment.cohort?.cohortPlan?.consultantProfile?.id,
     appointment.trial?.subscriptionPlan?.consultantProfile?.id,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (collaborator) => collaborator.consultantProfile?.id,
     ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
+    ...(appointment.cohort?.cohortPlan?.collaborators ?? []).map(
       (collaborator) => collaborator.consultantProfile?.id,
     ),
   ].filter((id): id is string => Boolean(id));

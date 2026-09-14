@@ -481,10 +481,10 @@ async function getEventData(eventType: EventType, eventId: string) {
     }
 
     case "class": {
-      const classData = await prisma.class.findUnique({
+      const cohortData = await prisma.cohort.findUnique({
         where: { id: eventId },
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: {
                 include: { user: { select: { id: true } } },
@@ -509,28 +509,28 @@ async function getEventData(eventType: EventType, eventId: string) {
           },
         },
       });
-      if (!classData) return null;
+      if (!cohortData) return null;
 
-      const consultantId = classData.classPlan.consultantProfile?.user?.id;
+      const consultantId = cohortData.cohortPlan.consultantProfile?.user?.id;
       if (!consultantId) return null;
 
       const members = [
-        ...(classData.classPlan.collaborators ?? []).map(
+        ...(cohortData.cohortPlan.collaborators ?? []).map(
           (c) => c.consultantProfile.userId,
         ),
-        ...(classData.appointment?.participants.map((p) => p.userId) || []),
+        ...(cohortData.appointment?.participants.map((p) => p.userId) || []),
       ];
 
       const organizationId = bookingOrgId({
         // #1554 — a class is one wrapper, so the org tag is its own.
-        classPlan: classData.classPlan,
-        appointment: classData.appointment,
+        cohortPlan: cohortData.cohortPlan,
+        appointment: cohortData.appointment,
       });
 
       return {
         consultantId,
         members,
-        name: classData.classPlan.title,
+        name: cohortData.cohortPlan.title,
         organizationId,
       };
     }
@@ -731,19 +731,19 @@ export async function syncUserEventChannels(
     const eventIds: { type: EventType; id: string }[] = [];
 
     // Batch query all events in parallel
-    const [webinars, classes, dmPairs] = await Promise.all([
+    const [webinars, cohorts, dmPairs] = await Promise.all([
       getWebinarIdsForUser(userId, user),
-      getClassIdsForUser(userId, user),
+      getCohortIdsForUser(userId, user),
       getDmPairsForUser(userId, user),
     ]);
 
     webinars.forEach((id) => eventIds.push({ type: "webinar", id }));
-    classes.forEach((id) => eventIds.push({ type: "class", id }));
+    cohorts.forEach((id) => eventIds.push({ type: "class", id }));
 
     streamLogger.debug("Events found for user", {
       userId,
       webinars: webinars.length,
-      classes: classes.length,
+      cohorts: cohorts.length,
       dmPairs: dmPairs.length,
       total: eventIds.length,
     });
@@ -1195,7 +1195,7 @@ async function getWebinarIdsForUser(
  * Get class IDs for a user (both hosted and enrolled).
  * Handles dual-role users who are both consultant and consultee.
  */
-async function getClassIdsForUser(
+async function getCohortIdsForUser(
   userId: string,
   user: {
     consultantProfileId: string | null;
@@ -1209,9 +1209,9 @@ async function getClassIdsForUser(
   // Consultant: get classes they host
   if (user.consultantProfileId) {
     queries.push(
-      prisma.class.findMany({
+      prisma.cohort.findMany({
         where: {
-          classPlan: { consultantProfileId: user.consultantProfileId },
+          cohortPlan: { consultantProfileId: user.consultantProfileId },
         },
         select: {
           id: true,
@@ -1234,7 +1234,7 @@ async function getClassIdsForUser(
 
   // Consultee: get classes they enrolled in
   queries.push(
-    prisma.class.findMany({
+    prisma.cohort.findMany({
       where: {
         appointment: {
           participants: { some: liveParticipant(userId) },

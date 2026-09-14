@@ -23,7 +23,7 @@ import {
   type PersonVM,
 } from "./view-model";
 
-/* Structural inputs — mirror ScheduledTrial / UnscheduledClass /
+/* Structural inputs — mirror ScheduledTrial / UnscheduledCohort /
  * UnscheduledWebinar from the consultant dashboard types without importing
  * from an app route (lib stays route-agnostic). */
 
@@ -49,10 +49,10 @@ export interface ConsultantTrialLike {
   } | null;
 }
 
-export interface UnscheduledClassLike {
+export interface UnscheduledCohortLike {
   id: string;
   status: string;
-  classPlan: {
+  cohortPlan: {
     id: string;
     title: string;
     sessionsPerWeek: number;
@@ -76,7 +76,7 @@ export interface UnscheduledWebinarLike {
 export interface ConsultantAppointmentsInput {
   appointments: TAppointment[];
   scheduledTrials?: ConsultantTrialLike[];
-  unscheduledClasses?: UnscheduledClassLike[];
+  unscheduledCohorts?: UnscheduledCohortLike[];
   unscheduledWebinars?: UnscheduledWebinarLike[];
   /** Viewer's consultantProfile id — resolves their collaborator role. */
   consultantId: string;
@@ -119,14 +119,14 @@ function eventFacts(appointment: TAppointment): {
         ),
         status: normalizeStatus(appointment.webinar?.status?.toString()),
       };
-    case "CLASS":
+    case "COHORT":
       return {
-        title: appointment.class?.classPlan?.title ?? "Class",
+        title: appointment.cohort?.cohortPlan?.title ?? "Class",
         counterpart: person(
-          appointment.class?.classPlan?.consultantProfile?.user,
+          appointment.cohort?.cohortPlan?.consultantProfile?.user,
           "Unknown Consultant",
         ),
-        status: normalizeStatus(appointment.class?.status?.toString()),
+        status: normalizeStatus(appointment.cohort?.status?.toString()),
       };
     default:
       return {
@@ -160,8 +160,8 @@ function collaboratorRoleOf(
   const plan =
     appointment.appointmentType === "WEBINAR"
       ? appointment.webinar?.webinarPlan
-      : appointment.appointmentType === "CLASS"
-        ? appointment.class?.classPlan
+      : appointment.appointmentType === "COHORT"
+        ? appointment.cohort?.cohortPlan
         : null;
   if (!plan) return null;
   const collaborators = (plan as { collaborators?: PlanCollaboratorLike[] })
@@ -247,7 +247,7 @@ function mapGroup(
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
       ? `subscription-${first.subscriptionId}`
-      : `class-${first.classId}`;
+      : `class-${first.cohortId}`;
   return {
     id: groupId,
     // Always the viewing consultant: this is their own list.
@@ -316,19 +316,19 @@ function mapTrial(
   };
 }
 
-function mapUnscheduledClass(
-  c: UnscheduledClassLike,
+function mapUnscheduledCohort(
+  c: UnscheduledCohortLike,
   consultantId: string,
   now: Date,
 ): AppointmentVM {
   const status = normalizeStatus(c.status);
-  const plan = c.classPlan;
+  const plan = c.cohortPlan;
   return {
     id: `unscheduled-class-${c.id}`,
     // Always the viewing consultant: this is their own list.
     consultantProfileId: consultantId,
     appointmentId: null,
-    kind: "CLASS",
+    kind: "COHORT",
     title: plan.title,
     counterpart: person(plan.consultantProfile?.user, "You"),
     status,
@@ -380,7 +380,7 @@ export function mapConsultantAppointments(
   const {
     appointments,
     scheduledTrials = [],
-    unscheduledClasses = [],
+    unscheduledCohorts = [],
     unscheduledWebinars = [],
     consultantId,
   } = input;
@@ -393,8 +393,8 @@ export function mapConsultantAppointments(
       appointment.appointmentType === "SUBSCRIPTION" &&
       appointment.subscriptionId
         ? `subscription-${appointment.subscriptionId}`
-        : appointment.appointmentType === "CLASS" && appointment.classId
-          ? `class-${appointment.classId}`
+        : appointment.appointmentType === "COHORT" && appointment.cohortId
+          ? `class-${appointment.cohortId}`
           : `single-${appointment.id}`;
     const bucket = groups.get(key);
     if (bucket) bucket.push(appointment);
@@ -413,7 +413,9 @@ export function mapConsultantAppointments(
 
   vms.push(...scheduledTrials.map((t) => mapTrial(t, consultantId, now)));
   vms.push(
-    ...unscheduledClasses.map((c) => mapUnscheduledClass(c, consultantId, now)),
+    ...unscheduledCohorts.map((c) =>
+      mapUnscheduledCohort(c, consultantId, now),
+    ),
   );
   vms.push(
     ...unscheduledWebinars.map((w) =>

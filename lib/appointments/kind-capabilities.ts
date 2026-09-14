@@ -11,7 +11,7 @@ export type AppointmentKind = AppointmentVM["kind"];
 
 /** Many attendees, one Payment each; the host reads money per seat. */
 export function isGroupKind(kind: AppointmentKind): boolean {
-  return kind === "WEBINAR" || kind === "CLASS";
+  return kind === "WEBINAR" || kind === "COHORT";
 }
 
 /** Documents are a 1:1 exchange; a webinar or class has no reviewer pair. */

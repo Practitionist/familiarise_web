@@ -27,7 +27,7 @@ import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 
 /**
  * Whole-event refund (#776 §C) — the production front door for the reversal
- * engine's CLASS_MULTI path.
+ * engine's COHORT_MULTI path.
  *
  * A cancelled class/webinar must refund EVERY attendee. Those attendees paid
  * through two very different rails, and each needs its own reversal:
@@ -41,7 +41,7 @@ import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
  *     org_invoice) — no card ever charged; the money lives in the wallet /
  *     invoice accrual / license ledger. `refundPayment` can't refund these
  *     (createRefund throws UNKNOWN_GATEWAY on a synthetic id), so they reverse
- *     purely in-ledger via one CLASS_MULTI transaction.
+ *     purely in-ledger via one COHORT_MULTI transaction.
  *
  * Idempotency: callers still gate on the appointment-cancel CAS / moderation
  * `moved === 0` guard, but a second call is now structurally harmless too —
@@ -81,7 +81,7 @@ export async function refundWholeEventPayments(
   const payments = await prisma.payment.findMany({
     where: {
       appointment:
-        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+        kind === "webinar" ? { webinarId: eventId } : { cohortId: eventId },
       paymentStatus: "SUCCEEDED",
       // #1161 — no amount filter: free_ (credit-funded) seats refund too, via
       // credit restoration.
@@ -161,7 +161,7 @@ export async function refundWholeEventPayments(
     }
   }
 
-  // Internal org-funded seats — one CLASS_MULTI reversal (ledger-only). Full
+  // Internal org-funded seats — one COHORT_MULTI reversal (ledger-only). Full
   // reversal: amountPaise == Σ child amounts, so each child reverses in full.
   const memberOverageFollowUps: string[] = [];
   if (internal.length > 0) {
@@ -172,12 +172,12 @@ export async function refundWholeEventPayments(
           (tx) =>
             applyReversal(tx, {
               source: {
-                kind: "CLASS_MULTI",
+                kind: "COHORT_MULTI",
                 paymentIds: internal.map((p) => p.id),
               },
               amountPaise: internalTotal,
               reason,
-              // Correlation tag only — reverseClassMulti mints its own child
+              // Correlation tag only — reverseCohortMulti mints its own child
               // Refund rows and keys idempotency off those, not this string.
               refundId: `event:${kind}:${eventId}`,
               initiatedByUserId,
@@ -213,7 +213,7 @@ export async function refundWholeEventPayments(
   }
 
   // #715/#716 — CHARGE_MEMBER overages on the internal seats were collected on
-  // separate gateway side-payments the CLASS_MULTI tx can't touch. Credit them
+  // separate gateway side-payments the COHORT_MULTI tx can't touch. Credit them
   // back now (best-effort; ops-paged on non-benign failure).
   for (const overagePaymentId of memberOverageFollowUps) {
     try {
@@ -298,7 +298,7 @@ export async function refundRemovedAttendeeSeat(args: {
   const eventFilter =
     args.kind === "webinar"
       ? { webinarId: args.eventId }
-      : { classId: args.eventId };
+      : { cohortId: args.eventId };
   // Missing flag = legacy organiser path; do not flip the money default.
   const isOrganiserInitiated =
     (args.initiatedBy ?? "organiser") === "organiser";

@@ -150,8 +150,10 @@ function buildWhere(
             },
           },
           {
-            class: {
-              classPlan: { consultantProfile: { userId: params.scope.userId } },
+            cohort: {
+              cohortPlan: {
+                consultantProfile: { userId: params.scope.userId },
+              },
             },
           },
         ],

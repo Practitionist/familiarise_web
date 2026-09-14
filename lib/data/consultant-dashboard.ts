@@ -101,15 +101,15 @@ const consultantAppointmentScope = (consultantProfileId: string) =>
         },
       },
       {
-        class: {
-          classPlan: { consultantProfileId },
+        cohort: {
+          cohortPlan: { consultantProfileId },
           status: "SCHEDULED" as const,
         },
       },
       {
         // Collaborated classes (co-instructor, TA, etc.)
-        class: {
-          classPlan: {
+        cohort: {
+          cohortPlan: {
             collaborators: {
               some: { consultantProfileId, status: "ACCEPTED" as const },
             },
@@ -208,9 +208,9 @@ const appointmentInclude = {
       },
     },
   },
-  class: {
+  cohort: {
     include: {
-      classPlan: {
+      cohortPlan: {
         include: {
           consultantProfile: {
             include: {
@@ -445,7 +445,7 @@ export async function getConsultantDashboard(
         subscription: {
           select: { id: true, requestedBy: { select: { id: true } } },
         },
-        class: { select: { id: true } },
+        cohort: { select: { id: true } },
       },
     }),
     // Fetch pending consultations
@@ -563,7 +563,7 @@ export async function getConsultantDashboard(
             { consultation: { consultationPlan: { consultantProfileId } } },
             { subscription: { subscriptionPlan: { consultantProfileId } } },
             { webinar: { webinarPlan: { consultantProfileId } } },
-            { class: { classPlan: { consultantProfileId } } },
+            { cohort: { cohortPlan: { consultantProfileId } } },
           ],
         },
         startsAt: { gte: thirtyDaysAgo, lt: now },
@@ -683,15 +683,16 @@ export async function getConsultantDashboard(
             status: appointment.webinar.status,
           }
         : undefined,
-      class: appointment.class
+      cohort: appointment.cohort
         ? {
-            id: appointment.class.id,
-            classPlan: {
-              ...appointment.class.classPlan,
-              consultantProfile: appointment.class.classPlan.consultantProfile,
-              collaborators: appointment.class.classPlan.collaborators ?? [],
+            id: appointment.cohort.id,
+            cohortPlan: {
+              ...appointment.cohort.cohortPlan,
+              consultantProfile:
+                appointment.cohort.cohortPlan.consultantProfile,
+              collaborators: appointment.cohort.cohortPlan.collaborators ?? [],
             },
-            status: appointment.class.status,
+            status: appointment.cohort.status,
           }
         : undefined,
     }),
@@ -809,13 +810,13 @@ export async function getConsultantDashboard(
   // row here counts.
   const activeClientIds = new Set<string>();
   const activeSubIds = new Set<string>();
-  const activeClassIds = new Set<string>();
+  const activeCohortIds = new Set<string>();
   for (const apt of activeBookRows) {
     const consulteeId =
       apt.consultation?.requestedBy?.id ?? apt.subscription?.requestedBy?.id;
     if (consulteeId) activeClientIds.add(consulteeId);
     if (apt.subscription?.id) activeSubIds.add(apt.subscription.id);
-    if (apt.class?.id) activeClassIds.add(apt.class.id);
+    if (apt.cohort?.id) activeCohortIds.add(apt.cohort.id);
   }
 
   const financialSummary = {
@@ -827,11 +828,11 @@ export async function getConsultantDashboard(
         ? `₹${(readyEarningsVal / 100).toLocaleString("en-IN")} / ₹${(PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT / 100).toLocaleString("en-IN")}`
         : "No ready earnings yet",
     activeClients: activeClientIds.size,
-    activePrograms: activeSubIds.size + activeClassIds.size,
+    activePrograms: activeSubIds.size + activeCohortIds.size,
   };
 
   // toPlain — transformedAppointments spreads the four money-extended plan
-  // rows (consultation/subscription/webinar/classPlan, each carries an
+  // rows (consultation/subscription/webinar/cohortPlan, each carries an
   // inspect symbol via the #780/#781 result extension), so the payload must
   // be plainified before it crosses the RSC→Client HydrationBoundary. The
   // route path (NextResponse.json) was always fine — JSON drops symbols —

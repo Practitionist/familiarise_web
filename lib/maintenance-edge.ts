@@ -193,7 +193,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/bookings/consultations",
   "/api/bookings/subscriptions",
   "/api/bookings/webinars",
-  "/api/bookings/classes",
+  "/api/bookings/cohorts",
   "/api/bookings/*/allocate",
   "/api/trials",
   "/api/plans/*/materials",

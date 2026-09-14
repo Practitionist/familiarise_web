@@ -142,9 +142,9 @@ export function buildRescheduleSubject(
           eventId: appointment.webinar?.id ?? undefined,
         };
       }
-      case "CLASS": {
-        const plan = appointment.class?.classPlan;
-        const classEvent = appointment.class;
+      case "COHORT": {
+        const plan = appointment.cohort?.cohortPlan;
+        const cohortEvent = appointment.cohort;
         return {
           consultantProfileId: plan?.consultantProfile?.id,
           consultantName: plan?.consultantProfile?.user?.name,
@@ -152,15 +152,15 @@ export function buildRescheduleSubject(
           typeLabel: "Class",
           sessionDurationInHours: plan?.sessionDurationInHours ?? undefined,
           eventType: "class",
-          eventId: classEvent?.id ?? undefined,
+          eventId: cohortEvent?.id ?? undefined,
           // Same clamp as SUBSCRIPTION; a class is the other recurring shape.
-          allowedStart: classEvent?.schedulingPeriodStartsAt
-            ? new Date(classEvent.schedulingPeriodStartsAt)
+          allowedStart: cohortEvent?.schedulingPeriodStartsAt
+            ? new Date(cohortEvent.schedulingPeriodStartsAt)
             : undefined,
-          allowedEnd: classEvent?.schedulingPeriodEndsAt
-            ? new Date(classEvent.schedulingPeriodEndsAt)
+          allowedEnd: cohortEvent?.schedulingPeriodEndsAt
+            ? new Date(cohortEvent.schedulingPeriodEndsAt)
             : undefined,
-          schedulingTimezone: classEvent?.schedulingTimezone,
+          schedulingTimezone: cohortEvent?.schedulingTimezone,
           sessionsPerWeek: plan?.sessionsPerWeek,
           totalSessions: plan?.totalSessions,
         };

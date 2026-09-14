@@ -62,8 +62,8 @@ function buildStoragePolicyFilter(
               },
             },
             {
-              class: {
-                classPlan: {
+              cohort: {
+                cohortPlan: {
                   recordingStoragePolicy: "PERMANENT" as const,
                 },
               },
@@ -487,8 +487,8 @@ export class RecordingTransferService {
                   },
                 },
                 {
-                  class: {
-                    classPlan: {
+                  cohort: {
+                    cohortPlan: {
                       recordingStoragePolicy: "STREAM_ONLY",
                     },
                   },
@@ -512,9 +512,9 @@ export class RecordingTransferService {
                         },
                       },
                     },
-                    class: {
+                    cohort: {
                       include: {
-                        classPlan: {
+                        cohortPlan: {
                           include: { consultantProfile: true },
                         },
                       },
@@ -532,7 +532,7 @@ export class RecordingTransferService {
       const apt = r.meeting.occurrence.appointment;
       const consultantUserId =
         apt.webinar?.webinarPlan?.consultantProfile?.userId ||
-        apt.class?.classPlan?.consultantProfile?.userId ||
+        apt.cohort?.cohortPlan?.consultantProfile?.userId ||
         "";
       return {
         recordingId: r.id,

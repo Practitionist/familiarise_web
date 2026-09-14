@@ -81,7 +81,7 @@ export function transformTopicsToStrings<
 }
 
 /**
- * Transform nested plan with topics (e.g., classPlan, webinarPlan)
+ * Transform nested plan with topics (e.g., cohortPlan, webinarPlan)
  * Use planKey as string to handle dynamic property access
  */
 export function transformNestedPlanTopics<T extends Record<string, unknown>>(

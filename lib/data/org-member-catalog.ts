@@ -53,11 +53,11 @@ export async function getOrgMemberCatalog(
   orgId: string,
 ): Promise<OrgCatalogEntry[]> {
   const where = memberVisibleWhere(orgId);
-  const [consultations, subscriptions, webinars, classes] = await Promise.all([
+  const [consultations, subscriptions, webinars, cohorts] = await Promise.all([
     prisma.consultationPlan.findMany({ where, select: CARD_SELECT }),
     prisma.subscriptionPlan.findMany({ where, select: CARD_SELECT }),
     prisma.webinarPlan.findMany({ where, select: CARD_SELECT }),
-    prisma.classPlan.findMany({ where, select: CARD_SELECT }),
+    prisma.cohortPlan.findMany({ where, select: CARD_SELECT }),
   ]);
 
   const tag = (
@@ -81,6 +81,6 @@ export async function getOrgMemberCatalog(
     ...tag(consultations, "CONSULTATION"),
     ...tag(subscriptions, "SUBSCRIPTION"),
     ...tag(webinars, "WEBINAR"),
-    ...tag(classes, "CLASS"),
+    ...tag(cohorts, "COHORT"),
   ].sort((a, b) => a.title.localeCompare(b.title));
 }

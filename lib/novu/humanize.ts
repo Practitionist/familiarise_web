@@ -228,7 +228,7 @@ const APPOINTMENT_TYPE_LABEL: Record<string, string> = {
   CONSULTATION: "consultation",
   SUBSCRIPTION: "subscription session",
   WEBINAR: "webinar",
-  CLASS: "class",
+  COHORT: "class",
   TRIAL: "trial session",
 };
 

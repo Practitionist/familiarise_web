@@ -72,7 +72,7 @@ const planTitleSchema = z
   .refine(profanityFreeRefinement, "Title contains inappropriate language");
 
 // Required at the validation edge even though the DB columns stay nullable
-// (ClassPlan's was relaxed so legacy rows survive); authoring always has a
+// (CohortPlan's was relaxed so legacy rows survive); authoring always has a
 // description.
 const requiredDescriptionSchema = z
   .string()
@@ -225,8 +225,8 @@ export const ConsultantProfileSchema = z.object({
 });
 
 // Curriculum / roadmap entries. Declared ahead of the plan schemas because both
-// SubscriptionPlanSchema and ClassPlanSchema embed them.
-export const ClassContentSchema = z.object({
+// SubscriptionPlanSchema and CohortPlanSchema embed them.
+export const CohortContentSchema = z.object({
   id: z.string().optional(),
   title: z
     .string()
@@ -280,12 +280,12 @@ export const ClassContentSchema = z.object({
   // Optional fields for Prisma compatibility
   createdAt: z.union([z.date(), z.string()]).optional(),
   updatedAt: z.union([z.date(), z.string()]).optional(),
-  classPlanId: z.string().optional(),
+  cohortPlanId: z.string().optional(),
 });
 
 // Subscription roadmap entries carry the same shape; only the owning FK differs.
-export const SubscriptionContentSchema = ClassContentSchema.omit({
-  classPlanId: true,
+export const SubscriptionContentSchema = CohortContentSchema.omit({
+  cohortPlanId: true,
 }).extend({
   subscriptionPlanId: z.string().optional(),
 });
@@ -433,7 +433,7 @@ export const WebinarPlanSchema = BaseEventPlanSchema.extend({
     }, "Start time must be at least 1 hour in the future"),
 });
 
-export const ClassPlanSchema = BaseEventPlanSchema.extend({
+export const CohortPlanSchema = BaseEventPlanSchema.extend({
   planType: z.literal("class"),
   // Bounds mirror SubscriptionPlanSchema. They were absent here, so a class
   // could be authored at 999 months × 500 sessions/week — and `totalSessions`
@@ -444,7 +444,7 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .max(24, "Duration cannot exceed 24 months"),
   // #1071 — planner CRUD now expands each session into N×30min atoms via
   // `getSlotsPerCall` (= ceil(hours/0.5)). WebinarPlan already refined to
-  // 30-minute steps; ClassPlan only had min/max, so a 0.75h class silently
+  // 30-minute steps; CohortPlan only had min/max, so a 0.75h class silently
   // became 2×30 = 60min on the consultant's calendar. Reject at the schema
   // rather than clamping the last atom (non-30 ends break allocator parity).
   sessionDurationInHours: z
@@ -463,12 +463,12 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
     .min(1, "At least one session per week is required")
     .max(7, "Cannot exceed 7 sessions per week"),
   emailSupport: z.enum(["GENERAL", "PRIORITY", "DEDICATED"]).default("GENERAL"),
-  classContents: z
-    .array(ClassContentSchema)
+  cohortContents: z
+    .array(CohortContentSchema)
     .min(1, "At least one class content item is required")
     .default([])
-    .refine((contents: z.infer<typeof ClassContentSchema>[]) => {
-      const titles = contents.map((c: z.infer<typeof ClassContentSchema>) =>
+    .refine((contents: z.infer<typeof CohortContentSchema>[]) => {
+      const titles = contents.map((c: z.infer<typeof CohortContentSchema>) =>
         c.title.trim().toLowerCase(),
       );
       return new Set(titles).size === titles.length;
@@ -485,7 +485,7 @@ export const ConsultantPlansSchema = z.object({
   consultationPlans: z.array(ConsultationPlanSchema),
   subscriptionPlans: z.array(SubscriptionPlanSchema),
   webinarPlans: z.array(WebinarPlanSchema),
-  classPlans: z.array(ClassPlanSchema),
+  cohortPlans: z.array(CohortPlanSchema),
 });
 
 export type Domain = z.infer<typeof DomainSchema>;
@@ -495,5 +495,5 @@ export type ConsultantProfile = z.infer<typeof ConsultantProfileSchema>;
 export type ConsultationPlan = z.infer<typeof ConsultationPlanSchema>;
 export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 export type WebinarPlan = z.infer<typeof WebinarPlanSchema>;
-export type ClassPlan = z.infer<typeof ClassPlanSchema>;
-export type ClassContent = z.infer<typeof ClassContentSchema>;
+export type CohortPlan = z.infer<typeof CohortPlanSchema>;
+export type CohortContent = z.infer<typeof CohortContentSchema>;

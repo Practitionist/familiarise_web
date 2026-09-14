@@ -84,7 +84,7 @@ export function buildWhere(
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
         { trial: { consultantProfile: { userId: uid } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
-        { class: { classPlan: { consultantProfile: { userId: uid } } } },
+        { cohort: { cohortPlan: { consultantProfile: { userId: uid } } } },
       ],
     };
   }
@@ -118,7 +118,7 @@ export function buildWhere(
         { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
         { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
-        { class: { classPlan: { consultantProfile: { userId: uid } } } },
+        { cohort: { cohortPlan: { consultantProfile: { userId: uid } } } },
       ],
     };
   }
@@ -240,9 +240,9 @@ export async function listAppointmentsScoped(
             },
           },
         },
-        class: {
+        cohort: {
           select: {
-            classPlan: {
+            cohortPlan: {
               select: {
                 title: true,
                 consultantProfile: {

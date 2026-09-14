@@ -43,8 +43,8 @@ export interface MeetingAppointment {
   webinar?: {
     webinarPlan?: { title?: string | null } | null;
   } | null;
-  class?: {
-    classPlan?: { title?: string | null } | null;
+  cohort?: {
+    cohortPlan?: { title?: string | null } | null;
   } | null;
 }
 

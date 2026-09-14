@@ -338,20 +338,20 @@ export async function createWebinarChannel(
 /**
  * Create a class channel with all participants
  *
- * @param classId — Class entity id
+ * @param cohortId — Class entity id
  * @param organizationId — Optional explicit org override. Falls back to
- *   `classPlan.organizationId` when omitted; `null` force-omits the tag.
+ *   `cohortPlan.organizationId` when omitted; `null` force-omits the tag.
  */
-export async function createClassChannel(
-  classId: string,
+export async function createCohortChannel(
+  cohortId: string,
   organizationId?: string | null,
 ) {
-  channelIdSchema.parse(classId);
+  channelIdSchema.parse(cohortId);
 
-  const classData = await prisma.class.findUnique({
-    where: { id: classId },
+  const cohortData = await prisma.cohort.findUnique({
+    where: { id: cohortId },
     include: {
-      classPlan: {
+      cohortPlan: {
         include: {
           consultantProfile: {
             include: { user: { select: { id: true } } },
@@ -369,22 +369,22 @@ export async function createClassChannel(
     },
   });
 
-  if (!classData) {
-    throw new Error(`Class not found: ${classId}`);
+  if (!cohortData) {
+    throw new Error(`Class not found: ${cohortId}`);
   }
 
-  const consultantUserId = classData.classPlan.consultantProfile?.user?.id;
+  const consultantUserId = cohortData.cohortPlan.consultantProfile?.user?.id;
   if (!consultantUserId) {
-    throw new Error(`Consultant not found for class: ${classId}`);
+    throw new Error(`Consultant not found for cohort: ${cohortId}`);
   }
 
   const appointmentIds =
-    classData.appointment?.participants.map((p) => p.userId) || [];
+    cohortData.appointment?.participants.map((p) => p.userId) || [];
 
   const allMembers = Array.from(new Set([consultantUserId, ...appointmentIds]));
 
   streamLogger.debug("Creating class channel", {
-    classId,
+    cohortId,
     appointmentCount: appointmentIds.length,
     totalUnique: allMembers.length,
   });
@@ -394,16 +394,16 @@ export async function createClassChannel(
 
   const resolvedOrgId =
     organizationId === undefined
-      ? (classData.classPlan.organizationId ?? null)
+      ? (cohortData.cohortPlan.organizationId ?? null)
       : organizationId;
 
   return createChannel({
     channelType: "team",
-    channelId: `class-${classId}`,
-    channelName: classData.classPlan.title,
+    channelId: `class-${cohortId}`,
+    channelName: cohortData.cohortPlan.title,
     members: allMembers,
     createdById: consultantUserId,
-    additionalData: { class_id: classId },
+    additionalData: { class_id: cohortId },
     organizationId: resolvedOrgId,
   });
 }
@@ -635,7 +635,7 @@ export async function createCollaboratorChannel(
       .map((c) => c.consultantProfile.user.id)
       .filter(Boolean);
   } else {
-    const plan = await prisma.classPlan.findUnique({
+    const plan = await prisma.cohortPlan.findUnique({
       where: { id: planId },
       include: {
         consultantProfile: {

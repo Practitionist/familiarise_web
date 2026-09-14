@@ -9,7 +9,7 @@
  */
 import {
   TWebinar,
-  TClass,
+  TCohort,
   TConsultation,
   TSubscription,
 } from "@/types/appointment";
@@ -37,7 +37,7 @@ export interface IPlanMaterial {
   consultationPlanId?: string | null;
   subscriptionPlanId?: string | null;
   webinarPlanId?: string | null;
-  classPlanId?: string | null;
+  cohortPlanId?: string | null;
   uploadedAt: Date;
   updatedAt?: Date;
 }
@@ -61,10 +61,10 @@ export type WebinarEvent = Omit<TWebinar, "webinarPlan"> & {
   };
 };
 
-export type ClassEvent = Omit<TClass, "classPlan"> & {
+export type CohortEvent = Omit<TCohort, "cohortPlan"> & {
   type: "class";
   // price is number at runtime via the extended client (#780)
-  classPlan: Omit<TClass["classPlan"], "topics" | "price"> & {
+  cohortPlan: Omit<TCohort["cohortPlan"], "topics" | "price"> & {
     topics: string[];
     price: number;
     faqs?: PlanFaqInput[];
@@ -128,7 +128,7 @@ export type PlannerWebinarEvent = WebinarEvent & {
   isCollaborated: boolean;
 };
 
-export type PlannerClassEvent = ClassEvent & {
+export type PlannerCohortEvent = CohortEvent & {
   collaboratorRole: string;
   isCollaborated: boolean;
 };
@@ -136,7 +136,7 @@ export type PlannerClassEvent = ClassEvent & {
 // Update base Event type to be a union
 export type Event =
   | WebinarEvent
-  | ClassEvent
+  | CohortEvent
   | ConsultationPlanEvent
   | SubscriptionPlanEvent;
 
@@ -148,7 +148,7 @@ export type EventPlannerProps = {
   onSave?: (
     event:
       | Partial<WebinarEvent>
-      | Partial<ClassEvent>
+      | Partial<CohortEvent>
       | Partial<ConsultationPlanEvent>
       | Partial<SubscriptionPlanEvent>,
   ) => void;
@@ -177,7 +177,7 @@ export type FormData = {
   emailSupport?: PlanEmailSupport;
   certificateProvided?: boolean;
   recordingEnabled?: boolean;
-  classContents?: ClassContentInput[];
+  cohortContents?: CohortContentInput[];
   scheduledAt?: string | Date | null;
   priceCurrency?: string;
 } & (
@@ -189,7 +189,7 @@ export type FormData = {
       sessionsPerWeek: number;
       emailSupport: "GENERAL" | "PRIORITY" | "DEDICATED";
       certificateProvided: boolean;
-      classContents: ClassContentInput[];
+      cohortContents: CohortContentInput[];
     }
 );
 
@@ -225,9 +225,9 @@ export interface WebinarPlannerProps extends BasePlannerProps {
   onSave: (data: Partial<WebinarEvent>, scheduledAt?: string | Date) => void;
 }
 
-export interface ClassPlannerProps extends BasePlannerProps {
-  initialData?: ClassEvent;
-  onSave: (data: Partial<ClassEvent>, startDate?: string) => void;
+export interface CohortPlannerProps extends BasePlannerProps {
+  initialData?: CohortEvent;
+  onSave: (data: Partial<CohortEvent>, startDate?: string) => void;
 }
 
 export interface ConsultationPlannerProps extends BasePlannerProps {
@@ -256,9 +256,9 @@ type CurriculumItemInputBase = {
   updatedAt?: string | Date;
 };
 
-// Define input type for ClassContent based on usage
-export type ClassContentInput = CurriculumItemInputBase & {
-  classPlanId?: string;
+// Define input type for CohortContent based on usage
+export type CohortContentInput = CurriculumItemInputBase & {
+  cohortPlanId?: string;
 };
 
 // Define input type for SubscriptionContent (session roadmap)
@@ -290,9 +290,9 @@ export type WebinarFormInput = {
   };
 };
 
-export type ClassFormInput = {
+export type CohortFormInput = {
   id?: string;
-  classPlan: {
+  cohortPlan: {
     id?: string;
     title: string;
     description?: string | null;
@@ -310,7 +310,7 @@ export type ClassFormInput = {
     materialProvided?: string | null;
     learningOutcomes: string[];
     topics: string[];
-    classContents: ClassContentInput[];
+    cohortContents: CohortContentInput[];
     consultantProfileId: string;
   };
 };

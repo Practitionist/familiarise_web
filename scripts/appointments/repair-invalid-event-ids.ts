@@ -79,8 +79,8 @@ async function collectInvalid(): Promise<Row[]> {
     }
   }
 
-  const classes = await prisma.class.findMany({ select: { id: true } });
-  for (const row of classes) {
+  const cohorts = await prisma.cohort.findMany({ select: { id: true } });
+  for (const row of cohorts) {
     if (!isEventIdFormat(row.id)) {
       bad.push({ id: row.id, label: "Class" });
     }
@@ -157,7 +157,7 @@ async function main() {
       } else if (row.label === "Webinar") {
         await prisma.webinar.delete({ where: { id: row.id } });
       } else if (row.label === "Class") {
-        await prisma.class.delete({ where: { id: row.id } });
+        await prisma.cohort.delete({ where: { id: row.id } });
       }
       deleted += 1;
       console.log(`Deleted ${row.label} ${row.id}`);

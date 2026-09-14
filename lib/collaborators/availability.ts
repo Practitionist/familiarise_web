@@ -34,7 +34,7 @@ function commitmentClauses(
     { consultation: { consultationPlan: { consultantProfileId } } },
     { subscription: { subscriptionPlan: { consultantProfileId } } },
     { webinar: { webinarPlan: { consultantProfileId } } },
-    { class: { classPlan: { consultantProfileId } } },
+    { cohort: { cohortPlan: { consultantProfileId } } },
     {
       webinar: {
         webinarPlan: {
@@ -43,8 +43,8 @@ function commitmentClauses(
       },
     },
     {
-      class: {
-        classPlan: {
+      cohort: {
+        cohortPlan: {
           collaborators: { some: { consultantProfileId, status: "ACCEPTED" } },
         },
       },
@@ -87,14 +87,14 @@ function mergeWindows(windows: CollaboratorWindow[]): CollaboratorWindow[] {
  * inside the scheduling transaction so the read is consistent with the slot
  * write that follows.
  *
- * The multi-window form exists for CLASS, whose "time commit" is N sessions at
+ * The multi-window form exists for COHORT, whose "time commit" is N sessions at
  * once; checking them one call at a time would be N round-trips on the common
  * no-conflict path.
  */
 export async function assertCollaboratorsAvailableForWindows(
   db: Tx | typeof prisma,
   params: {
-    planType: "WEBINAR" | "CLASS";
+    planType: "WEBINAR" | "COHORT";
     planId: string;
     windows: CollaboratorWindow[];
     /** The event's own appointments, excluded so its slots don't self-conflict. */
@@ -112,7 +112,7 @@ export async function assertCollaboratorsAvailableForWindows(
       status: "ACCEPTED",
       ...(planType === "WEBINAR"
         ? { webinarPlanId: planId }
-        : { classPlanId: planId }),
+        : { cohortPlanId: planId }),
     },
     select: {
       consultantProfileId: true,
@@ -191,7 +191,7 @@ export async function assertCollaboratorsAvailableForWindows(
 export async function assertCollaboratorsAvailable(
   db: Tx | typeof prisma,
   params: {
-    planType: "WEBINAR" | "CLASS";
+    planType: "WEBINAR" | "COHORT";
     planId: string;
     startsAt: Date;
     endsAt: Date;

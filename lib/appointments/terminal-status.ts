@@ -1,4 +1,4 @@
-import { AppointmentStatus, ClassStatus, WebinarStatus } from "@prisma/client";
+import { AppointmentStatus, CohortStatus, WebinarStatus } from "@prisma/client";
 
 /**
  * DOC-1 (#694) — an appointment is "terminal" for document visibility once the
@@ -23,7 +23,7 @@ export interface TerminalCheckAppointment {
   consultation?: { status: AppointmentStatus } | null;
   subscription?: { status: AppointmentStatus } | null;
   webinar?: { status: WebinarStatus } | null;
-  class?: { status: ClassStatus } | null;
+  cohort?: { status: CohortStatus } | null;
 }
 
 export function isBookingTerminal(
@@ -38,8 +38,8 @@ export function isBookingTerminal(
   if (appointment.webinar) {
     return appointment.webinar.status === WebinarStatus.CANCELLED;
   }
-  if (appointment.class) {
-    return appointment.class.status === ClassStatus.CANCELLED;
+  if (appointment.cohort) {
+    return appointment.cohort.status === CohortStatus.CANCELLED;
   }
   return false;
 }

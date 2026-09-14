@@ -62,7 +62,7 @@ import {
   isUserEnrolled,
   isUserRegisteredForWebinar,
 } from "@/lib/payments/utils/participants";
-import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
+import { getCohortCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 import {
@@ -303,7 +303,7 @@ export async function findReusablePendingOrderPayment(
   db: Pick<typeof prisma, "payment">,
   params: {
     userId: string;
-    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+    appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "COHORT";
     planId: string;
     eventId?: string;
     organizationId: string | null;
@@ -343,8 +343,8 @@ export async function findReusablePendingOrderPayment(
     case "WEBINAR":
       planScope = params.eventId ? { webinarId: params.eventId } : null;
       break;
-    case "CLASS":
-      planScope = params.eventId ? { classId: params.eventId } : null;
+    case "COHORT":
+      planScope = params.eventId ? { cohortId: params.eventId } : null;
       break;
     default:
       planScope = null;
@@ -493,14 +493,14 @@ async function releaseSupersededHolds(params: {
       select: {
         id: true,
         webinarId: true,
-        classId: true,
+        cohortId: true,
         consultation: { select: { id: true } },
         subscription: { select: { id: true } },
       },
     });
 
     for (const appointment of appointments) {
-      if (appointment.webinarId || appointment.classId) continue;
+      if (appointment.webinarId || appointment.cohortId) continue;
 
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
@@ -872,14 +872,14 @@ export async function calculateAmountAndValidate(
         break;
       }
 
-      case "CLASS": {
+      case "COHORT": {
         if (!validatedData.eventId) {
           throw new Error("Event ID is required for class");
         }
-        const classInstance = await tx.class.findUnique({
+        const cohortInstance = await tx.cohort.findUnique({
           where: { id: validatedData.eventId },
           include: {
-            classPlan: {
+            cohortPlan: {
               include: { consultantProfile: true },
             },
             appointment: {
@@ -894,11 +894,11 @@ export async function calculateAmountAndValidate(
           },
         });
 
-        if (!classInstance) {
+        if (!cohortInstance) {
           throw new Error("Class not found");
         }
 
-        plan = classInstance.classPlan;
+        plan = cohortInstance.cohortPlan;
 
         // #781 §B — soft-deleted expert is not bookable
         if (plan.consultantProfile?.deletedAt) {
@@ -907,14 +907,16 @@ export async function calculateAmountAndValidate(
 
         assertPlanPurchasable(plan, "This class");
 
-        const classConsultantUserId = plan.consultantProfile?.userId;
-        const classCapacity = getClassCapacity({
-          classInstance,
-          plan: classInstance.classPlan,
-          excludeUserIds: classConsultantUserId ? [classConsultantUserId] : [],
+        const cohortConsultantUserId = plan.consultantProfile?.userId;
+        const cohortCapacity = getCohortCapacity({
+          cohortInstance,
+          plan: cohortInstance.cohortPlan,
+          excludeUserIds: cohortConsultantUserId
+            ? [cohortConsultantUserId]
+            : [],
         });
 
-        if (classCapacity.isFull) {
+        if (cohortCapacity.isFull) {
           throw new Error("Class is full");
         }
 
@@ -1522,12 +1524,12 @@ async function getPlanDataForLock(
     return plan;
   }
 
-  // For WEBINAR/CLASS, we don't need consultant ID (event-based locking)
+  // For WEBINAR/COHORT, we don't need consultant ID (event-based locking)
   return {};
 }
 
 /**
- * B4 — OPTIMISTIC capacity read for WEBINAR/CLASS, run BEFORE the event
+ * B4 — OPTIMISTIC capacity read for WEBINAR/COHORT, run BEFORE the event
  * checkout mutex. Mirrors the in-lock recount's query shape exactly (same
  * includes, same capacity helpers, same host-exclusion rule) so the two can
  * only disagree inside the near-capacity race window that Serializable
@@ -1536,7 +1538,7 @@ async function getPlanDataForLock(
  * recount still decide.
  */
 async function readEventCapacity(
-  appointmentType: "WEBINAR" | "CLASS",
+  appointmentType: "WEBINAR" | "COHORT",
   eventId: string,
 ): Promise<{ isFull: boolean }> {
   if (appointmentType === "WEBINAR") {
@@ -1563,10 +1565,10 @@ async function readEventCapacity(
     });
   }
 
-  const classInstance = await prisma.class.findUnique({
+  const cohortInstance = await prisma.cohort.findUnique({
     where: { id: eventId },
     include: {
-      classPlan: { include: { consultantProfile: true } },
+      cohortPlan: { include: { consultantProfile: true } },
       appointment: {
         include: {
           participants: {
@@ -1577,11 +1579,11 @@ async function readEventCapacity(
       },
     },
   });
-  if (!classInstance) return { isFull: false };
-  const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
-  return getClassCapacity({
-    classInstance,
-    plan: classInstance.classPlan,
+  if (!cohortInstance) return { isFull: false };
+  const ownerUserId = cohortInstance.cohortPlan.consultantProfile?.userId;
+  return getCohortCapacity({
+    cohortInstance,
+    plan: cohortInstance.cohortPlan,
     excludeUserIds: ownerUserId ? [ownerUserId] : [],
   });
 }
@@ -1607,7 +1609,7 @@ async function acquireCheckoutLock(
     ) {
       consultantProfileId = planData.consultantProfile!.id;
     } else {
-      // For WEBINAR/CLASS with slots (shouldn't happen but handle gracefully)
+      // For WEBINAR/COHORT with slots (shouldn't happen but handle gracefully)
       throw new Error(
         "Invalid checkout configuration: slot-based checkout for event type",
       );
@@ -1635,8 +1637,8 @@ async function acquireCheckoutLock(
     );
   }
 
-  // Strategy B: Event-based locking (WEBINAR, CLASS, scheduling-period SUBSCRIPTION)
-  if (appointmentType === "WEBINAR" || appointmentType === "CLASS") {
+  // Strategy B: Event-based locking (WEBINAR, COHORT, scheduling-period SUBSCRIPTION)
+  if (appointmentType === "WEBINAR" || appointmentType === "COHORT") {
     if (!data.eventId) {
       throw new Error(`${appointmentType} checkout requires event ID`);
     }
@@ -1776,8 +1778,8 @@ async function verifyPlanExistsInsideLock(
         select: { ...select, collaborators },
       });
       break;
-    case "CLASS":
-      plan = await tx.classPlan.findUnique({
+    case "COHORT":
+      plan = await tx.cohortPlan.findUnique({
         where: { id: planId },
         select: { ...select, collaborators },
       });
@@ -1807,7 +1809,7 @@ interface OrgFundingContext {
   organizationId: string;
   callerMembershipId: string;
   programAssignmentId: string | null;
-  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "CLASS";
+  appointmentType: "CONSULTATION" | "SUBSCRIPTION" | "WEBINAR" | "COHORT";
 }
 
 async function revalidateInsideLock(
@@ -2202,13 +2204,13 @@ async function revalidateInsideLock(
         break;
       }
 
-      case "CLASS": {
+      case "COHORT": {
         if (!data.eventId) throw new Error("Event ID is required for class");
 
-        const classInstance = await tx.class.findUnique({
+        const cohortInstance = await tx.cohort.findUnique({
           where: { id: data.eventId },
           include: {
-            classPlan: {
+            cohortPlan: {
               include: { consultantProfile: true },
             },
             appointment: {
@@ -2223,12 +2225,12 @@ async function revalidateInsideLock(
           },
         });
 
-        if (!classInstance) throw new Error("Class not found");
+        if (!cohortInstance) throw new Error("Class not found");
 
-        const ownerUserId = classInstance.classPlan.consultantProfile?.userId;
-        const capacity = getClassCapacity({
-          classInstance,
-          plan: classInstance.classPlan,
+        const ownerUserId = cohortInstance.cohortPlan.consultantProfile?.userId;
+        const capacity = getCohortCapacity({
+          cohortInstance,
+          plan: cohortInstance.cohortPlan,
           excludeUserIds: ownerUserId ? [ownerUserId] : [],
         });
 
@@ -2653,16 +2655,16 @@ export async function handleWebinarCheckout(
   return { appointment, plan, amount: plan.price };
 }
 
-export async function handleClassCheckout(
+export async function handleCohortCheckout(
   tx: Tx,
   data: CheckoutInput,
   userId: string,
   _skipPayment: boolean,
 ) {
-  const classInstance = await tx.class.findUnique({
+  const cohortInstance = await tx.cohort.findUnique({
     where: { id: data.eventId },
     include: {
-      classPlan: {
+      cohortPlan: {
         include: { consultantProfile: true },
       },
       appointment: {
@@ -2686,18 +2688,18 @@ export async function handleClassCheckout(
     },
   });
 
-  if (!classInstance) {
+  if (!cohortInstance) {
     throw new Error("Class not found");
   }
 
-  const plan = classInstance.classPlan;
+  const plan = cohortInstance.cohortPlan;
   const consultantUserId = plan.consultantProfile?.userId;
   // #1554 — one wrapper per class; its live occurrences are the sessions.
-  const wrapper = classInstance.appointment;
+  const wrapper = cohortInstance.appointment;
   const sessions = wrapper?.occurrences ?? [];
 
-  const capacity = getClassCapacity({
-    classInstance,
+  const capacity = getCohortCapacity({
+    cohortInstance,
     plan,
     excludeUserIds: consultantUserId ? [consultantUserId] : [],
   });
@@ -2723,7 +2725,7 @@ export async function handleClassCheckout(
   // B11 — a partially-scheduled class (consultant hasn't allocated every
   // session yet) must not accept paid enrollments: the seat below covers
   // only EXISTING sessions, silently shorting the buyer the rest.
-  const expectedSessions = classInstance.classPlan?.totalSessions;
+  const expectedSessions = cohortInstance.cohortPlan?.totalSessions;
   if (
     typeof expectedSessions === "number" &&
     expectedSessions > 0 &&
@@ -2881,7 +2883,7 @@ export async function handleCheckout(
     | "CONSULTATION"
     | "SUBSCRIPTION"
     | "WEBINAR"
-    | "CLASS";
+    | "COHORT";
 
   let organizationId: string | null = null;
   let billingAccountId: string | null = null;
@@ -3500,15 +3502,15 @@ export async function handleCheckout(
             // Engagement count for enterprise cap (issue #710). One
             // engagement = one Appointment row = one calendar occurrence.
             //   - CONSULTATION/WEBINAR: 1 (single Appointment created here)
-            //   - CLASS: N (count of appointments the learner enrolled in,
+            //   - COHORT: N (count of appointments the learner enrolled in,
             //     all known at checkout because consultant pre-allocated)
             //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
             //     checkout. Slots are allocated lazily by the consultant;
             //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
-            // #1554 — CLASS meters its occurrence ids, not the one wrapper.
-            let classEngagementIds: string[] = [];
+            // #1554 — COHORT meters its occurrence ids, not the one wrapper.
+            let cohortEngagementIds: string[] = [];
 
             // FIX #520: Zero-amount payments (credits cover full cost) skip the
             // gateway, so slots should be confirmed immediately just like mock payments.
@@ -3571,17 +3573,17 @@ export async function handleCheckout(
                 break;
               }
 
-              case "CLASS": {
-                const classResult = await handleClassCheckout(
+              case "COHORT": {
+                const cohortResult = await handleCohortCheckout(
                   tx,
                   validatedData,
                   userId,
                   skipPayment,
                 );
                 // #1554 — one wrapper per class carries the payment linkage.
-                createdAppointment = classResult.appointment || null;
-                engagementsForCap = classResult.engagementsConsumed;
-                classEngagementIds = classResult.engagementIds;
+                createdAppointment = cohortResult.appointment || null;
+                engagementsForCap = cohortResult.engagementsConsumed;
+                cohortEngagementIds = cohortResult.engagementIds;
                 break;
               }
 
@@ -3662,14 +3664,14 @@ export async function handleCheckout(
             // confirm them here since no capture webhook ever will.
             if (createdAppointment) {
               const participantWhere =
-                validatedData.appointmentType === "CLASS" &&
+                validatedData.appointmentType === "COHORT" &&
                 validatedData.eventId
-                  ? { appointment: { classId: validatedData.eventId }, userId }
+                  ? { appointment: { cohortId: validatedData.eventId }, userId }
                   : validatedData.appointmentType === "WEBINAR"
                     ? { appointmentId: createdAppointment.id, userId }
                     : { appointmentId: createdAppointment.id };
               if (
-                validatedData.appointmentType === "CLASS" &&
+                validatedData.appointmentType === "COHORT" &&
                 validatedData.eventId
               ) {
                 // Cross-appointment scope (every session of the class); the
@@ -3777,11 +3779,11 @@ export async function handleCheckout(
                   // replay against the same Payment (retried webhook, resumed
                   // order) incremented the meter a second time.
                   // CONSULTATION/WEBINAR are one engagement on the appointment
-                  // just created; CLASS meters one per class session, which is
-                  // exactly the occurrence set handleClassCheckout counted.
+                  // just created; COHORT meters one per class session, which is
+                  // exactly the occurrence set handleCohortCheckout counted.
                   appointmentIds:
-                    validatedData.appointmentType === "CLASS"
-                      ? classEngagementIds
+                    validatedData.appointmentType === "COHORT"
+                      ? cohortEngagementIds
                       : createdAppointment
                         ? [createdAppointment.id]
                         : [],

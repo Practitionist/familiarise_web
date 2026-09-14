@@ -547,7 +547,7 @@ async function reverseFreeCreditSettlement(
 /**
  * In-ledger reversal of an org-funded booking payment.
  *
- * Mirrors the shape `reverseClassMulti` uses per child — mint the Refund row,
+ * Mirrors the shape `reverseCohortMulti` uses per child — mint the Refund row,
  * run the proven cascade against it, flip it SUCCEEDED — inside one
  * Serializable transaction, which is what `applyRefundCascade` requires for
  * race-safety. There is no gateway leg to wait on, so unlike `refundPayment`

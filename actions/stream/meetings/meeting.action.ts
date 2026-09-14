@@ -117,9 +117,9 @@ const appointmentAccessSelect = (userId: string) =>
         },
       },
     },
-    class: {
+    cohort: {
       select: {
-        classPlan: {
+        cohortPlan: {
           select: {
             title: true,
             consultantProfile: ownerProfileSelect,
@@ -309,7 +309,7 @@ export async function resolveSessionCallProfile(
     // fetched at all. `appointmentType` is already in hand from the gate.
     const isGroupEvent =
       appointment.appointmentType === "WEBINAR" ||
-      appointment.appointmentType === "CLASS";
+      appointment.appointmentType === "COHORT";
     // #1554 — the occurrence IS the session: a cancelled, rescheduled or
     // soft-deleted row describes no call.
     if (isDeadOccurrence(anchor)) return null;
@@ -334,11 +334,11 @@ export async function resolveSessionCallProfile(
     remember(appointment.consultation?.consultationPlan?.consultantProfile);
     remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
     remember(appointment.webinar?.webinarPlan?.consultantProfile);
-    remember(appointment.class?.classPlan?.consultantProfile);
+    remember(appointment.cohort?.cohortPlan?.consultantProfile);
     remember(appointment.trial?.subscriptionPlan?.consultantProfile);
     for (const collaborator of [
       ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
-      ...(appointment.class?.classPlan?.collaborators ?? []),
+      ...(appointment.cohort?.cohortPlan?.collaborators ?? []),
     ]) {
       remember(collaborator.consultantProfile);
     }
@@ -353,7 +353,7 @@ export async function resolveSessionCallProfile(
     const presenterProfileIds = new Set(
       [
         ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
-        ...(appointment.class?.classPlan?.collaborators ?? []),
+        ...(appointment.cohort?.cohortPlan?.collaborators ?? []),
       ]
         .filter((collaborator) => isPresenterRole(collaborator.role))
         .map((collaborator) => collaborator.consultantProfile?.id),
@@ -362,7 +362,7 @@ export async function resolveSessionCallProfile(
       appointment.consultation?.consultationPlan?.consultantProfile?.id ??
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ??
       appointment.webinar?.webinarPlan?.consultantProfile?.id ??
-      appointment.class?.classPlan?.consultantProfile?.id ??
+      appointment.cohort?.cohortPlan?.consultantProfile?.id ??
       appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
       null;
     const hostControlUserIds = [
@@ -395,7 +395,7 @@ export async function resolveSessionCallProfile(
       appointment.consultation?.consultationPlan?.title ??
       appointment.subscription?.subscriptionPlan?.title ??
       appointment.webinar?.webinarPlan?.title ??
-      appointment.class?.classPlan?.title ??
+      appointment.cohort?.cohortPlan?.title ??
       appointment.trial?.subscriptionPlan?.title ??
       null;
 
@@ -577,7 +577,7 @@ async function refuseMeetingCreation(
           consultation: { select: { status: true } },
           subscription: { select: { status: true } },
           webinar: { select: { status: true } },
-          class: { select: { status: true } },
+          cohort: { select: { status: true } },
           trial: { select: { status: true } },
         },
       },
@@ -608,7 +608,7 @@ async function refuseMeetingCreation(
     appt.consultation?.status ??
     appt.subscription?.status ??
     appt.webinar?.status ??
-    appt.class?.status ??
+    appt.cohort?.status ??
     (appt.trial?.status === "CANCELLED" || appt.trial?.status === "REJECTED"
       ? "CANCELLED"
       : null);
@@ -857,7 +857,7 @@ function describeCall(
       description: `Webinar Session for ${offeringTitle}`,
     };
   }
-  if (appointmentType === "CLASS" && offeringTitle) {
+  if (appointmentType === "COHORT" && offeringTitle) {
     return {
       title: `Class: ${offeringTitle}`,
       description: `Class Session for ${offeringTitle}`,

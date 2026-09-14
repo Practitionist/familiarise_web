@@ -137,14 +137,14 @@ export function bookingOrgId(booking: {
   // classes is how the org tag came to disagree between the creator, approval
   // and the reconciler in the first place.
   webinarPlan?: { organizationId: string | null } | null;
-  classPlan?: { organizationId: string | null } | null;
+  cohortPlan?: { organizationId: string | null } | null;
   appointment?: { organizationId: string | null } | null;
 }): string | null {
   return (
     booking.consultationPlan?.organizationId ??
     booking.subscriptionPlan?.organizationId ??
     booking.webinarPlan?.organizationId ??
-    booking.classPlan?.organizationId ??
+    booking.cohortPlan?.organizationId ??
     booking.appointment?.organizationId ??
     null
   );

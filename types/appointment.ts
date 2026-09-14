@@ -93,9 +93,9 @@ export type TWebinar = Prisma.WebinarGetPayload<{
 }>;
 
 // Custom type for Class with specific nesting depth
-export type TClass = Prisma.ClassGetPayload<{
+export type TCohort = Prisma.CohortGetPayload<{
   include: {
-    classPlan: {
+    cohortPlan: {
       include: {
         consultantProfile: {
           include: {
@@ -104,7 +104,7 @@ export type TClass = Prisma.ClassGetPayload<{
         };
         topics: true;
 
-        classContents: {
+        cohortContents: {
           orderBy: {
             order: "asc";
           };
@@ -183,9 +183,9 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
         };
       };
     };
-    class: {
+    cohort: {
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {

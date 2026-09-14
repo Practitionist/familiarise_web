@@ -12,12 +12,14 @@
 export const MAX_SUBSCRIPTION_SESSIONS_PER_DAY = 1;
 
 /** A class may run at most two sessions in one day. */
-export const MAX_CLASS_SESSIONS_PER_DAY = 2;
+export const MAX_COHORT_SESSIONS_PER_DAY = 2;
 
 /** The per-day cap that applies to an event type. Consultations and webinars
  * are single-session events and never reach a per-day-cap check. */
-export function maxSessionsPerDayFor(eventType: "subscription" | "class"): number {
+export function maxSessionsPerDayFor(
+  eventType: "subscription" | "class",
+): number {
   return eventType === "class"
-    ? MAX_CLASS_SESSIONS_PER_DAY
+    ? MAX_COHORT_SESSIONS_PER_DAY
     : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 }

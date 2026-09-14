@@ -365,7 +365,7 @@ export class ScheduleCalculationService {
    * For different event types:
    * - CONSULTATIONS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
    * - WEBINARS: Returns slots needed for the session duration (e.g., 2 slots for 1 hour)
-   * - CLASSES: Returns total slots for all sessions (weeks × calls/week × slots/session)
+   * - COHORTS: Returns total slots for all sessions (weeks × calls/week × slots/session)
    * - SUBSCRIPTIONS: Computes weeks → calls → slots (based on 30-min increments)
    */
   static calculateRequiredSlots(

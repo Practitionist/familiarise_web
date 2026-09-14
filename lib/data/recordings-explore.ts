@@ -55,9 +55,9 @@ const recordingListingSelect = {
                   },
                 },
               },
-              class: {
+              cohort: {
                 select: {
-                  classPlan: {
+                  cohortPlan: {
                     select: {
                       id: true,
                       title: true,
@@ -101,7 +101,7 @@ export interface RecordingListing {
   durationInMinutes: number;
   recordedAt: Date;
   publishedAt: Date | null;
-  planType: "WEBINAR" | "CLASS";
+  planType: "WEBINAR" | "COHORT";
   planId: string;
   planTitle: string;
   consultant: {
@@ -115,8 +115,8 @@ export interface RecordingListing {
 function flattenListing(row: ListingRow): RecordingListing | null {
   const apt = row.meeting.occurrence.appointment;
   const webinarArm = apt.webinar?.webinarPlan;
-  const classArm = apt.class?.classPlan;
-  const plan = webinarArm ?? classArm;
+  const cohortArm = apt.cohort?.cohortPlan;
+  const plan = webinarArm ?? cohortArm;
   if (!row.listingTitle || row.listPricePaise === null) return null;
   const consultantProfile = plan?.consultantProfile;
   if (!consultantProfile) return null;
@@ -136,7 +136,7 @@ function flattenListing(row: ListingRow): RecordingListing | null {
     durationInMinutes: row.durationInMinutes,
     recordedAt: row.recordedAt,
     publishedAt: row.publishedAt,
-    planType: webinarArm ? "WEBINAR" : "CLASS",
+    planType: webinarArm ? "WEBINAR" : "COHORT",
     planId: plan.id,
     planTitle: plan.title,
     consultant: {
@@ -163,7 +163,7 @@ export function publicRecordingWhere(): Prisma.RecordingWhereInput {
         appointment: {
           OR: [
             { webinar: { webinarPlan: eventPlanDiscoverableWhere() } },
-            { class: { classPlan: eventPlanDiscoverableWhere() } },
+            { cohort: { cohortPlan: eventPlanDiscoverableWhere() } },
           ],
         },
       },

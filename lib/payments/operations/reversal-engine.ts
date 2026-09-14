@@ -5,7 +5,7 @@ import type { Tx } from "@/lib/prisma";
  *
  * Pre-MVP, "undo money" was a per-path cascade: `refund.ts` reversed a single
  * booking payment, overage/payout-clawback/invoice-void each had bespoke logic,
- * and multi-booking (CLASS) refunds — which have no single `paymentId` — were
+ * and multi-booking (COHORT) refunds — which have no single `paymentId` — were
  * skipped entirely, drifting cap counts and the ledger. This module is the one
  * front door every reversal flows through:
  *
@@ -18,15 +18,15 @@ import type { Tx } from "@/lib/prisma";
  *
  * The deep booking cascade still lives in `refund.ts` (`applyRefundCascade`) —
  * it's proven and heavily tested; this engine DISPATCHES to it rather than
- * re-implementing it. New capability here: CLASS_MULTI (fan a single logical
- * refund across the child payments of a consolidated CLASS purchase).
+ * re-implementing it. New capability here: COHORT_MULTI (fan a single logical
+ * refund across the child payments of a consolidated COHORT purchase).
  *
  * Production callers (#776 §C):
- *   - CLASS_MULTI       — `refundWholeEventPayments` (lib/payments/operations/
+ *   - COHORT_MULTI       — `refundWholeEventPayments` (lib/payments/operations/
  *                         event-refunds.ts), for the INTERNAL (org-funded) seats
  *                         of a cancelled class/webinar. Gateway/card seats do NOT
  *                         come here — they credit the card via `refundPayment`,
- *                         which this engine never calls (reverseClassMulti marks
+ *                         which this engine never calls (reverseCohortMulti marks
  *                         its child refunds SUCCEEDED with no gateway leg).
  *   - PAYOUT_CLAWBACK   — the dispute-lost branch of handleDisputeUpdated.
  *   - BOOKING / OVERAGE — single-payment reversals still flow through
@@ -48,12 +48,12 @@ type ReversalSource =
   | { kind: "OVERAGE"; overagePaymentId: string }
   // Gateway-side payout clawback (e.g. a lost dispute on an org-funded booking).
   | { kind: "PAYOUT_CLAWBACK"; orgPayoutId: string; organizationId: string }
-  // A consolidated CLASS purchase: many child payments, no single paymentId.
-  | { kind: "CLASS_MULTI"; paymentIds: string[] };
+  // A consolidated COHORT purchase: many child payments, no single paymentId.
+  | { kind: "COHORT_MULTI"; paymentIds: string[] };
 
 export interface ApplyReversalInput {
   source: ReversalSource;
-  /** Total paise to reverse. For CLASS_MULTI it's split across children. */
+  /** Total paise to reverse. For COHORT_MULTI it's split across children. */
   amountPaise: number;
   reason: string;
   /** Existing Refund row id when one drives this reversal; else null. */
@@ -65,7 +65,7 @@ export interface ApplyReversalResult {
   kind: ReversalSource["kind"];
   /** Per-cascade results (one per payment touched). */
   cascades: ApplyRefundCascadeResult[];
-  /** Child Refund row ids created by CLASS_MULTI (one per reversed child). */
+  /** Child Refund row ids created by COHORT_MULTI (one per reversed child). */
   childRefundIds: string[];
   /** True if a payout clawback ledger posting was made. */
   clawbackPosted: boolean;
@@ -113,14 +113,14 @@ export async function applyReversal(
       };
     }
 
-    case "CLASS_MULTI": {
-      const { cascades, childRefundIds } = await reverseClassMulti(
+    case "COHORT_MULTI": {
+      const { cascades, childRefundIds } = await reverseCohortMulti(
         tx,
         input,
         input.source.paymentIds,
       );
       return {
-        kind: "CLASS_MULTI",
+        kind: "COHORT_MULTI",
         cascades,
         childRefundIds,
         clawbackPosted: false,
@@ -153,13 +153,13 @@ export async function applyReversal(
 
 /**
  * Fan a single logical refund across the child payments of a consolidated
- * CLASS purchase. The caller resolves the group → `paymentIds`; we distribute
+ * COHORT purchase. The caller resolves the group → `paymentIds`; we distribute
  * `amountPaise` proportionally by each payment's own amount, create one Refund
  * row per child (so each carries its own gateway/ledger trail), and run the
  * proven cascade on each. Last child absorbs the rounding remainder so the
  * children sum exactly to `amountPaise`.
  */
-async function reverseClassMulti(
+async function reverseCohortMulti(
   tx: Tx,
   input: ApplyReversalInput,
   paymentIds: string[],
@@ -189,7 +189,7 @@ async function reverseClassMulti(
   // children already processed) — a clear upfront error is far easier to debug.
   if (input.amountPaise > totalAmount) {
     throw new Error(
-      `CLASS_MULTI reversal amount ${input.amountPaise} exceeds class total ${totalAmount}`,
+      `COHORT_MULTI reversal amount ${input.amountPaise} exceeds class total ${totalAmount}`,
     );
   }
 

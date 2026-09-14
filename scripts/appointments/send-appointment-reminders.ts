@@ -115,9 +115,9 @@ async function sendRemindersForWindow(window: {
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 select: {
                   title: true,
                   consultantProfile: {
@@ -208,19 +208,19 @@ async function sendRemindersForWindow(window: {
         userIds.push(
           ...(await planCollaborators("webinar", apt.webinar.webinarPlanId)),
         );
-      } else if (apt.class) {
+      } else if (apt.cohort) {
         appointmentType = "class";
-        planTitle = apt.class.classPlan?.title ?? "Class";
+        planTitle = apt.cohort.cohortPlan?.title ?? "Class";
         consultantName =
-          apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
+          apt.cohort.cohortPlan?.consultantProfile?.user?.name ?? "Consultant";
         // Same three parties as the webinar branch above.
         for (const seat of apt.participants) {
           userIds.push(seat.userId);
         }
-        const hostId = apt.class.classPlan?.consultantProfile?.userId;
+        const hostId = apt.cohort.cohortPlan?.consultantProfile?.userId;
         if (hostId) userIds.push(hostId);
         userIds.push(
-          ...(await planCollaborators("class", apt.class.classPlanId)),
+          ...(await planCollaborators("class", apt.cohort.cohortPlanId)),
         );
       }
 

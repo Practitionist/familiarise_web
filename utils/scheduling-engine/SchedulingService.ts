@@ -61,7 +61,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "./occupancyPolicy";
 import {
-  MAX_CLASS_SESSIONS_PER_DAY,
+  MAX_COHORT_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
 } from "./sessionCaps";
 import {
@@ -75,7 +75,7 @@ import { isExclusionViolation, isUniqueViolation } from "@/lib/db/pg-errors";
 import {
   ALLOCATION_APPROVABLE_FROM,
   EVENT_ALLOWED_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
+  COHORT_EVENT_ALLOWED_FROM,
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
   transitionRescheduleRequest,
@@ -450,10 +450,10 @@ export class SchedulingService {
         appointmentId: row.appointment.id,
       };
     } else {
-      const row = await prisma.class.findUnique({
+      const row = await prisma.cohort.findUnique({
         where: { id: eventId },
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               title: true,
               consultantProfile: {
@@ -481,7 +481,7 @@ export class SchedulingService {
       });
       if (!row?.appointment) return;
       const appts = [row.appointment];
-      const plan = row.classPlan;
+      const plan = row.cohortPlan;
       const hostUser = plan.consultantProfile?.user;
       if (!hostUser) return;
       const host = hostUser;
@@ -586,7 +586,7 @@ export class SchedulingService {
     if (!planId || slotStarts.length === 0) return;
 
     await assertCollaboratorsAvailableForWindows(tx, {
-      planType: eventType === "webinar" ? "WEBINAR" : "CLASS",
+      planType: eventType === "webinar" ? "WEBINAR" : "COHORT",
       planId,
       windows: slotStarts.map((startsAt) => ({
         startsAt,
@@ -701,11 +701,11 @@ export class SchedulingService {
         return event?.webinarPlan?.consultantProfileId ?? null;
       }
       case "class": {
-        const event = await prisma.class.findUnique({
+        const event = await prisma.cohort.findUnique({
           where: { id: eventId },
-          select: { classPlan: { select: { consultantProfileId: true } } },
+          select: { cohortPlan: { select: { consultantProfileId: true } } },
         });
-        return event?.classPlan?.consultantProfileId ?? null;
+        return event?.cohortPlan?.consultantProfileId ?? null;
       }
       default:
         return null;
@@ -715,7 +715,7 @@ export class SchedulingService {
   /**
    * #898 follow-up — resolve the single consultee's user id for the
    * consultee-booking lock key. Only CONSULTATION/SUBSCRIPTION have one booker;
-   * WEBINAR/CLASS are group events (many attendees) with no single consultee to
+   * WEBINAR/COHORT are group events (many attendees) with no single consultee to
    * serialize on, so they return null and skip the lock.
    */
   private static async getConsulteeUserId(
@@ -894,7 +894,7 @@ export class SchedulingService {
         consultationId: true,
         subscriptionId: true,
         webinarId: true,
-        classId: true,
+        cohortId: true,
       },
     });
     if (!stamped) return null;
@@ -956,11 +956,11 @@ export class SchedulingService {
             })
           )?.subscriptionPlan?.totalSessions
         : (
-            await prisma.class.findUnique({
+            await prisma.cohort.findUnique({
               where: { id: eventId },
-              select: { classPlan: { select: { totalSessions: true } } },
+              select: { cohortPlan: { select: { totalSessions: true } } },
             })
-          )?.classPlan?.totalSessions;
+          )?.cohortPlan?.totalSessions;
 
     if (!requiredSessions || requiredSessions <= 0) return {};
 
@@ -3177,7 +3177,7 @@ export class SchedulingService {
     const placedPerDay = new Map(existingSessionsPerDay);
     const maxPerDay =
       eventType === "class"
-        ? MAX_CLASS_SESSIONS_PER_DAY
+        ? MAX_COHORT_SESSIONS_PER_DAY
         : MAX_SUBSCRIPTION_SESSIONS_PER_DAY;
 
     /**
@@ -3542,8 +3542,8 @@ export class SchedulingService {
     config?: EventConfig,
     // #768 Comment 5 — slots created here inherit the org context
     // resolved by fetchEventData. SUBSCRIPTION pulls from the placeholder
-    // Appointment's Payment.organizationId; CLASS pulls from
-    // classPlan.organizationId (host wins per #768 design decision);
+    // Appointment's Payment.organizationId; COHORT pulls from
+    // cohortPlan.organizationId (host wins per #768 design decision);
     // CONSULTATION/WEBINAR re-read the existing Appointment's tag.
     organizationId?: string | null,
     // #898 — when set (a 1:1 consultation/webinar whose payment-bearing
@@ -3735,7 +3735,7 @@ export class SchedulingService {
     // Issue #710: per-allocation cap debit for SUBSCRIPTION.
     //
     // CONSULTATION/WEBINAR debit at checkout (1 engagement, slots known
-    // synchronously). CLASS debits at enrolment (N engagements, all
+    // synchronously). COHORT debits at enrolment (N engagements, all
     // occurrences pre-allocated by the consultant). SUBSCRIPTION is the
     // only event type with truly lazy allocation — the consultant adds calls
     // one-at-a-time via the Requests tab — so the cap debit must happen
@@ -4417,15 +4417,15 @@ export class SchedulingService {
 
         // Same DRAFT-keeps-its-status rule as WEBINAR above, and the same
         // resurrection guard.
-        const restamped = await tx.class.updateMany({
+        const restamped = await tx.cohort.updateMany({
           where: {
             id: eventId,
-            status: { in: CLASS_EVENT_ALLOWED_FROM.SCHEDULED },
+            status: { in: COHORT_EVENT_ALLOWED_FROM.SCHEDULED },
           },
           data: { status: "SCHEDULED", ...periodData },
         });
         if (restamped.count === 0) {
-          const current = await tx.class.findUnique({
+          const current = await tx.cohort.findUnique({
             where: { id: eventId },
             select: { status: true },
           });
@@ -4435,7 +4435,7 @@ export class SchedulingService {
           // A draft keeps DRAFT but still needs its scheduling period, or the
           // slots it just received sit outside a window that is never set.
           if (Object.keys(periodData).length > 0) {
-            await tx.class.updateMany({
+            await tx.cohort.updateMany({
               where: { id: eventId, status: "DRAFT" },
               data: periodData,
             });
@@ -4589,10 +4589,10 @@ export class SchedulingService {
       }
 
       case "class": {
-        const event = await db.class.findUnique({
+        const event = await db.cohort.findUnique({
           where: { id: eventId },
           include: {
-            classPlan: {
+            cohortPlan: {
               include: {
                 consultantProfile: consultantProfileSelect,
               },
@@ -4601,31 +4601,31 @@ export class SchedulingService {
           },
         });
         if (!event) return null;
-        consultantProfile = event.classPlan?.consultantProfile;
+        consultantProfile = event.cohortPlan?.consultantProfile;
         // The plan's sessionDurationInHours is the ONE source of truth for a
         // class session's slot count: crud-with-plan writes tentative slots at
         // this duration, /validate validates against it, and the client picks
-        // slots with it. The former avg(classContents.hoursAllotted)
+        // slots with it. The former avg(cohortContents.hoursAllotted)
         // derivation disagreed with all three whenever a curriculum item's
         // hours differed from the plan — validate passed while allocate
         // rejected, and createAppointments regrouped sessions to the wrong
         // length. Curriculum items describe content coverage, not the length
         // of the sessions that teach it.
-        const sessionDuration = event.classPlan?.sessionDurationInHours || 1;
+        const sessionDuration = event.cohortPlan?.sessionDurationInHours || 1;
 
         config = {
-          durationInMonths: event.classPlan?.durationInMonths,
-          sessionsPerWeek: event.classPlan?.sessionsPerWeek,
+          durationInMonths: event.cohortPlan?.durationInMonths,
+          sessionsPerWeek: event.cohortPlan?.sessionsPerWeek,
           sessionDurationInHours: sessionDuration,
-          totalSessions: event.classPlan?.totalSessions,
+          totalSessions: event.cohortPlan?.totalSessions,
           schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
           schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
-        // #768 — CLASS sessions inherit host-org from the plan; locked
+        // #768 — COHORT sessions inherit host-org from the plan; locked
         // even on reschedule. Marketplace classes stay null.
-        organizationId = event.classPlan?.organizationId ?? null;
-        planId = event.classPlanId ?? null;
+        organizationId = event.cohortPlan?.organizationId ?? null;
+        planId = event.cohortPlanId ?? null;
         break;
       }
     }
@@ -4670,15 +4670,16 @@ export class SchedulingService {
       consultation: AppointmentsType.CONSULTATION,
       subscription: AppointmentsType.SUBSCRIPTION,
       webinar: AppointmentsType.WEBINAR,
-      class: AppointmentsType.CLASS,
+      class: AppointmentsType.COHORT,
     };
     return map[eventType];
   }
 
   /**
-   * Get event relation field name for Prisma
+   * Get event relation field name for Prisma. The "class" event type keeps
+   * its lowercase name while the relation is `Appointment.cohort` (#1640).
    */
   private static getEventRelationField(eventType: EventType): string {
-    return eventType;
+    return eventType === "class" ? "cohort" : eventType;
   }
 }

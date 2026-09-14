@@ -14,7 +14,7 @@ interface LogActivityParams {
   consultationId?: string;
   subscriptionId?: string;
   webinarId?: string;
-  classId?: string;
+  cohortId?: string;
   trialId?: string;
 }
 
@@ -32,7 +32,7 @@ export async function logActivity({
   consultationId,
   subscriptionId,
   webinarId,
-  classId,
+  cohortId,
   trialId,
 }: LogActivityParams) {
   try {
@@ -48,7 +48,7 @@ export async function logActivity({
         consultationId,
         subscriptionId,
         webinarId,
-        classId,
+        cohortId,
         trialId,
       },
     });
@@ -212,21 +212,21 @@ export async function logWebinarRegistered(
 /**
  * Log class enrollment activity
  */
-export async function logClassEnrolled(
+export async function logCohortEnrolled(
   consultantProfileId: string,
-  classId: string,
+  cohortId: string,
   actor: ActivityActor,
-  classTitle: string,
+  cohortTitle: string,
 ) {
   return logActivity({
-    activityType: "CLASS_ENROLLED",
-    description: `${actor.name} enrolled in class: ${classTitle}`,
+    activityType: "COHORT_ENROLLED",
+    description: `${actor.name} enrolled in class: ${cohortTitle}`,
     actorId: actor.id,
     actorName: actor.name,
     actorImage: actor.image,
     consultantProfileId,
-    classId,
-    metadata: { classTitle },
+    cohortId,
+    metadata: { cohortTitle },
   });
 }
 

@@ -23,7 +23,7 @@ export const appointmentTypeSchema = z.enum([
   "CONSULTATION",
   "SUBSCRIPTION",
   "WEBINAR",
-  "CLASS",
+  "COHORT",
   "TRIAL",
 ]);
 
@@ -79,7 +79,7 @@ export const webinarSearchParamsSchema = searchParamsSchema.extend({
 });
 
 // Class-specific validation
-export const classSearchParamsSchema = searchParamsSchema.extend({
+export const cohortSearchParamsSchema = searchParamsSchema.extend({
   eventId: z.string(),
 });
 
@@ -194,8 +194,8 @@ export const checkoutSchema = z
       }
     }
 
-    // === WEBINAR and CLASS validation ===
-    if (["WEBINAR", "CLASS"].includes(data.appointmentType)) {
+    // === WEBINAR and COHORT validation ===
+    if (["WEBINAR", "COHORT"].includes(data.appointmentType)) {
       if (!data.eventId) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -322,8 +322,8 @@ export const validateSearchParamsForAppointmentType = (
       return subscriptionSearchParamsSchema.safeParse(searchParams);
     case "WEBINAR":
       return webinarSearchParamsSchema.safeParse(searchParams);
-    case "CLASS":
-      return classSearchParamsSchema.safeParse(searchParams);
+    case "COHORT":
+      return cohortSearchParamsSchema.safeParse(searchParams);
     default:
       return {
         success: false,
