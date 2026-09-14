@@ -34,7 +34,10 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
+import {
+  buildOccurrenceForWindow,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
@@ -1759,8 +1762,10 @@ export async function confirmExistingAppointment(
   // conflict is surfaced loudly instead of double-booking the consultant.
   // Webinars/classes are capacity-based, not exclusive — skipped.
   if (appointment.consultation || appointment.subscription) {
+    // FAMILIARISE_WEB-46 — a row a reschedule released in place is still
+    // isTentative; it is not a hold and must not be checked or flipped.
     const mySlots = await tx.appointmentOccurrence.findMany({
-      where: { appointmentId, isTentative: true },
+      where: { appointmentId, isTentative: true, ...liveOccurrenceWhere },
       select: { id: true, startsAt: true, endsAt: true },
     });
     // The non-booker participants (the consultant) attend both bookings —
@@ -1815,17 +1820,27 @@ export async function confirmExistingAppointment(
             timestamp: new Date().toISOString(),
           }),
         );
-        void recordSystemError({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
-          err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
-          context: {
-            appointmentId,
-            conflictingAppointmentId: conflict.appointmentId,
-            slotId: slot.id,
-          },
-        }).catch(() => {});
+        // Once per appointment, not per sweep tick: the #830 re-drive hits
+        // this branch every 5 minutes until the refund lands (FAMILIARISE_WEB-46).
+        const correlationId = `double-booking-blocked:${appointmentId}`;
+        const alreadyRecorded = await tx.systemEvent.findFirst({
+          where: { correlationId, category: "PAYMENT" },
+          select: { id: true },
+        });
+        if (!alreadyRecorded) {
+          void recordSystemError({
+            organizationId: null,
+            category: "PAYMENT",
+            summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+            err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
+            context: {
+              appointmentId,
+              conflictingAppointmentId: conflict.appointmentId,
+              slotId: slot.id,
+            },
+            correlationId,
+          }).catch(() => {});
+        }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
         // the loser and releases the hold. The #830 sweep re-drives via this
         // same guard and reports (doesn't refund), so signalling the block up is
@@ -1945,8 +1960,10 @@ export async function confirmExistingAppointment(
   }
   // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
   else {
+    // Live rows only — a released (RESCHEDULED) row flipped back would
+    // re-block the consultant's old time and break reschedule withdrawal.
     await tx.appointmentOccurrence.updateMany({
-      where: { appointmentId },
+      where: { appointmentId, ...liveOccurrenceWhere },
       data: { isTentative: false },
     });
     await setParticipantStatus(

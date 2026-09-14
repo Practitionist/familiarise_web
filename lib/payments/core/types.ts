@@ -130,6 +130,9 @@ export class RefundError extends Error {
     public code: string,
     public gateway?: PaymentGateway,
     public originalError?: unknown,
+    // Razorpay's `error.reason` (e.g. input_validation_failed); the refund
+    // reconciler branches on it to tell an unknown id from a transient fault.
+    public reason?: string,
   ) {
     super(message);
     this.name = "RefundError";
