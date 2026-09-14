@@ -154,7 +154,7 @@ export const SUBSCRIPTION_ROADMAP = [
   },
 ];
 
-export const CLASS_CURRICULUM = [
+export const COHORT_CURRICULUM = [
   {
     sectionLabel: "Week 1",
     title: "Foundations and vocabulary",
@@ -207,7 +207,7 @@ export const PLAN_SUBTITLES = [
   "Turn scattered effort into a plan you can follow",
 ];
 
-export const CLASS_DESCRIPTIONS = [
+export const COHORT_DESCRIPTIONS = [
   "A practical, cohort-based course built around building things rather than watching slides. Every week pairs a live session with work you do yourself, then a review where we look at what you produced together with the rest of the cohort.",
   "This course assumes you can already write working code and want to get materially better at design and judgement. Sessions are discussion-heavy, and you should expect to have your assumptions challenged in front of your peers.",
   "A guided run through the material most people try to learn alone from scattered blog posts. We do it in order, with someone to ask when you get stuck, and finish with something you can show.",

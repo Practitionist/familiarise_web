@@ -296,7 +296,7 @@ async function seedWipro(learners: UserWithProfiles[], owner: UserWithProfiles) 
       type: ProgramType.LICENSED_SEAT,
       name: "Wipro Engineer Leadership Program",
       status: ProgramStatus.ACTIVE,
-      coveredPlanTypes: ["CONSULTATION", "CLASS"],
+      coveredPlanTypes: ["CONSULTATION", "COHORT"],
       licensedSeatConfig: {
         create: {
           ratePerSeatPaise: 25_000 * 100, // ₹25K per seat/year

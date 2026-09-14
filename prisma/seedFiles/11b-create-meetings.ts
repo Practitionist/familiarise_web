@@ -91,7 +91,7 @@ export async function createMeetings(): Promise<void> {
           consultation: true,
           subscription: true,
           webinar: true,
-          class: true,
+          cohort: true,
         },
       },
     },

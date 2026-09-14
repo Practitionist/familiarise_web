@@ -1,7 +1,7 @@
 import prisma from "../../lib/prisma";
 import {
-  CLASS_CURRICULUM,
-  CLASS_DESCRIPTIONS,
+  COHORT_CURRICULUM,
+  COHORT_DESCRIPTIONS,
   FAQ_POOL,
   PLAN_SUBTITLES,
   TARGET_AUDIENCE_POOL,
@@ -98,13 +98,13 @@ export async function createOrgCatalog() {
       created += 1;
     }
 
-    await prisma.classPlan.create({
+    await prisma.cohortPlan.create({
       data: {
         ...common,
         visibility: "ORG_AND_PUBLIC",
         title: `${org.name} — Cohort Programme`,
         subtitle: pick(PLAN_SUBTITLES, orgIndex + 3),
-        description: pick(CLASS_DESCRIPTIONS, orgIndex),
+        description: pick(COHORT_DESCRIPTIONS, orgIndex),
         price: 2500000,
         durationInMonths: 2,
         sessionsPerWeek: 2,
@@ -113,8 +113,8 @@ export async function createOrgCatalog() {
         totalHours: 24,
         maxParticipants: 20,
         certificateProvided: true,
-        classContents: {
-          create: CLASS_CURRICULUM.map((item, index) => ({
+        cohortContents: {
+          create: COHORT_CURRICULUM.map((item, index) => ({
             ...item,
             order: index + 1,
             hoursAllotted: 1.5,
@@ -126,13 +126,13 @@ export async function createOrgCatalog() {
 
     // An archived plan, so the archive tab, the restore path and the
     // discovery gate that must exclude it all have something to act on.
-    await prisma.classPlan.create({
+    await prisma.cohortPlan.create({
       data: {
         ...common,
         visibility: "ORG_AND_PUBLIC",
         title: `${org.name} — Retired Bootcamp`,
         subtitle: "No longer offered — kept for past enrolments",
-        description: pick(CLASS_DESCRIPTIONS, orgIndex + 1),
+        description: pick(COHORT_DESCRIPTIONS, orgIndex + 1),
         price: 1800000,
         durationInMonths: 1,
         sessionsPerWeek: 1,

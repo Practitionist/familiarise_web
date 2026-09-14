@@ -19,7 +19,7 @@ export async function createCollaborators() {
   }
 
   let webinarCollabsCreated = 0;
-  let classCollabsCreated = 0;
+  let cohortCollabsCreated = 0;
 
   // Get webinar plans with their owners
   const webinarPlans = await prisma.webinarPlan.findMany({
@@ -28,7 +28,7 @@ export async function createCollaborators() {
   });
 
   // Get class plans with their owners
-  const classPlans = await prisma.classPlan.findMany({
+  const cohortPlans = await prisma.cohortPlan.findMany({
     select: { id: true, consultantProfileId: true },
     take: 10,
   });
@@ -40,7 +40,7 @@ export async function createCollaborators() {
     "TECHNICAL_SUPPORT",
   ] as const;
 
-  const classRoles = [
+  const cohortRoles = [
     "CO_INSTRUCTOR",
     "TEACHING_ASSISTANT",
     "GUEST_LECTURER",
@@ -93,7 +93,10 @@ export async function createCollaborators() {
   }
 
   // Add collaborators to ~50% of class plans
-  for (const plan of classPlans.slice(0, Math.ceil(classPlans.length * 0.5))) {
+  for (const plan of cohortPlans.slice(
+    0,
+    Math.ceil(cohortPlans.length * 0.5),
+  )) {
     const availableCollaborators = consultantProfiles.filter(
       (cp) => cp.id !== plan.consultantProfileId,
     );
@@ -106,12 +109,12 @@ export async function createCollaborators() {
     for (const collab of selectedCollabs) {
       try {
         const status = faker.helpers.arrayElement(statuses);
-        const role = faker.helpers.arrayElement(classRoles);
+        const role = faker.helpers.arrayElement(cohortRoles);
         await prisma.collaborator.create({
           data: {
             consultantProfileId: collab.id,
-            collaboratorType: "CLASS",
-            classPlanId: plan.id,
+            collaboratorType: "COHORT",
+            cohortPlanId: plan.id,
             role,
             tier: tierForRole(role),
             revenueShareBps: faker.helpers.arrayElement([
@@ -124,7 +127,7 @@ export async function createCollaborators() {
               : {}),
           },
         });
-        classCollabsCreated++;
+        cohortCollabsCreated++;
       } catch {
         // Skip unique constraint violations
       }
@@ -132,6 +135,6 @@ export async function createCollaborators() {
   }
 
   console.log(
-    `Created ${webinarCollabsCreated} webinar collaborators, ${classCollabsCreated} class collaborators`,
+    `Created ${webinarCollabsCreated} webinar collaborators, ${cohortCollabsCreated} class collaborators`,
   );
 }

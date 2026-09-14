@@ -1065,7 +1065,7 @@ model Organization {
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
-  classPlans        ClassPlan[]
+  cohortPlans        CohortPlan[]
 
   // Per-org invoice number counters — one row per (org, fiscal year).
   // See `OrgInvoiceCounter` for the atomic increment semantics.
@@ -1692,7 +1692,7 @@ model LicensedSeatConfig {
   /// Per-assignment cap, counted in *engagements* — one engagement is one
   /// calendar occurrence (one Appointment row), regardless of duration.
   /// A 4-hour CONSULTATION = 1 engagement; a 12-call SUBSCRIPTION burns
-  /// 12 over the cycle (one per consultant allocation); an 8-day CLASS
+  /// 12 over the cycle (one per consultant allocation); an 8-day COHORT
   /// burns 8 at enrolment. Per-engagement *price* is governed by
   /// `priceCapPerEngagementPaise` below — this field controls *quantity*.
   /// `null` means unlimited — used for LICENSE-funded contracts where
@@ -1813,7 +1813,7 @@ model BookingUtilization {
   /// Appointment row (one calendar occurrence), regardless of duration.
   /// Recorded:
   ///   - CONSULTATION/WEBINAR: at checkout, always 1 (one Appointment).
-  ///   - CLASS: at checkout, equal to the count of distinct Appointments
+  ///   - COHORT: at checkout, equal to the count of distinct Appointments
   ///     the learner is being enrolled in (slots are pre-allocated by
   ///     the consultant; all appointments are known at enrolment time).
   ///   - SUBSCRIPTION: at slot-allocation time, 1 per consultant
@@ -1922,7 +1922,7 @@ enum OverageChargeStatus {
 }
 
 // #726 — Plan visibility enum + marketplace leak guard. Org-owned plans
-// (ConsultationPlan / SubscriptionPlan / WebinarPlan / ClassPlan with
+// (ConsultationPlan / SubscriptionPlan / WebinarPlan / CohortPlan with
 // `organizationId` set) need a way to opt out of public marketplace
 // discovery. Personal plans (no organizationId) default to PUBLIC and
 // are unaffected.
@@ -1941,7 +1941,7 @@ enum OrgPlanVisibility {
 
 enum CoveredPlanType {
   CONSULTATION
-  CLASS
+  COHORT
   WEBINAR
   SUBSCRIPTION
 }
@@ -2674,7 +2674,7 @@ enum OrgAuditCategory {
 // #778 elegance — the standalone OrganizationPlan catalog (+ its 4 typed config
 // children) was collapsed into the per-type plans. An org's catalog is now
 // simply its org-owned per-type plans (ConsultationPlan/SubscriptionPlan/
-// WebinarPlan/ClassPlan with organizationId set + visibility), which are the
+// WebinarPlan/CohortPlan with organizationId set + visibility), which are the
 // rows that actually get booked — one representation instead of a parallel,
 // never-booked shape. See the per-type plan models below.
 
@@ -3004,7 +3004,7 @@ model ConsultantProfile {
   consultationPlans ConsultationPlan[]
   subscriptionPlans SubscriptionPlan[]
   webinarPlans      WebinarPlan[]
-  classPlans        ClassPlan[]
+  cohortPlans        CohortPlan[]
 
   // Collaborator relations
   collaborations        Collaborator[] @relation("Collaborator")
@@ -3149,7 +3149,7 @@ model ConsultantReview {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
   appointmentId String?
 
-  // #1300 — the GROUP EVENT key ("webinar:<id>" / "class:<id>"); NULL on a 1:1 review.
+  // #1300 — the GROUP EVENT key ("webinar:<id>" / "cohort:<id>"); NULL on a 1:1 review.
   // Deliberately not moved on edit: reassigning merges event buckets.
   ratingUnitId String?
 
@@ -3576,7 +3576,7 @@ model ConsultationPlan {
   // #1134 P1-6 — 1:1 recording was structurally impossible: isAppointmentOwner
   // and isRecordingEnabledForAppointment only understood webinar and class, so
   // a consultation or subscription always 403'd on start and reported
-  // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
+  // recordingEnabled:false. Mirrors WebinarPlan/CohortPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
   recordingEnabled       Boolean                @default(false)
@@ -3687,12 +3687,12 @@ model SubscriptionPlan {
   // #1134 P1-6 — 1:1 recording was structurally impossible: isAppointmentOwner
   // and isRecordingEnabledForAppointment only understood webinar and class, so
   // a consultation or subscription always 403'd on start and reported
-  // recordingEnabled:false. Mirrors WebinarPlan/ClassPlan exactly, and defaults
+  // recordingEnabled:false. Mirrors WebinarPlan/CohortPlan exactly, and defaults
   // OFF — a 1:1 is the most sensitive session type on the platform, so
   // recording it stays an explicit per-plan opt-in by the consultant.
   recordingEnabled       Boolean                @default(false)
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
-  // #1011 — was `callsPerWeek`. Renamed to match ClassPlan so both recurring
+  // #1011 — was `callsPerWeek`. Renamed to match CohortPlan so both recurring
   // plan types name the same quantity the same way before the schema freeze.
   sessionsPerWeek        Int                    @default(1)
   sessionDurationInHours Float                  @default(1.0) // Duration of each session in hours
@@ -3913,7 +3913,7 @@ model ActivityLog {
   consultationId String?
   subscriptionId String?
   webinarId      String?
-  classId        String?
+  cohortId        String?
   trialId        String?
 
   createdAt DateTime @default(now())
@@ -3931,7 +3931,7 @@ enum ActivityType {
   SUBSCRIPTION_APPROVED
   SUBSCRIPTION_CANCELLED
   WEBINAR_REGISTERED
-  CLASS_ENROLLED
+  COHORT_ENROLLED
   TRIAL_REQUESTED
   TRIAL_SCHEDULED
   TRIAL_COMPLETED
@@ -4007,7 +4007,7 @@ model WebinarPlan {
   @@index([visibility, organizationId])
 }
 
-// #784 §4 (investigated 2026-06-10) — Webinar/Class deliberately lack the
+// #784 §4 (investigated 2026-06-10) — Webinar/Cohort deliberately lack the
 // request/feedback/cancellation fields Consultation/Subscription carry: those
 // are 1:1 engagements where the wrapper IS the relationship, while group
 // events are 1:N — per-attendee cancellation/feedback lives on each
@@ -4058,19 +4058,19 @@ enum WebinarStatus {
   CANCELLED
 }
 
-// Many-Many Class
+// Many-Many Cohort
 
-model ClassPlan {
+model CohortPlan {
   id                     String                 @id @default(cuid())
   title                  String
   // See ConsultationPlan.subtitle.
   subtitle               String?                @db.VarChar(160)
   // Nullable in the DB (relaxed for legacy rows) but REQUIRED by
-  // ClassPlanSchema — authoring always supplies one; the relaxation exists so
+  // CohortPlanSchema — authoring always supplies one; the relaxation exists so
   // pre-validation rows don't block migrations.
   description            String?                @db.Text
-  topics                 Topic[]                @relation("TopicToClassPlan")
-  classContents          ClassContent[]
+  topics                 Topic[]                @relation("TopicToCohortPlan")
+  cohortContents          CohortContent[]
   price                  BigInt // in paise (smallest currency unit, e.g. 50000 = ₹500)
   priceCurrency          Currency               @default(INR)
   certificateProvided    Boolean                @default(false)
@@ -4084,7 +4084,7 @@ model ClassPlan {
   totalHours             Float                  @default(4.0) // totalSessions × sessionDurationInHours
   emailSupport           PlanEmailSupport       @default(GENERAL)
   // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
-  // consultation); per-instance capacity lives on Class.maxParticipants.
+  // consultation); per-instance capacity lives on Cohort.maxParticipants.
   maxParticipants        Int                    @default(30)
   language               String                 @default("English")
   level                  PlanLevel              @default(BEGINNER)
@@ -4118,7 +4118,7 @@ model ClassPlan {
   // discovery. Null means live; set means withdrawn, and it is reversible.
   archivedAt DateTime?
 
-  classes       Class[]
+  cohorts       Cohort[]
   materials     PlanMaterial[]
   collaborators Collaborator[]
   faqs          PlanFaq[]
@@ -4131,13 +4131,13 @@ model ClassPlan {
   @@index([visibility, organizationId])
 }
 
-// #784 §4 (investigated 2026-06-10) — Webinar/Class deliberately lack the
+// #784 §4 (investigated 2026-06-10) — Webinar/Cohort deliberately lack the
 // request/feedback/cancellation fields Consultation/Subscription carry: those
 // are 1:1 engagements where the wrapper IS the relationship, while group
 // events are 1:N — per-attendee cancellation/feedback lives on each
 // Appointment (status=CANCELLED) and the wrapper keeps only the aggregate
 // feedbackSummary. Asymmetry is intentional; do not "fix" it with columns.
-model Class {
+model Cohort {
   id                       String      @id @default(cuid())
   // Nullable while a Subscription's window is required: class draft authoring
   // allows saving a plan run with no start date yet (the editor gates publish,
@@ -4147,7 +4147,7 @@ model Class {
   // #1076 — stamped from the host consultant's user.timezone at creation. See
   // Subscription.schedulingTimezone for why it is pinned, not followed.
   schedulingTimezone       String      @default("Asia/Kolkata")
-  status                   ClassStatus @default(SCHEDULED)
+  status                   CohortStatus @default(SCHEDULED)
 
   // Freeze ledger — see Webinar.chatFrozenAt.
   chatFrozenAt DateTime? @db.Timestamptz
@@ -4161,8 +4161,8 @@ model Class {
   recordingUrls   String[]
   feedbackSummary String?  @db.Text
 
-  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlanId String
+  cohortPlan   CohortPlan @relation(fields: [cohortPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortPlanId String
 
   appointment Appointment?
 
@@ -4172,13 +4172,13 @@ model Class {
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
-  @@index([classPlanId])
+  @@index([cohortPlanId])
   @@index([status])
   // #1169 PR 9 — availability/allocation scans bound by the scheduling window.
   @@index([schedulingPeriodStartsAt, schedulingPeriodEndsAt])
 }
 
-model ClassContent {
+model CohortContent {
   id            String   @id @default(cuid())
   title         String
   description   String   @db.Text
@@ -4192,17 +4192,17 @@ model ClassContent {
   sectionLabel  String?
   outcomes      String[] @default([])
 
-  classPlan   ClassPlan @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlanId String
+  cohortPlan   CohortPlan @relation(fields: [cohortPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortPlanId String
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([classPlanId])
-  @@index([classPlanId, order])
+  @@index([cohortPlanId])
+  @@index([cohortPlanId, order])
 }
 
-// Session-by-session curriculum for subscriptions (similar to ClassContent)
+// Session-by-session curriculum for subscriptions (similar to CohortContent)
 
 model SubscriptionContent {
   id            String   @id @default(cuid())
@@ -4212,7 +4212,7 @@ model SubscriptionContent {
   contentUrl    String? // Optional link to resources
   order         Int // Session sequence (1, 2, 3...)
   hoursAllotted Float    @default(1.0)
-  // See ClassContent.sectionLabel.
+  // See CohortContent.sectionLabel.
   sectionLabel  String?
   outcomes      String[] @default([])
 
@@ -4226,7 +4226,7 @@ model SubscriptionContent {
   @@index([subscriptionPlanId, order])
 }
 
-enum ClassStatus {
+enum CohortStatus {
   /// See WebinarStatus.DRAFT.
   DRAFT
   SCHEDULED
@@ -4240,7 +4240,7 @@ model Topic {
   name String @unique
 
   webinarPlans      WebinarPlan[]      @relation("TopicToWebinarPlan")
-  classPlans        ClassPlan[]        @relation("TopicToClassPlan")
+  cohortPlans        CohortPlan[]        @relation("TopicToCohortPlan")
   consultationPlans ConsultationPlan[] @relation("TopicToConsultationPlan")
   subscriptionPlans SubscriptionPlan[] @relation("TopicToSubscriptionPlan")
 
@@ -4336,8 +4336,8 @@ model Appointment {
   webinar   Webinar? @relation(fields: [webinarId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarId String?  @unique
 
-  class   Class?  @relation(fields: [classId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classId String? @unique
+  cohort   Cohort?  @relation(fields: [cohortId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortId String? @unique
 
   trial Trial?
 
@@ -4386,7 +4386,7 @@ model Appointment {
   // #997 — the PENDING request lists anti-join on `appointments.none.
   // organizationId != null`; these composites let it probe instead of scan.
   @@index([subscriptionId, organizationId])
-  @@index([classId, organizationId])
+  @@index([cohortId, organizationId])
   // #1356 — the chat-leg work queue. The reconcile sweep asks for
   // `chatChannelEnsuredAt IS NULL AND deletedAt IS NULL AND createdAt >= cutoff`
   // ordered by createdAt, and nothing above serves that: the leading column is
@@ -4483,7 +4483,7 @@ enum BookingHistoryEntity {
   CONSULTATION
   SUBSCRIPTION
   WEBINAR
-  CLASS
+  COHORT
   TRIAL
   RESCHEDULE_REQUEST
   OCCURRENCE
@@ -4493,7 +4493,7 @@ enum AppointmentsType {
   CONSULTATION
   SUBSCRIPTION
   WEBINAR
-  CLASS
+  COHORT
   TRIAL
 }
 
@@ -4810,13 +4810,13 @@ model PlanMaterial {
   consultationPlanId String?
   subscriptionPlanId String?
   webinarPlanId      String?
-  classPlanId        String?
+  cohortPlanId        String?
 
   // Relations
   consultationPlan ConsultationPlan? @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlan SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortPlan        CohortPlan?        @relation(fields: [cohortPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
   // Denormalized org tag mirrored from the owning plan's organizationId so org
   // dashboards can scope materials without polymorphic joins. Null = personal
@@ -4831,7 +4831,7 @@ model PlanMaterial {
   @@index([consultationPlanId])
   @@index([subscriptionPlanId])
   @@index([webinarPlanId])
-  @@index([classPlanId])
+  @@index([cohortPlanId])
   @@index([order])
   @@index([organizationId])
 }
@@ -4847,12 +4847,12 @@ model PlanFaq {
   consultationPlanId String?
   subscriptionPlanId String?
   webinarPlanId      String?
-  classPlanId        String?
+  cohortPlanId        String?
 
   consultationPlan ConsultationPlan? @relation(fields: [consultationPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlan SubscriptionPlan? @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlan      WebinarPlan?      @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan        ClassPlan?        @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortPlan        CohortPlan?        @relation(fields: [cohortPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4860,7 +4860,7 @@ model PlanFaq {
   @@index([consultationPlanId, order])
   @@index([subscriptionPlanId, order])
   @@index([webinarPlanId, order])
-  @@index([classPlanId, order])
+  @@index([cohortPlanId, order])
 }
 
 /// #1554 — one held call of an appointment. Who attends is AppointmentParticipant
@@ -6308,15 +6308,15 @@ enum CreditSource {
 
 //////////////////////////////////////////////////// COLLABORATOR SYSTEM ////////////////////////////////////////////////////
 
-// #784 — WebinarCollaborator + ClassCollaborator merged into one model.
-// Exactly one of webinarPlanId/classPlanId is set; XOR is app-enforced
+// #784 — WebinarCollaborator + CohortCollaborator merged into one model.
+// Exactly one of webinarPlanId/cohortPlanId is set; XOR is app-enforced
 // (Postgres CHECKs aren't Prisma-expressible).
 model Collaborator {
   id                  String             @id @default(cuid())
   consultantProfileId String
   collaboratorType    CollaboratorType
   webinarPlanId       String?
-  classPlanId         String?
+  cohortPlanId         String?
   role                CollaboratorRole
   // #1580 — what the role grants: PRESENTER (CO_HOST / CO_INSTRUCTOR) sees the
   // roster and holds host controls; CREW does not. Derived from `role` on write.
@@ -6333,16 +6333,16 @@ model Collaborator {
 
   consultantProfile ConsultantProfile  @relation("Collaborator", fields: [consultantProfileId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   webinarPlan       WebinarPlan?       @relation(fields: [webinarPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  classPlan         ClassPlan?         @relation(fields: [classPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  cohortPlan         CohortPlan?         @relation(fields: [cohortPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   invitedBy         ConsultantProfile? @relation("CollaboratorInvitedBy", fields: [invitedById], references: [id], onUpdate: Cascade, onDelete: SetNull)
 
   // Postgres treats NULLs as distinct, so each unique only bites for its own plan type.
   @@unique([consultantProfileId, webinarPlanId])
-  @@unique([consultantProfileId, classPlanId])
+  @@unique([consultantProfileId, cohortPlanId])
   // One live PRESENTER per plan: the partial uniques collaborator_one_presenter_
-  // {webinar,class} in prisma/sql (#1580).
+  // {webinar,cohort} in prisma/sql (#1580).
   @@index([webinarPlanId])
-  @@index([classPlanId])
+  @@index([cohortPlanId])
   @@index([status])
   @@index([invitedById])
 }
@@ -6355,7 +6355,7 @@ enum CollaboratorTier {
 
 enum CollaboratorType {
   WEBINAR
-  CLASS
+  COHORT
 }
 
 enum CollaboratorStatus {

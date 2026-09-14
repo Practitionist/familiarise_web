@@ -3,7 +3,7 @@
 -- ONE-OFF, and deliberately not a sidecar. Sidecars under prisma/sql/ are
 -- re-applied to every database because `prisma db push` never creates them.
 -- This is the opposite case: schema.prisma already declares chatFrozenAt on
--- Webinar and Class, so any database built from scratch via `db push` comes
+-- Webinar and Cohort, so any database built from scratch via `db push` comes
 -- out right on its own. Only the live shared database needed correcting, and
 -- re-running this against an already-corrected one is a no-op thanks to
 -- IF NOT EXISTS.
@@ -29,4 +29,4 @@
 --     correct pre-ledger semantic.
 --   * Zero rows carried a value beforehand by construction (new column).
 ALTER TABLE "Webinar" ADD COLUMN IF NOT EXISTS "chatFrozenAt" TIMESTAMPTZ;
-ALTER TABLE "Class" ADD COLUMN IF NOT EXISTS "chatFrozenAt" TIMESTAMPTZ;
+ALTER TABLE "Cohort" ADD COLUMN IF NOT EXISTS "chatFrozenAt" TIMESTAMPTZ;

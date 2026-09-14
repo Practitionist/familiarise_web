@@ -31,7 +31,7 @@ export interface VolumeConfig {
   topics: number;
   // Phase 4: Plans
   plansPerConsultant: number;
-  classContentsPerPlan: { min: number; max: number };
+  cohortContentsPerPlan: { min: number; max: number };
   // Phase 5: Availability
   weeklySlotsPerConsultant: { min: number; max: number };
   customSlotsPerConsultant: { min: number; max: number };
@@ -40,12 +40,12 @@ export interface VolumeConfig {
     consultation: number;
     subscription: number;
     webinar: number;
-    class: number;
+    cohort: number;
   };
-  // Phase 6b: authored-but-not-live group sessions (WebinarStatus/ClassStatus
+  // Phase 6b: authored-but-not-live group sessions (WebinarStatus/CohortStatus
   // DRAFT). Deliberately small — a draft is a work-in-progress, not a state a
   // catalog accumulates.
-  draftSessions: { webinar: number; class: number };
+  draftSessions: { webinar: number; cohort: number };
   // Phase 6c: reschedule proposals. `resolved` rows land on appointments that
   // already carry an open one, which is what exercises the nullable-unique
   // openForAppointmentId without colliding.
@@ -104,16 +104,16 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     educationPerPerson: { min: 1, max: 2 },
     topics: 50,
     plansPerConsultant: 2,
-    classContentsPerPlan: { min: 2, max: 4 },
+    cohortContentsPerPlan: { min: 2, max: 4 },
     weeklySlotsPerConsultant: { min: 3, max: 5 },
     customSlotsPerConsultant: { min: 1, max: 3 },
     appointments: {
       consultation: 75,
       subscription: 150,
       webinar: 75,
-      class: 75,
+      cohort: 75,
     },
-    draftSessions: { webinar: 3, class: 2 },
+    draftSessions: { webinar: 3, cohort: 2 },
     rescheduleProposals: {
       openConsultation: 4,
       counteredSubscription: 2,
@@ -158,16 +158,16 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     educationPerPerson: { min: 1, max: 3 },
     topics: 100,
     plansPerConsultant: 3,
-    classContentsPerPlan: { min: 3, max: 6 },
+    cohortContentsPerPlan: { min: 3, max: 6 },
     weeklySlotsPerConsultant: { min: 4, max: 7 },
     customSlotsPerConsultant: { min: 2, max: 5 },
     appointments: {
       consultation: 200,
       subscription: 400,
       webinar: 200,
-      class: 200,
+      cohort: 200,
     },
-    draftSessions: { webinar: 6, class: 4 },
+    draftSessions: { webinar: 6, cohort: 4 },
     rescheduleProposals: {
       openConsultation: 12,
       counteredSubscription: 5,
@@ -212,16 +212,16 @@ const VOLUMES: Record<SeedMode, VolumeConfig> = {
     educationPerPerson: { min: 1, max: 3 },
     topics: 200,
     plansPerConsultant: 4,
-    classContentsPerPlan: { min: 4, max: 8 },
+    cohortContentsPerPlan: { min: 4, max: 8 },
     weeklySlotsPerConsultant: { min: 5, max: 10 },
     customSlotsPerConsultant: { min: 3, max: 7 },
     appointments: {
       consultation: 500,
       subscription: 1000,
       webinar: 500,
-      class: 500,
+      cohort: 500,
     },
-    draftSessions: { webinar: 12, class: 8 },
+    draftSessions: { webinar: 12, cohort: 8 },
     rescheduleProposals: {
       openConsultation: 30,
       counteredSubscription: 12,
@@ -297,7 +297,7 @@ export function getTotalAppointments(): number {
     appointments.consultation +
     appointments.subscription +
     appointments.webinar +
-    appointments.class
+    appointments.cohort
   );
 }
 
@@ -333,9 +333,9 @@ export function printConfigSummary(): void {
   console.log(`    - Consultation: ${volumes.appointments.consultation}`);
   console.log(`    - Subscription: ${volumes.appointments.subscription}`);
   console.log(`    - Webinar: ${volumes.appointments.webinar}`);
-  console.log(`    - Class: ${volumes.appointments.class}`);
+  console.log(`    - Class: ${volumes.appointments.cohort}`);
   console.log(
-    `    - Drafts: ${volumes.draftSessions.webinar} webinar, ${volumes.draftSessions.class} class`,
+    `    - Drafts: ${volumes.draftSessions.webinar} webinar, ${volumes.draftSessions.cohort} class`,
   );
   const proposals = volumes.rescheduleProposals;
   console.log(

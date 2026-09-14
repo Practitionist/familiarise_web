@@ -1,8 +1,8 @@
 import { faker } from "@faker-js/faker";
 import {
   AppointmentsType,
-  ClassPlan,
-  ClassStatus,
+  CohortPlan,
+  CohortStatus,
   ConsultationPlan,
   DayOfWeek,
   Platform,
@@ -39,7 +39,7 @@ const getAppointmentType = (index: number): AppointmentsType => {
     return AppointmentsType.SUBSCRIPTION;
   if (index < NUM_CONSULTATION + NUM_SUBSCRIPTION + NUM_WEBINAR)
     return AppointmentsType.WEBINAR;
-  return AppointmentsType.CLASS;
+  return AppointmentsType.COHORT;
 };
 
 const getAppointmentStatus = (
@@ -101,8 +101,8 @@ const getAppointmentDate = (
 const LIVE_WEBINAR_STATUSES = Object.values(WebinarStatus).filter(
   (status) => status !== WebinarStatus.DRAFT,
 );
-const LIVE_CLASS_STATUSES = Object.values(ClassStatus).filter(
-  (status) => status !== ClassStatus.DRAFT,
+const LIVE_COHORT_STATUSES = Object.values(CohortStatus).filter(
+  (status) => status !== CohortStatus.DRAFT,
 );
 
 const getNumSlots = (appointmentType: AppointmentsType): number => {
@@ -129,7 +129,7 @@ const getNumSlots = (appointmentType: AppointmentsType): number => {
     }
     case AppointmentsType.WEBINAR:
       return 1;
-    case AppointmentsType.CLASS:
+    case AppointmentsType.COHORT:
       return faker.number.int({ min: 4, max: 8 });
     case AppointmentsType.TRIAL:
       return 1;
@@ -474,9 +474,9 @@ const createWebinarAppointment = async (
   };
 };
 
-const createClassAppointment = async (
+const createCohortAppointment = async (
   consultee: UserWithProfiles,
-  classPlans: PlanRead<ClassPlan>[],
+  cohortPlans: PlanRead<CohortPlan>[],
   consultees: UserWithProfiles[],
   isPastAppointment: boolean,
   startDate: Date,
@@ -498,7 +498,7 @@ const createClassAppointment = async (
     .slice(0, additionalCount);
 
   return {
-    appointmentType: AppointmentsType.CLASS,
+    appointmentType: AppointmentsType.COHORT,
     participants: {
       create: [
         ...(consultantUserId
@@ -542,17 +542,17 @@ const createClassAppointment = async (
         };
       }),
     },
-    class: {
+    cohort: {
       create: {
-        classPlan: {
-          connect: { id: faker.helpers.arrayElement(classPlans).id },
+        cohortPlan: {
+          connect: { id: faker.helpers.arrayElement(cohortPlans).id },
         },
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
         schedulingTimezone: "UTC",
         status: isPastAppointment
-          ? ClassStatus.COMPLETED
-          : faker.helpers.arrayElement(LIVE_CLASS_STATUSES),
+          ? CohortStatus.COMPLETED
+          : faker.helpers.arrayElement(LIVE_COHORT_STATUSES),
         recordingUrls: Array.from(
           { length: faker.number.int({ min: 0, max: 3 }) }, // Reduced from 5 to 3
           () => faker.internet.url(),
@@ -569,7 +569,7 @@ async function createAppointmentBatch(
   consultationPlans: PlanRead<ConsultationPlan>[],
   subscriptionPlans: PlanRead<SubscriptionPlan>[],
   webinarPlans: PlanRead<WebinarPlan>[],
-  classPlans: PlanRead<ClassPlan>[],
+  cohortPlans: PlanRead<CohortPlan>[],
   weeklySlots: AvailabilityWindowWeekly[],
   startIndex: number,
   batchSize: number,
@@ -619,7 +619,7 @@ async function createAppointmentBatch(
       const consultantWebinarPlans = webinarPlans.filter(
         (p) => p.consultantProfileId === slotConsultantId,
       );
-      const consultantClassPlans = classPlans.filter(
+      const consultantCohortPlans = cohortPlans.filter(
         (p) => p.consultantProfileId === slotConsultantId,
       );
 
@@ -648,8 +648,8 @@ async function createAppointmentBatch(
         continue;
       }
       if (
-        appointmentType === AppointmentsType.CLASS &&
-        consultantClassPlans.length === 0
+        appointmentType === AppointmentsType.COHORT &&
+        consultantCohortPlans.length === 0
       ) {
         continue;
       }
@@ -730,10 +730,10 @@ async function createAppointmentBatch(
           );
           break;
 
-        case AppointmentsType.CLASS:
-          appointmentData = await createClassAppointment(
+        case AppointmentsType.COHORT:
+          appointmentData = await createCohortAppointment(
             consultee,
-            consultantClassPlans,
+            consultantCohortPlans,
             consultees,
             isPastAppointment,
             startDate,
@@ -783,7 +783,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
   const consultationPlans = await prisma.consultationPlan.findMany();
   const subscriptionPlans = await prisma.subscriptionPlan.findMany();
   const webinarPlans = await prisma.webinarPlan.findMany();
-  const classPlans = await prisma.classPlan.findMany();
+  const cohortPlans = await prisma.cohortPlan.findMany();
 
   // Build a map of consultantProfileId -> consultantUserId so we can connect
   // the consultant user to every AppointmentOccurrence. Without this, the
@@ -818,7 +818,7 @@ export async function createAppointments(consultees: UserWithProfiles[]) {
       consultationPlans,
       subscriptionPlans,
       webinarPlans,
-      classPlans,
+      cohortPlans,
       weeklySlots,
       batchStart,
       BATCH_SIZE,

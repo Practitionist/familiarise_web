@@ -12,7 +12,7 @@
 -- "0 rows use the old value" did NOT make the change safe because the failure
 -- was in the catalog rather than the data.
 --
--- `chatFrozenAt` mirrors the existing columns on "Webinar" and "Class". It is
+-- `chatFrozenAt` mirrors the existing columns on "Webinar" and "Cohort". It is
 -- the freeze ledger for the PAIR's direct-message channel: DM ids are keyed on
 -- the pair, never the appointment, so it is read as MAX() across the pair's
 -- bookings and cleared across all of them when they book again.

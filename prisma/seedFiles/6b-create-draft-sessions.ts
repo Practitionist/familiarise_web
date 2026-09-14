@@ -2,7 +2,7 @@ import prisma from "../../lib/prisma";
 import { config } from "./config";
 
 /**
- * Authored-but-not-live group sessions — WebinarStatus/ClassStatus DRAFT.
+ * Authored-but-not-live group sessions — WebinarStatus/CohortStatus DRAFT.
  *
  * A draft is defined by the absence of a session, not by a flag: the authoring
  * route creates the instance without an appointment when no scheduled time was
@@ -15,11 +15,11 @@ import { config } from "./config";
  * isPlanViewable, the draft badge on the planner cards, or the publish step.
  */
 const NUM_DRAFT_WEBINARS = config.volumes.draftSessions.webinar;
-const NUM_DRAFT_CLASSES = config.volumes.draftSessions.class;
+const NUM_DRAFT_COHORTS = config.volumes.draftSessions.cohort;
 
 export async function createDraftSessions(): Promise<void> {
   console.log(
-    `Creating ${NUM_DRAFT_WEBINARS} draft webinars and ${NUM_DRAFT_CLASSES} draft classes...`,
+    `Creating ${NUM_DRAFT_WEBINARS} draft webinars and ${NUM_DRAFT_COHORTS} draft cohorts...`,
   );
 
   const webinarPlans = await prisma.webinarPlan.findMany({
@@ -29,14 +29,14 @@ export async function createDraftSessions(): Promise<void> {
     take: NUM_DRAFT_WEBINARS,
   });
 
-  const classPlans = await prisma.classPlan.findMany({
+  const cohortPlans = await prisma.cohortPlan.findMany({
     where: { archivedAt: null, consultantProfileId: { not: null } },
     select: { id: true },
     orderBy: { createdAt: "asc" },
-    take: NUM_DRAFT_CLASSES,
+    take: NUM_DRAFT_COHORTS,
   });
 
-  if (webinarPlans.length === 0 && classPlans.length === 0) {
+  if (webinarPlans.length === 0 && cohortPlans.length === 0) {
     console.warn("No live webinar or class plans found — skipping drafts.");
     return;
   }
@@ -56,12 +56,12 @@ export async function createDraftSessions(): Promise<void> {
     webinarsCreated += 1;
   }
 
-  let classesCreated = 0;
-  for (const [index, plan] of classPlans.entries()) {
-    await prisma.class.create({
+  let cohortsCreated = 0;
+  for (const [index, plan] of cohortPlans.entries()) {
+    await prisma.cohort.create({
       data: {
         status: "DRAFT",
-        classPlan: { connect: { id: plan.id } },
+        cohortPlan: { connect: { id: plan.id } },
         // A draft cohort has not picked its dates yet — that is precisely what
         // it is still missing, and why it cannot be published.
         schedulingPeriodStartsAt: null,
@@ -69,10 +69,10 @@ export async function createDraftSessions(): Promise<void> {
         maxParticipants: index % 2 === 0 ? 12 : null,
       },
     });
-    classesCreated += 1;
+    cohortsCreated += 1;
   }
 
   console.log(
-    `Created ${webinarsCreated} draft webinars and ${classesCreated} draft classes`,
+    `Created ${webinarsCreated} draft webinars and ${cohortsCreated} draft classes`,
   );
 }

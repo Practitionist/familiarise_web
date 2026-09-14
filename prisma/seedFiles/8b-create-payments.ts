@@ -25,7 +25,7 @@ export async function createPayments(users: UserWithProfiles[]) {
         { consultation: { status: "APPROVED" } },
         { subscription: { status: "APPROVED" } },
         { webinar: { status: "SCHEDULED" } },
-        { class: { status: "SCHEDULED" } },
+        { cohort: { status: "SCHEDULED" } },
       ],
     },
     include: {
@@ -44,9 +44,9 @@ export async function createPayments(users: UserWithProfiles[]) {
           webinarPlan: true,
         },
       },
-      class: {
+      cohort: {
         include: {
-          classPlan: true,
+          cohortPlan: true,
         },
       },
     },
@@ -71,9 +71,9 @@ export async function createPayments(users: UserWithProfiles[]) {
       } else if (appointment.webinar?.webinarPlan) {
         amount = appointment.webinar.webinarPlan.price;
         description = `Payment for Webinar: ${appointment.webinar.webinarPlan.title}`;
-      } else if (appointment.class?.classPlan) {
-        amount = appointment.class.classPlan.price;
-        description = `Payment for Class: ${appointment.class.classPlan.title}`;
+      } else if (appointment.cohort?.cohortPlan) {
+        amount = appointment.cohort.cohortPlan.price;
+        description = `Payment for Class: ${appointment.cohort.cohortPlan.title}`;
       }
 
       // Apply discount if available

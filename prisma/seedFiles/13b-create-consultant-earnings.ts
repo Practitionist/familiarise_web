@@ -17,7 +17,7 @@ const paymentInclude = {
       consultation: { include: { consultationPlan: true } },
       subscription: { include: { subscriptionPlan: true } },
       webinar: { include: { webinarPlan: true } },
-      class: { include: { classPlan: true } },
+      cohort: { include: { cohortPlan: true } },
     },
   },
 } satisfies Prisma.PaymentInclude;
@@ -49,8 +49,8 @@ function getConsultantProfileIdFromPayment(
   if (appointment.webinar?.webinarPlan) {
     return appointment.webinar.webinarPlan.consultantProfileId;
   }
-  if (appointment.class?.classPlan) {
-    return appointment.class.classPlan.consultantProfileId;
+  if (appointment.cohort?.cohortPlan) {
+    return appointment.cohort.cohortPlan.consultantProfileId;
   }
 
   return null;

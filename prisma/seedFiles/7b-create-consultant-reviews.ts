@@ -63,7 +63,7 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
     select: {
       id: true,
       webinarId: true,
-      classId: true,
+      cohortId: true,
       organizationId: true,
       consultation: {
         select: {
@@ -95,9 +95,9 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
           },
         },
       },
-      class: {
+      cohort: {
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               consultantProfileId: true,
               consultantProfile: { select: { userId: true } },
@@ -133,7 +133,7 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
       a.consultation?.consultationPlan?.consultantProfileId ??
       a.subscription?.subscriptionPlan?.consultantProfileId ??
       a.webinar?.webinarPlan?.consultantProfileId ??
-      a.class?.classPlan?.consultantProfileId ??
+      a.cohort?.cohortPlan?.consultantProfileId ??
       null;
     if (!consultantProfileId) continue;
     // The roster holds the consultant too; `appointmentRaterRole` ranks them
@@ -142,13 +142,13 @@ async function loadHeldSlots(now: Date): Promise<HeldSlot[]> {
       a.consultation?.consultationPlan?.consultantProfile?.userId ??
       a.subscription?.subscriptionPlan?.consultantProfile?.userId ??
       a.webinar?.webinarPlan?.consultantProfile?.userId ??
-      a.class?.classPlan?.consultantProfile?.userId ??
+      a.cohort?.cohortPlan?.consultantProfile?.userId ??
       null;
     const track = trackForAppointment(a);
     const ratingUnitId = a.webinarId
       ? `webinar:${a.webinarId}`
-      : a.classId
-        ? `class:${a.classId}`
+      : a.cohortId
+        ? `class:${a.cohortId}`
         : null;
     for (const slot of a.occurrences) {
       if (!slot.endsAt) continue;

@@ -46,17 +46,17 @@ ALTER TABLE "WebinarPlan" DROP CONSTRAINT IF EXISTS "webinar_plan_price_nonnegat
 -- SPLIT
 ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_price_nonnegative" CHECK ("price" >= 0);
 -- SPLIT
-ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_price_nonnegative";
+ALTER TABLE "CohortPlan" DROP CONSTRAINT IF EXISTS "cohort_plan_price_nonnegative";
 -- SPLIT
-ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_price_nonnegative" CHECK ("price" >= 0);
+ALTER TABLE "CohortPlan" ADD CONSTRAINT "cohort_plan_price_nonnegative" CHECK ("price" >= 0);
 -- SPLIT
 ALTER TABLE "WebinarPlan" DROP CONSTRAINT IF EXISTS "webinar_plan_max_participants_min";
 -- SPLIT
 ALTER TABLE "WebinarPlan" ADD CONSTRAINT "webinar_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
 -- SPLIT
-ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_max_participants_min";
+ALTER TABLE "CohortPlan" DROP CONSTRAINT IF EXISTS "cohort_plan_max_participants_min";
 -- SPLIT
-ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
+ALTER TABLE "CohortPlan" ADD CONSTRAINT "cohort_plan_max_participants_min" CHECK ("maxParticipants" >= 1);
 -- SPLIT
 -- Per-instance capacity override. NULL means "inherit the plan's value", so
 -- the guard has to admit NULL while still rejecting a zero or negative cap.
@@ -64,9 +64,9 @@ ALTER TABLE "Webinar" DROP CONSTRAINT IF EXISTS "webinar_max_participants_min";
 -- SPLIT
 ALTER TABLE "Webinar" ADD CONSTRAINT "webinar_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 -- SPLIT
-ALTER TABLE "Class" DROP CONSTRAINT IF EXISTS "class_max_participants_min";
+ALTER TABLE "Cohort" DROP CONSTRAINT IF EXISTS "cohort_max_participants_min";
 -- SPLIT
-ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
+ALTER TABLE "Cohort" ADD CONSTRAINT "cohort_max_participants_min" CHECK ("maxParticipants" IS NULL OR "maxParticipants" >= 1);
 
 -- SPLIT
 -- #440 — DB-level double-booking backstop for 1:1 bookings. The application
@@ -74,7 +74,7 @@ ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParti
 -- first line; this exclusion constraint is the last line: two CONFIRMED
 -- occurrences for the same consultant may never overlap in time. Scoped to rows
 -- carrying the denormalized consultantProfileId — consultation/subscription
--- occurrence creates set it; webinar/class attendee rows deliberately leave it
+-- occurrence creates set it; webinar/cohort attendee rows deliberately leave it
 -- NULL (many same-window rows per event are legitimate there) and legacy
 -- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
 -- conflict.
@@ -191,14 +191,14 @@ ALTER TABLE "ConsultantPayout" ADD CONSTRAINT "consultant_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
 
 -- SPLIT
--- #784 — a Collaborator references exactly one plan: a webinar XOR a class.
+-- #784 — a Collaborator references exactly one plan: a webinar XOR a cohort.
 -- The app-level backstop is assertCollaboratorPlanXor in
 -- lib/collaborators/service.ts; this DB CHECK is the last line. Exactly one of
 -- the two FKs is non-NULL <=> exactly one IS NULL, which `<>` expresses.
 ALTER TABLE "Collaborator" DROP CONSTRAINT IF EXISTS "collaborator_plan_xor";
 -- SPLIT
 ALTER TABLE "Collaborator" ADD CONSTRAINT "collaborator_plan_xor"
-  CHECK (("webinarPlanId" IS NULL) <> ("classPlanId" IS NULL));
+  CHECK (("webinarPlanId" IS NULL) <> ("cohortPlanId" IS NULL));
 
 -- SPLIT
 -- ============================================================================
@@ -589,10 +589,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_webinar"
   ON "Collaborator" ("webinarPlanId")
   WHERE "tier" = 'PRESENTER' AND "status" IN ('PENDING', 'ACCEPTED');
 -- SPLIT
-DROP INDEX IF EXISTS "collaborator_one_presenter_class";
+DROP INDEX IF EXISTS "collaborator_one_presenter_cohort";
 -- SPLIT
-CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_class"
-  ON "Collaborator" ("classPlanId")
+CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_cohort"
+  ON "Collaborator" ("cohortPlanId")
   WHERE "tier" = 'PRESENTER' AND "status" IN ('PENDING', 'ACCEPTED');
 -- SPLIT
 -- #1551 — a review revision is an append-only record of what the review said.
@@ -654,9 +654,9 @@ ALTER TABLE "SubscriptionPlan" DROP CONSTRAINT IF EXISTS "subscription_plan_tota
 ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
   CHECK ("totalSessions" >= 1);
 -- SPLIT
-ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_total_sessions_min";
+ALTER TABLE "CohortPlan" DROP CONSTRAINT IF EXISTS "cohort_plan_total_sessions_min";
 -- SPLIT
-ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
+ALTER TABLE "CohortPlan" ADD CONSTRAINT "cohort_plan_total_sessions_min"
   CHECK ("totalSessions" >= 1);
 -- SPLIT
 -- 4. #1499 — "at most one ACTIVE cancellation policy per scope" and "one row per

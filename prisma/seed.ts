@@ -19,7 +19,7 @@ import { createTopics } from "./seedFiles/3a-create-topics";
 import { createConsultationPlans } from "./seedFiles/4a-create-consultation-plans";
 import { createSubscriptionPlans } from "./seedFiles/4b-create-subscription-plans";
 import { createWebinarPlans } from "./seedFiles/4c-create-webinar-plans";
-import { createClassPlans } from "./seedFiles/4d-create-class-plans";
+import { createCohortPlans } from "./seedFiles/4d-create-cohort-plans";
 
 // Phase 5: Availability
 import { createSlotsOfAvailability } from "./seedFiles/5a-create-availability-windows";
@@ -122,7 +122,7 @@ async function seed() {
     await createWebinarPlans(consultants);
 
     console.log("Creating class plans...");
-    await createClassPlans(consultants);
+    await createCohortPlans(consultants);
 
     // Phase 5: Availability
     console.log("\n[Phase 5] Creating availability slots...");
@@ -134,7 +134,7 @@ async function seed() {
 
     // Drafts are instances with no appointment at all, so they follow the
     // booked ones rather than sharing their path.
-    console.log("Creating draft webinars and classes...");
+    console.log("Creating draft webinars and cohorts...");
     await createDraftSessions();
 
     // Must follow createAppointments: a proposal releases slots that only

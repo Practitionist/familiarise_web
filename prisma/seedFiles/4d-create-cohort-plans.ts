@@ -3,8 +3,8 @@ import { PlanEmailSupport, PlanLevel } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import {
-  CLASS_CURRICULUM,
-  CLASS_DESCRIPTIONS,
+  COHORT_CURRICULUM,
+  COHORT_DESCRIPTIONS,
   FAQ_POOL,
   PLAN_SUBTITLES,
   TARGET_AUDIENCE_POOL,
@@ -12,7 +12,7 @@ import {
   pick,
 } from "./plan-content";
 
-export async function createClassPlans(consultants: UserWithProfiles[]) {
+export async function createCohortPlans(consultants: UserWithProfiles[]) {
   console.log(`Creating class plans for ${consultants.length} consultants...`);
   for (let i = 0; i < consultants.length; i++) {
     const consultant = consultants[i];
@@ -24,12 +24,12 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
       const topics = await prisma.topic.findMany({ take: 5 });
 
       // Create class plans with proper data structure
-      const classPlans = await Promise.all([
-        prisma.classPlan.create({
+      await Promise.all([
+        prisma.cohortPlan.create({
           data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Beginner Class",
-            description: pick(CLASS_DESCRIPTIONS, i),
+            description: pick(COHORT_DESCRIPTIONS, i),
             priceCurrency: "INR",
             durationInMonths: 1,
             price: faker.number.int({ min: 1990000, max: 3990000 }), // ₹19900-₹39900 in paise
@@ -66,9 +66,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             subtitle: pick(PLAN_SUBTITLES, i + 1),
             targetAudience: pick(TARGET_AUDIENCE_POOL, i + 1),
             whatsIncluded: pick(WHATS_INCLUDED_POOL, i + 1),
-            faqs: { create: pick(FAQ_POOL, i + 1).map((f, o) => ({ ...f, order: o })) },
-            classContents: {
-              create: CLASS_CURRICULUM.map((item, index) => ({
+            faqs: {
+              create: pick(FAQ_POOL, i + 1).map((f, o) => ({ ...f, order: o })),
+            },
+            cohortContents: {
+              create: COHORT_CURRICULUM.map((item, index) => ({
                 ...item,
                 order: index + 1,
                 hoursAllotted: 1.5,
@@ -76,11 +78,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             },
           },
         }),
-        prisma.classPlan.create({
+        prisma.cohortPlan.create({
           data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Intermediate Class",
-            description: pick(CLASS_DESCRIPTIONS, i),
+            description: pick(COHORT_DESCRIPTIONS, i),
             priceCurrency: "INR",
             durationInMonths: 3,
             price: faker.number.int({ min: 3490000, max: 6990000 }), // ₹34900-₹69900 in paise
@@ -117,9 +119,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             subtitle: pick(PLAN_SUBTITLES, i + 2),
             targetAudience: pick(TARGET_AUDIENCE_POOL, i + 2),
             whatsIncluded: pick(WHATS_INCLUDED_POOL, i + 2),
-            faqs: { create: pick(FAQ_POOL, i + 2).map((f, o) => ({ ...f, order: o })) },
-            classContents: {
-              create: CLASS_CURRICULUM.map((item, index) => ({
+            faqs: {
+              create: pick(FAQ_POOL, i + 2).map((f, o) => ({ ...f, order: o })),
+            },
+            cohortContents: {
+              create: COHORT_CURRICULUM.map((item, index) => ({
                 ...item,
                 order: index + 1,
                 hoursAllotted: 1.5,
@@ -127,11 +131,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             },
           },
         }),
-        prisma.classPlan.create({
+        prisma.cohortPlan.create({
           data: {
             consultantProfileId: consultant.consultantProfile.id,
             title: "Advanced Class",
-            description: pick(CLASS_DESCRIPTIONS, i),
+            description: pick(COHORT_DESCRIPTIONS, i),
             priceCurrency: "INR",
             durationInMonths: 6,
             price: faker.number.int({ min: 4990000, max: 9990000 }), // ₹49900-₹99900 in paise
@@ -168,9 +172,11 @@ export async function createClassPlans(consultants: UserWithProfiles[]) {
             subtitle: pick(PLAN_SUBTITLES, i + 3),
             targetAudience: pick(TARGET_AUDIENCE_POOL, i + 3),
             whatsIncluded: pick(WHATS_INCLUDED_POOL, i + 3),
-            faqs: { create: pick(FAQ_POOL, i + 3).map((f, o) => ({ ...f, order: o })) },
-            classContents: {
-              create: CLASS_CURRICULUM.map((item, index) => ({
+            faqs: {
+              create: pick(FAQ_POOL, i + 3).map((f, o) => ({ ...f, order: o })),
+            },
+            cohortContents: {
+              create: COHORT_CURRICULUM.map((item, index) => ({
                 ...item,
                 order: index + 1,
                 hoursAllotted: 1.5,
