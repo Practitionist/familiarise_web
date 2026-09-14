@@ -5,7 +5,7 @@
 /**
  * #776 §C — whole-event refund partition. Gateway/card seats MUST credit the
  * gateway (refundPayment); internal org-funded seats MUST reverse in-ledger
- * (one CLASS_MULTI reversal) — a card seat routed through the engine would
+ * (one COHORT_MULTI reversal) — a card seat routed through the engine would
  * strand the customer's money. This asserts the partition + the member-overage
  * follow-up, with prisma / reversal-engine / refund mocked.
  */
@@ -57,7 +57,7 @@ beforeEach(() => {
     amountRefundedPaise: 1000,
   });
   applyReversalMock.mockResolvedValue({
-    kind: "CLASS_MULTI",
+    kind: "COHORT_MULTI",
     cascades: [],
     childRefundIds: [],
     clawbackPosted: false,
@@ -65,7 +65,7 @@ beforeEach(() => {
 });
 
 describe("refundWholeEventPayments — funding partition", () => {
-  it("routes card/mock seats to refundPayment and org seats to CLASS_MULTI", async () => {
+  it("routes card/mock seats to refundPayment and org seats to COHORT_MULTI", async () => {
     findMany.mockResolvedValue([
       { id: "pay_card", amount: 1000, paymentIntent: "pay_abc" },
       { id: "p_mock", amount: 2000, paymentIntent: "cs_mock_1" },
@@ -73,7 +73,12 @@ describe("refundWholeEventPayments — funding partition", () => {
       { id: "p_org2", amount: 4000, paymentIntent: "org_invoice_2" },
     ]);
 
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "admin1");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "admin1",
+    );
 
     // Two gateway seats → two refundPayment calls; NEVER the org seats.
     const refundedIds = refundPayment_.mock.calls.map((c) => c[0].paymentId);
@@ -81,10 +86,10 @@ describe("refundWholeEventPayments — funding partition", () => {
     expect(refundedIds).not.toContain("p_org1");
     expect(refundedIds).not.toContain("p_org2");
 
-    // One CLASS_MULTI reversal covering EXACTLY the two org seats, full total.
+    // One COHORT_MULTI reversal covering EXACTLY the two org seats, full total.
     expect(applyReversalMock).toHaveBeenCalledTimes(1);
     const arg = applyReversalMock.mock.calls[0][1];
-    expect(arg.source.kind).toBe("CLASS_MULTI");
+    expect(arg.source.kind).toBe("COHORT_MULTI");
     expect(arg.source.paymentIds).toEqual(["p_org1", "p_org2"]);
     expect(arg.amountPaise).toBe(7000);
 
@@ -97,7 +102,7 @@ describe("refundWholeEventPayments — funding partition", () => {
       { id: "p_org1", amount: 3000, paymentIntent: "org_license_1" },
     ]);
     applyReversalMock.mockResolvedValue({
-      kind: "CLASS_MULTI",
+      kind: "COHORT_MULTI",
       cascades: [{ memberOverageRefundDue: null }],
       childRefundIds: ["child1"],
       clawbackPosted: false,
@@ -116,7 +121,7 @@ describe("refundWholeEventPayments — funding partition", () => {
       { id: "p_org1", amount: 3000, paymentIntent: "org_wallet_1" },
     ]);
     applyReversalMock.mockResolvedValue({
-      kind: "CLASS_MULTI",
+      kind: "COHORT_MULTI",
       cascades: [{ memberOverageRefundDue: { overagePaymentId: "pay_side" } }],
       childRefundIds: ["child1"],
       clawbackPosted: false,
@@ -136,7 +141,12 @@ describe("refundWholeEventPayments — funding partition", () => {
     ]);
     refundPayment_.mockRejectedValueOnce(new Error("gateway down"));
 
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "a");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
     expect(summary.failures).toEqual([
       { paymentId: "pay_card", error: "gateway down" },
     ]);
@@ -145,7 +155,12 @@ describe("refundWholeEventPayments — funding partition", () => {
 
   it("no-ops on an event with no paid seats", async () => {
     findMany.mockResolvedValue([]);
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "a");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
     expect(refundPayment_).not.toHaveBeenCalled();
     expect(applyReversalMock).not.toHaveBeenCalled();
     expect(summary.refundsIssued).toBe(0);

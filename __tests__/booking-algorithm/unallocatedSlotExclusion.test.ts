@@ -27,7 +27,7 @@ import { AppointmentStatus, TrialStatus } from "@prisma/client";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe("buildOccupiedAppointmentFilter", () => {
-  it("should return 5 filter entries (consultation, subscription, webinar, class, trial)", () => {
+  it("should return 5 filter entries (consultation, subscription, webinar, cohort, trial)", () => {
     const filters = buildOccupiedAppointmentFilter("cp-001");
     expect(filters).toHaveLength(5);
   });
@@ -78,11 +78,11 @@ describe("buildOccupiedAppointmentFilter", () => {
 
   it("should include class filter with SCHEDULED and IN_PROGRESS", () => {
     const filters = buildOccupiedAppointmentFilter("cp-001");
-    const classFilter = filters[3] as any;
+    const cohortFilter = filters[3] as any;
 
-    expect(classFilter.class).toBeDefined();
-    expect(classFilter.class.status.in).toEqual([...OCCUPIED_EVENT_STATUSES]);
-    expect(classFilter.class.classPlan.consultantProfileId).toBe("cp-001");
+    expect(cohortFilter.cohort).toBeDefined();
+    expect(cohortFilter.cohort.status.in).toEqual([...OCCUPIED_EVENT_STATUSES]);
+    expect(cohortFilter.cohort.cohortPlan.consultantProfileId).toBe("cp-001");
   });
 
   it("should include trial session filter for occupying statuses", () => {

@@ -13,7 +13,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    cohort: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
   },
 }));
@@ -82,12 +82,12 @@ describe("readManageTimingsTarget slot payload", () => {
     mockReadAppointmentDetail.mockResolvedValue({
       appointment: {
         id: "appt-1",
-        appointmentType: "CLASS",
-        class: {
+        appointmentType: "COHORT",
+        cohort: {
           id: "class-1",
           schedulingPeriodStartsAt: new Date("2026-08-01T00:00:00Z"),
           schedulingPeriodEndsAt: new Date("2026-11-01T00:00:00Z"),
-          classPlan: { title: "Pottery", totalSessions: 24 },
+          cohortPlan: { title: "Pottery", totalSessions: 24 },
         },
         // #1554 — the roster rides on the wrapper, not the rows.
         participants: [

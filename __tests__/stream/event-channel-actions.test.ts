@@ -402,9 +402,9 @@ describe("Event Channel Actions", () => {
     });
 
     it("should fetch class data with consultant and members", async () => {
-      mockPrisma.class.findUnique.mockResolvedValue({
+      mockPrisma.cohort.findUnique.mockResolvedValue({
         id: "class-123",
-        classPlan: {
+        cohortPlan: {
           title: "Test Class",
           consultantProfile: {
             user: { id: "consultant-1" },
@@ -425,7 +425,7 @@ describe("Event Channel Actions", () => {
       );
 
       expect(result.success).toBe(true);
-      expect(mockPrisma.class.findUnique).toHaveBeenCalledWith(
+      expect(mockPrisma.cohort.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { id: "class-123" },
         }),
@@ -433,9 +433,9 @@ describe("Event Channel Actions", () => {
     });
 
     it("names only ACCEPTED, non-deleted collaborators as initial members (#1593)", async () => {
-      mockPrisma.class.findUnique.mockResolvedValue({
+      mockPrisma.cohort.findUnique.mockResolvedValue({
         id: "class-123",
-        classPlan: {
+        cohortPlan: {
           title: "Test Class",
           consultantProfile: { user: { id: "consultant-1" } },
           collaborators: [{ consultantProfile: { userId: "cohost-1" } }],
@@ -447,17 +447,17 @@ describe("Event Channel Actions", () => {
         await import("../../actions/stream/chat/event-channel.action");
       await addUserToEventChannel("class", "class-123", "new-user");
 
-      const include = mockPrisma.class.findUnique.mock.calls[0][0].include;
-      expect(include.classPlan.include.collaborators.where).toEqual({
+      const include = mockPrisma.cohort.findUnique.mock.calls[0][0].include;
+      expect(include.cohortPlan.include.collaborators.where).toEqual({
         status: "ACCEPTED",
         consultantProfile: { deletedAt: null },
       });
     });
 
     it("should return null for class without consultant", async () => {
-      mockPrisma.class.findUnique.mockResolvedValue({
+      mockPrisma.cohort.findUnique.mockResolvedValue({
         id: "class-123",
-        classPlan: {
+        cohortPlan: {
           title: "Test Class",
           consultantProfile: null,
         },
@@ -627,7 +627,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
@@ -656,7 +656,7 @@ describe("Event Channel Actions", () => {
       ]);
 
       // Mock consultant classes
-      mockPrisma.class.findMany.mockResolvedValue([{ id: "class-1" }]);
+      mockPrisma.cohort.findMany.mockResolvedValue([{ id: "class-1" }]);
 
       // Mock consultations — include requestedBy so getDmPairsForUser can build the pair
       mockPrisma.consultation.findMany.mockResolvedValue([
@@ -696,7 +696,7 @@ describe("Event Channel Actions", () => {
       });
 
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       // Two consultations with different consultants → two distinct DM pairs
       mockPrisma.consultation.findMany.mockResolvedValue([
         {
@@ -747,7 +747,7 @@ describe("Event Channel Actions", () => {
         { id: "webinar-1" },
         { id: "webinar-2" },
       ]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
@@ -775,7 +775,7 @@ describe("Event Channel Actions", () => {
       mockPrisma.webinar.findMany.mockResolvedValueOnce([
         { id: "appointment-webinar" },
       ]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
@@ -791,14 +791,14 @@ describe("Event Channel Actions", () => {
     });
   });
 
-  describe("getClassIdsForUser", () => {
+  describe("getCohortIdsForUser", () => {
     it("should return hosted classes for consultant", async () => {
       mockPrisma.user.findUnique.mockResolvedValue({
         consultantProfileId: "consultant-123",
         consulteeProfileId: null,
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([
+      mockPrisma.cohort.findMany.mockResolvedValue([
         { id: "class-1" },
         { id: "class-2" },
       ]);
@@ -812,10 +812,10 @@ describe("Event Channel Actions", () => {
 
       await syncUserEventChannels("consultant-user");
 
-      expect(mockPrisma.class.findMany).toHaveBeenCalledWith(
+      expect(mockPrisma.cohort.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: {
-            classPlan: { consultantProfileId: "consultant-123" },
+            cohortPlan: { consultantProfileId: "consultant-123" },
           },
         }),
       );
@@ -829,7 +829,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([
         { id: "cons-1" },
         { id: "cons-2" },
@@ -865,7 +865,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: null,
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
@@ -887,7 +887,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([
         { id: "sub-1" },
@@ -949,7 +949,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
 
@@ -983,7 +983,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
       mockStreamClient.queryChannels.mockResolvedValue([]);
@@ -1008,7 +1008,7 @@ describe("Event Channel Actions", () => {
         consulteeProfileId: "consultee-123",
       });
       mockPrisma.webinar.findMany.mockResolvedValue([]);
-      mockPrisma.class.findMany.mockResolvedValue([]);
+      mockPrisma.cohort.findMany.mockResolvedValue([]);
       mockPrisma.consultation.findMany.mockResolvedValue([]);
       mockPrisma.subscription.findMany.mockResolvedValue([]);
       // More memberships than Stream's offset ceiling will ever serve.

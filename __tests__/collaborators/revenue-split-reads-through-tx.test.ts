@@ -27,7 +27,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     collaborator: { findMany: jest.fn() },
     webinarPlan: { findUnique: jest.fn() },
-    classPlan: { findUnique: jest.fn() },
+    cohortPlan: { findUnique: jest.fn() },
   },
 }));
 
@@ -50,7 +50,7 @@ function makeTx() {
     webinarPlan: {
       findUnique: jest.fn().mockResolvedValue({ consultantProfileId: "owner" }),
     },
-    classPlan: { findUnique: jest.fn() },
+    cohortPlan: { findUnique: jest.fn() },
   };
 }
 
@@ -69,7 +69,7 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
     expect(tx.webinarPlan.findUnique).toHaveBeenCalledTimes(1);
     expect(globalPrisma.collaborator.findMany).not.toHaveBeenCalled();
     expect(globalPrisma.webinarPlan.findUnique).not.toHaveBeenCalled();
-    expect(globalPrisma.classPlan.findUnique).not.toHaveBeenCalled();
+    expect(globalPrisma.cohortPlan.findUnique).not.toHaveBeenCalled();
     expect(splits).toEqual([
       { consultantProfileId: "owner", share: 7000, role: "OWNER" },
       { consultantProfileId: "collab-1", share: 3000, role: "CO_HOST" },
@@ -78,11 +78,13 @@ describe("calculateRevenueSplit reads through the client it is given", () => {
 
   it("reads the class plan through the same client", async () => {
     const tx = makeTx();
-    tx.classPlan.findUnique.mockResolvedValue({ consultantProfileId: "owner" });
+    tx.cohortPlan.findUnique.mockResolvedValue({
+      consultantProfileId: "owner",
+    });
     await calculateRevenueSplit("class", "plan-1", 10_000, tx as never);
-    expect(tx.classPlan.findUnique).toHaveBeenCalledTimes(1);
+    expect(tx.cohortPlan.findUnique).toHaveBeenCalledTimes(1);
     expect(tx.webinarPlan.findUnique).not.toHaveBeenCalled();
-    expect(globalPrisma.classPlan.findUnique).not.toHaveBeenCalled();
+    expect(globalPrisma.cohortPlan.findUnique).not.toHaveBeenCalled();
   });
 
   it("never pays a collaborator a share of their own seat, whatever the checkout guard saw", async () => {

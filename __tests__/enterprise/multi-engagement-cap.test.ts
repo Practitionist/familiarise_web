@@ -8,7 +8,7 @@
  *
  * Covers:
  *   - CONSULTATION/WEBINAR debit 1 at checkout
- *   - CLASS debits N at enrolment (one per class day Appointment)
+ *   - COHORT debits N at enrolment (one per class day Appointment)
  *   - SUBSCRIPTION skips checkout-time debit (lazy at allocation)
  *   - SUBSCRIPTION lazy debit accumulates engagementsConsumed via upsert
  *   - Cap with BLOCK throws ProgramAssignmentLimitError when exceeded
@@ -131,7 +131,7 @@ describe("recordBookingUtilization — engagement counting (issue #710)", () => 
     );
   });
 
-  it("CLASS pattern: passes engagementsConsumed = N (count of distinct enrolled appointments)", async () => {
+  it("COHORT pattern: passes engagementsConsumed = N (count of distinct enrolled appointments)", async () => {
     const tx = makeTx({ cap: 20, behavior: "BLOCK" });
     await recordBookingUtilization(tx as never, {
       programAssignmentId: "asg-1",
@@ -332,7 +332,7 @@ describe("reverseBookingUtilization — refund cap reversal (full + partial)", (
     const tx = makeTx({ cap: 10, behavior: "BLOCK" });
     tx.bookingUtilization.findUnique = jest.fn().mockResolvedValue({
       programAssignmentId: "asg-1",
-      engagementsConsumed: 8, // CLASS that enrolled 8 sessions
+      engagementsConsumed: 8, // COHORT that enrolled 8 sessions
       priceAtBookingPaise: 200_000,
       wasOverage: false,
       reversedAt: null,

@@ -15,9 +15,9 @@
  */
 
 const mockTx = {
-  classPlan: { create: jest.fn(), update: jest.fn() },
-  class: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
-  classContent: { deleteMany: jest.fn() },
+  cohortPlan: { create: jest.fn(), update: jest.fn() },
+  cohort: { create: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
+  cohortContent: { deleteMany: jest.fn() },
   appointment: { findMany: jest.fn().mockResolvedValue([]) },
   payment: { count: jest.fn().mockResolvedValue(0) },
   collaborator: { findMany: jest.fn().mockResolvedValue([]) },
@@ -31,8 +31,8 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     $transaction: (...args: unknown[]) => transaction(...args),
     consultantProfile: { findFirst: jest.fn() },
-    classPlan: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    cohortPlan: { findUnique: jest.fn() },
+    cohort: { findUnique: jest.fn() },
     payment: { count: jest.fn() },
   },
 }));
@@ -71,7 +71,7 @@ jest.mock("../../lib/topics", () => ({
 
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { POST, PATCH } from "@/app/api/bookings/classes/crud-with-plan/route";
+import { POST, PATCH } from "@/app/api/bookings/cohorts/crud-with-plan/route";
 
 const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
 
@@ -97,7 +97,7 @@ const VALID_POST_BODY = {
   topics: ["pottery"],
   learningOutcomes: ["Throw a bowl"],
   startDate: "2026-03-02T10:00:00.000Z",
-  classContents: [
+  cohortContents: [
     { title: "Week one", description: "Wedging clay", hoursAllotted: 1 },
   ],
 };
@@ -122,11 +122,11 @@ beforeEach(() => {
     userId: "user-1",
     user: { timezone: "Asia/Kolkata" },
   });
-  mockTx.classPlan.create.mockResolvedValue({
+  mockTx.cohortPlan.create.mockResolvedValue({
     id: "plan-1",
     title: "Advanced Pottery",
     topics: [],
-    classContents: [],
+    cohortContents: [],
     consultantProfile: { id: "cp-1" },
     faqs: [],
   });
@@ -134,7 +134,7 @@ beforeEach(() => {
 
 describe("#784 — class POST maps an overlap to 409", () => {
   it("returns 409 when the session write trips occurrence_no_confirmed_overlap", async () => {
-    mockTx.class.create.mockRejectedValue(exclusionViolation());
+    mockTx.cohort.create.mockRejectedValue(exclusionViolation());
 
     const response = await POST(request(VALID_POST_BODY));
 
@@ -144,9 +144,9 @@ describe("#784 — class POST maps an overlap to 409", () => {
   });
 
   it("runs the create transaction at Serializable", async () => {
-    mockTx.class.create.mockResolvedValue({
+    mockTx.cohort.create.mockResolvedValue({
       id: "class-1",
-      classPlan: { topics: [], classContents: [] },
+      cohortPlan: { topics: [], cohortContents: [] },
       appointments: [],
     });
 
@@ -167,9 +167,9 @@ describe("#784 — class POST maps an overlap to 409", () => {
       .mockImplementation(async (callback: (tx: unknown) => unknown) =>
         callback(mockTx),
       );
-    mockTx.class.create.mockResolvedValue({
+    mockTx.cohort.create.mockResolvedValue({
       id: "class-1",
-      classPlan: { topics: [], classContents: [] },
+      cohortPlan: { topics: [], cohortContents: [] },
       appointments: [],
     });
 
@@ -183,41 +183,41 @@ describe("#784 — class POST maps an overlap to 409", () => {
 describe("#627/#784 — class PATCH maps its two rejections", () => {
   const patchBody = {
     id: "plan-1",
-    classId: "class-1",
+    cohortId: "class-1",
     startDate: "2026-04-06T10:00:00.000Z",
   };
 
   beforeEach(() => {
-    base.classPlan.findUnique.mockResolvedValue({
+    base.cohortPlan.findUnique.mockResolvedValue({
       id: "plan-1",
       consultantProfile: { id: "cp-1", userId: "user-1" },
       topics: [],
-      classContents: [],
-      classes: [],
+      cohortContents: [],
+      cohorts: [],
       sessionsPerWeek: 1,
       durationInMonths: 1,
       sessionDurationInHours: 1,
     });
-    base.class.findUnique.mockResolvedValue({
+    base.cohort.findUnique.mockResolvedValue({
       id: "class-1",
       schedulingPeriodStartsAt: new Date("2026-03-02T10:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-04-02T10:00:00.000Z"),
     });
-    mockTx.classPlan.update.mockResolvedValue({
+    mockTx.cohortPlan.update.mockResolvedValue({
       id: "plan-1",
       topics: [],
-      classContents: [],
-      classes: [],
+      cohortContents: [],
+      cohorts: [],
       consultantProfile: { id: "cp-1", userId: "user-1" },
     });
-    mockTx.class.findUnique.mockResolvedValue({
+    mockTx.cohort.findUnique.mockResolvedValue({
       id: "class-1",
       schedulingPeriodStartsAt: new Date("2026-03-02T10:00:00.000Z"),
       schedulingPeriodEndsAt: new Date("2026-04-02T10:00:00.000Z"),
     });
-    mockTx.class.update.mockResolvedValue({
+    mockTx.cohort.update.mockResolvedValue({
       id: "class-1",
-      classPlan: { topics: [], classContents: [] },
+      cohortPlan: { topics: [], cohortContents: [] },
       appointments: [],
     });
   });
@@ -232,11 +232,11 @@ describe("#627/#784 — class PATCH maps its two rejections", () => {
     const payload = await response.json();
     expect(payload.error).toMatch(/reschedule workflow/i);
     // The move never reached the class row.
-    expect(mockTx.class.update).not.toHaveBeenCalled();
+    expect(mockTx.cohort.update).not.toHaveBeenCalled();
   });
 
   it("returns 409 when the update trips occurrence_no_confirmed_overlap", async () => {
-    mockTx.class.update.mockRejectedValue(exclusionViolation());
+    mockTx.cohort.update.mockRejectedValue(exclusionViolation());
 
     const response = await PATCH(request(patchBody));
 

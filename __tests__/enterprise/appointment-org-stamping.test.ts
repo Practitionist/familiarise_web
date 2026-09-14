@@ -5,7 +5,7 @@
 /**
  * Booking-org-stamping fix coverage — #768 Comment 5.
  *
- * SUBSCRIPTION lazy allocation, CLASS pre-allocation, marketplace WEBINAR, and
+ * SUBSCRIPTION lazy allocation, COHORT pre-allocation, marketplace WEBINAR, and
  * CONSULTATION reschedule each used to create Appointment rows with
  * `organizationId = null` even when the booker was org-funded. The org tag is
  * resolved per event type inside `SchedulingService.fetchEventData`:
@@ -16,7 +16,7 @@
  *     Payment.organizationId (org-tagged at checkout).
  *   - WEBINAR      → webinarPlan.organizationId (Appointment is SHARED across
  *     attendees from any org).
- *   - CLASS        → classPlan.organizationId (host wins; marketplace = null).
+ *   - COHORT        → cohortPlan.organizationId (host wins; marketplace = null).
  *
  * These tests drive the REAL resolution by calling `fetchEventData` with a
  * mocked Prisma tx per event type and asserting the resolved organizationId —
@@ -142,16 +142,16 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     ).resolves.toBeNull();
   });
 
-  it("CLASS uses the classPlan host org (host wins; marketplace = null)", async () => {
+  it("COHORT uses the cohortPlan host org (host wins; marketplace = null)", async () => {
     const base = {
       appointment: null,
     };
     await expect(
-      resolveOrg("class", "class", {
+      resolveOrg("cohort", "class", {
         ...base,
-        classPlan: {
+        cohortPlan: {
           consultantProfile: CONSULTANT,
-          classContents: [],
+          cohortContents: [],
           totalSessions: 4,
           organizationId: "infosys-org-id",
         },
@@ -159,11 +159,11 @@ describe("Appointment.organizationId stamping (#768 Comment 5)", () => {
     ).resolves.toBe("infosys-org-id");
 
     await expect(
-      resolveOrg("class", "class", {
+      resolveOrg("cohort", "class", {
         ...base,
-        classPlan: {
+        cohortPlan: {
           consultantProfile: CONSULTANT,
-          classContents: [],
+          cohortContents: [],
           totalSessions: 4,
           organizationId: null,
         },

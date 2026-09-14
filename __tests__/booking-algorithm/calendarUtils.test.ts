@@ -814,8 +814,8 @@ describe("getAppointmentTitle", () => {
   it("should return class title", () => {
     const apt: Appointment = {
       id: "1",
-      appointmentType: AppointmentsType.CLASS,
-      class: { status: "SCHEDULED", classPlan: { title: "Yoga" } },
+      appointmentType: AppointmentsType.COHORT,
+      cohort: { status: "SCHEDULED", cohortPlan: { title: "Yoga" } },
     };
     expect(getAppointmentTitle(apt)).toBe("Yoga");
   });

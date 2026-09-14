@@ -80,7 +80,7 @@ jest.mock("../../lib/prisma", () => ({
     $transaction: async (fn: (tx: unknown) => unknown) => fn(webhookTx),
     payment: { update: jest.fn().mockResolvedValue({}) },
     appointment: { findUnique: jest.fn().mockResolvedValue(null) },
-    class: {
+    cohort: {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -140,7 +140,7 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
   getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getCohortCapacity: jest.fn(),
 }));
 
 // Checkout-side guards that talk to the world rather than to `tx`.
@@ -237,7 +237,7 @@ async function runWebhookCreator(): Promise<SlotAtom[]> {
     consultation: { id: "cons-1" },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
     occurrences: [],
   });
   (validateWebhookMetadata as jest.Mock).mockReturnValue(METADATA);

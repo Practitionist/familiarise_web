@@ -24,7 +24,7 @@ import { listReviewableSessions } from "@/lib/reviews";
 
 type Arm = Record<string, unknown> & {
   webinarId?: unknown;
-  classId?: unknown;
+  cohortId?: unknown;
   NOT?: unknown;
 };
 
@@ -43,17 +43,17 @@ describe("a collaborator's own event is not reviewable", () => {
     const arms: Arm[] = findMany.mock.calls[0][0].where.OR;
 
     const webinarArm = arms.find((a) => a.webinarId !== undefined);
-    const classArm = arms.find((a) => a.classId !== undefined);
+    const cohortArm = arms.find((a) => a.cohortId !== undefined);
     expect(webinarArm?.NOT).toEqual({
       webinar: { webinarPlan: collaboratorExclusion },
     });
-    expect(classArm?.NOT).toEqual({
-      class: { classPlan: collaboratorExclusion },
+    expect(cohortArm?.NOT).toEqual({
+      cohort: { cohortPlan: collaboratorExclusion },
     });
 
     // The 1:1 arms are untouched — a consultation has no collaborators.
     const oneToOneArms = arms.filter(
-      (a) => a.webinarId === undefined && a.classId === undefined,
+      (a) => a.webinarId === undefined && a.cohortId === undefined,
     );
     expect(oneToOneArms).toHaveLength(3);
     for (const arm of oneToOneArms) expect(arm.NOT).toBeUndefined();

@@ -4,9 +4,9 @@
 
 /**
  * Unified reversal engine dispatch (#776 §C / ARCH #4). Asserts the front door
- * routes each source kind correctly and that CLASS_MULTI fans a single logical
+ * routes each source kind correctly and that COHORT_MULTI fans a single logical
  * refund across child payments proportionally (the genuinely-new capability —
- * consolidated CLASS purchases have no single paymentId). The deep booking
+ * consolidated COHORT purchases have no single paymentId). The deep booking
  * cascade is mocked; it's tested in its own suite.
  */
 
@@ -47,7 +47,7 @@ describe("applyReversal — BOOKING", () => {
   });
 });
 
-describe("applyReversal — CLASS_MULTI", () => {
+describe("applyReversal — COHORT_MULTI", () => {
   function mockTx(payments: Array<{ id: string; amount: number }>) {
     return {
       payment: {
@@ -79,13 +79,13 @@ describe("applyReversal — CLASS_MULTI", () => {
       { id: "p2", amount: 50 },
     ]);
     const res = await applyReversal(tx as never, {
-      source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2"] },
+      source: { kind: "COHORT_MULTI", paymentIds: ["p1", "p2"] },
       amountPaise: 51,
       reason: "class refund",
       refundId: "parent-ref",
     });
 
-    expect(res.kind).toBe("CLASS_MULTI");
+    expect(res.kind).toBe("COHORT_MULTI");
     expect(mockedCascade).toHaveBeenCalledTimes(2);
     const shares = mockedCascade.mock.calls.map((c) => c[1].amountPaise).sort();
     expect(shares).toEqual([25, 26]);
@@ -114,7 +114,7 @@ describe("applyReversal — CLASS_MULTI", () => {
       { id: "p3", amount: 1 },
     ]);
     await applyReversal(tx as never, {
-      source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2", "p3"] },
+      source: { kind: "COHORT_MULTI", paymentIds: ["p1", "p2", "p3"] },
       amountPaise: 2,
       reason: "r",
       refundId: "ref",
@@ -133,7 +133,7 @@ describe("applyReversal — CLASS_MULTI", () => {
     ]);
     await expect(
       applyReversal(tx as never, {
-        source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2"] },
+        source: { kind: "COHORT_MULTI", paymentIds: ["p1", "p2"] },
         amountPaise: 250,
         reason: "r",
         refundId: "ref",
@@ -149,7 +149,7 @@ describe("applyReversal — CLASS_MULTI", () => {
       { id: "p2", amount: 0 },
     ]);
     await applyReversal(tx as never, {
-      source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2"] },
+      source: { kind: "COHORT_MULTI", paymentIds: ["p1", "p2"] },
       amountPaise: 100,
       reason: "r",
       refundId: "ref",

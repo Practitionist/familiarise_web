@@ -58,7 +58,7 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
   },
-  class: {
+  cohort: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
   },
@@ -180,9 +180,9 @@ function appointmentRow(kind: "consultation" | "subscription") {
     id: APPT,
     organizationId: null,
     webinarId: null,
-    classId: null,
+    cohortId: null,
     webinar: null,
-    class: null,
+    cohort: null,
     occurrences: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
   };
 

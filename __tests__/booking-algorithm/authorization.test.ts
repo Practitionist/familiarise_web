@@ -24,7 +24,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    cohort: { findUnique: jest.fn() },
     $transaction: jest.fn(),
     // #1006 — cancel resolves the refund facts across the WHOLE booking, so it
     // reads every appointment of the parent request, not just the one it was
@@ -213,7 +213,7 @@ function makeConsultationAppointment() {
     },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 
@@ -240,7 +240,7 @@ function makeSubscriptionAppointment() {
       },
     },
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 
@@ -258,22 +258,22 @@ function makeWebinarAppointment() {
         consultantProfileId: "cp-001",
       },
     },
-    class: null,
+    cohort: null,
   };
 }
 
-function makeClassAppointment() {
+function makeCohortAppointment() {
   return {
     id: "apt-1",
-    appointmentType: "CLASS",
+    appointmentType: "COHORT",
     occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: null,
-    class: {
+    cohort: {
       id: "cls-1",
       status: "SCHEDULED",
-      classPlan: {
+      cohortPlan: {
         consultantProfileId: "cp-001",
       },
     },
@@ -307,7 +307,7 @@ function makeMockTx(appointmentData: any = null) {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    class: {
+    cohort: {
       update: jest.fn(),
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
@@ -523,12 +523,12 @@ describe("authorizeEventAccess", () => {
     });
   });
 
-  // ─── CLASS ────────────────────────────────────────────────────────────
+  // ─── COHORT ────────────────────────────────────────────────────────────
 
   describe("class", () => {
     it("should allow consultant who owns the class plan", async () => {
-      (prisma.class.findUnique as jest.Mock).mockResolvedValue({
-        classPlan: { consultantProfileId: "cp-001" },
+      (prisma.cohort.findUnique as jest.Mock).mockResolvedValue({
+        cohortPlan: { consultantProfileId: "cp-001" },
       });
 
       const result = await authorizeEventAccess(
@@ -540,8 +540,8 @@ describe("authorizeEventAccess", () => {
     });
 
     it("should reject consultee (class has no requestedById)", async () => {
-      (prisma.class.findUnique as jest.Mock).mockResolvedValue({
-        classPlan: { consultantProfileId: "cp-001" },
+      (prisma.cohort.findUnique as jest.Mock).mockResolvedValue({
+        cohortPlan: { consultantProfileId: "cp-001" },
       });
 
       const result = await authorizeEventAccess(
@@ -554,8 +554,8 @@ describe("authorizeEventAccess", () => {
     });
 
     it("should reject stranger with 403", async () => {
-      (prisma.class.findUnique as jest.Mock).mockResolvedValue({
-        classPlan: { consultantProfileId: "cp-001" },
+      (prisma.cohort.findUnique as jest.Mock).mockResolvedValue({
+        cohortPlan: { consultantProfileId: "cp-001" },
       });
 
       const result = await authorizeEventAccess(
@@ -581,7 +581,7 @@ describe("authorizeEventAccess", () => {
       expect(prisma.consultation.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
       expect(prisma.webinar.findUnique).not.toHaveBeenCalled();
-      expect(prisma.class.findUnique).not.toHaveBeenCalled();
+      expect(prisma.cohort.findUnique).not.toHaveBeenCalled();
     });
 
     it("should only query webinar table for webinar type", async () => {
@@ -594,7 +594,7 @@ describe("authorizeEventAccess", () => {
       expect(prisma.webinar.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.consultation.findUnique).not.toHaveBeenCalled();
       expect(prisma.subscription.findUnique).not.toHaveBeenCalled();
-      expect(prisma.class.findUnique).not.toHaveBeenCalled();
+      expect(prisma.cohort.findUnique).not.toHaveBeenCalled();
     });
   });
 });
@@ -687,12 +687,12 @@ describe("Reschedule Route — Authorization", () => {
 
   it("should return 403 when stranger reschedules class", async () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
-    const mockTx = makeMockTx(makeClassAppointment());
+    const mockTx = makeMockTx(makeCohortAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
-    const req = makeRescheduleRequest("apt-1", "CLASS");
+    const req = makeRescheduleRequest("apt-1", "COHORT");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(403);
@@ -739,12 +739,12 @@ describe("Reschedule Route — Authorization", () => {
 
   it("should allow STAFF to reschedule any appointment", async () => {
     (getSession as jest.Mock).mockResolvedValue(staffSession());
-    const mockTx = makeMockTx(makeClassAppointment());
+    const mockTx = makeMockTx(makeCohortAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
-    const req = makeRescheduleRequest("apt-1", "CLASS");
+    const req = makeRescheduleRequest("apt-1", "COHORT");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(200);
@@ -765,12 +765,12 @@ describe("Reschedule Route — Authorization", () => {
 
   it("should reject consultee from rescheduling class (consultant-only)", async () => {
     (getSession as jest.Mock).mockResolvedValue(consulteeSession());
-    const mockTx = makeMockTx(makeClassAppointment());
+    const mockTx = makeMockTx(makeCohortAppointment());
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
-    const req = makeRescheduleRequest("apt-1", "CLASS");
+    const req = makeRescheduleRequest("apt-1", "COHORT");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(403);
@@ -836,7 +836,7 @@ describe("Cancel Route — Authorization", () => {
   it("should return 403 when stranger cancels class", async () => {
     (getSession as jest.Mock).mockResolvedValue(strangerSession());
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
-      makeClassAppointment(),
+      makeCohortAppointment(),
     );
 
     const req = makeCancelRequest("apt-1");

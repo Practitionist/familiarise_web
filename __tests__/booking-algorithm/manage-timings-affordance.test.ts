@@ -54,7 +54,7 @@ describe("allowsManageTimings", () => {
   });
 
   it("keeps Timings on a class instance", () => {
-    expect(offered("CLASS", confirmed)).toEqual({
+    expect(offered("COHORT", confirmed)).toEqual({
       timings: true,
       reschedule: false,
     });
@@ -63,7 +63,7 @@ describe("allowsManageTimings", () => {
   it("keeps Timings on an offering that was never scheduled", () => {
     // The `unscheduled-class-…` / `unscheduled-webinar-…` rows: no Appointment
     // row at all, so no slots.
-    expect(offered("CLASS", nothingAllocated)).toEqual({
+    expect(offered("COHORT", nothingAllocated)).toEqual({
       timings: true,
       reschedule: false,
     });
@@ -123,8 +123,8 @@ describe("allowsManageTimings", () => {
   it("offers exactly one action in every settled case", () => {
     const cases: Array<[AppointmentKind, TestSlot[]]> = [
       ["WEBINAR", confirmed],
-      ["CLASS", confirmed],
-      ["CLASS", nothingAllocated],
+      ["COHORT", confirmed],
+      ["COHORT", nothingAllocated],
       ["WEBINAR", nothingAllocated],
       ["CONSULTATION", tentative],
       ["CONSULTATION", nothingAllocated],
@@ -188,7 +188,7 @@ describe("allowsUnschedule", () => {
   });
 
   it("offers a confirmed class Timings AND Unschedule, never Reschedule", () => {
-    expect(menu("CLASS", confirmed)).toEqual({
+    expect(menu("COHORT", confirmed)).toEqual({
       timings: true,
       reschedule: false,
       unschedule: true,
@@ -203,7 +203,7 @@ describe("allowsUnschedule", () => {
       reschedule: false,
       unschedule: false,
     });
-    expect(menu("CLASS", nothingAllocated)).toEqual({
+    expect(menu("COHORT", nothingAllocated)).toEqual({
       timings: true,
       reschedule: false,
       unschedule: false,
@@ -214,7 +214,7 @@ describe("allowsUnschedule", () => {
     // The release leaves every slot tentative, so the action is idempotent by
     // construction rather than by a second guard.
     expect(allowsUnschedule("WEBINAR", tentative)).toBe(false);
-    expect(allowsUnschedule("CLASS", tentative)).toBe(false);
+    expect(allowsUnschedule("COHORT", tentative)).toBe(false);
   });
 
   it("offers Unschedule while any session of a part-released class is still placed", () => {
@@ -224,7 +224,7 @@ describe("allowsUnschedule", () => {
       { isTentative: true, completionStatus: "RESCHEDULED" },
       { isTentative: false, completionStatus: "SCHEDULED" },
     ];
-    expect(allowsUnschedule("CLASS", partlyReleased)).toBe(true);
+    expect(allowsUnschedule("COHORT", partlyReleased)).toBe(true);
   });
 
   it("never offers Unschedule for a 1:1, whatever its slots look like", () => {

@@ -7,7 +7,7 @@
  *
  * `recordBookingUtilization` grew a set-diff idempotency guard in PR-1e (G3),
  * but it only arms itself when the caller NAMES the appointments it is
- * counting. Checkout — the CONSULTATION / WEBINAR / CLASS debit — never passed
+ * counting. Checkout — the CONSULTATION / WEBINAR / COHORT debit — never passed
  * `appointmentIds`, so the guard was inert for every one of them and the
  * "legacy caller" branch incremented unconditionally: a retried webhook or a
  * resumed order against the same Payment charged the org's cap twice.
@@ -161,11 +161,11 @@ describe("checkout names the appointments it meters", () => {
     );
     const body = call.slice(0, call.indexOf("});"));
     expect(body).toContain("appointmentIds:");
-    // CLASS meters one engagement per class session, so the id set is the
+    // COHORT meters one engagement per class session, so the id set is the
     // wrapper's occurrence rows (#1554), not the one appointment the Payment
     // links to.
-    expect(body).toContain('validatedData.appointmentType === "CLASS"');
-    expect(body).toContain("classEngagementIds");
+    expect(body).toContain('validatedData.appointmentType === "COHORT"');
+    expect(body).toContain("cohortEngagementIds");
     expect(body).toContain("[createdAppointment.id]");
   });
 });

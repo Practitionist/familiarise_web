@@ -69,10 +69,24 @@ const RETIRED_IDENTIFIERS = [
   "ProposedSlotAuthor",
   "useSlotAllocation",
   "SlotPicker",
+  // #1640 — Class became Cohort. Whole-identifier matches, so `className`
+  // and CSS classes never trip this.
+  "ClassPlan",
+  "classPlan",
+  "classPlanId",
+  "classId",
+  "ClassStatus",
 ];
 
 /** Retired text that is not a bare identifier. */
-const RETIRED_SUBSTRINGS = ["prisma.feedback.", "/api/slots/"];
+const RETIRED_SUBSTRINGS = [
+  "prisma.feedback.",
+  "/api/slots/",
+  // #1640
+  "prisma.class.",
+  "/api/plans/classes",
+  "/api/bookings/classes",
+];
 
 /**
  * Files exempt from the code-tree scan, read from a sidecar JSON list so an

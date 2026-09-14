@@ -351,7 +351,7 @@ const consultation = (status: string) => ({
   },
   subscription: null,
   webinar: null,
-  class: null,
+  cohort: null,
   trial: null,
 });
 
@@ -359,7 +359,7 @@ const trial = (status: string) => ({
   consultation: null,
   subscription: null,
   webinar: null,
-  class: null,
+  cohort: null,
   trial: { consultantProfileId: "cp-1", status },
 });
 
@@ -374,7 +374,7 @@ const webinar = (status: string) => ({
       recordingEnabled: false,
     },
   },
-  class: null,
+  cohort: null,
   trial: null,
 });
 

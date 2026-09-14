@@ -146,7 +146,7 @@ describe("refundRemovedAttendeeSeat", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           userId: ATTENDEE,
-          appointment: { classId: "class-1" },
+          appointment: { cohortId: "class-1" },
           paymentStatus: "SUCCEEDED",
         }),
       }),

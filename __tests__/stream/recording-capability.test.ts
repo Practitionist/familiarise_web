@@ -33,7 +33,7 @@ const withPlan = (kind: string, plan: OwnedPlan): AppointmentWithOwnership => {
     case "webinar":
       return { webinar: { webinarPlan: plan } };
     case "class":
-      return { class: { classPlan: plan } };
+      return { cohort: { cohortPlan: plan } };
     case "consultation":
       return { consultation: { consultationPlan: plan } };
     default:

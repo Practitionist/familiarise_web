@@ -96,7 +96,7 @@ jest.mock("../../lib/prisma", () => {
     },
     membership: { findFirst: jest.fn() },
     webinarPlan: { findUnique: jest.fn() },
-    classPlan: {
+    cohortPlan: {
       findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
     },
     bookingUtilization: { findUnique: jest.fn().mockResolvedValue(null) },
@@ -147,7 +147,7 @@ function payment() {
     appointment: {
       consultantProfile: { id: EXPERT },
       webinar: { webinarPlanId: PLAN_ID },
-      class: null,
+      cohort: null,
     },
   } as unknown as Parameters<typeof createEarningsFromPayment>[0]["payment"];
 }

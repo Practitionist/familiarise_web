@@ -107,7 +107,7 @@ describe("computeOverage — LICENSED_SEAT pass-through", () => {
   });
 
   it("multi-session split: only the over-cap sessions are marginal (#710)", () => {
-    // cap 5, used 4 → 1 covered seat; a 3-session CLASS at 100_000 → 2 over-cap
+    // cap 5, used 4 → 1 covered seat; a 3-session COHORT at 100_000 → 2 over-cap
     // sessions × floor(100_000/3) = 66_666 marginal; per-session floor leaves
     // the 2-paise residual in coveredPaise (payer's benefit, #778 §C).
     const r = computeOverage({

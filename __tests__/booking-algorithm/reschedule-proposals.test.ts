@@ -78,7 +78,7 @@ describe("scope and shape guards", () => {
     expect(supportsProposals("SUBSCRIPTION")).toBe(true);
     // A webinar has N attendees — no coherent "other side" to accept or counter.
     expect(supportsProposals("WEBINAR")).toBe(false);
-    expect(supportsProposals("CLASS")).toBe(false);
+    expect(supportsProposals("COHORT")).toBe(false);
     expect(supportsProposals("TRIAL")).toBe(false);
   });
 

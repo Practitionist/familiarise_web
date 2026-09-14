@@ -117,7 +117,7 @@ function subscriptionAppointment() {
       requestedBy: { id: "ce-001", user: { id: "consultee-user" } },
     },
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 
@@ -143,7 +143,7 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    class: {
+    cohort: {
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },

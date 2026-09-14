@@ -616,11 +616,11 @@ describe("Entity Channel Creation", () => {
     });
   });
 
-  describe("createClassChannel", () => {
+  describe("createCohortChannel", () => {
     it("should create channel for class with multiple appointments", async () => {
-      mockPrisma.class.findUnique.mockResolvedValueOnce({
+      mockPrisma.cohort.findUnique.mockResolvedValueOnce({
         id: "class-456",
-        classPlan: {
+        cohortPlan: {
           title: "Test Class",
           consultantProfile: { user: { id: "consultant-2" } },
         },
@@ -630,10 +630,10 @@ describe("Entity Channel Creation", () => {
         ],
       });
 
-      const { createClassChannel } =
+      const { createCohortChannel } =
         await import("../../actions/stream/chat/channel.action");
 
-      const result = await createClassChannel("class-456");
+      const result = await createCohortChannel("class-456");
 
       expect(result.channelId).toBe("class-class-456");
       expect(mockStreamClient.channel).toHaveBeenCalledWith(
@@ -648,28 +648,28 @@ describe("Entity Channel Creation", () => {
     });
 
     it("should throw error when class not found", async () => {
-      mockPrisma.class.findUnique.mockResolvedValueOnce(null);
+      mockPrisma.cohort.findUnique.mockResolvedValueOnce(null);
 
-      const { createClassChannel } =
+      const { createCohortChannel } =
         await import("../../actions/stream/chat/channel.action");
 
-      await expect(createClassChannel("nonexistent")).rejects.toThrow(
+      await expect(createCohortChannel("nonexistent")).rejects.toThrow(
         "Class not found: nonexistent",
       );
     });
 
     it("should throw error when consultant missing", async () => {
-      mockPrisma.class.findUnique.mockResolvedValueOnce({
+      mockPrisma.cohort.findUnique.mockResolvedValueOnce({
         id: "class-456",
-        classPlan: { title: "Test", consultantProfile: { user: null } },
+        cohortPlan: { title: "Test", consultantProfile: { user: null } },
         appointments: [],
       });
 
-      const { createClassChannel } =
+      const { createCohortChannel } =
         await import("../../actions/stream/chat/channel.action");
 
-      await expect(createClassChannel("class-456")).rejects.toThrow(
-        "Consultant not found for class",
+      await expect(createCohortChannel("class-456")).rejects.toThrow(
+        "Consultant not found for cohort",
       );
     });
   });

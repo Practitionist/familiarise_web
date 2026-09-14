@@ -41,7 +41,7 @@ describe("hygiene", () => {
     "Consultation",
     "Subscription",
     "Webinar",
-    "Class",
+    "Cohort",
     "Trial",
     "RescheduleRequest",
     "RescheduleProposedTime",
@@ -72,7 +72,7 @@ describe("hygiene", () => {
   it("the redundant prefix indexes are gone and the org/deletedAt index exists", () => {
     const a = model("Appointment");
     expect(a).not.toMatch(/@@index\(\[subscriptionId\]\)/);
-    expect(a).not.toMatch(/@@index\(\[classId\]\)/);
+    expect(a).not.toMatch(/@@index\(\[cohortId\]\)/);
     expect(a).not.toMatch(/@@index\(\[appointmentType\]\)/);
     expect(a).toContain("@@index([organizationId, deletedAt, createdAt])");
     expect(model("Consultation")).not.toMatch(

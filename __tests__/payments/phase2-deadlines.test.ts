@@ -78,7 +78,7 @@ jest.mock("../../lib/prisma", () => ({
     appointmentOccurrence: {
       findFirst: (...a: unknown[]) => baseSlotFindFirst(...a),
     },
-    class: {
+    cohort: {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -146,7 +146,7 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
   getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getCohortCapacity: jest.fn(),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
@@ -211,7 +211,7 @@ function primePhase1() {
     consultation: { id: "cons-1" },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
     occurrences: [],
   });
   // Phase 2's notification read + the session time the template needs.
@@ -226,7 +226,7 @@ function primePhase1() {
     },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
   });
   baseSlotFindFirst.mockResolvedValue({ startsAt: START });
   (validateWebhookMetadata as jest.Mock).mockReturnValue(METADATA);

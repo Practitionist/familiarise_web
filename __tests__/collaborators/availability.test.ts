@@ -40,15 +40,15 @@ function makeDb(opts: {
           consultation?: { consultationPlan?: Owned };
           subscription?: { subscriptionPlan?: Owned };
           webinar?: { webinarPlan?: Owned & Collab };
-          class?: { classPlan?: Owned & Collab };
+          cohort?: { cohortPlan?: Owned & Collab };
         };
         const profileIdOf = (c: Clause): string | undefined =>
           c.consultation?.consultationPlan?.consultantProfileId ??
           c.subscription?.subscriptionPlan?.consultantProfileId ??
           c.webinar?.webinarPlan?.consultantProfileId ??
           c.webinar?.webinarPlan?.collaborators?.some?.consultantProfileId ??
-          c.class?.classPlan?.consultantProfileId ??
-          c.class?.classPlan?.collaborators?.some?.consultantProfileId;
+          c.cohort?.cohortPlan?.consultantProfileId ??
+          c.cohort?.cohortPlan?.collaborators?.some?.consultantProfileId;
         // #1319 — the commitment clauses moved under `appointment.AND[0]` so
         // the occupancy predicate can own `appointment.OR`.
         const orClauses: Clause[] = where.appointment.AND[0].OR;

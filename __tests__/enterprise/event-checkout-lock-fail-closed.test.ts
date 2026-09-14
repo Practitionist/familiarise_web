@@ -90,7 +90,7 @@ describe("lockEventCheckout — CN-1 fail-closed", () => {
   it("carries a 503 + stable code so the route can reject", async () => {
     mockHealth.mockResolvedValue(false);
 
-    const err = await lockEventCheckout("CLASS", "event-2", TTL).catch(
+    const err = await lockEventCheckout("COHORT", "event-2", TTL).catch(
       (e: unknown) => e,
     );
 
@@ -133,7 +133,7 @@ describe("lockEventCheckout — CN-1 fail-closed", () => {
     mockSet.mockResolvedValue(null);
 
     const err = (await settleWithTimers(
-      lockEventCheckout("CLASS", "event-5", TTL),
+      lockEventCheckout("COHORT", "event-5", TTL),
     )) as Error;
 
     // Genuine contention must NOT be misreported as an outage (fail OPEN here).

@@ -79,10 +79,10 @@ jest.mock("../../lib/payments/utils/slot-validation", () => ({
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
   getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn().mockReturnValue({ isFull: false }),
+  getCohortCapacity: jest.fn().mockReturnValue({ isFull: false }),
 }));
 
-import { handleClassCheckout } from "../../lib/payments/operations/checkout";
+import { handleCohortCheckout } from "../../lib/payments/operations/checkout";
 import type { Tx } from "../../lib/prisma";
 import type { CheckoutInput } from "../../schemas/checkout";
 
@@ -108,10 +108,10 @@ function occurrence(
 function txWith(occurrences: ReturnType<typeof occurrence>[]) {
   const createMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
-    class: {
+    cohort: {
       findUnique: jest.fn().mockResolvedValue({
         id: "class-1",
-        classPlan: {
+        cohortPlan: {
           price: 100_000,
           totalSessions: 4,
           consultantProfile: { userId: "consultant-user" },
@@ -137,7 +137,7 @@ const PLANNED = [
 
 it("counts a RESCHEDULED session as planned: the gate opens and the meter says four", async () => {
   const tx = txWith(PLANNED);
-  const result = await handleClassCheckout(
+  const result = await handleCohortCheckout(
     tx,
     { eventId: "class-1" } as unknown as CheckoutInput,
     "buyer-1",
@@ -148,7 +148,7 @@ it("counts a RESCHEDULED session as planned: the gate opens and the meter says f
   expect(result.slotsLinked).toBe(4);
   // And the read itself keeps the released row: only a cancelled or deleted
   // session is out of the plan.
-  const args = (tx.class.findUnique as jest.Mock).mock.calls[0][0];
+  const args = (tx.cohort.findUnique as jest.Mock).mock.calls[0][0];
   expect(args.include.appointment.include.occurrences.where).toEqual({
     deletedAt: null,
     completionStatus: { not: "CANCELLED" },
@@ -157,7 +157,7 @@ it("counts a RESCHEDULED session as planned: the gate opens and the meter says f
 
 it("still refuses a class that is genuinely short of sessions", async () => {
   await expect(
-    handleClassCheckout(
+    handleCohortCheckout(
       txWith(PLANNED.slice(0, 3)),
       { eventId: "class-1" } as unknown as CheckoutInput,
       "buyer-1",

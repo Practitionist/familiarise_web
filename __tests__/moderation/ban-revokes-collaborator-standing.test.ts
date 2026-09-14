@@ -69,8 +69,12 @@ const tx = {
     // One statement flips and returns the rows, so the revocation list is
     // exactly what was flipped.
     updateManyAndReturn: jest.fn(async () => [
-      { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
-      { collaboratorType: "CLASS", webinarPlanId: null, classPlanId: "cp-9" },
+      {
+        collaboratorType: "WEBINAR",
+        webinarPlanId: "wp-1",
+        cohortPlanId: null,
+      },
+      { collaboratorType: "COHORT", webinarPlanId: null, cohortPlanId: "cp-9" },
     ]),
   },
 };

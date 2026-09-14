@@ -60,7 +60,7 @@ jest.mock("../../lib/prisma", () => ({
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
     },
     webinar: { updateMany: jest.fn() },
-    class: { updateMany: jest.fn() },
+    cohort: { updateMany: jest.fn() },
     $disconnect: jest.fn(),
   },
 }));

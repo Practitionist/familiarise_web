@@ -37,7 +37,7 @@ const detail = {
     organizationId: null,
     consultation: null,
     webinar: null,
-    class: null,
+    cohort: null,
     trial: null,
     subscription: {
       status: "SCHEDULED",

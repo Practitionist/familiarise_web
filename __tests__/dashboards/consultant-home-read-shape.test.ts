@@ -185,7 +185,7 @@ describe("consultant Home read shape (#1101)", () => {
     const activeBook = Array.from({ length: 64 }, (_, i) => ({
       consultation: { requestedBy: { id: `consultee-${i}` } },
       subscription: null,
-      class: null,
+      cohort: null,
     }));
 
     apptFindMany.mockImplementation((args: { select?: unknown }) =>

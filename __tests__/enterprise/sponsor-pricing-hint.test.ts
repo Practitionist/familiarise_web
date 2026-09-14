@@ -6,7 +6,7 @@ import {
   applySponsorPricingHintToManifest,
   resolveSponsorPricingHint,
 } from "@/components/offerings/editor/sponsor-pricing-hint";
-import { CLASS_MANIFEST } from "@/components/offerings/editor/manifests";
+import { COHORT_MANIFEST } from "@/components/offerings/editor/manifests";
 
 describe("resolveSponsorPricingHint", () => {
   it("returns null for no memberships", () => {
@@ -56,8 +56,8 @@ describe("resolveSponsorPricingHint", () => {
 
 describe("applySponsorPricingHintToManifest", () => {
   it("stamps the hint on the price field and nothing else", () => {
-    const hinted = applySponsorPricingHintToManifest(CLASS_MANIFEST, "HINT");
-    const before = CLASS_MANIFEST.sections.flatMap((s) =>
+    const hinted = applySponsorPricingHintToManifest(COHORT_MANIFEST, "HINT");
+    const before = COHORT_MANIFEST.sections.flatMap((s) =>
       s.fields.filter((f) => f.kind === "price"),
     );
     const after = hinted.sections.flatMap((s) =>
@@ -72,7 +72,7 @@ describe("applySponsorPricingHintToManifest", () => {
     const others = hinted.sections.flatMap((s) =>
       s.fields.filter((f) => f.kind !== "price"),
     );
-    const othersBefore = CLASS_MANIFEST.sections.flatMap((s) =>
+    const othersBefore = COHORT_MANIFEST.sections.flatMap((s) =>
       s.fields.filter((f) => f.kind !== "price"),
     );
     expect(others).toEqual(othersBefore);

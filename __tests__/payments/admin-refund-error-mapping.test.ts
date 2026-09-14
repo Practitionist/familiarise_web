@@ -18,7 +18,7 @@
  * refund from an outage.
  *
  * Verified against the deploy preview before the fix: `{paymentId}` returned
- * 500 with content-length 0 and no content-type, while the `{classId}` branch
+ * 500 with content-length 0 and no content-type, while the `{cohortId}` branch
  * — which returns normally instead of throwing — returned 200.
  */
 
@@ -224,7 +224,7 @@ describe("the success paths are unchanged", () => {
     });
 
     const res = await POST(
-      refundRequest({ classId: "class_1", reason: "cancelled" }),
+      refundRequest({ cohortId: "class_1", reason: "cancelled" }),
     );
 
     expect(res.status).toBe(200);
@@ -233,7 +233,7 @@ describe("the success paths are unchanged", () => {
 
   it("rejects a payload naming more than one target", async () => {
     const res = await POST(
-      refundRequest({ paymentId: "p1", classId: "c1", reason: "both" }),
+      refundRequest({ paymentId: "p1", cohortId: "c1", reason: "both" }),
     );
 
     expect(res.status).toBe(400);

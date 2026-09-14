@@ -18,7 +18,7 @@ const slotFindMany = jest.fn(async (..._args: unknown[]) => [
       participants: [{ userId: "u-attendee" }],
       consultation: null,
       subscription: null,
-      class: null,
+      cohort: null,
       webinar: {
         id: "web-1",
         webinarPlanId: "wp-1",

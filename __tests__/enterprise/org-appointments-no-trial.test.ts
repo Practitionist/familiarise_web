@@ -67,7 +67,7 @@ describe("GET /api/organizations/[orgId]/appointments", () => {
   });
 
   it("still accepts the four types an org can actually hold", async () => {
-    for (const type of ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]) {
+    for (const type of ["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "COHORT"]) {
       const res = await get(`?appointmentType=${type}`);
       expect(res.status).toBe(200);
       expect(mockGetOrgAppointments).toHaveBeenLastCalledWith(

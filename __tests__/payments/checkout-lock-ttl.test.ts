@@ -4,9 +4,9 @@
 
 /**
  * #832 follow-up — bugs/finances/high-concurrency-and-spikes.md documents the
- * serverless-freeze worst case for CLASS: the platform can suspend the lock
+ * serverless-freeze worst case for COHORT: the platform can suspend the lock
  * holder AFTER the single checked renewal while Redis keeps counting the TTL
- * down, so the old 300s CLASS budget could expire mid-checkout and admit a
+ * down, so the old 300s COHORT budget could expire mid-checkout and admit a
  * second instance.
  *
  * Asserts the IMPORTED constant (CodeRabbit #1220 triage): source-text regexes
@@ -17,12 +17,12 @@
 import { CHECKOUT_LOCK_TTL_MS } from "../../utils/appointmentlock";
 
 describe("CHECKOUT_LOCK_TTL_MS (#832 serverless-freeze worst case)", () => {
-  it("raises CLASS to the documented freeze worst case: 600s", () => {
-    expect(CHECKOUT_LOCK_TTL_MS.CLASS).toBe(600_000);
+  it("raises COHORT to the documented freeze worst case: 600s", () => {
+    expect(CHECKOUT_LOCK_TTL_MS.COHORT).toBe(600_000);
   });
 
-  it("no longer carries the insufficient 300s CLASS budget", () => {
-    expect(CHECKOUT_LOCK_TTL_MS.CLASS).not.toBe(300_000);
+  it("no longer carries the insufficient 300s COHORT budget", () => {
+    expect(CHECKOUT_LOCK_TTL_MS.COHORT).not.toBe(300_000);
   });
 
   it("keeps the smaller shapes on their sized #832 budgets", () => {

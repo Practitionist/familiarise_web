@@ -6,7 +6,7 @@
 
 import {
   OFFERING_MANIFESTS,
-  CLASS_MANIFEST,
+  COHORT_MANIFEST,
   CONSULTATION_MANIFEST,
   SUBSCRIPTION_MANIFEST,
   WEBINAR_MANIFEST,
@@ -17,7 +17,7 @@ const ALL = [
   CONSULTATION_MANIFEST,
   SUBSCRIPTION_MANIFEST,
   WEBINAR_MANIFEST,
-  CLASS_MANIFEST,
+  COHORT_MANIFEST,
 ];
 
 function fieldsOf(manifest: OfferingManifest): FieldSpec[] {
@@ -65,7 +65,7 @@ describe("offering manifests", () => {
     // only — CollaboratorsTab's own planType is "webinar" | "class". Showing
     // the section on a 1:1 offering would promise storage that does not exist.
     expect(sectionIds(WEBINAR_MANIFEST)).toContain("collaborators");
-    expect(sectionIds(CLASS_MANIFEST)).toContain("collaborators");
+    expect(sectionIds(COHORT_MANIFEST)).toContain("collaborators");
     expect(sectionIds(CONSULTATION_MANIFEST)).not.toContain("collaborators");
     expect(sectionIds(SUBSCRIPTION_MANIFEST)).not.toContain("collaborators");
   });
@@ -83,7 +83,7 @@ describe("offering manifests", () => {
   it("exposes session duration on both recurring types", () => {
     // The class dialog hardcoded this to 1 and never rendered it, so every
     // class was a one-hour-session class while subscriptions could set it.
-    for (const manifest of [SUBSCRIPTION_MANIFEST, CLASS_MANIFEST]) {
+    for (const manifest of [SUBSCRIPTION_MANIFEST, COHORT_MANIFEST]) {
       expect(fieldNames(manifest)).toContain("sessionDurationInHours");
       expect(fieldNames(manifest)).toContain("sessionsPerWeek");
     }
@@ -91,7 +91,7 @@ describe("offering manifests", () => {
 
   it("puts the class start date in the form rather than beside it", () => {
     // It used to be plain useState outside the form with a hand-rolled error.
-    expect(fieldNames(CLASS_MANIFEST)).toContain("schedulingStartDate");
+    expect(fieldNames(COHORT_MANIFEST)).toContain("schedulingStartDate");
   });
 
   it("keeps every section's fields within one 6-column row width", () => {
@@ -146,7 +146,7 @@ describe("offering manifests", () => {
  * Every slot a manifest declares must be one the container actually supplies,
  * or the editor silently renders "Nothing to configure here yet" over a section
  * the offering genuinely needs — which for a class curriculum would make the
- * offering unsaveable, since ClassPlanSchema requires at least one item.
+ * offering unsaveable, since CohortPlanSchema requires at least one item.
  */
 describe("declared slots are all supplied", () => {
   const SUPPLIED = new Set(["faq", "curriculum", "roadmap", "collaborators"]);
@@ -161,7 +161,7 @@ describe("declared slots are all supplied", () => {
   });
 
   it("keeps the class curriculum a slot, since the schema requires content", () => {
-    const curriculum = CLASS_MANIFEST.sections.find(
+    const curriculum = COHORT_MANIFEST.sections.find(
       (s) => s.id === "curriculum",
     );
     expect(curriculum?.slot).toBe("curriculum");
@@ -186,8 +186,7 @@ describe("slot status tokens", () => {
     // The legend surfaces `hint` as a title, so an empty one is a silent gap.
     const incomplete = Object.entries(SLOT_STATUS_TOKENS)
       .filter(
-        ([, t]) =>
-          !t.label || !t.className || !t.swatchClassName || !t.hint,
+        ([, t]) => !t.label || !t.className || !t.swatchClassName || !t.hint,
       )
       .map(([key]) => key);
 

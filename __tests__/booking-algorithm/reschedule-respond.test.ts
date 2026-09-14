@@ -724,7 +724,7 @@ describe("lifecycle hygiene wiring", () => {
   it("removed attendees lose event-channel access at refund time", () => {
     for (const rel of [
       "app/api/participants/webinar/[webinarId]/route.ts",
-      "app/api/participants/class/[classId]/route.ts",
+      "app/api/participants/cohort/[cohortId]/route.ts",
     ]) {
       expect(read(rel)).toContain("removeUserFromEventChannel(");
     }

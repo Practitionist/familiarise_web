@@ -58,7 +58,7 @@ const plan = (recordingEnabled: boolean) => ({
 const CONSULTATION = { consultation: { consultationPlan: plan(true) } };
 const SUBSCRIPTION = { subscription: { subscriptionPlan: plan(true) } };
 const WEBINAR = { webinar: { webinarPlan: plan(true) } };
-const CLASS = { class: { classPlan: plan(true) } };
+const COHORT = { cohort: { cohortPlan: plan(true) } };
 
 beforeEach(() => jest.clearAllMocks());
 
@@ -73,7 +73,7 @@ describe("consent regime", () => {
 
   it("treats group sessions as acknowledge-only", () => {
     expect(consentRegimeFor(WEBINAR)).toBe("ACKNOWLEDGE");
-    expect(consentRegimeFor(CLASS)).toBe("ACKNOWLEDGE");
+    expect(consentRegimeFor(COHORT)).toBe("ACKNOWLEDGE");
   });
 });
 
@@ -152,7 +152,7 @@ describe("the recording gate", () => {
     // replay that every other attendee paid for.
     mockConsent.count.mockResolvedValue(5);
     expect((await getRecordingBlock("s1", WEBINAR)).blocked).toBe(false);
-    expect((await getRecordingBlock("s1", CLASS)).blocked).toBe(false);
+    expect((await getRecordingBlock("s1", COHORT)).blocked).toBe(false);
     expect(mockConsent.count).not.toHaveBeenCalled();
   });
 });

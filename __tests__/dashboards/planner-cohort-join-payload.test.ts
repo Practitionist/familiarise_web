@@ -4,7 +4,7 @@
 
 /**
  * #1080 — the planner's class Join always reported "No joinable session found
- * for this class". `classInclude` was `appointment: true`, so the slot rows
+ * for this class". `cohortInclude` was `appointment: true`, so the slot rows
  * the component derives the session from never left the database, the `?? []`
  * fallback swallowed the absence, and the message was indistinguishable from
  * the legitimate out-of-window case.
@@ -41,7 +41,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     webinar: { findMany: jest.fn() },
-    class: { findMany: jest.fn() },
+    cohort: { findMany: jest.fn() },
     collaborator: { findMany: jest.fn() },
     consultantProfile: { findUnique: jest.fn() },
     membership: { findMany: jest.fn() },
@@ -51,7 +51,7 @@ jest.mock("../../lib/prisma", () => ({
 
 const db = prisma as unknown as {
   webinar: { findMany: jest.Mock };
-  class: { findMany: jest.Mock };
+  cohort: { findMany: jest.Mock };
   collaborator: { findMany: jest.Mock };
   consultantProfile: { findUnique: jest.Mock };
   membership: { findMany: jest.Mock };
@@ -112,7 +112,7 @@ interface SlotSpec {
   where?: { startsAt?: { gte?: Date; lte?: Date } };
   select?: Record<string, true | { select: Record<string, true> }>;
 }
-interface ClassIncludeSpec {
+interface CohortIncludeSpec {
   appointment?: true | { include?: { occurrences?: SlotSpec } };
 }
 
@@ -133,25 +133,25 @@ function projectSlots(spec: SlotSpec, slots: StoredSlot[]) {
     });
 }
 
-let classRows: Array<{
+let cohortRows: Array<{
   id: string;
-  classPlanId: string;
-  classPlan: Record<string, unknown>;
+  cohortPlanId: string;
+  cohortPlan: Record<string, unknown>;
   /** #1554 — one wrapper per class carries every sitting. */
   appointment: StoredAppointment | null;
 }> = [];
 
-function seedClass(appointment: StoredAppointment | null) {
-  classRows = [
+function seedCohort(appointment: StoredAppointment | null) {
+  cohortRows = [
     {
       id: "class-1",
-      classPlanId: "plan-1",
-      classPlan: {
+      cohortPlanId: "plan-1",
+      cohortPlan: {
         id: "plan-1",
         title: "Systems design, eight weeks",
         consultantProfileId: CONSULTANT_PROFILE_ID,
         topics: [{ name: "architecture" }],
-        classContents: [],
+        cohortContents: [],
       },
       appointment,
     },
@@ -159,7 +159,7 @@ function seedClass(appointment: StoredAppointment | null) {
 }
 
 beforeEach(() => {
-  // The route bounds its slot window with `classInclude(new Date())`, while
+  // The route bounds its slot window with `cohortInclude(new Date())`, while
   // these rows are anchored to NOW. Without pinning the clock the suite passes
   // only on the day NOW happens to fall on.
   jest.useFakeTimers({ doNotFake: ["performance"] });
@@ -180,7 +180,7 @@ beforeEach(() => {
     userId: "user-consultant",
   });
 
-  // #1346 — the unwindowed firstSessionAt lookup; unlike classInclude's
+  // #1346 — the unwindowed firstSessionAt lookup; unlike cohortInclude's
   // slot select, this reads every row regardless of the ±24h window.
   // The mock applies the predicates the route actually sends, so a regression
   // that drops the deletedAt or completionStatus filter fails here instead of
@@ -202,7 +202,7 @@ beforeEach(() => {
         appointmentId: string;
         _min: { startsAt: Date };
       }> = [];
-      for (const row of classRows) {
+      for (const row of cohortRows) {
         const appt = row.appointment;
         if (!appt || !ids.has(appt.id)) continue;
         const live = appt.occurrences.filter(
@@ -225,14 +225,14 @@ beforeEach(() => {
     },
   );
 
-  db.class.findMany.mockImplementation(
+  db.cohort.findMany.mockImplementation(
     async (args: {
-      include?: ClassIncludeSpec;
-      where?: { classPlan?: { consultantProfileId?: string } };
+      include?: CohortIncludeSpec;
+      where?: { cohortPlan?: { consultantProfileId?: string } };
     }) => {
       // No include means the participant-count query, which uses `select`.
       if (!args.include) {
-        return classRows.map((row) => ({
+        return cohortRows.map((row) => ({
           id: row.id,
           appointment: row.appointment
             ? {
@@ -245,13 +245,13 @@ beforeEach(() => {
       }
       // Only the owned-plans query matches; the collaborated one returns none.
       if (
-        args.where?.classPlan?.consultantProfileId !== CONSULTANT_PROFILE_ID
+        args.where?.cohortPlan?.consultantProfileId !== CONSULTANT_PROFILE_ID
       ) {
         return [];
       }
       const spec = args.include.appointment;
       const slotSpec = spec === true ? undefined : spec?.include?.occurrences;
-      return classRows.map((row) => {
+      return cohortRows.map((row) => {
         if (!row.appointment) return { ...row, appointment: null };
         const {
           occurrences,
@@ -288,7 +288,7 @@ interface PayloadSlot {
   } | null;
 }
 
-async function plannerClasses() {
+async function plannerCohorts() {
   const res = await GET(
     new Request(
       `http://localhost/api/dashboard/consultant/${CONSULTANT_PROFILE_ID}/planner`,
@@ -297,7 +297,7 @@ async function plannerClasses() {
   );
   expect(res.status).toBe(200);
   const body = await res.json();
-  return body.data.classes as Array<{
+  return body.data.cohorts as Array<{
     id: string;
     firstSessionAt: string | null;
     appointment: {
@@ -319,9 +319,9 @@ const liveSitting = (
 
 describe("the planner payload carries what a class join reads", () => {
   it("returns the slot rows at all, with exactly the join path's fields", async () => {
-    seedClass(liveSitting());
+    seedCohort(liveSitting());
 
-    const [cls] = await plannerClasses();
+    const [cls] = await plannerCohorts();
     const slots = cls.appointment!.occurrences;
 
     expect(slots).toHaveLength(1);
@@ -338,9 +338,9 @@ describe("the planner payload carries what a class join reads", () => {
   });
 
   it("resolves to the live occurrence", async () => {
-    seedClass(liveSitting());
+    seedCohort(liveSitting());
 
-    const [cls] = await plannerClasses();
+    const [cls] = await plannerCohorts();
     const run = getJoinableOccurrence(cls.appointment!.occurrences!, {
       joinWindowMs: 10 * 60 * 1000,
       now: NOW,
@@ -355,7 +355,7 @@ describe("the planner payload carries what a class join reads", () => {
   it("sees a host-ended call rather than only the clock", async () => {
     // The `meeting` select is what makes the ended guard reachable:
     // the row is still inside its window, so the clock alone says "joinable".
-    seedClass(
+    seedCohort(
       liveSitting({
         meeting: {
           id: "ms-1",
@@ -365,7 +365,7 @@ describe("the planner payload carries what a class join reads", () => {
       }),
     );
 
-    const [cls] = await plannerClasses();
+    const [cls] = await plannerCohorts();
     const slots = cls.appointment!.occurrences!;
     const run = getCurrentOrNextOccurrence(slots, NOW);
 
@@ -376,9 +376,11 @@ describe("the planner payload carries what a class join reads", () => {
   });
 
   it("drops rows a day out while keeping the live occurrence", async () => {
-    seedClass(liveSitting({}, [storedSlot("slot-far", hoursFromNow(24 * 30))]));
+    seedCohort(
+      liveSitting({}, [storedSlot("slot-far", hoursFromNow(24 * 30))]),
+    );
 
-    const [cls] = await plannerClasses();
+    const [cls] = await plannerCohorts();
     const ids = (cls.appointment!.occurrences ?? []).map(
       (slot) => slot.id as string,
     );
@@ -389,16 +391,16 @@ describe("the planner payload carries what a class join reads", () => {
 
   it("names the class's first session even when every slot is outside the join window", async () => {
     // #1346 — a class whose only session is 5 days out gets zero slots from
-    // classInclude's ±24h window, so the card's date must come from the
+    // cohortInclude's ±24h window, so the card's date must come from the
     // separate, unwindowed firstSessionAt field.
     const farStart = hoursFromNow(24 * 5);
-    seedClass({
+    seedCohort({
       id: "appt-class",
       organizationId: null,
       occurrences: [storedSlot("slot-far", farStart)],
     });
 
-    const [cls] = await plannerClasses();
+    const [cls] = await plannerCohorts();
 
     expect(cls.appointment!.occurrences).toHaveLength(0);
     expect(cls.firstSessionAt).toBe(farStart.toISOString());
@@ -407,7 +409,7 @@ describe("the planner payload carries what a class join reads", () => {
   it("still counts participants from its own batched query", async () => {
     // The slot select carries no roster, so the count must not have silently
     // moved onto the trimmed rows.
-    seedClass(liveSitting());
+    seedCohort(liveSitting());
 
     const res = await GET(
       new Request(

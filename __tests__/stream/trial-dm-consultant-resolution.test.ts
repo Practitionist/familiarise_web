@@ -33,7 +33,7 @@ interface AppointmentShape {
   consultation?: { consultationPlan?: { consultantProfile?: Owner } } | null;
   subscription?: { subscriptionPlan?: { consultantProfile?: Owner } } | null;
   webinar?: { webinarPlan?: { consultantProfile?: Owner } } | null;
-  class?: { classPlan?: { consultantProfile?: Owner } } | null;
+  cohort?: { cohortPlan?: { consultantProfile?: Owner } } | null;
   trial?: { consultantProfile?: Owner } | null;
 }
 
@@ -49,7 +49,7 @@ function resolveConsultantUserId(
     appointment?.consultation?.consultationPlan?.consultantProfile ||
     appointment?.subscription?.subscriptionPlan?.consultantProfile ||
     appointment?.webinar?.webinarPlan?.consultantProfile ||
-    appointment?.class?.classPlan?.consultantProfile ||
+    appointment?.cohort?.cohortPlan?.consultantProfile ||
     appointment?.trial?.consultantProfile;
   return consultantProfile?.userId;
 }
@@ -62,7 +62,7 @@ describe("consultant resolution for the payment-success DM", () => {
       consultation: null,
       subscription: null,
       webinar: null,
-      class: null,
+      cohort: null,
       trial: { consultantProfile: owner("consultant-1") },
     };
 
@@ -83,15 +83,34 @@ describe("consultant resolution for the payment-success DM", () => {
   });
 
   it.each([
-    ["consultation", { consultation: { consultationPlan: { consultantProfile: owner("c") } } }, "c"],
-    ["subscription", { subscription: { subscriptionPlan: { consultantProfile: owner("s") } } }, "s"],
-    ["webinar", { webinar: { webinarPlan: { consultantProfile: owner("w") } } }, "w"],
-    ["class", { class: { classPlan: { consultantProfile: owner("k") } } }, "k"],
-  ] as const)("leaves %s resolution unchanged", (_kind, appointment, expected) => {
-    expect(resolveConsultantUserId(appointment as AppointmentShape)).toBe(
-      expected,
-    );
-  });
+    [
+      "consultation",
+      { consultation: { consultationPlan: { consultantProfile: owner("c") } } },
+      "c",
+    ],
+    [
+      "subscription",
+      { subscription: { subscriptionPlan: { consultantProfile: owner("s") } } },
+      "s",
+    ],
+    [
+      "webinar",
+      { webinar: { webinarPlan: { consultantProfile: owner("w") } } },
+      "w",
+    ],
+    [
+      "class",
+      { cohort: { cohortPlan: { consultantProfile: owner("k") } } },
+      "k",
+    ],
+  ] as const)(
+    "leaves %s resolution unchanged",
+    (_kind, appointment, expected) => {
+      expect(resolveConsultantUserId(appointment as AppointmentShape)).toBe(
+        expected,
+      );
+    },
+  );
 
   it("is undefined when nothing owns the appointment", () => {
     // The guard is load-bearing: no consultant means no DM, not a DM to a

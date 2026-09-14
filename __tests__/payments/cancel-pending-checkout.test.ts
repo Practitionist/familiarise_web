@@ -17,18 +17,18 @@ type Row = Record<string, unknown>;
 interface SlotRow {
   id: string;
   appointmentId: string;
-  classId: string | null;
+  cohortId: string | null;
   isTentative: boolean;
   completionStatus: string;
   deletedAt: Date | null;
   userIds: string[];
 }
 
-/** #1554 — a seat is an AppointmentParticipant row; classId rides along so
- *  the class-wide release (`appointment: { classId }`) can be matched. */
+/** #1554 — a seat is an AppointmentParticipant row; cohortId rides along so
+ *  the class-wide release (`appointment: { cohortId }`) can be matched. */
 interface SeatRow {
   appointmentId: string;
-  classId: string | null;
+  cohortId: string | null;
   userId: string;
   status: string;
 }
@@ -55,7 +55,7 @@ function newStore(): Store {
 
 interface SeatWhere {
   appointmentId?: string;
-  appointment?: { classId?: string };
+  appointment?: { cohortId?: string };
   userId?: string;
   status?: { in?: string[] };
 }
@@ -66,8 +66,8 @@ function matchSeats(where: Row): SeatRow[] {
     let match = true;
     if (w.appointmentId !== undefined)
       match = match && seat.appointmentId === w.appointmentId;
-    if (w.appointment?.classId !== undefined)
-      match = match && seat.classId === w.appointment.classId;
+    if (w.appointment?.cohortId !== undefined)
+      match = match && seat.cohortId === w.appointment.cohortId;
     if (w.userId !== undefined) match = match && seat.userId === w.userId;
     if (w.status?.in !== undefined)
       match = match && w.status.in.includes(seat.status);
@@ -77,7 +77,7 @@ function matchSeats(where: Row): SeatRow[] {
 
 interface SlotWhere {
   appointmentId?: string;
-  appointment?: { classId?: string };
+  appointment?: { cohortId?: string };
   isTentative?: boolean;
   deletedAt?: Date | null;
   completionStatus?: { in?: string[] };
@@ -89,8 +89,8 @@ function matchSlots(where: Row): SlotRow[] {
     let match = true;
     if (w.appointmentId !== undefined)
       match = match && slot.appointmentId === w.appointmentId;
-    if (w.appointment?.classId !== undefined)
-      match = match && slot.classId === w.appointment.classId;
+    if (w.appointment?.cohortId !== undefined)
+      match = match && slot.cohortId === w.appointment.cohortId;
     if (w.isTentative !== undefined)
       match = match && slot.isTentative === w.isTentative;
     if (w.deletedAt === null) match = match && slot.deletedAt === null;
@@ -119,7 +119,7 @@ function makeTx() {
                   ? { id: p.subscriptionId }
                   : null,
                 webinar: p.webinarId ? { id: p.webinarId } : null,
-                class: p.classId ? { id: p.classId } : null,
+                cohort: p.cohortId ? { id: p.cohortId } : null,
               }
             : null,
         };
@@ -250,7 +250,7 @@ function seedConsultationPayment({
     consultationId: "cons-1",
     subscriptionId: null,
     webinarId: null,
-    classId: null,
+    cohortId: null,
   });
   state.consultations.set("cons-1", {
     id: "cons-1",
@@ -259,7 +259,7 @@ function seedConsultationPayment({
   state.slots.push({
     id: "slot-1",
     appointmentId: "appt-1",
-    classId: null,
+    cohortId: null,
     isTentative: true,
     completionStatus: "SCHEDULED",
     deletedAt: null,
@@ -429,7 +429,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
       consultationId: null,
       subscriptionId: "sub-1",
       webinarId: null,
-      classId: null,
+      cohortId: null,
     });
     state.subscriptions.set("sub-1", {
       id: "sub-1",
@@ -438,7 +438,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
     state.slots.push({
       id: "slot-s",
       appointmentId: "appt-s",
-      classId: null,
+      cohortId: null,
       isTentative: true,
       completionStatus: "SCHEDULED",
       deletedAt: null,
@@ -470,7 +470,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
       consultationId: null,
       subscriptionId: "sub-2",
       webinarId: null,
-      classId: null,
+      cohortId: null,
     });
     state.subscriptions.set("sub-2", { id: "sub-2", status: "SCHEDULED" });
 
@@ -493,12 +493,12 @@ describe("cancelPendingCheckout — webinar scoping", () => {
       consultationId: null,
       subscriptionId: null,
       webinarId: "web-1",
-      classId: null,
+      cohortId: null,
     });
     state.slots.push({
       id: "slot-shared",
       appointmentId: "appt-w",
-      classId: null,
+      cohortId: null,
       isTentative: false,
       completionStatus: "SCHEDULED",
       deletedAt: null,
@@ -507,13 +507,13 @@ describe("cancelPendingCheckout — webinar scoping", () => {
     state.seats.push(
       {
         appointmentId: "appt-w",
-        classId: null,
+        cohortId: null,
         userId: "user-1",
         status: "HELD",
       },
       {
         appointmentId: "appt-w",
-        classId: null,
+        cohortId: null,
         userId: "user-2",
         status: "HELD",
       },
@@ -532,13 +532,13 @@ describe("cancelPendingCheckout — webinar scoping", () => {
     expect(state.seats).toEqual([
       {
         appointmentId: "appt-w",
-        classId: null,
+        cohortId: null,
         userId: "user-1",
         status: "CANCELLED",
       },
       {
         appointmentId: "appt-w",
-        classId: null,
+        cohortId: null,
         userId: "user-2",
         status: "HELD",
       },
@@ -559,24 +559,24 @@ describe("cancelPendingCheckout — class scoping", () => {
       consultationId: null,
       subscriptionId: null,
       webinarId: null,
-      classId: "class-1",
+      cohortId: "class-1",
     });
     state.seats.push(
       {
         appointmentId: "appt-c1",
-        classId: "class-1",
+        cohortId: "class-1",
         userId: "user-1",
         status: "HELD",
       },
       {
         appointmentId: "appt-c2",
-        classId: "class-1",
+        cohortId: "class-1",
         userId: "user-1",
         status: "HELD",
       },
       {
         appointmentId: "appt-c2",
-        classId: "class-1",
+        cohortId: "class-1",
         userId: "user-2",
         status: "HELD",
       },

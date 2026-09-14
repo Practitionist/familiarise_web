@@ -43,7 +43,7 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
   },
-  class: {
+  cohort: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
   },
@@ -185,7 +185,7 @@ function consultationAppointment() {
     },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 

@@ -99,8 +99,8 @@ describe("bookingAppointmentFilter", () => {
   });
 
   it("selects the class's one wrapper by its parent link", () => {
-    expect(bookingAppointmentFilter({ classId: "class-1" })).toEqual({
-      classId: "class-1",
+    expect(bookingAppointmentFilter({ cohortId: "class-1" })).toEqual({
+      cohortId: "class-1",
     });
   });
 
@@ -220,7 +220,7 @@ describe("resolveBookingRefundContext", () => {
   it("scopes the payment lookup to one buyer for group events", async () => {
     mockAppointmentFindFirst.mockResolvedValue(null);
 
-    await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
+    await resolveBookingRefundContext({ cohortId: "class-1" }, "user-7");
 
     // Every attendee's Payment hangs off the same appointment, so an unscoped
     // lookup would refund whoever the DB returned first.
@@ -238,7 +238,7 @@ describe("resolveBookingRefundContext", () => {
   it("reads the shared occurrences unscoped by buyer (#1554)", async () => {
     mockAppointmentFindFirst.mockResolvedValue(null);
 
-    await resolveBookingRefundContext({ classId: "class-1" }, "user-7");
+    await resolveBookingRefundContext({ cohortId: "class-1" }, "user-7");
 
     // Every attendee of a class shares the appointment's occurrences, so
     // there is no per-buyer subset to scope to; the buyer filter lives on the
@@ -320,10 +320,10 @@ describe("resolveBookingRefundContext", () => {
       occurrences: [],
     });
 
-    await resolveBookingRefundContext({ classId: "class-1" });
+    await resolveBookingRefundContext({ cohortId: "class-1" });
     expect(mockRecordSystemError).not.toHaveBeenCalled();
 
-    await resolveBookingRefundContext({ classId: "class-1" }, "user-a");
+    await resolveBookingRefundContext({ cohortId: "class-1" }, "user-a");
     expect(mockRecordSystemError).toHaveBeenCalledTimes(1);
   });
 

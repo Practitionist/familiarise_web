@@ -76,7 +76,7 @@ jest.mock("../../lib/prisma", () => {
       findUnique: jest.fn(),
     },
     webinar: { findMany: jest.fn(), updateMany: jest.fn() },
-    class: { findMany: jest.fn(), updateMany: jest.fn() },
+    cohort: { findMany: jest.fn(), updateMany: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
     trial: { findMany: jest.fn() },
     appointmentOccurrence: { findMany: jest.fn(), updateMany: jest.fn() },
@@ -148,7 +148,7 @@ beforeEach(() => {
   for (const model of [
     "consultation",
     "webinar",
-    "class",
+    "cohort",
     "subscription",
     "trial",
     "appointmentOccurrence",

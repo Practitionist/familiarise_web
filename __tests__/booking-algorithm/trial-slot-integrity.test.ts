@@ -70,7 +70,10 @@ import {
   BookingLockUnavailableError,
 } from "../../utils/appointmentlock";
 import { SlotLockError } from "../../utils/errors/SlotLockError";
-import { getWebinarCapacity, getClassCapacity } from "../../lib/events/capacity";
+import {
+  getWebinarCapacity,
+  getCohortCapacity,
+} from "../../lib/events/capacity";
 
 const redisMock = jest.requireMock("../../lib/redis") as {
   checkRedisHealth: jest.Mock;
@@ -355,8 +358,8 @@ describe("capacity include-trap (#676 CN-4)", () => {
 
   it("throws for class capacity when the wrapper was loaded without participants", () => {
     expect(() =>
-      getClassCapacity({
-        classInstance: {
+      getCohortCapacity({
+        cohortInstance: {
           maxParticipants: 1,
           appointment: {} as { participants?: { userId: string }[] },
         },

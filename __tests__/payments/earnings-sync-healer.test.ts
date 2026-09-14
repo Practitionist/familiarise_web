@@ -77,7 +77,7 @@ function healablePayment(id: string, ageDays: number) {
       },
       subscription: null,
       webinar: null,
-      class: null,
+      cohort: null,
     },
   };
 }

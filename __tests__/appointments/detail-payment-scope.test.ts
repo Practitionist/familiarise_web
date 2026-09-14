@@ -30,7 +30,7 @@ const detail = {
     id: "appt",
     organizationId: null,
     webinarId: "web-1",
-    classId: null,
+    cohortId: null,
     webinar: { webinarPlan: { consultantProfile: { userId: HOST } } },
     occurrences: [{}],
     participants: [
@@ -83,7 +83,7 @@ describe("scopeAppointmentDetail", () => {
         id: "appt-1to1",
         organizationId: "org-1",
         webinarId: null,
-        classId: null,
+        cohortId: null,
         consultation: {
           consultationPlan: { consultantProfile: { userId: HOST } },
           requestedBy: { userId: A },

@@ -11,7 +11,7 @@ import {
   transitionConsultationRequest,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
-  transitionClassEvent,
+  transitionCohortEvent,
   transitionRescheduleRequest,
   transitionOccurrenceCompletion,
   transitionTrial,
@@ -80,11 +80,11 @@ const cases: Array<{
   },
   {
     name: "class",
-    model: "class",
-    entity: "CLASS",
+    model: "cohort",
+    entity: "COHORT",
     to: "CANCELLED",
     run: (tx) =>
-      transitionClassEvent(tx, { where: { id: "k1" }, to: "CANCELLED" }),
+      transitionCohortEvent(tx, { where: { id: "k1" }, to: "CANCELLED" }),
   },
   {
     name: "reschedule request",

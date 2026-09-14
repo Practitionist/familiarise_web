@@ -11,7 +11,7 @@
  * - validateSameDaySlots
  * - validateConsultation (duration, same-day, consecutive)
  * - validateWebinar (duration, consecutive)
- * - validateClass (weekly limits, session grouping)
+ * - validateCohort (weekly limits, session grouping)
  * - slotDurationMinutes fix verification
  */
 
@@ -560,7 +560,7 @@ describe("validate: consultation event", () => {
 describe("validate: per-day session cap (#898)", () => {
   // Class cap is 2 sessions/day (subscription is 1/day). The cap was previously
   // only enforced at allocation-selection time + the client guard; these cover
-  // the new hard server-side check in validateClass.
+  // the new hard server-side check in validateCohort.
   it("accepts a class at the per-day cap (2 one-hour sessions on one day)", async () => {
     const result = await service.validate(
       "class",

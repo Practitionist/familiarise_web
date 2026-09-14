@@ -259,7 +259,7 @@ describe("retryModerationEnforcement", () => {
     outboxFindMany.mockResolvedValue([
       {
         id: "retry-1",
-        planType: "CLASS",
+        planType: "COHORT",
         planId: "cp-9",
         attempts: 1,
         erasureRequest: { userId: "u-erased" },

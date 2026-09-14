@@ -14,7 +14,7 @@ export const createMockPrisma = () => ({
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },
-  class: {
+  cohort: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
   },

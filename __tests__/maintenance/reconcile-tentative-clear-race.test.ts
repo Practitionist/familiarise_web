@@ -24,7 +24,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
     },
-    class: {
+    cohort: {
       findMany: jest.fn().mockResolvedValue([]),
       update: jest.fn().mockResolvedValue({}),
     },

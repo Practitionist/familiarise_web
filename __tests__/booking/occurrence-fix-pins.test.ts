@@ -148,7 +148,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
             consultation: { id: "c1" },
             subscription: null,
             webinar: null,
-            class: null,
+            cohort: null,
           }),
         },
         appointmentOccurrence: {
@@ -235,7 +235,7 @@ describe("#855 — capturedAfterTerminal signal on a cancelled booking", () => {
           consultation: { id: "c1" },
           subscription: null,
           webinar: null,
-          class: null,
+          cohort: null,
         }),
       },
       appointmentOccurrence: {

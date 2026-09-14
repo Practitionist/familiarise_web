@@ -56,7 +56,7 @@ beforeEach(() => {
         collaborators: [{ consultantProfileId: "cp-cohost" }],
       },
     },
-    class: null,
+    cohort: null,
   });
   mockPrisma.user.findUnique.mockResolvedValue({
     consultantProfileId: "cp-cohost",
@@ -81,7 +81,7 @@ it("reads only ACCEPTED collaborators whose profile is not soft-deleted", async 
   expect(select.webinar.select.webinarPlan.select.collaborators.where).toEqual(
     expected,
   );
-  expect(select.class.select.classPlan.select.collaborators.where).toEqual(
+  expect(select.cohort.select.cohortPlan.select.collaborators.where).toEqual(
     expected,
   );
 });

@@ -13,9 +13,9 @@
  *   - Live event → the ordinary confirm machinery flips the payer's rows,
  *     exactly like the NEW flow.
  *
- * #1319 changed how the seat itself is taken. `createClass` no longer births a
+ * #1319 changed how the seat itself is taken. `createCohort` no longer births a
  * row at all: it connects the payer to the sessions the consultant already
- * allocated, which is what `handleClassCheckout` has always done. So the
+ * allocated, which is what `handleCohortCheckout` has always done. So the
  * tentative-birth assertion below became an assertion that nothing is born.
  */
 
@@ -32,7 +32,7 @@ jest.mock("@sentry/nextjs", () => ({
   captureMessage: jest.fn(),
 }));
 
-// Phase-1 tx stub — every model the legacy CLASS flow touches.
+// Phase-1 tx stub — every model the legacy COHORT flow touches.
 const slotCreate = jest.fn();
 const slotUpdate = jest.fn().mockResolvedValue({});
 const slotUpdateMany = jest.fn().mockResolvedValue({ count: 0 });
@@ -41,8 +41,8 @@ let appointmentFindUniqueResult: unknown = null;
 const appointmentFindUnique = jest.fn(() =>
   Promise.resolve(appointmentFindUniqueResult),
 );
-const classFindUnique = jest.fn();
-const classUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+const cohortFindUnique = jest.fn();
+const cohortUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
 const participantCreateMany = jest.fn().mockResolvedValue({ count: 1 });
 const participantUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
 const paymentFindUnique = jest.fn();
@@ -67,7 +67,7 @@ const txStub = {
     updateMany: participantUpdateMany,
   },
   appointment: { create: appointmentCreate, findUnique: appointmentFindUnique },
-  class: { findUnique: classFindUnique, updateMany: classUpdateMany },
+  cohort: { findUnique: cohortFindUnique, updateMany: cohortUpdateMany },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -77,7 +77,7 @@ jest.mock("../../lib/prisma", () => ({
     payment: { update: jest.fn().mockResolvedValue({}) },
     appointment: { findUnique: jest.fn().mockResolvedValue(null) },
     // B4 pre-check reads these on the BASE client before the mutex.
-    class: {
+    cohort: {
       findUnique: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
@@ -138,26 +138,26 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
   getWebinarCapacity: jest.fn(),
-  getClassCapacity: jest.fn(),
+  getCohortCapacity: jest.fn(),
 }));
 
 import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const VALID_METADATA = {
-  appointmentType: "CLASS",
+  appointmentType: "COHORT",
   userId: "user-1",
   planId: "plan-1",
   eventId: "class-1",
 };
 
-function makeCancelledClass() {
+function makeCancelledCohort() {
   return {
     id: "class-1",
     status: "CANCELLED",
     schedulingPeriodStartsAt: new Date("2026-01-01"),
     schedulingPeriodEndsAt: new Date("2026-03-01"),
-    classPlan: {
+    cohortPlan: {
       id: "plan-1",
       consultantProfile: { userId: "consultant-1" },
     },
@@ -174,7 +174,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   slotUpdate.mockResolvedValue({});
   slotUpdateMany.mockResolvedValue({ count: 0 });
-  classUpdateMany.mockResolvedValue({ count: 1 });
+  cohortUpdateMany.mockResolvedValue({ count: 1 });
   paymentFindUnique.mockResolvedValue({
     id: "pay1",
     paymentIntent: "order1",
@@ -197,11 +197,11 @@ beforeEach(() => {
 
 describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", () => {
   it("takes the seat by joining existing sessions, minting nothing", async () => {
-    classFindUnique.mockResolvedValue(makeCancelledClass());
-    classUpdateMany.mockResolvedValue({ count: 0 }); // CAS refuses CANCELLED
+    cohortFindUnique.mockResolvedValue(makeCancelledCohort());
+    cohortUpdateMany.mockResolvedValue({ count: 0 }); // CAS refuses CANCELLED
     appointmentFindUniqueResult = {
       id: "session-appt-1",
-      class: { id: "class-1", status: "CANCELLED" },
+      cohort: { id: "class-1", status: "CANCELLED" },
       consultation: null,
       subscription: null,
       webinar: null,
@@ -236,9 +236,9 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
     );
   });
 
-  it("refuses a CANCELLED class: no confirmed flip, refund instead", async () => {
-    classFindUnique.mockResolvedValue(makeCancelledClass());
-    classUpdateMany.mockResolvedValue({ count: 0 }); // CAS misses → terminal
+  it("refuses a CANCELLED cohort: no confirmed flip, refund instead", async () => {
+    cohortFindUnique.mockResolvedValue(makeCancelledCohort());
+    cohortUpdateMany.mockResolvedValue({ count: 0 }); // CAS misses → terminal
 
     await handlePaymentSuccess(
       "order1",
@@ -268,20 +268,20 @@ describe("HOIf/#1202 — legacy capture births tentative slots, guard decides", 
   });
 
   it("confirms the payer's rows when the class is LIVE", async () => {
-    classFindUnique.mockResolvedValue(makeCancelledClass());
+    cohortFindUnique.mockResolvedValue(makeCancelledCohort());
     // Overwrite status to SCHEDULED for the fresh read after a successful CAS.
-    classFindUnique.mockImplementation(async (args: unknown) => {
+    cohortFindUnique.mockImplementation(async (args: unknown) => {
       const where = (args ?? {}) as { id?: string };
       return {
-        ...makeCancelledClass(),
+        ...makeCancelledCohort(),
         status: "SCHEDULED",
         id: where.id ?? "class-1",
       };
     });
-    classUpdateMany.mockResolvedValue({ count: 1 }); // CAS succeeds
+    cohortUpdateMany.mockResolvedValue({ count: 1 }); // CAS succeeds
     appointmentFindUniqueResult = {
       id: "session-appt-1",
-      class: { id: "class-1", status: "SCHEDULED" },
+      cohort: { id: "class-1", status: "SCHEDULED" },
       consultation: null,
       subscription: null,
       webinar: null,

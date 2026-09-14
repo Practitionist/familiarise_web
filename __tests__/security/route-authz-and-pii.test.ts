@@ -99,12 +99,12 @@ describe("consultant statutory PII is never returned by a bare include", () => {
   });
 
   // The plan reads. Two of these are PUBLIC (middleware.ts lists
-  // /api/plans/classes and /api/plans/webinars), the rest answer any signed-in
+  // /api/plans/cohorts and /api/plans/webinars), the rest answer any signed-in
   // user; all six served the whole ConsultantProfile row until 2026-09-11. The
   // write handlers in the same files still include the caller's OWN profile, so
   // only the GET slice is asserted.
   const PLAN_READS = [
-    "app/api/plans/classes/route.ts",
+    "app/api/plans/cohorts/route.ts",
     "app/api/plans/webinars/route.ts",
     "app/api/plans/consultations/route.ts",
     "app/api/plans/subscriptions/route.ts",

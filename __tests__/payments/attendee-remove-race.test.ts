@@ -26,7 +26,7 @@ const mockFindLiveEventSlot = jest.fn();
 const mockRequireApiAuth = jest.fn();
 
 const mockWebinarFindFirst = jest.fn();
-const mockClassFindFirst = jest.fn();
+const mockCohortFindFirst = jest.fn();
 const mockParticipantUpdateMany = jest.fn();
 const mockTransaction = jest.fn();
 
@@ -34,7 +34,7 @@ jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     webinar: { findFirst: (...a: unknown[]) => mockWebinarFindFirst(...a) },
-    class: { findFirst: (...a: unknown[]) => mockClassFindFirst(...a) },
+    cohort: { findFirst: (...a: unknown[]) => mockCohortFindFirst(...a) },
     $transaction: (...a: unknown[]) => mockTransaction(...a),
   },
 }));
@@ -73,7 +73,7 @@ jest.mock("../../lib/appointments/live-event-slot", () => ({
 
 import { Prisma } from "@prisma/client";
 import { DELETE as deleteWebinarParticipant } from "../../app/api/participants/webinar/[webinarId]/route";
-import { DELETE as deleteClassParticipant } from "../../app/api/participants/class/[classId]/route";
+import { DELETE as deleteCohortParticipant } from "../../app/api/participants/cohort/[cohortId]/route";
 
 const ORGANISER = {
   id: "user-organiser",
@@ -120,12 +120,12 @@ const CASES = [
   },
   {
     label: "class",
-    handler: deleteClassParticipant as unknown as ParticipantDelete,
+    handler: deleteCohortParticipant as unknown as ParticipantDelete,
     eventId: "class-1",
-    participantScope: { classId: "class-1" },
+    participantScope: { cohortId: "class-1" },
     params: (): Promise<Record<string, string>> =>
-      Promise.resolve({ classId: "class-1" }),
-    findFirst: mockClassFindFirst,
+      Promise.resolve({ cohortId: "class-1" }),
+    findFirst: mockCohortFindFirst,
   },
 ] as const;
 
@@ -133,7 +133,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockRequireApiAuth.mockResolvedValue({ session: { user: ORGANISER } });
   mockWebinarFindFirst.mockResolvedValue({ id: "webinar-1" });
-  mockClassFindFirst.mockResolvedValue({ id: "class-1" });
+  mockCohortFindFirst.mockResolvedValue({ id: "class-1" });
   mockFindLiveEventSlot.mockResolvedValue(null);
   mockParticipantUpdateMany.mockResolvedValue({ count: 1 });
   // The real contract of refundRemovedAttendeeSeat — the roster client reads

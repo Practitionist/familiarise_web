@@ -43,4 +43,17 @@ describe("check-terminology", () => {
       { file: "lib/stale.ts", line: 1, match: "slotOfAppointment" },
     ]);
   });
+
+  it("refuses the retired Class names as whole identifiers only (#1640)", () => {
+    const root = fixtureRoot({
+      "lib/stale.ts":
+        'const c = await prisma.class.findFirst({ where: { classId } });\nconst el = <div className="class card" />;\n',
+      "lib/fine.ts":
+        'const rows = await prisma.cohort.findMany({ where: { cohortPlanId } });\nconst el = <div className="class card" />;\n',
+    });
+    expect(scanTrees(["lib"], root)).toEqual([
+      { file: "lib/stale.ts", line: 1, match: "classId" },
+      { file: "lib/stale.ts", line: 1, match: "prisma.class." },
+    ]);
+  });
 });

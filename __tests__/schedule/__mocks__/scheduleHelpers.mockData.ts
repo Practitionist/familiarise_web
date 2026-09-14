@@ -55,7 +55,7 @@ export const mockEvents: EventWithType[] = [
     id: "class-1",
     type: "Class",
     status: "COMPLETED",
-    classPlan: {
+    cohortPlan: {
       id: "plan-2",
       title: "Intermediate Class",
       consultantProfile: {
@@ -80,7 +80,7 @@ export const mockEvents: EventWithType[] = [
     appointments: [
       {
         id: "appointment-2",
-        appointmentType: "CLASS",
+        appointmentType: "COHORT",
         occurrences: [
           {
             id: "slot-2",
@@ -165,14 +165,14 @@ export const pastEvent: EventWithType = {
   id: "past-class",
   type: "Class",
   status: "COMPLETED",
-  classPlan: {
+  cohortPlan: {
     id: "past-plan",
     title: "Past Plan",
     consultantProfile: {
       /* Fill with valid profile data */
     } as any,
     topics: [],
-    classContents: [],
+    cohortContents: [],
     createdAt: new Date(),
     updatedAt: new Date(),
     description: null,
@@ -196,7 +196,7 @@ export const pastEvent: EventWithType = {
   appointments: [
     {
       id: "past-appt",
-      appointmentType: "CLASS",
+      appointmentType: "COHORT",
       payment: [],
       occurrences: [
         {
@@ -215,7 +215,7 @@ export const pastEvent: EventWithType = {
       consultationId: null,
       subscriptionId: null,
       webinarId: null,
-      classId: "past-class",
+      cohortId: "past-class",
     },
   ],
   createdAt: new Date(),
@@ -225,7 +225,7 @@ export const pastEvent: EventWithType = {
   endDate: null, // Added
   recordingUrls: [], // Added
   feedbackSummary: null, // Added
-  classPlanId: "past-plan", // Added
+  cohortPlanId: "past-plan", // Added
 } as unknown as EventWithType; // Use unknown cast if EventWithType is complex union
 
 // New Mock Data for eventWithoutSlots

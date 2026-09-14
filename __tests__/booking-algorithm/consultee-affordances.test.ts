@@ -11,7 +11,7 @@ describe("#1005 consultee affordances", () => {
     expect(consulteeMayReschedule("CONSULTATION")).toBe(true);
     expect(consulteeMayReschedule("SUBSCRIPTION")).toBe(true);
     expect(consulteeMayReschedule("WEBINAR")).toBe(false);
-    expect(consulteeMayReschedule("CLASS")).toBe(false);
+    expect(consulteeMayReschedule("COHORT")).toBe(false);
     expect(consulteeMayReschedule("TRIAL")).toBe(false);
   });
 
@@ -20,7 +20,7 @@ describe("#1005 consultee affordances", () => {
     expect(consulteeDestructiveAction("SUBSCRIPTION")).toBe("cancel-booking");
     expect(consulteeDestructiveAction("TRIAL")).toBe("cancel-trial");
     expect(consulteeDestructiveAction("WEBINAR")).toBe("leave-event");
-    expect(consulteeDestructiveAction("CLASS")).toBe("leave-event");
+    expect(consulteeDestructiveAction("COHORT")).toBe("leave-event");
   });
 });
 

@@ -39,7 +39,7 @@ const NO_EXPERTS = {
 };
 
 const NO_PROGRAMS = {
-  publishedClassCount: 0,
+  publishedCohortCount: 0,
   publishedWebinarCount: 0,
   enrolledLearnerCount: 0,
 };
@@ -150,7 +150,7 @@ describe("buildProgramHeroStats", () => {
   it("never emits a learners stat when nobody is enrolled", () => {
     const stats = buildProgramHeroStats({
       ...NO_PROGRAMS,
-      publishedClassCount: 3,
+      publishedCohortCount: 3,
       publishedWebinarCount: 2,
     });
 
@@ -161,7 +161,7 @@ describe("buildProgramHeroStats", () => {
   it("renders the real figures when they exist", () => {
     expect(
       buildProgramHeroStats({
-        publishedClassCount: 1,
+        publishedCohortCount: 1,
         publishedWebinarCount: 4,
         enrolledLearnerCount: 26,
       }),
@@ -200,9 +200,9 @@ describe("no fabricated literal survives, on the inputs that used to produce the
   it("holds for the programs hero", () => {
     const thin = [
       NO_PROGRAMS,
-      { ...NO_PROGRAMS, publishedClassCount: 1 },
+      { ...NO_PROGRAMS, publishedCohortCount: 1 },
       {
-        publishedClassCount: 2,
+        publishedCohortCount: 2,
         publishedWebinarCount: 1,
         enrolledLearnerCount: 3,
       },

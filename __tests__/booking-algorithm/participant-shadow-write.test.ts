@@ -77,12 +77,12 @@ describe("setParticipantStatus / linkParticipantsToPayment", () => {
     const { tx: t, updateMany } = tx();
     const n = await setParticipantStatus(
       t,
-      { appointment: { classId: "k1" }, userId: "u2" },
+      { appointment: { cohortId: "k1" }, userId: "u2" },
       "CANCELLED",
     );
     expect(n).toBe(2);
     expect(updateMany).toHaveBeenCalledWith({
-      where: { appointment: { classId: "k1" }, userId: "u2" },
+      where: { appointment: { cohortId: "k1" }, userId: "u2" },
       data: { status: "CANCELLED" },
     });
   });
@@ -116,7 +116,7 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
       /recordParticipants\(/,
     ],
     [
-      "app/api/bookings/classes/crud-with-plan/route.ts",
+      "app/api/bookings/cohorts/crud-with-plan/route.ts",
       /recordParticipants\(/,
     ],
     [
@@ -127,7 +127,7 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
       "app/api/participants/webinar/[webinarId]/route.ts",
       /releaseParticipant\(/,
     ],
-    ["app/api/participants/class/[classId]/route.ts", /releaseParticipant\(/],
+    ["app/api/participants/cohort/[cohortId]/route.ts", /releaseParticipant\(/],
     ["lib/payments/operations/cancel-pending.ts", /releaseParticipant\(/],
     [
       "app/api/appointments/[appointmentId]/cancel/route.ts",

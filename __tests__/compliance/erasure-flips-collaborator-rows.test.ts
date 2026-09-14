@@ -32,7 +32,11 @@ const tx = {
   consultantProfile: { updateMany: jest.fn(async () => ({ count: 1 })) },
   collaborator: {
     updateManyAndReturn: jest.fn(async () => [
-      { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },
+      {
+        collaboratorType: "WEBINAR",
+        webinarPlanId: "wp-1",
+        cohortPlanId: null,
+      },
     ]),
   },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },

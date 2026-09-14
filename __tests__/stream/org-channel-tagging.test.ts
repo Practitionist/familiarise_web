@@ -24,7 +24,7 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     expect(bookingOrgId({ webinarPlan: { organizationId: "org-1" } })).toBe(
       "org-1",
     );
-    expect(bookingOrgId({ classPlan: { organizationId: "org-2" } })).toBe(
+    expect(bookingOrgId({ cohortPlan: { organizationId: "org-2" } })).toBe(
       "org-2",
     );
   });
@@ -37,7 +37,7 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
       "consultationPlan",
       "subscriptionPlan",
       "webinarPlan",
-      "classPlan",
+      "cohortPlan",
     ] as const) {
       expect(
         bookingOrgId({
@@ -75,7 +75,7 @@ describe("bookingOrgId — one resolver for every booking shape", () => {
     // org tag is a single column and the helper carries no list arm at all.
     expect(
       bookingOrgId({
-        classPlan: { organizationId: null },
+        cohortPlan: { organizationId: null },
         appointment: { organizationId: "org-a" },
       }),
     ).toBe("org-a");

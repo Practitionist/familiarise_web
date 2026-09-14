@@ -19,7 +19,7 @@ jest.mock("../../lib/prisma", () => ({
     consultationPlan: { findUnique: jest.fn(), update: jest.fn() },
     subscriptionPlan: { findUnique: jest.fn(), update: jest.fn() },
     webinarPlan: { findUnique: jest.fn(), update: jest.fn() },
-    classPlan: { findUnique: jest.fn(), update: jest.fn() },
+    cohortPlan: { findUnique: jest.fn(), update: jest.fn() },
   },
 }));
 
@@ -32,7 +32,7 @@ jest.mock("@sentry/nextjs", () => ({
 }));
 
 // schemas/plans pulls `bad-words` (ESM-only) in through utils/contentValidation
-// at import time (see __tests__/booking-algorithm/class-crud-conflict-mapping.test.ts);
+// at import time (see __tests__/booking-algorithm/cohort-crud-conflict-mapping.test.ts);
 // none of these plan validations matter here, so boundary-mock the module
 // rather than transform node_modules.
 // webinar/class GET pulls in lib/data/plan-details, which wraps its export
@@ -42,7 +42,7 @@ jest.mock("@sentry/nextjs", () => ({
 // here) uses it.
 jest.mock("../../lib/data/plan-details", () => ({
   fetchWebinarPlanDetail: jest.fn(),
-  fetchClassPlanDetail: jest.fn(),
+  fetchCohortPlanDetail: jest.fn(),
 }));
 
 jest.mock("../../utils/contentValidation", () => ({
@@ -62,7 +62,7 @@ import { getSession } from "@/lib/auth-server";
 import { PATCH as consultationPatch } from "@/app/api/plans/consultations/[consultationPlanId]/route";
 import { PATCH as subscriptionPatch } from "@/app/api/plans/subscriptions/[subscriptionPlanId]/route";
 import { PATCH as webinarPatch } from "@/app/api/plans/webinars/[webinarPlanId]/route";
-import { PATCH as classPatch } from "@/app/api/plans/classes/[classPlanId]/route";
+import { PATCH as cohortPatch } from "@/app/api/plans/cohorts/[cohortPlanId]/route";
 
 const mockedGetSession = getSession as jest.Mock;
 
@@ -99,9 +99,9 @@ const families = [
   },
   {
     name: "class",
-    patch: classPatch,
-    delegate: prisma.classPlan as unknown as Delegate,
-    paramKey: "classPlanId",
+    patch: cohortPatch,
+    delegate: prisma.cohortPlan as unknown as Delegate,
+    paramKey: "cohortPlanId",
   },
 ] as const;
 

@@ -20,7 +20,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    cohort: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn() },
     rescheduleRequest: { findFirst: jest.fn() },
   },
@@ -75,7 +75,7 @@ const MON_0930 = "2025-01-06T09:30:00.000Z";
 
 function makeMockTx() {
   return {
-    class: {
+    cohort: {
       findUnique: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -139,18 +139,18 @@ function makeConsultantProfile() {
   };
 }
 
-function makeClassEvent(overrides: Record<string, unknown> = {}) {
+function makeCohortEvent(overrides: Record<string, unknown> = {}) {
   return {
     id: "class-1",
-    classPlanId: "class-plan-1",
-    classPlan: {
+    cohortPlanId: "class-plan-1",
+    cohortPlan: {
       id: "class-plan-1",
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
       sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       consultantProfile: makeConsultantProfile(),
-      classContents: [],
+      cohortContents: [],
     },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
     schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
@@ -199,9 +199,9 @@ beforeEach(() => {
 
   const base = prisma as unknown as Record<string, Record<string, jest.Mock>>;
   base.appointment = mockTx.appointment;
-  base.class.findUnique = mockTx.class.findUnique;
+  base.cohort.findUnique = mockTx.cohort.findUnique;
   base.webinar.findUnique = mockTx.webinar.findUnique;
-  mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+  mockTx.cohort.findUnique.mockResolvedValue(makeCohortEvent());
   mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
   base.rescheduleRequest.findFirst.mockResolvedValue(null);
 

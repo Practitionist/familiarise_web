@@ -21,11 +21,11 @@ import {
 
 const KEYS = Object.keys(SLOT_STATUS_TOKENS) as SlotStatusKey[];
 
-const classesOf = (value: string) => value.split(/\s+/).filter(Boolean);
+const cohortsOf = (value: string) => value.split(/\s+/).filter(Boolean);
 
 /** Every colour utility on an element, ignoring variants like `hover:`. */
 const colourUtilities = (value: string, prefix: string) =>
-  classesOf(value).filter(
+  cohortsOf(value).filter(
     (name) => !name.includes(":") && name.startsWith(prefix),
   );
 
@@ -70,7 +70,7 @@ describe("slot palette — the base cell string cannot fight the token", () => {
    * always discarded and unavailable cells rendered with no outline at all.
    */
   it("carries a border width but no border colour", () => {
-    expect(classesOf(SLOT_CELL_BASE_CLASS)).toContain("border");
+    expect(cohortsOf(SLOT_CELL_BASE_CLASS)).toContain("border");
     expect(colourUtilities(SLOT_CELL_BASE_CLASS, "border-")).toEqual([]);
   });
 
@@ -90,14 +90,14 @@ describe("slot palette — the base cell string cannot fight the token", () => {
    * pinned directly here.
    */
   it("does not fade every disabled cell", () => {
-    const faders = classesOf(SLOT_CELL_BASE_CLASS).filter((name) =>
+    const faders = cohortsOf(SLOT_CELL_BASE_CLASS).filter((name) =>
       name.startsWith("disabled:opacity-"),
     );
     expect(faders).toEqual([]);
   });
 
   it("still stops disabled cells being clicked", () => {
-    expect(classesOf(SLOT_CELL_BASE_CLASS)).toContain(
+    expect(cohortsOf(SLOT_CELL_BASE_CLASS)).toContain(
       "disabled:pointer-events-none",
     );
   });
@@ -108,10 +108,10 @@ describe("slot palette — the base cell string cannot fight the token", () => {
    * and must keep working.
    */
   it("still fades a cell that asks to be faded", () => {
-    expect(classesOf(slotCellClassName("unavailable", { faded: true }))).toContain(
-      "opacity-60",
-    );
-    expect(classesOf(slotCellClassName("unavailable"))).not.toContain(
+    expect(
+      cohortsOf(slotCellClassName("unavailable", { faded: true })),
+    ).toContain("opacity-60");
+    expect(cohortsOf(slotCellClassName("unavailable"))).not.toContain(
       "opacity-60",
     );
   });

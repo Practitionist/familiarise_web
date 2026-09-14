@@ -46,7 +46,7 @@ describe("catalog plans are archived, never deleted", () => {
 
   it("both archivable models declare the column", () => {
     const schema = read(SCHEMA);
-    for (const model of ["WebinarPlan", "ClassPlan"]) {
+    for (const model of ["WebinarPlan", "CohortPlan"]) {
       const block = schema.slice(
         schema.indexOf(`model ${model} {`),
         schema.indexOf("\n}", schema.indexOf(`model ${model} {`)),

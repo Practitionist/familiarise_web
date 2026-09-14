@@ -113,7 +113,7 @@ function makeConsultationAppointment(slotOverrides?: any[]) {
     },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 
@@ -134,7 +134,7 @@ function makeSubscriptionAppointment(slotOverrides?: any[]) {
       requestedBy: { user: { id: "user-1", name: "John Doe" } },
     },
     webinar: null,
-    class: null,
+    cohort: null,
   };
 }
 
@@ -150,7 +150,7 @@ function makeWebinarAppointment(slotOverrides?: any[]) {
       status: "SCHEDULED",
       webinarPlan: { consultantProfileId: "cp-001" },
     },
-    class: null,
+    cohort: null,
   };
 }
 
@@ -186,7 +186,7 @@ function makeMockTx(appointmentData: any) {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    class: {
+    cohort: {
       update: jest.fn(),
       // Each transition helper reads the from-status before its CAS.
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
@@ -315,14 +315,14 @@ describe("Reschedule — Type mismatch returns proper 400", () => {
     expect(body.error).toContain("mismatch");
   });
 
-  it("should return 400 when query type CLASS doesn't match webinar", async () => {
+  it("should return 400 when query type COHORT doesn't match webinar", async () => {
     const appointment = makeWebinarAppointment();
     const mockTx = makeMockTx(appointment);
     (prisma.$transaction as jest.Mock).mockImplementation(
       async (callback: any) => callback(mockTx),
     );
 
-    const req = makeRequest("apt-1", "CLASS");
+    const req = makeRequest("apt-1", "COHORT");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
     expect(res.status).toBe(400);

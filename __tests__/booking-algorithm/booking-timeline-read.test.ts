@@ -37,7 +37,7 @@ function appointmentRow() {
     consultationId: "consult-1",
     subscriptionId: null,
     webinarId: null,
-    classId: null,
+    cohortId: null,
     trial: null,
     occurrences: [{ id: "slot-1" }],
     rescheduleRequests: [

@@ -122,7 +122,7 @@ function abandonedConsultation() {
     consultation: { id: "cons_1" },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
     occurrences: [{ id: "slot_1", isTentative: true }],
   };
 }

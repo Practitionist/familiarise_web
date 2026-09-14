@@ -23,14 +23,14 @@ jest.mock("../../lib/data/plan-viewable", () => ({
 const mockGetConsultationPlanDetail = jest.fn();
 const mockGetSubscriptionPlanDetail = jest.fn();
 const mockGetWebinarPlanDetail = jest.fn();
-const mockGetClassPlanDetail = jest.fn();
+const mockGetCohortPlanDetail = jest.fn();
 jest.mock("../../lib/data/plan-details", () => ({
   getConsultationPlanDetail: (...a: unknown[]) =>
     mockGetConsultationPlanDetail(...a),
   getSubscriptionPlanDetail: (...a: unknown[]) =>
     mockGetSubscriptionPlanDetail(...a),
   getWebinarPlanDetail: (...a: unknown[]) => mockGetWebinarPlanDetail(...a),
-  getClassPlanDetail: (...a: unknown[]) => mockGetClassPlanDetail(...a),
+  getCohortPlanDetail: (...a: unknown[]) => mockGetCohortPlanDetail(...a),
 }));
 
 // The page modules import their presentational components, which drag in the
@@ -48,8 +48,8 @@ jest.mock(
   () => ({ WebinarDetails: () => null }),
 );
 jest.mock(
-  "../../app/explore/programs/plans/classes/[classPlanId]/components/ClassDetails",
-  () => ({ ClassDetails: () => null }),
+  "../../app/explore/programs/plans/classes/[cohortPlanId]/components/CohortDetails",
+  () => ({ CohortDetails: () => null }),
 );
 
 /** An ORG_ONLY, archived plan — hidden under every rule the gate applies. */
@@ -87,9 +87,9 @@ const PAGES = [
   {
     name: "class",
     load: () =>
-      require("../../app/explore/programs/plans/classes/[classPlanId]/page"),
-    fetcher: mockGetClassPlanDetail,
-    params: { classPlanId: "plan-1" },
+      require("../../app/explore/programs/plans/classes/[cohortPlanId]/page"),
+    fetcher: mockGetCohortPlanDetail,
+    params: { cohortPlanId: "plan-1" },
   },
 ];
 

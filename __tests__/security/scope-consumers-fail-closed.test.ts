@@ -85,7 +85,7 @@ describe("every scoped list helper fails closed", () => {
 
 describe("every self-scoped consumer treats orgMember as an org filter", () => {
   const CONSUMERS = [
-    "app/api/bookings/classes/route.ts",
+    "app/api/bookings/cohorts/route.ts",
     "app/api/bookings/subscriptions/route.ts",
     "app/api/bookings/webinars/route.ts",
     "app/api/dashboard/consultant/[consultantId]/documents/route.ts",

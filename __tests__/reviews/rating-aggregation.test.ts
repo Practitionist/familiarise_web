@@ -121,7 +121,7 @@ describe("the two tracks are separate numbers", () => {
   });
 
   it("counts each class RUN separately, not classes as a category", async () => {
-    // A CLASS mints one Appointment per enrolment, so grouping by session TYPE
+    // A COHORT mints one Appointment per enrolment, so grouping by session TYPE
     // would collapse a consultant's whole teaching history into one point.
     const rows = Array.from({ length: MIN_RATED_EVENTS_GROUP }, (_, i) =>
       event(`class:c${i}`, 5, MIN_GROUP_RESPONSES_PER_EVENT),

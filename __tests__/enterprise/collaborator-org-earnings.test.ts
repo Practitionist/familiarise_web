@@ -158,7 +158,7 @@ jest.mock("../../lib/prisma", () => {
     webinarPlan: {
       findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
     },
-    classPlan: {
+    cohortPlan: {
       findUnique: jest.fn().mockResolvedValue({ organizationId: null }),
     },
   };
@@ -212,7 +212,7 @@ function makePayment(overrides: Partial<{ id: string; amount: number }> = {}) {
     appointment: {
       consultantProfile: { id: PRIMARY_PROFILE },
       webinar: { webinarPlanId: PLAN_ID },
-      class: null,
+      cohort: null,
     },
   } as unknown as Parameters<typeof createEarningsFromPayment>[0]["payment"];
 }

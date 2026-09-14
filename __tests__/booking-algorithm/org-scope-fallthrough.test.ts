@@ -98,7 +98,7 @@ describe("fall-through 2 — the consultee events read", () => {
         consultation: { findMany },
         subscription: { findMany },
         webinar: { findMany },
-        class: { findMany },
+        cohort: { findMany },
         trial: { findMany },
       },
     }));

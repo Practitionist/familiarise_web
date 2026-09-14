@@ -25,16 +25,16 @@ describe("group-event status writes go through the CAS helpers", () => {
   });
 
   it("classes crud-with-plan never writes a client status with a bare update", () => {
-    const src = read("app/api/bookings/classes/crud-with-plan/route.ts");
-    expect(src).not.toMatch(/classUpdateData\.status\s*=/);
-    expect(src).toContain("transitionClassEvent(");
+    const src = read("app/api/bookings/cohorts/crud-with-plan/route.ts");
+    expect(src).not.toMatch(/cohortUpdateData\.status\s*=/);
+    expect(src).toContain("transitionCohortEvent(");
     expect(src).toContain("instanceof IllegalTransitionError");
   });
 
   it("auto-complete marks webinars/classes COMPLETED only from the allowed set", () => {
     const src = read("scripts/appointments/auto-complete-appointments.ts");
     expect(src).not.toMatch(/prisma\.webinar\.update\(/);
-    expect(src).not.toMatch(/prisma\.class\.update\(/);
+    expect(src).not.toMatch(/prisma\.cohort\.update\(/);
     expect(src).not.toMatch(/prisma\.trial\.update\(/);
     expect(src).toContain("EVENT_ALLOWED_FROM.COMPLETED");
     expect(src).toContain("transitionTrial(");

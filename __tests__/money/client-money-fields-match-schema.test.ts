@@ -105,7 +105,7 @@ describe("paise values reach a paise formatter", () => {
   it("no product code calls the major-unit formatter at all", () => {
     // This assertion used to name one page and one variable
     // (`formatCurrencyFromMajorUnit(refund`), which is why it did not notice
-    // the collaborator cards passing `WebinarPlan.price` / `ClassPlan.price`
+    // the collaborator cards passing `WebinarPlan.price` / `CohortPlan.price`
     // — BigInt paise, selected raw — to the rupee formatter and displaying a
     // ₹500 plan as ₹50,000, to the collaborator deciding whether to accept a
     // revenue share on it.

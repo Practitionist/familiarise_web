@@ -39,7 +39,7 @@ describe("freeze-appointments doctrine (#1162)", () => {
       "transitionConsultationRequest",
       "transitionSubscriptionRequest",
       "transitionWebinarEvent",
-      "transitionClassEvent",
+      "transitionCohortEvent",
     ]) {
       expect(freezeSource).toContain(`${helper}(tx, {`);
     }
@@ -47,7 +47,7 @@ describe("freeze-appointments doctrine (#1162)", () => {
     // Raw unguarded event status writes are gone.
     expect(freezeSource).not.toContain("tx.consultation.update(");
     expect(freezeSource).not.toContain("tx.webinar.update(");
-    expect(freezeSource).not.toContain("tx.class.update(");
+    expect(freezeSource).not.toContain("tx.cohort.update(");
   });
 
   it("guards the trial status flip and tombstones via the domain helper", () => {

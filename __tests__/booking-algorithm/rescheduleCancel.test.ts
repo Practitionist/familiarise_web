@@ -182,7 +182,7 @@ function makeConsultationAppointment(overrides: any = {}) {
     },
     subscription: null,
     webinar: null,
-    class: null,
+    cohort: null,
     ...overrides,
   };
 }
@@ -209,7 +209,7 @@ function makeSubscriptionAppointment(overrides: any = {}) {
       },
     },
     webinar: null,
-    class: null,
+    cohort: null,
     ...overrides,
   };
 }
@@ -222,20 +222,20 @@ function makeWebinarAppointment(overrides: any = {}) {
     consultation: null,
     subscription: null,
     webinar: { id: "web-1", status: "SCHEDULED" },
-    class: null,
+    cohort: null,
     ...overrides,
   };
 }
 
-function makeClassAppointment(overrides: any = {}) {
+function makeCohortAppointment(overrides: any = {}) {
   return {
     id: "apt-1",
-    appointmentType: "CLASS",
+    appointmentType: "COHORT",
     occurrences: [makeSlot("slot-1", FUTURE_DATE)],
     consultation: null,
     subscription: null,
     webinar: null,
-    class: { id: "cls-1", status: "SCHEDULED" },
+    cohort: { id: "cls-1", status: "SCHEDULED" },
     ...overrides,
   };
 }
@@ -272,7 +272,7 @@ function makeMockTx() {
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    class: {
+    cohort: {
       update: jest.fn(),
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
@@ -766,21 +766,21 @@ describe("Reschedule Route Handler - POST", () => {
     });
   });
 
-  // ─── CLASS Reschedule ───────────────────────────────────────────────────
+  // ─── COHORT Reschedule ───────────────────────────────────────────────────
 
-  describe("CLASS", () => {
+  describe("COHORT", () => {
     it("should mark slots tentative and update class to SCHEDULED", async () => {
-      const appointment = makeClassAppointment();
+      const appointment = makeCohortAppointment();
       mockTx.appointment.findUnique.mockResolvedValue(appointment);
 
-      const req = makeRescheduleRequest("apt-1", "CLASS");
+      const req = makeRescheduleRequest("apt-1", "COHORT");
       const res = await rescheduleHandler(req, makeParams("apt-1"));
       const body = await res.json();
 
       expect(res.status).toBe(200);
       expect(body.success).toBe(true);
 
-      expect(mockTx.class.updateMany).toHaveBeenCalledWith({
+      expect(mockTx.cohort.updateMany).toHaveBeenCalledWith({
         where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
         data: { status: "SCHEDULED" },
       });
@@ -1058,11 +1058,11 @@ describe("Cancel Route Handler - POST", () => {
     });
   });
 
-  // ─── CLASS Cancellation ─────────────────────────────────────────────────
+  // ─── COHORT Cancellation ─────────────────────────────────────────────────
 
-  describe("CLASS", () => {
+  describe("COHORT", () => {
     it("should update class to CANCELLED", async () => {
-      const appointment = makeClassAppointment();
+      const appointment = makeCohortAppointment();
       (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
         appointment,
       );
@@ -1072,7 +1072,7 @@ describe("Cancel Route Handler - POST", () => {
 
       expect(res.status).toBe(200);
 
-      expect(mockTx.class.updateMany).toHaveBeenCalledWith({
+      expect(mockTx.cohort.updateMany).toHaveBeenCalledWith({
         where: { id: "cls-1", status: { in: ["SCHEDULED", "IN_PROGRESS"] } },
         data: { status: "CANCELLED" },
       });
@@ -1172,11 +1172,11 @@ describe("Cancel Route Handler - POST", () => {
 
   it("should notify the roster of a cancelled class too", async () => {
     (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
-      makeClassAppointment({
-        class: {
+      makeCohortAppointment({
+        cohort: {
           id: "cls-1",
           status: "SCHEDULED",
-          classPlan: {
+          cohortPlan: {
             title: "Weekly Cohort",
             consultantProfile: {
               user: { id: "consultant-1", name: "Dr Who" },
@@ -1194,7 +1194,7 @@ describe("Cancel Route Handler - POST", () => {
 
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["consultant-1", "attendee-9"]),
-      expect.objectContaining({ appointmentType: "CLASS" }),
+      expect.objectContaining({ appointmentType: "COHORT" }),
     );
   });
 

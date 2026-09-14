@@ -50,7 +50,7 @@ jest.mock("../../utils/appointmentlock", () => ({
     CONSULTATION: 60_000,
     SUBSCRIPTION: 120_000,
     WEBINAR: 120_000,
-    CLASS: 600_000,
+    COHORT: 600_000,
   },
   CHECKOUT_WAIT_RETRY_CONFIG: { retryCount: 5 },
   lockSlotBooking: jest.fn(async () => []),
@@ -86,7 +86,7 @@ jest.mock("../../lib/profiles/ensure-consultee-profile", () => ({
 }));
 jest.mock("../../lib/events/capacity", () => ({
   __esModule: true,
-  getClassCapacity: jest.fn(() => ({ isFull: false })),
+  getCohortCapacity: jest.fn(() => ({ isFull: false })),
   getWebinarCapacity: jest.fn(() => ({ isFull: false })),
 }));
 jest.mock("../../lib/payments/tax/tax-engine", () => ({

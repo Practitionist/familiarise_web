@@ -28,7 +28,7 @@ jest.mock("../../lib/prisma", () => ({
     consultation: { findUnique: jest.fn() },
     subscription: { findUnique: jest.fn() },
     webinar: { findUnique: jest.fn() },
-    class: { findUnique: jest.fn() },
+    cohort: { findUnique: jest.fn() },
     appointment: { findMany: jest.fn() },
     // #1065 — a reschedule reads the initiator's stated placement preference
     // before searching. Unstubbed it resolves undefined, which is the "no
@@ -109,7 +109,7 @@ function makeMockTx() {
       // Guarded transitions (transitionWebinarEvent) use WHERE-guarded updateMany
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
-    class: {
+    cohort: {
       findUnique: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -226,16 +226,16 @@ function makeWebinarEvent(overrides: any = {}) {
   };
 }
 
-function makeClassEvent(overrides: any = {}) {
+function makeCohortEvent(overrides: any = {}) {
   return {
     id: "class-1",
-    classPlan: {
+    cohortPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
       sessionsPerWeek: 1,
       sessionDurationInHours: 1,
       consultantProfile: makeConsultantProfile(),
-      classContents: [],
+      cohortContents: [],
     },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
     schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"), // 1 week → requires 2 slots
@@ -266,7 +266,7 @@ beforeEach(() => {
   (prisma as any).consultation.findUnique = mockTx.consultation.findUnique;
   (prisma as any).subscription.findUnique = mockTx.subscription.findUnique;
   (prisma as any).webinar.findUnique = mockTx.webinar.findUnique;
-  (prisma as any).class.findUnique = mockTx.class.findUnique;
+  (prisma as any).cohort.findUnique = mockTx.cohort.findUnique;
 
   // Default full-event reads so getConsultantProfileId / getConsulteeUserId /
   // fetchEventData all resolve from one mock (factories carry the scalar
@@ -275,7 +275,7 @@ beforeEach(() => {
   mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
   mockTx.subscription.findUnique.mockResolvedValue(makeSubscriptionEvent());
   mockTx.webinar.findUnique.mockResolvedValue(makeWebinarEvent());
-  mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+  mockTx.cohort.findUnique.mockResolvedValue(makeCohortEvent());
 
   mockValidateFn.mockReset();
   mockValidateFn.mockResolvedValue({
@@ -1330,9 +1330,9 @@ describe("Auto allocation", () => {
   // week than available days was UNALLOCATABLE by auto (one-placement-per-day
   // cursor found 1/day) while manual + validatePerDaySessionCap allow 2/day.
   it("stacks two class sessions on one day when available days < sessionsPerWeek", async () => {
-    mockTx.class.findUnique.mockResolvedValue(
-      makeClassEvent({
-        classPlan: {
+    mockTx.cohort.findUnique.mockResolvedValue(
+      makeCohortEvent({
+        cohortPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 1,
           sessionsPerWeek: 3,
@@ -1701,10 +1701,10 @@ describe("fetchEventData - config extraction", () => {
     );
   });
 
-  it("should extract class config from the PLAN session duration, not the classContents average", async () => {
-    mockTx.class.findUnique.mockResolvedValue(
-      makeClassEvent({
-        classPlan: {
+  it("should extract class config from the PLAN session duration, not the cohortContents average", async () => {
+    mockTx.cohort.findUnique.mockResolvedValue(
+      makeCohortEvent({
+        cohortPlan: {
           consultantProfileId: "consultant-profile-1",
           durationInMonths: 2,
           sessionsPerWeek: 2,
@@ -1714,7 +1714,7 @@ describe("fetchEventData - config extraction", () => {
           // 1.0h): they describe content coverage, not session length. The
           // allocator must follow the plan — crud-with-plan writes slots at
           // the plan duration and /validate validates against it.
-          classContents: [{ hoursAllotted: 1 }, { hoursAllotted: 1 }],
+          cohortContents: [{ hoursAllotted: 1 }, { hoursAllotted: 1 }],
         },
         // 1 week with sessionsPerWeek=2, 1.5hr sessions (3 slots each) → requires 6 slots
         schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
@@ -1829,8 +1829,8 @@ describe("updateEventStatus", () => {
   it("should set SCHEDULED with scheduling period for class", async () => {
     // Use a class without pre-set scheduling period — updateEventStatus should
     // derive schedulingPeriodStartsAt/EndsAt from the first allocated slot
-    mockTx.class.findUnique.mockResolvedValue(
-      makeClassEvent({
+    mockTx.cohort.findUnique.mockResolvedValue(
+      makeCohortEvent({
         schedulingPeriodStartsAt: null,
         schedulingPeriodEndsAt: null,
       }),
@@ -1843,8 +1843,8 @@ describe("updateEventStatus", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    // Guarded transition: status rides transitionClassEvent's updateMany
-    const updateCall = mockTx.class.updateMany.mock.calls[0][0];
+    // Guarded transition: status rides transitionCohortEvent's updateMany
+    const updateCall = mockTx.cohort.updateMany.mock.calls[0][0];
     expect(updateCall.data.status).toBe("SCHEDULED");
     expect(updateCall.data.schedulingPeriodStartsAt).toBeDefined();
     expect(updateCall.data.schedulingPeriodEndsAt).toBeDefined();
@@ -1864,12 +1864,12 @@ describe("updateEventStatus", () => {
   ] as const)("allocating a DRAFT %s", (eventType, eventId) => {
     /** Guarded updateMany matches nothing (a DRAFT row); the re-read says why. */
     function arrangeDraft() {
-      const model = mockTx[eventType as "webinar" | "class"];
+      const model = mockTx[eventType === "class" ? "cohort" : eventType];
       model.updateMany.mockResolvedValue({ count: 0 });
       model.findUnique.mockResolvedValue(
         eventType === "webinar"
           ? makeWebinarEvent({ status: "DRAFT" })
-          : makeClassEvent({ status: "DRAFT" }),
+          : makeCohortEvent({ status: "DRAFT" }),
       );
       return model;
     }
@@ -1913,12 +1913,12 @@ describe("updateEventStatus", () => {
     it("still refuses to resurrect a CANCELLED event", async () => {
       // Tolerating DRAFT must not reopen the resurrection hole the guard was
       // added to close (#836) — the re-read is what distinguishes them.
-      const model = mockTx[eventType as "webinar" | "class"];
+      const model = mockTx[eventType === "class" ? "cohort" : eventType];
       model.updateMany.mockResolvedValue({ count: 0 });
       model.findUnique.mockResolvedValue(
         eventType === "webinar"
           ? makeWebinarEvent({ status: "CANCELLED" })
-          : makeClassEvent({ status: "CANCELLED" }),
+          : makeCohortEvent({ status: "CANCELLED" }),
       );
 
       const result = await SchedulingService.allocate({
@@ -2215,11 +2215,11 @@ describe("deleteExistingAppointments", () => {
   // reconnectEnrolledUsers must re-link them to the new slots — otherwise the
   // paid learner silently loses the class.
   it("reconnects enrolled learners after a class tentative reschedule", async () => {
-    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+    mockTx.cohort.findUnique.mockResolvedValue(makeCohortEvent());
 
     // One tentative 1h session (one occurrence row, #1554) the learner is
     // enrolled in.
-    const tentativeClassAppt = {
+    const tentativeCohortAppt = {
       id: "class-apt-1",
       occurrences: [
         {
@@ -2233,7 +2233,7 @@ describe("deleteExistingAppointments", () => {
       participants: [{ userId: "consultant-1" }, { userId: "learner-1" }],
       _count: { payment: 0 },
     };
-    mockTx.appointment.findMany.mockResolvedValue([tentativeClassAppt]);
+    mockTx.appointment.findMany.mockResolvedValue([tentativeCohortAppt]);
     mockTx.appointment.create.mockResolvedValue({
       id: "new-class-apt",
       occurrences: [{ id: "new-occ-1" }],
@@ -2279,10 +2279,10 @@ describe("deleteExistingAppointments", () => {
   // session appointments and recreates them — enrolled learners must be
   // captured and reconnected here too.
   it("reconnects enrolled learners when a confirmed class is re-scheduled (full-delete)", async () => {
-    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+    mockTx.cohort.findUnique.mockResolvedValue(makeCohortEvent());
 
     // One confirmed (non-tentative), future session the learner is enrolled in.
-    const confirmedClassAppt = {
+    const confirmedCohortAppt = {
       id: "confirmed-class-apt",
       occurrences: [
         {
@@ -2301,7 +2301,7 @@ describe("deleteExistingAppointments", () => {
       participants: [{ userId: "consultant-1" }, { userId: "learner-1" }],
       _count: { payment: 0 },
     };
-    mockTx.appointment.findMany.mockResolvedValue([confirmedClassAppt]);
+    mockTx.appointment.findMany.mockResolvedValue([confirmedCohortAppt]);
     mockTx.appointment.create.mockResolvedValue({
       id: "new-class-apt-2",
       occurrences: [{ id: "new-slot-2" }, { id: "new-slot-2b" }],
@@ -2774,7 +2774,7 @@ describe("Edge cases", () => {
   });
 
   it("should handle class with sessionsPerWeek mapping to sessionsPerWeek", async () => {
-    mockTx.class.findUnique.mockResolvedValue(makeClassEvent());
+    mockTx.cohort.findUnique.mockResolvedValue(makeCohortEvent());
 
     const result = await SchedulingService.allocate({
       eventType: "class",
@@ -2785,8 +2785,8 @@ describe("Edge cases", () => {
 
     expect(result.success).toBe(true);
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.appointmentType).toBe(AppointmentsType.CLASS);
-    expect(createCall.data.class).toEqual({ connect: { id: "class-1" } });
+    expect(createCall.data.appointmentType).toBe(AppointmentsType.COHORT);
+    expect(createCall.data.cohort).toEqual({ connect: { id: "class-1" } });
   });
 
   it("should handle custom schedule consultant", async () => {
@@ -2837,12 +2837,14 @@ describe("Edge cases", () => {
         consultation: makeConsultationEvent,
         subscription: makeSubscriptionEvent,
         webinar: makeWebinarEvent,
-        class: makeClassEvent,
+        class: makeCohortEvent,
       };
+      // #1640 — the "class" event type reads and writes the `cohort` delegate.
+      const model = eventType === "class" ? "cohort" : eventType;
 
       // #908 — fetchEventData reads the BASE client (out of txn); writes go to
       // freshTx. Set the read on base prisma and assert the write on freshTx.
-      (prisma as any)[eventType].findUnique.mockResolvedValue(
+      (prisma as any)[model].findUnique.mockResolvedValue(
         eventFactories[eventType](),
       );
 
@@ -2856,11 +2858,11 @@ describe("Edge cases", () => {
       });
 
       // Correct model was queried (read runs on the base client now)
-      expect((prisma as any)[eventType].findUnique).toHaveBeenCalled();
+      expect((prisma as any)[model].findUnique).toHaveBeenCalled();
       // Correct model was updated — ALL four types now go through
       // WHERE-guarded CAS transitions (updateMany): #836 for
       // consultation/subscription, EVENT_ALLOWED_FROM for webinar/class.
-      expect(freshTx[eventType].updateMany).toHaveBeenCalled();
+      expect(freshTx[model].updateMany).toHaveBeenCalled();
     }
   });
 });

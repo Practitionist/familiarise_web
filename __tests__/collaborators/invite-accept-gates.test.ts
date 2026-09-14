@@ -76,7 +76,7 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     consultantProfile: { findUnique: jest.fn(async () => invitee) },
     webinarPlan: { findUnique: jest.fn(async () => plan) },
-    classPlan: { findUnique: jest.fn(async () => plan) },
+    cohortPlan: { findUnique: jest.fn(async () => plan) },
     appointmentParticipant: { findFirst: jest.fn(async () => seat) },
     appointment: {
       findMany: jest.fn(async () => [{ id: "appt-1", organizationId: null }]),
@@ -86,7 +86,7 @@ jest.mock("../../lib/prisma", () => ({
         id: "c-1",
         consultantProfileId: "cp-new",
         webinarPlanId: "plan-1",
-        classPlanId: null,
+        cohortPlanId: null,
         status: "PENDING",
       })),
       // Referenced lazily: the factory is hoisted above the const.
