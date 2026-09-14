@@ -111,10 +111,10 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     },
   );
 
+  // #1298 — gate on the recipient only; a missing key dead-letters in deliver().
   const to = process.env.DATABREACH_ALERT_EMAIL;
-  const apiKey = process.env.RESEND_API_KEY;
   let emailSent = false;
-  if (to && apiKey) {
+  if (to) {
     try {
       const rowsToShow = candidates.slice(0, MAX_ROWS_IN_EMAIL);
       const truncated = candidates.length > MAX_ROWS_IN_EMAIL;
@@ -171,7 +171,7 @@ async function runDataBreachDeadlineAlertsUnlocked(): Promise<{
     }
   } else {
     console.log(
-      "[DataBreach] DATABREACH_ALERT_EMAIL or RESEND_API_KEY not configured; email skipped",
+      "[DataBreach] DATABREACH_ALERT_EMAIL not configured; email skipped",
     );
   }
 

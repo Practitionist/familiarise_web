@@ -150,10 +150,9 @@ Support and contact mail still goes to a real mailbox through `NEXT_PUBLIC_SUPPO
 - [ ] Sync the workflows (see [Novu Dashboard Configuration](#novu-dashboard-configuration)) — no Resend email provider to add, every family is in-app only
 - [ ] Copy Secret Key + App ID → save for Step 5
 
-### Step 4: Prisma Migration
+### Step 4: Prisma Schema
 
-- [ ] Run `npx prisma migrate dev --name add-newsletter-unsubscribe-fields`
-- [ ] Verify Newsletter model has `unsubscribed` and `unsubscribedAt` fields
+- [x] The `Waitlist` model (status, confirmedAt, unsubscribedAt, consent proof) is already in `prisma/schema.prisma`; no migration is needed for the newsletter
 
 ### Step 5: Environment Variables
 
@@ -246,8 +245,6 @@ Then, before the first send:
 9. Resolve the open Sentry issues fingerprinted `["email-send-terminal", ...]` that were paging during the outage, once sends succeed again.
 
 ---
-
-## Cron Job Scheduling
 
 ## Cron Job Scheduling
 

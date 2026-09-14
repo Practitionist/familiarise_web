@@ -131,10 +131,10 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
 
   // Email dispatch — opt-in per environment so we don't spam finance
   // during staging/preview deploys. The log above is always emitted.
+  // #1298 — gate on the recipient only; a missing key dead-letters in deliver().
   const to = process.env.MSME_ALERT_EMAIL;
-  const apiKey = process.env.RESEND_API_KEY;
   let emailSent = false;
-  if (to && apiKey) {
+  if (to) {
     try {
       const rowsToShow = atRiskRows.slice(0, MAX_ROWS_IN_EMAIL);
       const truncated = atRiskRows.length > MAX_ROWS_IN_EMAIL;
@@ -179,9 +179,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       });
     }
   } else {
-    console.log(
-      "[MSME] MSME_ALERT_EMAIL or RESEND_API_KEY not configured; email skipped",
-    );
+    console.log("[MSME] MSME_ALERT_EMAIL not configured; email skipped");
   }
 
   const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };

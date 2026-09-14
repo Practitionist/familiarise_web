@@ -229,9 +229,7 @@ async function emailRequester(params: {
   downloadUrl: string;
   expiresAt: Date;
 }): Promise<void> {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) return; // Local dev — skip email send.
-
+  // #1298 — no key guard here: a missing key dead-letters inside deliver().
   const membership = await prisma.membership.findUnique({
     where: { id: params.requestedByMembershipId },
     include: { user: { select: { name: true, email: true } } },

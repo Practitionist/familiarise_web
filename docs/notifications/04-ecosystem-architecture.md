@@ -37,9 +37,10 @@ flowchart TB
         direction TB
         P1_LIB["lib/email/index.ts\n11 functions"]
         subgraph P1_TEMPLATES["10 React Email Templates"]
-            P1_T1["emails/auth/\nWelcomeEmail\nPasswordResetEmail\nAccountLinkedEmail"]
+            P1_T1["emails/auth/\nWelcomeEmail\nPasswordResetEmail\nVerificationEmail\nAccountLinkedEmail"]
             P1_T2["emails/payments/\nPaymentLinkEmail\nPaymentSuccessEmail\nPaymentFailedEmail"]
             P1_T3["emails/waitlist/\nConfirm | Welcome"]
+            P1_T4["emails/organizations/\nOrgInvitationEmail"]
         end
         P1_RENDER["renderEmail()\nreact-email → {html, text}"]
         P1_DELIVER["deliver()\nsingle send core, idempotency key"]
@@ -53,7 +54,7 @@ flowchart TB
         P2_SUB["lib/novu/subscriber.ts\nsyncSubscriber()\nupdateSubscriberPreferences()\ndeleteSubscriber()"]
         subgraph NOVU_CLOUD["Novu Cloud Dashboard — NEEDS CONFIG"]
             NC_WF["15 Tier 1 Workflows\nSpecs: docs/notifications/\n03-novu-template-specs.md"]
-            NC_EMAIL["Email Channel\nroutes through Resend"]
+            NC_EMAIL["Email Channel\nNOT CONFIGURED (ADR 30: in-app only)"]
             NC_INAPP["In-App Channel\nWebSocket → bell icon"]
             NC_PUSH["Push/FCM Channel\nNOT IMPLEMENTED"]
             NC_PREFS["Subscriber Custom Data\n7 category flags\n3 channel flags"]
@@ -62,15 +63,16 @@ flowchart TB
 
     subgraph PIPE3["PIPELINE 3: Newsletter — LIVE (interim)"]
         direction TB
-        P3_SUB["POST /api/newsletter/subscribe\nSaves email + calls ConvertKit stub"]
-        P3_UNSUB["GET /api/newsletter/unsubscribe\nHMAC-signed token verification\nSets unsubscribed=true"]
+        P3_SUB["POST /api/waitlist\nUpserts a PENDING row, sends the confirm email"]
+        P3_CONFIRM["GET /api/waitlist/confirm\nHMAC-signed, 48h link\nPENDING → SUBSCRIBED, sends welcome"]
+        P3_UNSUB["GET|POST /api/waitlist/unsubscribe\nHMAC-signed, timeless token\nRFC 8058 one-click"]
         P3_SEND["POST /api/admin/waitlist/broadcast\nAdmin-only, Resend batch API\n100/call, auto-appends\nunsubscribe footer + headers"]
-        P3_DB[("Newsletter table\nid, email, unsubscribed\nunsubscribedAt")]
+        P3_DB[("Waitlist table\nemail, name, status, source, tags\nconfirmedAt, unsubscribedAt")]
     end
 
     subgraph STUBS["DEFERRED — STUBS"]
         direction TB
-        STUB_CK["ConvertKit / Kit\nlib/newsletter/convertkit.ts\nsyncToConvertKit() — logs\nremoveFromConvertKit() — logs\ntagSubscriber() — logs\ncreateBroadcast() — logs"]
+        STUB_CK["ConvertKit / Kit\nNo code yet — deferred until\nthe list outgrows the Resend batch API"]
         STUB_CMS["Directus CMS\napp/api/webhooks/directus/\nLogs webhook, returns 200\nTODO: blog → broadcast"]
         STUB_PUSH["Push Notifications\nSchema: pushEnabled field\nNo FCM integration"]
     end
@@ -126,12 +128,14 @@ flowchart TB
 
     %% Pipeline 2 internal
     P2_SVC --> P2_CLIENT --> NOVU_CLOUD
-    NC_EMAIL --> DEL_RESEND
+    NC_EMAIL -.->|"future"| DEL_RESEND
     NC_INAPP --> DEL_WS
 
     %% Pipeline 3 internal
     P3_SUB --> P3_DB
-    P3_SUB -.->|"stub call"| STUB_CK
+    P3_SUB --> DEL_RESEND
+    P3_CONFIRM --> P3_DB
+    P3_CONFIRM --> DEL_RESEND
     P3_UNSUB --> P3_DB
     P3_SEND --> P3_DB
     P3_SEND --> DEL_RESEND
@@ -196,7 +200,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 
 ### Pipeline 2: Novu Orchestrated — CODE DONE, DASHBOARD NEEDS CONFIG
 
-**Purpose:** Multi-channel notifications (email + in-app + future push). Novu is the "brain" that decides what/who/where/when. Resend is the "postman" for the email channel.
+**Purpose:** Multi-channel notifications (in-app today; email and push are future channels). Novu is the "brain" that decides what/who/where/when. As of ADR 30 all sixteen workflow families are in-app only, so the email step described below is the planned design and is not created in any family; no Resend provider is configured in Novu.
 
 **How it works:**
 
@@ -204,7 +208,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 2. Function checks `isNovuConfigured()` — if false, logs warning and returns `{success: false}`
 3. Calls `novu.trigger()` (single user), `triggerForMultiple()` (batch of 100), or `triggerBroadcast()` (all subscribers)
 4. Novu Cloud receives the event and executes the workflow:
-   - **Email step** → renders template with `{{payload.variables}}` → sends via Resend integration
+   - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)
 5. Novu checks subscriber preference data before sending (category flags)
@@ -245,16 +249,22 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 
 ### Pipeline 3: Newsletter Interim — LIVE
 
-**Purpose:** Collect newsletter subscribers and send occasional broadcasts via Resend batch API. Interim solution until ConvertKit is integrated at 500+ subscribers.
+**Purpose:** Collect newsletter subscribers with a double opt-in and send occasional broadcasts via the Resend batch API. Interim solution until a list tool such as ConvertKit is integrated at 500+ subscribers.
 
 **How it works:**
 
 ```
-Subscribe:
-  User enters email on site → POST /api/newsletter/subscribe
-    → prisma.newsletter.upsert (clears unsubscribed flag if re-subscribing)
-    → syncToConvertKit(email) — STUB, logs only
+Subscribe (double opt-in, see docs/marketing/01-waitlist-newsletter.md):
+  User enters email on site → POST /api/waitlist
+    → upserts a Waitlist row with status PENDING (re-subscribe resets it)
+    → sendWaitlistConfirmEmail() with an HMAC-signed, 48-hour confirm link
     → returns {success: true}
+
+Confirm:
+  User clicks link → GET /api/waitlist/confirm?email=...&token=...&issuedAt=...
+    → verifyConfirmToken() (signature + TTL)
+    → status PENDING → SUBSCRIBED, confirmedAt = now()
+    → sendWaitlistWelcomeEmail() with the unsubscribe link
 
 Send:
   Admin calls POST /api/admin/waitlist/broadcast {subject, htmlBody, textBody?}
@@ -269,24 +279,14 @@ Send:
   opt-in confirmation share the Waitlist table.
 
 Unsubscribe:
-  User clicks link → GET /api/newsletter/unsubscribe?email=...&token=...
-    → Verify HMAC-SHA256 token (prevents unauthorized unsubscribes)
-    → Set unsubscribed = true, unsubscribedAt = now()
+  User clicks link → GET /api/waitlist/unsubscribe?email=...&token=...
+  Mail client one-click → POST /api/waitlist/unsubscribe (RFC 8058)
+    → verifyUnsubscribeToken() (HMAC-SHA256, never expires)
+    → status → UNSUBSCRIBED, unsubscribedAt = now()
     → Show HTML confirmation page
 ```
 
-**Database model:**
-
-```prisma
-model Newsletter {
-  id             String    @id @default(uuid())
-  email          String    @unique
-  unsubscribed   Boolean   @default(false)
-  unsubscribedAt DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-}
-```
+**Database model:** the `Waitlist` model in `prisma/schema.prisma` (`email`, `name`, `status`, `source`, `tags`, `userId`, `confirmedAt`, `unsubscribedAt`, consent proof). There are no token columns because both links are stateless HMACs; the field-by-field description lives in [docs/marketing/01-waitlist-newsletter.md](../marketing/01-waitlist-newsletter.md).
 
 ---
 
@@ -408,14 +408,14 @@ flowchart LR
 
 ## Dashboard & Admin Features
 
-| Feature                      | Route                           | Who                                             | What It Does                                                    |
-| ---------------------------- | ------------------------------- | ----------------------------------------------- | --------------------------------------------------------------- |
-| **Notification Preferences** | Settings page                   | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours                         |
-| **Bell Icon / Inbox**        | All dashboards                  | All roles                                       | Novu in-app notifications, unread count, click-to-redirect      |
-| **Announcements**            | POST /api/announcements         | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers         |
-| **Newsletter Send**          | POST /api/admin/newsletter/send | Admin only                                      | Send HTML email to all active newsletter subscribers via Resend |
-| **Newsletter Stats**         | (not built)                     | —                                               | Would show subscriber count, open rates                         |
-| **Verification Review**      | /dashboard/admin/verification   | Admin, Staff                                    | Review applications → triggers verificationStatusChanged        |
+| Feature                      | Route                              | Who                                             | What It Does                                                |
+| ---------------------------- | ---------------------------------- | ----------------------------------------------- | ----------------------------------------------------------- |
+| **Notification Preferences** | Settings page                      | Admin ✅, Staff ✅, Consultant ⚠️, Consultee ⚠️ | 3 channels + 7 categories + quiet hours                     |
+| **Bell Icon / Inbox**        | All dashboards                     | All roles                                       | Novu in-app notifications, unread count, click-to-redirect  |
+| **Announcements**            | POST /api/announcements            | Admin, Staff                                    | Create announcement + broadcast to all Novu subscribers     |
+| **Newsletter Send**          | POST /api/admin/waitlist/broadcast | Admin only                                      | Send HTML email to every SUBSCRIBED Waitlist row via Resend |
+| **Newsletter Stats**         | (not built)                        | —                                               | Would show subscriber count, open rates                     |
+| **Verification Review**      | /dashboard/admin/verification      | Admin, Staff                                    | Review applications → triggers verificationStatusChanged    |
 
 ---
 

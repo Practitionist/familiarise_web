@@ -104,8 +104,9 @@ export async function sendVerificationEmail({
   name: string;
   verificationUrl: string;
 }) {
-  // Dev affordance: with no Resend key the link can only reach the console.
-  if (!process.env.RESEND_API_KEY) {
+  // Dev affordance gated on NODE_ENV, not on the key being absent: the link is
+  // a bearer token, and a misconfigured production must not print it.
+  if (process.env.NODE_ENV === "development") {
     console.log(`[verify-email] ${email} -> ${verificationUrl}`);
   }
   return send(
@@ -337,7 +338,15 @@ export async function sendWaitlistWelcomeEmail({
   email: string;
   name?: string | null;
 }) {
-  const unsubscribeLink = buildUnsubscribeUrl(email);
+  let unsubscribeLink: string;
+  try {
+    // Same never-throw contract as the confirm sender. Unreachable in practice:
+    // confirmSubscription verified the confirm token with this secret first.
+    unsubscribeLink = buildUnsubscribeUrl(email);
+  } catch (error) {
+    console.error("Failed to sign waitlist unsubscribe link:", error);
+    return { success: false as const, error };
+  }
   return send(
     "WAITLIST_WELCOME",
     WaitlistWelcomeEmail({ name, unsubscribeLink }),

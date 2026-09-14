@@ -13,7 +13,7 @@ This report answers five questions: whether the stack can handle concurrent work
 1. **The core architecture is well-designed for concurrency.** Distributed Redis locks, idempotency keys on every money flow, conditional-UPDATE atomic guards, and Prisma serializable-retry are already in place. The platform will not silently corrupt data under concurrent load.
 2. **The primary bottleneck at scale is the Supabase connection pool (60 direct connections), not the application logic.** Every Netlify serverless function that opens a Prisma connection competes for a pool slot. This is the single most important thing to validate before launch.
 3. **You do not need Kafka, RabbitMQ, BullMQ, or Amazon SQS.** All four are architecturally incompatible with Netlify's serverless model or introduce AWS infrastructure footprint that is unjustified at this stage.
-4. **Upstash QStash and Inngest are worth evaluating post-MVP**, specifically for email retry queuing and parallelising the invoice/payout batch crons. They are not blocking pre-launch.
+4. **Upstash QStash and Inngest are worth evaluating post-MVP**, specifically for parallelising the invoice/payout batch crons. (Email retry, the original QStash use case, has since been closed by #474 and #1298 without a queue; see Risk 5.) They are not blocking pre-launch.
 5. **Add k6 load tests now.** k6 runs as a single binary locally and in GitHub Actions with no Kubernetes required. A minimal smoke-test suite targeting the five endpoints the script below actually exercises (auth sign-in, slot availability, health, consultant search, checkout context) will expose the connection-pool ceiling before real users do.
 
 ---
@@ -171,7 +171,7 @@ The following risks are ordered by estimated impact at launch-scale load. The mi
 
 **Current mitigation.** As of #474 and #1298 this risk is closed without QStash. `lib/email/deliver.ts` is now the single send core behind all eleven senders in `lib/email/index.ts`: a transient Resend failure, and a missing or invalid `RESEND_API_KEY`, are both captured to the `FailedEmail` table instead of dropped, and `jobs/email/retry-failed-emails.ts` replays a stored message on a one-minute/five-minute/thirty-minute/two-hour/eight-hour backoff, using a content-hash Idempotency-Key so a retry cannot double-send. A terminal failure (dead key, unverified domain) dead-letters on the first attempt and pages through Sentry rather than walking the ladder. See [docs/notifications/01-architecture.md](../notifications/01-architecture.md) for the current pipeline.
 
-**Acceptable pre-launch?** Marginal. Payment confirmation emails and org invitation emails are on this path. A transient Resend outage at checkout time would result in users not receiving payment confirmation — a poor experience that could generate support tickets. Post-MVP, routing email dispatch through Upstash QStash (which provides automatic retry and a delivery log) is the simplest fix.
+**Acceptable pre-launch?** Yes, now that the mitigation above is in place. Payment confirmation emails and org invitation emails are on this path, and a transient Resend outage at checkout time now delays the confirmation by the backoff schedule instead of losing it. The earlier recommendation to route email dispatch through Upstash QStash is superseded; the QStash evaluation in section 6.5 stands only for the other use cases listed there.
 
 ### Risk 6 — Netlify 125-Function Concurrency Ceiling (Severity: LOW)
 
@@ -645,7 +645,7 @@ The following improvements are not needed for launch but should be scheduled in 
 
 ### Sprint 1: Reliability Hardening
 
-**Add Upstash QStash for email retry.** Wrap all `resend.emails.send()` calls in a QStash publish to a `/api/workers/send-email` endpoint. QStash will retry on transient failures and log delivery status. The cost is negligible ($1/100k messages) and the reliability improvement is significant for payment confirmation and org invitation flows.
+**Add Upstash QStash for email retry — superseded.** This recommendation predates #474 and #1298; `lib/email/deliver.ts` plus `jobs/email/retry-failed-emails.ts` now provide the retry and delivery log a QStash publish would have added, so no QStash work is needed for email.
 
 **Add QStash for outbound webhook dispatch.** Replace the polling cron (`lib/enterprise/outbound-webhooks/worker.ts` triggered every minute) with a QStash enqueue at the moment a webhook delivery row is created. This reduces delivery latency from up to 60 seconds to near-zero and eliminates the cron polling overhead.
 

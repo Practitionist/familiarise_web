@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
+import { companyPostalAddress } from "@/lib/email/config";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -158,12 +159,16 @@ async function sendBatch(
 }
 
 function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
+  const line = `style="font-size:12px;color:#666;margin:10px 0;line-height:1.5"`;
+  // #1298 — same postal line EmailFooter renders, so marketing mail carries it.
+  const postal = companyPostalAddress();
+  const postalLine = postal ? `\n  <p ${line}>${escapeHtml(postal)}</p>` : "";
   const footer = `
 <div style="text-align:center;margin:30px 0 0;padding:20px 0;border-top:1px solid #eee">
-  <p style="font-size:12px;color:#666;margin:10px 0;line-height:1.5">
+  <p ${line}>
     &copy; ${new Date().getFullYear()} Familiarise. All rights reserved.
-  </p>
-  <p style="font-size:12px;color:#666;margin:10px 0;line-height:1.5">
+  </p>${postalLine}
+  <p ${line}>
     You received this because you joined the Familiarise waitlist.
     <br/>
     <a href="${unsubscribeUrl}" style="color:#666;text-decoration:underline">Unsubscribe</a>
@@ -175,4 +180,11 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   if (html.includes("</html>"))
     return html.replace("</html>", `${footer}</html>`);
   return html + footer;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }

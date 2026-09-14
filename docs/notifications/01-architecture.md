@@ -9,7 +9,7 @@ The notification system uses two complementary services rather than one:
 | **Resend** | Email delivery infrastructure            | The postman |
 | **Novu**   | Multi-channel notification orchestration | The brain   |
 
-**Why both?** Resend sends emails reliably (DKIM, SPF, bounce handling) but cannot do in-app notifications, push notifications, digest batching, or user preference routing. Novu orchestrates all channels but cannot deliver emails itself -- it uses Resend as its email provider.
+**Why both?** Resend sends emails reliably (DKIM, SPF, bounce handling) but cannot do in-app notifications, push notifications, digest batching, or user preference routing. Novu orchestrates all channels but cannot deliver emails itself. As of ADR 30 every Novu workflow family is in-app only, so the Novu email channel shown below is a possible future path, not a configured one; Novu sends no email today.
 
 **Why not Novu for everything?** Some emails (auth, payment links) are tightly coupled to their API routes and don't need multi-channel delivery. Sending these directly through Resend avoids unnecessary complexity.
 
@@ -28,7 +28,7 @@ graph LR
         B2[Support Events] --> N
         B3[Subscription Events] --> N
         B4[Admin Events] --> N
-        N -->|Email channel| R
+        N -.->|Email channel: future, not configured| R
         N -->|In-App channel| WS[WebSocket]
         N -->|Push channel| FCM[Firebase]
     end
@@ -63,7 +63,7 @@ lib/email/
 
 sendWelcomeEmail()         -- from: SENDERS.onboarding (onboarding@mail.familiarisenow.com)
 sendPasswordResetEmail()   -- from: SENDERS.security (security@mail.familiarisenow.com)
-sendVerificationEmail()    -- from: SENDERS.security
+sendVerificationEmail()    -- from: SENDERS.onboarding
 sendAccountLinkedEmail()   -- from: SENDERS.security
 sendPaymentLinkEmail()     -- from: SENDERS.payments (payments@mail.familiarisenow.com)
 sendPaymentSuccessEmail()  -- from: SENDERS.payments
@@ -71,7 +71,7 @@ sendPaymentFailedEmail()   -- from: SENDERS.payments
 sendOrgInvitationEmail()   -- from: SENDERS.notifications (no caller today)
 sendWaitlistConfirmEmail() -- from: SENDERS.newsletter (newsletter@news.familiarisenow.com)
 sendWaitlistWelcomeEmail() -- from: SENDERS.newsletter
-sendContactInquiryEmail()  -- from: SENDERS.notifications, to: contactInboxAddress()
+sendContactInquiryEmail()  -- from: SENDERS.onboarding, to: contactInboxAddress()
 ```
 
 Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` at call time (defaults `mail.familiarisenow.com` / `news.familiarisenow.com`), not hardcoded, so an environment can point sends at a different verified domain without a code change.
@@ -378,24 +378,24 @@ This pattern ensures:
 
 For Novu triggers this remains a true fire-and-forget: a failed call is logged and forgotten. As of #474 the direct Resend transactional emails behave differently on failure, and #1298 extended the same treatment to a missing or invalid key. When a Resend send throws -- a transient provider outage, a dead key, an unverified domain, or `EmailNotConfiguredError` -- the sender no longer drops the message. Instead `deliver()` persists the already-rendered message (subject, HTML and text body, recipient, from and reply-to) to the `FailedEmail` table via `recordFailedEmail()` in `lib/email/deliver.ts`. A transient failure is retried by `jobs/email/retry-failed-emails.ts` on a fixed backoff schedule of one minute, five minutes, thirty minutes, two hours, and eight hours, replaying the same content-hash Idempotency-Key the original send used so a Resend-side success that never reached the caller is not re-sent as a duplicate. A terminal failure (dead key, unverified domain, missing key) is dead-lettered on the first attempt instead of walking the ladder, and pages through a Sentry message at level `"error"`. An `EMAIL_VERIFICATION` row older than 60 minutes or a `PASSWORD_RESET` row older than 30 minutes is dead-lettered without a send, because a stale link is no longer useful to the recipient. The calling operation still never blocks or rolls back; the difference is that nothing that reaches `deliver()` is silently lost.
 
-`lib/auth.ts` awaits `sendWelcomeEmail()` and `sendAccountLinkedEmail()` inside a try/catch instead of firing them without awaiting, because a Netlify instance that freezes immediately after the response is sent drops an un-awaited call before it reaches Resend, which is the same failure class as #1616; the surrounding try/catch keeps the calling operation non-blocking on a thrown error.
+`lib/auth.ts` awaits `sendWelcomeEmail()` and `sendAccountLinkedEmail()` inside a try/catch instead of firing them without awaiting, because a Netlify instance that freezes immediately after the response is sent drops an un-awaited call before it reaches Resend, which is the same failure class as #1616; the surrounding try/catch makes the send non-fatal (the operation still waits for delivery and for `recordFailedEmail()`, but a thrown error does not abort it).
 
 ---
 
 ## Environment Variables
 
-| Variable                             | Side   | Required                                      | Purpose                                                                                                   |
-| ------------------------------------ | ------ | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `RESEND_API_KEY`                     | Server | Yes (for emails)                              | Resend API key for email delivery                                                                         |
-| `EMAIL_TRANSACTIONAL_DOMAIN`         | Server | No (defaults to `mail.familiarisenow.com`)    | Domain for transactional senders (onboarding/security/payments/notifications/finance/dpdp/noreply/system) |
-| `EMAIL_NEWSLETTER_DOMAIN`            | Server | No (defaults to `news.familiarisenow.com`)    | Domain for the waitlist/newsletter sender                                                                 |
-| `NEXT_PUBLIC_SUPPORT_EMAIL`          | Both   | No (defaults to `support@familiarisenow.com`) | Public support mailbox; also the default Reply-To on every send                                           |
-| `CONTACT_INBOX_ADDRESS`              | Server | No (defaults to `supportEmail()`)             | Where `/contactus` inquiries are delivered                                                                |
-| `BILLING_EMAIL`                      | Server | No (defaults to `supportEmail()`)             | Supplier contact printed on tax invoices                                                                  |
-| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | Both   | No (line omitted when unset)                  | Optional postal line in `EmailFooter`                                                                     |
-| `NOVU_SECRET_KEY`                    | Server | Yes (for notifications)                       | Novu server-side API key                                                                                  |
-| `NEXT_PUBLIC_NOVU_APP_ID`            | Client | Yes (for in-app)                              | Novu application identifier for React SDK                                                                 |
-| `NEXT_PUBLIC_APP_URL`                | Both   | No (defaults to localhost:3000)               | Base URL for email links                                                                                  |
+| Variable                             | Side   | Required                                                    | Purpose                                                                                                   |
+| ------------------------------------ | ------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `RESEND_API_KEY`                     | Server | Yes (for emails)                                            | Resend API key for email delivery                                                                         |
+| `EMAIL_TRANSACTIONAL_DOMAIN`         | Server | No (defaults to `mail.familiarisenow.com`)                  | Domain for transactional senders (onboarding/security/payments/notifications/finance/dpdp/noreply/system) |
+| `EMAIL_NEWSLETTER_DOMAIN`            | Server | No (defaults to `news.familiarisenow.com`)                  | Domain for the waitlist/newsletter sender                                                                 |
+| `NEXT_PUBLIC_SUPPORT_EMAIL`          | Both   | No (defaults to `support@familiarisenow.com`)               | Public support mailbox; also the default Reply-To on every send                                           |
+| `CONTACT_INBOX_ADDRESS`              | Server | No (defaults to `supportEmail()`)                           | Where `/contactus` inquiries are delivered                                                                |
+| `BILLING_EMAIL`                      | Server | No (defaults to `supportEmail()`)                           | Supplier contact printed on tax invoices                                                                  |
+| `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | Both   | No (line omitted when unset)                                | Optional postal line in `EmailFooter`                                                                     |
+| `NOVU_SECRET_KEY`                    | Server | Yes (for notifications)                                     | Novu server-side API key                                                                                  |
+| `NEXT_PUBLIC_NOVU_APP_ID`            | Client | Yes (for in-app)                                            | Novu application identifier for React SDK                                                                 |
+| `NEXT_PUBLIC_APP_URL`                | Both   | Yes in production; local dev falls back to `localhost:3000` | Base URL for email links (`lib/url.ts` also honours Netlify `DEPLOY_PRIME_URL` / `URL`)                   |
 
 ### NPM Packages
 
