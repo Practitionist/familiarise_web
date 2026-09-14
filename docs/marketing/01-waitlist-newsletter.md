@@ -20,18 +20,18 @@ The model lives in `prisma/schema.prisma` alongside the two enums it uses.
 There are no token columns, because both the confirmation link and the
 unsubscribe link are stateless HMACs.
 
-| Field              | Type             | Notes                                                      |
-| ------------------ | ---------------- | ---------------------------------------------------------- |
-| `email`            | `String @unique` | Always stored lowercased and trimmed.                      |
-| `name`             | `String?`        | Optional; only some surfaces collect it.                   |
-| `status`           | `WaitlistStatus` | `PENDING`, `SUBSCRIBED`, `UNSUBSCRIBED`, `BOUNCED`.        |
-| `source`           | `WaitlistSource` | Which surface the signup came from.                        |
-| `tags`             | `String[]`       | Free-form segmentation labels.                             |
-| `userId`           | `String?`        | Set when a signed-in user subscribes; `SetNull` on delete. |
-| `confirmedAt`      | `DateTime?`      | Set when the confirm link is clicked.                      |
-| `unsubscribedAt`   | `DateTime?`      | Set on opt-out.                                            |
-| `consentIpHash`    | `String?`        | SHA-256 of the request IP, salted with the HMAC secret.    |
-| `consentUserAgent` | `String?`        | Truncated to 500 characters.                               |
+| Field | Type | Notes |
+| --- | --- | --- |
+| `email` | `String @unique` | Always stored lowercased and trimmed. |
+| `name` | `String?` | Optional; only some surfaces collect it. |
+| `status` | `WaitlistStatus` | `PENDING`, `SUBSCRIBED`, `UNSUBSCRIBED`, `BOUNCED`. |
+| `source` | `WaitlistSource` | Which surface the signup came from. |
+| `tags` | `String[]` | Free-form segmentation labels. |
+| `userId` | `String?` | Set when a signed-in user subscribes; `SetNull` on delete. |
+| `confirmedAt` | `DateTime?` | Set when the confirm link is clicked. |
+| `unsubscribedAt` | `DateTime?` | Set on opt-out. |
+| `consentIpHash` | `String?` | SHA-256 of the request IP, salted with the HMAC secret. |
+| `consentUserAgent` | `String?` | Truncated to 500 characters. |
 
 The raw IP is never stored. Under DPDP the platform needs to be able to show
 that a given address consented, and a salted digest plus a user agent and a
@@ -67,14 +67,14 @@ testable without configuration.
 
 ## Routes
 
-| Route                                | Purpose                                                                           |
-| ------------------------------------ | --------------------------------------------------------------------------------- |
-| `POST /api/waitlist`                 | Public signup. Rate limited to three requests per hour per IP in `middleware.ts`. |
-| `GET /api/waitlist/confirm`          | Double opt-in landing page.                                                       |
-| `GET /api/waitlist/unsubscribe`      | The link in an email footer; renders a confirmation page.                         |
-| `POST /api/waitlist/unsubscribe`     | RFC 8058 one-click, used by Gmail and Outlook's native unsubscribe button.        |
-| `GET /api/admin/waitlist`            | Backoffice subscriber list. `?format=csv` exports the same filtered set.          |
-| `POST /api/admin/waitlist/broadcast` | Sends one newsletter to every confirmed subscriber.                               |
+| Route | Purpose |
+| --- | --- |
+| `POST /api/waitlist` | Public signup. Rate limited to three requests per hour per IP in `middleware.ts`. |
+| `GET /api/waitlist/confirm` | Double opt-in landing page. |
+| `GET /api/waitlist/unsubscribe` | The link in an email footer; renders a confirmation page. |
+| `POST /api/waitlist/unsubscribe` | RFC 8058 one-click, used by Gmail and Outlook's native unsubscribe button. |
+| `GET /api/admin/waitlist` | Backoffice subscriber list. `?format=csv` exports the same filtered set. |
+| `POST /api/admin/waitlist/broadcast` | Sends one newsletter to every confirmed subscriber. |
 
 The public endpoints are deliberately enumeration-safe. Signing up with an
 address that is already subscribed returns the same response as a fresh signup,

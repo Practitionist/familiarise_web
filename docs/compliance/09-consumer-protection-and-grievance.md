@@ -11,18 +11,17 @@ The Consumer Protection Act 2019 + Consumer Protection (E-Commerce) Rules 2020 �
 
 **Key obligations (Rule 4 + Rule 5):**
 
-| #   | Rule                                                    | What it requires                                                                                                                                                                                                                                                                                                                                                                                 |
-| --- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **Rule 4(4)–4(5)** — Grievance Officer                  | Appoint one; display name, contact details, designation prominently. The officer must **acknowledge a complaint within 48 hours and redress it within one month** from receipt. _(Verified 2026-06-05 against the Rules text — the statutory wording is "one month," not a literal 30 days.)_                                                                                                    |
-| 2   | **Rule 4(11)** — Refund timeline                        | Effect refunds within "a reasonable period." For card/UPI auto-reversals the operative RBI norm (TAT harmonisation circular) is **T+5 working days**; treat 5–7 days as the practical target.                                                                                                                                                                                                    |
-| 3   | **Rule 5(1)** — Seller details                          | Marketplace must display seller (consultant) — legal name, principal address, GSTIN, customer-care channel.                                                                                                                                                                                                                                                                                      |
-| 4   | **Rule 5(3)** — No misleading guarantees                | Marketplace cannot advertise services in a manner that misleads consumers about seller responsibility.                                                                                                                                                                                                                                                                                           |
-| 5   | **Rule 6** — Inventory e-commerce entity                | Doesn't apply — we're a marketplace, not an inventory entity.                                                                                                                                                                                                                                                                                                                                    |
-| 6   | **Section 18 CPA + CCPA Dark Patterns Guidelines 2023** | The CCPA's **Guidelines for Prevention and Regulation of Dark Patterns, 2023** (issued 30 Nov 2023 under Sec 18 CPA 2019) list **13 prohibited dark patterns** (false urgency, basket sneaking, confirm shaming, subscription trap, drip pricing, etc.) and bind every e-commerce platform. A June 2025 CCPA advisory directed platforms to self-audit within 3 months. _(Verified 2026-06-05.)_ |
-| 7   | **Section 17 CPA** — Consumer grievance                 | Establishes the Central Consumer Protection Authority (CCPA) as the recourse if our internal grievance flow fails.                                                                                                                                                                                                                                                                               |
+| # | Rule | What it requires |
+|---|------|------------------|
+| 1 | **Rule 4(4)–4(5)** — Grievance Officer | Appoint one; display name, contact details, designation prominently. The officer must **acknowledge a complaint within 48 hours and redress it within one month** from receipt. *(Verified 2026-06-05 against the Rules text — the statutory wording is "one month," not a literal 30 days.)* |
+| 2 | **Rule 4(11)** — Refund timeline | Effect refunds within "a reasonable period." For card/UPI auto-reversals the operative RBI norm (TAT harmonisation circular) is **T+5 working days**; treat 5–7 days as the practical target. |
+| 3 | **Rule 5(1)** — Seller details | Marketplace must display seller (consultant) — legal name, principal address, GSTIN, customer-care channel. |
+| 4 | **Rule 5(3)** — No misleading guarantees | Marketplace cannot advertise services in a manner that misleads consumers about seller responsibility. |
+| 5 | **Rule 6** — Inventory e-commerce entity | Doesn't apply — we're a marketplace, not an inventory entity. |
+| 6 | **Section 18 CPA + CCPA Dark Patterns Guidelines 2023** | The CCPA's **Guidelines for Prevention and Regulation of Dark Patterns, 2023** (issued 30 Nov 2023 under Sec 18 CPA 2019) list **13 prohibited dark patterns** (false urgency, basket sneaking, confirm shaming, subscription trap, drip pricing, etc.) and bind every e-commerce platform. A June 2025 CCPA advisory directed platforms to self-audit within 3 months. *(Verified 2026-06-05.)* |
+| 7 | **Section 17 CPA** — Consumer grievance | Establishes the Central Consumer Protection Authority (CCPA) as the recourse if our internal grievance flow fails. |
 
 **Note**: this is a SEPARATE grievance flow from DPDP's grievance officer ([doc 08](./08-dpdp-and-privacy.md)). They cover different complaint types:
-
 - Consumer Protection officer: refund delays, service quality, misrepresentation, billing disputes.
 - DPDP officer: data privacy, consent, erasure requests.
 
@@ -42,32 +41,32 @@ It's permissible (and common) to have one person fill both roles, but the public
 
 ## Current code
 
-| Item                                        | What it does                                                                            | State |
-| ------------------------------------------- | --------------------------------------------------------------------------------------- | ----- |
-| Grievance officer page                      | **Missing**                                                                             | 🔴    |
-| `Grievance` model                           | **Missing**                                                                             | 🔴    |
-| `app/api/grievances/route.ts`               | **Missing**                                                                             | 🔴    |
-| 48-hour acknowledgement cron                | **Missing**                                                                             | 🔴    |
-| 30-day resolution SLA dashboard             | **Missing**                                                                             | 🔴    |
-| Refund SLA tracking                         | **Missing** — `Refund` model has PENDING/SUCCEEDED/FAILED but no `targetCompletionDate` | 🔴    |
-| Customer-facing "expected refund date"      | **Missing**                                                                             | 🔴    |
-| Seller (consultant) details on profile page | ⚠️ partial — name + bio shown; legal name, principal address, GSTIN missing             | 🟠    |
-| Customer-care channel disclosure            | **Missing**                                                                             | 🔴    |
-| Misrepresentation gate (Rule 5(3))          | N/A — currently no advertising of consultants beyond their own profile                  | 🟢    |
+| Item | What it does | State |
+|---|---|---|
+| Grievance officer page | **Missing** | 🔴 |
+| `Grievance` model | **Missing** | 🔴 |
+| `app/api/grievances/route.ts` | **Missing** | 🔴 |
+| 48-hour acknowledgement cron | **Missing** | 🔴 |
+| 30-day resolution SLA dashboard | **Missing** | 🔴 |
+| Refund SLA tracking | **Missing** — `Refund` model has PENDING/SUCCEEDED/FAILED but no `targetCompletionDate` | 🔴 |
+| Customer-facing "expected refund date" | **Missing** | 🔴 |
+| Seller (consultant) details on profile page | ⚠️ partial — name + bio shown; legal name, principal address, GSTIN missing | 🟠 |
+| Customer-care channel disclosure | **Missing** | 🔴 |
+| Misrepresentation gate (Rule 5(3)) | N/A — currently no advertising of consultants beyond their own profile | 🟢 |
 
 ## Gap
 
-| Gap                                                                                                                      | Severity |
-| ------------------------------------------------------------------------------------------------------------------------ | -------- |
-| No Grievance Officer page (Rule 4(5))                                                                                    | 🔴       |
-| No grievance form / API                                                                                                  | 🔴       |
-| No 48-hour ack cron                                                                                                      | 🔴       |
-| No 30-day resolution SLA tracking                                                                                        | 🔴       |
-| No refund SLA `targetCompletionDate`                                                                                     | 🟠       |
-| Consultant detail page missing GSTIN + principal address (Rule 5(1))                                                     | 🟠       |
-| No customer-care channel published                                                                                       | 🔴       |
-| No CCPA escalation pathway documented for users                                                                          | 🟡       |
-| No dark-patterns self-audit against the CCPA 2023 Guidelines (13 patterns) — pricing/checkout/subscription UX unreviewed | 🟠       |
+| Gap | Severity |
+|---|---|
+| No Grievance Officer page (Rule 4(5)) | 🔴 |
+| No grievance form / API | 🔴 |
+| No 48-hour ack cron | 🔴 |
+| No 30-day resolution SLA tracking | 🔴 |
+| No refund SLA `targetCompletionDate` | 🟠 |
+| Consultant detail page missing GSTIN + principal address (Rule 5(1)) | 🟠 |
+| No customer-care channel published | 🔴 |
+| No CCPA escalation pathway documented for users | 🟡 |
+| No dark-patterns self-audit against the CCPA 2023 Guidelines (13 patterns) — pricing/checkout/subscription UX unreviewed | 🟠 |
 
 ## Required
 
@@ -126,7 +125,6 @@ enum GrievanceStatus {
 ### C. SLA cron (PR 1 cont.)
 
 `jobs/compliance/grievance-sla-sweeper.ts`:
-
 - Runs hourly.
 - For grievances where `status = SUBMITTED` AND `createdAt + 48h < now`: fire `ackBreachedAt`, alert admin Slack/email.
 - For `status NOT IN (RESOLVED, CLOSED)` AND `createdAt + 30d < now`: fire `resolutionBreachedAt`, alert admin.
@@ -135,7 +133,6 @@ enum GrievanceStatus {
 ### D. Admin grievance dashboard (PR 1 cont.)
 
 `/dashboard/admin/grievances`:
-
 - Inbox with filters by status / category / SLA-state.
 - Detail view with timeline, attachments, response form.
 - "Mark resolved" + "Escalate to CCPA" actions.
@@ -151,7 +148,6 @@ enum GrievanceStatus {
 ### F. Consultant seller-detail disclosure (PR 3)
 
 On `app/explore/consultants/[slug]/page.tsx` (or wherever the public profile lives):
-
 1. Legal name (separate from display name if different).
 2. Principal address (city + state minimum; full address optional for privacy).
 3. GSTIN if registered, with a "Not GST registered" indicator otherwise.
@@ -167,7 +163,6 @@ On `app/explore/consultants/[slug]/page.tsx` (or wherever the public profile liv
 ### H. Dark-patterns self-audit (PR 5)
 
 Audit the consumer UX against the **CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023** (13 specified patterns). Highest-risk surfaces for this product:
-
 1. **Drip pricing / basket sneaking** — show GST, platform fees, and any add-ons up front in the booking flow; no fees that appear only at the final step.
 2. **Subscription trap** — make cancel/auto-renew as easy as sign-up; clear renewal-date + amount disclosure (ties to subscription refund UI, [doc 13](./13-implementation-roadmap.md) Phase 5).
 3. **False urgency / confirm shaming** — no fake "only N slots left" timers; no guilt-worded opt-outs on marketing/consent prompts.
@@ -183,17 +178,17 @@ Audit the consumer UX against the **CCPA Guidelines for Prevention and Regulatio
 
 ## Don't build
 
-| Don't build                                    | Reason                                                                                      |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| In-app dispute resolution (ADR / mediation)    | Out of scope; CCPA + civil court are the consumer's recourse if our internal SLA fails.     |
+| Don't build | Reason |
+|---|---|
+| In-app dispute resolution (ADR / mediation) | Out of scope; CCPA + civil court are the consumer's recourse if our internal SLA fails. |
 | Consultant-side grievance against the consumer | Marketplace ECO Rule covers consumer rights, not seller rights. Track separately if needed. |
 
 ## References
 
-- [Consumer Protection (E-Commerce) Rules 2020 — full text](<https://thc.nic.in/Central%20Governmental%20Rules/Consumer%20Protection%20(E-Commerce)%20Rules,%202020.pdf>) — Rule 4(4)–4(5): ack 48h, redress **one month** _(verified 2026-06-05)_
+- [Consumer Protection (E-Commerce) Rules 2020 — full text](https://thc.nic.in/Central%20Governmental%20Rules/Consumer%20Protection%20(E-Commerce)%20Rules,%202020.pdf) — Rule 4(4)–4(5): ack 48h, redress **one month** *(verified 2026-06-05)*
 - [Consumer Protection Act 2019](https://consumeraffairs.nic.in/sites/default/files/CP_Act_2019.pdf)
-- [CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023 (PIB, 30 Nov 2023 — 13 patterns)](https://www.pib.gov.in/PressReleaseIframePage.aspx?PRID=1983994) _(verified 2026-06-05)_
-- [RBI Harmonisation of TAT & Customer Compensation for Failed Transactions (Sep 2019 — T+5 card/merchant auto-reversal)](https://www.rbi.org.in/commonman/English/scripts/Notification.aspx?Id=3074) _(verified 2026-06-05)_
+- [CCPA Guidelines for Prevention and Regulation of Dark Patterns, 2023 (PIB, 30 Nov 2023 — 13 patterns)](https://www.pib.gov.in/PressReleaseIframePage.aspx?PRID=1983994) *(verified 2026-06-05)*
+- [RBI Harmonisation of TAT & Customer Compensation for Failed Transactions (Sep 2019 — T+5 card/merchant auto-reversal)](https://www.rbi.org.in/commonman/English/scripts/Notification.aspx?Id=3074) *(verified 2026-06-05)*
 - [Consumer Helpline (CCPA)](https://consumerhelpline.gov.in/)
 - [E-Commerce Rules summary (IndiaLaw)](https://www.indialaw.in/blog/civil/consumer-protection-e-commerce-rules/)
 - See also: [08](./08-dpdp-and-privacy.md) (DPDP grievance — different officer), [05](./05-refund-and-chargeback-tax-adjustments.md) (refund cascade).

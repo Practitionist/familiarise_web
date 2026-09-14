@@ -2,7 +2,7 @@
 
 **Generated:** 2026-06-11  
 **Stack:** Next.js 15 · Supabase (PostgreSQL + Supavisor) · Netlify · Upstash Redis  
-**Scope:** Pre-MVP; all data is mock/dev data in a shared Supabase project
+**Scope:** Pre-MVP; all data is mock/dev data in a shared Supabase project  
 
 ---
 
@@ -55,21 +55,21 @@ The GitHub Actions cron layer is the platform's substitute for a job queue. It i
 
 These are the concrete constraints imposed by the hosting and database providers, not by the application code. Every load-testing exercise should be designed to find where the platform hits these walls.
 
-| Constraint                            | Value                           | Tier             | Risk Level                          |
-| ------------------------------------- | ------------------------------- | ---------------- | ----------------------------------- |
-| Netlify function timeout              | 10 seconds                      | Free             | 🔴 Will fail on slow DB queries     |
-| Netlify function timeout              | 26 seconds                      | Pro/Business     | 🟡 Adequate for most operations     |
-| Netlify background function timeout   | 15 minutes                      | Pro+             | 🟢 For long-running jobs            |
-| Netlify concurrent invocations        | **125 per site**                | All paid         | 🟡 Flash-sale ceiling               |
-| Netlify function memory               | 1,024 MB                        | All plans        | 🟢 Sufficient                       |
-| Netlify cold start latency            | ~3 seconds                      | All plans        | 🟡 Affects first-user UX            |
-| Supabase direct connections           | **60**                          | Free + Pro Micro | 🔴 Primary bottleneck               |
-| Supabase Supavisor pool               | **200**                         | Free             | 🟡                                  |
-| Supabase Supavisor pool               | Dedicated (scales with compute) | Pro+             | 🟢                                  |
-| Supavisor sustained TPS (benchmarked) | ~21,700 TPS                     | Single node      | 🟢 Plenty for MVP                   |
-| Supabase realtime concurrent users    | 200                             | Free             | 🟡                                  |
-| Supabase realtime concurrent users    | 500                             | Pro              | 🟢                                  |
-| Upstash Redis REST latency            | ~100–200 ms per call            | All plans        | 🟡 Adds latency on lock-heavy paths |
+| Constraint | Value | Tier | Risk Level |
+|---|---|---|---|
+| Netlify function timeout | 10 seconds | Free | 🔴 Will fail on slow DB queries |
+| Netlify function timeout | 26 seconds | Pro/Business | 🟡 Adequate for most operations |
+| Netlify background function timeout | 15 minutes | Pro+ | 🟢 For long-running jobs |
+| Netlify concurrent invocations | **125 per site** | All paid | 🟡 Flash-sale ceiling |
+| Netlify function memory | 1,024 MB | All plans | 🟢 Sufficient |
+| Netlify cold start latency | ~3 seconds | All plans | 🟡 Affects first-user UX |
+| Supabase direct connections | **60** | Free + Pro Micro | 🔴 Primary bottleneck |
+| Supabase Supavisor pool | **200** | Free | 🟡 |
+| Supabase Supavisor pool | Dedicated (scales with compute) | Pro+ | 🟢 |
+| Supavisor sustained TPS (benchmarked) | ~21,700 TPS | Single node | 🟢 Plenty for MVP |
+| Supabase realtime concurrent users | 200 | Free | 🟡 |
+| Supabase realtime concurrent users | 500 | Pro | 🟢 |
+| Upstash Redis REST latency | ~100–200 ms per call | All plans | 🟡 Adds latency on lock-heavy paths |
 
 ### What these numbers mean in practice
 
@@ -93,16 +93,16 @@ The lock implementation includes a circuit breaker: after 5 consecutive Redis fa
 
 Eight rate-limit rules run at the Netlify edge before the request reaches the Next.js handler. These rules use Upstash's sliding-window algorithm, which survives Redis restarts because the window is stored in Redis sorted sets:
 
-| Endpoint                                         | Limit        | Window     | Key     |
-| ------------------------------------------------ | ------------ | ---------- | ------- |
-| `POST /api/auth/sign-in,sign-up,forget-password` | 10 requests  | 15 minutes | IP      |
-| `GET /api/user/consultants`                      | 60 requests  | 1 minute   | IP      |
-| `GET /api/trials/check-eligibility`              | 100 requests | 1 hour     | IP      |
-| `POST /api/newsletter/subscribe`                 | 30 requests  | 1 hour     | IP      |
-| `GET /api/scheduling/availability/*`             | 60 requests  | 1 minute   | IP      |
-| `POST /api/organizations/.../invitations/accept` | 30 requests  | 1 minute   | IP      |
-| `GET /api/auth/sso/domain-check`                 | 60 requests  | 1 hour     | IP      |
-| `POST /api/checkout`                             | 5 requests   | 1 minute   | User ID |
+| Endpoint | Limit | Window | Key |
+|---|---|---|---|
+| `POST /api/auth/sign-in,sign-up,forget-password` | 10 requests | 15 minutes | IP |
+| `GET /api/user/consultants` | 60 requests | 1 minute | IP |
+| `GET /api/trials/check-eligibility` | 100 requests | 1 hour | IP |
+| `POST /api/newsletter/subscribe` | 30 requests | 1 hour | IP |
+| `GET /api/scheduling/availability/*` | 60 requests | 1 minute | IP |
+| `POST /api/organizations/.../invitations/accept` | 30 requests | 1 minute | IP |
+| `GET /api/auth/sso/domain-check` | 60 requests | 1 hour | IP |
+| `POST /api/checkout` | 5 requests | 1 minute | User ID |
 
 All rules are configured to fail open: if Upstash is unreachable, the request passes rather than being blocked. This is the correct choice for availability, but it means the rate limit does not protect against a Redis outage coinciding with a brute-force attempt.
 
@@ -315,10 +315,10 @@ const checkoutTrend = new Trend("checkout_duration");
 // Adjust vus and duration for more aggressive tests.
 export const options = {
   stages: [
-    { duration: "30s", target: 20 }, // warm-up ramp
-    { duration: "60s", target: 50 }, // sustained load
-    { duration: "30s", target: 100 }, // spike test
-    { duration: "30s", target: 0 }, // ramp down
+    { duration: "30s", target: 20 },   // warm-up ramp
+    { duration: "60s", target: 50 },   // sustained load
+    { duration: "30s", target: 100 },  // spike test
+    { duration: "30s", target: 0 },    // ramp down
   ],
   thresholds: {
     // 95th percentile response time must be under 3 seconds
@@ -349,14 +349,14 @@ export function setup() {
     const loginRes = http.post(
       `${BASE_URL}/api/auth/sign-in/email`,
       JSON.stringify({ email: TEST_EMAIL, password: TEST_PASSWORD }),
-      { headers: { "Content-Type": "application/json" } },
+      { headers: { "Content-Type": "application/json" } }
     );
     const cookie = loginRes.cookies["better-auth.session_token"]?.[0]?.value;
     if (!cookie) {
       // Fail fast: without a session every request 401s and the run
       // measures nothing but noise.
       throw new Error(
-        `setup login ${i + 1}/${SESSION_POOL_SIZE} failed (status ${loginRes.status}) — check TEST_EMAIL/TEST_PASSWORD against ${BASE_URL}`,
+        `setup login ${i + 1}/${SESSION_POOL_SIZE} failed (status ${loginRes.status}) — check TEST_EMAIL/TEST_PASSWORD against ${BASE_URL}`
       );
     }
     sessions.push(cookie);
@@ -375,7 +375,7 @@ export default function (data) {
   group("slot_availability", function () {
     const res = http.get(
       `${BASE_URL}/api/scheduling/availability/${CONSULTANT_ID}`,
-      { headers },
+      { headers }
     );
     slotAvailabilityTrend.add(res.timings.duration);
     const ok = check(res, {
@@ -413,9 +413,10 @@ export default function (data) {
 
   // ── 3. Consultant search (public, rate-limited 60/min/IP) ──────────────────
   group("consultant_search", function () {
-    const res = http.get(`${BASE_URL}/api/user/consultants?limit=20&page=1`, {
-      headers,
-    });
+    const res = http.get(
+      `${BASE_URL}/api/user/consultants?limit=20&page=1`,
+      { headers }
+    );
     const ok = check(res, {
       "search 200": (r) => r.status === 200,
     });
@@ -443,15 +444,13 @@ export function handleSummary(data) {
     stdout: JSON.stringify(
       {
         vus_max: data.metrics.vus_max?.values?.max,
-        http_req_duration_p95:
-          data.metrics.http_req_duration?.values?.["p(95)"],
+        http_req_duration_p95: data.metrics.http_req_duration?.values?.["p(95)"],
         error_rate: data.metrics.errors?.values?.rate,
         total_requests: data.metrics.http_reqs?.values?.count,
-        slot_availability_p95:
-          data.metrics.slot_availability_duration?.values?.["p(95)"],
+        slot_availability_p95: data.metrics.slot_availability_duration?.values?.["p(95)"],
       },
       null,
-      2,
+      2
     ),
   };
 }
@@ -525,7 +524,7 @@ export default function () {
         "Content-Type": "application/json",
         Cookie: `better-auth.session_token=${AUTH_TOKEN}`,
       },
-    },
+    }
   );
 
   if (res.status === 201) created.add(1);
@@ -546,15 +545,13 @@ export function handleSummary(data) {
   return {
     stdout: JSON.stringify(
       {
-        result: pass
-          ? "PASS — exactly 1 booking succeeded"
-          : "FAIL — race condition detected",
+        result: pass ? "PASS — exactly 1 booking succeeded" : "FAIL — race condition detected",
         created: c,
         conflicted: x,
         unexpected: o,
       },
       null,
-      2,
+      2
     ),
   };
 }
@@ -567,9 +564,9 @@ export function handleSummary(data) {
 name: Load Test (Smoke)
 
 on:
-  workflow_dispatch: # manual trigger only — do not run on every PR
+  workflow_dispatch:         # manual trigger only — do not run on every PR
   schedule:
-    - cron: "0 6 * * 1" # optional: weekly Monday 6 AM UTC
+    - cron: "0 6 * * 1"      # optional: weekly Monday 6 AM UTC
 
 jobs:
   smoke:
@@ -670,17 +667,17 @@ At sustained production load (>1,000 daily active users, >10,000 bookings per mo
 
 ## Appendix A: External Service Throughput Reference
 
-| Service        | Limit                    | Plan     | Notes                                   |
-| -------------- | ------------------------ | -------- | --------------------------------------- |
-| Resend         | 100 emails/day           | Free     | $20/month for 50k/month                 |
-| Upstash Redis  | 10,000 commands/day      | Free     | $10/month for 10M/month                 |
-| Upstash QStash | 1,000 messages/day       | Free     | $1 per 100k messages                    |
-| Stream.io      | 100 MAU, 5 GB storage    | Free     | Scales with usage                       |
-| Novu           | 30,000 events/month      | Free     | Cloud-hosted                            |
-| Razorpay       | No published QPS limit   | Standard | Contact support for burst limits        |
-| Stripe         | No published QPS limit   | Standard | 25 events/second on webhooks by default |
-| BetterStack    | 1 monitor, 1 status page | Free     | Paid tiers from $20/month               |
+| Service | Limit | Plan | Notes |
+|---|---|---|---|
+| Resend | 100 emails/day | Free | $20/month for 50k/month |
+| Upstash Redis | 10,000 commands/day | Free | $10/month for 10M/month |
+| Upstash QStash | 1,000 messages/day | Free | $1 per 100k messages |
+| Stream.io | 100 MAU, 5 GB storage | Free | Scales with usage |
+| Novu | 30,000 events/month | Free | Cloud-hosted |
+| Razorpay | No published QPS limit | Standard | Contact support for burst limits |
+| Stripe | No published QPS limit | Standard | 25 events/second on webhooks by default |
+| BetterStack | 1 monitor, 1 status page | Free | Paid tiers from $20/month |
 
 ---
 
-_Report generated from a six-agent codebase scan and web research pass on 2026-06-11. All platform limits should be verified against current provider documentation before a production capacity planning exercise, as these limits change with plan updates._
+*Report generated from a six-agent codebase scan and web research pass on 2026-06-11. All platform limits should be verified against current provider documentation before a production capacity planning exercise, as these limits change with plan updates.*

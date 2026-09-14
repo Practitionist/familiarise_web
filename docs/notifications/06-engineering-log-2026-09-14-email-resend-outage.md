@@ -41,7 +41,7 @@ The key had gone stale, and because it lived in four independent locations (Netl
 - `lib/auth.ts` now awaits `sendWelcomeEmail()` and `sendAccountLinkedEmail()` inside a try/catch, because an un-awaited call is dropped when a Netlify instance freezes right after the response is sent.
 - `react-email` 6.9.5 replaced the deprecated `@react-email/components` and `@react-email/render`, and two shared components (`EmailLogo`, `EmailFooter`) replaced six templates' relative `../public/...` logo paths, which cannot load in a mail client.
 
-The full design rationale is recorded in [ADR 31](../enterprise/70-design-decisions/31-email-sending-domain-and-sender-identities.md). The owner runbook for rotating the key and adding the two subdomains is in [05-pre-production-checklist.md](./05-pre-production-checklist.md#owner-runbook-rotating-resend_api_key).
+The full design rationale is recorded in [ADR 31](../enterprise/70-design-decisions/31-email-sending-domain.md). The owner runbook for rotating the key and adding the two subdomains is in [05-pre-production-checklist.md](./05-pre-production-checklist.md#owner-runbook-rotating-resend_api_key).
 
 ## What is still open
 
