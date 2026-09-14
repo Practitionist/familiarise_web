@@ -1,0 +1,9 @@
+# System Diagrams Index
+
+This page lists the five cross-cutting system diagrams added across the documentation tree, so a reader who wants the shape of a subsystem before its detail can start here and follow one link into the doc that owns that subject.
+
+- **Money flow** — how a checkout becomes a captured payment through the single writer, and how a refund unwinds it. See [Four callers, one writer](../payments/06-high-level-design.md#5-four-callers-one-writer) in the payments high-level design doc.
+- **Hosting machinery** — how a request reaches this site through Netlify's contexts, functions and cron ticker, and which third-party service reads which environment variable. See [Hosting machinery, end to end](../deployment/netlify.md#hosting-machinery-end-to-end) in the Netlify deployment reference.
+- **Life of a booking, with every cron that can touch it** — the timeline of a booking from checkout through completion, plus the full list of scheduled jobs that can also touch it if a step fails. See [Every Cron That Can Touch a Booking](../booking/06-booking-lifecycle.md#14-every-cron-that-can-touch-a-booking) in the booking lifecycle doc.
+- **Notifications and email** — the two separate Novu tenants and the direct Resend delivery path, including how a failed email is retried. See [Two Novu tenants, and the Resend path underneath](../notifications/01-architecture.md#two-novu-tenants-and-the-resend-path-underneath) in the notifications architecture doc.
+- **Org scoping** — the `Scope` type that turns a `?orgScope=` query parameter into a Prisma `where` fragment, and the two independent role axes (`UserRole`, `MemberRole`) above it. See [Org scoping: the two role axes and the `Scope` type](../enterprise/70-design-decisions/18-open-b2b-b2c-boundary.md#org-scoping-the-two-role-axes-and-the-scope-type) in ADR 18.

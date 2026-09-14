@@ -1273,6 +1273,44 @@ Three behaviors of the approve flow changed together. First, the payment link is
 
 Approval links also now mint on RAZORPAY across all three request types (#1165), and org sponsorship survives the flow end-to-end (#1166): the request validates an ACTIVE membership of a `canSponsor` organization that is itself transactable (`ACTIVE` or `PENDING_VERIFICATION`, the same standing the checkout path demands), stamps `Appointment.organizationId` at creation, and the approval payment carries the org onto the `Payment` row and gateway metadata. Approval payments now also write the `CARD` funding leg that every `Payment` is required to carry; this was the one gateway path that created a payment with no leg at all, which mattered little while the rows were untagged and matters a great deal now that they carry an organization.
 
+## 14. Every Cron That Can Touch a Booking
+
+The timeline in section 12 shows the path a consultation is meant to take. This section adds every scheduled job that can also touch that same booking if the path breaks somewhere, verified against [`docs/maintenance/04-cron-jobs-reference.md`](../maintenance/04-cron-jobs-reference.md) and the `jobs/` entrypoints it inventories. None of the crons on the right is "the" path; they are the safety net under a path that is allowed to fail halfway, because a webhook can be lost, a serverless instance can die mid-request, and a consultant can simply not show up.
+
+```
+t=0        Book -> Appointment + AppointmentOccurrence isTentative=true (HOLD), Payment PENDING, Razorpay order
+             never paid -> cleanup-tentative-occurrences (`38 */2 * * *`, every 2h) releases the held occurrence
+                            cleanup-abandoned-payments (`6-59/15 * * * *`, ~15 min) expires the Payment, restores referral credits
+t=1m       webhook payment.captured -> handlePaymentSuccess (one transaction): Payment SUCCEEDED,
+             occurrence isTentative=false, ConsultantEarnings on hold, ledger posted
+             after(): chat channel, invoice, email, Novu bell
+             Lambda died after the money commit -> reconcile-orphaned-confirmations (`13-59/30 * * * *`, ~30 min)
+                            re-runs the confirmation and, since #1356, ensures the chat channel too
+             webhook failed or never arrived -> reconcile-payment-status (`18-59/30 * * * *`, ~30 min) asks Razorpay directly;
+                            sweep-stuck-webhook-events (`4-59/10 * * * *`, ~10 min) re-drives a stored-but-unprocessed WebhookEvent
+t=1d       Reschedule proposed -> the old occurrence is released in place: isTentative=true, completionStatus=RESCHEDULED
+             (kept on the row, not deleted; re-confirmed if the proposal is accepted)
+             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly)
+t=call     Meeting on Stream -> reconcile-orphaned-sessions (`25,55 * * * *`, twice hourly) closes the Meeting record
+                            against the Stream call state
+             consultant never joined -> detect-consultant-no-shows (`57 * * * *`, hourly): cancels and fully refunds
+                            through `refundBookingPayment`, releases the occurrence
+             nobody marked it done -> auto-complete-appointments (`7 * * * *`, hourly); the two jobs share one
+                            attendance predicate (`lib/booking/attendance.ts`) so a booking in the no-show shape
+                            is never completed out from under the detector
+t+7d       release-earnings (`17 * * * *`, hourly) moves ConsultantEarnings/OrganizationEarnings past their hold window to READY
+             create-payout-batch (`0 20 * * 1`, Mondays) batches READY earnings into a ConsultantPayout
+cancel     Refund row PENDING (reserves the amount) -> gateway -> refund.processed webhook
+             gateway slow or the webhook is lost -> reconcile-pending-refunds (`11-59/15 * * * *`, ~15 min)
+             earnings not yet clawed back -> cascade-refund-earnings (`1-59/15 * * * *`, ~15 min)
+```
+
+The Netlify scheduled ticker (`netlify/functions/cron-tick.mts`, every 5 minutes) drives the ten money-sensitive rows of this table — `sweep-stuck-webhook-events`, `cascade-refund-earnings`, `reconcile-refunds`, `abandoned-payments`, `reconcile-payment-status`, `reconcile-orphaned-confirmations`, `sweep-orphaned-topup-captures`, `dispatch-outbound-webhooks`, `sync-payment-earnings` and `release-earnings` — as an HTTP twin under `/api/cleanup/*`, because GitHub Actions' own sub-hourly schedules deliver roughly once every hundred minutes rather than once a minute (ADR 22). Every other job in the table above still runs on its GitHub Actions schedule alone.
+
+### Why sweeps go wrong
+
+A sweep breaks in exactly one way in this codebase: it treats a row that is permanent as if it were merely not-yet-settled, and retries something that will never succeed. The fix each time has been a shared predicate that tells the sweep which case it is looking at, rather than a bigger retry budget. `lib/webhooks/event-log.ts` prefixes a webhook processing error with `"permanent:"` when the failure is a decode or validation error that a replay cannot fix, so `sweep-stuck-webhook-events` skips those rows instead of re-processing them forever. The refund reconciler does the same with a status rather than a string prefix: a Razorpay lookup that comes back `BAD_REQUEST_ERROR` / `input_validation_failed` means the gateway has no record of that refund id at all, so the row is moved to `FAILED` with a `failureReason` instead of being polled on every future tick. And `lib/appointments/occurrences.ts` exports `liveOccurrenceWhere` and `isDeadOccurrence` as the one Prisma-`where` definition of "this occurrence still represents a live hold" — `reconcile-orphaned-confirmations` filters on it so that a `RESCHEDULED` occurrence, which keeps `isTentative=true` on purpose, is never mistaken for an abandoned one and flipped back into the consultant's calendar.
+
 ## Times are rendered in the viewer's zone (2026-09-15)
 
 Every absolute instant on the Appointments list (`components/appointments/AppointmentsShell.tsx`, its rows and the next-up hero) is formatted through `formatInViewerZone` from `lib/time/viewer-zone.ts` in one IANA zone that is resolved once per page: the signed-in user's saved `User.timezone`, else the appointment's scheduling zone where the caller has one, else UTC. The RSC page reads that zone from the session with `getViewerZone()` and passes it down as a prop, so the server render and the hydrating client format each time from the same value; date-fns's bare `format()` reads the runtime's local zone, and with Netlify in UTC and the browser in Asia/Kolkata the same instant produced two wall clocks and React hydration error #418 on both dashboards. A short zone label such as `IST` or `UTC` is appended only when the displayed zone is not the viewer's own, so a time shown in a fallback zone is never mistaken for theirs. Client-only surfaces that never server-render their times, such as the earnings table, take the same zone from the `useViewerZone()` hook. The pin is `__tests__/time/viewer-zone.test.ts`, and the remaining bare `format()` sites are listed in `engineering-log-2026-09-15-viewer-timezone.md`.

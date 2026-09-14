@@ -48,6 +48,42 @@ graph LR
 
 ---
 
+## Two Novu tenants, and the Resend path underneath
+
+Novu treats Development and Production as two fully separate tenants — separate workflows, separate subscribers, separate notification history, and a secret key that only works against its own tenant. `lib/novu/secret-key.ts` decides which tenant a given process talks to by reading `NEXT_PUBLIC_SENTRY_ENVIRONMENT`: the Netlify production context and the GitHub Actions cron twins resolve to `NOVU_PRODUCTION_KEY`, and every preview, branch deploy and local shell resolves to `NOVU_DEVELOPMENT_KEY`, so a developer testing on a preview can never trigger a workflow that reaches a real subscriber's inbox. The platform ships 16 workflow families against Novu's 20-workflow plan cap, and all 69 individual events across those families have a trigger call site in code; promoting a workflow from Development to Production is a per-workflow `workflows.sync({ targetEnvironmentId })` call made from the Development side, because Novu's environment-publish endpoint itself refuses API keys.
+
+The diagram also follows the direct-Resend path for the emails that never go through Novu. A `Failed*/email` component under `emails/**` is rendered to HTML by `@react-email/render` inside `lib/email.ts`, sent with `resend.emails.send({ from: "<name> <address>@<sender domain>", ... })`, and, on a thrown error, persisted verbatim to a `FailedEmail` row that `jobs/email/retry-failed-emails.ts` retries on a fixed backoff before giving up to `DEAD_LETTER`. Whichever domain appears after the `@` in that `from` address has to be a domain Resend has verified, with DKIM, SPF and DMARC records published at whatever host manages that domain's DNS; those records are what let a receiving mail server trust that the message actually came from this platform rather than being spoofed.
+
+```mermaid
+flowchart LR
+  subgraph NovuTenants["Novu — two tenants, one key each"]
+    DEV_ENV["Development tenant<br/>NOVU_DEVELOPMENT_KEY"]
+    PROD_ENV["Production tenant<br/>NOVU_PRODUCTION_KEY"]
+    SYNC["workflows.sync({ targetEnvironmentId })<br/>promotes a workflow Development -> Production"]
+    DEV_ENV -- "16 families, 69 triggered events" --> SYNC --> PROD_ENV
+  end
+  APP["Next.js app<br/>lib/novu/secret-key.ts picks the key from NEXT_PUBLIC_SENTRY_ENVIRONMENT"]
+  APP -- "preview / branch-deploy / local shell" --> DEV_ENV
+  APP -- "Netlify production context + GitHub Actions cron twins" --> PROD_ENV
+  BELL["NEXT_PUBLIC_NOVU_APP_ID<br/>in-app bell (client SDK)"]
+  PROD_ENV --> BELL
+
+  subgraph ResendPath["Direct Resend path"]
+    TPL["emails/** React Email components"]
+    RENDER["@react-email/render<br/>lib/email.ts"]
+    SEND["resend.emails.send<br/>from: name@&lt;verified sender domain&gt;"]
+    OK["Delivered"]
+    FAIL["FailedEmail row"]
+    RETRY["jobs/email/retry-failed-emails.ts<br/>1m, 5m, 30m, 2h, 8h backoff"]
+    DEAD["DEAD_LETTER — operator-replayable"]
+  end
+  TPL --> RENDER --> SEND
+  SEND -- "success" --> OK
+  SEND -- "throws" --> FAIL --> RETRY
+  RETRY -- "exhausted after 5 attempts" --> DEAD
+  RETRY -- "succeeds" --> OK
+```
+
 ## Resend Layer
 
 ### Client Initialization
