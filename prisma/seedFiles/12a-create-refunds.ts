@@ -10,6 +10,14 @@ const STATUS_WEIGHTS: { status: RefundStatus; weight: number }[] = [
   { status: "CANCELLED", weight: 5 },
 ];
 
+// FAMILIARISE_WEB-3V — a gateway-backed row must never claim to be in flight
+// at a gateway that never saw its id; the 20% moves to 70% SUCCEEDED, 25% FAILED.
+const GATEWAY_STATUS_WEIGHTS: { status: RefundStatus; weight: number }[] = [
+  { status: "SUCCEEDED", weight: 70 },
+  { status: "FAILED", weight: 25 },
+  { status: "CANCELLED", weight: 5 },
+];
+
 // Refund reasons
 const REFUND_REASONS = [
   "Customer request - changed mind",
@@ -24,14 +32,15 @@ const REFUND_REASONS = [
   "Partial refund for shortened session",
 ];
 
-function getWeightedStatus(): RefundStatus {
-  const totalWeight = STATUS_WEIGHTS.reduce(
-    (sum, item) => sum + item.weight,
-    0,
-  );
+function getWeightedStatus(gateway: PaymentGateway): RefundStatus {
+  const weights =
+    gateway === "RAZORPAY" || gateway === "STRIPE"
+      ? GATEWAY_STATUS_WEIGHTS
+      : STATUS_WEIGHTS;
+  const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0);
   let random = faker.number.int({ min: 1, max: totalWeight });
 
-  for (const item of STATUS_WEIGHTS) {
+  for (const item of weights) {
     random -= item.weight;
     if (random <= 0) {
       return item.status;
@@ -91,7 +100,7 @@ export async function createRefunds(): Promise<void> {
   for (let i = 0; i < Math.min(NUM_REFUNDS, succeededPayments.length); i++) {
     try {
       const payment = succeededPayments[i];
-      const status = getWeightedStatus();
+      const status = getWeightedStatus(payment.paymentGateway);
 
       // Refund amount: 70% full refund, 30% partial refund
       const isFullRefund = faker.datatype.boolean({ probability: 0.7 });
