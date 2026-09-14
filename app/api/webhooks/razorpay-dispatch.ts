@@ -38,7 +38,9 @@ import {
 } from "@/schemas/webhooks/razorpay";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
-import { z } from "zod";
+import { permanentFailure } from "@/lib/webhooks/event-log";
+import { reportSentryError } from "@/lib/observability/report";
+import { z, ZodError } from "zod";
 
 // Strict inner-entity schemas used to narrow optional envelope fields at the
 // point of consumption (one per event family we actually process).
@@ -451,18 +453,42 @@ export async function processRazorpayWebhookEvent(
       { eventId, deferred },
     );
   } catch (handlerError) {
-    processingError =
-      handlerError instanceof Error
-        ? handlerError.message
-        : String(handlerError);
-    console.error(
-      `Razorpay webhook processing error for ${eventId}:`,
-      handlerError,
-    );
-    Sentry.captureException(handlerError, {
-      tags: { subsystem: "payments", provider: "razorpay" },
-      contexts: { dispatch: { eventType, eventId } },
-    });
+    if (handlerError instanceof ZodError) {
+      // FAMILIARISE_WEB-3W — a payload that fails its schema cannot pass on a
+      // re-drive; the `permanent:` prefix keeps the sweeper off it (#785 B5).
+      const detail = handlerError.issues
+        .slice(0, 5)
+        .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+        .join("; ");
+      processingError = permanentFailure(
+        `schema mismatch: ${eventType} — ${detail}`.slice(0, 500),
+      );
+      console.error(
+        `Razorpay webhook ${eventId} is permanently unprocessable:`,
+        detail,
+      );
+      reportSentryError(handlerError, {
+        subsystem: "payments",
+        op: "razorpay.schema_mismatch",
+        expected: true,
+        level: "warning",
+        tags: { provider: "razorpay" },
+        contexts: { dispatch: { eventType, eventId, detail } },
+      });
+    } else {
+      processingError =
+        handlerError instanceof Error
+          ? handlerError.message
+          : String(handlerError);
+      console.error(
+        `Razorpay webhook processing error for ${eventId}:`,
+        handlerError,
+      );
+      Sentry.captureException(handlerError, {
+        tags: { subsystem: "payments", provider: "razorpay" },
+        contexts: { dispatch: { eventType, eventId } },
+      });
+    }
   } finally {
     // #813/#812 — on a defer, leave the row processed=false/error=null so the
     // stuck-event sweeper re-drives it once the awaited payment lands.
