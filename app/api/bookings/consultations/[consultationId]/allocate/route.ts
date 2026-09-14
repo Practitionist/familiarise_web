@@ -1,18 +1,18 @@
 /**
  * Consultation Slot Allocation API Route
  *
- * Refactored to use unified SlotAllocationService
+ * Refactored to use unified SchedulingService
  * Reduced from 590 lines to ~100 lines
  *
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
- * 2. SlotAllocationService - Validates business rules and executes allocation
+ * 2. SchedulingService - Validates business rules and executes allocation
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { SlotAllocationService } from "@/utils/slotAllocation/SlotAllocationService";
-import { AllocationMode } from "@/utils/slotAllocation/types";
+import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
+import { AllocationMode } from "@/utils/scheduling-engine/types";
 import {
   allocationRequestSchema,
   eventIdSchema,
@@ -83,7 +83,7 @@ export async function PATCH(
       );
 
       // LAYER 2: Business Logic Validation & Allocation
-      const result = await SlotAllocationService.allocate({
+      const result = await SchedulingService.allocate({
         eventType: "consultation",
         eventId: consultationId,
         mode,

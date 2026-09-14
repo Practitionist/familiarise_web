@@ -12,16 +12,16 @@ Investigation of consultant `31e2e9f4-c9d5-4c4c-b281-e8531da623dd` (Mr. Jimmy Gi
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. DATABASE (Prisma)                                        │
 ├─────────────────────────────────────────────────────────────┤
-│ • SlotOfAvailabilityWeekly  (consultant's working hours)    │
-│ • SlotOfAvailabilityCustom  (specific date slots)           │
-│ • Appointment +  SlotOfAppointment  (bookings)              │
+│ • AvailabilityWindowWeekly  (consultant's working hours)    │
+│ • AvailabilityWindowCustom  (specific date slots)           │
+│ • Appointment +  AppointmentOccurrence  (bookings)              │
 └──────────────────┬──────────────────────────────────────────┘
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ 2. API LAYER                                                │
 ├─────────────────────────────────────────────────────────────┤
-│ • /api/slots/availability-with-allocation/[consultantId]    │
+│ • /api/scheduling/availability-with-allocation/[consultantId]    │
 │   - Fetches availability + appointments                     │
 │   - Calls processAvailabilitySlots()                        │
 └──────────────────┬──────────────────────────────────────────┘
@@ -269,7 +269,7 @@ for (let callIndex = 0; callIndex < callsThisWeek; callIndex++) {
 
 // AFTER:
 // 1. Fetch consultant's weekly availability slots
-const consultantWeeklySlots = await prisma.slotOfAvailabilityWeekly.findMany({
+const consultantWeeklySlots = await prisma.availabilityWindowWeekly.findMany({
   where: { consultantProfileId: slotData.slot.consultantProfileId },
 });
 

@@ -11,10 +11,10 @@ import {
   allowsManageTimings,
   allowsUnschedule,
   CONSULTANT_JOIN_WINDOW_MS,
-  getJoinableSlot,
-  slotsAllowReschedule,
-  upcomingSlots,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+  occurrencesAllowReschedule,
+  upcomingOccurrences,
+} from "@/lib/appointments/occurrences";
 import {
   isApprovedStatus,
   isConfirmedStatus,
@@ -51,7 +51,7 @@ function canManageBookingLifecycle(vm: AppointmentVM): boolean {
 }
 
 function actionableRawSlots(vm: AppointmentVM) {
-  if (vm.raw.rawSlots?.length) return vm.raw.rawSlots;
+  if (vm.raw.rawOccurrences?.length) return vm.raw.rawOccurrences;
   const sources =
     vm.raw.groupAppointments && vm.raw.groupAppointments.length > 0
       ? vm.raw.groupAppointments
@@ -60,7 +60,7 @@ function actionableRawSlots(vm: AppointmentVM) {
         : [];
   // Shared with the timings page's own gate, so the menu cannot offer a route
   // that then 404s on a different reading of the same slots (#1082).
-  return upcomingSlots(sources.flatMap((a) => a.slotsOfAppointment ?? []));
+  return upcomingOccurrences(sources.flatMap((a) => a.occurrences ?? []));
 }
 
 export function useConsultantAppointmentsAdapter(
@@ -83,7 +83,7 @@ export function useConsultantAppointmentsAdapter(
     ? TYPE_LABEL[activeVm.kind]
     : ("Consultation" as const);
 
-  const rawSlots = useMemo(
+  const rawOccurrences = useMemo(
     () => (activeVm ? actionableRawSlots(activeVm) : []),
     [activeVm],
   );
@@ -91,7 +91,7 @@ export function useConsultantAppointmentsAdapter(
   const actions = useConsultantEventActions({
     consultantId,
     appointmentId: activeVm?.appointmentId ?? undefined,
-    rawSlots,
+    rawOccurrences,
     title: activeVm?.title ?? "",
     type: typeLabel as
       | "Consultation"
@@ -108,7 +108,7 @@ export function useConsultantAppointmentsAdapter(
   const closeDialog = () => setDialog(null);
 
   const joinableSlotOf = (vm: AppointmentVM) =>
-    getJoinableSlot(vm.raw.appointment?.slotsOfAppointment ?? [], {
+    getJoinableOccurrence(vm.raw.appointment?.occurrences ?? [], {
       joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
     });
 
@@ -117,13 +117,13 @@ export function useConsultantAppointmentsAdapter(
     let navigating = false;
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike;
-      const slot = trial.appointment?.slotsOfAppointment?.[0];
+      const slot = trial.appointment?.occurrences?.[0];
       if (trial.appointment && slot) {
         navigating = await joinMeeting(
           {
             id: trial.appointment.id,
             appointmentType: "TRIAL",
-            slotsOfAppointment: [
+            occurrences: [
               {
                 id: slot.id,
                 startsAt: slot.startsAt,
@@ -137,7 +137,7 @@ export function useConsultantAppointmentsAdapter(
       }
     } else if (vm.raw.appointment) {
       const slot = force
-        ? vm.raw.appointment.slotsOfAppointment?.[0]
+        ? vm.raw.appointment.occurrences?.[0]
         : (joinableSlotOf(vm) ?? undefined);
       navigating = await joinMeeting(vm.raw.appointment, slot);
     }
@@ -165,9 +165,9 @@ export function useConsultantAppointmentsAdapter(
   const trialJoinable = (vm: AppointmentVM) => {
     if (vm.kind !== "TRIAL") return false;
     const trial = vm.raw.source as ConsultantTrialLike;
-    const slots = trial.appointment?.slotsOfAppointment ?? [];
+    const slots = trial.appointment?.occurrences ?? [];
     return (
-      getJoinableSlot(
+      getJoinableOccurrence(
         slots.map((s) => ({ ...s, isTentative: false })),
         { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
       ) !== null
@@ -197,9 +197,9 @@ export function useConsultantAppointmentsAdapter(
   const hasSlotRows = (vm: AppointmentVM): boolean => {
     if (vm.kind === "TRIAL") {
       const trial = vm.raw.source as ConsultantTrialLike | undefined;
-      return (trial?.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+      return (trial?.appointment?.occurrences?.length ?? 0) > 0;
     }
-    return (vm.raw.appointment?.slotsOfAppointment?.length ?? 0) > 0;
+    return (vm.raw.appointment?.occurrences?.length ?? 0) > 0;
   };
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
@@ -225,7 +225,7 @@ export function useConsultantAppointmentsAdapter(
     const items: OverflowItem[] = [];
     const appointment = vm.raw.appointment;
     const inactive = isInactiveStatus(vm.status);
-    const rawSlots = actionableRawSlots(vm);
+    const rawOccurrences = actionableRawSlots(vm);
     const lifecycleOk = canManageBookingLifecycle(vm);
     const isTrial = vm.kind === "TRIAL";
 
@@ -233,7 +233,7 @@ export function useConsultantAppointmentsAdapter(
     // only offered where nobody else has committed to the time. A 1:1 whose
     // consultee already holds a confirmed slot gets Reschedule below instead —
     // the two are alternatives, never both (#1082).
-    const timingsOk = allowsManageTimings(vm.kind, rawSlots);
+    const timingsOk = allowsManageTimings(vm.kind, rawOccurrences);
 
     if (
       appointment &&
@@ -265,7 +265,7 @@ export function useConsultantAppointmentsAdapter(
       // Reschedule is the negotiated path, so it belongs exactly where Manage
       // Timings does not: a booking a counterparty holds a confirmed time on.
       !timingsOk &&
-      slotsAllowReschedule(rawSlots)
+      occurrencesAllowReschedule(rawOccurrences)
     ) {
       items.push({
         key: "reschedule",
@@ -290,7 +290,7 @@ export function useConsultantAppointmentsAdapter(
       !inactive &&
       // The route's own from-state for a group release is SCHEDULED/IN_PROGRESS.
       isConfirmedStatus(vm.status) &&
-      allowsUnschedule(vm.kind, rawSlots)
+      allowsUnschedule(vm.kind, rawOccurrences)
     ) {
       items.push({
         key: "unschedule",

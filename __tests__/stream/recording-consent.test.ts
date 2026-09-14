@@ -26,7 +26,7 @@ import { RecordingConsentDecision } from "@prisma/client";
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    meetingRecordingConsent: {
+    recordingConsent: {
       findUnique: jest.fn(),
       upsert: jest.fn(),
       count: jest.fn(),
@@ -36,7 +36,7 @@ jest.mock("../../lib/prisma", () => ({
 
 import prisma from "../../lib/prisma";
 
-const mockConsent = prisma.meetingRecordingConsent as unknown as {
+const mockConsent = prisma.recordingConsent as unknown as {
   findUnique: jest.Mock;
   upsert: jest.Mock;
   count: jest.Mock;
@@ -116,7 +116,7 @@ describe("recording the decision", () => {
     // Changing your mind must update the standing row, never stack a second
     // one — otherwise "has anyone declined" depends on row ordering.
     expect(arg.where).toEqual({
-      meetingSessionId_userId: { meetingSessionId: "s1", userId: "u1" },
+      meetingId_userId: { meetingId: "s1", userId: "u1" },
     });
     expect(arg.create.noticeVersion).toBe(RECORDING_NOTICE_VERSION);
     expect(arg.update.noticeVersion).toBe(RECORDING_NOTICE_VERSION);

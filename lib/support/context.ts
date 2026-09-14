@@ -11,7 +11,7 @@ import {
   termsFromPolicyRow,
 } from "@/lib/payments/operations/cancellation-policy-store";
 import { hasOrgPermission } from "@/lib/auth/org-permissions";
-import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
+import { liveOccurrencesOf } from "@/lib/appointments/occurrences";
 import type { SupportContext, SupportStage } from "./types";
 
 /**
@@ -56,13 +56,10 @@ export async function buildSupportContext(
       appointmentType: true,
       organizationId: true,
       cancellationPolicy: POLICY_TERMS_INCLUDE,
-      slotsOfAppointment: {
-        // Every live row, not the next one. A session is the contiguous RUN of
-        // 30-minute rows (#1061), so taking a single row gave a 90-minute
-        // meeting a 30-minute window: `endsAt` fell an hour early and the
-        // stage flipped to COMPLETED while the call was still running, which
-        // is what gates the intents on offer. Grouping below restores the
-        // real session bounds.
+      occurrences: {
+        // Every live row, not the next one: the retrospective intents need
+        // the last finished call as well as the next one (#1554: one row per
+        // held call, with its real bounds).
         //
         // Live means "not called off", NOT "still SCHEDULED". A session that has
         // happened is COMPLETED or UNVERIFIED, so the old status equality
@@ -70,8 +67,8 @@ export async function buildSupportContext(
         // `lastEndedRun` was always null, a no-show report fell back to the
         // upcoming session, and with nothing upcoming `endsAt` was null — so the
         // server-side 48-hour recording-window check could not run at all. Same
-        // exclusion as `heldSlot` (lib/reviews.ts) and `isDeadSlot`
-        // (lib/appointments/slots.ts), which the grouping below re-applies.
+        // exclusion as `heldOccurrence` (lib/reviews.ts) and `isDeadOccurrence`
+        // (lib/appointments/occurrences.ts), which the read below re-applies.
         where: {
           deletedAt: null,
           completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
@@ -91,16 +88,56 @@ export async function buildSupportContext(
         take: 1,
       },
       consultation: {
-        select: { consultationPlan: { select: { consultantProfileId: true } } },
+        select: {
+          consultationPlan: {
+            select: { consultantProfileId: true, title: true },
+          },
+        },
       },
       subscription: {
-        select: { subscriptionPlan: { select: { consultantProfileId: true } } },
+        select: {
+          subscriptionPlan: {
+            select: { consultantProfileId: true, title: true },
+          },
+        },
       },
+      // #1580 C-P1-3 — an ACCEPTED collaborator is on the provider side too,
+      // so they are never offered the attendee no-show flow.
       webinar: {
-        select: { webinarPlan: { select: { consultantProfileId: true } } },
+        select: {
+          webinarPlan: {
+            select: {
+              consultantProfileId: true,
+              title: true,
+              collaborators: {
+                // A soft-deleted profile keeps its ACCEPTED row (#1593).
+                where: {
+                  status: "ACCEPTED",
+                  consultantProfile: { deletedAt: null },
+                },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
       },
       class: {
-        select: { classPlan: { select: { consultantProfileId: true } } },
+        select: {
+          classPlan: {
+            select: {
+              consultantProfileId: true,
+              title: true,
+              collaborators: {
+                // A soft-deleted profile keeps its ACCEPTED row (#1593).
+                where: {
+                  status: "ACCEPTED",
+                  consultantProfile: { deletedAt: null },
+                },
+                select: { consultantProfileId: true },
+              },
+            },
+          },
+        },
       },
     },
   });
@@ -117,16 +154,27 @@ export async function buildSupportContext(
     appt.webinar?.webinarPlan?.consultantProfileId ??
     appt.class?.classPlan?.consultantProfileId ??
     null;
+  const providerProfileIds = [
+    planConsultantId,
+    ...(appt.webinar?.webinarPlan?.collaborators ?? []).map(
+      (c) => c.consultantProfileId,
+    ),
+    ...(appt.class?.classPlan?.collaborators ?? []).map(
+      (c) => c.consultantProfileId,
+    ),
+  ];
   const isProvider =
-    !!me?.consultantProfileId && me.consultantProfileId === planConsultantId;
+    !!me?.consultantProfileId &&
+    providerProfileIds.includes(me.consultantProfileId);
 
   const nowMs = Date.now();
-  const runs = groupSlotsIntoRuns(
-    appt.slotsOfAppointment.map((slot) => ({ ...slot, appointmentId })),
-  );
-  /** The session in progress or still to come — the forward-looking subject. */
+  const runs = liveOccurrencesOf(appt.occurrences).map((row) => ({
+    startsAt: new Date(row.startsAt),
+    endsAt: new Date(row.endsAt),
+  }));
+  /** The call in progress or still to come — the forward-looking subject. */
   const activeRun = runs.find((run) => run.endsAt.getTime() > nowMs) ?? null;
-  /** The most recent session that has finished. */
+  /** The most recent call that has finished. */
   const lastEndedRun =
     [...runs].reverse().find((run) => run.endsAt.getTime() <= nowMs) ?? null;
 
@@ -154,9 +202,9 @@ export async function buildSupportContext(
     : "COMPLETED";
 
   // Recordings hang off the slot's meeting session, not the appointment directly
-  // (Recording → MeetingSession → SlotOfAppointment → Appointment).
+  // (Recording → Meeting → AppointmentOccurrence → Appointment).
   const recording = await prisma.recording.findFirst({
-    where: { meetingSession: { slotOfAppointment: { appointmentId } } },
+    where: { meeting: { occurrence: { appointmentId } } },
     select: { id: true },
   });
 
@@ -216,5 +264,11 @@ export async function buildSupportContext(
     // moneyResultExtensions has already converted the BigInt column → number paise.
     paymentAmountPaise: appt.payment[0]?.amount ?? null,
     hasRecording: !!recording,
+    planTitle:
+      appt.consultation?.consultationPlan?.title ??
+      appt.subscription?.subscriptionPlan?.title ??
+      appt.webinar?.webinarPlan?.title ??
+      appt.class?.classPlan?.title ??
+      null,
   };
 }

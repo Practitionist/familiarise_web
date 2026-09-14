@@ -20,28 +20,15 @@ export const CLASS_COLLABORATOR_ROLES = [
 export const WebinarCollaboratorRoleEnum = z.enum(WEBINAR_COLLABORATOR_ROLES);
 export const ClassCollaboratorRoleEnum = z.enum(CLASS_COLLABORATOR_ROLES);
 
-// #768 lockdown #12 — typed permission booleans set at invite time. Default
-// false (least privilege); the owner opts each capability in per collaborator.
-export const collaboratorPermissionsSchema = z.object({
-  canApprovePayment: z.boolean().optional().default(false),
-  canViewAnalytics: z.boolean().optional().default(false),
-  canEditEvent: z.boolean().optional().default(false),
-  canSeeAttendees: z.boolean().optional().default(false),
+// #1580 — what a seat grants is its `tier`, derived from the role on the
+// server; the invite carries no per-capability booleans any more.
+export const inviteCollaboratorSchema = z.object({
+  consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
+  revenueSharePercentage: z
+    .number({ required_error: "Revenue share percentage is required" })
+    .gt(0, "Revenue share percentage must be greater than 0")
+    .lte(90, "Revenue share percentage cannot exceed 90"),
 });
-
-export type CollaboratorPermissions = z.infer<
-  typeof collaboratorPermissionsSchema
->;
-
-export const inviteCollaboratorSchema = z
-  .object({
-    consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
-    revenueSharePercentage: z
-      .number({ required_error: "Revenue share percentage is required" })
-      .gt(0, "Revenue share percentage must be greater than 0")
-      .lte(90, "Revenue share percentage cannot exceed 90"),
-  })
-  .merge(collaboratorPermissionsSchema);
 
 export const inviteWebinarCollaboratorSchema = inviteCollaboratorSchema.extend({
   role: WebinarCollaboratorRoleEnum,
@@ -50,3 +37,13 @@ export const inviteWebinarCollaboratorSchema = inviteCollaboratorSchema.extend({
 export const inviteClassCollaboratorSchema = inviteCollaboratorSchema.extend({
   role: ClassCollaboratorRoleEnum,
 });
+
+// #1580 C-P0-3 — the PATCH body was forwarded unvalidated. `updateCollaborator`
+// changes only the share and the role.
+export const updateWebinarCollaboratorSchema = inviteWebinarCollaboratorSchema
+  .omit({ consultantProfileId: true })
+  .partial();
+
+export const updateClassCollaboratorSchema = inviteClassCollaboratorSchema
+  .omit({ consultantProfileId: true })
+  .partial();

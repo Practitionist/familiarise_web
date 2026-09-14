@@ -9,9 +9,26 @@
 -- org-sponsored bookings legitimately write amount = 0 (free_/org_ synthetic
 -- payment intents in lib/payments/operations/checkout.ts).
 
-ALTER TABLE "SlotOfAppointment" DROP CONSTRAINT IF EXISTS "slot_time_order";
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_time_order";
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_time_order" CHECK ("endsAt" > "startsAt");
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_time_order" CHECK ("endsAt" > "startsAt");
+-- SPLIT
+-- #1554 — `ordinal` is the call's position in its purchase and a replacement
+-- written after a reschedule inherits it, so the unique holds over LIVE rows
+-- only; the RESCHEDULED / CANCELLED row keeps its number for history.
+DROP INDEX IF EXISTS "appointment_occurrence_live_ordinal_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "appointment_occurrence_live_ordinal_key"
+  ON "AppointmentOccurrence" ("appointmentId", "ordinal")
+  WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL;
+-- SPLIT
+-- #1554 / #1550 — a rating is about one call (appointmentOccurrenceId set) or
+-- the whole appointment (NULL). One row per person per level: NULLS NOT
+-- DISTINCT (PG 15) makes two whole-appointment rows collide.
+DROP INDEX IF EXISTS "appointment_feedback_level_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
+  ON "AppointmentFeedback" ("appointmentId", "appointmentOccurrenceId", "userId") NULLS NOT DISTINCT;
 -- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
@@ -55,17 +72,17 @@ ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParti
 -- #440 — DB-level double-booking backstop for 1:1 bookings. The application
 -- guards (consultant allocation lock, #827 confirm-time recheck) are the
 -- first line; this exclusion constraint is the last line: two CONFIRMED
--- slots for the same consultant may never overlap in time. Scoped to rows
+-- occurrences for the same consultant may never overlap in time. Scoped to rows
 -- carrying the denormalized consultantProfileId — consultation/subscription
--- slot creates set it; webinar/class attendee slots deliberately leave it
+-- occurrence creates set it; webinar/class attendee rows deliberately leave it
 -- NULL (many same-window rows per event are legitimate there) and legacy
--- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back slots don't
+-- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
 -- conflict.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" DROP CONSTRAINT IF EXISTS "slot_no_confirmed_overlap";
+ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
 -- SPLIT
-ALTER TABLE "SlotOfAppointment" ADD CONSTRAINT "slot_no_confirmed_overlap"
+ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_overlap"
   EXCLUDE USING gist (
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&
@@ -495,44 +512,165 @@ ALTER TABLE "OrganizationPayout" ADD CONSTRAINT "org_payout_tds_fy_format"
   CHECK ("tdsFinancialYear" IS NULL OR "tdsFinancialYear" ~ '^[0-9]{4}-[0-9]{2}$');
 
 -- SPLIT
+-- #1549 — one review per (consultant, consultee, track, event). ratingUnitId is NULL on
+-- every 1:1 row, so the key needs NULLS NOT DISTINCT, which Prisma cannot express; the
+-- predicate exempts NULL-track legacy rows and is what keeps `db push` from seeing the
+-- index (Prisma ignores partial indexes; a total one with an undeclared tuple would be
+-- dropped). Deliberately NOT partial on deletedAt: a removed row keeps occupying its key.
+DROP INDEX IF EXISTS "consultant_review_pair_track_event_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "consultant_review_pair_track_event_key"
+  ON "ConsultantReview" ("consultantProfileId", "consulteeProfileId", "track", "ratingUnitId")
+  NULLS NOT DISTINCT
+  WHERE "track" IS NOT NULL;
+
+-- SPLIT
+-- #1562 — the actor enum is set exactly when the removal timestamp is, on both the
+-- review and its reply; the read paths branch on the enum and must never meet a
+-- removed row with no actor.
+ALTER TABLE "ConsultantReview" DROP CONSTRAINT IF EXISTS "consultant_review_removed_pair";
+-- SPLIT
+ALTER TABLE "ConsultantReview" ADD CONSTRAINT "consultant_review_removed_pair"
+  CHECK (("deletedAt" IS NULL) = ("removedBy" IS NULL));
+-- SPLIT
+ALTER TABLE "ConsultantReview" DROP CONSTRAINT IF EXISTS "consultant_review_reply_removed_pair";
+-- SPLIT
+ALTER TABLE "ConsultantReview" ADD CONSTRAINT "consultant_review_reply_removed_pair"
+  CHECK (("replyDeletedAt" IS NULL) = ("replyRemovedBy" IS NULL));
+
+-- SPLIT
+-- #1562 — ModerationAction is the single audit row for every staff act; reportId is
+-- nullable now, so a row must still name what it was about.
+ALTER TABLE "ModerationAction" DROP CONSTRAINT IF EXISTS "moderation_action_has_target";
+-- SPLIT
+ALTER TABLE "ModerationAction" ADD CONSTRAINT "moderation_action_has_target"
+  CHECK ("reportId" IS NOT NULL OR "reviewId" IS NOT NULL OR "feedbackId" IS NOT NULL);
+-- SPLIT
+-- #1562 — a direct act names the content its type is about: a review act carries
+-- reviewId, a feedback act carries feedbackId. Report-backed acts are unaffected.
+ALTER TABLE "ModerationAction" DROP CONSTRAINT IF EXISTS "moderation_action_target_matches_type";
+-- SPLIT
+ALTER TABLE "ModerationAction" ADD CONSTRAINT "moderation_action_target_matches_type"
+  CHECK (
+    ("actionType" NOT IN ('REVIEW_REMOVED', 'REVIEW_REPLY_REMOVED', 'REVIEW_EXCLUDED_FROM_AGGREGATE') OR "reviewId" IS NOT NULL)
+    AND ("actionType" <> 'FEEDBACK_EXCLUDED_FROM_AGGREGATE' OR "feedbackId" IS NOT NULL)
+  );
+
+-- SPLIT
+-- #1549 — a GROUP review is one data point about one EVENT; a GROUP row with no
+-- event key can be attributed to nothing, and no fallback is safe.
+ALTER TABLE "ConsultantReview" DROP CONSTRAINT IF EXISTS "consultant_review_group_has_event";
+-- SPLIT
+ALTER TABLE "ConsultantReview" ADD CONSTRAINT "consultant_review_group_has_event"
+  CHECK ("track" IS DISTINCT FROM 'GROUP' OR "ratingUnitId" IS NOT NULL);
+
+-- SPLIT
+-- #1562 — a REVIEW report acts on a review; without one CONTENT_REMOVED would
+-- resolve the report and remove nothing.
+ALTER TABLE "ModerationReport" DROP CONSTRAINT IF EXISTS "moderation_report_review_has_review";
+-- SPLIT
+ALTER TABLE "ModerationReport" ADD CONSTRAINT "moderation_report_review_has_review"
+  CHECK ("type" IS DISTINCT FROM 'REVIEW' OR "reviewId" IS NOT NULL);
+
+-- SPLIT
+-- #1569 — one earning per (payment, consultant, role, occurrence). A whole-
+-- purchase fee carries a NULL occurrence, and NULLS NOT DISTINCT (PG 15) keeps
+-- that single row unique too. Replaces the Prisma @@unique on the first three.
+DROP INDEX IF EXISTS "consultant_earnings_occurrence_key";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "consultant_earnings_occurrence_key"
+  ON "ConsultantEarnings" ("paymentId", "consultantProfileId", "role", "appointmentOccurrenceId") NULLS NOT DISTINCT;
+-- SPLIT
+-- #1580 — one live PRESENTER per plan. The invite transaction checks this too;
+-- the partial uniques make a racing second presenter impossible to commit.
+DROP INDEX IF EXISTS "collaborator_one_presenter_webinar";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_webinar"
+  ON "Collaborator" ("webinarPlanId")
+  WHERE "tier" = 'PRESENTER' AND "status" IN ('PENDING', 'ACCEPTED');
+-- SPLIT
+DROP INDEX IF EXISTS "collaborator_one_presenter_class";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "collaborator_one_presenter_class"
+  ON "Collaborator" ("classPlanId")
+  WHERE "tier" = 'PRESENTER' AND "status" IN ('PENDING', 'ACCEPTED');
+-- SPLIT
+-- #1551 — a review revision is an append-only record of what the review said.
+-- UPDATE never; DELETE only once the parent review row itself is gone (the
+-- cascade), so history cannot be edited under a live review.
+DROP TRIGGER IF EXISTS review_revision_immutable ON "ConsultantReviewRevision";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_review_revision_immutable() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' THEN
+    RAISE EXCEPTION 'ConsultantReviewRevision % is immutable', OLD."id";
+  END IF;
+  IF EXISTS (SELECT 1 FROM "ConsultantReview" WHERE "id" = OLD."reviewId") THEN
+    RAISE EXCEPTION
+      'ConsultantReviewRevision % cannot be deleted while review % exists',
+      OLD."id", OLD."reviewId";
+  END IF;
+  RETURN OLD;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER review_revision_immutable
+  BEFORE UPDATE OR DELETE ON "ConsultantReviewRevision"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_review_revision_immutable();
+
+-- SPLIT
 -- ============================================================================
--- STAGED FOR THE PRE-MVP RESET (#1169 decision 8 — do NOT apply mid-cycle).
--- Each of these can fail against pre-reset data (existing nulls, historical
--- overlaps, drifted denormalizations). They ship here commented so review and
--- the reset runbook see them; uncomment at the reset.
---
--- 1. #1093 §3 — make the idempotency guarantees structural once no nulls exist
---    (writers mint since #1169 PR 9, so no new nulls are created):
+-- APPLIED AT THE PRE-MVP RESET (#1169 decision 8; #1554 uncommented them).
+-- Each of these could fail against pre-reset data, so they shipped commented
+-- until the reset gave them a clean schema.
+
+-- 1. #1093 §3 — DEFERRED again at the #1554 reset rehearsal (2026-09-14). The
+--    premise "writers mint since #1169 PR 9" is false: the seed (8b), the
+--    overage side charge (lib/payments/billing/overage-settlement.ts) and the
+--    approval payment (lib/payments/operations/approval-payment.ts) never write
+--    Payment.clientIdempotencyKey, checkout writes `?? null`, and the Zod key
+--    is optional. A sidecar NOT NULL also disagrees with the nullable Prisma
+--    column, so the next `db push` would drop it. Do it as schema (`String
+--    @unique`) once every writer mints a key — its own money PR.
 --    ALTER TABLE "Payment" ALTER COLUMN "clientIdempotencyKey" SET NOT NULL;
 --    ALTER TABLE "OrganizationPayout" ALTER COLUMN "idempotencyKey" SET NOT NULL;
---
 -- 2. #1093 §5 — overlapping ACTIVE program assignments double-bill a seat; the
 --    (programId, membershipId, periodStart) unique cannot see different starts:
---    ALTER TABLE "ProgramAssignment" ADD CONSTRAINT "program_assignment_no_active_overlap"
---      EXCLUDE USING gist (
---        "programId" WITH =,
---        "membershipId" WITH =,
---        tstzrange("periodStart", "periodEnd") WITH &&
---      ) WHERE ("status" = 'ACTIVE');
---
+ALTER TABLE "ProgramAssignment" DROP CONSTRAINT IF EXISTS "program_assignment_no_active_overlap";
+-- SPLIT
+ALTER TABLE "ProgramAssignment" ADD CONSTRAINT "program_assignment_no_active_overlap"
+  EXCLUDE USING gist (
+    "programId" WITH =,
+    "membershipId" WITH =,
+    tstzrange("periodStart", "periodEnd") WITH &&
+  ) WHERE ("status" = 'ACTIVE');
+-- SPLIT
 -- 3. #1169 PR 1 residue — the denormalized session totals feed
 --    calculateRequiredSlots as authoritative; incoherent values make plans
 --    impossible to allocate ("Could only find N of M"):
---    ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
---      CHECK ("totalSessions" >= 1);
---    ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
---      CHECK ("totalSessions" >= 1);
---
+ALTER TABLE "SubscriptionPlan" DROP CONSTRAINT IF EXISTS "subscription_plan_total_sessions_min";
+-- SPLIT
+ALTER TABLE "SubscriptionPlan" ADD CONSTRAINT "subscription_plan_total_sessions_min"
+  CHECK ("totalSessions" >= 1);
+-- SPLIT
+ALTER TABLE "ClassPlan" DROP CONSTRAINT IF EXISTS "class_plan_total_sessions_min";
+-- SPLIT
+ALTER TABLE "ClassPlan" ADD CONSTRAINT "class_plan_total_sessions_min"
+  CHECK ("totalSessions" >= 1);
+-- SPLIT
 -- 4. #1499 — "at most one ACTIVE cancellation policy per scope" and "one row per
---    (scope, version)" are enforced today only by the Serializable rotation in
---    publishOrgCancellationPolicy. Postgres treats NULLs as distinct in a plain
---    unique, so the platform row (organizationId IS NULL) escapes the Prisma
---    @@unique entirely; NULLS NOT DISTINCT closes that. These stay COMMENTED —
---    check-db-sidecars strips comments and would demand an index that is not
---    applied, and the partial unique can fail against pre-reset rows:
---    CREATE UNIQUE INDEX "cancellation_policy_one_active_per_scope"
---      ON "CancellationPolicy" ("organizationId") NULLS NOT DISTINCT
---      WHERE "status" = 'ACTIVE';
---    CREATE UNIQUE INDEX "cancellation_policy_scope_version"
---      ON "CancellationPolicy" ("organizationId", "version") NULLS NOT DISTINCT;
+--    (scope, version)". Postgres treats NULLs as distinct in a plain unique, so
+--    the platform row (organizationId IS NULL) escapes the Prisma @@unique;
+--    NULLS NOT DISTINCT closes that.
+DROP INDEX IF EXISTS "cancellation_policy_one_active_per_scope";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "cancellation_policy_one_active_per_scope"
+  ON "CancellationPolicy" ("organizationId") NULLS NOT DISTINCT
+  WHERE "status" = 'ACTIVE';
+-- SPLIT
+DROP INDEX IF EXISTS "cancellation_policy_scope_version";
+-- SPLIT
+CREATE UNIQUE INDEX IF NOT EXISTS "cancellation_policy_scope_version"
+  ON "CancellationPolicy" ("organizationId", "version") NULLS NOT DISTINCT;
 -- ============================================================================

@@ -19,10 +19,9 @@ export type TConsultation = Prisma.ConsultationGetPayload<{
     };
     appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -50,12 +49,11 @@ export type TSubscription = Prisma.SubscriptionGetPayload<{
         user: true;
       };
     };
-    appointments: {
+    appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -81,10 +79,9 @@ export type TWebinar = Prisma.WebinarGetPayload<{
     };
     appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -114,12 +111,11 @@ export type TClass = Prisma.ClassGetPayload<{
         };
       };
     };
-    appointments: {
+    appointment: {
       include: {
-        slotsOfAppointment: {
+        occurrences: {
           include: {
-            user: true;
-            meetingSession: {
+            meeting: {
               select: { id: true; endedAt: true; endedReason: true };
             };
           };
@@ -168,7 +164,7 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
           };
         };
         // #997 Phase 3 — weekly-confirmed-call-count aggregate buckets by this
-        // column (ADR B9), read in app/api/slots/appointments/route.ts.
+        // column (ADR B9), read in app/api/scheduling/appointments/route.ts.
         schedulingTimezone: true;
       };
     };
@@ -201,10 +197,9 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
       };
     };
     payment: true;
-    slotsOfAppointment: {
+    occurrences: {
       include: {
-        user: true;
-        meetingSession: {
+        meeting: {
           select: { id: true; endedAt: true; endedReason: true };
         };
       };
@@ -213,4 +208,4 @@ export type TAppointment = Prisma.AppointmentGetPayload<{
 }>;
 
 // Extract slot type from TAppointment for reuse
-export type TSlotOfAppointment = TAppointment["slotsOfAppointment"][number];
+export type TAppointmentOccurrence = TAppointment["occurrences"][number];

@@ -3,14 +3,14 @@ import { Prisma } from "@prisma/client";
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 
 /**
  * AE-2 (#784) — collaborator double-booking guard.
  *
  * A webinar/class co-host commits real time, but co-hosts are NOT slot
- * participants (only the plan owner is denormalized onto SlotOfAppointment),
- * so neither the `slot_no_confirmed_overlap` exclusion constraint nor the
+ * participants (only the plan owner is denormalized onto AppointmentOccurrence),
+ * so neither the `occurrence_no_confirmed_overlap` exclusion constraint nor the
  * owner-scoped availability checks ever see them. Scheduling an event at a time
  * a co-host is already committed elsewhere therefore goes undetected. This guard
  * is called at the event's time-commit so a clash is rejected (→ 409).
@@ -25,8 +25,7 @@ export class CollaboratorUnavailableError extends Error {
 
 /**
  * A co-host's existing commitments: appointments they own, or have ACCEPTED a
- * collaboration on. Mirrors the booked-slots query behind
- * /api/collaborators/[consultantProfileId]/availability.
+ * collaboration on.
  */
 function commitmentClauses(
   consultantProfileId: string,
@@ -141,7 +140,7 @@ export async function assertCollaboratorsAvailableForWindows(
   // PENDING whose every payment is EXPIRED/FAILED or clock-expired).
   const overlapWhere = (
     appointment: Prisma.AppointmentWhereInput,
-  ): Prisma.SlotOfAppointmentWhereInput => ({
+  ): Prisma.AppointmentOccurrenceWhereInput => ({
     // Half-open overlap: existing.start < new.end AND existing.end > new.start.
     OR: windows.map((w) => ({
       startsAt: { lt: w.endsAt },
@@ -160,7 +159,7 @@ export async function assertCollaboratorsAvailableForWindows(
 
   // Fast path: one query asking whether ANY co-host clashes — no N+1 on the
   // common no-conflict scheduling path.
-  const anyClash = await db.slotOfAppointment.findFirst({
+  const anyClash = await db.appointmentOccurrence.findFirst({
     where: overlapWhere({
       OR: collaborators.flatMap((c) =>
         commitmentClauses(c.consultantProfileId),
@@ -174,7 +173,7 @@ export async function assertCollaboratorsAvailableForWindows(
   // 409 message. This per-co-host probe runs only in that rare blocking case.
   const clashing: string[] = [];
   for (const c of collaborators) {
-    const conflict = await db.slotOfAppointment.findFirst({
+    const conflict = await db.appointmentOccurrence.findFirst({
       where: overlapWhere({ OR: commitmentClauses(c.consultantProfileId) }),
       select: { id: true },
     });

@@ -82,13 +82,9 @@ export function usePrograms(
             (plan): ClassPlanProgram => {
               const typedPlan = plan as ClassPlanApiItem;
               const classes = typedPlan.classes || [];
-              const appointments = classes.flatMap(
-                (c) => c.appointments ?? [],
-              );
-              const isRegistered =
-                userId && appointments.length > 0
-                  ? isUserEnrolled(appointments, userId)
-                  : false;
+              const isRegistered = userId
+                ? classes.some((c) => isUserEnrolled(c.appointment, userId))
+                : false;
 
               return {
                 ...typedPlan,

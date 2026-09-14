@@ -1,24 +1,24 @@
 /**
  * Consultation Slot Validation API Route
  *
- * Refactored to use unified SlotValidationService
+ * Refactored to use unified ScheduleValidationService
  * Reduced from 200 lines to ~90 lines
  *
  * VALIDATION LAYERS:
  * 1. Zod schema validation - Type-safe validation with automatic type inference
- * 2. SlotValidationService - Validates business rules (conflicts, availability, etc.)
+ * 2. ScheduleValidationService - Validates business rules (conflicts, availability, etc.)
  */
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
-import { SlotValidationService } from "@/utils/slotAllocation/SlotValidationService";
+import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import {
   validationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
 import { ZodError } from "zod";
-import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
@@ -29,8 +29,8 @@ const consultationInclude = {
         select: {
           user: true,
           scheduleType: true,
-          slotsOfAvailabilityWeekly: true,
-          slotsOfAvailabilityCustom: true,
+          availabilityWindowsWeekly: true,
+          availabilityWindowsCustom: true,
         },
       },
     },
@@ -101,7 +101,7 @@ export async function POST(
       const slotDates = body.slots.map((slot) => new Date(slot));
 
       // LAYER 2: Business Logic Validation (conflicts, availability, consecutive slots, etc.)
-      const validationService = new SlotValidationService(prisma);
+      const validationService = new ScheduleValidationService(prisma);
 
       // Exclude this consultation's own tentative appointments from conflict
       // detection. During re-allocation (e.g. "Use Requested Times"), the old
@@ -109,7 +109,7 @@ export async function POST(
       const tentativeAppointments = await prisma.appointment.findMany({
         where: {
           consultationId,
-          slotsOfAppointment: { some: { isTentative: true } },
+          occurrences: { some: { isTentative: true } },
         },
         select: { id: true },
       });
@@ -133,10 +133,10 @@ export async function POST(
         {
           userId: consultantProfile.user.id,
           scheduleType: consultantProfile.scheduleType,
-          slotsOfAvailabilityWeekly:
-            consultantProfile.slotsOfAvailabilityWeekly,
-          slotsOfAvailabilityCustom:
-            consultantProfile.slotsOfAvailabilityCustom,
+          availabilityWindowsWeekly:
+            consultantProfile.availabilityWindowsWeekly,
+          availabilityWindowsCustom:
+            consultantProfile.availabilityWindowsCustom,
           timezone: consultantProfile.user.timezone || undefined,
         },
         {

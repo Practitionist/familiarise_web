@@ -9,13 +9,19 @@ Correctness under concurrency here is a hybrid: **Redis serializes, Postgres
 decides.** The lock removes contention cheaply and gives the loser a fast,
 structured answer; Postgres then refuses the illegal write when a lock is
 missed, expired or never taken. Which Postgres mechanism does the refusing
-depends on the invariant: the `slot_no_confirmed_overlap` exclusion constraint
+depends on the invariant: the `occurrence_no_confirmed_overlap` exclusion constraint
 (§7) blocks a consultant double-book, the CAS WHERE clause (§6) blocks an
 illegal status change, and the `Serializable` transaction with its retries (§8)
-is what holds webinar and class seat capacity. That last one is not
-interchangeable with the other two — an attendee slot carries a null
-`consultantProfileId` and so falls outside the constraint's predicate, and CAS
-knows nothing about a seat count. Neither half is optional.
+is what holds webinar and class seat capacity, counting `AppointmentParticipant`
+rows tentative-inclusive. That last one is not interchangeable with the other
+two — an attendee slot carries a null `consultantProfileId` and so falls
+outside the constraint's predicate, and CAS knows nothing about a seat count.
+Neither half is optional. The payment webhook adds a fourth, narrower check on
+top of the exclusion constraint: the #827 confirm-time recheck inside its own
+Serializable transaction re-scans for a conflict before stamping a captured
+payment's occurrence CONFIRMED, so two concurrent capture webhooks for
+overlapping intervals resolve to one confirmation and one
+`doubleBookingBlocked` result rather than both landing (`lib/payments/webhooks/handlers.ts`).
 
 ## 1. One key shape per atom, minted in one file
 
@@ -116,13 +122,19 @@ rule 1 for the helpers and the maps.
 The final backstops are not in `schema.prisma`. They live in `prisma/sql/`
 (`check-constraints.sql`, `ledger-triggers.sql`, `payment-legs-triggers.sql`),
 applied after a schema push. The one that matters most here is
-`slot_no_confirmed_overlap` on `SlotOfAppointment`: `EXCLUDE USING gist
+`occurrence_no_confirmed_overlap` on `AppointmentOccurrence`: `EXCLUDE USING gist
 ("consultantProfileId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE
 ("consultantProfileId" IS NOT NULL AND NOT "isTentative")`. That predicate has
 two consequences — tentative rows and rows with a null `consultantProfileId`
 (webinar and class attendee slots) are deliberately outside its reach, and
 half-open `tstzrange` means back-to-back slots do not conflict. Never assume the
 sidecars are present on a database you did not push to with the full chain.
+The neighbouring sidecar `appointment_occurrence_live_ordinal_key` is a
+partial unique index, not an exclusion constraint — it guards
+`("appointmentId", "ordinal")` only over live rows
+(`completionStatus NOT IN ('RESCHEDULED', 'CANCELLED') AND deletedAt IS NULL`),
+because a reschedule's replacement occurrence inherits its predecessor's
+`ordinal` and the superseded row must be free to keep it for history.
 
 ## 8. Serializable retries, and what may not run inside one
 

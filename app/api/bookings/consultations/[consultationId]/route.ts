@@ -62,11 +62,7 @@ type ConsultationWithDetails = Prisma.Result<
       };
       appointment: {
         include: {
-          slotsOfAppointment: {
-            include: {
-              user: true;
-            };
-          };
+          occurrences: true;
         };
       };
     };
@@ -118,18 +114,7 @@ export async function GET(
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -235,9 +220,6 @@ export async function PUT(
         bookingSource: z
           .enum(["DIRECT_CHECKOUT", "REQUEST_SUBMITTED"])
           .optional(),
-        feedbackFromConsultee: z.string().max(MAX_TEXT_LENGTH).nullish(),
-        feedbackFromConsultant: z.string().max(MAX_TEXT_LENGTH).nullish(),
-        rating: z.number().min(1).max(5).nullish(),
         planId: z.string().optional(),
       })
       .strict();
@@ -259,9 +241,6 @@ export async function PUT(
       data: {
         requestNotes: validatedBody.requestNotes,
         bookingSource: validatedBody.bookingSource,
-        feedbackFromConsultee: validatedBody.feedbackFromConsultee,
-        feedbackFromConsultant: validatedBody.feedbackFromConsultant,
-        rating: validatedBody.rating,
         consultationPlan: validatedBody.planId
           ? {
               connect: { id: validatedBody.planId },
@@ -299,18 +278,7 @@ export async function PUT(
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    email: true,
-                    image: true,
-                  },
-                },
-              },
-            },
+            occurrences: true,
           },
         },
       },
@@ -516,11 +484,7 @@ export async function PATCH(
                 },
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -579,11 +543,7 @@ export async function PATCH(
                 },
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
-                      include: {
-                        user: true,
-                      },
-                    },
+                    occurrences: true,
                   },
                 },
               },
@@ -603,7 +563,7 @@ export async function PATCH(
                   // excluded (#1169 PR 2): they keep their ORIGINAL startsAt, so
                   // flipping them re-confirms exactly the time the consultee
                   // asked to move away from.
-                  await tx.slotOfAppointment.updateMany({
+                  await tx.appointmentOccurrence.updateMany({
                     where: {
                       appointmentId: consultation.appointment.id,
                       completionStatus: "SCHEDULED",
@@ -653,11 +613,7 @@ export async function PATCH(
                       },
                       appointment: {
                         include: {
-                          slotsOfAppointment: {
-                            include: {
-                              user: true,
-                            },
-                          },
+                          occurrences: true,
                         },
                       },
                     },
@@ -976,7 +932,7 @@ async function generatePaymentLink(consultation: ConsultationWithDetails) {
   const { consultationPlan, requestedBy, appointment } = consultation;
 
   // Extract slot times if appointment/slots exist
-  const slot = appointment?.slotsOfAppointment?.[0];
+  const slot = appointment?.occurrences?.[0];
   const startsAt = slot?.startsAt?.toISOString();
   const endsAt = slot?.endsAt?.toISOString();
 

@@ -19,10 +19,18 @@
  * Re-driving is safe because every Stream step is idempotent (see
  * applyStreamEnforcement) and because a step is skipped outright once the state
  * that justified it is gone: a lifted ban is never re-revoked.
+ *
+ * #1580 — the same queue carries a failed collaborator revocation
+ * (`sideEffects.collaboratorRevocation`): the rows are REMOVED for good, so
+ * the per-plan Stream removal is re-driven regardless of the ban's fate.
  */
-import type { ModerationActionType } from "@prisma/client";
+import type {
+  ModerationActionType,
+  ModerationReportType,
+} from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { nextRetryAt } from "@/lib/retry/backoff";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   applyStreamEnforcement,
@@ -43,6 +51,10 @@ export interface ModerationRetryResult {
   gaveUp: number;
   /** No longer applicable: the ban was lifted, so re-revoking would be harmful. */
   skipped: number;
+  /** #1580 — collaborator Stream revocations that landed on this attempt. */
+  collaboratorRecovered: number;
+  /** #1593 — erasure requests whose owed Stream revocations were re-driven. */
+  erasureRevocationsRecovered: number;
   errors: string[];
 }
 
@@ -71,6 +83,7 @@ type ActionRow = {
   sideEffects: unknown;
   report: {
     id: string;
+    type: ModerationReportType;
     targetUserId: string;
     reviewId: string | null;
     streamMessageId: string | null;
@@ -87,6 +100,7 @@ function summaryOf(row: ActionRow): SideEffectSummary {
 function reportRefOf(row: ActionRow): ModerationReportRef {
   return {
     id: row.report.id,
+    type: row.report.type,
     targetUserId: row.report.targetUserId,
     reviewId: row.report.reviewId,
     streamMessageId: row.report.streamMessageId,
@@ -150,13 +164,19 @@ async function retryModerationEnforcementUnlocked(
   const limit = opts.limit ?? 100;
   const giveUpOlderThan = new Date(Date.now() - giveUpAfterHours * 3_600_000);
 
-  // `stream: "failed"` is the queue. The terminal marker is a different value
-  // ("gave_up"), so a capped row falls out of this selector by construction
-  // rather than by a negated JSON filter that a null path would defeat.
+  // `stream: "failed"` (and, since #1580, `collaboratorRevocation: "failed"`)
+  // is the queue. The terminal marker is a different value ("gave_up"), so a
+  // capped row falls out of this selector by construction rather than by a
+  // negated JSON filter that a null path would defeat.
   const rows = (await prisma.moderationAction.findMany({
     where: {
       actionType: { in: RETRYABLE_ACTIONS },
-      sideEffects: { path: ["stream"], equals: "failed" },
+      OR: [
+        { sideEffects: { path: ["stream"], equals: "failed" } },
+        {
+          sideEffects: { path: ["collaboratorRevocation"], equals: "failed" },
+        },
+      ],
     },
     select: {
       id: true,
@@ -166,6 +186,7 @@ async function retryModerationEnforcementUnlocked(
       report: {
         select: {
           id: true,
+          type: true,
           targetUserId: true,
           reviewId: true,
           streamMessageId: true,
@@ -184,12 +205,24 @@ async function retryModerationEnforcementUnlocked(
     stillFailing: 0,
     gaveUp: 0,
     skipped: 0,
+    collaboratorRecovered: 0,
+    erasureRevocationsRecovered: 0,
     errors: [],
   };
 
   for (const row of rows) {
-    await retryOne(row, { maxAttempts, giveUpOlderThan }, result);
+    const summary = summaryOf(row);
+    const budget = { maxAttempts, giveUpOlderThan };
+    if (summary.stream === "failed")
+      await retryOne(row, summary, budget, result);
+    if (summary.collaboratorRevocation === "failed") {
+      await retryCollaboratorRevocation(row, summary, budget, result);
+    }
   }
+
+  // #1593 — the erasure scrub records the Stream revocations it could not
+  // land; there is no erasure sweep of its own, so this one drains them.
+  await drainErasureRevocations(result, limit);
 
   // #1270 review — a sweep that left enforcement unlanded did not succeed.
   // `jobs/` reads this to decide the workflow's exit code.
@@ -198,12 +231,75 @@ async function retryModerationEnforcementUnlocked(
   return result;
 }
 
+async function drainErasureRevocations(
+  result: ModerationRetryResult,
+  limit: number,
+): Promise<void> {
+  const now = new Date();
+  // #1593 — the outbox `scrubUser` writes inside its own transaction; a row
+  // is owed until SUCCEEDED, and FAILED rows wait out their backoff slot.
+  const rows = await prisma.streamRevocationRetry.findMany({
+    where: {
+      status: { in: ["PENDING", "FAILED"] },
+      OR: [{ nextRetryAt: null }, { nextRetryAt: { lte: now } }],
+    },
+    select: {
+      id: true,
+      planType: true,
+      planId: true,
+      attempts: true,
+      erasureRequest: { select: { userId: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+  if (rows.length === 0) return;
+
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  for (const row of rows) {
+    const planType = row.planType === "WEBINAR" ? "webinar" : "class";
+    let error: string | null = null;
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        row.planId,
+        row.erasureRequest.userId,
+        { notify: false },
+      );
+      if (!success) error = "Collaborator Stream access not fully revoked";
+    } catch (caught) {
+      error = errMsg(caught);
+    }
+    const attempts = row.attempts + 1;
+    await prisma.streamRevocationRetry.update({
+      where: { id: row.id },
+      data: error
+        ? {
+            status: "FAILED",
+            attempts,
+            lastError: error,
+            nextRetryAt: nextRetryAt(attempts, now),
+          }
+        : { status: "SUCCEEDED", attempts, completedAt: now },
+    });
+    if (error) {
+      result.stillFailing++;
+      result.errors.push(`erasure-revoke ${row.id}: ${error}`);
+    } else {
+      result.erasureRevocationsRecovered++;
+    }
+  }
+}
+
+type Budget = { maxAttempts: number; giveUpOlderThan: Date };
+
 async function retryOne(
   row: ActionRow,
-  budget: { maxAttempts: number; giveUpOlderThan: Date },
+  summary: SideEffectSummary,
+  budget: Budget,
   result: ModerationRetryResult,
 ): Promise<void> {
-  const summary = summaryOf(row);
   const attempts = summary.streamAttempts ?? 1;
 
   if (
@@ -257,6 +353,75 @@ async function retryOne(
     result.stillFailing++;
     result.errors.push(`${row.id}: ${errMsg(error)}`);
   }
+}
+
+/**
+ * #1580 — re-run `revokeCollaboratorAccess` for every plan the action flipped.
+ * Always applicable: the rows are REMOVED whatever became of the ban, and the
+ * Stream removal is idempotent. Shares the attempt and age budget above.
+ */
+async function retryCollaboratorRevocation(
+  row: ActionRow,
+  summary: SideEffectSummary,
+  budget: Budget,
+  result: ModerationRetryResult,
+): Promise<void> {
+  const attempts = summary.collaboratorRevocationAttempts ?? 1;
+  const plans = summary.collaborationsRemoved ?? [];
+
+  if (
+    attempts >= budget.maxAttempts ||
+    row.createdAt < budget.giveUpOlderThan
+  ) {
+    summary.collaboratorRevocation = "gave_up";
+    summary.errors = appendNote(
+      summary.errors,
+      "collaborator-revoke: gave up — out of retry budget",
+    );
+    await writeSummary(row.id, summary).catch(captureRetryError);
+    result.gaveUp++;
+    result.errors.push(`${row.id}: collaborator-revoke gave up`);
+    Sentry.captureMessage(
+      `Collaborator revocation gave up for action ${row.id} (${row.actionType})`,
+      { level: "error", tags: { subsystem: "moderation" } },
+    );
+    return;
+  }
+
+  // Lazy, as in side-effects.ts: the service pulls Stream and Novu.
+  const { revokeCollaboratorAccess } =
+    await import("@/lib/collaborators/service");
+  const failed: string[] = [];
+  for (const { planType, planId } of plans) {
+    try {
+      const { success } = await revokeCollaboratorAccess(
+        planType,
+        planId,
+        row.report.targetUserId,
+        { notify: false },
+      );
+      if (!success) failed.push(`${planType}:${planId}`);
+    } catch (error) {
+      failed.push(`${planType}:${planId} (${errMsg(error)})`);
+    }
+  }
+
+  summary.collaboratorRevocationAttempts = attempts + 1;
+  if (failed.length === 0) {
+    summary.collaboratorRevocation = "ok";
+    await writeSummary(row.id, summary);
+    result.collaboratorRecovered++;
+    console.log(`✅ Re-drove collaborator revocation for action ${row.id}`);
+    return;
+  }
+  summary.collaboratorRevocation = "failed";
+  summary.errors = appendNote(
+    summary.errors,
+    `collaborator-revoke: ${failed.join(", ")} (attempt ${attempts + 1})`,
+  );
+  await writeSummary(row.id, summary).catch(captureRetryError);
+  result.stillFailing++;
+  result.errors.push(`${row.id}: collaborator-revoke ${failed.join(", ")}`);
 }
 
 async function cap(

@@ -11,7 +11,7 @@ import {
 } from "date-fns";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { isDeadSlot } from "@/lib/appointments/slots";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import type {
   AppointmentKind,
   AppointmentVM,
@@ -55,8 +55,8 @@ export function AppointmentCalendar({
     return vms
       .filter((vm) => vm.bucket !== "cancelled")
       .flatMap((vm) =>
-        vm.sessions
-          .filter((s) => !isDeadSlot(s))
+        vm.occurrences
+          .filter((s) => !isDeadOccurrence(s))
           .map((s) => ({
             vm,
             start: s.startsAt,

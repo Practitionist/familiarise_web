@@ -13,13 +13,13 @@ import {
   getRecordingBlock,
 } from "@/lib/stream/recording-consent";
 import { RecordingConsentDecision } from "@prisma/client";
-import { getMeetingSessionOwnershipInfo } from "@/lib/stream/recording-utils";
+import { getMeetingOwnershipInfo } from "@/lib/stream/recording-utils";
 import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 
 import { getSession } from "@/lib/auth-server";
 const startRecordingSchema = z.object({
-  meetingSessionId: z.string().min(1, "Meeting session ID is required"),
+  meetingId: z.string().min(1, "Meeting session ID is required"),
 });
 
 export async function POST(req: NextRequest) {
@@ -42,13 +42,13 @@ export async function POST(req: NextRequest) {
 
     // Parse and validate request body
     const body = await req.json();
-    const { meetingSessionId } = startRecordingSchema.parse(body);
+    const { meetingId } = startRecordingSchema.parse(body);
 
     // Verify the meeting session exists and belongs to consultant's appointment
-    const meetingSession = await prisma.meetingSession.findUnique({
-      where: { id: meetingSessionId },
+    const meeting = await prisma.meeting.findUnique({
+      where: { id: meetingId },
       include: {
-        slotOfAppointment: {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -58,6 +58,11 @@ export async function POST(req: NextRequest) {
                       select: {
                         consultantProfileId: true,
                         recordingEnabled: true,
+                        // #1580 C-P1-4 — the accepted co-presenter may record too.
+                        collaborators: {
+                          where: { status: "ACCEPTED" as const },
+                          select: { consultantProfileId: true, role: true },
+                        },
                       },
                     },
                   },
@@ -68,6 +73,11 @@ export async function POST(req: NextRequest) {
                       select: {
                         consultantProfileId: true,
                         recordingEnabled: true,
+                        // #1580 C-P1-4 — the accepted co-presenter may record too.
+                        collaborators: {
+                          where: { status: "ACCEPTED" as const },
+                          select: { consultantProfileId: true, role: true },
+                        },
                       },
                     },
                   },
@@ -103,7 +113,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (!meetingSession) {
+    if (!meeting) {
       return NextResponse.json(
         { error: "Meeting session not found" },
         { status: 404 },
@@ -117,8 +127,8 @@ export async function POST(req: NextRequest) {
     });
 
     // Verify the consultant owns this appointment using helper function
-    const { isOwner, recordingEnabled } = getMeetingSessionOwnershipInfo(
-      meetingSession,
+    const { isOwner, recordingEnabled } = getMeetingOwnershipInfo(
+      meeting,
       consultantProfile?.id,
     );
 
@@ -142,17 +152,17 @@ export async function POST(req: NextRequest) {
     // effect or it is not consent. Group sessions are never blocked here — their
     // recording is the product, disclosed at purchase, and acknowledged rather
     // than consented to.
-    const appointment = meetingSession.slotOfAppointment?.appointment;
+    const appointment = meeting.occurrence?.appointment;
 
     /** One shape for a refusal, used by the pre-claim gate and the race re-read. */
     const refuse = (reason: string | undefined) => {
       streamLogger.info("Recording refused — participant declined", {
-        meetingSessionId,
+        meetingId,
       });
       return NextResponse.json({ error: reason }, { status: 409 });
     };
 
-    const consentBlock = await getRecordingBlock(meetingSessionId, appointment);
+    const consentBlock = await getRecordingBlock(meetingId, appointment);
     if (consentBlock.blocked) return refuse(consentBlock.reason);
 
     // Claim atomically, and re-assert the consent condition IN the claim.
@@ -167,9 +177,9 @@ export async function POST(req: NextRequest) {
     // match zero rows. The earlier read stays because it produces the specific
     // user-facing reason; this is the part that has to be true.
     const blockOnDecline = consentRegimeFor(appointment) === "OPT_OUT";
-    const updated = await prisma.meetingSession.updateMany({
+    const updated = await prisma.meeting.updateMany({
       where: {
-        id: meetingSessionId,
+        id: meetingId,
         isRecording: false,
         ...(blockOnDecline
           ? {
@@ -190,7 +200,7 @@ export async function POST(req: NextRequest) {
       // Either a concurrent start won, or a decline landed between the read and
       // this write. Re-read to say which, so a refused host is not told the
       // wrong thing.
-      const raced = await getRecordingBlock(meetingSessionId, appointment);
+      const raced = await getRecordingBlock(meetingId, appointment);
       if (raced.blocked) return refuse(raced.reason);
       return NextResponse.json(
         { error: "Recording is already in progress" },
@@ -200,15 +210,19 @@ export async function POST(req: NextRequest) {
 
     // Start recording via Stream API (use DB-stored call ID, never trust client)
     const result = await RecordingService.startRecording(
-      meetingSession.streamCallId,
+      meeting.streamCallId,
       session.user.id,
     );
 
     if (!result.success) {
       // Revert the DB state since Stream API failed
-      await prisma.meetingSession.update({
-        where: { id: meetingSessionId },
-        data: { isRecording: false, recordingStartedAt: null, recordingStartedBy: null },
+      await prisma.meeting.update({
+        where: { id: meetingId },
+        data: {
+          isRecording: false,
+          recordingStartedAt: null,
+          recordingStartedBy: null,
+        },
       });
       return NextResponse.json(
         { error: result.error || "Failed to start recording" },

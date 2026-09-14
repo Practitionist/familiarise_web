@@ -1,5 +1,6 @@
 import type { StreamChat } from "stream-chat";
 import type { StreamVideoClient } from "@stream-io/video-react-sdk";
+import type { ConnectFailure } from "./connect-failure";
 
 /**
  * Module-level store for the Stream connection, read via `useSyncExternalStore`.
@@ -29,6 +30,7 @@ export interface StreamConnectionSnapshot {
   videoConnected: boolean;
   isConnecting: boolean;
   error: string | null;
+  failure: ConnectFailure | null;
 }
 
 const INITIAL: StreamConnectionSnapshot = {
@@ -37,6 +39,7 @@ const INITIAL: StreamConnectionSnapshot = {
   videoConnected: false,
   isConnecting: false,
   error: null,
+  failure: null,
 };
 
 let snapshot: StreamConnectionSnapshot = INITIAL;

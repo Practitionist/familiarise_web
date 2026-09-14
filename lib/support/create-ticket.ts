@@ -16,8 +16,8 @@ import type {
   SupportTicket,
 } from "@prisma/client";
 import {
+  notifySupportTicketActivity,
   notifySupportTicketCreated,
-  notifySupportTicketUpdateForStaff,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { allocateTicketReference } from "./reference";
@@ -66,6 +66,28 @@ export interface CreateSupportTicketInput {
 }
 
 /**
+ * Ops recipients, each with the queue URL THEY can open: `/dashboard/admin/*`
+ * is ADMIN-only and bounces a STAFF user to their home, while the staff tree
+ * admits both roles. One trigger per recipient, since the href differs.
+ */
+async function opsRecipients(
+  assigneeId?: string | null,
+): Promise<Array<{ id: string; dashboardUrl: string }>> {
+  const users = await prisma.user.findMany({
+    where: assigneeId
+      ? { id: assigneeId }
+      : { role: { in: ["STAFF", "ADMIN"] } },
+    select: { id: true, staffProfileId: true },
+  });
+  return users.map((u) => ({
+    id: u.id,
+    dashboardUrl: u.staffProfileId
+      ? `/dashboard/staff/${u.staffProfileId}/tickets`
+      : "/dashboard/admin/tickets",
+  }));
+}
+
+/**
  * Fire-and-forget staff notification — shared by every creation path.
  *
  * Exported because the per-appointment escalation creates its ticket INSIDE a
@@ -77,7 +99,7 @@ export interface CreateSupportTicketInput {
 export async function notifySupportStaff(
   ticket: Pick<
     SupportTicket,
-    "id" | "title" | "organizationId" | "referenceNumber"
+    "id" | "title" | "organizationId" | "referenceNumber" | "userId"
   >,
 ): Promise<void> {
   // ADR 23 — the notification inherits the ticket's org-ness (attribution +
@@ -90,21 +112,27 @@ export async function notifySupportStaff(
     });
     orgName = org?.name ?? null;
   }
-  const staffUsers = await prisma.user.findMany({
-    where: { role: { in: ["STAFF", "ADMIN"] } },
-    select: { id: true },
-  });
-  void notifySupportTicketCreated(
-    staffUsers.map((u) => u.id),
-    {
-      ticketId: ticket.id,
-      // Lead with the reference: it is what the user will quote back.
-      ticketTitle: ticket.referenceNumber
-        ? `${ticket.referenceNumber} — ${ticket.title || "Support Ticket"}`
-        : ticket.title || "Support Ticket",
-      dashboardUrl: "/dashboard/admin/tickets",
-      ...notificationScope(ticket.organizationId, orgName),
-    },
+  const [recipients, customer] = await Promise.all([
+    opsRecipients(),
+    prisma.user.findUnique({
+      where: { id: ticket.userId },
+      select: { name: true },
+    }),
+  ]);
+  // Awaited, not void: a Netlify instance freezes once the response is sent,
+  // and a trigger still in flight at that moment is lost (seen on the first
+  // sync, 2026-09-13). The SDK caps a trigger at five seconds.
+  await Promise.all(
+    recipients.map((recipient) =>
+      notifySupportTicketCreated([recipient.id], {
+        ticketId: ticket.id,
+        reference: ticket.referenceNumber ?? undefined,
+        ticketTitle: ticket.title || "Support Ticket",
+        userName: customer?.name ?? undefined,
+        dashboardUrl: recipient.dashboardUrl,
+        ...notificationScope(ticket.organizationId, orgName),
+      }),
+    ),
   );
 }
 
@@ -125,6 +153,7 @@ export async function notifyStaffOfTicketActivity(
    * would ever have paged anyone.
    */
   eventId?: string,
+  activity: "replied" | "reopened" = "replied",
 ): Promise<void> {
   const ticket = await prisma.supportTicket.findUnique({
     where: { id: ticketId },
@@ -133,29 +162,29 @@ export async function notifyStaffOfTicketActivity(
       assignedToId: true,
       referenceNumber: true,
       organizationId: true,
+      user: { select: { name: true } },
     },
   });
   if (!ticket) return;
-  const recipients = ticket.assignedToId
-    ? [ticket.assignedToId]
-    : (
-        await prisma.user.findMany({
-          where: { role: { in: ["STAFF", "ADMIN"] } },
-          select: { id: true },
-        })
-      ).map((u) => u.id);
+  const recipients = await opsRecipients(ticket.assignedToId);
   if (recipients.length === 0) return;
-  void notifySupportTicketUpdateForStaff(
-    recipients,
-    {
-      ticketId,
-      ticketTitle: ticket.referenceNumber
-        ? `${ticket.referenceNumber} — ${ticket.title}`
-        : ticket.title,
-      dashboardUrl: "/dashboard/admin/tickets",
-      ...notificationScope(organizationId ?? ticket.organizationId),
-    },
-    eventId ?? `${ticketId}:${Date.now()}`,
+  const dedupeKey = eventId ?? `${ticketId}:${Date.now()}`;
+  await Promise.all(
+    recipients.map((recipient) =>
+      notifySupportTicketActivity(
+        [recipient.id],
+        {
+          ticketId,
+          reference: ticket.referenceNumber ?? undefined,
+          ticketTitle: ticket.title,
+          userName: ticket.user.name ?? undefined,
+          activity,
+          dashboardUrl: recipient.dashboardUrl,
+          ...notificationScope(organizationId ?? ticket.organizationId),
+        },
+        dedupeKey,
+      ),
+    ),
   );
 }
 

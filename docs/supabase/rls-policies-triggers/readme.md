@@ -106,10 +106,10 @@ All application tables have RLS enabled (`rowsecurity = true`):
 ✅ Subscription                   ✅ Waitlist
 ✅ Appointment                    ✅ Feedback
 ✅ AppointmentDocument            ✅ SupportTicket
-✅ SlotOfAppointment              ✅ SupportResponse
-✅ SlotOfAvailabilityWeekly       ✅ cookie_preferences
-✅ SlotOfAvailabilityCustom       ✅ notification_preferences
-✅ MeetingSession                 ✅ verificationtokens
+✅ AppointmentOccurrence              ✅ SupportResponse
+✅ AvailabilityWindowWeekly       ✅ cookie_preferences
+✅ AvailabilityWindowCustom       ✅ notification_preferences
+✅ Meeting                 ✅ verificationtokens
 ✅ Recording                      ✅ Payment
 ✅ DiscountCode
 ```
@@ -303,10 +303,10 @@ $$ LANGUAGE plpgsql;
 ✅ ConsultationPlan              ✅ Domain
 ✅ ConsulteeProfile              ✅ SubDomain
 ✅ DiscountCode                  ✅ Feedback
-✅ MeetingSession                ✅ Payment
+✅ Meeting                ✅ Payment
 ✅ Newsletter                    ✅ Recording
-✅ SlotOfAppointment             ✅ SlotOfAvailabilityCustom
-✅ SlotOfAvailabilityWeekly      ✅ StaffProfile
+✅ AppointmentOccurrence             ✅ AvailabilityWindowCustom
+✅ AvailabilityWindowWeekly      ✅ StaffProfile
 ```
 
 **Example:**

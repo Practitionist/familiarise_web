@@ -11,7 +11,8 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
 import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
-import { INTERVALS } from "@/utils/timeSlotsMeta";
+import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
+import type { BookableInterval } from "@/utils/scheduling-engine/types";
 
 /**
  * CALENDAR DATA SYNCHRONIZATION REFACTOR
@@ -62,12 +63,8 @@ export interface UseCalendarDataOptions {
   includeAppointmentDetails?: boolean;
 }
 
-export interface TimeSlot {
-  startTime: Date;
-  endTime: Date;
-  isAvailable: boolean;
-  isBooked: boolean;
-}
+// #1554 — the picker cell is the engine's BookableInterval; one declaration, re-exported here.
+export type { BookableInterval };
 
 /** Minimal plan info shape for event types used in appointment title/status extraction */
 interface EventPlanInfo {
@@ -107,7 +104,7 @@ interface AppointmentSlotRaw {
 interface Appointment {
   id: string;
   appointmentType: string;
-  slotsOfAppointment?: AppointmentSlotRaw[];
+  occurrences?: AppointmentSlotRaw[];
   consultation?: AppointmentConsultation;
   subscription?: AppointmentSubscription;
   webinar?: AppointmentWebinar;
@@ -171,15 +168,15 @@ interface SlotStatusResult {
 
 interface CalendarData {
   consultantDetails: ConsultantData | null;
-  availableSlots: TimeSlot[];
+  availableSlots: BookableInterval[];
   rawAvailabilitySlots: {
     weekly: RawSlotData[];
     custom: RawSlotData[];
   };
-  eventSlots: TimeSlot[];
+  eventSlots: BookableInterval[];
   // This event's OWN tentative slots (being rescheduled) — rendered as a distinct
   // "Rescheduling" state, separate from confirmed eventSlots and foreign bookings.
-  eventTentativeSlots: TimeSlot[];
+  eventTentativeSlots: BookableInterval[];
   // #997 Phase 3 — confirmed (non-tentative) call counts for THIS event,
   // bucketed by scheduling-timezone week key (ADR B9). Server-computed
   // alongside eventSlots; replaces re-deriving this from a separate
@@ -234,11 +231,11 @@ export function useCalendarData(
     weekly: RawSlotData[];
     custom: RawSlotData[];
   }>({ weekly: [], custom: [] });
-  const [eventSlots, setEventSlots] = useState<TimeSlot[]>([]);
+  const [eventSlots, setEventSlots] = useState<BookableInterval[]>([]);
   // The current event's OWN tentative slots (being rescheduled). Tracked
   // separately from eventSlots (confirmed) so the calendar can render them as a
   // distinct "Rescheduling" state instead of mislabeling them as foreign "Booked".
-  const [eventTentativeSlots, setEventTentativeSlots] = useState<TimeSlot[]>([]);
+  const [eventTentativeSlots, setEventTentativeSlots] = useState<BookableInterval[]>([]);
   // #997 Phase 3 — see CalendarData.weeklyConfirmedCallCounts.
   const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
     Record<string, number>
@@ -269,7 +266,7 @@ export function useCalendarData(
   const availabilityEtagRef = useRef<string | null>(null);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
-  const availableSlots = useMemo((): TimeSlot[] => {
+  const availableSlots = useMemo((): BookableInterval[] => {
     const allRawSlots = [
       ...(rawAvailabilitySlots.weekly || []),
       ...(rawAvailabilitySlots.custom || []),
@@ -514,10 +511,10 @@ export function useCalendarData(
         // distinct "Rescheduling" state. Previously tentative slots were simply
         // dropped here, so they fell through to the foreign-booking "Booked"
         // (gray) style — misleading, since they belong to THIS event.
-        const confirmedSlots: TimeSlot[] = [];
-        const tentativeSlots: TimeSlot[] = [];
+        const confirmedSlots: BookableInterval[] = [];
+        const tentativeSlots: BookableInterval[] = [];
         for (const appointment of activeData) {
-          for (const slot of (appointment.slotsOfAppointment ||
+          for (const slot of (appointment.occurrences ||
             []) as AppointmentSlotRaw[]) {
             const start = new Date(slot.startsAt);
             const end = new Date(slot.endsAt);

@@ -33,7 +33,7 @@ describe("#1163 open proposal detection", () => {
     expiresAt: "2026-08-20T10:00:00.000Z",
     initiatorRole: "CONSULTANT",
     initiatedById: "user-1",
-    proposedSlots: [
+    proposedTimes: [
       { startsAt: "2026-08-21T10:00:00.000Z", endsAt: "2026-08-21T10:30:00.000Z", round: 1 },
       { startsAt: "2026-08-22T10:00:00.000Z", endsAt: "2026-08-22T10:30:00.000Z", round: 2 },
     ],

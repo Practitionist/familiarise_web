@@ -43,7 +43,7 @@ try {
 | `searchLimiter` | GET `/api/user/consultants` | IP | 60 | 1 min |
 | `eligibilityLimiter` | GET `/api/trials/check-eligibility` | IP | 20 | 1 min |
 | `newsletterLimiter` | POST `/api/newsletter/subscribe` | IP | 3 | 1 hr |
-| `availabilityLimiter` | GET `/api/slots/availability/` | IP | 30 | 1 min |
+| `availabilityLimiter` | GET `/api/scheduling/availability/` | IP | 30 | 1 min |
 | `orgInviteAcceptLimiter` | POST `/api/organizations/invitations/accept` | IP | 30 | 1 hr |
 | `ssoDomainCheckLimiter` | GET `/api/auth/sso/domain-check` | IP | 60 | 1 hr |
 | `orgWalletTopUpLimiter` | POST `…/billing-account/wallet/top-ups` | `org:<orgId>` | 20 | 1 hr |
@@ -58,7 +58,7 @@ try {
 | `spamLimiter` | support-tickets, feedbacks, reviews, report | `<route>:<userId>` | 5 | 1 hr |
 | `waitlistLimiter` | POST `/api/waitlist` | userId | 5 | 1 hr |
 | `trialRequestLimiter` | POST `/api/trials` | userId | 3 | 24 hr |
-| `requestApprovalLimiter` | POST `/api/slots/request-for-approval` | userId | 10 | 1 hr |
+| `requestApprovalLimiter` | POST `/api/scheduling/request-for-approval` | userId | 10 | 1 hr |
 
 ### 2.3 Localhost Bypass
 

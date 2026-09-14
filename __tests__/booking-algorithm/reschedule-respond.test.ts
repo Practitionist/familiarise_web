@@ -39,7 +39,7 @@ const txStub = {
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // Present so a decline that wrote slots would be caught rather than silently
   // passing: "the released slots stay released" is the contract.
-  slotOfAppointment: { updateMany: jest.fn() },
+  appointmentOccurrence: { updateMany: jest.fn() },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -56,8 +56,8 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-jest.mock("../../utils/slotAllocation/SlotAllocationService", () => ({
-  SlotAllocationService: { allocate: (...a: unknown[]) => mockAllocate(...a) },
+jest.mock("../../utils/scheduling-engine/SchedulingService", () => ({
+  SchedulingService: { allocate: (...a: unknown[]) => mockAllocate(...a) },
 }));
 
 jest.mock("../../lib/auth-server", () => ({
@@ -140,7 +140,7 @@ function proposalRow(overrides: Record<string, unknown> = {}) {
     appointmentId: APPT,
     status: "PENDING_REVIEW",
     expiresAt: new Date(Date.now() + 48 * HOUR),
-    proposedSlots: [
+    proposedTimes: [
       { startsAt: new Date("2026-09-01T10:00:00.000Z") },
       { startsAt: new Date("2026-09-08T10:00:00.000Z") },
     ],
@@ -173,7 +173,7 @@ function sessionOf(userId: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   txStub.rescheduleRequest.updateMany.mockResolvedValue({ count: 1 });
-  txStub.slotOfAppointment.updateMany.mockResolvedValue({ count: 0 });
+  txStub.appointmentOccurrence.updateMany.mockResolvedValue({ count: 0 });
   mockAllocate.mockResolvedValue({ success: true });
   mockHasActiveDispute.mockResolvedValue(false);
   mockRequestFindUnique.mockResolvedValue(proposalRow());
@@ -275,7 +275,7 @@ describe("accept re-validates through the allocator before anything is written",
   });
 
   it("has nothing to accept on a preference-only request", async () => {
-    mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedSlots: [] }));
+    mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedTimes: [] }));
 
     const out = await acceptProposal({
       rescheduleRequestId: REQ,
@@ -342,8 +342,8 @@ describe("#1340 — a confirmation keeps the proposal it is confirming", () => {
     mockRequestFindUnique.mockResolvedValue(
       proposalRow({
         initiatorRole: "CONSULTEE",
-        releasedSlotIds: ["released-slot-1"],
-        proposedSlots: [
+        releasedOccurrenceIds: ["released-slot-1"],
+        proposedTimes: [
           {
             startsAt: new Date("2026-09-01T10:00:00.000Z"),
             endsAt: new Date("2026-09-01T11:00:00.000Z"),
@@ -401,7 +401,7 @@ describe("decline ends the request and leaves the released slots released", () =
     // The documented semantics: the initiator still wants to move, so the
     // booking belongs in the consultant's allocate queue. Restoring the slots
     // here is withdraw's job, not decline's.
-    expect(txStub.slotOfAppointment.updateMany).not.toHaveBeenCalled();
+    expect(txStub.appointmentOccurrence.updateMany).not.toHaveBeenCalled();
     expect(mockAllocate).not.toHaveBeenCalled();
   });
 
@@ -508,7 +508,7 @@ describe("the respond route drives the loop for the counterparty", () => {
   });
 
   it("answers 422 — not 409 — when there are no concrete times to accept", async () => {
-    mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedSlots: [] }));
+    mockRequestFindUnique.mockResolvedValue(proposalRow({ proposedTimes: [] }));
 
     const res = await respondHandler(makeRequest(), makeParams());
     const body = await res.json();

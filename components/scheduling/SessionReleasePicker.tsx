@@ -5,20 +5,20 @@ import { format } from "date-fns";
 import { CalendarClock, CalendarRange, Check, CheckSquare } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { toDate, type SlotLike } from "@/lib/appointments/view-model";
+import { toDate, type OccurrenceLike } from "@/lib/appointments/view-model";
 import { cn } from "@/utils/tailwind";
 
 /**
  * Which sessions of a booking are being released, for the reschedule
  * surfaces. Lifted out of the reschedule modal it replaced, unchanged in behaviour;
- * `SlotPicker` shows it beside the grid rather than as a first step, because a
+ * `TimePicker` shows it beside the grid rather than as a first step, because a
  * page has the width the dialog did not.
  */
 
 export type ReleaseMode = "individual" | "multiple" | "entire";
 
 export interface ReleasableSession {
-  slots: SlotLike[];
+  slots: OccurrenceLike[];
   startTime: Date;
   endTime: Date;
 }
@@ -29,9 +29,9 @@ export interface ReleasableSession {
  * appointment id stands alone.
  */
 export function groupReleasableSessions(
-  slots: readonly SlotLike[],
+  slots: readonly OccurrenceLike[],
 ): ReleasableSession[] {
-  const groups = new Map<string, SlotLike[]>();
+  const groups = new Map<string, OccurrenceLike[]>();
   for (const slot of slots) {
     if (slot.isTentative) continue;
     const key = slot.appointmentId ?? slot.id;

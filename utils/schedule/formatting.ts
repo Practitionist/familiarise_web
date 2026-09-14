@@ -10,9 +10,9 @@ import {
   isOvernight,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
-import { dateToMinuteUtc } from "@/utils/slotAllocation/slotTimeUtils";
+import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
 import { resolveOvernightStatus } from "@/utils/schedule/overnight";
-import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import { DayOfWeek } from "@prisma/client";
 import type { CustomSlot, SlotsType, WeeklySlot } from "./types";
 

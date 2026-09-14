@@ -31,6 +31,11 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => ({ banned: true, banExpires: null })),
     },
+    // #1593 — the sweep also drains the erasure revocation outbox.
+    streamRevocationRetry: {
+      findMany: jest.fn(async () => []),
+      update: jest.fn(async () => ({})),
+    },
     $disconnect: jest.fn(async () => undefined),
   },
 }));
@@ -41,6 +46,10 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
     (_name: string, _opts: unknown, fn: () => Promise<unknown>) => fn(),
   ),
   CronLockHeldError: class extends Error {},
+}));
+
+jest.mock("../../lib/collaborators/service", () => ({
+  revokeCollaboratorAccess: jest.fn(async () => ({ success: true })),
 }));
 
 jest.mock("../../lib/moderation/side-effects", () => ({
@@ -54,9 +63,12 @@ jest.mock("../../lib/moderation/side-effects", () => ({
 import { retryModerationEnforcement } from "../../scripts/cleanup/retry-moderation-enforcement";
 import prisma from "../../lib/prisma";
 import { applyStreamEnforcement } from "../../lib/moderation/side-effects";
+import { revokeCollaboratorAccess } from "../../lib/collaborators/service";
 
 const findMany = prisma.moderationAction.findMany as jest.Mock;
 const update = prisma.moderationAction.update as jest.Mock;
+const outboxFindMany = prisma.streamRevocationRetry.findMany as jest.Mock;
+const outboxUpdate = prisma.streamRevocationRetry.update as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
 
@@ -71,6 +83,7 @@ const failedBan = (overrides: Record<string, unknown> = {}) => ({
   },
   report: {
     id: "r1",
+    type: "PROFILE",
     targetUserId: "u1",
     reviewId: null,
     streamMessageId: null,
@@ -85,12 +98,47 @@ beforeEach(() => {
 });
 
 describe("retryModerationEnforcement", () => {
-  it("selects only the actions whose recorded Stream outcome failed", async () => {
+  it("selects only the actions whose recorded Stream or collaborator outcome failed", async () => {
     await retryModerationEnforcement();
 
     expect(findMany.mock.calls[0][0].where).toMatchObject({
-      sideEffects: { path: ["stream"], equals: "failed" },
+      OR: [
+        { sideEffects: { path: ["stream"], equals: "failed" } },
+        { sideEffects: { path: ["collaboratorRevocation"], equals: "failed" } },
+      ],
     });
+  });
+
+  // #1580 — a failed per-plan Stream revocation is re-driven from the same
+  // queue, and the user-level step is left alone when it did not fail.
+  it("re-drives a failed collaborator revocation without touching a landed Stream step", async () => {
+    findMany.mockResolvedValueOnce([
+      failedBan({
+        sideEffects: {
+          stream: "ok",
+          collaboratorRevocation: "failed",
+          collaborationsRemoved: [{ planType: "webinar", planId: "wp-1" }],
+          errors: ["collaborator-revoke: webinar:wp-1"],
+        },
+      }),
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
+      "webinar",
+      "wp-1",
+      "u1",
+      { notify: false },
+    );
+    expect(enforce).not.toHaveBeenCalled();
+    expect(update.mock.calls[0][0].data.sideEffects).toMatchObject({
+      stream: "ok",
+      collaboratorRevocation: "ok",
+      collaboratorRevocationAttempts: 2,
+    });
+    expect(result.collaboratorRecovered).toBe(1);
+    expect(result.recovered).toBe(0);
   });
 
   it("re-drives the ban and records that it landed", async () => {
@@ -181,6 +229,7 @@ describe("retryModerationEnforcement", () => {
         actionType: "CONTENT_REMOVED",
         report: {
           id: "r2",
+          type: "MESSAGE",
           targetUserId: "u1",
           reviewId: null,
           streamMessageId: "msg-1",
@@ -194,14 +243,42 @@ describe("retryModerationEnforcement", () => {
     expect(enforce).toHaveBeenCalledWith(
       "CONTENT_REMOVED",
       expect.objectContaining({
-          streamMessageId: "msg-1",
-          // The cid travels with the id — the delete needs both, and asserting
-          // only the id passed while the sweep forwarded neither.
-          streamChannelCid: "messaging:chan-1",
-        }),
+        streamMessageId: "msg-1",
+        // The cid travels with the id — the delete needs both, and asserting
+        // only the id passed while the sweep forwarded neither.
+        streamChannelCid: "messaging:chan-1",
+      }),
     );
     // The ban state is irrelevant to a message delete, so it is not consulted.
     expect(findUser).not.toHaveBeenCalled();
     expect(result.recovered).toBe(1);
+  });
+
+  it("drains the erasure revocation outbox and marks a landed row SUCCEEDED (#1593)", async () => {
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValue([
+      {
+        id: "retry-1",
+        planType: "CLASS",
+        planId: "cp-9",
+        attempts: 1,
+        erasureRequest: { userId: "u-erased" },
+      },
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
+      "class",
+      "cp-9",
+      "u-erased",
+      { notify: false },
+    );
+    expect(outboxUpdate).toHaveBeenCalledWith({
+      where: { id: "retry-1" },
+      data: { status: "SUCCEEDED", attempts: 2, completedAt: expect.any(Date) },
+    });
+    expect(result.erasureRevocationsRecovered).toBe(1);
+    expect(result.success).toBe(true);
   });
 });

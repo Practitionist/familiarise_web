@@ -29,6 +29,9 @@ import {
   classPlanRecordingInclude,
 } from "./recording-types";
 
+/** One composite file per call, the shape every reader of `Recording` expects. */
+const RECORDING_TYPE = "composite";
+
 // Types for Stream Recording API responses
 export interface StreamRecording {
   filename: string;
@@ -38,14 +41,14 @@ export interface StreamRecording {
 }
 
 /**
- * The slice of a MeetingSession the recording sync actually reads. Structural
+ * The slice of a Meeting the recording sync actually reads. Structural
  * rather than a Prisma payload type: the consultant and consultee paths reach
  * this point through different `include` shapes.
  */
 export type SyncableSession = {
   id: string;
   streamCallId: string | null;
-  slotOfAppointment: {
+  occurrence: {
     appointment:
       | (NonNullable<Parameters<typeof generateRecordingTitle>[0]> & {
           organizationId: string | null;
@@ -88,8 +91,10 @@ export class RecordingService {
       // stopRecording in a loop of up to MAX_DRAIN_BATCH sessions, so an
       // unbounded call here holds the OFFLINE transition open for the duration
       // of the very outage it is transitioning for.
+      // `recording_type` is a PATH segment of Stream's start/stop endpoints and
+      // accepts composite | individual | raw; "default" was refused (#1580 §4 E2E).
       await withStreamCircuitBreaker(() =>
-        call.startRecording({ recording_type: "default" }),
+        call.startRecording({ recording_type: RECORDING_TYPE }),
       );
 
       streamLogger.info("Recording started via API", {
@@ -124,7 +129,7 @@ export class RecordingService {
 
       const call = client.video.call(callType, callId);
       await withStreamCircuitBreaker(() =>
-        call.stopRecording({ recording_type: "default" }),
+        call.stopRecording({ recording_type: RECORDING_TYPE }),
       );
 
       streamLogger.info("Recording stopped via API", {
@@ -184,15 +189,15 @@ export class RecordingService {
 
   /**
    * Get recordings for a meeting session from database
-   * @param meetingSessionId The meeting session ID
+   * @param meetingId The meeting session ID
    */
   static async getSessionRecordings(
-    meetingSessionId: string,
+    meetingId: string,
   ): Promise<RecordingRow[]> {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
-          meetingSessionId,
+          meetingId,
           status: {
             notIn: ["FAILED", "EXPIRED"],
           },
@@ -205,7 +210,7 @@ export class RecordingService {
       return recordings;
     } catch (error) {
       streamLogger.error("Failed to get session recordings", error, {
-        meetingSessionId,
+        meetingId,
       });
       return [];
     }
@@ -221,8 +226,8 @@ export class RecordingService {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlanId,
@@ -259,8 +264,8 @@ export class RecordingService {
     try {
       const recordings = await prisma.recording.findMany({
         where: {
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlanId,
@@ -318,8 +323,8 @@ export class RecordingService {
       if (!filters?.type || filters.type === "webinar") {
         // Owner's webinar recordings
         typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlan: { consultantProfileId },
@@ -330,8 +335,8 @@ export class RecordingService {
         });
         // Collaborator's webinar recordings
         typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 webinar: {
                   webinarPlan: {
@@ -349,8 +354,8 @@ export class RecordingService {
       if (!filters?.type || filters.type === "class") {
         // Owner's class recordings
         typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlan: { consultantProfileId },
@@ -361,8 +366,8 @@ export class RecordingService {
         });
         // Collaborator's class recordings
         typeConditions.push({
-          meetingSession: {
-            slotOfAppointment: {
+          meeting: {
+            occurrence: {
               appointment: {
                 class: {
                   classPlan: {
@@ -490,8 +495,8 @@ export class RecordingService {
       if (!filters?.type || filters.type === "webinar") {
         if (webinarPlanIds.length > 0) {
           whereConditions.push({
-            meetingSession: {
-              slotOfAppointment: {
+            meeting: {
+              occurrence: {
                 appointment: {
                   webinar: {
                     webinarPlanId: {
@@ -508,8 +513,8 @@ export class RecordingService {
       if (!filters?.type || filters.type === "class") {
         if (classPlanIds.length > 0) {
           whereConditions.push({
-            meetingSession: {
-              slotOfAppointment: {
+            meeting: {
+              occurrence: {
                 appointment: {
                   class: {
                     classPlanId: {
@@ -699,16 +704,16 @@ export class RecordingService {
 
   /**
    * Get the current recording state for a meeting session
-   * @param meetingSessionId The meeting session ID
+   * @param meetingId The meeting session ID
    */
-  static async getRecordingState(meetingSessionId: string): Promise<{
+  static async getRecordingState(meetingId: string): Promise<{
     isRecording: boolean;
     startedAt: Date | null;
     startedBy: string | null;
   }> {
     try {
-      const session = await prisma.meetingSession.findUnique({
-        where: { id: meetingSessionId },
+      const session = await prisma.meeting.findUnique({
+        where: { id: meetingId },
         select: {
           isRecording: true,
           recordingStartedAt: true,
@@ -727,7 +732,7 @@ export class RecordingService {
       };
     } catch (error) {
       streamLogger.error("Failed to get recording state", error, {
-        meetingSessionId,
+        meetingId,
       });
       return { isRecording: false, startedAt: null, startedBy: null };
     }
@@ -771,7 +776,7 @@ export class RecordingService {
         // Check if recording already exists (by filename/streamRecordingId)
         const existingRecording = await prisma.recording.findFirst({
           where: {
-            meetingSessionId: session.id,
+            meetingId: session.id,
             streamRecordingId: streamRec.filename,
           },
         });
@@ -792,7 +797,7 @@ export class RecordingService {
         );
 
         // Generate title from appointment info (same logic as handleRecordingReady)
-        const appointment = session.slotOfAppointment.appointment;
+        const appointment = session.occurrence.appointment;
         const title = generateRecordingTitle(appointment, startDate);
 
         // Calculate Stream URL expiration (2 weeks from now)
@@ -813,7 +818,7 @@ export class RecordingService {
             storageType: "STREAM_S3",
             status: "READY",
             streamUrlExpiresAt,
-            meetingSessionId: session.id,
+            meetingId: session.id,
             organizationId: appointment?.organizationId ?? null,
           },
         });
@@ -856,8 +861,8 @@ export class RecordingService {
 
     try {
       // Define the include for meeting sessions with full appointment details
-      const meetingSessionInclude = {
-        slotOfAppointment: {
+      const meetingInclude = {
+        occurrence: {
           include: {
             appointment: {
               include: {
@@ -887,11 +892,11 @@ export class RecordingService {
         },
       } as const;
 
-      // Get all MeetingSessions for consultant's webinars and classes (owned or collaborated)
-      const meetingSessions = await prisma.meetingSession.findMany({
+      // Get all Meetings for consultant's webinars and classes (owned or collaborated)
+      const meetings = await prisma.meeting.findMany({
         where: {
           streamCallId: { not: "" },
-          slotOfAppointment: {
+          occurrence: {
             appointment: {
               OR: [
                 // Owned webinars
@@ -930,16 +935,16 @@ export class RecordingService {
             },
           },
         },
-        include: meetingSessionInclude,
+        include: meetingInclude,
       });
 
       streamLogger.info("Syncing recordings for consultant", {
         consultantProfileId,
-        sessionCount: meetingSessions.length,
+        sessionCount: meetings.length,
       });
 
       // For each session, fetch recordings from Stream and sync
-      for (const session of meetingSessions) {
+      for (const session of meetings) {
         await this.syncSessionRecordings(session, syncedRecordings);
       }
 
@@ -1004,11 +1009,11 @@ export class RecordingService {
           refunds: { select: { amountPaise: true, status: true } },
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 include: {
-                  meetingSession: {
+                  meeting: {
                     include: {
-                      slotOfAppointment: {
+                      occurrence: {
                         include: {
                           appointment: {
                             include: {
@@ -1046,24 +1051,24 @@ export class RecordingService {
       });
 
       // Collect all meeting sessions from paid enrollments
-      type MeetingSessionWithDetails = NonNullable<
+      type MeetingWithDetails = NonNullable<
         (typeof paidEnrollments)[0]["appointment"]
-      >["slotsOfAppointment"][0]["meetingSession"];
-      const meetingSessions: NonNullable<MeetingSessionWithDetails>[] = [];
+      >["occurrences"][0]["meeting"];
+      const meetings: NonNullable<MeetingWithDetails>[] = [];
 
       for (const payment of paidEnrollments) {
         if (!payment.appointment) continue;
         if (!isPaymentEntitled(payment)) continue; // #689 — skip fully-refunded
-        for (const slot of payment.appointment.slotsOfAppointment) {
-          if (slot.meetingSession && slot.meetingSession.streamCallId) {
-            meetingSessions.push(slot.meetingSession);
+        for (const slot of payment.appointment.occurrences) {
+          if (slot.meeting && slot.meeting.streamCallId) {
+            meetings.push(slot.meeting);
           }
         }
       }
 
       // Deduplicate sessions by ID
       const uniqueSessions = Array.from(
-        new Map(meetingSessions.map((s) => [s.id, s])).values(),
+        new Map(meetings.map((s) => [s.id, s])).values(),
       );
 
       streamLogger.info("Syncing recordings for consultee", {

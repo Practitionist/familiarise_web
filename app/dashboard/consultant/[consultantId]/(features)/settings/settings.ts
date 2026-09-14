@@ -4,10 +4,10 @@ import {
   extractTimeFromUtcSlot,
   sortSlotsByTime,
 } from "@/utils/dateTimeUtils";
-import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
-import { isValidTimeRange } from "@/utils/timeSlotValidation";
+import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
+import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
-import { DayOfWeek, ScheduleType, SessionType } from "@prisma/client";
+import { DayOfWeek, ScheduleType, OfferingFormat } from "@prisma/client";
 
 export interface FormData {
   description: string;
@@ -26,7 +26,7 @@ export interface FormData {
   languages: string[];
   toolsAndTechnologies: string[];
   mentoringStyle: string;
-  sessionTypes: SessionType[];
+  offeringFormats: OfferingFormat[];
 }
 
 export interface Domain {
@@ -76,7 +76,7 @@ export const getInitialFormData = (
   languages: consultant?.languages ?? [],
   toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],
   mentoringStyle: consultant?.mentoringStyle ?? "",
-  sessionTypes: consultant?.sessionTypes ?? [],
+  offeringFormats: consultant?.offeringFormats ?? [],
 });
 
 /**
@@ -87,12 +87,12 @@ export const getInitialWeeklySlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
 ): SlotsType => {
-  if (!consultant?.slotsOfAvailabilityWeekly?.length) return {};
+  if (!consultant?.availabilityWindowsWeekly?.length) return {};
 
   const formattedWeeklySlots: SlotsType = {};
   const refDate = new Date("1970-01-05T00:00:00Z");
   try {
-    consultant.slotsOfAvailabilityWeekly.forEach((slot) => {
+    consultant.availabilityWindowsWeekly.forEach((slot) => {
       try {
         if (!slot || slot.startTimeUtc === null || slot.endTimeUtc === null) {
           console.warn("Invalid weekly slot data:", slot);
@@ -160,11 +160,11 @@ export const getInitialCustomSlots = (
   consultant: TConsultantProfile,
   timezone: string = "UTC",
 ): SlotsType => {
-  if (!consultant?.slotsOfAvailabilityCustom?.length) return {};
+  if (!consultant?.availabilityWindowsCustom?.length) return {};
 
   const formattedCustomSlots: SlotsType = {};
   try {
-    consultant.slotsOfAvailabilityCustom.forEach((slot) => {
+    consultant.availabilityWindowsCustom.forEach((slot) => {
       try {
         if (!slot || !slot.startsAt || !slot.endsAt) {
           console.warn("Invalid custom slot data:", slot);

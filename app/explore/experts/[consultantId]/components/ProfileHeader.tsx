@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
+import { displayedScore, displayedScoreCount } from "@/lib/reviews-display";
 
 interface ProfileHeaderProps {
   userDetails: User;
@@ -28,6 +29,10 @@ export function ProfileHeader({
   consultantDetails,
   reviewCount,
 }: ProfileHeaderProps) {
+  const headlineScore = displayedScore(consultantDetails);
+  // #1566 — a published score is always shown with its own denominator; the total
+  // review count is the wrong number beside a per-track mean.
+  const headlineCount = displayedScoreCount(consultantDetails, "ONE_TO_ONE");
   return (
     <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
       <div className="flex flex-col sm:flex-row gap-6">
@@ -83,19 +88,18 @@ export function ProfileHeader({
             )}
           </div>
 
-          {/* Rating. #705 — the PUBLISHED score, which is null until enough
-              distinct sessions have been rated. Rendering the raw mean here
-              while the reviews section showed the published one would have made
-              the threshold decorative. */}
+          {/* Rating. #1300 — the published 1:1 score, no fallback (#1566), with
+              "based on N clients"; the reviews section below lists both tracks.
+              Null until five distinct clients have rated. */}
           <div className="flex items-center gap-3 mb-4">
-            {consultantDetails.publishedRating !== null && (
+            {headlineScore.score !== null && (
               <>
                 <div className="flex items-center gap-1">
                   {[...Array(5)].map((_, i) => (
                     <Star
                       key={i}
                       className={`w-5 h-5 ${
-                        i < Math.floor(consultantDetails.publishedRating!)
+                        i < Math.floor(headlineScore.score!)
                           ? "fill-amber-400 text-amber-400"
                           : "fill-muted text-muted"
                       }`}
@@ -103,12 +107,16 @@ export function ProfileHeader({
                   ))}
                 </div>
                 <span className="font-semibold text-foreground">
-                  {consultantDetails.publishedRating.toFixed(1)}
+                  {headlineScore.score.toFixed(1)}
                 </span>
                 <span className="text-muted-foreground/70">•</span>
               </>
             )}
-            <span className="text-muted-foreground">{reviewCount} reviews</span>
+            <span className="text-muted-foreground">
+              {headlineScore.score !== null
+                ? `based on ${headlineCount} client${headlineCount === 1 ? "" : "s"}`
+                : `${reviewCount} reviews`}
+            </span>
           </div>
 
           {/* Meta */}

@@ -1,6 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
+import {
   curriculumCreateNested,
   faqCreateNested,
   faqReplaceNested,
@@ -17,7 +21,7 @@ import { z } from "zod";
 import { addMonthsSafely } from "@/utils/dateUtils";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { checkConsultantVerification } from "@/lib/verification";
-import { countUniqueParticipants } from "@/lib/payments/utils/participants";
+import { countWebinarParticipants } from "@/lib/payments/utils/participants";
 import {
   CapacityBelowEnrollmentError,
   capacityBelowRegisteredMessage,
@@ -25,7 +29,7 @@ import {
 
 import { getSession } from "@/lib/auth-server";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { buildContiguousSlotAtoms } from "@/lib/appointments/contiguous-slot-run";
+import { buildOccurrence } from "@/lib/appointments/occurrences";
 import {
   assertCollaboratorsAvailableForWindows,
   CollaboratorUnavailableError,
@@ -305,22 +309,27 @@ export async function POST(request: NextRequest) {
                 consultantProfile.user.timezone,
               ),
               classPlan: { connect: { id: classPlan.id } },
-              // Create appointments for the full duration
-              appointments: {
-                // Only create appointments if startDate is defined
-                create: sessionStarts.map((slotStart) => ({
-                  // #1071 — N×30min atoms per session (allocator parity).
-                  appointmentType: "CLASS" as const,
-                  slotsOfAppointment: {
-                    create: buildContiguousSlotAtoms({
-                      startsAt: slotStart,
-                      durationInHours: sessionDurationInHours,
-                      consultantProfileId,
-                      isTentative: true,
-                    }),
-                  },
-                })),
-              },
+              // #1554 — one wrapper with one tentative occurrence per session
+              // (allocator parity); only when a start date is defined.
+              appointment:
+                sessionStarts.length > 0
+                  ? {
+                      create: {
+                        appointmentType: "CLASS" as const,
+                        occurrences: {
+                          create: sessionStarts.map((slotStart, index) =>
+                            buildOccurrence({
+                              startsAt: slotStart,
+                              durationInHours: sessionDurationInHours,
+                              consultantProfileId,
+                              isTentative: true,
+                              ordinal: index + 1,
+                            }),
+                          ),
+                        },
+                      },
+                    }
+                  : undefined,
             },
             include: {
               classPlan: {
@@ -330,17 +339,25 @@ export async function POST(request: NextRequest) {
                   classContents: true,
                 },
               },
-              appointments: {
+              appointment: {
                 include: {
-                  slotsOfAppointment: {
-                    include: {
-                      user: true,
-                    },
-                  },
+                  occurrences: true,
                 },
               },
             },
           });
+
+          // #1554 — the roster is AppointmentParticipant; the planner seats the
+          // consultant on the wrapper exactly as the allocator does, or the
+          // reconcile sweep reads every planner-scheduled class as drift.
+          if (classEvent.appointment) {
+            await recordParticipants(
+              tx,
+              classEvent.appointment.id,
+              [{ userId: session.user.id, role: "CONSULTANT" }],
+              { status: "CONFIRMED" },
+            );
+          }
 
           return { classPlan, classEvent };
         },
@@ -374,7 +391,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 409 });
     }
     // #784 — the owner is denormalized onto group-event slots, so a scheduling
-    // overlap trips slot_no_confirmed_overlap (23P01): a conflict, not a 500.
+    // overlap trips occurrence_no_confirmed_overlap (23P01): a conflict, not a 500.
     if (isExclusionViolation(error)) {
       return NextResponse.json(
         {
@@ -734,17 +751,18 @@ export async function PATCH(request: NextRequest) {
             // paying learners. Checked inside the tx (the old guard ran before
             // it and left a TOCTOU window).
             if (maxParticipants !== undefined) {
-              const classAppointments = await tx.appointment.findMany({
+              const classAppointment = await tx.appointment.findUnique({
                 where: { classId: updatedClass.id },
                 include: {
-                  slotsOfAppointment: {
-                    include: { user: { select: { id: true } } },
+                  participants: {
+                    where: liveParticipant(),
+                    select: { userId: true },
                   },
                 },
               });
               const consultantUserId = existingPlan.consultantProfile?.userId;
-              const enrolledCount = countUniqueParticipants(
-                classAppointments,
+              const enrolledCount = countWebinarParticipants(
+                classAppointment,
                 consultantUserId ? [consultantUserId] : [],
               );
               if (maxParticipants < enrolledCount) {
@@ -850,7 +868,7 @@ export async function PATCH(request: NextRequest) {
                 where: { classId: updatedClass.id, deletedAt: null },
                 select: {
                   id: true,
-                  slotsOfAppointment: {
+                  occurrences: {
                     where: { deletedAt: null },
                     select: { startsAt: true, endsAt: true },
                   },
@@ -859,7 +877,7 @@ export async function PATCH(request: NextRequest) {
               await assertCollaboratorsAvailableForWindows(tx, {
                 planType: "CLASS",
                 planId: id,
-                windows: liveSessions.flatMap((a) => a.slotsOfAppointment),
+                windows: liveSessions.flatMap((a) => a.occurrences),
                 excludeAppointmentIds: liveSessions.map((a) => a.id),
               });
             }
@@ -876,13 +894,9 @@ export async function PATCH(request: NextRequest) {
                       classContents: true,
                     },
                   },
-                  appointments: {
+                  appointment: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },
@@ -900,13 +914,9 @@ export async function PATCH(request: NextRequest) {
                       classContents: true,
                     },
                   },
-                  appointments: {
+                  appointment: {
                     include: {
-                      slotsOfAppointment: {
-                        include: {
-                          user: true,
-                        },
-                      },
+                      occurrences: true,
                     },
                   },
                 },

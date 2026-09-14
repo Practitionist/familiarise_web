@@ -23,13 +23,8 @@ export type TWebinarPlanData = Omit<
         include: {
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: { id: true };
-                  };
-                };
-              };
+              occurrences: true;
+              participants: { select: { userId: true } };
               payment: true;
             };
           };

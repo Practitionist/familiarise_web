@@ -21,8 +21,8 @@ import {
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
-} from "../../utils/slotAllocation/occupancyPolicy";
-import { isOccupiedByLiveAppointment } from "../../utils/slotAllocation/SlotValidationService";
+} from "../../utils/scheduling-engine/occupancyPolicy";
+import { isOccupiedByLiveAppointment } from "../../utils/scheduling-engine/ScheduleValidationService";
 
 const PROFILE = "consultant-profile-1";
 const USER = "consultant-user-1";
@@ -42,13 +42,18 @@ describe("buildConsultantOccupancyWhere", () => {
 
     expect(arms).toHaveLength(2);
 
-    // Participation: the consultant is on the slot, whatever plan it belongs to.
-    // deletedAt: null — a tombstoned slot is not a booking (defense-in-depth;
-    // RESCHEDULED rows stay occupied, a pending reschedule is a live hold).
+    // Participation (#1554): the consultant holds a live seat, whatever plan
+    // the appointment belongs to, and it has a live row. deletedAt: null — a
+    // tombstoned occurrence is not a booking (defense-in-depth; RESCHEDULED
+    // rows stay occupied, a pending reschedule is a live hold).
     expect(arms[0]).toEqual({
-      slotsOfAppointment: {
-        some: { user: { some: { id: USER } }, deletedAt: null },
+      participants: {
+        some: {
+          userId: USER,
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        },
       },
+      occurrences: { some: { deletedAt: null } },
     });
 
     // Ownership: the appointment is delivered under one of their own plans,
@@ -79,9 +84,13 @@ describe("buildConsultantOccupancyWhere", () => {
 
     expect(arms).toHaveLength(1);
     expect(arms[0]).toEqual({
-      slotsOfAppointment: {
-        some: { user: { some: { id: USER } }, deletedAt: null },
+      participants: {
+        some: {
+          userId: USER,
+          status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
+        },
       },
+      occurrences: { some: { deletedAt: null } },
     });
   });
 

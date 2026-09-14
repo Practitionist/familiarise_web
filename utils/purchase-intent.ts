@@ -30,7 +30,7 @@ export interface StashedPurchaseIntent {
     startsAt: string;
     endsAt: string;
     type?: "WEEKLY" | "CUSTOM";
-    slotOfAvailabilityId?: string;
+    availabilityWindowId?: string;
   };
 }
 

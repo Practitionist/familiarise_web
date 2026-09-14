@@ -262,7 +262,7 @@ the same user id appears once per slot.
 
 ```typescript
 const appointmentIds =
-  webinar.appointment?.slotsOfAppointment?.flatMap((slot) =>
+  webinar.appointment?.appointmentOccurrences?.flatMap((slot) =>
     slot.user.map((user) => user.id),
   ) || [];
 
@@ -679,7 +679,7 @@ outright.
 async function handleJoinWebinar(userId: string, webinarId: string) {
   try {
     // 1. Record the registration
-    await prisma.slotOfAppointment.update({
+    await prisma.appointmentOccurrence.update({
       data: {
         userId,
         webinarId,

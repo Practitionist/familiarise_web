@@ -8,18 +8,19 @@ import {
   findUncoveredAtom,
   loadPublishedCoverage,
   windowAtoms,
-} from "@/utils/slotAllocation/availabilityCoverage";
+} from "@/utils/scheduling-engine/availabilityCoverage";
 import {
   linkParticipantsToPayment,
+  liveParticipant,
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
 import {
   appendCreationHistory,
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
-  transitionTrialSession,
+  transitionTrial,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
@@ -33,7 +34,7 @@ import {
   PaymentStatus,
   Prisma,
   AppointmentStatus,
-  TrialSessionStatus,
+  TrialStatus,
 } from "@prisma/client";
 import {
   CHECKOUT_WAIT_RETRY_CONFIG,
@@ -50,15 +51,17 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
-import { buildContiguousSlotAtomsForWindow } from "@/lib/appointments/contiguous-slot-run";
-import { connectAttendeeToEventSlots } from "@/lib/appointments/attendee-seats";
+import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { isUserEnrolled } from "@/lib/payments/utils/participants";
+import {
+  isUserEnrolled,
+  isUserRegisteredForWebinar,
+} from "@/lib/payments/utils/participants";
 import { getClassCapacity, getWebinarCapacity } from "@/lib/events/capacity";
 import { getExchangeRates } from "@/lib/currency";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -211,11 +214,11 @@ export function buildPaymentMetadata(
     // back in, stranding a captured sale as REQUIRES_MANUAL_RECOVERY.
     ...(data.startsAt && { startsAt: data.startsAt }),
     ...(data.endsAt && { endsAt: data.endsAt }),
-    ...(data.slotOfAvailabilityWeeklyId && {
-      slotOfAvailabilityWeeklyId: data.slotOfAvailabilityWeeklyId,
+    ...(data.availabilityWindowWeeklyId && {
+      availabilityWindowWeeklyId: data.availabilityWindowWeeklyId,
     }),
-    ...(data.slotOfAvailabilityCustomId && {
-      slotOfAvailabilityCustomId: data.slotOfAvailabilityCustomId,
+    ...(data.availabilityWindowCustomId && {
+      availabilityWindowCustomId: data.availabilityWindowCustomId,
     }),
     ...(data.schedulingPeriodStartsAt && {
       schedulingPeriodStartsAt: data.schedulingPeriodStartsAt,
@@ -273,7 +276,7 @@ interface ReusableOrder {
   /** The booked window's slot rows (consultation/class shape); empty for
    *  subscription placeholders whose period lives on the slot rows too. */
   appointment?: {
-    slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }>;
+    occurrences: Array<{ startsAt: Date; endsAt: Date }>;
   } | null;
 }
 
@@ -370,7 +373,7 @@ export async function findReusablePendingOrderPayment(
       isMockPayment: true,
       appointment: {
         select: {
-          slotsOfAppointment: {
+          occurrences: {
             select: { startsAt: true, endsAt: true },
             orderBy: { startsAt: "asc" as const },
             // #1463 — the whole run, not its first atom. Bounded well above any
@@ -387,13 +390,13 @@ export async function findReusablePendingOrderPayment(
 
   for (const candidate of candidates) {
     const appt = candidate.appointment as {
-      slotsOfAppointment: Array<{ startsAt: Date; endsAt: Date }>;
+      occurrences: Array<{ startsAt: Date; endsAt: Date }>;
     } | null;
 
     // Gate 1 — slot window (#1220-triage Critical): a second checkout for a
     // DIFFERENT appointment time must never resume the first attempt's order.
     if (params.appointmentType === "CONSULTATION") {
-      const run = slotRunWindow(appt?.slotsOfAppointment);
+      const run = slotRunWindow(appt?.occurrences);
       if (!params.slotWindow || !run) {
         supersede.push({ id: candidate.id, reason: "window-unmatchable" });
         continue;
@@ -410,7 +413,7 @@ export async function findReusablePendingOrderPayment(
       const reqPeriod = params.schedulingPeriod ?? null;
       // Subscription windows ride the SAME slot rows as consultations — the
       // minted placeholder's slot carries the scheduling-period bounds.
-      const rowPeriod = slotRunWindow(appt?.slotsOfAppointment);
+      const rowPeriod = slotRunWindow(appt?.occurrences);
       if (!!reqPeriod !== !!rowPeriod) {
         supersede.push({ id: candidate.id, reason: "period-mismatch" });
         continue;
@@ -501,7 +504,7 @@ async function releaseSupersededHolds(params: {
 
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
-      await transitionSlotCompletion(tx, {
+      await transitionOccurrenceCompletion(tx, {
         where: {
           appointmentId: appointment.id,
           isTentative: true,
@@ -830,10 +833,10 @@ export async function calculateAmountAndValidate(
             },
             appointment: {
               include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: { select: { id: true } },
-                  },
+                occurrences: true,
+                participants: {
+                  where: liveParticipant(),
+                  select: { userId: true },
                 },
               },
             },
@@ -879,12 +882,12 @@ export async function calculateAmountAndValidate(
             classPlan: {
               include: { consultantProfile: true },
             },
-            appointments: {
+            appointment: {
               include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
+                occurrences: true,
+                participants: {
+                  where: liveParticipant(),
+                  select: { userId: true },
                 },
               },
             },
@@ -1153,7 +1156,7 @@ export async function findSelfHoldAppointmentIds(
       },
       // Cheap index-served pre-filter on the run's first atom; the run's full
       // extent is checked below.
-      slotsOfAppointment: {
+      occurrences: {
         some: {
           startsAt: params.slotStart,
           isTentative: true,
@@ -1163,7 +1166,7 @@ export async function findSelfHoldAppointmentIds(
     },
     select: {
       id: true,
-      slotsOfAppointment: {
+      occurrences: {
         where: { deletedAt: null },
         select: { startsAt: true, endsAt: true },
       },
@@ -1175,7 +1178,7 @@ export async function findSelfHoldAppointmentIds(
 
   return candidates
     .filter((appointment) => {
-      const slots = appointment.slotsOfAppointment;
+      const slots = appointment.occurrences;
       if (slots.length === 0) return false;
       const runStart = Math.min(...slots.map((s) => s.startsAt.getTime()));
       const runEnd = Math.max(...slots.map((s) => s.endsAt.getTime()));
@@ -1255,14 +1258,14 @@ export async function validateSlotAvailability(
 
   // 0b. Validate the whole [start, end) window against the consultant's
   // PUBLISHED availability. #1320 — this used to check the window against the
-  // single row the client named (`slotOfAvailabilityWeeklyId`), so a two-hour
+  // single row the client named (`availabilityWindowWeeklyId`), so a two-hour
   // booking spanning two adjacent one-hour rows was rejected even though the
   // expert-page grid drew them as one block and the generator now merges
   // them. The rule is now interval containment against the UNION of the
   // consultant's rows: every 30-minute atom of the window must fall inside
   // some published row. The named id, when present, still proves ownership
   // and catches a soft-deleted profile (B13); it is no longer the boundary.
-  if (data.slotOfAvailabilityWeeklyId || data.slotOfAvailabilityCustomId) {
+  if (data.availabilityWindowWeeklyId || data.availabilityWindowCustomId) {
     // Both row kinds are read for the same three facts, so they share one
     // include; a checkout names at most one of them.
     const namedRowInclude = {
@@ -1271,15 +1274,15 @@ export async function validateSlotAvailability(
       },
     } as const;
     const named =
-      (data.slotOfAvailabilityWeeklyId
-        ? await tx.slotOfAvailabilityWeekly.findUnique({
-            where: { id: data.slotOfAvailabilityWeeklyId },
+      (data.availabilityWindowWeeklyId
+        ? await tx.availabilityWindowWeekly.findUnique({
+            where: { id: data.availabilityWindowWeeklyId },
             include: namedRowInclude,
           })
         : null) ??
-      (data.slotOfAvailabilityCustomId
-        ? await tx.slotOfAvailabilityCustom.findUnique({
-            where: { id: data.slotOfAvailabilityCustomId },
+      (data.availabilityWindowCustomId
+        ? await tx.availabilityWindowCustom.findUnique({
+            where: { id: data.availabilityWindowCustomId },
             include: namedRowInclude,
           })
         : null);
@@ -1337,8 +1340,8 @@ export async function validateSlotAvailability(
           customRows: customRows.length,
           slotStartISO: data.startsAt,
           slotEndISO: data.endsAt,
-          namedWeeklyId: data.slotOfAvailabilityWeeklyId ?? null,
-          namedCustomId: data.slotOfAvailabilityCustomId ?? null,
+          namedWeeklyId: data.availabilityWindowWeeklyId ?? null,
+          namedCustomId: data.availabilityWindowCustomId ?? null,
           timestamp: new Date().toISOString(),
         }),
       );
@@ -1363,7 +1366,7 @@ export async function validateSlotAvailability(
         now,
       })
     : [];
-  const notSelfHeld: Prisma.SlotOfAppointmentWhereInput[] =
+  const notSelfHeld: Prisma.AppointmentOccurrenceWhereInput[] =
     selfHoldAppointmentIds.length > 0
       ? [{ NOT: { appointmentId: { in: selfHoldAppointmentIds } } }]
       : [];
@@ -1373,7 +1376,7 @@ export async function validateSlotAvailability(
   // (partial start, partial end, full containment, and exact match)
   // FIX #540: Only check slots belonging to occupied (active) appointments.
   // Cancelled/rejected/expired appointment slots should NOT block new bookings.
-  const existingBooking = await tx.slotOfAppointment.findFirst({
+  const existingBooking = await tx.appointmentOccurrence.findFirst({
     where: {
       AND: [
         { startsAt: { lt: slotEnd } },
@@ -1384,16 +1387,15 @@ export async function validateSlotAvailability(
         // predicate), so two overlapping holds both reached payment and both
         // charged. The occupancy term below is the whole check now — it admits
         // live holds and drops released/expired ones by status, and
-        // cleanup-tentative-slots bounds any stale remainder. Re-adding a
+        // cleanup-tentative-occurrences bounds any stale remainder. Re-adding a
         // confirmed-only predicate here reopens the double-charge.
-        // FIX: Filter by consultant - only check slots belonging to this consultant
+        // Filter by consultant — only rows whose booking seats this consultant
+        // (#1554: the roster is the appointment's participant list).
         ...(consultantUserId
           ? [
               {
-                user: {
-                  some: {
-                    id: consultantUserId,
-                  },
+                appointment: {
+                  participants: { some: liveParticipant(consultantUserId) },
                 },
               },
             ]
@@ -1431,20 +1433,19 @@ export async function validateSlotAvailability(
   // never fired. The parameter is the buyer's User id now, which is also the
   // identity the self-hold exclusion needs.
   if (buyerUserId) {
-    const recentAttempt = await tx.slotOfAppointment.findFirst({
+    const recentAttempt = await tx.appointmentOccurrence.findFirst({
       where: {
         AND: [
           { startsAt: { lt: slotEnd } },
           { endsAt: { gt: slotStart } },
           { isTentative: true },
-          // FIX: Filter by consultant - only check tentative slots for this consultant
+          // Filter by consultant — only tentative rows whose booking seats
+          // this consultant (#1554).
           ...(consultantUserId
             ? [
                 {
-                  user: {
-                    some: {
-                      id: consultantUserId,
-                    },
+                  appointment: {
+                    participants: { some: liveParticipant(consultantUserId) },
                   },
                 },
               ]
@@ -1545,7 +1546,10 @@ async function readEventCapacity(
         webinarPlan: { include: { consultantProfile: true } },
         appointment: {
           include: {
-            slotsOfAppointment: { include: { user: { select: { id: true } } } },
+            participants: {
+              where: liveParticipant(),
+              select: { userId: true },
+            },
           },
         },
       },
@@ -1563,8 +1567,13 @@ async function readEventCapacity(
     where: { id: eventId },
     include: {
       classPlan: { include: { consultantProfile: true } },
-      appointments: {
-        include: { slotsOfAppointment: { include: { user: true } } },
+      appointment: {
+        include: {
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
+        },
       },
     },
   });
@@ -1730,13 +1739,22 @@ async function verifyPlanExistsInsideLock(
 ): Promise<{
   consultantProfileId: string | null;
   organizationId: string | null;
+  /** ACCEPTED collaborators' profile ids; only webinar and class plans have any. */
+  collaboratorProfileIds: string[];
 }> {
   // ADR 18 — also surface the plan's consultant + org ownership so the
   // allowlist/exclusivity checks below reuse this lookup.
   const select = { consultantProfileId: true, organizationId: true } as const;
+  // #1580 C-P0-2 — the self-booking guard below also refuses an ACCEPTED
+  // collaborator, who would otherwise be paid back part of their own seat.
+  const collaborators = {
+    where: { status: "ACCEPTED" as const },
+    select: { consultantProfileId: true },
+  };
   let plan: {
     consultantProfileId: string | null;
     organizationId: string | null;
+    collaborators?: { consultantProfileId: string }[];
   } | null = null;
 
   switch (appointmentType) {
@@ -1755,13 +1773,13 @@ async function verifyPlanExistsInsideLock(
     case "WEBINAR":
       plan = await tx.webinarPlan.findUnique({
         where: { id: planId },
-        select,
+        select: { ...select, collaborators },
       });
       break;
     case "CLASS":
       plan = await tx.classPlan.findUnique({
         where: { id: planId },
-        select,
+        select: { ...select, collaborators },
       });
       break;
   }
@@ -1771,7 +1789,13 @@ async function verifyPlanExistsInsideLock(
       "This plan is no longer available. Please refresh and try again.",
     );
   }
-  return plan;
+  return {
+    consultantProfileId: plan.consultantProfileId,
+    organizationId: plan.organizationId,
+    collaboratorProfileIds: (plan.collaborators ?? []).map(
+      (c) => c.consultantProfileId,
+    ),
+  };
 }
 
 /**
@@ -1834,12 +1858,25 @@ async function revalidateInsideLock(
     // rather than someone else's money, so it is self-punishing rather than
     // dangerous, but there is no legitimate reason to buy your own session and
     // a rule with no exceptions needs no explanation at the call site.
+    //
+    // An ACCEPTED collaborator is the same party for this purpose: they hold a
+    // share of the price and would be paid back part of their own seat, so the
+    // sponsor-money loop above is reachable through a collaboration too. The
+    // capacity `excludeUserIds` sites are left alone — a buyer refused here
+    // never holds a seat (#1580 C-P0-2).
+    // Not gated on the owner existing: an org-owned plan has no owner and can
+    // still carry collaborators.
     if (
-      plan.consultantProfileId &&
       user.consultantProfile &&
-      plan.consultantProfileId === user.consultantProfile.id
+      (plan.consultantProfileId === user.consultantProfile.id ||
+        plan.collaboratorProfileIds.includes(user.consultantProfile.id))
     ) {
-      throw new Error("You cannot book your own plan.");
+      // A coded rejection, not a fault: the plain Error answered 500 and paged
+      // Sentry on every legitimate refusal (#1580 §2 E2E).
+      throw Object.assign(new Error("You cannot book your own plan."), {
+        httpStatus: 409,
+        code: "SELF_BOOKING",
+      });
     }
 
     // #1319 (B2B gap 3) — the org gate chain ran BEFORE the locks, so an org
@@ -2009,7 +2046,7 @@ async function revalidateInsideLock(
 
           // Consultee-side conflict check.
           //
-          // validateNoConflicts (SlotValidationService) is scoped to the
+          // validateNoConflicts (ScheduleValidationService) is scoped to the
           // consultant's User ID — it ensures the consultant is not double-booked
           // but says nothing about the learner's own calendar. A learner who is
           // a member of two orgs (e.g., Org A with SEAT_PACK and Org B with
@@ -2041,18 +2078,16 @@ async function revalidateInsideLock(
                 ...(selfHoldAppointmentIds.length > 0
                   ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
                   : []),
+                // userId (User.id) is the right scope — the roster keys on
+                // User, not ConsulteeProfile, so this catches conflicts from
+                // any org and from marketplace bookings with no org at all.
+                { participants: { some: liveParticipant(userId) } },
                 {
-                  slotsOfAppointment: {
+                  occurrences: {
                     some: {
                       AND: [
                         { startsAt: { lt: new Date(data.endsAt!) } },
                         { endsAt: { gt: new Date(data.startsAt!) } },
-                        // userId (User.id) is the right scope — slots are
-                        // connected to User records, not ConsulteeProfile records.
-                        // This catches conflicts regardless of which org the
-                        // conflicting booking came from or whether it was a
-                        // marketplace booking with no org context at all.
-                        { user: { some: { id: userId } } },
                       ],
                     },
                   },
@@ -2103,13 +2138,13 @@ async function revalidateInsideLock(
                 ...(selfHoldAppointmentIds.length > 0
                   ? [{ NOT: { id: { in: selfHoldAppointmentIds } } }]
                   : []),
+                { participants: { some: liveParticipant(userId) } },
                 {
-                  slotsOfAppointment: {
+                  occurrences: {
                     some: {
                       AND: [
                         { startsAt: { lt: new Date(data.endsAt!) } },
                         { endsAt: { gt: new Date(data.startsAt!) } },
-                        { user: { some: { id: userId } } },
                       ],
                     },
                   },
@@ -2139,11 +2174,12 @@ async function revalidateInsideLock(
               },
             },
             appointment: {
-              // `user` is load-bearing: without it the participant count is
-              // silently 0 and this whole recheck is dead.
+              // `participants` is load-bearing: without it the participant
+              // count is silently 0 and this whole recheck is dead.
               include: {
-                slotsOfAppointment: {
-                  include: { user: { select: { id: true } } },
+                participants: {
+                  where: liveParticipant(),
+                  select: { userId: true },
                 },
               },
             },
@@ -2175,12 +2211,12 @@ async function revalidateInsideLock(
             classPlan: {
               include: { consultantProfile: true },
             },
-            appointments: {
+            appointment: {
               include: {
-                slotsOfAppointment: {
-                  include: {
-                    user: true,
-                  },
+                occurrences: true,
+                participants: {
+                  where: liveParticipant(),
+                  select: { userId: true },
                 },
               },
             },
@@ -2278,19 +2314,16 @@ export async function handleConsultationCheckout(
     },
   });
 
-  // N x 30-minute atoms, both parties on every one (#1071 / ADR B1). Half-hour
-  // rows are what conflict detection compares against, and the consultant has
-  // to be connected or the user-scoped filter in validateNoConflicts
-  // (`user.some.id === consultantUserId`) cannot see the booking at all.
-  // #1319 — shared with the webhook capture fallback, which had drifted to one
-  // oversized row carrying only the buyer.
-  const slotAtoms = buildContiguousSlotAtomsForWindow({
+  // One occurrence with the real end (#1554); both parties are seated on the
+  // appointment's participant rows below, which the user-scoped filter in
+  // validateNoConflicts reads. #1319 — shared with the webhook capture
+  // fallback so the two creators cannot drift.
+  const occurrence = buildOccurrenceForWindow({
     startsAt: new Date(data.startsAt!),
     endsAt: new Date(data.endsAt!),
     // #440 — denormalized for the DB-level overlap guard.
     consultantProfileId: plan.consultantProfileId,
     isTentative: !skipPayment,
-    userIds: [consultantUserId, consulteeUserId],
   });
 
   const appointment = await tx.appointment.create({
@@ -2301,10 +2334,10 @@ export async function handleConsultationCheckout(
       // B1/#1499 — freeze the refund terms at booking by pointing at the immutable
       // policy version; the cancel flow reads it back through this FK.
       cancellationPolicyId,
-      slotsOfAppointment: { create: slotAtoms },
+      occurrences: { create: occurrence },
     },
   });
-  // #1319 A9 — shadow participant rows, same tx as the slot connects.
+  // #1319 A9 / #1554 — the roster, same tx as the occurrence create.
   await recordParticipants(
     tx,
     appointment.id,
@@ -2412,11 +2445,11 @@ export async function handleSubscriptionCheckout(
 
   // Link any completed trial to this subscription (trial conversion tracking)
   // Find a completed trial from the same consultee for this consultant
-  const completedTrial = await tx.trialSession.findFirst({
+  const completedTrial = await tx.trial.findFirst({
     where: {
       consulteeProfileId,
       consultantProfileId: plan.consultantProfileId,
-      status: TrialSessionStatus.COMPLETED, // Only link completed trials, not pending/scheduled
+      status: TrialStatus.COMPLETED, // Only link completed trials, not pending/scheduled
       convertedToSubscriptionId: null, // Not already linked to another subscription
     },
   });
@@ -2425,9 +2458,9 @@ export async function handleSubscriptionCheckout(
     // Mark the trial as converted and link to this subscription
     // CAS (#1319): the findFirst above filtered COMPLETED; the WHERE here is
     // what makes that hold at write time.
-    await transitionTrialSession(tx, {
+    await transitionTrial(tx, {
       where: { id: completedTrial.id },
-      to: TrialSessionStatus.CONVERTED,
+      to: TrialStatus.CONVERTED,
       data: { convertedToSubscriptionId: subscription.id },
     });
 
@@ -2513,10 +2546,10 @@ export async function handleWebinarCheckout(
       },
       appointment: {
         include: {
-          slotsOfAppointment: {
-            include: {
-              user: { select: { id: true } },
-            },
+          occurrences: true,
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -2541,7 +2574,7 @@ export async function handleWebinarCheckout(
 
   // FIX Issue #5: Validate webinar is scheduled before allowing booking
   // Prevents slot timing from defaulting to new Date()
-  if (!webinar.appointment?.slotsOfAppointment?.[0]) {
+  if (!webinar.appointment?.occurrences?.[0]) {
     throw new Error(
       "This webinar has not been scheduled yet. Please wait for the consultant to set a date and time.",
     );
@@ -2562,7 +2595,7 @@ export async function handleWebinarCheckout(
   // BUG-A FIX: Block booking if the webinar's scheduled end time has already passed.
   // This catches stale SCHEDULED webinars where the consultant never updated the status.
   // Late joiners to IN_PROGRESS webinars are still allowed as long as the end time hasn't passed.
-  const masterSlot = webinar.appointment.slotsOfAppointment[0];
+  const masterSlot = webinar.appointment.occurrences[0];
   if (masterSlot.endsAt < new Date()) {
     throw new Error(
       "This webinar has already ended. It can no longer accept registrations.",
@@ -2570,9 +2603,7 @@ export async function handleWebinarCheckout(
   }
 
   // Check if user is already registered for this webinar
-  const isAlreadyRegistered = webinar.appointment?.slotsOfAppointment?.some(
-    (slot) => slot.user?.some((u) => u.id === userId),
-  );
+  const isAlreadyRegistered = isUserRegisteredForWebinar([webinar], userId);
   if (isAlreadyRegistered) {
     throw new Error("You are already registered for this webinar");
   }
@@ -2598,24 +2629,19 @@ export async function handleWebinarCheckout(
         organizationId: plan.organizationId ?? null,
       },
       include: {
-        slotsOfAppointment: {
-          include: {
-            user: { select: { id: true } },
-          },
+        occurrences: true,
+        participants: {
+          where: liveParticipant(),
+          select: { userId: true },
         },
       },
     });
   }
 
-  // Add user to webinar by linking them to ALL existing slots.
-  // Webinar participants attend the entire session, so they must be
-  // connected to every SlotOfAppointment (not given a new duplicate slot).
-  if (appointment && appointment.slotsOfAppointment.length > 0) {
-    await connectAttendeeToEventSlots(tx, {
-      appointments: [appointment],
-      userId,
-    });
-    // #1319 A9 — one participant row per seat holder.
+  // Seat the user on the webinar's appointment.
+  // Webinar participants attend the entire session on the consultant's
+  // occurrences; the seat is one participant row (#1554), never a new row.
+  if (appointment && appointment.occurrences.length > 0) {
     await recordParticipants(
       tx,
       appointment.id,
@@ -2639,12 +2665,21 @@ export async function handleClassCheckout(
       classPlan: {
         include: { consultantProfile: true },
       },
-      appointments: {
+      appointment: {
         include: {
-          slotsOfAppointment: {
-            include: {
-              user: true,
+          // A RESCHEDULED row is a planned session awaiting its new time, so
+          // it still counts toward "fully scheduled" and the engagement
+          // meter; only a cancelled or deleted one is gone (#1554).
+          occurrences: {
+            where: {
+              deletedAt: null,
+              completionStatus: { not: "CANCELLED" },
             },
+            orderBy: { startsAt: "asc" },
+          },
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       },
@@ -2657,6 +2692,9 @@ export async function handleClassCheckout(
 
   const plan = classInstance.classPlan;
   const consultantUserId = plan.consultantProfile?.userId;
+  // #1554 — one wrapper per class; its live occurrences are the sessions.
+  const wrapper = classInstance.appointment;
+  const sessions = wrapper?.occurrences ?? [];
 
   const capacity = getClassCapacity({
     classInstance,
@@ -2670,68 +2708,53 @@ export async function handleClassCheckout(
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).
   // Similar to webinar validation — prevents booking a class whose last session is over.
-  if (classInstance.appointments.length > 0) {
-    const lastSession =
-      classInstance.appointments[classInstance.appointments.length - 1];
-    const lastMasterSlot = lastSession.slotsOfAppointment[0];
-    if (lastMasterSlot && lastMasterSlot.endsAt < new Date()) {
-      throw new Error(
-        "This class has already ended. It can no longer accept enrollments.",
-      );
-    }
+  const lastSession = sessions[sessions.length - 1];
+  if (lastSession && lastSession.endsAt < new Date()) {
+    throw new Error(
+      "This class has already ended. It can no longer accept enrollments.",
+    );
   }
 
   // Check if user is already enrolled - OPT-2: Use extracted utility
-  if (isUserEnrolled(classInstance.appointments, userId)) {
+  if (isUserEnrolled(wrapper, userId)) {
     throw new Error("You are already enrolled in this class");
   }
 
   // B11 — a partially-scheduled class (consultant hasn't allocated every
-  // session yet) must not accept paid enrollments: the loop below links the
-  // buyer only to EXISTING sessions, silently shorting them the rest.
+  // session yet) must not accept paid enrollments: the seat below covers
+  // only EXISTING sessions, silently shorting the buyer the rest.
   const expectedSessions = classInstance.classPlan?.totalSessions;
   if (
     typeof expectedSessions === "number" &&
     expectedSessions > 0 &&
-    classInstance.appointments.length < expectedSessions
+    sessions.length < expectedSessions
   ) {
     throw new Error(
-      `This class is not fully scheduled yet (${classInstance.appointments.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
+      `This class is not fully scheduled yet (${sessions.length} of ${expectedSessions} sessions). Enrollment opens once all sessions are scheduled.`,
     );
   }
-
-  // Link user to ALL existing slots of ALL class appointments (sessions).
-  // Class participants attend every session, so they must be connected to
-  // every existing SlotOfAppointment (not given duplicate slots).
-  const linkedSlotCount = await connectAttendeeToEventSlots(tx, {
-    appointments: classInstance.appointments,
-    userId,
-  });
-  // #1319 A9 — one participant row per session the buyer is enrolled in.
-  for (const appointment of classInstance.appointments) {
-    await recordParticipants(
-      tx,
-      appointment.id,
-      [{ userId, role: "CONSULTEE" }],
-      { status: _skipPayment ? "CONFIRMED" : "HELD" },
-    );
-  }
-
-  // Return the first appointment for compatibility
-  const firstAppointment = classInstance.appointments[0];
-  if (!firstAppointment) {
+  if (!wrapper) {
     throw new Error("No class sessions found");
   }
 
+  // Class participants attend every session on the consultant's occurrences;
+  // the seat is one participant row on the wrapper (#1554), never new rows.
+  await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
+    status: _skipPayment ? "CONFIRMED" : "HELD",
+  });
+
   return {
-    appointment: firstAppointment,
+    appointment: wrapper,
     plan,
     amount: plan.price,
-    slotsLinked: linkedSlotCount,
+    slotsLinked: sessions.length,
     // For enterprise cap counting (issue #710): one engagement per
-    // class day. The learner is enrolling in every existing class
-    // appointment at this moment, so the count is fully known here.
-    engagementsConsumed: classInstance.appointments.length,
+    // class session. The learner is enrolling in every existing session
+    // at this moment, so the count is fully known here.
+    engagementsConsumed: sessions.length,
+    // #1554 — the metered unit is the session, so the utilization row names
+    // the occurrence ids (the wrapper is one row for the whole class).
+    engagementIds: sessions.map((session) => session.id),
   };
 }
 
@@ -3481,9 +3504,11 @@ export async function handleCheckout(
             //     all known at checkout because consultant pre-allocated)
             //   - SUBSCRIPTION: null → SKIP recordBookingUtilization at
             //     checkout. Slots are allocated lazily by the consultant;
-            //     debits land in SlotAllocationService.createAppointments,
+            //     debits land in SchedulingService.createAppointments,
             //     1 per allocation batch.
             let engagementsForCap: number | null = null;
+            // #1554 — CLASS meters its occurrence ids, not the one wrapper.
+            let classEngagementIds: string[] = [];
 
             // FIX #520: Zero-amount payments (credits cover full cost) skip the
             // gateway, so slots should be confirmed immediately just like mock payments.
@@ -3530,7 +3555,7 @@ export async function handleCheckout(
                 // This ensures webhook uses NEW FLOW (confirm) not LEGACY FLOW (create duplicate)
                 createdAppointment = subscriptionResult.appointment;
                 // engagementsForCap stays null — debit happens at
-                // SlotAllocationService.createAppointments time.
+                // SchedulingService.createAppointments time.
                 break;
               }
 
@@ -3553,10 +3578,10 @@ export async function handleCheckout(
                   userId,
                   skipPayment,
                 );
-                // Class creates slots across multiple appointments
-                // Use first appointment for payment linkage
+                // #1554 — one wrapper per class carries the payment linkage.
                 createdAppointment = classResult.appointment || null;
                 engagementsForCap = classResult.engagementsConsumed;
+                classEngagementIds = classResult.engagementIds;
                 break;
               }
 
@@ -3753,15 +3778,10 @@ export async function handleCheckout(
                   // order) incremented the meter a second time.
                   // CONSULTATION/WEBINAR are one engagement on the appointment
                   // just created; CLASS meters one per class session, which is
-                  // exactly the set handleClassCheckout counted.
+                  // exactly the occurrence set handleClassCheckout counted.
                   appointmentIds:
                     validatedData.appointmentType === "CLASS"
-                      ? (
-                          await tx.appointment.findMany({
-                            where: { classId: validatedData.eventId },
-                            select: { id: true },
-                          })
-                        ).map((a) => a.id)
+                      ? classEngagementIds
                       : createdAppointment
                         ? [createdAppointment.id]
                         : [],

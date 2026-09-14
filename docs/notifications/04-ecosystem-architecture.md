@@ -109,7 +109,7 @@ flowchart TB
     %% Trigger → Pipeline 2 (Novu)
     T_BOOK -->|"notifyAppointmentBooked\nnotifyPaymentSuccess/Failed\nnotifyAppointmentCancelled"| P2_SVC
     T_SUPPORT -->|"notifySupportTicketCreated\nnotifyNewReview"| P2_SVC
-    T_TRIAL -->|"notifyTrialSessionRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
+    T_TRIAL -->|"notifyTrialRequested\nnotifyVerificationStatusChanged\nnotifyNewConsultantApplication"| P2_SVC
     T_ADMIN -->|"notifyGeneralAnnouncement"| P2_SVC
     T_CRON -->|"notifyAppointmentReminder\nnotifyAppointmentCompleted"| P2_SVC
     T_STREAM -->|"notifyRecordingAvailable"| P2_SVC
@@ -172,16 +172,16 @@ flowchart TB
 
 **10 Templates:**
 
-| Template                   | From Address                    | Triggered By                                          |
-| -------------------------- | ------------------------------- | ----------------------------------------------------- |
-| WelcomeEmail               | `onboarding@familiarise.com`    | BetterAuth `user.create.after` hook                   |
-| PasswordResetEmail         | `security@familiarise.com`      | Password reset flow                                   |
-| AccountLinkedEmail         | `security@familiarise.com`      | OAuth account linking                                 |
-| PaymentLinkEmail           | `payments@familiarise.com`      | Consultant approves consultation/subscription request |
-| PaymentSuccessEmail        | `payments@familiarise.com`      | Stripe/Razorpay payment webhook                       |
-| PaymentFailedEmail         | `payments@familiarise.com`      | Stripe/Razorpay failure webhook                       |
-| WaitlistConfirmEmail       | `newsletter@familiarise.com`    | Double opt-in confirmation for a newsletter signup    |
-| WaitlistWelcomeEmail       | `newsletter@familiarise.com`    | Sent once the confirm link is clicked                 |
+| Template             | From Address                 | Triggered By                                          |
+| -------------------- | ---------------------------- | ----------------------------------------------------- |
+| WelcomeEmail         | `onboarding@familiarise.com` | BetterAuth `user.create.after` hook                   |
+| PasswordResetEmail   | `security@familiarise.com`   | Password reset flow                                   |
+| AccountLinkedEmail   | `security@familiarise.com`   | OAuth account linking                                 |
+| PaymentLinkEmail     | `payments@familiarise.com`   | Consultant approves consultation/subscription request |
+| PaymentSuccessEmail  | `payments@familiarise.com`   | Stripe/Razorpay payment webhook                       |
+| PaymentFailedEmail   | `payments@familiarise.com`   | Stripe/Razorpay failure webhook                       |
+| WaitlistConfirmEmail | `newsletter@familiarise.com` | Double opt-in confirmation for a newsletter signup    |
+| WaitlistWelcomeEmail | `newsletter@familiarise.com` | Sent once the confirm link is clicked                 |
 
 **Design system:** White card on `#f5f5f5` background, black CTA button, `-apple-system` font stack, `16px` body, `28px` heading.
 
@@ -207,7 +207,7 @@ flowchart TB
 | Tier        | Workflows                                                                                                                                                                                                                                                                                    | Status                                                                 |
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-\* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
-| Tier 2 (9)  | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, payout-processed, collaborator-invited/accepted/removed, new-consultant-application                                                                                                                                        | Triggers wired, Dashboard config deferred                              |
+| Tier 2 (9)  | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, payout-processed, collaborator-invited/accepted/removed, new-consultant-application                                                                                                       | Triggers wired, Dashboard config deferred                              |
 | Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                       | Functions exist, wiring deferred                                       |
 
 **Trigger wiring (which business logic calls which notification):**
@@ -219,9 +219,9 @@ flowchart TB
 | `app/api/appointments/[id]/reschedule/route.ts`             | appointmentRescheduled                                         |
 | `app/api/cleanup/appointment-reminders/route.ts`            | appointmentReminder (cron)                                     |
 | `scripts/appointments/auto-complete-appointments.ts`        | appointmentCompleted (cron)                                    |
-| `app/api/slots/request-for-approval/route.ts`               | newBookingRequest                                              |
-| `app/api/bookings/subscriptions/`                             | subscriptionStarted, subscriptionCancelled                     |
-| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trialSession\* (4)                                             |
+| `app/api/scheduling/request-for-approval/route.ts`               | newBookingRequest                                              |
+| `app/api/bookings/subscriptions/`                           | subscriptionStarted, subscriptionCancelled                     |
+| `app/api/trials/route.ts` + `[trialId]/route.ts`            | trial\* (4)                                             |
 | `app/api/user/support-tickets/route.ts`                     | supportTicketCreated                                           |
 | `app/api/staff/support-tickets/[id]/responses/route.ts`     | supportTicketResponse                                          |
 | `app/api/user/reviews/route.ts`                             | newReview                                                      |
@@ -328,11 +328,11 @@ flowchart LR
 
     subgraph HANDLERS["Webhook Handlers"]
         H1["app/api/stream/webhooks/route.ts\n8 event types\nHMAC signature verification"]
-        H2["app/api/webhooks/stream/recording/route.ts\ncall.recording.ready\nLooks up MeetingSession → Slot → Users"]
+        H2["app/api/webhooks/stream/recording/route.ts\ncall.recording.ready\nLooks up Meeting → Slot → Users"]
     end
 
     subgraph ACTIONS["Notification Actions"]
-        A1["Update MeetingSession\nrecording state in DB"]
+        A1["Update Meeting\nrecording state in DB"]
         A2["notifyRecordingAvailable()\nAll participants via Novu"]
     end
 
@@ -343,7 +343,7 @@ flowchart LR
 ```
 
 **Data path for recording notification:**
-`Stream.io call.recording.ready` → `route.ts` → `prisma.meetingSession.findFirst({where: {streamCallId}})` → `include: slotOfAppointment → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
+`Stream.io call.recording.ready` → `route.ts` → `prisma.meeting.findFirst({where: {streamCallId}})` → `include: appointmentOccurrence → appointment → consultation/subscription/webinar/class` → extract consultant name + participant user IDs from slot's M2M `user` relation → `notifyRecordingAvailable(userIds, {recordingUrl, ...})`
 
 ---
 

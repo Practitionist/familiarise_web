@@ -105,9 +105,9 @@ describe("returnTo hop safety (#1166)", () => {
 });
 
 describe("consultant reschedule legend wiring", () => {
-  it("SlotPicker sets showConsultantLegend for consultant propose, not consultee", () => {
+  it("TimePicker sets showConsultantLegend for consultant propose, not consultee", () => {
     const src = readFileSync(
-      path.join(root, "components/scheduling/SlotPicker.tsx"),
+      path.join(root, "components/scheduling/TimePicker.tsx"),
       "utf8",
     );
     expect(src).toContain('policy.kind === "RESCHEDULE_CONSULTANT"');

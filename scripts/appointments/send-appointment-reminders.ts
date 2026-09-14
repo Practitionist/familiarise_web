@@ -14,6 +14,8 @@
  */
 
 import prisma from "../../lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
+import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import redis from "../../lib/redis";
 import { notifyAppointmentReminder } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
@@ -54,7 +56,7 @@ async function sendRemindersForWindow(window: {
   let sent = 0;
 
   // Find slots starting within the reminder window
-  const upcomingSlots = await prisma.slotOfAppointment.findMany({
+  const upcomingOccurrences = await prisma.appointmentOccurrence.findMany({
     where: {
       startsAt: {
         gte: windowStart,
@@ -66,6 +68,11 @@ async function sendRemindersForWindow(window: {
     include: {
       appointment: {
         include: {
+          // #1554 — the roster: every live seat holder.
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
           consultation: {
             include: {
               consultationPlan: {
@@ -122,19 +129,31 @@ async function sendRemindersForWindow(window: {
           },
         },
       },
-      // Get participant user IDs via M2M relation
-      user: { select: { id: true, name: true } },
     },
   });
 
   console.log(
-    `Found ${upcomingSlots.length} slots in ${window.label} reminder window`,
+    `Found ${upcomingOccurrences.length} slots in ${window.label} reminder window`,
   );
 
   // Deduplicate by appointmentId (multiple slots per appointment)
   const seenAppointments = new Set<string>();
+  // Sessions of one class share a plan; one collaborator read per plan (#1593).
+  const collaboratorsByPlan = new Map<string, Promise<string[]>>();
+  const planCollaborators = (planType: "webinar" | "class", planId: string) => {
+    const key = `${planType}:${planId}`;
+    let ids = collaboratorsByPlan.get(key);
+    if (!ids) {
+      ids = collaboratorUserIds(planType, planId);
+      collaboratorsByPlan.set(key, ids);
+      // A failed lookup must not be memoised, or every later session of the
+      // plan in this window would skip its reminders too.
+      ids.catch(() => collaboratorsByPlan.delete(key));
+    }
+    return ids;
+  };
 
-  for (const slot of upcomingSlots) {
+  for (const slot of upcomingOccurrences) {
     const apt = slot.appointment;
     if (!apt || seenAppointments.has(apt.id)) continue;
     seenAppointments.add(apt.id);
@@ -179,19 +198,30 @@ async function sendRemindersForWindow(window: {
         consultantName =
           apt.webinar.webinarPlan?.consultantProfile?.user?.name ??
           "Consultant";
-        // For webinars, notify all connected users (participants)
-        for (const user of slot.user) {
-          userIds.push(user.id);
+        // Attendees, the host (missing until #1580 — only the slot's joined
+        // users were reminded) and the accepted collaborators (C-P1-5).
+        for (const seat of apt.participants) {
+          userIds.push(seat.userId);
         }
+        const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
+        if (hostId) userIds.push(hostId);
+        userIds.push(
+          ...(await planCollaborators("webinar", apt.webinar.webinarPlanId)),
+        );
       } else if (apt.class) {
         appointmentType = "class";
         planTitle = apt.class.classPlan?.title ?? "Class";
         consultantName =
           apt.class.classPlan?.consultantProfile?.user?.name ?? "Consultant";
-        // For classes, notify all connected users (participants)
-        for (const user of slot.user) {
-          userIds.push(user.id);
+        // Same three parties as the webinar branch above.
+        for (const seat of apt.participants) {
+          userIds.push(seat.userId);
         }
+        const hostId = apt.class.classPlan?.consultantProfile?.userId;
+        if (hostId) userIds.push(hostId);
+        userIds.push(
+          ...(await planCollaborators("class", apt.class.classPlanId)),
+        );
       }
 
       // Deduplicate user IDs

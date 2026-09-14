@@ -59,7 +59,7 @@ interface ThreadDetail {
   appointment: {
     id: string;
     appointmentType: string;
-    slotsOfAppointment: { startsAt: string }[];
+    occurrences: { startsAt: string }[];
     consultation?: { consultationPlan?: { title?: string } };
     subscription?: { subscriptionPlan?: { title?: string } };
     webinar?: { webinarPlan?: { title?: string } };
@@ -334,9 +334,9 @@ export function SupportThreadsPage() {
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {d.user.name} ({d.user.email}) ·{" "}
-                      {d.appointment.slotsOfAppointment[0]?.startsAt &&
+                      {d.appointment.occurrences[0]?.startsAt &&
                         new Date(
-                          d.appointment.slotsOfAppointment[0].startsAt,
+                          d.appointment.occurrences[0].startsAt,
                         ).toLocaleDateString()}
                     </p>
                   </div>

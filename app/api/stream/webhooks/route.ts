@@ -132,7 +132,7 @@ function verifyStreamSignature(
  * separate "signing secret" field in their dashboard, so requiring a distinct
  * `STREAM_WEBHOOK_SECRET` meant this route 500'd on every delivery for as long
  * as it existed: 0 rows in WebhookEvent for provider='stream', 0
- * MeetingAttendance, and 1,663 MeetingSessions that never ended.
+ * MeetingAttendance, and 1,663 Meetings that never ended.
  *
  * The override is kept so the value can be rotated independently if Stream ever
  * ships one, but the API secret is the correct default rather than a fatal gap.

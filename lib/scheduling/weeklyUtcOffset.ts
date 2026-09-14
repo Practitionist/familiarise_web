@@ -15,7 +15,7 @@
  * the launch offset rather than to UTC (ADR 17 — IST-only at launch).
  */
 
-import { getTimezoneOffsetMinutes } from "@/utils/slotAllocation/slotTimeUtils";
+import { getTimezoneOffsetMinutes } from "@/utils/scheduling-engine/slotTimeUtils";
 import { reportSentryMessage } from "@/lib/observability/report";
 
 export { weeklyRowLocalColumns } from "@/utils/schedule/weekly-projection";

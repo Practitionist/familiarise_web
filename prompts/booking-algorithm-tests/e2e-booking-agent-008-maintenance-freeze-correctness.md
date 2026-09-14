@@ -95,7 +95,7 @@ reset it to the in-flight shape and note you did so:
 UPDATE "Payment" SET "paymentStatus" = 'PENDING',
        "expiresAt" = NOW() + INTERVAL '30 minutes'
 WHERE id = '<PAYMENT_ID>';
-UPDATE "SlotOfAppointment" SET "isTentative" = true
+UPDATE "AppointmentOccurrence" SET "isTentative" = true
 WHERE "appointmentId" = '<APPOINTMENT_ID>';
 ```
 
@@ -119,7 +119,7 @@ SELECT id, "paymentStatus", "appointmentId" FROM "Payment" WHERE id = '<PAYMENT_
 -- Expected: the row EXISTS, status still PENDING (or EXPIRED later — but the
 -- row itself must never disappear).
 
-SELECT COUNT(*) FROM "SlotOfAppointment"
+SELECT COUNT(*) FROM "AppointmentOccurrence"
 WHERE "appointmentId" = '<APPOINTMENT_ID>' AND "deletedAt" IS NULL;
 -- Expected: unchanged from Test 1.1 — no slot was hard-deleted mid-freeze.
 ```

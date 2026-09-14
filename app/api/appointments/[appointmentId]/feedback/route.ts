@@ -1,19 +1,21 @@
 /**
- * #appt-support — private per-participant CSAT for ONE VIDEO CALL (1–5 + note),
- * distinct from the public ConsultantReview. Upsert, so re-submitting edits.
+ * #appt-support — private per-participant CSAT (1–5 + note), distinct from the
+ * public ConsultantReview. Re-submitting edits.
  *
- * Per call, not per appointment: an appointment is not a session. A subscription
- * booking holds up to 24 of them, so one rating per appointment meant a single
- * score for a three-month package, arriving months after the sessions it
- * described. GET returns every call of this booking the caller has rated.
+ * #1554 — a rating is about ONE CALL (`occurrenceId` names it) or about the
+ * WHOLE BOOKING (no `occurrenceId`; the row's occurrence is NULL). A subscription
+ * holds up to 24 calls, so one rating per appointment alone meant a single score
+ * for a three-month package; both levels now coexist, one row per person per
+ * level, guarded by the `appointment_feedback_level_key` sidecar unique.
+ * GET returns every row of this booking the caller has written.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { appointmentRaterRole } from "@/lib/data/appointment-detail";
-import { heldSlot } from "@/lib/reviews";
-import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
+import { heldOccurrence } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
@@ -23,15 +25,21 @@ import {
 
 const FEEDBACK_ROUTE = "appointments.feedback";
 
+/** How much of the booking the GET answers for. Parsed rather than compared: an
+ *  unrecognised value used to fall through to the single-appointment answer, so a
+ *  typo'd or renamed scope returned a NARROWER result than the caller asked for and
+ *  said 200 about it. */
+const scopeSchema = z.enum(["appointment", "booking"]).default("appointment");
+
 const feedbackSchema = z.object({
   rating: z.number().int().min(1).max(5),
   comment: z.string().trim().max(2000).optional(),
-  /** Which call of this booking is being rated. */
-  slotId: z.string().min(1).max(64),
+  /** Which call of this booking is being rated; absent = the whole booking. */
+  occurrenceId: z.string().min(1).max(64).optional(),
 });
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   const id = await parseRouteParams(AppointmentIdParams, params, {
@@ -57,13 +65,32 @@ export async function GET(
     const asProvider =
       appointmentRaterRole(auth.userId, auth.detail) === "PROVIDER";
 
+    // #1540 — one request for the whole BOOKING. #1554 made a booking ONE
+    // Appointment, so `scope=booking` and the default now read the same row;
+    // the parameter stays accepted so existing callers do not 400.
+    const scope = scopeSchema.safeParse(
+      new URL(req.url).searchParams.get("scope") ?? undefined,
+    );
+    if (!scope.success) {
+      return supportError({
+        status: 400,
+        code: "VALIDATION_FAILED",
+        detail: scope.error.flatten(),
+        context: { route: FEEDBACK_ROUTE, action: "get", appointmentId },
+      });
+    }
+    const scopeIds = [auth.detail.appointment.id];
+
     // Which calls of this booking the caller may rate at all, so the timeline
     // offers stars only where a rating would be accepted rather than erroring
     // after the click.
     const rateable = asProvider
       ? []
-      : await prisma.slotOfAppointment.findMany({
-          where: { appointmentId, ...heldSlot(auth.userId) },
+      : await prisma.appointmentOccurrence.findMany({
+          where: {
+            appointmentId: { in: scopeIds },
+            ...heldOccurrence(auth.userId),
+          },
           select: { id: true },
         });
 
@@ -72,11 +99,11 @@ export async function GET(
     // breakdown instead of one number for the package.
     const feedback = await prisma.appointmentFeedback.findMany({
       where: asProvider
-        ? { appointmentId, raterRole: "CONSULTEE" }
-        : { appointmentId, userId: auth.userId },
+        ? { appointmentId: { in: scopeIds }, raterRole: "CONSULTEE" }
+        : { appointmentId: { in: scopeIds }, userId: auth.userId },
       select: {
         id: true,
-        slotOfAppointmentId: true,
+        appointmentOccurrenceId: true,
         rating: true,
         // The SCORE is disclosed to the provider; the free-text note is not.
         // Every comment in this table was typed into AppointmentCsatCard, whose
@@ -147,20 +174,22 @@ export async function POST(
       });
     }
 
-    // The slot must belong to THIS appointment: without the check a caller
-    // could rate a call from a booking they merely have access to the id of.
-    const slot = await prisma.slotOfAppointment.findFirst({
+    // The occurrence must belong to THIS appointment: without the check a
+    // caller could rate a call from a booking they merely have access to the
+    // id of. Without one the rating is about the whole booking, which still
+    // needs at least one held call to rate at all.
+    const slot = await prisma.appointmentOccurrence.findFirst({
       where: {
-        id: body.data.slotId,
+        ...(body.data.occurrenceId ? { id: body.data.occurrenceId } : {}),
         appointmentId,
         // You may rate a call you ATTENDED, or one nobody could have recorded
         // (an offline session). A COMPLETED slot the caller never joined does
         // not qualify: a no-show rating would otherwise feed the consultant's
-        // quality signal. `heldSlot` also excludes cancelled and rescheduled
+        // quality signal. `heldOccurrence` also excludes cancelled and rescheduled
         // calls, which never happened at all.
-        ...heldSlot(auth.userId),
+        ...heldOccurrence(auth.userId),
       },
-      select: { id: true },
+      select: { id: true, consultantProfileId: true },
     });
     if (!slot) {
       return supportError({
@@ -172,53 +201,97 @@ export async function POST(
       });
     }
 
-    // Normalise to the run's ANCHOR — the rating belongs to the MEETING, and a
-    // meeting longer than 30 minutes is stored as several rows (#1061). The
-    // anchor is already "the only row the video room may ever be keyed to", so
-    // this is the identity the codebase uses for a session; MeetingSession
-    // hangs off exactly this row, which is why the video path happened to be
-    // safe. The offline path was not: an UNVERIFIED run has no MeetingSession,
-    // so every row in it satisfies `heldSlot` independently and one 90-minute
-    // in-person session could take three separate ratings. Resolving here
-    // makes one-rating-per-meeting a rule rather than a UI convention.
-    const runRows = await prisma.slotOfAppointment.findMany({
-      where: { appointmentId, deletedAt: null },
-      select: {
-        id: true,
-        appointmentId: true,
-        startsAt: true,
-        endsAt: true,
-        isTentative: true,
-        completionStatus: true,
-      },
-    });
-    const ratedSlotId =
-      groupSlotsIntoRuns(runRows).find((run) =>
-        run.slots.some((row) => row.id === slot.id),
-      )?.anchor.id ?? slot.id;
+    // #1554 — the rating belongs to the MEETING, and the occurrence IS the
+    // meeting: one row per held call; NULL is the whole-booking level.
+    const ratedOccurrenceId = body.data.occurrenceId ? slot.id : null;
 
-    const feedback = await prisma.appointmentFeedback.upsert({
+    // #1580 — the one live PRESENTER on the rated call's plan, if the booking
+    // is a group event: one read through the wrapper's event.
+    const presenter = await prisma.collaborator.findFirst({
       where: {
-        slotOfAppointmentId_userId: {
-          slotOfAppointmentId: ratedSlotId,
-          userId: auth.userId,
-        },
+        tier: "PRESENTER",
+        status: "ACCEPTED",
+        OR: [
+          {
+            webinarPlan: {
+              webinars: { some: { appointment: { id: appointmentId } } },
+            },
+          },
+          {
+            classPlan: {
+              classes: { some: { appointment: { id: appointmentId } } },
+            },
+          },
+        ],
       },
-      create: {
-        slotOfAppointmentId: ratedSlotId,
-        appointmentId,
-        userId: auth.userId,
-        organizationId: auth.organizationId,
-        rating: body.data.rating,
-        comment: body.data.comment,
-        raterRole,
-      },
-      update: {
-        rating: body.data.rating,
-        comment: body.data.comment,
-        raterRole,
-      },
+      select: { consultantProfileId: true },
     });
+
+    // `updatedAt` is stamped HERE, not by `@updatedAt`. Prisma populates that
+    // attribute on create as well as on update, so the column could never be NULL
+    // — and NULL is the meaning the schema documents: never edited since it was
+    // written. Only a changed OPINION counts, the same rule the review upsert
+    // applies to `editedAt`: re-submitting identical stars is idempotent and must
+    // not read to a moderator as somebody who keeps changing their mind.
+    //
+    // findFirst + update/create rather than an upsert: the per-level unique is
+    // a NULLS NOT DISTINCT sidecar Prisma cannot name as a compound key, so a
+    // racing second create surfaces as P2002 and answers 409.
+    const previous = await prisma.appointmentFeedback.findFirst({
+      where: {
+        appointmentId,
+        appointmentOccurrenceId: ratedOccurrenceId,
+        userId: auth.userId,
+      },
+      select: { id: true, rating: true, comment: true },
+    });
+    const opinionChanged =
+      previous !== null &&
+      (previous.rating !== body.data.rating ||
+        // An absent `comment` is "not supplied", which the update already treats
+        // as leaving the stored note alone — so it is not an edit either.
+        (body.data.comment !== undefined &&
+          (previous.comment ?? "") !== body.data.comment));
+
+    let feedback;
+    try {
+      feedback = previous
+        ? await prisma.appointmentFeedback.update({
+            where: { id: previous.id },
+            data: {
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+              ...(opinionChanged ? { updatedAt: new Date() } : {}),
+            },
+          })
+        : await prisma.appointmentFeedback.create({
+            data: {
+              appointmentOccurrenceId: ratedOccurrenceId,
+              appointmentId,
+              userId: auth.userId,
+              organizationId: auth.organizationId,
+              // #1550 — the consultant on the rated call (or on the booking's
+              // held call, for a whole-booking rating).
+              consultantProfileId: slot.consultantProfileId,
+              // #1580 — the co-presenter the rating also speaks to.
+              coPresenterProfileId: presenter?.consultantProfileId ?? null,
+              rating: body.data.rating,
+              comment: body.data.comment,
+              raterRole,
+            },
+          });
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return supportError({
+          status: 409,
+          code: "CONFLICT",
+          message: "You have already rated this; reload and edit it instead",
+          context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+        });
+      }
+      throw error;
+    }
     return NextResponse.json({ data: feedback });
   } catch (cause) {
     return supportError({

@@ -19,7 +19,7 @@ import {
   Currency,
   PaymentGateway,
   PaymentStatus,
-  TrialSessionStatus,
+  TrialStatus,
 } from "@prisma/client";
 import {
   lockApprovalPaymentMint,
@@ -461,7 +461,7 @@ function buildApprovalMetadata(
     metadata.subscriptionId = params.subscriptionId;
   }
 
-  // Add trial-specific fields — the webhook resolves the TrialSession from this.
+  // Add trial-specific fields — the webhook resolves the Trial from this.
   if (params.trialId) {
     metadata.trialId = params.trialId;
   }
@@ -547,10 +547,10 @@ export async function findExistingLivePayment(params: {
     PaymentStatus.EXPIRED,
   ];
   if (params.trialId) {
-    // A trial owns its Payment directly (TrialSession.paymentId), so unlike the
+    // A trial owns its Payment directly (Trial.paymentId), so unlike the
     // consultation/subscription arms there is no appointment to walk through —
     // the appointment doesn't exist until the trial is paid and scheduled.
-    const trial = await prisma.trialSession.findUnique({
+    const trial = await prisma.trial.findUnique({
       where: { id: params.trialId },
       select: {
         status: true,
@@ -577,7 +577,7 @@ export async function findExistingLivePayment(params: {
     }
     return {
       ...payment,
-      requestIsPayable: trial?.status === TrialSessionStatus.AWAITING_PAYMENT,
+      requestIsPayable: trial?.status === TrialStatus.AWAITING_PAYMENT,
     };
   }
 
@@ -614,7 +614,7 @@ export async function findExistingLivePayment(params: {
     const subscription = await prisma.subscription.findUnique({
       where: { id: params.subscriptionId },
       include: {
-        appointments: {
+        appointment: {
           include: {
             payment: true,
           },
@@ -622,8 +622,10 @@ export async function findExistingLivePayment(params: {
       },
     });
 
-    // Check any appointment for payment
-    for (const apt of subscription?.appointments ?? []) {
+    // Check the wrapper for a payment (#1554: one per subscription)
+    for (const apt of subscription?.appointment
+      ? [subscription.appointment]
+      : []) {
       const payment = apt.payment?.find((p) =>
         REUSABLE_STATUSES.includes(p.paymentStatus),
       );

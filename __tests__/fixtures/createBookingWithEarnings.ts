@@ -55,9 +55,9 @@ export interface FixtureResult {
 
 /**
  * NOTE: The full implementation requires importing
- * `createEarningsFromPayment` and a real Appointment + SlotOfAppointment
+ * `createEarningsFromPayment` and a real Appointment + AppointmentOccurrence
  * graph. Production booking creates these via the
- * `SlotAllocationService` — recreating that here would couple the
+ * `SchedulingService` — recreating that here would couple the
  * fixture to internal scheduling APIs that drift independently of the
  * earnings flow.
  *

@@ -76,7 +76,7 @@ Priority 2 (500ms): Feedback, support tickets, messages, settings
 The consultant dashboard prefetches:
 
 - **Dashboard Overview**: `/api/dashboard/consultant/{id}`
-- **Appointments**: `/api/slots/appointments?consultantProfileId={id}`
+- **Appointments**: `/api/scheduling/appointments?consultantProfileId={id}`
 - **Consultant Details**: `/api/user/consultants/{id}`
 - **Requests**: `/api/bookings/*` (self-fetched by the tab; the `/api/dashboard/consultant/{id}/requests` endpoint was deleted)
 - **Planner**: `/api/dashboard/consultant/{id}/planner`

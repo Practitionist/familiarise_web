@@ -259,7 +259,7 @@ export async function pairBookingContexts(
       },
       select: {
         subscriptionPlan: { select: { organizationId: true } },
-        appointments: { select: { organizationId: true } },
+        appointment: { select: { organizationId: true } },
       },
     }),
   ]);

@@ -82,7 +82,7 @@ export async function GET() {
       // Completed sessions (slots that have ended)
       prisma.appointment.count({
         where: {
-          slotsOfAppointment: {
+          occurrences: {
             some: {
               endsAt: { lt: now },
             },
@@ -92,7 +92,7 @@ export async function GET() {
       // Upcoming sessions (slots that haven't started yet)
       prisma.appointment.count({
         where: {
-          slotsOfAppointment: {
+          occurrences: {
             some: {
               startsAt: { gt: now },
             },

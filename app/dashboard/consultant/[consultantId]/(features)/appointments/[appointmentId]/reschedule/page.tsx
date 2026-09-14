@@ -7,7 +7,7 @@ import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { buildRescheduleSubject } from "@/lib/scheduling/slot-picker-subject";
+import { buildRescheduleSubject } from "@/lib/scheduling/time-picker-subject";
 
 import { RescheduleClient } from "./RescheduleClient";
 

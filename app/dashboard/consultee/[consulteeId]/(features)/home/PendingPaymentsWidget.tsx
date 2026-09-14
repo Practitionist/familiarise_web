@@ -394,7 +394,7 @@ export function PendingPaymentsWidget({
                       className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
                       onClick={() => {
                         // #1167 — a trial has a branded checkout page of our
-                        // own (`payment.id` IS the TrialSession id here), which
+                        // own (`payment.id` IS the Trial id here), which
                         // shows the amount, the duration and the hold deadline
                         // before handing off to the gateway. Everything else
                         // still opens the gateway link directly.

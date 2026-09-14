@@ -2,10 +2,10 @@
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { RequestSlotAllocationTab } from "@/components/dashboard/shared/requests/RequestSlotAllocationTab";
+import { RequestSchedulingTab } from "@/components/dashboard/shared/requests/RequestSchedulingTab";
 
 /**
- * Requests tab page. RequestSlotAllocationTab owns its data: it resolves the
+ * Requests tab page. RequestSchedulingTab owns its data: it resolves the
  * consultantId from the route via useParams and fetches the paginated
  * /api/bookings/consultations + /api/bookings/subscriptions endpoints with its
  * own loading/error states.
@@ -19,7 +19,7 @@ import { RequestSlotAllocationTab } from "@/components/dashboard/shared/requests
  */
 export default function RequestsPage() {
   const handleUpdate = () => {
-    // Handled internally by RequestSlotAllocationTab
+    // Handled internally by RequestSchedulingTab
   };
 
   return (
@@ -29,7 +29,7 @@ export default function RequestsPage() {
         subtitle="Pending booking requests awaiting slot allocation"
       />
       <div className="pt-6">
-        <RequestSlotAllocationTab type="all" onUpdate={handleUpdate} />
+        <RequestSchedulingTab type="all" onUpdate={handleUpdate} />
       </div>
     </DashboardErrorBoundary>
   );

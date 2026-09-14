@@ -31,7 +31,15 @@ import type {
  * app/explore/programs/utils.ts. */
 const planConsultantInclude = {
   select: {
-    rating: true,
+    // #1300 — the PUBLISHED scores, not the raw mean. A program card renders a
+    // star, and `rating` is unshrunk, unsuppressed and 0 for a consultant nobody
+    // has rated — so the card printed "0.0" or a single review's "5.0", the two
+    // things the publication threshold exists to prevent. A program is a group
+    // product, so `displayedScore` is asked for the GROUP track first.
+    publishedRatingOneToOne: true,
+    publishedRatingGroup: true,
+    ratedClientsOneToOne: true,
+    ratedEventsGroup: true,
     headline: true,
     user: {
       select: {
@@ -44,6 +52,31 @@ const planConsultantInclude = {
             isCurrent: true,
           },
           take: 3,
+        },
+      },
+    },
+  },
+};
+
+// #1580 C-P2-2 — the ACCEPTED co-hosts a program card already knows how to
+// render (their company logos beside the host's); an erased profile stays off.
+const planCollaboratorsInclude = {
+  where: {
+    status: "ACCEPTED" as const,
+    consultantProfile: { deletedAt: null },
+  },
+  select: {
+    consultantProfile: {
+      select: {
+        user: {
+          select: {
+            name: true,
+            image: true,
+            workExperiences: {
+              select: { company: true, companyDomain: true, isCurrent: true },
+              take: 3,
+            },
+          },
         },
       },
     },
@@ -112,7 +145,7 @@ const getTrendingClassPlanIds = unstable_cache(
         where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
         select: { id: true, createdAt: true },
       }),
-      prisma.slotOfAppointment.findMany({
+      prisma.appointmentOccurrence.findMany({
         where: {
           ...recentSlotWindow(),
           appointment: { deletedAt: null, classId: { not: null } },
@@ -138,7 +171,7 @@ const getTrendingWebinarPlanIds = unstable_cache(
         where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
         select: { id: true, createdAt: true },
       }),
-      prisma.slotOfAppointment.findMany({
+      prisma.appointmentOccurrence.findMany({
         where: {
           ...recentSlotWindow(),
           appointment: { deletedAt: null, webinarId: { not: null } },
@@ -198,6 +231,7 @@ export const getCuratedPrograms = unstable_cache(
             }, // #726
             include: {
               consultantProfile: planConsultantInclude,
+              collaborators: planCollaboratorsInclude,
               topics: true,
               classContents: true,
               classes: true,
@@ -215,6 +249,7 @@ export const getCuratedPrograms = unstable_cache(
           where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
+            collaborators: planCollaboratorsInclude,
             topics: true,
             classContents: true,
             classes: true,
@@ -255,6 +290,7 @@ export const getCuratedPrograms = unstable_cache(
             }, // #726
             include: {
               consultantProfile: planConsultantInclude,
+              collaborators: planCollaboratorsInclude,
               topics: true,
             },
           }),
@@ -269,6 +305,7 @@ export const getCuratedPrograms = unstable_cache(
           where: { ...eventPlanDiscoverableWhere(), ...liveConsultantWhere }, // #726
           include: {
             consultantProfile: planConsultantInclude,
+            collaborators: planCollaboratorsInclude,
             topics: true,
           },
           ...(orderBy && { orderBy }),

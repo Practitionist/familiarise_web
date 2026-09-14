@@ -20,6 +20,8 @@ export const { GET, POST } = cleanupRoute({
   summarize: (r) => ({
     scanned: r.scanned,
     recovered: r.recovered,
+    collaboratorRecovered: r.collaboratorRecovered,
+    erasureRevocationsRecovered: r.erasureRevocationsRecovered,
     stillFailing: r.stillFailing,
     gaveUp: r.gaveUp,
   }),

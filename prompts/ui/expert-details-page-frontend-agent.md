@@ -64,7 +64,7 @@ model ConsultantProfile {
   languages                   String[]
   toolsAndTechnologies        String[]
   mentoringStyle              String?  @db.Text
-  sessionTypes                SessionType[]
+  offeringFormats                OfferingFormat[]
   websiteUrl                  String?
   twitterUrl                  String?
   githubUrl                   String?
@@ -77,8 +77,8 @@ model ConsultantProfile {
   subDomains                  SubDomain[]
   tags                        Tag[]
   reviews                     ConsultantReview[]
-  slotsOfAvailabilityWeekly   SlotOfAvailabilityWeekly[]
-  slotsOfAvailabilityCustom   SlotOfAvailabilityCustom[]
+  slotsOfAvailabilityWeekly   AvailabilityWindowWeekly[]
+  slotsOfAvailabilityCustom   AvailabilityWindowCustom[]
   consultationPlans           ConsultationPlan[]
   subscriptionPlans           SubscriptionPlan[]
   webinarPlans                WebinarPlan[]
@@ -250,7 +250,7 @@ model ClassPlan {
 
 ```prisma
 // Recurring weekly availability windows
-model SlotOfAvailabilityWeekly {
+model AvailabilityWindowWeekly {
   id           String
   startDay     DayOfWeek   // MON | TUE | WED | THU | FRI | SAT | SUN
   startTimeUtc Int @db.SmallInt   // Minutes since midnight UTC (0–1439)
@@ -260,7 +260,7 @@ model SlotOfAvailabilityWeekly {
 }
 
 // One-off custom availability windows
-model SlotOfAvailabilityCustom {
+model AvailabilityWindowCustom {
   id       String
   startsAt DateTime @db.Timestamptz
   endsAt   DateTime @db.Timestamptz
@@ -349,7 +349,7 @@ type TConsultantDetailData = {
   languages: string[];
   toolsAndTechnologies: string[];
   mentoringStyle: string | null;
-  sessionTypes: SessionType[];
+  offeringFormats: OfferingFormat[];
   websiteUrl: string | null;
   twitterUrl: string | null;
   githubUrl: string | null;
@@ -375,8 +375,8 @@ type TConsultantDetailData = {
   subDomains: SubDomain[];
   tags: Tag[];
 
-  slotsOfAvailabilityWeekly: SlotOfAvailabilityWeekly[];
-  slotsOfAvailabilityCustom: SlotOfAvailabilityCustom[];
+  slotsOfAvailabilityWeekly: AvailabilityWindowWeekly[];
+  slotsOfAvailabilityCustom: AvailabilityWindowCustom[];
 
   consultationPlans: ConsultationPlan[];
   subscriptionPlans: (SubscriptionPlan & {
@@ -436,7 +436,7 @@ A section for the consultant's full profile in prose and structured form:
 
 - **About / Full Description** — `ConsultantProfile.description` rendered as rich text (support newlines, maybe markdown-lite). Show a "Read more" expansion if it exceeds ~4 lines.
 - **Mentoring Style** — `mentoringStyle` field if present — short paragraph.
-- **Session Types** — render `sessionTypes` as labeled tags (e.g., "1-on-1", "Group", "Async").
+- **Session Types** — render `offeringFormats` as labeled tags (e.g., "1-on-1", "Group", "Async").
 - **Languages** — list of languages the expert teaches in.
 - **Tools & Technologies** — `toolsAndTechnologies` array rendered as a tag cloud or icon grid. Where possible, use recognisable tech logos (e.g., via Devicons or Simple Icons CDN).
 - **Video Intro** — if `videoIntroUrl` is set, embed it (YouTube/Loom iframe or a play-button thumbnail that opens a modal/lightbox).

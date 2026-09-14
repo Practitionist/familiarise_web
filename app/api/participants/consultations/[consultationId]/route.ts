@@ -1,6 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import {
+  liveParticipant,
+  releaseParticipant,
+} from "@/lib/booking/participants";
 
 // Roster payload — never the full User row. The class/ and webinar/
 // siblings were hardened this way in the #946 sweep; these two were
@@ -46,10 +50,9 @@ export async function GET(
         consultationPlan: true,
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: { select: PARTICIPANT_USER_SELECT },
-              },
+            participants: {
+              where: liveParticipant(),
+              include: { user: { select: PARTICIPANT_USER_SELECT } },
             },
           },
         },
@@ -73,12 +76,11 @@ export async function GET(
       participants.push(consultation.requestedBy.user);
     }
 
-    // Add any users from appointment slots (typically the consultant)
+    // Add every seat holder on the appointment (typically the consultant)
     if (consultation.appointment) {
-      const slotUsers =
-        consultation.appointment.slotsOfAppointment?.flatMap(
-          (slot) => slot.user || [],
-        ) || [];
+      const slotUsers = consultation.appointment.participants.map(
+        (participant) => participant.user,
+      );
 
       // Get unique participants by user ID (avoid duplicates)
       const uniqueUsers = Array.from(
@@ -140,37 +142,19 @@ export async function DELETE(
               },
             }),
       },
-      include: {
-        appointment: {
-          include: {
-            slotsOfAppointment: {
-              include: {
-                user: { select: PARTICIPANT_USER_SELECT },
-              },
-            },
-          },
-        },
-      },
+      select: { appointment: { select: { id: true } } },
     });
 
     if (!consultation) {
       return new NextResponse("Consultation not found", { status: 404 });
     }
 
-    // Remove user from all slots in the appointment
+    // #1554 — the seat is released by status; the participant row is history.
     if (consultation.appointment) {
-      for (const slot of consultation.appointment.slotsOfAppointment) {
-        if (slot.user.some((user) => user.id === userId)) {
-          await prisma.slotOfAppointment.update({
-            where: { id: slot.id },
-            data: {
-              user: {
-                disconnect: { id: userId },
-              },
-            },
-          });
-        }
-      }
+      await releaseParticipant(prisma, {
+        appointmentId: consultation.appointment.id,
+        userId,
+      });
     }
 
     return new NextResponse(null, { status: 204 });

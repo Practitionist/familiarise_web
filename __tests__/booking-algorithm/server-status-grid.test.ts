@@ -10,7 +10,7 @@
  *
  *  - computeWeeklyConfirmedCallCounts (lib/booking/weekly-call-counts.ts):
  *    Phase 3's per-week confirmed-call aggregate, parity-checked against
- *    SlotCalculationService.weekKey — the SAME key the interactive weekly-
+ *    ScheduleCalculationService.weekKey — the SAME key the interactive weekly-
  *    limit guard and the server validator (SubscriptionValidationService) use.
  *  - buildOverlapMetaIndex / overlapMetaCandidatesFor / extractOverlapTitleAndParticipant
  *    (availability-with-allocation route): Phase 2's per-interval tooltip
@@ -31,7 +31,7 @@ jest.mock("../../lib/auth-server", () => ({
   getSession: jest.fn(),
 }));
 
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import {
   buildOverlapMetaIndex,
@@ -44,72 +44,99 @@ import {
 
 describe("computeWeeklyConfirmedCallCounts", () => {
   const SUB_ID = "sub-1";
-  const SLOTS_PER_CALL = 2; // 1-hour session
 
-  function confirmedAppt(startsAtIso: string, opts?: { tz?: string }) {
-    const start = new Date(startsAtIso);
+  /** #1554 — one 1-hour call is ONE occurrence row on the subscription's wrapper. */
+  function call(startsAtIso: string, extra: Record<string, unknown> = {}) {
+    return {
+      startsAt: new Date(startsAtIso),
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      ...extra,
+    };
+  }
+  function wrapper(
+    occurrences: ReturnType<typeof call>[],
+    opts?: { tz?: string; subId?: string },
+  ) {
     return {
       appointmentType: "SUBSCRIPTION",
-      subscription: { id: SUB_ID, schedulingTimezone: opts?.tz },
-      slotsOfAppointment: [
-        { startsAt: start, isTentative: false },
-        { startsAt: new Date(start.getTime() + 30 * 60 * 1000), isTentative: false },
-      ],
+      subscription: { id: opts?.subId ?? SUB_ID, schedulingTimezone: opts?.tz },
+      occurrences,
     };
   }
 
-  it("counts one confirmed call per matching week key", () => {
+  it("counts one confirmed call per occurrence, bucketed by week key", () => {
     const appts = [
-      confirmedAppt("2025-01-06T10:00:00.000Z"), // Monday
-      confirmedAppt("2025-01-08T10:00:00.000Z"), // Wednesday, same week
+      wrapper([
+        call("2025-01-06T10:00:00.000Z"), // Monday
+        call("2025-01-08T10:00:00.000Z"), // Wednesday, same week
+        call("2025-01-13T10:00:00.000Z"), // next week
+      ]),
     ];
-    const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID, SLOTS_PER_CALL);
-    const weekKey = SlotCalculationService.weekKey(new Date("2025-01-06T10:00:00.000Z"));
-    expect(counts[weekKey]).toBe(2);
+    const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID);
+    const week1 = ScheduleCalculationService.weekKey(
+      new Date("2025-01-06T10:00:00.000Z"),
+    );
+    const week2 = ScheduleCalculationService.weekKey(
+      new Date("2025-01-13T10:00:00.000Z"),
+    );
+    expect(counts[week1]).toBe(2);
+    expect(counts[week2]).toBe(1);
   });
 
-  it("parity: buckets by the SAME key as SlotCalculationService.weekKey per appointment's own schedulingTimezone", () => {
+  it("parity: buckets by the SAME key as ScheduleCalculationService.weekKey per appointment's own schedulingTimezone", () => {
     const tz = "America/Los_Angeles";
     const startIso = "2025-01-06T10:00:00.000Z";
-    const appts = [confirmedAppt(startIso, { tz })];
-    const counts = computeWeeklyConfirmedCallCounts(appts, SUB_ID, SLOTS_PER_CALL);
-    const expectedKey = SlotCalculationService.weekKey(new Date(startIso), tz);
+    const counts = computeWeeklyConfirmedCallCounts(
+      [wrapper([call(startIso)], { tz })],
+      SUB_ID,
+    );
+    const expectedKey = ScheduleCalculationService.weekKey(
+      new Date(startIso),
+      tz,
+    );
     expect(counts[expectedKey]).toBe(1);
     expect(Object.keys(counts)).toEqual([expectedKey]);
   });
 
-  it("excludes tentative slots (mid-reschedule, not a completed call)", () => {
-    const appt = confirmedAppt("2025-01-06T10:00:00.000Z");
-    appt.slotsOfAppointment[0].isTentative = true;
-    const counts = computeWeeklyConfirmedCallCounts([appt], SUB_ID, SLOTS_PER_CALL);
-    expect(counts).toEqual({});
-  });
-
-  it("excludes appointments whose slot count doesn't match slotsPerCall", () => {
-    const appt = confirmedAppt("2025-01-06T10:00:00.000Z");
-    appt.slotsOfAppointment.pop(); // now 1 slot, slotsPerCall expects 2
-    const counts = computeWeeklyConfirmedCallCounts([appt], SUB_ID, SLOTS_PER_CALL);
-    expect(counts).toEqual({});
+  it("skips a tentative or dead row WITHOUT hiding its siblings (#1554)", () => {
+    // The old shape skipped the whole appointment when any row was tentative;
+    // on a one-wrapper subscription that emptied every week's count and let a
+    // third call into a capped week. Only the row itself drops out.
+    const counts = computeWeeklyConfirmedCallCounts(
+      [
+        wrapper([
+          call("2025-01-06T10:00:00.000Z"),
+          call("2025-01-08T10:00:00.000Z", { isTentative: true }),
+          call("2025-01-09T10:00:00.000Z", { completionStatus: "RESCHEDULED" }),
+          call("2025-01-10T10:00:00.000Z", { deletedAt: new Date() }),
+        ]),
+      ],
+      SUB_ID,
+    );
+    const weekKey = ScheduleCalculationService.weekKey(
+      new Date("2025-01-06T10:00:00.000Z"),
+    );
+    expect(counts).toEqual({ [weekKey]: 1 });
   });
 
   it("excludes other subscriptions and other appointment types", () => {
-    const otherSub = confirmedAppt("2025-01-06T10:00:00.000Z");
-    otherSub.subscription = { id: "sub-other", schedulingTimezone: undefined };
+    const otherSub = wrapper([call("2025-01-06T10:00:00.000Z")], {
+      subId: "sub-other",
+    });
     const consultation = {
       appointmentType: "CONSULTATION",
       subscription: undefined,
-      slotsOfAppointment: [{ startsAt: new Date("2025-01-06T10:00:00.000Z") }],
+      occurrences: [call("2025-01-06T10:00:00.000Z")],
     };
-    const counts = computeWeeklyConfirmedCallCounts(
-      [otherSub, consultation],
-      SUB_ID,
-      SLOTS_PER_CALL,
-    );
-    expect(counts).toEqual({});
+    expect(
+      computeWeeklyConfirmedCallCounts([otherSub, consultation], SUB_ID),
+    ).toEqual({});
   });
 
   it("returns {} for an empty appointment list", () => {
-    expect(computeWeeklyConfirmedCallCounts([], SUB_ID, SLOTS_PER_CALL)).toEqual({});
+    expect(computeWeeklyConfirmedCallCounts([], SUB_ID)).toEqual({});
   });
 });
 
@@ -120,7 +147,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a1",
       appointmentType: "CONSULTATION",
-      slotsOfAppointment: [],
+      occurrences: [],
       consultation: {
         consultationPlan: { title: "Career Coaching" },
         requestedBy: { user: { name: "Jane Doe" } },
@@ -133,7 +160,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a2",
       appointmentType: "SUBSCRIPTION",
-      slotsOfAppointment: [],
+      occurrences: [],
       subscription: {
         subscriptionPlan: { title: "Monthly Mentorship" },
         requestedBy: { user: { name: "John Smith" } },
@@ -146,7 +173,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const result = extractOverlapTitleAndParticipant({
       id: "a3",
       appointmentType: "WEBINAR",
-      slotsOfAppointment: [],
+      occurrences: [],
       webinar: { webinarPlan: { title: null } },
     });
     expect(result).toEqual({ title: "Webinar" });
@@ -156,7 +183,7 @@ describe("extractOverlapTitleAndParticipant", () => {
     const webinar = extractOverlapTitleAndParticipant({
       id: "a4",
       appointmentType: "WEBINAR",
-      slotsOfAppointment: [],
+      occurrences: [],
       webinar: { webinarPlan: { title: "Group Session" } },
     });
     expect(webinar.with).toBeUndefined();
@@ -167,8 +194,12 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
   const baseAppt = (id: string, startIso: string, endIso: string) => ({
     id,
     appointmentType: "CONSULTATION" as const,
-    slotsOfAppointment: [
-      { id: `${id}-slot`, startsAt: new Date(startIso), endsAt: new Date(endIso) },
+    occurrences: [
+      {
+        id: `${id}-slot`,
+        startsAt: new Date(startIso),
+        endsAt: new Date(endIso),
+      },
     ],
     consultation: {
       consultationPlan: { title: "Basic Consultation" },
@@ -178,7 +209,11 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
 
   it("finds an appointment overlapping an exact 30-min bucket", () => {
     const index = buildOverlapMetaIndex([
-      baseAppt("appt-1", "2025-01-06T10:00:00.000Z", "2025-01-06T10:30:00.000Z"),
+      baseAppt(
+        "appt-1",
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T10:30:00.000Z",
+      ),
     ]);
     const found = overlapMetaCandidatesFor(
       index,
@@ -195,7 +230,11 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
 
   it("spans multiple 30-min buckets for a longer appointment slot", () => {
     const index = buildOverlapMetaIndex([
-      baseAppt("appt-2", "2025-01-06T10:00:00.000Z", "2025-01-06T11:00:00.000Z"), // 2 buckets
+      baseAppt(
+        "appt-2",
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T11:00:00.000Z",
+      ), // 2 buckets
     ]);
     const secondBucket = overlapMetaCandidatesFor(
       index,
@@ -207,7 +246,11 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
 
   it("returns no candidates for a non-overlapping window", () => {
     const index = buildOverlapMetaIndex([
-      baseAppt("appt-3", "2025-01-06T10:00:00.000Z", "2025-01-06T10:30:00.000Z"),
+      baseAppt(
+        "appt-3",
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T10:30:00.000Z",
+      ),
     ]);
     const found = overlapMetaCandidatesFor(
       index,
@@ -219,7 +262,11 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
 
   it("dedupes by appointment id when a slot spans buckets already scanned", () => {
     const index = buildOverlapMetaIndex([
-      baseAppt("appt-4", "2025-01-06T10:00:00.000Z", "2025-01-06T11:00:00.000Z"),
+      baseAppt(
+        "appt-4",
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T11:00:00.000Z",
+      ),
     ]);
     // Query window spans BOTH of appt-4's buckets — must appear once, not twice.
     const found = overlapMetaCandidatesFor(
@@ -232,9 +279,17 @@ describe("buildOverlapMetaIndex + overlapMetaCandidatesFor", () => {
 
   it("keeps two different appointments in the same bucket separate", () => {
     const index = buildOverlapMetaIndex([
-      baseAppt("appt-5", "2025-01-06T10:00:00.000Z", "2025-01-06T10:30:00.000Z"),
+      baseAppt(
+        "appt-5",
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T10:30:00.000Z",
+      ),
       {
-        ...baseAppt("appt-6", "2025-01-06T10:00:00.000Z", "2025-01-06T10:30:00.000Z"),
+        ...baseAppt(
+          "appt-6",
+          "2025-01-06T10:00:00.000Z",
+          "2025-01-06T10:30:00.000Z",
+        ),
         consultation: {
           consultationPlan: { title: "Overlap Two" },
           requestedBy: { user: { name: "Bob" } },

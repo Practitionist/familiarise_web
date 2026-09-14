@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
+  CollaboratorCapError,
+  CollaboratorIneligibleError,
   getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
@@ -32,7 +34,10 @@ export async function GET(
 
     return NextResponse.json({ data: result.data });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
     console.error("Error fetching webinar collaborators:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborators" },
@@ -84,15 +89,7 @@ export async function POST(
       );
     }
 
-    const {
-      consultantProfileId,
-      role,
-      revenueSharePercentage,
-      canApprovePayment,
-      canViewAnalytics,
-      canEditEvent,
-      canSeeAttendees,
-    } = parsed.data;
+    const { consultantProfileId, role, revenueSharePercentage } = parsed.data;
 
     if (consultantProfileId === ownerProfile.id) {
       return NextResponse.json(
@@ -105,7 +102,7 @@ export async function POST(
       where: {
         webinarPlanId: planId,
         consultantProfileId,
-        status: { notIn: ["REMOVED", "DECLINED"] },
+        status: { notIn: ["REMOVED", "DECLINED", "WITHDRAWN"] },
       },
     });
     if (existingCollab) {
@@ -125,7 +122,6 @@ export async function POST(
       role,
       revenueSharePercentage,
       ownerProfile.id,
-      { canApprovePayment, canViewAnalytics, canEditEvent, canSeeAttendees },
     );
 
     if (!collab) {
@@ -140,7 +136,19 @@ export async function POST(
 
     return NextResponse.json({ data: collab });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
+    if (error instanceof CollaboratorCapError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
+    if (error instanceof CollaboratorIneligibleError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.httpStatus },
+      );
+    }
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
     console.error("Error inviting webinar collaborator:", error);
     return NextResponse.json(
       { error: "Failed to invite collaborator" },

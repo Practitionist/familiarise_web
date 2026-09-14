@@ -21,15 +21,15 @@
 
 The video implementation uses a dual-ID system to link appointments with Stream calls:
 
-**Database Layer**: `MeetingSession` model
+**Database Layer**: `Meeting` model
 
 ```prisma
-model MeetingSession {
+model Meeting {
   id                   String              @id @default(cuid())
   streamCallId         String              @unique
   platform             Platform            @default(STREAM)
   slotOfAppointmentId  String              @unique
-  slotOfAppointment    SlotOfAppointment   @relation(...)
+  appointmentOccurrence    AppointmentOccurrence   @relation(...)
   createdAt            DateTime            @default(now())
   updatedAt            DateTime            @updatedAt
 }
@@ -50,14 +50,14 @@ model MeetingSession {
 ```mermaid
 graph TB
     subgraph Database["Database Layer"]
-        Slot[SlotOfAppointment]
-        Meeting[MeetingSession]
+        Slot[AppointmentOccurrence]
+        Meeting[Meeting]
         Slot -->|1:1| Meeting
     end
 
     subgraph Server["Server Actions"]
-        Find[findDbMeetingSessionBySlot]
-        Create[createDbMeetingSession]
+        Find[findDbMeetingByOccurrence]
+        Create[createDbMeeting]
         Find --> Meeting
         Create --> Meeting
     end
@@ -102,20 +102,20 @@ The order the action works in is load-bearing, and every step of it exists
 because of a defect that reached production.
 
 1. Resolve the anchor slot. A session longer than thirty minutes is stored as
-   several consecutive `SlotOfAppointment` rows and each dashboard hands over a
+   several consecutive `AppointmentOccurrence` rows and each dashboard hands over a
    different one, so the room is keyed to the run's first row and both sides
    land in the same place (#1061).
-2. Return early if a `MeetingSession` row already exists. This is the common
+2. Return early if a `Meeting` row already exists. This is the common
    case, and nothing below is allowed to rewrite an existing room.
 3. Run every refusal that can block a join — maintenance, a tentative or
    cancelled slot, a booking whose parent row is in a terminal state — before
    anything is minted (#1077).
 4. Check entitlement, still before the Stream write. The check used to live in
-   `createDbMeetingSession`, which runs afterwards, so a refused caller left a
+   `createDbMeeting`, which runs afterwards, so a refused caller left a
    real Stream room behind that no database row pointed at.
 5. Create the call with the server client, naming the appointment's host as
    `created_by_id` and every member as `call_member`.
-6. Write the `MeetingSession` row, which re-checks both gates itself.
+6. Write the `Meeting` row, which re-checks both gates itself.
 
 Two properties are worth stating explicitly because the previous implementation
 had neither. The call's author is the consultant who delivers the session, not
@@ -164,22 +164,22 @@ every participant out of every call.
 #### Find Existing Meeting Session
 
 ```typescript
-export const findDbMeetingSessionBySlot = async (
+export const findDbMeetingByOccurrence = async (
   slotId: string,
-): Promise<MeetingSession | null> => {
+): Promise<Meeting | null> => {
   try {
-    const meetingSession = await prisma.meetingSession.findUnique({
+    const meeting = await prisma.meeting.findUnique({
       where: { slotOfAppointmentId: slotId },
     });
 
-    if (meetingSession) {
+    if (meeting) {
       console.log(
-        `Found existing DB meeting session ${meetingSession.id} for slot ${slotId}`,
+        `Found existing DB meeting session ${meeting.id} for slot ${slotId}`,
       );
     } else {
       console.log(`No existing DB session found for slot ${slotId}`);
     }
-    return meetingSession;
+    return meeting;
   } catch (error) {
     console.error(
       `Error finding DB meeting session for slot ${slotId}:`,
@@ -193,29 +193,29 @@ export const findDbMeetingSessionBySlot = async (
 #### Create New Meeting Session
 
 ```typescript
-export const createDbMeetingSession = async (
-  slot: ISlotOfAppointment,
+export const createDbMeeting = async (
+  slot: IAppointmentOccurrence,
   streamCallId: string,
-): Promise<MeetingSession> => {
+): Promise<Meeting> => {
   try {
     console.log(
       `Creating new DB session for slot ${slot.id} with Stream ID ${streamCallId}`,
     );
 
-    const meetingSession = await prisma.meetingSession.create({
+    const meeting = await prisma.meeting.create({
       data: {
         streamCallId: streamCallId,
         platform: "STREAM",
-        slotOfAppointment: {
+        appointmentOccurrence: {
           connect: { id: slot.id },
         },
       },
     });
 
     console.log(
-      `Stored new meeting session ${meetingSession.id} in DB linking slot ${slot.id}`,
+      `Stored new meeting session ${meeting.id} in DB linking slot ${slot.id}`,
     );
-    return meetingSession;
+    return meeting;
   } catch (error) {
     console.error(
       `Error creating DB meeting session for slot ${slot.id}:`,
@@ -461,19 +461,28 @@ const MeetingRoom = () => {
     }
   }, [call]);
 
-  // Show loading while joining
-  if (callingState !== CallingState.JOINED && !callEndedAt) {
-    return <Loader />;
-  }
-
-  // Show ended screen if call ended and user is not owner
-  if (callEndedAt && !isCallOwner) {
+  // An ended call is over for everyone still on this screen, host or not.
+  // The only client not shown this is the one already on its way out
+  // (`exit` is set before the end or leave request goes out). On
+  // `call.ended` the SDK leaves and empties the participant list, so a host
+  // exempted here would be left on a live-looking room with an empty stage.
+  if (callEndedAt && !exit) {
     return (
       <CallEnded
-        message="The call has been ended by the host"
+        message={
+          isHost ? "The call has ended" : "The call has been ended by the host"
+        }
         onRejoin={handleRejoinCall}
       />
     );
+  }
+
+  // Every non-JOINED state gets its own screen; see describeCallingState.
+  const advice = exit
+    ? { tone: "loading", title: "Leaving…", canRejoin: false }
+    : describeCallingState(callingState);
+  if (advice) {
+    return <ConnectionStateScreen advice={advice} />;
   }
 
   return (
@@ -705,12 +714,14 @@ rendering for them, which is a React conditional over call data. Routing through
 the server makes the grant revocable: once the button is deployed and serving
 traffic, `scripts/stream/ensure-call-type-grants.ts` can strip `end-call` from
 `call_member` without taking the host's own control down with it. That revocation
-has deliberately not been applied yet.
+has since been applied on the live type: `call_member` keeps `join-ended-call`
+and nothing else that ends or records a call (#1607).
 
-The route does not write `MeetingSession.endedAt`. The `call.ended` webhook owns
-that column, and it also sets the slot's completion status and the session's
-actual duration — writing `endedAt` first would make the handler treat the event
-as a duplicate and skip all of it.
+The route does not write `Meeting.endedAt`. The `call.ended` webhook owns
+that column, and it also sets the slot's completion status and logs the
+session's actual duration. Since #1607 the handler treats an end event as authoritative
+only when it is later than the recorded `endedAt`, so a route that wrote the
+column first would win the race and the webhook's own timestamp would be lost.
 
 ---
 
@@ -796,12 +807,12 @@ useEffect(() => {
 
 ```typescript
 // 1. Server: Create meeting session
-const slot = await prisma.slotOfAppointment.findUnique({
+const slot = await prisma.appointmentOccurrence.findUnique({
   where: { id: slotId },
 });
 
 const streamCallId = `consultation_${Date.now()}_${Math.random()}`;
-await createDbMeetingSession(slot, streamCallId);
+await createDbMeeting(slot, streamCallId);
 
 // 2. Client: Join meeting
 const MeetingFlow = () => {
@@ -847,8 +858,16 @@ useEffect(() => {
 if (isCallLoading) return <Loader />;
 if (error) return <Error message={error.message} />;
 if (!call) return <NotFound />;
-if (callEndedAt && !isCallOwner) return <CallEnded />;
+if (callEndedAt && !exit) return <CallEnded />;
 ```
+
+The ended screen is not gated on who the viewer is. A webinar has more than one
+host, the owner can hold a second tab, and the SFU ends the call itself at
+`max_duration_seconds`; in every one of those cases the SDK has already left the
+call and emptied the participant list, so a host exempted from this screen sees
+an empty stage under a live-looking control bar. The one client that is exempt
+is the one that pressed End or Leave, and it says so by setting `exit` before
+the request goes out.
 
 ### 3. Graceful Error Handling
 

@@ -2,7 +2,7 @@
  * Who may act on a booking as its consultant.
  *
  * This was written out by hand at every route that needed it, and the copies
- * drifted: the manage-timings read omitted `trialSession`, so a consultant
+ * drifted: the manage-timings read omitted `trial`, so a consultant
  * opening the timings of their own trial was refused by a check the reschedule
  * route passed. Two hand-maintained ownership predicates is one too many —
  * the failure mode is silent, and it is an authorization decision.
@@ -25,7 +25,7 @@ export interface AppointmentPlanOwnership {
   subscription?: { subscriptionPlan?: PlanOwner | null } | null;
   webinar?: { webinarPlan?: PlanWithCollaborators | null } | null;
   class?: { classPlan?: PlanWithCollaborators | null } | null;
-  trialSession?: { subscriptionPlan?: PlanOwner | null } | null;
+  trial?: { subscriptionPlan?: PlanOwner | null } | null;
 }
 
 export function resolvePlanOwnerIds(
@@ -36,7 +36,7 @@ export function resolvePlanOwnerIds(
     appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
     appointment.class?.classPlan?.consultantProfile?.id,
-    appointment.trialSession?.subscriptionPlan?.consultantProfile?.id,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.id,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (collaborator) => collaborator.consultantProfile?.id,
     ),

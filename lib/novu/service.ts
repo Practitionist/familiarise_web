@@ -7,6 +7,8 @@
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { toWire } from "./templates";
+import type { NovuWorkflowId } from "./templates/types";
 import {
   NOVU_WORKFLOWS,
   type AccountBannedPayload,
@@ -24,8 +26,10 @@ import {
   type BookingRequestInput,
   type BookingRequestPayload,
   type CollaboratorAcceptedPayload,
+  type CollaboratorDeclinedPayload,
   type CollaboratorInvitedPayload,
   type CollaboratorRemovedPayload,
+  type CollaboratorWithdrawnPayload,
   type ConsultantApplicationPayload,
   type DisputeInput,
   type DisputePayload,
@@ -58,8 +62,8 @@ import {
   type RescheduleOutcomeFields,
   type SubscriptionPayload,
   type SupportTicketPayload,
-  type TrialSessionInput,
-  type TrialSessionPayload,
+  type TrialInput,
+  type TrialPayload,
   type VerificationPayload,
 } from "./workflows";
 import {
@@ -98,6 +102,93 @@ function reportNotConfigured(workflowId: string): void {
   }
 }
 
+/**
+ * What the SDK actually told us about a failed trigger.
+ *
+ * `@novu/api` validates the RESPONSE against its own generated Zod schema and
+ * throws `ResponseValidationError` before handing back the status. Its 422
+ * schema requires an `errors` record, but the two 422s Novu documents for this
+ * endpoint — an unknown or unpublished workflow (`workflow_not_found`) and an
+ * idempotency key reused with a different body — both answer with `statusCode`
+ * and `message` only. So all that reached Sentry was a ZodError about a field
+ * of the SDK's own error envelope: the status and Novu's reason were both lost
+ * (FAMILIARISE_WEB-1B). No published `@novu/api` relaxes that field (checked
+ * through 3.19.1), so read the status off the error instead of chasing a bump.
+ *
+ * Duck-typed on `statusCode`: every `NovuError` subclass carries it, and the
+ * class itself is not re-exported from the package root, so an `instanceof`
+ * would mean deep-importing generated internals.
+ */
+function describeNovuFailure(error: unknown): {
+  statusCode?: number;
+  /** Novu's own error text. Never the whole body — it can echo payload values. */
+  novuMessage?: string;
+  /** True when the SDK rejected a body Novu had already accepted. */
+  accepted: boolean;
+} {
+  if (!error || typeof error !== "object") return { accepted: false };
+  const { statusCode, body } = error as {
+    statusCode?: unknown;
+    body?: unknown;
+  };
+  if (typeof statusCode !== "number") return { accepted: false };
+
+  let novuMessage: string | undefined;
+  if (typeof body === "string" && body.length > 0) {
+    try {
+      const parsed: unknown = JSON.parse(body);
+      const message =
+        parsed && typeof parsed === "object"
+          ? (parsed as { message?: unknown }).message
+          : undefined;
+      if (typeof message === "string") novuMessage = message.slice(0, 200);
+    } catch {
+      // Not JSON (an HTML gateway page); the status alone is the signal.
+    }
+  }
+
+  return {
+    statusCode,
+    novuMessage,
+    accepted: statusCode >= 200 && statusCode < 300,
+  };
+}
+
+/**
+ * One report shape for every `novu.trigger` failure. `accepted` means the
+ * notification is already queued at Novu and only the SDK's response parsing
+ * failed, so it is an expected outcome rather than a lost notification.
+ */
+function reportTriggerFailure(
+  error: unknown,
+  workflowId: string,
+  recipientCount: number,
+): { accepted: boolean } {
+  const { statusCode, novuMessage, accepted } = describeNovuFailure(error);
+  // Never pass the raw SDK error: `NovuError.body` is the submitted payload
+  // echoed back on validation failures, so it can carry notification PII.
+  console.error(`[Novu] Failed to trigger ${workflowId}:`, {
+    workflowId,
+    statusCode,
+    novuMessage,
+    recipientCount,
+    accepted,
+  });
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(String(error)),
+    {
+      tags: {
+        subsystem: "novu",
+        op: "trigger",
+        expected: String(accepted),
+      },
+      level: "warning",
+      extra: { workflowId, statusCode, novuMessage, recipientCount },
+    },
+  );
+  return { accepted };
+}
+
 // Deterministic transactionId so app-level retries can't double-notify: Novu
 // rejects a repeated transactionId. Derived from recipient(s) + workflow +
 // canonical payload (the payloads carry the entity ids). `dedupeKey` lets a
@@ -124,7 +215,7 @@ function deriveTransactionId(
 }
 
 async function triggerWorkflow<T extends NovuPayload>(
-  workflowId: string,
+  workflowId: NovuWorkflowId,
   subscriberId: string,
   payload: T,
   dedupeKey?: string,
@@ -136,10 +227,11 @@ async function triggerWorkflow<T extends NovuPayload>(
 
   try {
     const novu = getNovuClient();
+    const wire = toWire(workflowId, payload);
     await novu.trigger({
-      workflowId,
+      workflowId: wire.workflowId,
       to: subscriberId,
-      payload,
+      payload: wire.payload,
       transactionId: deriveTransactionId(
         workflowId,
         subscriberId,
@@ -150,11 +242,11 @@ async function triggerWorkflow<T extends NovuPayload>(
     console.log(`[Novu] Triggered ${workflowId} for ${subscriberId}`);
     return { success: true };
   } catch (error) {
-    console.error(`[Novu] Failed to trigger ${workflowId}:`, error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "novu" }, level: "warning" },
-    );
+    // A 2xx the SDK could not parse still queued the notification; reporting it
+    // as a failed send made callers retry a send Novu had already accepted.
+    if (reportTriggerFailure(error, workflowId, 1).accepted) {
+      return { success: true };
+    }
     return {
       success: false,
       error: error instanceof Error ? error : String(error),
@@ -167,7 +259,7 @@ async function triggerWorkflow<T extends NovuPayload>(
  * Uses a single API call with array `to` field (max 100 per call).
  */
 async function triggerForMultiple<T extends NovuPayload>(
-  workflowId: string,
+  workflowId: NovuWorkflowId,
   userIds: string[],
   payload: T,
   dedupeKey?: string,
@@ -191,10 +283,11 @@ async function triggerForMultiple<T extends NovuPayload>(
     const batch = userIds.slice(i, i + BATCH_SIZE);
     try {
       const novu = getNovuClient();
+      const wire = toWire(workflowId, payload);
       await novu.trigger({
-        workflowId,
+        workflowId: wire.workflowId,
         to: batch,
-        payload,
+        payload: wire.payload,
         transactionId: deriveTransactionId(
           workflowId,
           batch,
@@ -207,7 +300,10 @@ async function triggerForMultiple<T extends NovuPayload>(
       );
       results.push(...batch.map(() => ({ success: true }) as TriggerResult));
     } catch (error) {
-      console.error(`[Novu] Failed to trigger ${workflowId} for batch:`, error);
+      if (reportTriggerFailure(error, workflowId, batch.length).accepted) {
+        results.push(...batch.map(() => ({ success: true }) as TriggerResult));
+        continue;
+      }
       const err: TriggerResult = {
         success: false,
         error: error instanceof Error ? error : String(error),
@@ -224,7 +320,7 @@ async function triggerForMultiple<T extends NovuPayload>(
  * Uses Novu's triggerBroadcast API — no need to fetch user IDs.
  */
 async function triggerBroadcastWorkflow<T extends NovuPayload>(
-  workflowId: string,
+  workflowId: NovuWorkflowId,
   payload: T,
 ): Promise<TriggerResult> {
   if (!isNovuConfigured()) {
@@ -234,9 +330,10 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
 
   try {
     const novu = getNovuClient();
+    const wire = toWire(workflowId, payload);
     await novu.triggerBroadcast({
-      name: workflowId,
-      payload,
+      name: wire.workflowId,
+      payload: wire.payload,
     });
     console.log(`[Novu] Broadcast triggered: ${workflowId}`);
     return { success: true };
@@ -267,7 +364,7 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
  * why that read is bounded and never throws.
  */
 async function triggerForMultipleZoned(
-  workflowId: string,
+  workflowId: NovuWorkflowId,
   userIds: string[],
   build: (timezone: string) => NovuPayload,
   dedupeKey?: string,
@@ -301,7 +398,7 @@ async function triggerForMultipleZoned(
 
 /** Single-recipient sibling of {@link triggerForMultipleZoned}. */
 async function triggerWorkflowZoned(
-  workflowId: string,
+  workflowId: NovuWorkflowId,
   subscriberId: string,
   build: (timezone: string) => NovuPayload,
   dedupeKey?: string,
@@ -401,10 +498,7 @@ function rescheduledWire(
   };
 }
 
-function trialWire(
-  input: TrialSessionInput,
-  timezone: string,
-): TrialSessionPayload {
+function trialWire(input: TrialInput, timezone: string): TrialPayload {
   const { dateTime: rawDateTime, ...rest } = input;
   const dateTime = formatNotificationDateTime(rawDateTime, timezone);
   return {
@@ -621,18 +715,19 @@ export async function notifySupportTicketUpdate(
 }
 
 /**
- * #705 — the ops side of a ticket update, fanned out to several staff.
- * A user replying into an escalated thread used to page nobody at all, so the
- * only way staff learned of it was reopening the inbox.
+ * #705 — the ops side of a ticket: the customer replied or reopened, fanned
+ * out to the assignee or the whole queue. Its own workflow, not the owner's
+ * SUPPORT_TICKET_UPDATE, so staff can digest it later without touching the
+ * customer's bell.
  */
-export async function notifySupportTicketUpdateForStaff(
-  userIds: string[],
+export async function notifySupportTicketActivity(
+  staffUserIds: string[],
   payload: SupportTicketPayload,
   dedupeKey?: string,
 ) {
   return triggerForMultiple(
-    NOVU_WORKFLOWS.SUPPORT_TICKET_UPDATE,
-    userIds,
+    NOVU_WORKFLOWS.SUPPORT_TICKET_ACTIVITY,
+    staffUserIds,
     payload,
     dedupeKey,
   );
@@ -679,9 +774,9 @@ export async function notifyNewReview(
 // Trial Session Notifications
 // ============================================================================
 
-export async function notifyTrialSessionRequested(
+export async function notifyTrialRequested(
   consultantUserId: string,
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerWorkflowZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_REQUESTED,
@@ -690,9 +785,9 @@ export async function notifyTrialSessionRequested(
   );
 }
 
-export async function notifyTrialSessionScheduled(
+export async function notifyTrialScheduled(
   consulteeUserId: string,
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerWorkflowZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_SCHEDULED,
@@ -701,9 +796,9 @@ export async function notifyTrialSessionScheduled(
   );
 }
 
-export async function notifyTrialSessionCompleted(
+export async function notifyTrialCompleted(
   userIds: string[],
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_COMPLETED,
@@ -712,9 +807,9 @@ export async function notifyTrialSessionCompleted(
   );
 }
 
-export async function notifyTrialSessionCancelled(
+export async function notifyTrialCancelled(
   userIds: string[],
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_CANCELLED,
@@ -1061,6 +1156,18 @@ export async function notifyCollaboratorAccepted(
   );
 }
 
+/** #1580 C-P1-5 — the host learns that the invitee declined. */
+export async function notifyCollaboratorDeclined(
+  ownerUserId: string,
+  payload: CollaboratorDeclinedPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.COLLABORATOR_DECLINED,
+    ownerUserId,
+    payload,
+  );
+}
+
 export async function notifyCollaboratorRemoved(
   consultantUserId: string,
   payload: CollaboratorRemovedPayload,
@@ -1068,6 +1175,18 @@ export async function notifyCollaboratorRemoved(
   return triggerWorkflow(
     NOVU_WORKFLOWS.COLLABORATOR_REMOVED,
     consultantUserId,
+    payload,
+  );
+}
+
+/** #1580 C-P1-7 — the host learns that a collaborator withdrew their own row. */
+export async function notifyCollaboratorWithdrawn(
+  ownerUserId: string,
+  payload: CollaboratorWithdrawnPayload,
+) {
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.COLLABORATOR_WITHDRAWN,
+    ownerUserId,
     payload,
   );
 }

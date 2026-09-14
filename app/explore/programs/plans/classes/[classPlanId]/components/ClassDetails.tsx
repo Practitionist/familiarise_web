@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import {
-  buildSessionsFromAppointments,
+  buildSessionsFromAppointment,
   groupSessionsByWeek,
 } from "@/app/explore/programs/plans/schedule-utils";
 import { ClientClassRegistration } from "./ClientClassRegistration";
@@ -149,8 +149,8 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 {plan.classes && plan.classes.length > 0 ? (
                   <div className="space-y-6">
                     {plan.classes.map((classInstance, classIndex) => {
-                      const sessions = buildSessionsFromAppointments(
-                        classInstance.appointments ?? [],
+                      const sessions = buildSessionsFromAppointment(
+                        classInstance.appointment,
                       );
                       const weeks = groupSessionsByWeek(sessions);
 

@@ -92,16 +92,19 @@ export type BookingRef = {
   webinarId?: string | null;
 };
 
-/** Every Appointment row belonging to the same booking as `ref`. */
+/**
+ * The ONE Appointment row of the booking `ref` names. #1554 — a purchase is a
+ * single wrapper and every event FK on it is unique, so an id and a parent
+ * link identify the same row; the id wins when the caller already has it.
+ */
 export function bookingAppointmentFilter(
   ref: BookingRef,
 ): Prisma.AppointmentWhereInput {
+  if (ref.appointmentId) return { id: ref.appointmentId };
   if (ref.subscriptionId) return { subscriptionId: ref.subscriptionId };
   if (ref.classId) return { classId: ref.classId };
   if (ref.consultationId) return { consultationId: ref.consultationId };
   if (ref.webinarId) return { webinarId: ref.webinarId };
-  // Trials and anything unlinked are genuinely single-appointment.
-  if (ref.appointmentId) return { id: ref.appointmentId };
   throw new Error("bookingAppointmentFilter: no booking identifier given");
 }
 
@@ -114,10 +117,9 @@ export async function resolveBookingRefundContext(
    */
   payerUserId?: string,
 ): Promise<BookingRefundContext> {
-  const rows = await prisma.appointment.findMany({
-    // Deterministic: the booking's oldest appointment is the one checkout
-    // created, so it is the row that carries the payment and the frozen terms.
-    orderBy: { createdAt: "asc" },
+  const row = await prisma.appointment.findFirst({
+    // #1554 — one wrapper per booking: this is the row checkout created, so
+    // it carries the payment and the frozen terms.
     where: { ...bookingAppointmentFilter(ref), deletedAt: null },
     select: {
       id: true,
@@ -142,31 +144,29 @@ export async function resolveBookingRefundContext(
         },
         orderBy: { createdAt: "asc" },
       },
-      slotsOfAppointment: {
-        // Scoped to the payer for the same reason the payment lookup is: on a
-        // class every attendee's seat hangs off the same appointment, so an
-        // unscoped count would tier ONE buyer's refund off OTHER attendees'
-        // sessions. A 1:1 booking has no `user` rows to filter on beyond its
-        // own, so the constraint is inert there.
-        where: {
-          deletedAt: null,
-          ...(payerUserId ? { user: { some: { id: payerUserId } } } : {}),
-        },
+      occurrences: {
+        // #1554 — every attendee of a class shares the appointment's
+        // occurrences, so there is no per-payer subset to scope to; the payer
+        // filter lives on the payment lookup above.
+        where: { deletedAt: null },
         select: { startsAt: true, completionStatus: true },
       },
     },
   });
 
-  const payments = rows.flatMap((r) => r.payment);
+  const payments = row?.payment ?? [];
   const payment = payments[0];
-  // More than one SUCCEEDED payment on a booking should be unreachable:
+  // More than one SUCCEEDED payment for one PAYER should be unreachable:
   // `@@unique([userId, appointmentId])` means one row per payer per
   // appointment, and the CHARGE_MEMBER overage side-charge is deliberately
   // created with `appointmentId: null` to avoid exactly that clash
   // (overage-settlement.ts). Which is precisely why this must not stay silent
   // — if it ever fires, the model has changed under us and a buyer is being
-  // refunded less than they paid.
-  if (payments.length > 1) {
+  // refunded less than they paid. #1554 — a class or webinar wrapper carries
+  // one Payment per attendee, so the alarm is only meaningful once the lookup
+  // is scoped to a payer (or the booking has exactly one: the 1:1 types).
+  const singlePayer = !!payerUserId || (!ref.classId && !ref.webinarId);
+  if (singlePayer && payments.length > 1) {
     void recordSystemError({
       organizationId: null,
       category: "PAYMENT",
@@ -188,19 +188,13 @@ export async function resolveBookingRefundContext(
         ),
       }
     : null;
-  const payer = rows.find((r) => r.payment.length > 0);
 
-  // The terms that bind are the ones stamped on the row the buyer actually paid for.
-  // The "any session row" fallback survives only for bookings sold before #1499 wrote
-  // the FK onto the subscription placeholder; a booking with neither reads as the
-  // platform ladder, which is what it was sold under.
-  const policy = termsFromPolicyRow(
-    payer?.cancellationPolicy ??
-      rows.find((r) => r.cancellationPolicy !== null)?.cancellationPolicy ??
-      null,
-  );
+  // The terms that bind are the ones stamped on the row the buyer paid for; a
+  // booking with none reads as the platform ladder, which is what it was sold
+  // under.
+  const policy = termsFromPolicyRow(row?.cancellationPolicy ?? null);
 
-  const slots = rows.flatMap((r) => r.slotsOfAppointment);
+  const slots = row?.occurrences ?? [];
   const liveStarts = slots
     .filter((s) =>
       (LIVE_SLOT_STATUSES as readonly string[]).includes(s.completionStatus),

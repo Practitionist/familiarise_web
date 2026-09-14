@@ -1,6 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { recordParticipants } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  recordParticipants,
+} from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
@@ -10,7 +13,7 @@ import {
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
 import {
-  TrialSessionStatus,
+  TrialStatus,
   AppointmentsType,
   PaymentGateway,
   Prisma,
@@ -30,24 +33,24 @@ import {
   ApprovalLock,
 } from "@/utils/appointmentlock";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
-import { transitionTrialSession } from "@/lib/booking/transitions";
+import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
-  notifyTrialSessionScheduled,
-  notifyTrialSessionCompleted,
-  notifyTrialSessionCancelled,
+  notifyTrialScheduled,
+  notifyTrialCompleted,
+  notifyTrialCancelled,
 } from "@/lib/novu";
 import { UpdateTrialSchema } from "@/schemas/trials";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import {
   buildDeadHoldFilter,
   buildOccupiedAppointmentFilter,
-} from "@/utils/slotAllocation/occupancyPolicy";
+} from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   findUncoveredAtom,
   loadPublishedCoverage,
   windowAtoms,
-} from "@/utils/slotAllocation/availabilityCoverage";
+} from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { reportSentryError } from "@/lib/observability/report";
 
@@ -67,7 +70,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const { trialId } = await context.params;
 
   try {
-    const trialSession = await prisma.trialSession.findUnique({
+    const trial = await prisma.trial.findUnique({
       where: {
         id: trialId,
         ...(isPrivileged(session.user.role)
@@ -114,9 +117,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
         subscriptionPlan: true,
         appointment: {
           include: {
-            slotsOfAppointment: {
+            occurrences: {
               include: {
-                meetingSession: true,
+                meeting: true,
               },
             },
           },
@@ -125,14 +128,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
     });
 
-    if (!trialSession) {
+    if (!trial) {
       return NextResponse.json(
         { error: "Trial session not found" },
         { status: 404 },
       );
     }
 
-    return NextResponse.json({ data: trialSession });
+    return NextResponse.json({ data: trial });
   } catch (error) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
@@ -159,7 +162,7 @@ class TrialSlotUnavailableError extends Error {
 // global client, outside the transaction that acts on it. Two accepts that both
 // saw PENDING serialise on the consultee lock but pick DIFFERENT slots, so
 // neither trips the availability check: the second created a second appointment
-// and overwrote TrialSession.appointmentId, stranding the first one's slot hold
+// and overwrote Trial.appointmentId, stranding the first one's slot hold
 // with nothing pointing at it. Thrown when the CAS claim matches no row.
 class TrialStateChangedError extends Error {
   constructor() {
@@ -196,7 +199,7 @@ async function validateSlotAvailability(
   // Use canonical occupancy policy for consistent conflict detection
   const occupiedFilter = buildOccupiedAppointmentFilter(consultantProfileId);
 
-  const overlapping = await db.slotOfAppointment.findFirst({
+  const overlapping = await db.appointmentOccurrence.findFirst({
     where: {
       appointment: {
         AND: [
@@ -215,11 +218,13 @@ async function validateSlotAvailability(
   // #1093 §1 follow-through — the consultee's own calendar. The GiST
   // constraint is consultant-keyed, so a consultee double-booked across two
   // consultants is only ever caught here (mirrors validateNoConflicts).
-  const consulteeConflict = await db.slotOfAppointment.findFirst({
+  const consulteeConflict = await db.appointmentOccurrence.findFirst({
     where: {
-      user: { some: { id: consulteeUserId } },
       completionStatus: "SCHEDULED",
-      appointment: { deletedAt: null },
+      appointment: {
+        deletedAt: null,
+        participants: { some: liveParticipant(consulteeUserId) },
+      },
       startsAt: { lt: endTime },
       endsAt: { gt: startTime },
     },
@@ -255,7 +260,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       parseResult.data;
 
     // Fetch the existing trial session
-    const existingTrial = await prisma.trialSession.findUnique({
+    const existingTrial = await prisma.trial.findUnique({
       where: {
         id: trialId,
         ...(isPrivileged(session.user.role)
@@ -296,7 +301,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       );
     }
 
-    const updateData: Prisma.TrialSessionUpdateInput = {};
+    const updateData: Prisma.TrialUpdateInput = {};
 
     // #1319 — status-dependent activity logs and notifications run only after
 
@@ -325,18 +330,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       //   paid trial   PENDING → AWAITING_PAYMENT → SCHEDULED → …
       // REJECTED = consultant declines, CANCELLED = consultee cancels or the
       // pay-link lapses past paymentDueAt.
-      const validTransitions: Record<TrialSessionStatus, TrialSessionStatus[]> =
-        {
-          PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
-          // Only the webhook moves this to SCHEDULED (on payment capture); the
-          // expiry job and the consultee move it to CANCELLED.
-          AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
-          SCHEDULED: ["COMPLETED", "CANCELLED"],
-          COMPLETED: ["CONVERTED"],
-          CONVERTED: [],
-          CANCELLED: [],
-          REJECTED: [],
-        };
+      const validTransitions: Record<TrialStatus, TrialStatus[]> = {
+        PENDING: ["AWAITING_PAYMENT", "SCHEDULED", "CANCELLED", "REJECTED"],
+        // Only the webhook moves this to SCHEDULED (on payment capture); the
+        // expiry job and the consultee move it to CANCELLED.
+        AWAITING_PAYMENT: ["SCHEDULED", "CANCELLED"],
+        SCHEDULED: ["COMPLETED", "CANCELLED"],
+        COMPLETED: ["CONVERTED"],
+        CONVERTED: [],
+        CANCELLED: [],
+        REJECTED: [],
+      };
 
       const currentStatus = existingTrial.status;
       if (!validTransitions[currentStatus]?.includes(status)) {
@@ -362,7 +366,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       // Consultee can only cancel their trials
       if (isTrialConsultee && !isTrialConsultant && !isPrivilegedUser) {
-        if (status !== TrialSessionStatus.CANCELLED) {
+        if (status !== TrialStatus.CANCELLED) {
           return NextResponse.json(
             { error: "Consultees can only cancel trial sessions" },
             { status: 403 },
@@ -372,7 +376,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       // CONVERTED requires consultant or privileged
       if (
-        status === TrialSessionStatus.CONVERTED &&
+        status === TrialStatus.CONVERTED &&
         !isTrialConsultant &&
         !isPrivilegedUser
       ) {
@@ -392,12 +396,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         existingTrial.subscriptionPlan.trialPriceInPaise ?? 0,
       );
       const requiresPayment =
-        status === TrialSessionStatus.SCHEDULED &&
-        existingTrial.status === TrialSessionStatus.PENDING &&
+        status === TrialStatus.SCHEDULED &&
+        existingTrial.status === TrialStatus.PENDING &&
         trialPriceInPaise > 0;
 
       // Handle scheduling with distributed locking
-      if (status === TrialSessionStatus.SCHEDULED) {
+      if (status === TrialStatus.SCHEDULED) {
         // Support both new slotData and legacy scheduledTime
         if (!slotData && !scheduledTime) {
           return NextResponse.json(
@@ -499,27 +503,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             const appointment = await tx.appointment.create({
               data: {
                 appointmentType: AppointmentsType.TRIAL,
-                slotsOfAppointment: {
+                occurrences: {
                   create: {
+                    ordinal: 1,
                     startsAt: startTime,
                     endsAt: endTime,
                     isTentative: false,
                     // #1093 §1 — without this the slot falls outside the
-                    // slot_no_confirmed_overlap exclusion constraint's WHERE
+                    // occurrence_no_confirmed_overlap exclusion constraint's WHERE
                     // clause and the DB accepts a trial on top of a confirmed
                     // consultation for the same consultant.
                     consultantProfileId: existingTrial.consultantProfileId,
-                    user: {
-                      connect: [
-                        { id: existingTrial.consulteeProfile.user.id },
-                        { id: existingTrial.consultantProfile.user.id },
-                      ],
-                    },
                   },
                 },
               },
               include: {
-                slotsOfAppointment: true,
+                occurrences: true,
               },
             });
             // #1319 A9 — a paid trial holds its seat until capture confirms it.
@@ -548,16 +547,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             // status this request read outside the transaction. Two accepts
             // that both saw PENDING pick DIFFERENT slots, so neither trips the
             // availability check above; without this the loser overwrote
-            // TrialSession.appointmentId and stranded the winner's slot hold.
+            // Trial.appointmentId and stranded the winner's slot hold.
             // Zero rows rolls the whole attempt back, appointment included.
             // Never wider than TRIAL_ALLOWED_FROM: the validTransitions gate
             // above only lets PENDING/AWAITING_PAYMENT reach this arm.
             try {
-              await transitionTrialSession(tx, {
+              await transitionTrial(tx, {
                 where: { id: trialId },
                 to: requiresPayment
-                  ? TrialSessionStatus.AWAITING_PAYMENT
-                  : TrialSessionStatus.SCHEDULED,
+                  ? TrialStatus.AWAITING_PAYMENT
+                  : TrialStatus.SCHEDULED,
                 fromIn: [existingTrial.status],
                 data: {
                   appointmentId: appointment.id,
@@ -574,7 +573,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               }
               throw error;
             }
-            const updatedTrial = await tx.trialSession.findUniqueOrThrow({
+            const updatedTrial = await tx.trial.findUniqueOrThrow({
               where: { id: trialId },
               include: {
                 consulteeProfile: {
@@ -605,9 +604,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 subscriptionPlan: true,
                 appointment: {
                   include: {
-                    slotsOfAppointment: {
+                    occurrences: {
                       include: {
-                        meetingSession: true,
+                        meeting: true,
                       },
                     },
                   },
@@ -656,7 +655,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 endsAt: endTime.toISOString(),
               });
               paymentUrl = intent.checkoutUrl;
-              await prisma.trialSession.update({
+              await prisma.trial.update({
                 where: { id: trialId },
                 data: { pendingPaymentUrl: intent.checkoutUrl },
               });
@@ -672,20 +671,17 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // Notify the consultee — "pay to confirm" for a paid trial, plain
           // confirmation for a free one. Sending "your trial is scheduled" for
           // something still awaiting payment would be a lie.
-          void notifyTrialSessionScheduled(
-            existingTrial.consulteeProfile.user.id,
-            {
-              consultantName:
-                existingTrial.consultantProfile.user.name || "Consultant",
-              consulteeName: existingTrial.consulteeProfile.user.name || "User",
-              planTitle: existingTrial.subscriptionPlan.title,
-              dateTime: startTime.toISOString(),
-              status: requiresPayment
-                ? TrialSessionStatus.AWAITING_PAYMENT
-                : TrialSessionStatus.SCHEDULED,
-              dashboardUrl: paymentUrl ?? "/dashboard",
-            },
-          );
+          void notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
+            consultantName:
+              existingTrial.consultantProfile.user.name || "Consultant",
+            consulteeName: existingTrial.consulteeProfile.user.name || "User",
+            planTitle: existingTrial.subscriptionPlan.title,
+            dateTime: startTime.toISOString(),
+            status: requiresPayment
+              ? TrialStatus.AWAITING_PAYMENT
+              : TrialStatus.SCHEDULED,
+            dashboardUrl: paymentUrl ?? "/dashboard",
+          });
 
           return NextResponse.json({ data: result });
         } catch (error) {
@@ -733,7 +729,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
 
       // Handle completion
-      if (status === TrialSessionStatus.COMPLETED) {
+      if (status === TrialStatus.COMPLETED) {
         updateData.completedAt = new Date();
 
         // Log activity
@@ -752,7 +748,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
         // Notify both parties that the trial is completed
         afterCommit.push(() =>
-          notifyTrialSessionCompleted(
+          notifyTrialCompleted(
             [
               existingTrial.consultantProfile.user.id,
               existingTrial.consulteeProfile.user.id,
@@ -762,7 +758,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 existingTrial.consultantProfile.user.name || "Consultant",
               consulteeName: existingTrial.consulteeProfile.user.name || "User",
               planTitle: existingTrial.subscriptionPlan.title,
-              status: TrialSessionStatus.COMPLETED,
+              status: TrialStatus.COMPLETED,
               dashboardUrl: "/dashboard",
             },
           ),
@@ -770,12 +766,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
 
       // Handle cancellation / rejection
-      if (
-        status === TrialSessionStatus.CANCELLED ||
-        status === TrialSessionStatus.REJECTED
-      ) {
+      if (status === TrialStatus.CANCELLED || status === TrialStatus.REJECTED) {
         afterCommit.push(() =>
-          notifyTrialSessionCancelled(
+          notifyTrialCancelled(
             [
               existingTrial.consultantProfile.user.id,
               existingTrial.consulteeProfile.user.id,
@@ -808,12 +801,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // consultee is the only non-privileged actor the guards above let
           // through, so anyone else is cancelling on the consultant's side.
           isConsultantInitiated:
-            status === TrialSessionStatus.REJECTED || !isTrialConsultee,
+            status === TrialStatus.REJECTED || !isTrialConsultee,
         };
       }
 
       // Handle trial conversion — requires a linked subscription
-      if (status === TrialSessionStatus.CONVERTED) {
+      if (status === TrialStatus.CONVERTED) {
         if (!subscriptionId) {
           return NextResponse.json(
             {
@@ -892,12 +885,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const { status: nextStatus, ...restUpdate } = updateData;
     const updatedTrial = await prisma.$transaction(async (tx) => {
       if (nextStatus !== undefined) {
-        await transitionTrialSession(tx, {
+        await transitionTrial(tx, {
           where: { id: trialId },
-          to: nextStatus as TrialSessionStatus,
+          to: nextStatus as TrialStatus,
         });
       }
-      return tx.trialSession.update({
+      return tx.trial.update({
         where: { id: trialId },
         data: restUpdate,
         include: {
@@ -929,9 +922,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           subscriptionPlan: true,
           appointment: {
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 include: {
-                  meetingSession: true,
+                  meeting: true,
                 },
               },
             },
@@ -1007,7 +1000,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const { trialId } = await context.params;
 
   try {
-    const existingTrial = await prisma.trialSession.findUnique({
+    const existingTrial = await prisma.trial.findUnique({
       where: {
         id: trialId,
         ...(isPrivileged(session.user.role)
@@ -1044,9 +1037,9 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     // Only allow cancellation of PENDING or SCHEDULED trials
-    const cancellableStatuses: TrialSessionStatus[] = [
-      TrialSessionStatus.PENDING,
-      TrialSessionStatus.SCHEDULED,
+    const cancellableStatuses: TrialStatus[] = [
+      TrialStatus.PENDING,
+      TrialStatus.SCHEDULED,
     ];
 
     if (!cancellableStatuses.includes(existingTrial.status)) {
@@ -1059,12 +1052,12 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     // #1009 — same soft-cancel as the PATCH path. CANCELLED drops the trial out
     // of the occupancy filter, which is what frees the slot; the appointment is
     // tombstoned rather than deleted so the payment it carries survives.
-    await transitionTrialSession(prisma, {
+    await transitionTrial(prisma, {
       where: { id: trialId },
-      to: TrialSessionStatus.CANCELLED,
+      to: TrialStatus.CANCELLED,
       fromIn: cancellableStatuses,
     });
-    const updatedTrial = await prisma.trialSession.findUniqueOrThrow({
+    const updatedTrial = await prisma.trial.findUniqueOrThrow({
       where: { id: trialId },
     });
 
@@ -1084,7 +1077,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
 
     // FIX #554: Send cancellation notification (DELETE path was missing this)
-    void notifyTrialSessionCancelled(
+    void notifyTrialCancelled(
       [
         existingTrial.consultantProfile.user.id,
         existingTrial.consulteeProfile.user.id,
@@ -1094,7 +1087,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
           existingTrial.consultantProfile.user.name || "Consultant",
         consulteeName: existingTrial.consulteeProfile.user.name || "User",
         planTitle: existingTrial.subscriptionPlan.title,
-        status: TrialSessionStatus.CANCELLED,
+        status: TrialStatus.CANCELLED,
         dashboardUrl: "/dashboard",
       },
     );

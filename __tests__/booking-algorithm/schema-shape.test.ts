@@ -42,22 +42,22 @@ describe("hygiene", () => {
     "Subscription",
     "Webinar",
     "Class",
-    "TrialSession",
+    "Trial",
     "RescheduleRequest",
-    "RescheduleProposedSlot",
-    "SlotOfAvailabilityWeekly",
-    "SlotOfAvailabilityCustom",
+    "RescheduleProposedTime",
+    "AvailabilityWindowWeekly",
+    "AvailabilityWindowCustom",
     "BookingUtilization",
     "Appointment",
-    "SlotOfAppointment",
+    "AppointmentOccurrence",
     "Payment",
     "Refund",
   ])("%s carries a deletedAt tombstone", (name) => {
     expect(model(name)).toMatch(/deletedAt\s+DateTime\?\s+@db\.Timestamptz/);
   });
 
-  it("TrialSession, Webinar and BookingUtilization have no naive DateTime column", () => {
-    for (const name of ["TrialSession", "Webinar", "BookingUtilization"]) {
+  it("Trial, Webinar and BookingUtilization have no naive DateTime column", () => {
+    for (const name of ["Trial", "Webinar", "BookingUtilization"]) {
       const naive = model(name)
         .split("\n")
         .filter(
@@ -106,19 +106,14 @@ describe("push chain", () => {
     expect(pkg.scripts["db:push:schema"]).toContain("db:sidecars");
   });
 
-  it("the STAGED block is the last thing in check-constraints.sql", () => {
+  it("the reset applied the once-staged block, so nothing is left commented", () => {
+    // #1554 — the STAGED banner and its commented DDL are gone; the reset
+    // gave them a clean schema and they are live objects the guard asserts.
     const sql = fs.readFileSync(
       path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
       "utf8",
     );
-    const staged = sql.indexOf("STAGED FOR THE PRE-MVP RESET");
-    expect(staged).toBeGreaterThan(-1);
-    // From the start of the banner line, only comment lines may follow.
-    const lineStart = sql.lastIndexOf("\n", staged) + 1;
-    const after = sql
-      .slice(lineStart)
-      .split("\n")
-      .filter((l) => l.trim() && !l.trimStart().startsWith("--"));
-    expect(after).toEqual([]);
+    expect(sql).not.toContain("STAGED FOR THE PRE-MVP RESET");
+    expect(sql).toContain("APPLIED AT THE PRE-MVP RESET");
   });
 });

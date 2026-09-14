@@ -16,7 +16,7 @@ export async function GET() {
       );
     }
 
-    const feedbacks = await prisma.feedback.findMany({
+    const feedbacks = await prisma.platformFeedback.findMany({
       where: {
         userId: session.user.id,
       },
@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
     }
     const validatedData = result.data;
 
-    const feedback = await prisma.feedback.create({
+    const feedback = await prisma.platformFeedback.create({
       data: {
         title: validatedData.title,
         description: validatedData.description,

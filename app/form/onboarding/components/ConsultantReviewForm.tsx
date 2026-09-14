@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { formatDate, formatTime } from "@/utils/dateTimeUtils";
-import { minutesToTimeString } from "@/utils/slotAllocation/slotTimeUtils";
+import { minutesToTimeString } from "@/utils/scheduling-engine/slotTimeUtils";
 import { OnboardingFormData } from "@/utils/onboarding";
 import React, { useState } from "react";
 import {

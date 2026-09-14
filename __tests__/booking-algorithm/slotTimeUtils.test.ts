@@ -18,7 +18,7 @@ import {
   slotsOverlap,
   isMinuteWithinWeeklySlot,
   getTimezoneOffsetMinutes,
-} from "@/utils/slotAllocation/slotTimeUtils";
+} from "@/utils/scheduling-engine/slotTimeUtils";
 import { DayOfWeek } from "@prisma/client";
 
 // ─── minutesToTimeString / timeStringToMinutes ──────────────────────────────

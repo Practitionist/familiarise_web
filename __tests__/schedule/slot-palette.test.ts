@@ -17,7 +17,7 @@ import {
   resolveSlotStatusKey,
   slotCellClassName,
   type SlotStatusKey,
-} from "@/lib/scheduling/slot-status-tokens";
+} from "@/lib/scheduling/interval-status-tokens";
 
 const KEYS = Object.keys(SLOT_STATUS_TOKENS) as SlotStatusKey[];
 

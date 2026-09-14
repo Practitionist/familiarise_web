@@ -29,7 +29,7 @@ jest.mock("../../hooks/scheduling/useCalendarData", () => ({
   useCalendarData: () => calendarData,
 }));
 
-jest.mock("../../hooks/scheduling/useSlotAllocation", () => ({
+jest.mock("../../hooks/scheduling/useScheduling", () => ({
   useEventSlotAllocation: () => allocation,
 }));
 
@@ -39,8 +39,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { UnifiedCalendar } from "../../components/scheduling/UnifiedCalendar";
 import {
   FOCUS_LEAD_ROWS,
-  type SlotPickerFocus,
-} from "../../lib/scheduling/slot-picker-focus";
+  type TimePickerFocus,
+} from "../../lib/scheduling/time-picker-focus";
 
 /** Every row is one of these tall; jsdom has no layout, so we supply it. */
 const ROW_HEIGHT = 32;
@@ -139,7 +139,7 @@ function weekGrid(host: HTMLElement): HTMLElement {
 // Local noon so the row is read in the same zone the grid draws in, whatever
 // zone the test happens to run in.
 const target = new Date(2026, 7, 1, 10, 30, 0, 0);
-const focus: SlotPickerFocus = { at: target, precision: "session" };
+const focus: TimePickerFocus = { at: target, precision: "session" };
 
 describe("UnifiedCalendar focus effect", () => {
   let host: HTMLElement;

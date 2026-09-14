@@ -1,6 +1,6 @@
 # Edge Cases, Special Flows & Issues
 
-> **Superseded (2026-09-03):** this document dates to November 2025. Its race-condition protection ("three-layer protection system") and capacity checks predate the interval-atom `slot-booking:` locks in `utils/appointmentlock.ts`, the CAS transitions in `lib/booking/transitions.ts`, and the union-coverage validation in `utils/slotAllocation/availabilityCoverage.ts`. For current concurrency and edge-case behavior, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) (ADR B6, B7, B11), [`docs/booking/15-checklist.md`](../../booking/15-checklist.md), and the wave-5 entries in [`docs/booking/05-troubleshooting-and-changelog.md`](../../booking/05-troubleshooting-and-changelog.md). The rest of this file is kept for historical context only; do not cite its file:line references as current.
+> **Superseded (2026-09-03):** this document dates to November 2025. Its race-condition protection ("three-layer protection system") and capacity checks predate the interval-atom `slot-booking:` locks in `utils/appointmentlock.ts`, the CAS transitions in `lib/booking/transitions.ts`, and the union-coverage validation in `utils/scheduling-engine/availabilityCoverage.ts`. For current concurrency and edge-case behavior, read [`docs/booking/00-architecture-decisions.md`](../../booking/00-architecture-decisions.md) (ADR B6, B7, B11), [`docs/booking/15-checklist.md`](../../booking/15-checklist.md), and the wave-5 entries in [`docs/booking/05-troubleshooting-and-changelog.md`](../../booking/05-troubleshooting-and-changelog.md). The rest of this file is kept for historical context only; do not cite its file:line references as current.
 
 ---
 
@@ -50,7 +50,7 @@ User A                      User B                      Database
 // Three-layer protection system
 
 // Layer 1: No confirmed overlap
-const confirmedOverlap = await tx.slotOfAppointment.findFirst({
+const confirmedOverlap = await tx.appointmentOccurrence.findFirst({
   where: {
     appointment: {
       consultation: { consultationPlanId: planId },
@@ -74,7 +74,7 @@ if (confirmedOverlap) {
 }
 
 // Layer 2: No duplicate pending for same user
-const userPendingCount = await tx.slotOfAppointment.count({
+const userPendingCount = await tx.appointmentOccurrence.count({
   where: {
     appointment: {
       consultation: { consultationPlanId: planId },
@@ -94,7 +94,7 @@ if (userPendingCount > 0) {
 }
 
 // Layer 3: Rate limiting (max 3 concurrent attempts)
-const allPendingCount = await tx.slotOfAppointment.count({
+const allPendingCount = await tx.appointmentOccurrence.count({
   where: {
     appointment: {
       consultation: { consultationPlanId: planId },
@@ -122,11 +122,11 @@ if (allPendingCount >= 3) {
 
 **DB backstop — `slot_no_confirmed_overlap` exclusion constraint (#440):**
 
-Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `SlotOfAppointment` prevents two _confirmed_ (non-tentative) rows from overlapping the same `(consultantId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot. The constraint fires at `COMMIT` time; the losing transaction receives a `P2002` / `UniqueConstraintError` which surfaces to the webhook handler as a 409 and triggers a gateway refund cascade.
+Even if two Serializable transactions race past all three application-layer checks, a PostgreSQL **exclusion constraint** on `AppointmentOccurrence` prevents two _confirmed_ (non-tentative) rows from overlapping the same `(consultantId, startsAt, endsAt)` range. This is the last-resort guarantee that concurrent webhooks cannot double-confirm a slot. The constraint fires at `COMMIT` time; the losing transaction receives a `P2002` / `UniqueConstraintError` which surfaces to the webhook handler as a 409 and triggers a gateway refund cascade.
 
 ```sql
 -- prisma/sql/check-constraints.sql lines 56-58
-ALTER TABLE "SlotOfAppointment"
+ALTER TABLE "AppointmentOccurrence"
   ADD CONSTRAINT "slot_no_confirmed_overlap"
   EXCLUDE USING gist (...) WHERE ("isTentative" = false);
 ```
@@ -257,7 +257,7 @@ expiresAt: new Date(Date.now() + 30 * 60 * 1000),
 - User can self-cancel immediately via `DELETE /api/checkout/pending/[paymentId]` (see §1.4)
 - Otherwise, tentative slot is released by the cron cleanup
 
-**TTL distinction:** The `Payment.expiresAt` field is set to **30 minutes** (matches the gateway checkout session). The `isTentative` slot itself has a **24-hour** cleanup window (#833 — changed from the old 7-day window). The abandoned-payments cron releases the slot once `expiresAt` has passed; the tentative-slots cron is a belt-and-braces fallback that runs every 2 hours and catches any orphans past the 24-hour mark.
+**TTL distinction:** The `Payment.expiresAt` field is set to **30 minutes** (matches the gateway checkout session). The `isTentative` slot itself has a **24-hour** cleanup window (#833 — changed from the old 7-day window). The abandoned-payments cron releases the slot once `expiresAt` has passed; the tentative-occurrences cron is a belt-and-braces fallback that runs every 2 hours and catches any orphans past the 24-hour mark.
 
 **Edge Case:** User completes payment at exactly 30:00 → May succeed or fail depending on gateway clock.
 
@@ -433,7 +433,7 @@ async function auditPaymentStatuses() {
 ```sql
 -- Find duplicate tentative slots
 SELECT u.id, u.email, COUNT(*) as slot_count
-FROM SlotOfAppointment s
+FROM AppointmentOccurrence s
 JOIN Appointment a ON s.appointmentId = a.id
 JOIN Payment p ON a.id = p.appointmentId
 JOIN User u ON p.userId = u.id
@@ -447,7 +447,7 @@ HAVING COUNT(*) > 1;
 ```typescript
 // Keep oldest, remove others
 async function cleanupDuplicateTentativeSlots(userId: string) {
-  const slots = await prisma.slotOfAppointment.findMany({
+  const slots = await prisma.appointmentOccurrence.findMany({
     where: {
       isTentative: true,
       appointment: {
@@ -461,7 +461,7 @@ async function cleanupDuplicateTentativeSlots(userId: string) {
 
   // Keep first (oldest), delete rest
   if (slots.length > 1) {
-    await prisma.slotOfAppointment.deleteMany({
+    await prisma.appointmentOccurrence.deleteMany({
       where: {
         id: { in: slots.slice(1).map((s) => s.id) },
       },
@@ -482,14 +482,14 @@ async function cleanupDuplicateTentativeSlots(userId: string) {
 
 ```typescript
 // Non-atomic check-then-act
-const currentCount = webinar.appointment?.slotsOfAppointment?.length || 0;
+const currentCount = webinar.appointment?.appointmentOccurrences?.length || 0;
 
 if (currentCount >= plan.capacity) {
   throw new Error("Webinar is full");
 }
 
 // Between check and insert, another enrollment happens
-await tx.slotOfAppointment.create({...});
+await tx.appointmentOccurrence.create({...});
 ```
 
 **Mitigation (Current):**
@@ -528,7 +528,7 @@ await tx.webinar.update({
 ```typescript
 // Counted total slots across all sessions
 const currentParticipants = classInstance.appointments.reduce(
-  (total, apt) => total + apt.slotsOfAppointment.length,
+  (total, apt) => total + apt.appointmentOccurrences.length,
   0,
 );
 // For 10 students × 10 sessions = 100 slots (wrong!)
@@ -540,7 +540,7 @@ const currentParticipants = classInstance.appointments.reduce(
 // Count unique users across all sessions
 const uniqueUserIds = new Set<string>();
 for (const apt of classInstance.appointments) {
-  for (const slot of apt.slotsOfAppointment) {
+  for (const slot of apt.appointmentOccurrences) {
     if (slot.user && Array.isArray(slot.user)) {
       slot.user.forEach((u) => uniqueUserIds.add(u.id));
     }
@@ -784,7 +784,7 @@ for (let i = 0; i < totalSessions; i++) {
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
-      slotsOfAppointment: {
+      appointmentOccurrences: {
         create: {
           startsAt: sessionStart,
           endsAt: sessionEnd,
@@ -837,7 +837,7 @@ Array.from({
   return {
     appointmentType: AppointmentsType.CLASS,
     classId: createdClass.id,
-    slotsOfAppointment: {
+    appointmentOccurrences: {
       create: {
         startsAt: sessionDate,
         endsAt: new Date(sessionDate.getTime() + sessionDurationMs),
@@ -972,7 +972,7 @@ Key models:
 
 - `Payment` - Payment records
 - `Appointment` - Appointment records
-- `SlotOfAppointment` - Time slots
+- `AppointmentOccurrence` - Time slots
 - `Refund` - Refund records
 - `Dispute` - Dispute records
 - `Consultation`, `Subscription`, `Webinar`, `Class` - Event types

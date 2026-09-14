@@ -9,7 +9,7 @@ import {
   validateTimeSlot,
   validateAllSlotsDetailed,
   getSlotStatistics,
-} from "@/utils/timeSlotValidation";
+} from "@/utils/scheduling-engine/interval-validation";
 import type { SlotType, SlotsType } from "@/utils/schedule/types";
 
 describe("Schedule Validation", () => {

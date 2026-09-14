@@ -36,16 +36,16 @@ export {
   // Support
   notifySupportTicketCreated,
   notifySupportTicketUpdate,
-  notifySupportTicketUpdateForStaff,
+  notifySupportTicketActivity,
   notifySupportTicketResponse,
   // Feedback & Reviews
   notifyFeedbackReceived,
   notifyNewReview,
   // Trials
-  notifyTrialSessionRequested,
-  notifyTrialSessionScheduled,
-  notifyTrialSessionCompleted,
-  notifyTrialSessionCancelled,
+  notifyTrialRequested,
+  notifyTrialScheduled,
+  notifyTrialCompleted,
+  notifyTrialCancelled,
   // Subscriptions
   notifySubscriptionStarted,
   notifySubscriptionCancelled,

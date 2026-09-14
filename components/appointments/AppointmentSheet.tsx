@@ -58,14 +58,14 @@ export function AppointmentSheet({
   const overflow = adapter.overflowItems(vm);
   const detailHref = adapter.detailHref(vm);
   const anchorSession = vm.nextAt
-    ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
   const anchorOver = vm.nextAt
     ? (anchorSession?.endsAt?.getTime() ??
         vm.nextAt.getTime() + 60 * 60 * 1000) < Date.now()
     : false;
-  const hasConcreteSessions = vm.sessions.some((s) => !s.isTentative);
-  const allTentative = vm.sessions.length > 0 && !hasConcreteSessions;
+  const hasConcreteSessions = vm.occurrences.some((s) => !s.isTentative);
+  const allTentative = vm.occurrences.length > 0 && !hasConcreteSessions;
 
   return (
     <Sheet open onOpenChange={onOpenChange}>
@@ -164,7 +164,7 @@ export function AppointmentSheet({
             )}
 
             {/* Timeline (tentative-only / slot-less rows get a note instead) */}
-            {(allTentative || vm.sessions.length === 0) && (
+            {(allTentative || vm.occurrences.length === 0) && (
               <p className="text-xs text-muted-foreground rounded-lg bg-muted border border-border p-3">
                 {allTentative
                   ? "Awaiting schedule confirmation."
@@ -179,7 +179,7 @@ export function AppointmentSheet({
                   Sessions
                 </p>
                 <SessionTimeline
-                  sessions={vm.sessions}
+                  occurrences={vm.occurrences}
                   joinWindowMs={joinWindowMs}
                   isJoining={action.kind === "join" && !!action.busy}
                   onJoinSession={

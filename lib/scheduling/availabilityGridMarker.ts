@@ -5,7 +5,7 @@ import type { Db } from "@/lib/prisma";
  * #1319 PR 9 — the change marker behind the availability grid's conditional GET.
  *
  * ADR 16 settled that slot freshness is polled, not pushed, so every open
- * calendar re-asks `/api/slots/availability-with-allocation/[consultantId]`
+ * calendar re-asks `/api/scheduling/availability-with-allocation/[consultantId]`
  * once a minute and almost always gets back the answer it already has. This
  * module answers "has anything the response depends on changed?" in ONE
  * indexed read, so the unchanged case can be a 304 instead of the 8–18
@@ -58,15 +58,15 @@ export interface AvailabilityGridMarker {
 
 /**
  * One statement, one round trip. Every consultant-scoped arm is an index probe
- * (`SlotOfAppointment_consultantProfileId_startsAt_endsAt_idx`,
- * `_SlotOfAppointmentToUser_B_index`, the four `*Plan_consultantProfileId_idx`,
- * `Payment_expiresAt_paymentStatus_idx`).
+ * (`AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`,
+ * `AppointmentParticipant_userId_status_idx`, the four
+ * `*Plan_consultantProfileId_idx`, `Payment_expiresAt_paymentStatus_idx`).
  *
  * `reach` is the set of appointments that can paint a cell on this calendar:
- * the allocator stamps every slot it writes with BOTH the denormalized
- * consultantProfileId (#440) and a `user` edge to the consultant, and the
- * request arm below rides that set, so a status flip on a booking where the
- * consultant is the CONSULTEE is covered too.
+ * the allocator stamps every occurrence it writes with the denormalized
+ * consultantProfileId (#440) and seats the consultant on the appointment's
+ * roster (#1554), and the request arm below rides that set, so a status flip
+ * on a booking where the consultant is the CONSULTEE is covered too.
  *
  * `consulteeUserId` is the empty string when absent: an index probe that
  * matches nothing, which keeps this one SQL string rather than two.
@@ -85,40 +85,38 @@ export async function readAvailabilityGridMarker(
     ),
     reach AS (
       SELECT s."appointmentId" AS id
-        FROM "SlotOfAppointment" s
+        FROM "AppointmentOccurrence" s
        WHERE s."consultantProfileId" = ${consultantId}
       UNION
-      SELECT s."appointmentId"
-        FROM "SlotOfAppointment" s
-        JOIN "_SlotOfAppointmentToUser" e ON e."A" = s.id
-        JOIN consultant c ON c."userId" = e."B"
+      SELECT p."appointmentId"
+        FROM "AppointmentParticipant" p
+        JOIN consultant c ON c."userId" = p."userId"
       UNION
-      SELECT s."appointmentId"
-        FROM "SlotOfAppointment" s
-        JOIN "_SlotOfAppointmentToUser" e ON e."A" = s.id
-       WHERE e."B" = ${consulteeKey}
+      SELECT p."appointmentId"
+        FROM "AppointmentParticipant" p
+       WHERE p."userId" = ${consulteeKey}
     )
     SELECT
       (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(w."updatedAt") AS t
-            FROM "SlotOfAvailabilityWeekly" w
+            FROM "AvailabilityWindowWeekly" w
            WHERE w."consultantProfileId" = ${consultantId}
           UNION ALL
           SELECT max(cu."updatedAt")
-            FROM "SlotOfAvailabilityCustom" cu
+            FROM "AvailabilityWindowCustom" cu
            WHERE cu."consultantProfileId" = ${consultantId}
        ) a) AS "availabilityUpdatedAt",
-      (SELECT (SELECT count(*) FROM "SlotOfAvailabilityWeekly" w
+      (SELECT (SELECT count(*) FROM "AvailabilityWindowWeekly" w
                  WHERE w."consultantProfileId" = ${consultantId})
-            + (SELECT count(*) FROM "SlotOfAvailabilityCustom" cu
+            + (SELECT count(*) FROM "AvailabilityWindowCustom" cu
                  WHERE cu."consultantProfileId" = ${consultantId}))::int
         AS "availabilityRowCount",
       (SELECT max(p."updatedAt")
          FROM "Payment" p
          JOIN reach r ON r.id = p."appointmentId") AS "paymentsUpdatedAt",
       (SELECT max(s."updatedAt")
-         FROM "SlotOfAppointment" s
+         FROM "AppointmentOccurrence" s
          JOIN reach r ON r.id = s."appointmentId") AS "slotsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t
@@ -142,7 +140,7 @@ export async function readAvailabilityGridMarker(
             JOIN reach r ON r.id = a.id
           UNION ALL
           SELECT max(ts."updatedAt")
-            FROM "TrialSession" ts
+            FROM "Trial" ts
             JOIN reach r ON r.id = ts."appointmentId"
           UNION ALL
           SELECT max(c."updatedAt")
@@ -166,7 +164,7 @@ export async function readAvailabilityGridMarker(
            WHERE clp."consultantProfileId" = ${consultantId}
           UNION ALL
           SELECT max(ts."updatedAt")
-            FROM "TrialSession" ts
+            FROM "Trial" ts
            WHERE ts."consultantProfileId" = ${consultantId}
        ) b) AS "requestsUpdatedAt",
       (SELECT min(p."expiresAt")

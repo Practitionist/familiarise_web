@@ -38,9 +38,8 @@ export async function GET(
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -162,9 +161,8 @@ export async function PUT(
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },
@@ -232,7 +230,7 @@ export async function DELETE(
               where: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } },
               select: { id: true },
             },
-            slotsOfAppointment: {
+            occurrences: {
               where: { endsAt: { gt: now } },
               select: { id: true },
             },
@@ -252,7 +250,7 @@ export async function DELETE(
         { status: 400 },
       );
     }
-    if (webinar.appointment?.slotsOfAppointment?.length) {
+    if (webinar.appointment?.occurrences?.length) {
       return NextResponse.json(
         { error: "Cannot delete webinar with upcoming or in-progress slots." },
         { status: 400 },
@@ -285,9 +283,8 @@ export async function DELETE(
         },
         appointment: {
           include: {
-            slotsOfAppointment: {
-              include: {
-                user: true, // Changed from consulteeProfile to user
+            occurrences: {
+              include: { // Changed from consulteeProfile to user
               },
             },
           },

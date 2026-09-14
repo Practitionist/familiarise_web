@@ -19,15 +19,23 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Star } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { bookingFeedbackKey } from "@/hooks/useSessionFeedback";
 
 export function SessionRatingRow({
   appointmentId,
-  slotId,
+  bookingAppointmentId,
+  occurrenceId,
   existingRating,
   readOnly = false,
 }: Readonly<{
+  /** The CHILD appointment this session belongs to — where the rating is POSTed. */
   appointmentId: string;
-  slotId: string;
+  /** The BOOKING the page is showing, which owns the cache entry to invalidate.
+   *  #1540 consolidated the read to one request for the whole booking, so
+   *  invalidating this row's own child id would leave the stars unchanged after a
+   *  save. */
+  bookingAppointmentId: string;
+  occurrenceId: string;
   existingRating: number | null;
   /** The consultant's view: what this call scored, not something to set. */
   readOnly?: boolean;
@@ -39,21 +47,21 @@ export function SessionRatingRow({
 
   useEffect(() => {
     setRating(existingRating ?? 0);
-  }, [existingRating, slotId]);
+  }, [existingRating, occurrenceId]);
 
   const save = useMutation({
     mutationFn: async (value: number) => {
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating: value, slotId }),
+        body: JSON.stringify({ rating: value, occurrenceId }),
       });
       if (!res.ok) await throwSupportError(res, "session rating");
       return res.json();
     },
     onSuccess: () => {
       void qc.invalidateQueries({
-        queryKey: ["appointment-feedback", appointmentId],
+        queryKey: bookingFeedbackKey(bookingAppointmentId),
       });
     },
     onError: (e: unknown) => {

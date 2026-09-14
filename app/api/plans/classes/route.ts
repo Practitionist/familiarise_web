@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { groupSlotsIntoRuns } from "@/lib/appointments/slots";
+import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { CollaboratorStatus, PlanEmailSupport, Prisma } from "@prisma/client";
 import {
@@ -38,12 +38,12 @@ export async function GET(request: NextRequest) {
     if (includeRegistration) {
       classesInclude = {
         include: {
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true } },
-                },
+              // #1554 — seat ids only; the explore card's enrolment check.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -80,20 +80,21 @@ export async function GET(request: NextRequest) {
           id: true,
           classes: {
             select: {
-              appointments: {
+              appointment: {
                 select: {
                   id: true,
-                  slotsOfAppointment: {
-                    where: { createdAt: { gte: thirtyDaysAgo } },
-                    // #1071 — what groupSlotsIntoRuns needs to fold the
-                    // half-hour atoms of one session back into one session.
+                  // #1554 — one row per held call, so the count is the rows.
+                  _count: {
                     select: {
-                      id: true,
-                      startsAt: true,
-                      endsAt: true,
-                      isTentative: true,
-                      completionStatus: true,
-                      deletedAt: true,
+                      occurrences: {
+                        where: {
+                          createdAt: { gte: thirtyDaysAgo },
+                          deletedAt: null,
+                          completionStatus: {
+                            notIn: ["CANCELLED", "RESCHEDULED"],
+                          },
+                        },
+                      },
                     },
                   },
                 },
@@ -103,27 +104,13 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      // #1319 — this counted slot ROWS, so a class stored as canonical 30-minute
-      // atoms outranked an identical one stored as legacy 60-minute rows two to
-      // one: the ranking measured how a plan's sessions happen to be chunked,
-      // not how much of it is running. Count contiguous runs (= sessions).
+      // The ranking measures how much of a plan is running: one occurrence
+      // row is one held call (#1554), so the live rows are the count.
       const ranked = plansForRanking
         .map((p) => ({
           id: p.id,
           count: p.classes.reduce(
-            (sum, cls) =>
-              sum +
-              cls.appointments.reduce(
-                (s, apt) =>
-                  s +
-                  groupSlotsIntoRuns(
-                    apt.slotsOfAppointment.map((slot) => ({
-                      ...slot,
-                      appointmentId: apt.id,
-                    })),
-                  ).length,
-                0,
-              ),
+            (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
             0,
           ),
         }))

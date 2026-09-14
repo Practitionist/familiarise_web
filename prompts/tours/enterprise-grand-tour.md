@@ -41,30 +41,30 @@ guard paths; it is NOT trying to enumerate every error code.
 
 **Permitted tools.**
 
-| Tool | Use |
-|---|---|
-| `mcp__chrome-devtools__navigate_page` | Open a URL |
-| `mcp__chrome-devtools__take_snapshot` | Get the accessibility tree of the current page |
-| `mcp__chrome-devtools__click` | Click a labeled element |
-| `mcp__chrome-devtools__fill` | Type into a single input |
-| `mcp__chrome-devtools__fill_form` | Fill multiple inputs at once |
-| `mcp__chrome-devtools__select_option` (where supported) or `mcp__chrome-devtools__click` on combobox items | Pick a dropdown value |
-| `mcp__chrome-devtools__wait_for` | Wait for a piece of text or element to appear |
-| `mcp__chrome-devtools__upload_file` | Pick a file in a `<input type=file>` |
-| `mcp__chrome-devtools__handle_dialog` | Accept / dismiss confirm + alert dialogs |
-| `mcp__chrome-devtools__list_network_requests` | Inspect what the page fired |
-| `mcp__chrome-devtools__get_network_request` | Get headers + body of a specific request |
-| `mcp__chrome-devtools__list_console_messages` | Inspect what the page logged |
-| `mcp__chrome-devtools__take_screenshot` | Visual checkpoint |
-| `mcp__chrome-devtools__new_page` / `select_page` / `list_pages` | Multi-tab journeys (e.g. invitation accept) |
-| `mcp__supabase__execute_sql` | All DB reads, scoped writes (project `pzmbxqdgibfkhjwzeprf`) |
-| `mcp__supabase__list_tables` | Schema discovery (rare; only if a column name surprises us) |
-| `mcp__supabase__get_logs` | Inspect Supabase logs when a query unexpectedly errors |
+| Tool                                                                                                       | Use                                                          |
+| ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `mcp__chrome-devtools__navigate_page`                                                                      | Open a URL                                                   |
+| `mcp__chrome-devtools__take_snapshot`                                                                      | Get the accessibility tree of the current page               |
+| `mcp__chrome-devtools__click`                                                                              | Click a labeled element                                      |
+| `mcp__chrome-devtools__fill`                                                                               | Type into a single input                                     |
+| `mcp__chrome-devtools__fill_form`                                                                          | Fill multiple inputs at once                                 |
+| `mcp__chrome-devtools__select_option` (where supported) or `mcp__chrome-devtools__click` on combobox items | Pick a dropdown value                                        |
+| `mcp__chrome-devtools__wait_for`                                                                           | Wait for a piece of text or element to appear                |
+| `mcp__chrome-devtools__upload_file`                                                                        | Pick a file in a `<input type=file>`                         |
+| `mcp__chrome-devtools__handle_dialog`                                                                      | Accept / dismiss confirm + alert dialogs                     |
+| `mcp__chrome-devtools__list_network_requests`                                                              | Inspect what the page fired                                  |
+| `mcp__chrome-devtools__get_network_request`                                                                | Get headers + body of a specific request                     |
+| `mcp__chrome-devtools__list_console_messages`                                                              | Inspect what the page logged                                 |
+| `mcp__chrome-devtools__take_screenshot`                                                                    | Visual checkpoint                                            |
+| `mcp__chrome-devtools__new_page` / `select_page` / `list_pages`                                            | Multi-tab journeys (e.g. invitation accept)                  |
+| `mcp__supabase__execute_sql`                                                                               | All DB reads, scoped writes (project `pzmbxqdgibfkhjwzeprf`) |
+| `mcp__supabase__list_tables`                                                                               | Schema discovery (rare; only if a column name surprises us)  |
+| `mcp__supabase__get_logs`                                                                                  | Inspect Supabase logs when a query unexpectedly errors       |
 
 **Prohibited tools.**
 
-| Tool | Why |
-|---|---|
+| Tool                                    | Why                                                                                                                                 |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `mcp__chrome-devtools__evaluate_script` | Cheating. Defeats the purpose of a real-user tour. If a step requires arbitrary JS to complete, that's a UX bug — file it and stop. |
 
 ---
@@ -74,6 +74,7 @@ guard paths; it is NOT trying to enumerate every error code.
 These five rules apply to every stop. The agent must internalize them.
 
 ### 1. Pause at every T.x boundary
+
 Each tour stop is numbered T.1, T.2, … At the start of every stop the
 agent narrates: (a) what we're about to do, (b) why it matters in the
 context of the enterprise subsystem, (c) what to watch for in the
@@ -86,6 +87,7 @@ explicit replies:
 - `stop` — exit the tour, leaving in-flight tour data in place
 
 ### 2. Two-flavor offer at every interactive step
+
 Before any UI input or DB mutation, the agent offers TWO ways to
 proceed and waits for the user to pick one:
 
@@ -97,6 +99,7 @@ Both flavors end at the same observable state, verified via Supabase
 MCP `execute_sql` against `pzmbxqdgibfkhjwzeprf`.
 
 ### 3. Bug-fix in flight
+
 On unexpected outcome (500, console error, DB row that disagrees with
 the UI), the agent:
 
@@ -110,11 +113,13 @@ the UI), the agent:
 Never accumulate a bug list. Decide each one in the moment.
 
 ### 4. Re-test on fail
+
 After any in-flight fix, re-run the failed scenario from the closest
 stable navigation point. Confirm green before declaring the stop
 complete and pausing for `next`.
 
 ### 5. Mock-data scope
+
 All tour-created records use the slug / name prefix
 `tour-2026-04-25-` so they are trivially identifiable and deletable
 at the end. The tour MUST NOT modify any record that doesn't carry
@@ -134,22 +139,22 @@ a clean 400) but not exercised end-to-end.
 
 ### Capability shapes (`Organization.canSponsor` × `canHost`)
 
-| Shape | canSponsor | canHost | Stop |
-|---|---|---|---|
-| Sponsor (BUYER) | true | false | T.2 |
-| Host (PROVIDER) | false | true | T.4 |
-| Hybrid | true | true | T.3 |
-| Invalid | false | false | T.2 (rejected at create) |
+| Shape           | canSponsor | canHost | Stop                     |
+| --------------- | ---------- | ------- | ------------------------ |
+| Sponsor (BUYER) | true       | false   | T.2                      |
+| Host (PROVIDER) | false      | true    | T.4                      |
+| Hybrid          | true       | true    | T.3                      |
+| Invalid         | false      | false   | T.2 (rejected at create) |
 
 ### Funding × Program matrix (`BillingAccount.fundingSource` × `Program.type`)
 
-| ↓ Funding / → Program | LICENSED_SEAT | CREDIT_POOL | PROJECT | RETAINER |
-|---|---|---|---|---|
-| **PERSONAL** | n/a (T.5 — no Program; just attribution tag) | n/a | n/a | n/a |
-| **WALLET** | T.6 (Stripe IN: per-seat quota) | T.7 (IIT students: shared pool) | v2 (T.10) | v2 (T.10) |
-| **INVOICE** | T.8 (Microsoft India: postpaid per-seat) | T.8.5 (Razorpay L&D: postpaid pool) | v2 (T.10) | v2 (T.10) |
-| **LICENSE** | T.9 (Goldman analysts: `coveredEngagementsPerCycle=null`) | ❌ **bogus** — flat fee already pays for unmetered usage; API rejects with `BOGUS_LICENSE_CREDIT_POOL` | v2 | v2 |
-| **PROJECT** | v2 (T.10) | v2 | v2 | v2 |
+| ↓ Funding / → Program | LICENSED_SEAT                                             | CREDIT_POOL                                                                                            | PROJECT   | RETAINER  |
+| --------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- | --------- |
+| **PERSONAL**          | n/a (T.5 — no Program; just attribution tag)              | n/a                                                                                                    | n/a       | n/a       |
+| **WALLET**            | T.6 (Stripe IN: per-seat quota)                           | T.7 (IIT students: shared pool)                                                                        | v2 (T.10) | v2 (T.10) |
+| **INVOICE**           | T.8 (Microsoft India: postpaid per-seat)                  | T.8.5 (Razorpay L&D: postpaid pool)                                                                    | v2 (T.10) | v2 (T.10) |
+| **LICENSE**           | T.9 (Goldman analysts: `coveredEngagementsPerCycle=null`) | ❌ **bogus** — flat fee already pays for unmetered usage; API rejects with `BOGUS_LICENSE_CREDIT_POOL` | v2        | v2        |
+| **PROJECT**           | v2 (T.10)                                                 | v2                                                                                                     | v2        | v2        |
 
 **Hybrid combos** (canSponsor=true AND canHost=true) are layered on top
 of the above — the org has a sponsor arm (any of the above rows) PLUS
@@ -158,33 +163,33 @@ a host arm (RateCard + EXPERT memberships + payouts). T.10.5 / T.10.6
 
 ### Role lenses (`MemberRole`)
 
-| Role | Stop | What we tour |
-|---|---|---|
-| OWNER | T.11 | Full chrome — billing, contracts, payouts, branding |
-| MAINTAINER | T.12 | Admin minus org delete + final budget moves |
-| MANAGER | T.13 | Department-level — programs, members |
-| EXPERT | T.14 | Delivers services — earnings, payouts (own) |
-| LEARNER | T.15 | Consumes — most restrictive chrome |
-| SUPPORT | T.16 | Read-only, non-billing |
+| Role       | Stop | What we tour                                        |
+| ---------- | ---- | --------------------------------------------------- |
+| OWNER      | T.11 | Full chrome — billing, contracts, payouts, branding |
+| MAINTAINER | T.12 | Admin minus org delete + final budget moves         |
+| MANAGER    | T.13 | Department-level — programs, members                |
+| EXPERT     | T.14 | Delivers services — earnings, payouts (own)         |
+| LEARNER    | T.15 | Consumes — most restrictive chrome                  |
+| SUPPORT    | T.16 | Read-only, non-billing                              |
 
 ### Cross-cutting integrations
 
-| Integration | Stop |
-|---|---|
-| Operator (cross-org) dashboard at `/dashboard/org-workspace/<id>/*` — Home / Activity / Billing / Settings + switcher redirect from `/dashboard/organization` | T.16.5 |
-| Consumer in-org pages — LEARNER `/my-program`, EXPERT `/my-arrangement` | T.14, T.15 |
-| Audit log viewer + CSV export | T.17 |
-| Domain DNS verification + signin gate | T.18 |
-| SSO provider config + cert expiry | T.19 |
-| Invoice lifecycle + PDF cache | T.20 |
-| Wallet top-up + Razorpay popup | T.21 |
-| Payout request + 3-way split | T.22 |
-| Anti-lockout guards (3 vectors) | T.23 |
-| OrgContextFilter (Personal / Org / All) | T.24 |
-| Novu org-lifecycle workflows (9 events) | T.25 |
-| Reconcile cron (8 checks incl. session, seat, payout, leg drift) | T.26 - T.27 |
-| Invoice-fraud guard (PENDING_TRUST + credit-limit) | T.8.6 |
-| Domain governance gates (SSO save, bulk seats) | T.18, T.19 |
+| Integration                                                                                                                                                   | Stop        |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| Operator (cross-org) dashboard at `/dashboard/org-workspace/<id>/*` — Home / Activity / Billing / Settings + switcher redirect from `/dashboard/organization` | T.16.5      |
+| Consumer in-org pages — LEARNER `/my-program`, EXPERT `/my-arrangement`                                                                                       | T.14, T.15  |
+| Audit log viewer + CSV export                                                                                                                                 | T.17        |
+| Domain DNS verification + signin gate                                                                                                                         | T.18        |
+| SSO provider config + cert expiry                                                                                                                             | T.19        |
+| Invoice lifecycle + PDF cache                                                                                                                                 | T.20        |
+| Wallet top-up + Razorpay popup                                                                                                                                | T.21        |
+| Payout request + 3-way split                                                                                                                                  | T.22        |
+| Anti-lockout guards (3 vectors)                                                                                                                               | T.23        |
+| OrgContextFilter (Personal / Org / All)                                                                                                                       | T.24        |
+| Novu org-lifecycle workflows (9 events)                                                                                                                       | T.25        |
+| Reconcile cron (8 checks incl. session, seat, payout, leg drift)                                                                                              | T.26 - T.27 |
+| Invoice-fraud guard (PENDING_TRUST + credit-limit)                                                                                                            | T.8.6       |
+| Domain governance gates (SSO save, bulk seats)                                                                                                                | T.18, T.19  |
 
 ---
 
@@ -243,7 +248,7 @@ booleans. No writes; no UI. We're just orienting before we start
 creating tour data.
 
 **Why it matters.** The seed cohort is your reference for what each
-shape *should* look like in the dashboard later. Wipro is a pure
+shape _should_ look like in the dashboard later. Wipro is a pure
 sponsor (canSponsor=true, canHost=false); LearnPro Agency is host-only
 (canSponsor=false, canHost=true); IIT Madras is hybrid (canSponsor=true,
 canHost=true with WALLET funding); Rahul's personal org is host-only.
@@ -255,6 +260,7 @@ When we create the tour orgs, we'll mirror these shapes with
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — I'll run the SQL via `mcp__supabase__execute_sql` and
 >   render the result as a table.
 > - `manual` — Open the Supabase project (`pzmbxqdgibfkhjwzeprf`) in
@@ -307,6 +313,7 @@ the matrix.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — I'll
 >   `mcp__chrome-devtools__navigate_page("http://localhost:3000/dashboard/organization/create")`,
 >   take a snapshot, then `fill_form` for each wizard step. I'll
@@ -401,6 +408,7 @@ matrix.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Navigate to
 >   `/dashboard/organization/<acmeId>/settings`, click the "Capability"
 >   section, toggle "Can host experts" on, save. Wait for the success
@@ -452,6 +460,7 @@ sections that would have been confusing-empty.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard run with capability = "Host only".
 > - `manual` — Same wizard.
 
@@ -481,10 +490,10 @@ send any). This is governed by the capability gates in
 
 # Chapter 2 — Funding × Program matrix
 
-Now that we have the capability shapes, the next axis is *how money
-moves*. `BillingAccount.fundingSource` answers that question (5
+Now that we have the capability shapes, the next axis is _how money
+moves_. `BillingAccount.fundingSource` answers that question (5
 values, one v2-reserved). On top of funding, `Program.type` answers
-*what's covered per person* (4 values, two v2-reserved). The
+_what's covered per person_ (4 values, two v2-reserved). The
 combinations are not all equally useful; this chapter walks every
 cell that ships in v1.
 
@@ -524,6 +533,7 @@ flows through so analytics can segment.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard with funding = "PERSONAL (members pay their own card)".
 > - `manual` — Same.
 
@@ -581,6 +591,7 @@ what differentiates this from CREDIT_POOL (next stop).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard for WALLET, then `mcp__chrome-devtools__navigate_page`
 >   to the contract page, click "New contract", fill rate +
 >   payment terms, save. Then "New program" → LICENSED_SEAT.
@@ -628,7 +639,7 @@ pool. Variable usage by month (exam season spikes, summer dips). NO
 per-student quota — anyone in the org can draw from the shared
 budget; first-come-first-served until the pool exhausts.
 
-**Why it matters.** CREDIT_POOL is the *shared-budget* shape — the
+**Why it matters.** CREDIT_POOL is the _shared-budget_ shape — the
 opposite of LICENSED_SEAT's per-seat quota. Same funding source
 (WALLET) but completely different allocation semantics. CREDIT_POOL
 was simplified post-Arch-4 (see commit `9d33c652`); the dormant
@@ -642,6 +653,7 @@ rate-card couldn't already express. Finance dashboards now read in
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard, contract, then "New program" → CREDIT_POOL,
 >   credits per cycle = 1000, cycle = MONTHLY.
 > - `manual` — Same.
@@ -711,6 +723,7 @@ ledger entries, reconcile invariant E, and BLOCK overage rejection.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Use the existing CLASS plan from a seeded consultant (or
 >   create a tiny tour CLASS via Supabase MCP with `totalSessions=8`).
 >   Have the tour learner book it via the marketplace flow. Watch the
@@ -746,7 +759,7 @@ Cross-check against the actual slot count and the immutable ledger:
 
 ```sql
 -- Slot count for the booked class
-SELECT COUNT(*) FROM "SlotOfAppointment" sa
+SELECT COUNT(*) FROM "AppointmentOccurrence" sa
 JOIN "Appointment" a ON a.id = sa."appointmentId"
 WHERE a."classId" IN (
   SELECT id FROM "Class" WHERE "classPlanId" = '<our-plan-id>' ORDER BY "createdAt" DESC LIMIT 1
@@ -799,6 +812,7 @@ an unlimited bill. T.20 walks the invoice lifecycle in detail.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard with funding = "INVOICE (billed monthly)",
 >   credit limit = 5000 (rupees). Then contract + program.
 > - `manual` — Same.
@@ -856,6 +870,7 @@ screening is deferred to PR-2.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Create the org via the wizard with funding=INVOICE.
 >   Skip the verification step. Have a tour LEARNER book a few
 >   consultations. SQL-query `OrganizationEarnings` to see the
@@ -941,6 +956,7 @@ for paying orgs.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard with funding = "INVOICE", credit limit = 25000,
 >   then contract + program with type = CREDIT_POOL, creditsPerCycle
 >   = 2000000, cycle = QUARTERLY.
@@ -1002,6 +1018,7 @@ blocked at the API layer (see T.10 sub-stop).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Wizard, funding = "LICENSE (flat fee)", then
 >   contract + program with the "Unmetered (no cap)" toggle on.
 > - `manual` — Same.
@@ -1038,8 +1055,7 @@ where the cap pill normally shows a number. The PaymentLeg with
 program against `tour-2026-04-25-license` (T.9's Goldman-style org).
 Confirm the API returns 400 with `code: "BOGUS_LICENSE_CREDIT_POOL"`.
 
-(b) **PROJECT is v2-reserved.** Try POSTing `type='PROJECT'`. Confirm
-400.
+(b) **PROJECT is v2-reserved.** Try POSTing `type='PROJECT'`. Confirm 400.
 
 (c) **RETAINER is v2-reserved.** Same.
 
@@ -1057,11 +1073,13 @@ observed).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Three curl POSTs against
 >   `/api/organizations/<licenseOrgId>/programs` (sub-stop a) and
 >   `/api/organizations/<wallet-seatOrgId>/programs` (b + c with
 >   PROJECT and RETAINER bodies). Inspect each response.
 > - `manual` — Same via your shell:
+>
 >   ```bash
 >   # (a) LICENSE × CREDIT_POOL — bogus
 >   curl -i -X POST http://localhost:3000/api/organizations/<licenseOrgId>/programs \
@@ -1135,6 +1153,7 @@ professors are `payoutRecipient=ORGANIZATION` (university takes the
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Settings → Capability → toggle "Can host". Then Hosting
 >   → "Add expert" twice. Then Hosting → "Payout account" →
 >   "Configure". Then Hosting → "Rate card" → set 10/10/80.
@@ -1186,6 +1205,7 @@ to BCG via `OrganizationEarnings`).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Same as T.10.5 but on the license org.
 > - `manual` — Same.
 
@@ -1272,6 +1292,7 @@ this baseline.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Logout via `/api/auth/sign-out`, then login flow with
 >   the OWNER credentials. Then `take_snapshot` of the sidebar.
 > - `manual` — Sign out, sign back in, type `done`.
@@ -1309,6 +1330,7 @@ OWNER (typically an exec) only signs off on contract-level changes.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Run two SQL inserts (User, Membership), then sign in
 >   via `/api/auth/sign-in/email` (BetterAuth) with the password
 >   we set. Tour the sidebar.
@@ -1498,7 +1520,7 @@ operator dashboard with a `CollapsibleSidebar` (mirrors
 now a server-redirect for backward compatibility (old bookmarks,
 dropdown links, Novu payloads keep working).
 
-This is also the *cross-org* surface — per-org operator views
+This is also the _cross-org_ surface — per-org operator views
 (members, programs, billing) live one click deeper at
 `/dashboard/organization/[orgId]/*`. The two layers don't overlap.
 
@@ -1510,6 +1532,7 @@ dual-entry behavior (in-dashboard `/create` vs unbranded
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — `mcp__chrome-devtools__navigate_page` to
 >   `http://localhost:3000/dashboard/organization`. `take_snapshot`
 >   to confirm the URL settled at `/dashboard/org-workspace/<id>/home`.
@@ -1608,6 +1631,7 @@ export.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Navigate, take snapshot, click each filter, set
 >   date range to "Last 7 days", click Export. Inspect the network
 >   tab for the CSV response.
@@ -1655,6 +1679,7 @@ The `verifiedAt IS NOT NULL` enforcement landed in commit
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Navigate to
 >   `/dashboard/organization/<acmeId>/sso/domains`, click "Add
 >   domain", fill `tour.example.com`, save. Read the
@@ -1729,9 +1754,10 @@ expiry.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Navigate to provider config, paste cert, save. Then
 >   `mcp__supabase__execute_sql` to UPDATE `notAfter`. Then `curl
->   POST` the cron route.
+POST` the cron route.
 > - `manual` — Same.
 
 **Verify.**
@@ -1792,6 +1818,7 @@ cache.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Curl POST to create a draft invoice, PATCH to
 >   ISSUED, GET PDF (download), GET PDF again (verify Supabase
 >   signed URL is reused), PATCH to VOID, GET PDF (regen).
@@ -1866,6 +1893,7 @@ popup.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — `mcp__chrome-devtools__navigate_page` to the wallet
 >   page, click "Top up ₹100", `wait_for` the Razorpay popup, fill
 >   the test card, complete. The agent will need to handle the
@@ -1947,6 +1975,7 @@ the new service end-to-end including idempotency + concurrency.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Configure payout account → flip to VERIFIED via SQL.
 >   SQL-insert ~5 READY OrganizationEarnings rows. Hit
 >   `GET /api/organizations/<orgId>/payouts` (eligibility-style read)
@@ -2032,6 +2061,7 @@ webhook reconciler that flips PROCESSING → COMPLETED land in PR-3.
 ### T.23 — Anti-lockout demo (3 vectors)
 
 **What we're about to do.** Three sub-stops:
+
 - (a) Try to demote the OWNER of `tour-2026-04-25-acme` via PATCH
   `/members/[memberId]` — observe 409.
 - (b) Try to terminate the contract on `tour-2026-04-25-wallet-seat`
@@ -2051,6 +2081,7 @@ vectors).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Three curl PATCH/DELETE calls, one per vector, with
 >   `take_snapshot` of the resulting toast.
 > - `manual` — Same.
@@ -2101,6 +2132,7 @@ analytics get muddied. The component is at
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Navigate to the consultant dashboard, take_snapshot
 >   to find the filter combobox, click each option, take snapshot
 >   between each.
@@ -2135,6 +2167,7 @@ payload locally) and confirm the recipient roster matches the
 roster resolver's expectation.
 
 The 9 workflows:
+
 1. `notifyOrgInviteSent` — sent when an invite is created
 2. `notifyOrgInviteAccepted` — sent when accepted
 3. `notifyOrgInvoiceIssued` — sent when an invoice is issued
@@ -2156,6 +2189,7 @@ events).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Trigger each: invite a tour user → 1, accept → 2,
 >   issue invoice → 3, pay it (we already did in T.20) → 4, top
 >   up wallet (T.21) → 5, request payout (T.22) → 6, exceed
@@ -2196,6 +2230,7 @@ that's a known gap tracked in the broader follow-up issue.
 **What we're about to do.** Trigger the reconcile cron via
 `POST /api/admin/reconcile-ledgers`. Walk through the 8 checks the
 auditor runs:
+
 - (A) Wallet balance drift
 - (B) Funding-ledger mirror
 - (C) Settlement coverage (INVOICE_ISSUED)
@@ -2206,7 +2241,7 @@ auditor runs:
   match the denormalized counter.
 - (G) **PR-1c (#713-2):** OrganizationPayout total mismatch — sum
   of attached `OrganizationEarnings.orgSharePaise -
-  refundedAmountPaise` must equal `OrganizationPayout.netPayoutPaise`.
+refundedAmountPaise` must equal `OrganizationPayout.netPayoutPaise`.
 - (H) **PR-1b (#700 LED-3):** Payment leg-sum mismatch — for every
   Payment with org legs, sum(PaymentLeg.amountPaise) must equal
   Payment.amount.
@@ -2231,6 +2266,7 @@ checks).
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Curl POST to `/api/admin/reconcile-ledgers` with
 >   admin credentials. Read the resulting `LedgerReconciliationReport`
 >   row. Walk through each finding (or absence of findings).
@@ -2281,6 +2317,7 @@ detection.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — UPDATE SQL, POST to reconcile route, read findings,
 >   restore SQL.
 > - `manual` — Same.
@@ -2365,6 +2402,7 @@ non-deterministic data.
 **Drive.**
 
 > Pick one:
+>
 > - `auto` — Run the SQL deletes via `mcp__supabase__execute_sql`.
 > - `manual` — Same SQL via the Supabase SQL editor.
 
