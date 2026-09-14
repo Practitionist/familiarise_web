@@ -47,6 +47,8 @@ const NUM_CONSULTEES = config.volumes.users.consultees;
 const NUM_STAFF = config.volumes.users.staff;
 const NUM_ADMINS = config.volumes.users.admins;
 const NUM_USERS = NUM_CONSULTANTS + NUM_CONSULTEES + NUM_STAFF + NUM_ADMINS;
+/** Per role, how many of the first seeded users are always onboarded. */
+const QA_ACCOUNTS_PER_ROLE = 3;
 
 // Gender enum values
 const GENDERS: Gender[] = ["MALE", "FEMALE", "NON_BINARY", "PREFER_NOT_TO_SAY"];
@@ -537,6 +539,14 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
       adminIndex++;
     }
 
+    const roleOrdinal = {
+      CONSULTANT: consultantIndex,
+      CONSULTEE: consulteeIndex,
+      STAFF: staffIndex,
+      ADMIN: adminIndex,
+      ORG_WORKSPACE: 0,
+    }[userRole];
+
     try {
       // Generate consistent name and email from index
       const { name, email } = generateNameAndEmail(i);
@@ -553,7 +563,10 @@ export async function createUsers(): Promise<UserWithProfiles[]> {
         address: sanitizeString(faker.location.streetAddress()),
         onlineStatus: faker.datatype.boolean(),
         timezone: sanitizeString(faker.location.timeZone()),
-        onboardingCompleted: faker.datatype.boolean(),
+        // The first QA_ACCOUNTS_PER_ROLE users of each role are the QA logins;
+        // a coin flip here hid whole dashboards behind onboarding on every reset.
+        onboardingCompleted:
+          roleOrdinal <= QA_ACCOUNTS_PER_ROLE || faker.datatype.boolean(),
         role: userRole,
 
         // New fields for enhanced user
