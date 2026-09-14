@@ -129,7 +129,7 @@ graph TD
 
 Singleton pattern matching `lib/stream-client.ts`:
 
-- `isNovuConfigured()` -- checks if `NOVU_SECRET_KEY` env var is set
+- `isNovuConfigured()` -- checks whether the secret key for the detected Novu environment is set: `NOVU_PRODUCTION_KEY` when `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`, otherwise `NOVU_DEVELOPMENT_KEY` (`lib/novu/secret-key.ts`)
 - `validateNovuConfig()` -- throws if not configured (used by `getNovuClient`)
 - `getNovuClient()` -- returns singleton `Novu` instance
 - `resetNovuClient()` -- clears singleton (for testing)
@@ -361,7 +361,8 @@ For Novu triggers this remains a true fire-and-forget: a failed call is logged a
 | Variable                  | Side   | Required                        | Purpose                                   |
 | ------------------------- | ------ | ------------------------------- | ----------------------------------------- |
 | `RESEND_API_KEY`          | Server | Yes (for emails)                | Resend API key for email delivery         |
-| `NOVU_SECRET_KEY`         | Server | Yes (for notifications)         | Novu server-side API key                  |
+| `NOVU_DEVELOPMENT_KEY`    | Server | Yes (for notifications)         | Novu secret key, Development environment  |
+| `NOVU_PRODUCTION_KEY`     | Server | Yes (production only)           | Novu secret key, Production environment   |
 | `NEXT_PUBLIC_NOVU_APP_ID` | Client | Yes (for in-app)                | Novu application identifier for React SDK |
 | `NEXT_PUBLIC_APP_URL`     | Both   | No (defaults to localhost:3000) | Base URL for email links                  |
 

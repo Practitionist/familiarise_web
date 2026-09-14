@@ -14,14 +14,26 @@
  */
 
 import { Novu } from "@novu/api";
+import {
+  resolveNovuSecretKey,
+  type NovuEnvironment,
+} from "../../lib/novu/secret-key";
 import { EVENT_FAMILY } from "../../lib/novu/templates";
 
 const APPLY = process.argv.includes("--apply");
 const PAGE = 100;
 
+/** `--env production` targets Production; anything else is Development. */
+function targetEnvironment(): NovuEnvironment {
+  const i = process.argv.indexOf("--env");
+  return i !== -1 && process.argv[i + 1] === "production"
+    ? "production"
+    : "development";
+}
+
 async function main() {
-  const secretKey = process.env.NOVU_SECRET_KEY;
-  if (!secretKey) throw new Error("NOVU_SECRET_KEY is not set");
+  const { name, key: secretKey } = resolveNovuSecretKey(targetEnvironment());
+  if (!secretKey) throw new Error(`${name} is not set`);
   const novu = new Novu({ secretKey });
   const legacyIds = new Set<string>(Object.keys(EVENT_FAMILY));
 
