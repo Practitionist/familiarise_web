@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import {
   createWebinarChannel,
-  createClassChannel,
+  createCohortChannel,
   createConsultationChannel,
   createSubscriptionChannel,
   createChannel,
@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
             result = await createWebinarChannel(eventId);
             break;
           case "class":
-            result = await createClassChannel(eventId);
+            result = await createCohortChannel(eventId);
             break;
           case "consultation":
             result = await createConsultationChannel(eventId);

@@ -174,8 +174,8 @@ export async function GET(
               webinar: {
                 select: { webinarPlan: planInclude },
               },
-              class: {
-                select: { classPlan: planInclude },
+              cohort: {
+                select: { cohortPlan: planInclude },
               },
             },
           },
@@ -310,13 +310,13 @@ export async function GET(
         apt?.consultation?.consultationPlan?.title ??
         apt?.subscription?.subscriptionPlan?.title ??
         apt?.webinar?.webinarPlan?.title ??
-        apt?.class?.classPlan?.title ??
+        apt?.cohort?.cohortPlan?.title ??
         "Payment";
       const consultantName =
         apt?.consultation?.consultationPlan?.consultantProfile?.user?.name ??
         apt?.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
         apt?.webinar?.webinarPlan?.consultantProfile?.user?.name ??
-        apt?.class?.classPlan?.consultantProfile?.user?.name ??
+        apt?.cohort?.cohortPlan?.consultantProfile?.user?.name ??
         "Consultant";
       const type =
         (apt?.appointmentType?.toLowerCase() as

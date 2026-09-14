@@ -37,11 +37,11 @@ import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
   CANCELLABLE_FROM,
-  CLASS_EVENT_ALLOWED_FROM,
+  COHORT_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   RESCHEDULE_OPEN_STATUSES,
   SLOT_RESCHEDULABLE_FROM,
-  transitionClassEvent,
+  transitionCohortEvent,
   transitionConsultationRequest,
   transitionRescheduleRequest,
   transitionOccurrenceCompletion,
@@ -179,9 +179,9 @@ export async function POST(
             },
           },
         },
-        class: {
+        cohort: {
           include: {
-            classPlan: {
+            cohortPlan: {
               include: {
                 consultantProfile: {
                   include: { user: { select: { id: true, name: true } } },
@@ -231,11 +231,11 @@ export async function POST(
       const webinarConsultantId =
         appointment.webinar.webinarPlan?.consultantProfileId;
       isParticipant = consultantProfileId === webinarConsultantId;
-    } else if (appointment.class) {
+    } else if (appointment.cohort) {
       // Only the consultant (organizer) can cancel a group event
-      const classConsultantId =
-        appointment.class.classPlan?.consultantProfileId;
-      isParticipant = consultantProfileId === classConsultantId;
+      const cohortConsultantId =
+        appointment.cohort.cohortPlan?.consultantProfileId;
+      isParticipant = consultantProfileId === cohortConsultantId;
     }
 
     const isPrivilegedUser = isPrivileged(session.user.role);
@@ -287,12 +287,12 @@ export async function POST(
       consulteeName =
         appointment.subscription.requestedBy?.user?.name || undefined;
       planTitle = appointment.subscription.subscriptionPlan?.title;
-    } else if (appointment.webinar || appointment.class) {
+    } else if (appointment.webinar || appointment.cohort) {
       // #1003 — group events had no recipients assembled at all, so cancelling
       // one told nobody. The organiser is the consultant on the plan; the
       // attendees are gathered after the refund fan-out below.
       const plan =
-        appointment.webinar?.webinarPlan ?? appointment.class?.classPlan;
+        appointment.webinar?.webinarPlan ?? appointment.cohort?.cohortPlan;
       consultantUserId = plan?.consultantProfile?.user?.id;
       consultantName = plan?.consultantProfile?.user?.name || undefined;
       planTitle = plan?.title;
@@ -403,13 +403,13 @@ export async function POST(
                 fromIn: EVENT_ALLOWED_FROM.CANCELLED,
               });
               moved = true;
-            } else if (appointment.class) {
-              await transitionClassEvent(tx, {
+            } else if (appointment.cohort) {
+              await transitionCohortEvent(tx, {
                 ...auditMeta,
                 appointmentId,
-                where: { id: appointment.class.id },
+                where: { id: appointment.cohort.id },
                 to: "CANCELLED",
-                fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
+                fromIn: COHORT_EVENT_ALLOWED_FROM.CANCELLED,
               });
               moved = true;
             }
@@ -463,7 +463,7 @@ export async function POST(
             cancellationReason: validatedData.reason,
             cancelledAt: cancellationData.cancelledAt,
             webinarId: appointment.webinar?.id,
-            classId: appointment.class?.id,
+            cohortId: appointment.cohort?.id,
           };
         },
         {
@@ -660,13 +660,13 @@ export async function POST(
 
     // #776 §C — whole-event (class/webinar) cancellation refunds every attendee
     // in full through the reversal engine: org-funded seats reverse in-ledger
-    // (CLASS_MULTI), card/mock seats credit the gateway. Same at-most-once CAS
+    // (COHORT_MULTI), card/mock seats credit the gateway. Same at-most-once CAS
     // guarantee as the block above. Attendees didn't leave voluntarily (the
     // event was cancelled on them), so this is a full refund, not policy-tiered.
     let eventRefund: WholeEventRefundSummary | null = null;
-    if (appointment.class || appointment.webinar) {
-      const eventKind = appointment.class ? "class" : "webinar";
-      const eventId = appointment.class?.id ?? appointment.webinar!.id;
+    if (appointment.cohort || appointment.webinar) {
+      const eventKind = appointment.cohort ? "class" : "webinar";
+      const eventId = appointment.cohort?.id ?? appointment.webinar!.id;
       eventRefund = await refundWholeEventPayments(
         eventKind,
         eventId,
@@ -691,9 +691,9 @@ export async function POST(
     // it too. They have no 1:1 counterpart on the booking, so they are read off
     // the payments, exactly as the moderation bulk-cancel does.
     let attendeeUserIds: string[] = [];
-    if (appointment.class || appointment.webinar) {
-      const eventFilter = appointment.class
-        ? { classId: appointment.class.id }
+    if (appointment.cohort || appointment.webinar) {
+      const eventFilter = appointment.cohort
+        ? { cohortId: appointment.cohort.id }
         : { webinarId: appointment.webinar!.id };
       const attendeePayments = await prisma.payment.findMany({
         where: {
@@ -716,10 +716,10 @@ export async function POST(
         "webinar",
         appointment.webinar.webinarPlan.id,
       );
-    } else if (appointment.class?.classPlan) {
+    } else if (appointment.cohort?.cohortPlan) {
       collaboratorIds = await collaboratorUserIds(
         "class",
-        appointment.class.classPlan.id,
+        appointment.cohort.cohortPlan.id,
       );
     }
 

@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
               select: { subscriptionPlan: { select: { title: true } } },
             },
             webinar: { select: { webinarPlan: { select: { title: true } } } },
-            class: { select: { classPlan: { select: { title: true } } } },
+            cohort: { select: { cohortPlan: { select: { title: true } } } },
           },
         },
       },
@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
           t.appointment.consultation?.consultationPlan?.title ??
           t.appointment.subscription?.subscriptionPlan?.title ??
           t.appointment.webinar?.webinarPlan?.title ??
-          t.appointment.class?.classPlan?.title ??
+          t.appointment.cohort?.cohortPlan?.title ??
           null,
       },
     }));

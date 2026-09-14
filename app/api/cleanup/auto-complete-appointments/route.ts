@@ -15,7 +15,7 @@ export const { GET, POST } = cleanupRoute({
   run: () => autoCompleteAppointments(),
   summarize: (r) => ({
     webinarsCompleted: r.webinarsCompleted,
-    classesCompleted: r.classesCompleted,
+    cohortsCompleted: r.cohortsCompleted,
     consultationsCompleted: r.consultationsCompleted,
     subscriptionsCompleted: r.subscriptionsCompleted,
   }),

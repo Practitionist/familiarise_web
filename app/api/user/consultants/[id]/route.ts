@@ -248,7 +248,7 @@ export async function GET(
         webinarPlans: planVisibilityFilter
           ? { where: planVisibilityFilter }
           : true,
-        classPlans: planVisibilityFilter
+        cohortPlans: planVisibilityFilter
           ? { where: planVisibilityFilter }
           : true,
         reviews: {
@@ -641,7 +641,7 @@ export async function PUT(
           },
         },
         webinarPlans: true,
-        classPlans: true,
+        cohortPlans: true,
         // #1300 — `reviews` deliberately NOT included. This response is
         // authenticated as the profile OWNER, i.e. the reviewed consultant, and a
         // bare relation include returns every scalar: `consulteeProfileId`,
@@ -786,7 +786,7 @@ export async function DELETE(
         where: { consultantProfileId: id },
       });
       await tx.webinarPlan.deleteMany({ where: { consultantProfileId: id } });
-      await tx.classPlan.deleteMany({ where: { consultantProfileId: id } });
+      await tx.cohortPlan.deleteMany({ where: { consultantProfileId: id } });
       await tx.consultantReview.deleteMany({
         where: { consultantProfileId: id },
       });

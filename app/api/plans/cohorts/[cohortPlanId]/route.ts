@@ -1,6 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
-import { fetchClassPlanDetail } from "@/lib/data/plan-details";
+import { fetchCohortPlanDetail } from "@/lib/data/plan-details";
 import { apiError } from "@/lib/errors";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -14,13 +14,13 @@ import {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
+  { params }: { params: Promise<{ cohortPlanId: string }> },
 ) {
   try {
-    const { classPlanId } = await params;
-    const classPlan = await fetchClassPlanDetail(classPlanId);
+    const { cohortPlanId } = await params;
+    const cohortPlan = await fetchCohortPlanDetail(cohortPlanId);
 
-    if (!classPlan) {
+    if (!cohortPlan) {
       return NextResponse.json(
         { error: "Class plan not found" },
         { status: 404 },
@@ -28,7 +28,7 @@ export async function GET(
     }
 
     return NextResponse.json(
-      { data: classPlan },
+      { data: cohortPlan },
       {
         status: 200,
         headers: {
@@ -37,23 +37,26 @@ export async function GET(
       },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
-    return apiError({ tag: "[ClassPlan.GET]", error });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
+    return apiError({ tag: "[CohortPlan.GET]", error });
   }
 }
 
 /**
  * Retired. Plan writes go through POST/PATCH on
- * /api/bookings/classes/crud-with-plan, which validates with
- * ClassPlanSchema and maintains the plan + contents + slot run atomically.
+ * /api/bookings/cohorts/crud-with-plan, which validates with
+ * CohortPlanSchema and maintains the plan + contents + slot run atomically.
  * This legacy PUT bypassed Zod entirely, so retiring it (no callers remained)
- * removes the last unvalidated write path to ClassPlan.
+ * removes the last unvalidated write path to CohortPlan.
  */
 export async function PUT() {
   return NextResponse.json(
     {
       error:
-        "PUT is no longer supported on this route. Use POST/PATCH on /api/bookings/classes/crud-with-plan.",
+        "PUT is no longer supported on this route. Use POST/PATCH on /api/bookings/cohorts/crud-with-plan.",
     },
     { status: 405, headers: { Allow: "GET" } },
   );
@@ -69,7 +72,7 @@ export async function PUT() {
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ classPlanId: string }> },
+  { params }: { params: Promise<{ cohortPlanId: string }> },
 ) {
   try {
     const session = await getSession();
@@ -80,7 +83,7 @@ export async function PATCH(
       );
     }
 
-    const { classPlanId } = await params;
+    const { cohortPlanId } = await params;
 
     const parsedBody = await parsePlanArchiveBody(request);
     if (!parsedBody.ok) {
@@ -91,8 +94,8 @@ export async function PATCH(
     }
     const { archived } = parsedBody;
 
-    const existingPlan = await prisma.classPlan.findUnique({
-      where: { id: classPlanId },
+    const existingPlan = await prisma.cohortPlan.findUnique({
+      where: { id: cohortPlanId },
       include: { consultantProfile: true },
     });
 
@@ -117,8 +120,8 @@ export async function PATCH(
       return NextResponse.json(PLAN_ORG_GOVERNED_RESPONSE, { status: 403 });
     }
 
-    const classPlan = await prisma.classPlan.update({
-      where: { id: classPlanId },
+    const cohortPlan = await prisma.cohortPlan.update({
+      where: { id: cohortPlanId },
       data: {
         archivedAt: archived
           ? archivedAtForArchive(existingPlan.archivedAt)
@@ -128,7 +131,7 @@ export async function PATCH(
 
     return NextResponse.json(
       {
-        data: { id: classPlan.id, archivedAt: classPlan.archivedAt },
+        data: { id: cohortPlan.id, archivedAt: cohortPlan.archivedAt },
         message: PLAN_ARCHIVE_RESPONSE_NOTE,
       },
       { status: 200 },
@@ -143,8 +146,11 @@ export async function PATCH(
         { status: 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
-    return apiError({ tag: "[ClassPlan.PATCH]", error });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
+    return apiError({ tag: "[CohortPlan.PATCH]", error });
   }
 }
 

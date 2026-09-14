@@ -131,7 +131,7 @@ async function isEventParticipant(
     );
   }
 
-  const hit = await prisma.class.findFirst({
+  const hit = await prisma.cohort.findFirst({
     where: {
       id: eventId,
       status: { in: [...OPENABLE_EVENT_STATUSES] },
@@ -143,7 +143,7 @@ async function isEventParticipant(
               participants: { some: liveParticipant(userId) },
             },
         },
-        { classPlan: { consultantProfile: { userId } } },
+        { cohortPlan: { consultantProfile: { userId } } },
       ],
     },
     select: {

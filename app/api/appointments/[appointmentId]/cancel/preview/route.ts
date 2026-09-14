@@ -26,7 +26,7 @@ async function loadPreviewAppointment(appointmentId: string) {
       consultationId: true,
       subscriptionId: true,
       webinarId: true,
-      classId: true,
+      cohortId: true,
       consultation: {
         select: {
           requestedById: true,
@@ -61,9 +61,9 @@ async function loadPreviewAppointment(appointmentId: string) {
           },
         },
       },
-      class: {
+      cohort: {
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               consultantProfileId: true,
               consultantProfile: { select: { userId: true } },
@@ -137,8 +137,8 @@ function deriveActorRoles(
         actorConsultantProfileId === plan?.consultantProfileId,
     };
   }
-  if (appointment.class) {
-    const plan = appointment.class.classPlan;
+  if (appointment.cohort) {
+    const plan = appointment.cohort.cohortPlan;
     return {
       consultantUserId: plan?.consultantProfile?.userId ?? null,
       consulteeUserId: null,
@@ -177,7 +177,7 @@ async function quoteWholeEventRefund(
   const seats = await prisma.payment.findMany({
     where: {
       appointment:
-        kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
+        kind === "webinar" ? { webinarId: eventId } : { cohortId: eventId },
       paymentStatus: "SUCCEEDED",
       amount: { gt: 0 },
     },
@@ -220,7 +220,7 @@ async function quoteIndividualBooking(
     appointmentId: appointment.id,
     consultationId: appointment.consultationId,
     subscriptionId: appointment.subscriptionId,
-    classId: appointment.classId,
+    cohortId: appointment.cohortId,
     webinarId: appointment.webinarId,
   };
   const ctx = await resolveBookingRefundContext(bookingRef);
@@ -351,9 +351,9 @@ export async function GET(
     if (appointment.webinarId) {
       eventKind = "webinar";
       eventId = appointment.webinarId;
-    } else if (appointment.classId) {
+    } else if (appointment.cohortId) {
       eventKind = "class";
-      eventId = appointment.classId;
+      eventId = appointment.cohortId;
     }
 
     if (eventKind && eventId) {

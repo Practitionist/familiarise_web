@@ -28,7 +28,7 @@ const ProgramStatusSchema = z.enum([
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
-  "CLASS",
+  "COHORT",
   "WEBINAR",
   "SUBSCRIPTION",
 ]);

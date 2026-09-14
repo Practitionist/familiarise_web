@@ -51,9 +51,9 @@ export async function GET(req: NextRequest) {
                 webinarPlan: true,
               },
             },
-            class: {
+            cohort: {
               include: {
-                classPlan: true,
+                cohortPlan: true,
               },
             },
             occurrences: true,
@@ -170,7 +170,7 @@ export async function GET(req: NextRequest) {
             consultation: payment.appointment.consultation,
             subscription: payment.appointment.subscription,
             webinar: payment.appointment.webinar,
-            class: payment.appointment.class,
+            cohort: payment.appointment.cohort,
           }
         : null,
       amount: payment.amount,

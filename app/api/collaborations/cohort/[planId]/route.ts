@@ -8,7 +8,7 @@ import {
   getCollaboratorsForUser,
   inviteCollaborator,
 } from "@/lib/collaborators/service";
-import { inviteClassCollaboratorSchema } from "@/schemas/collaborators";
+import { inviteCohortCollaboratorSchema } from "@/schemas/collaborators";
 
 export async function GET(
   _req: NextRequest,
@@ -58,7 +58,7 @@ export async function POST(
 
     const { planId } = await params;
 
-    const plan = await prisma.classPlan.findUnique({
+    const plan = await prisma.cohortPlan.findUnique({
       where: { id: planId },
       include: { consultantProfile: true },
     });
@@ -79,7 +79,7 @@ export async function POST(
     }
 
     const body = await req.json();
-    const parsed = inviteClassCollaboratorSchema.safeParse(body);
+    const parsed = inviteCohortCollaboratorSchema.safeParse(body);
 
     if (!parsed.success) {
       return NextResponse.json(
@@ -99,7 +99,7 @@ export async function POST(
 
     const existingCollab = await prisma.collaborator.findFirst({
       where: {
-        classPlanId: planId,
+        cohortPlanId: planId,
         consultantProfileId,
         status: { notIn: ["REMOVED", "DECLINED", "WITHDRAWN"] },
       },

@@ -54,8 +54,8 @@ async function loadConsultantAppointment(
         },
       },
       {
-        class: {
-          classPlan: { consultantProfile: { user: { id: userId } } },
+        cohort: {
+          cohortPlan: { consultantProfile: { user: { id: userId } } },
         },
       },
     ];
@@ -85,10 +85,12 @@ async function loadConsultantAppointment(
           },
         },
       },
-      class: {
+      cohort: {
         include: {
-          classPlan: {
-            include: { consultantProfile: { select: { id: true, userId: true } } },
+          cohortPlan: {
+            include: {
+              consultantProfile: { select: { id: true, userId: true } },
+            },
           },
         },
       },
@@ -147,7 +149,7 @@ export async function POST(
       appointment.consultation?.consultationPlan?.consultantProfile?.id ||
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ||
       appointment.webinar?.webinarPlan?.consultantProfile?.id ||
-      appointment.class?.classPlan?.consultantProfile?.id;
+      appointment.cohort?.cohortPlan?.consultantProfile?.id;
 
     if (!consultantId) {
       return NextResponse.json(

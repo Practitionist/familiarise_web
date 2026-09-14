@@ -58,7 +58,7 @@ export async function GET(
         consultationPlan: { select: { id: true, title: true } },
         subscriptionPlan: { select: { id: true, title: true } },
         webinarPlan: { select: { id: true, title: true } },
-        classPlan: { select: { id: true, title: true } },
+        cohortPlan: { select: { id: true, title: true } },
       },
       orderBy: { uploadedAt: "desc" },
       take: perPage,

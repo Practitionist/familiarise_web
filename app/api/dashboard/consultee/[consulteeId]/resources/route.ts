@@ -97,8 +97,8 @@ const webinarInclude = {
   },
 } satisfies Prisma.WebinarInclude;
 
-const classInclude = {
-  classPlan: {
+const cohortInclude = {
+  cohortPlan: {
     include: {
       materials: {
         select: planMaterialSelect,
@@ -112,7 +112,7 @@ const classInclude = {
   appointment: {
     include: slotsWithRecordings,
   },
-} satisfies Prisma.ClassInclude;
+} satisfies Prisma.CohortInclude;
 
 // Trials ride the subscription plan's materials + the single trial
 // appointment's recordings — same shape as consultations.
@@ -150,9 +150,9 @@ type WebinarWithResources = Prisma.Result<
   { include: typeof webinarInclude },
   "findFirstOrThrow"
 >;
-type ClassWithResources = Prisma.Result<
-  typeof prisma.class,
-  { include: typeof classInclude },
+type CohortWithResources = Prisma.Result<
+  typeof prisma.cohort,
+  { include: typeof cohortInclude },
   "findFirstOrThrow"
 >;
 type TrialWithResources = Prisma.Result<
@@ -210,7 +210,7 @@ export async function GET(
     // Get paid plan IDs via shared RecordingService method
     const {
       webinarPlanIds: paidWebinarPlanIds,
-      classPlanIds: paidClassPlanIds,
+      cohortPlanIds: paidCohortPlanIds,
     } = await RecordingService.getPaidPlanIds(userId);
 
     // #1166 ORG-4 — personal surface: participation arms pin the appointment
@@ -219,7 +219,7 @@ export async function GET(
     // entitlement, not booking scope, and pinning them would revoke
     // recordings the user paid for. Trials stay unpinned (attribution-only
     // org tag, always B2C).
-    const [consultations, subscriptions, webinars, classes, trials] =
+    const [consultations, subscriptions, webinars, cohorts, trials] =
       await Promise.all([
         prisma.consultation.findMany({
           where: {
@@ -281,7 +281,7 @@ export async function GET(
           orderBy: { createdAt: "desc" },
         }),
 
-        prisma.class.findMany({
+        prisma.cohort.findMany({
           where: {
             OR: [
               // Instances the user directly attended
@@ -292,10 +292,10 @@ export async function GET(
                 },
               },
               // Other instances from paid plans that have recordings
-              ...(paidClassPlanIds.length > 0
+              ...(paidCohortPlanIds.length > 0
                 ? [
                     {
-                      classPlanId: { in: paidClassPlanIds },
+                      cohortPlanId: { in: paidCohortPlanIds },
                       appointment: {
                         occurrences: {
                           some: {
@@ -319,7 +319,7 @@ export async function GET(
                 : []),
             ],
           },
-          include: classInclude,
+          include: cohortInclude,
           orderBy: { createdAt: "desc" },
         }),
 
@@ -391,19 +391,20 @@ export async function GET(
           })),
         )
       ).filter(shouldInclude),
-      classes: (
+      cohorts: (
         await Promise.all(
-          classes.map(async (cl: ClassWithResources) => ({
+          cohorts.map(async (cl: CohortWithResources) => ({
             id: cl.id,
-            planTitle: cl.classPlan.title,
-            consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
-            consultantImage: cl.classPlan.consultantProfile?.user.image ?? null,
+            planTitle: cl.cohortPlan.title,
+            consultantName: cl.cohortPlan.consultantProfile?.user.name ?? null,
+            consultantImage:
+              cl.cohortPlan.consultantProfile?.user.image ?? null,
             status: cl.status,
             date:
               cl.schedulingPeriodStartsAt ||
               cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
-            materials: cl.classPlan.materials,
+            materials: cl.cohortPlan.materials,
             recordings: await extractRecordings(
               cl.appointment ? [cl.appointment] : [],
             ),

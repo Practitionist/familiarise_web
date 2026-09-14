@@ -68,19 +68,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       const slot = recording.meeting.occurrence;
       const appointment = slot.appointment;
 
-      let planType: "webinar" | "class" | null = null;
-      let planId: string | null = null;
-      let planTitle: string | null = null;
+        let planType: "webinar" | "class" | null = null;
+        let planId: string | null = null;
+        let planTitle: string | null = null;
 
-      if (appointment?.webinar?.webinarPlan) {
-        planType = "webinar";
-        planId = appointment.webinar.webinarPlan.id;
-        planTitle = appointment.webinar.webinarPlan.title;
-      } else if (appointment?.class?.classPlan) {
-        planType = "class";
-        planId = appointment.class.classPlan.id;
-        planTitle = appointment.class.classPlan.title;
-      }
+        if (appointment?.webinar?.webinarPlan) {
+          planType = "webinar";
+          planId = appointment.webinar.webinarPlan.id;
+          planTitle = appointment.webinar.webinarPlan.title;
+        } else if (appointment?.cohort?.cohortPlan) {
+          planType = "class";
+          planId = appointment.cohort.cohortPlan.id;
+          planTitle = appointment.cohort.cohortPlan.title;
+        }
 
       // Participant names come from the appointment's live roster (#1554)
       const allNames = appointment.participants

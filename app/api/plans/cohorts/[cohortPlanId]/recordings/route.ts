@@ -1,6 +1,6 @@
 /**
  * Class Plan Recordings API Route
- * GET /api/plans/classes/[classPlanId]/recordings
+ * GET /api/plans/cohorts/[cohortPlanId]/recordings
  *
  * Gets all recordings for a specific class plan.
  * Access: Consultant owner or enrolled consultees.
@@ -15,7 +15,7 @@ import { isPrivileged } from "@/lib/auth-helpers";
 import { getSession } from "@/lib/auth-server";
 type RouteParams = {
   params: Promise<{
-    classPlanId: string;
+    cohortPlanId: string;
   }>;
 };
 
@@ -27,11 +27,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { classPlanId } = await params;
+    const { cohortPlanId } = await params;
 
     // Get the class plan to check ownership and recording settings
-    const classPlan = await prisma.classPlan.findUnique({
-      where: { id: classPlanId },
+    const cohortPlan = await prisma.cohortPlan.findUnique({
+      where: { id: cohortPlanId },
       select: {
         id: true,
         title: true,
@@ -40,7 +40,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    if (!classPlan) {
+    if (!cohortPlan) {
       return NextResponse.json(
         { error: "Class plan not found" },
         { status: 404 },
@@ -58,11 +58,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Provider path: owns the plan, or is an accepted collaborator.
     if (!hasAccess && session.user.consultantProfileId) {
       hasAccess =
-        classPlan.consultantProfileId === session.user.consultantProfileId;
+        cohortPlan.consultantProfileId === session.user.consultantProfileId;
       if (!hasAccess) {
         const collab = await prisma.collaborator.findFirst({
           where: {
-            classPlanId,
+            cohortPlanId,
             consultantProfileId: session.user.consultantProfileId,
             status: "ACCEPTED",
           },
@@ -78,8 +78,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           userId: session.user.id,
           paymentStatus: "SUCCEEDED",
           appointment: {
-            class: {
-              classPlanId,
+            cohort: {
+              cohortPlanId,
             },
           },
         },
@@ -96,7 +96,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
     // Get recordings for this class plan
     const recordings =
-      await RecordingService.getClassPlanRecordings(classPlanId);
+      await RecordingService.getCohortPlanRecordings(cohortPlanId);
 
     // Map recordings to response format (async — presigned URLs)
     const formattedRecordings = await Promise.all(recordings.map(async (recording) => ({
@@ -116,9 +116,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     })));
 
     return NextResponse.json({
-      planId: classPlanId,
-      planTitle: classPlan.title,
-      recordingEnabled: classPlan.recordingEnabled,
+      planId: cohortPlanId,
+      planTitle: cohortPlan.title,
+      recordingEnabled: cohortPlan.recordingEnabled,
       recordings: formattedRecordings,
       total: formattedRecordings.length,
     });

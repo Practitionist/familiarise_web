@@ -38,11 +38,11 @@ import { logActivity } from "@/lib/activity/log-activity";
 import { tryAutoConfirmProposal } from "@/lib/booking/reschedule-auto-confirm";
 import { hasActiveDisputeForAppointment } from "@/lib/payments/dispute-guard";
 import {
-  CLASS_EVENT_ALLOWED_FROM,
+  COHORT_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   RESCHEDULABLE_FROM,
   SLOT_RESCHEDULABLE_FROM,
-  transitionClassEvent,
+  transitionCohortEvent,
   transitionConsultationRequest,
   transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
@@ -73,7 +73,7 @@ function roleOf(
  * Reschedule an appointment or specific session(s) within a subscription.
  *
  * Query Parameters:
- * - type: AppointmentType (CONSULTATION, SUBSCRIPTION, WEBINAR, CLASS)
+ * - type: AppointmentType (CONSULTATION, SUBSCRIPTION, WEBINAR, COHORT)
  *
  * Body (optional):
  * - slotIds: string[] - For SUBSCRIPTION type only. If provided, only these specific
@@ -84,7 +84,7 @@ function roleOf(
  * - For CONSULTATION: Marks all slots as tentative, reverts status to PENDING
  * - For SUBSCRIPTION with slotIds: Marks only specified slots as tentative (individual/multiple session reschedule)
  * - For SUBSCRIPTION without slotIds: Marks ALL slots as tentative (entire subscription reschedule)
- * - For WEBINAR/CLASS: Marks all slots as tentative
+ * - For WEBINAR/COHORT: Marks all slots as tentative
  *
  * 24-Hour Restriction:
  * - Cannot reschedule if ANY slot to be rescheduled is within 24 hours
@@ -216,9 +216,9 @@ export async function POST(
                   webinarPlan: true,
                 },
               },
-              class: {
+              cohort: {
                 include: {
-                  classPlan: true,
+                  cohortPlan: true,
                 },
               },
             },
@@ -265,11 +265,11 @@ export async function POST(
             const webinarConsultantId =
               appointment.webinar.webinarPlan?.consultantProfileId;
             isParticipant = consultantProfileId === webinarConsultantId;
-          } else if (appointment.class) {
+          } else if (appointment.cohort) {
             // Same as webinar: consultant-only reschedule
-            const classConsultantId =
-              appointment.class.classPlan?.consultantProfileId;
-            isParticipant = consultantProfileId === classConsultantId;
+            const cohortConsultantId =
+              appointment.cohort.cohortPlan?.consultantProfileId;
+            isParticipant = consultantProfileId === cohortConsultantId;
           }
 
           // Allow ADMIN/STAFF bypass
@@ -295,8 +295,8 @@ export async function POST(
               ? "SUBSCRIPTION"
               : appointment.webinar
                 ? "WEBINAR"
-                : appointment.class
-                  ? "CLASS"
+                : appointment.cohort
+                  ? "COHORT"
                   : null;
 
           if (
@@ -313,7 +313,7 @@ export async function POST(
           // #1554 — a subscription or class is ONE wrapper, so every session
           // of the programme is already on `appointment.occurrences`.
           let allSubscriptionSlots: typeof appointment.occurrences =
-            derivedType === "SUBSCRIPTION" || derivedType === "CLASS"
+            derivedType === "SUBSCRIPTION" || derivedType === "COHORT"
               ? appointment.occurrences
               : [];
 
@@ -329,22 +329,22 @@ export async function POST(
           );
 
           // Determine which slots will be affected
-          // For multi-appointment types (SUBSCRIPTION, CLASS) without slotIds, check all slots
+          // For multi-appointment types (SUBSCRIPTION, COHORT) without slotIds, check all slots
           let slotsToReschedule =
-            (derivedType === "SUBSCRIPTION" || derivedType === "CLASS") &&
+            (derivedType === "SUBSCRIPTION" || derivedType === "COHORT") &&
             (!slotIds || slotIds.length === 0) &&
             allSubscriptionSlots.length > 0
               ? allSubscriptionSlots
               : appointment.occurrences;
 
-          // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
-          // slots. CLASS previously fell through to the whole-class branch, so
+          // For SUBSCRIPTION/COHORT with slotIds, only reschedule the specific
+          // slots. COHORT previously fell through to the whole-class branch, so
           // a per-session class reschedule silently escalated to every session.
           if (
             slotIds &&
             slotIds.length > 0 &&
             ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
-              (derivedType === "CLASS" && appointment.class))
+              (derivedType === "COHORT" && appointment.cohort))
           ) {
             // Filter to only the requested slots from ALL subscription slots
             slotsToReschedule = allSubscriptionSlots.filter((s) =>
@@ -409,7 +409,7 @@ export async function POST(
             slotIds &&
             slotIds.length > 0 &&
             ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
-              (derivedType === "CLASS" && appointment.class))
+              (derivedType === "COHORT" && appointment.cohort))
           ) {
             // #1554 — one occurrence row is one session, so a per-session
             // reschedule releases exactly the rows named; releasing by
@@ -490,13 +490,13 @@ export async function POST(
                 to: "SCHEDULED",
                 fromIn: EVENT_ALLOWED_FROM.SCHEDULED,
               });
-            } else if (appointment.class) {
-              await transitionClassEvent(tx, {
+            } else if (appointment.cohort) {
+              await transitionCohortEvent(tx, {
                 ...auditMeta,
                 appointmentId,
-                where: { id: appointment.class.id },
+                where: { id: appointment.cohort.id },
                 to: "SCHEDULED",
-                fromIn: CLASS_EVENT_ALLOWED_FROM.SCHEDULED,
+                fromIn: COHORT_EVENT_ALLOWED_FROM.SCHEDULED,
               });
             }
           } catch (err) {
@@ -645,13 +645,13 @@ export async function POST(
                 appointment.subscription?.subscriptionPlan
                   ?.consultantProfileId ??
                 appointment.webinar?.webinarPlan?.consultantProfileId ??
-                appointment.class?.classPlan?.consultantProfileId ??
+                appointment.cohort?.cohortPlan?.consultantProfileId ??
                 null,
               appointmentType: appointment.appointmentType,
               consultationId: appointment.consultation?.id,
               subscriptionId: appointment.subscription?.id,
               webinarId: appointment.webinar?.id,
-              classId: appointment.class?.id,
+              cohortId: appointment.cohort?.id,
             },
             rescheduleRequestId,
           };
@@ -744,7 +744,7 @@ export async function POST(
         consultationId: result.logContext.consultationId,
         subscriptionId: result.logContext.subscriptionId,
         webinarId: result.logContext.webinarId,
-        classId: result.logContext.classId,
+        cohortId: result.logContext.cohortId,
       });
     }
 
@@ -797,9 +797,9 @@ export async function POST(
               },
             },
           },
-          class: {
+          cohort: {
             include: {
-              classPlan: {
+              cohortPlan: {
                 select: {
                   title: true,
                   consultantProfile: {
@@ -821,13 +821,13 @@ export async function POST(
         const consultation = appointment.consultation;
         const subscription = appointment.subscription;
         const webinar = appointment.webinar;
-        const classEvent = appointment.class;
+        const cohortEvent = appointment.cohort;
 
         const plan =
           consultation?.consultationPlan ??
           subscription?.subscriptionPlan ??
           webinar?.webinarPlan ??
-          classEvent?.classPlan ??
+          cohortEvent?.cohortPlan ??
           null;
         const requestedBy =
           consultation?.requestedBy ?? subscription?.requestedBy ?? null;
@@ -851,9 +851,9 @@ export async function POST(
           userIds.push(
             ...(await collaboratorUserIds("webinar", webinar.webinarPlanId)),
           );
-        } else if (classEvent) {
+        } else if (cohortEvent) {
           userIds.push(
-            ...(await collaboratorUserIds("class", classEvent.classPlanId)),
+            ...(await collaboratorUserIds("class", cohortEvent.cohortPlanId)),
           );
         }
 

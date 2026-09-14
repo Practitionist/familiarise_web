@@ -10,7 +10,7 @@ export interface ActiveAppointmentsResult {
     pendingConsultations: number;
     activeSubscriptions: number;
     upcomingWebinars: number;
-    upcomingClasses: number;
+    upcomingCohorts: number;
   };
   /** Human-readable details string (e.g., "2 pending consultations, 1 active subscription") */
   details?: string;
@@ -40,7 +40,7 @@ export async function checkActiveAppointments(
     pendingConsultations,
     activeSubscriptions,
     upcomingWebinars,
-    upcomingClasses,
+    upcomingCohorts,
   ] = await Promise.all([
     prisma.consultation.count({
       where: {
@@ -65,9 +65,9 @@ export async function checkActiveAppointments(
         },
       },
     }),
-    prisma.class.count({
+    prisma.cohort.count({
       where: {
-        classPlan: { consultantProfileId: consultantId },
+        cohortPlan: { consultantProfileId: consultantId },
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
       },
     }),
@@ -77,7 +77,7 @@ export async function checkActiveAppointments(
     pendingConsultations +
     activeSubscriptions +
     upcomingWebinars +
-    upcomingClasses;
+    upcomingCohorts;
 
   // Build human-readable details
   const detailParts: string[] = [];
@@ -96,9 +96,9 @@ export async function checkActiveAppointments(
       `${upcomingWebinars} upcoming webinar${upcomingWebinars > 1 ? "s" : ""}`,
     );
   }
-  if (upcomingClasses > 0) {
+  if (upcomingCohorts > 0) {
     detailParts.push(
-      `${upcomingClasses} upcoming class${upcomingClasses > 1 ? "es" : ""}`,
+      `${upcomingCohorts} upcoming class${upcomingCohorts > 1 ? "es" : ""}`,
     );
   }
 
@@ -109,7 +109,7 @@ export async function checkActiveAppointments(
       pendingConsultations,
       activeSubscriptions,
       upcomingWebinars,
-      upcomingClasses,
+      upcomingCohorts,
     },
     details: detailParts.length > 0 ? detailParts.join(", ") : undefined,
   };

@@ -17,7 +17,7 @@ export interface PlanMaterialsConfig {
     | "consultationPlan"
     | "subscriptionPlan"
     | "webinarPlan"
-    | "classPlan";
+    | "cohortPlan";
 }
 
 // Development mode check
@@ -74,8 +74,8 @@ async function verifyMaterialManageAccess(
           select,
         });
         break;
-      case "classPlan":
-        plan = await prisma.classPlan.findFirst({
+      case "cohortPlan":
+        plan = await prisma.cohortPlan.findFirst({
           where: { id: planId },
           select,
         });
@@ -145,7 +145,7 @@ async function resolveMaterialRowAccess(
           organizationId: true,
         },
       },
-      classPlan: {
+      cohortPlan: {
         select: {
           consultantProfile: { select: { userId: true } },
           organizationId: true,
@@ -159,7 +159,7 @@ async function resolveMaterialRowAccess(
     material.consultationPlan ??
     material.subscriptionPlan ??
     material.webinarPlan ??
-    material.classPlan;
+    material.cohortPlan;
   if (!plan) return { status: "not_found" };
 
   if (isDevelopment() || plan.consultantProfile?.userId === userId) {

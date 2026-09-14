@@ -27,19 +27,19 @@ import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const startTime = Date.now();
   try {
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
 
-    const { classId } = await params;
+    const { cohortId } = await params;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
       "class",
-      classId,
+      cohortId,
     );
     if (authzError) return authzError;
 
@@ -53,9 +53,9 @@ export async function PATCH(
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
       // Validate class ID from URL params
-      eventIdSchema.parse(classId);
+      eventIdSchema.parse(cohortId);
       console.log(
-        `[Class Allocation] Starting allocation for class: ${classId}`,
+        `[Class Allocation] Starting allocation for cohort: ${cohortId}`,
       );
 
       // Validate request body and get typed data
@@ -78,13 +78,13 @@ export async function PATCH(
       const canOverride = await isEventConsultant(
         authResult.session,
         "class",
-        classId,
+        cohortId,
       );
 
       // LAYER 2: Business Logic Validation & Allocation
       const result = await SchedulingService.allocate({
         eventType: "class",
-        eventId: classId,
+        eventId: cohortId,
         mode,
         slots: body.slots,
         // #837 — client dedupe key; a double-submit with the same value returns
@@ -122,7 +122,7 @@ export async function PATCH(
             placeableSessions: result.placeableSessions,
             requiredSessions: result.requiredSessions,
             details: {
-              classId,
+              cohortId,
               mode,
               slotsProvided: body.slots ? body.slots.length : 0,
               duration,
@@ -170,7 +170,7 @@ export async function PATCH(
           {
             error: errorMessage,
             details: validationError.errors,
-            classId,
+            cohortId,
           },
           { status: 400 },
         );

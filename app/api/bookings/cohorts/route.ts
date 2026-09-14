@@ -56,10 +56,10 @@ export async function GET(request: NextRequest) {
     const endDateStr = searchParams.get("endDate");
 
     // Org-scope filter — Class rows don't carry organizationId directly;
-    // attribution lives on the parent ClassPlan (per
+    // attribution lives on the parent CohortPlan (per
     // `docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md`
     // — plans with `organizationId` set are the org's catalog). So we
-    // filter via the `classPlan.organizationId` relation.
+    // filter via the `cohortPlan.organizationId` relation.
     const callerMemberships = await prisma.membership.findMany({
       where: { userId: session.user.id, status: "ACTIVE" },
       select: { organizationId: true, status: true, role: true },
@@ -82,14 +82,14 @@ export async function GET(request: NextRequest) {
     }
     // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
     const scopedOrgId = scopeOrgId(scopeResolution.scope);
-    const classPlanOrgWhere: Prisma.ClassPlanWhereInput | null =
+    const cohortPlanOrgWhere: Prisma.CohortPlanWhereInput | null =
       scopeResolution.scope.kind === "personal"
         ? { organizationId: null }
         : scopedOrgId
           ? { organizationId: scopedOrgId }
           : null; // "all" → no filter
 
-    let classes;
+    let cohorts;
 
     const dateFilter =
       startDateStr && endDateStr
@@ -103,9 +103,9 @@ export async function GET(request: NextRequest) {
         : {};
 
     if (consulteeProfileId) {
-      classes = await prisma.class.findMany({
+      cohorts = await prisma.cohort.findMany({
         where: {
-          ...(classPlanOrgWhere && { classPlan: classPlanOrgWhere }),
+          ...(cohortPlanOrgWhere && { cohortPlan: cohortPlanOrgWhere }),
           OR: [
             // Get classes where consultee is registered through appointments
             {
@@ -122,7 +122,7 @@ export async function GET(request: NextRequest) {
           ...dateFilter,
         },
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: {
                 select: {
@@ -137,7 +137,7 @@ export async function GET(request: NextRequest) {
                   },
                 },
               },
-              classContents: {
+              cohortContents: {
                 orderBy: {
                   order: "asc",
                 },
@@ -161,20 +161,20 @@ export async function GET(request: NextRequest) {
         ],
       });
     } else if (consultantProfileId) {
-      classes = await prisma.class.findMany({
+      cohorts = await prisma.cohort.findMany({
         where: {
-          classPlan: {
+          cohortPlan: {
             consultantProfileId,
-            ...(classPlanOrgWhere ?? {}),
+            ...(cohortPlanOrgWhere ?? {}),
           },
           ...dateFilter,
         },
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               consultantProfile: { select: consultantPublicScalars },
               topics: true,
-              classContents: {
+              cohortContents: {
                 orderBy: {
                   order: "asc",
                 },
@@ -192,13 +192,13 @@ export async function GET(request: NextRequest) {
         },
       });
     } else {
-      classes = await prisma.class.findMany({
+      cohorts = await prisma.cohort.findMany({
         where: {
-          ...(classPlanOrgWhere && { classPlan: classPlanOrgWhere }),
+          ...(cohortPlanOrgWhere && { cohortPlan: cohortPlanOrgWhere }),
           ...dateFilter,
         },
         include: {
-          classPlan: {
+          cohortPlan: {
             include: {
               topics: true,
             },
@@ -208,12 +208,12 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Transform topics from objects to strings in nested classPlan
-    const transformedClasses = classes.map((c) =>
-      transformNestedPlanTopics(c, "classPlan"),
+    // Transform topics from objects to strings in nested cohortPlan
+    const transformedCohorts = cohorts.map((c) =>
+      transformNestedPlanTopics(c, "cohortPlan"),
     );
 
-    return NextResponse.json({ data: transformedClasses }, { status: 200 });
+    return NextResponse.json({ data: transformedCohorts }, { status: 200 });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

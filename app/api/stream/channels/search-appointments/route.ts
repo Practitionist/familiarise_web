@@ -327,11 +327,11 @@ export async function GET(request: NextRequest) {
       take: 10,
     });
 
-    const classesPromise = prisma.class.findMany({
+    const cohortsPromise = prisma.cohort.findMany({
       where: {
         AND: [
           {
-            classPlan: {
+            cohortPlan: {
               title: {
                 contains: query,
                 mode: "insensitive",
@@ -353,7 +353,7 @@ export async function GET(request: NextRequest) {
               },
               // User is the consultant
               {
-                classPlan: {
+                cohortPlan: {
                   consultantProfile: {
                     userId: userId,
                   },
@@ -364,7 +364,7 @@ export async function GET(request: NextRequest) {
         ],
       },
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -383,12 +383,12 @@ export async function GET(request: NextRequest) {
       take: 10,
     });
 
-    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+    const [consultations, subscriptions, webinars, cohorts] = await Promise.all(
       [
         consultationsPromise,
         subscriptionsPromise,
         webinarsPromise,
-        classesPromise,
+        cohortsPromise,
       ],
     );
 
@@ -475,17 +475,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    for (const classItem of classes) {
-      if (classItem.classPlan.consultantProfile) {
+    for (const cohortItem of cohorts) {
+      if (cohortItem.cohortPlan.consultantProfile) {
         results.push({
-          id: classItem.id,
+          id: cohortItem.id,
           type: "class",
-          name: classItem.classPlan.title,
+          name: cohortItem.cohortPlan.title,
           counterpartyName:
-            classItem.classPlan.consultantProfile.user.name || "Unknown",
+            cohortItem.cohortPlan.consultantProfile.user.name || "Unknown",
           counterpartyImage:
-            classItem.classPlan.consultantProfile.user.image || undefined,
-          channelId: `class-${classItem.id}`,
+            cohortItem.cohortPlan.consultantProfile.user.image || undefined,
+          channelId: `class-${cohortItem.id}`,
         });
       }
     }

@@ -56,19 +56,19 @@ const webinarInclude = {
  * `firstSessionAt`, a separate unwindowed lookup, because a class whose
  * sessions all fall outside this window arrives here with zero slots (#1346).
  */
-const PLANNER_CLASS_SLOT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const PLANNER_COHORT_SLOT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Bounded by `now`, so this is a factory rather than the module-level constant
  * the webinar side can be.
  */
-const classInclude = (now: Date) =>
+const cohortInclude = (now: Date) =>
   ({
-    classPlan: {
+    cohortPlan: {
       include: {
         consultantProfile: true,
         topics: true,
-        classContents: {
+        cohortContents: {
           orderBy: {
             order: "asc" as const,
           },
@@ -89,8 +89,8 @@ const classInclude = (now: Date) =>
         occurrences: {
           where: {
             startsAt: {
-              gte: new Date(now.getTime() - PLANNER_CLASS_SLOT_WINDOW_MS),
-              lte: new Date(now.getTime() + PLANNER_CLASS_SLOT_WINDOW_MS),
+              gte: new Date(now.getTime() - PLANNER_COHORT_SLOT_WINDOW_MS),
+              lte: new Date(now.getTime() + PLANNER_COHORT_SLOT_WINDOW_MS),
             },
           },
           select: {
@@ -106,7 +106,7 @@ const classInclude = (now: Date) =>
         },
       },
     },
-  }) satisfies Prisma.ClassInclude;
+  }) satisfies Prisma.CohortInclude;
 
 // Derive types from the include objects via the extended client — raw
 // GetPayload would re-introduce bigint money fields (#780).
@@ -115,9 +115,9 @@ type PlannerWebinar = Prisma.Result<
   { include: typeof webinarInclude },
   "findFirstOrThrow"
 >;
-type PlannerClass = Prisma.Result<
-  typeof prisma.class,
-  { include: ReturnType<typeof classInclude> },
+type PlannerCohort = Prisma.Result<
+  typeof prisma.cohort,
+  { include: ReturnType<typeof cohortInclude> },
   "findFirstOrThrow"
 >;
 
@@ -127,11 +127,11 @@ type WebinarEvent = PlannerWebinar & {
   collaboratorRole: string;
   isCollaborated: boolean;
 };
-type ClassEvent = PlannerClass & {
+type CohortEvent = PlannerCohort & {
   type: "class";
   collaboratorRole: string;
   isCollaborated: boolean;
-  // #1346 — classInclude's slots are windowed to ±24h of now for the Join
+  // #1346 — cohortInclude's slots are windowed to ±24h of now for the Join
   // affordance, so a class whose sessions fall outside that day arrives with
   // zero slots here; the card's date comes from this field instead.
   firstSessionAt: string | null;
@@ -139,7 +139,7 @@ type ClassEvent = PlannerClass & {
 
 interface PlannerData {
   webinars: WebinarEvent[];
-  classes: ClassEvent[];
+  cohorts: CohortEvent[];
   participantCounts: Record<string, number>;
 }
 
@@ -175,20 +175,20 @@ function countWebinarParticipants(
 }
 
 /**
- * Class participant counts still need their one batched query — classInclude
+ * Class participant counts still need their one batched query — cohortInclude
  * now carries slot rows (#1080) but not the attendees on them, and it is
  * bounded to a day either side of now, so the user ids are not in memory and
  * counting from them would under-report. FIX #142: batched, never N+1.
  */
-async function getClassParticipantCounts(
-  classIds: string[],
+async function getCohortParticipantCounts(
+  cohortIds: string[],
   excludeConsultantUserId?: string,
 ): Promise<Record<string, number>> {
   const counts: Record<string, number> = {};
 
-  if (classIds.length > 0) {
-    const classCounts = await prisma.class.findMany({
-      where: { id: { in: classIds } },
+  if (cohortIds.length > 0) {
+    const cohortCounts = await prisma.cohort.findMany({
+      where: { id: { in: cohortIds } },
       select: {
         id: true,
         appointment: {
@@ -202,18 +202,18 @@ async function getClassParticipantCounts(
       },
     });
 
-    for (const classEvent of classCounts) {
+    for (const cohortEvent of cohortCounts) {
       // Unique users on the class's one wrapper (#1554).
       // FIX #556: Exclude the consultant host from participant count
       const uniqueUserIds = new Set<string>();
 
-      for (const seat of classEvent.appointment?.participants ?? []) {
+      for (const seat of cohortEvent.appointment?.participants ?? []) {
         if (seat.userId !== excludeConsultantUserId) {
           uniqueUserIds.add(seat.userId);
         }
       }
 
-      counts[classEvent.id] = uniqueUserIds.size;
+      counts[cohortEvent.id] = uniqueUserIds.size;
     }
   }
 
@@ -305,7 +305,7 @@ export async function GET(
               },
             }
           : undefined;
-    const classApptOrg: Prisma.ClassWhereInput | undefined =
+    const cohortApptOrg: Prisma.CohortWhereInput | undefined =
       scopeResolution.scope.kind === "personal"
         ? {
             OR: [
@@ -321,14 +321,14 @@ export async function GET(
 
     // Read once, so the owned and collaborated class queries bound their slot
     // rows to the same instant and a session cannot straddle the two.
-    const classSlotsAround = classInclude(new Date());
+    const cohortSlotsAround = cohortInclude(new Date());
 
     // Fetch owned plans, collaborated plans, and collaborator roles in parallel
     const [
       ownedWebinarsRaw,
-      ownedClassesRaw,
+      ownedCohortsRaw,
       collabWebinarsRaw,
-      collabClassesRaw,
+      collabCohortsRaw,
       collabRoles,
     ] = await Promise.all([
       // Owned plans
@@ -339,12 +339,12 @@ export async function GET(
         },
         include: webinarInclude,
       }),
-      prisma.class.findMany({
+      prisma.cohort.findMany({
         where: {
-          classPlan: { consultantProfileId: consultantId },
-          ...(classApptOrg ?? {}),
+          cohortPlan: { consultantProfileId: consultantId },
+          ...(cohortApptOrg ?? {}),
         },
-        include: classSlotsAround,
+        include: cohortSlotsAround,
       }),
       // Collaborated plans (only ACCEPTED)
       prisma.webinar.findMany({
@@ -358,42 +358,42 @@ export async function GET(
         },
         include: webinarInclude,
       }),
-      prisma.class.findMany({
+      prisma.cohort.findMany({
         where: {
-          classPlan: {
+          cohortPlan: {
             collaborators: {
               some: { consultantProfileId: consultantId, status: "ACCEPTED" },
             },
           },
-          ...(classApptOrg ?? {}),
+          ...(cohortApptOrg ?? {}),
         },
-        include: classSlotsAround,
+        include: cohortSlotsAround,
       }),
       // Collaborator role lookups (#784 — one merged model for both plan types)
       prisma.collaborator.findMany({
         where: { consultantProfileId: consultantId, status: "ACCEPTED" },
-        select: { webinarPlanId: true, classPlanId: true, role: true },
+        select: { webinarPlanId: true, cohortPlanId: true, role: true },
       }),
     ]);
 
     // Build role lookup maps — exactly one plan FK is set per record (#784)
     const webinarRoleMap: Record<string, string> = {};
-    const classRoleMap: Record<string, string> = {};
+    const cohortRoleMap: Record<string, string> = {};
     for (const c of collabRoles) {
       if (c.webinarPlanId) webinarRoleMap[c.webinarPlanId] = c.role;
-      else if (c.classPlanId) classRoleMap[c.classPlanId] = c.role;
+      else if (c.cohortPlanId) cohortRoleMap[c.cohortPlanId] = c.role;
     }
 
     // Collect owned IDs for deduplication
     const ownedWebinarIds = new Set(ownedWebinarsRaw.map((w) => w.id));
-    const ownedClassIds = new Set(ownedClassesRaw.map((c) => c.id));
+    const ownedCohortIds = new Set(ownedCohortsRaw.map((c) => c.id));
 
     // Filter out any collaborated plans that are also owned (defensive)
     const uniqueCollabWebinars = collabWebinarsRaw.filter(
       (w) => !ownedWebinarIds.has(w.id),
     );
-    const uniqueCollabClasses = collabClassesRaw.filter(
-      (c) => !ownedClassIds.has(c.id),
+    const uniqueCollabCohorts = collabCohortsRaw.filter(
+      (c) => !ownedCohortIds.has(c.id),
     );
 
     // Transform topics and annotate with roles
@@ -412,55 +412,55 @@ export async function GET(
       })),
     ];
 
-    const classes: ClassEvent[] = [
-      ...ownedClassesRaw.map((c) => ({
-        ...transformNestedPlanTopics(c, "classPlan"),
+    const cohorts: CohortEvent[] = [
+      ...ownedCohortsRaw.map((c) => ({
+        ...transformNestedPlanTopics(c, "cohortPlan"),
         type: "class" as const,
         collaboratorRole: "HOST",
         isCollaborated: false,
         firstSessionAt: null,
       })),
-      ...uniqueCollabClasses.map((c) => ({
-        ...transformNestedPlanTopics(c, "classPlan"),
+      ...uniqueCollabCohorts.map((c) => ({
+        ...transformNestedPlanTopics(c, "cohortPlan"),
         type: "class" as const,
-        collaboratorRole: classRoleMap[c.classPlanId] || "COLLABORATOR",
+        collaboratorRole: cohortRoleMap[c.cohortPlanId] || "COLLABORATOR",
         isCollaborated: true,
         firstSessionAt: null,
       })),
     ];
 
-    // #1346 — classInclude's slot window drops rows outside ±24h of now, so
+    // #1346 — cohortInclude's slot window drops rows outside ±24h of now, so
     // the earliest session must be read separately, unwindowed, in one
     // batched query rather than per-card.
-    const classAppointmentIds = classes.flatMap((c) =>
+    const cohortAppointmentIds = cohorts.flatMap((c) =>
       c.appointment ? [c.appointment.id] : [],
     );
-    if (classAppointmentIds.length > 0) {
+    if (cohortAppointmentIds.length > 0) {
       const earliestSlots = await prisma.appointmentOccurrence.groupBy({
         by: ["appointmentId"],
         where: {
-          appointmentId: { in: classAppointmentIds },
+          appointmentId: { in: cohortAppointmentIds },
           deletedAt: null,
           completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
         },
         _min: { startsAt: true },
       });
-      const appointmentToClassId: Record<string, string> = {};
-      for (const c of classes) {
-        if (c.appointment) appointmentToClassId[c.appointment.id] = c.id;
+      const appointmentToCohortId: Record<string, string> = {};
+      for (const c of cohorts) {
+        if (c.appointment) appointmentToCohortId[c.appointment.id] = c.id;
       }
-      const earliestByClassId: Record<string, Date> = {};
+      const earliestByCohortId: Record<string, Date> = {};
       for (const row of earliestSlots) {
-        const classId = appointmentToClassId[row.appointmentId];
+        const cohortId = appointmentToCohortId[row.appointmentId];
         const startsAt = row._min.startsAt;
-        if (!classId || !startsAt) continue;
-        const existing = earliestByClassId[classId];
+        if (!cohortId || !startsAt) continue;
+        const existing = earliestByCohortId[cohortId];
         if (!existing || startsAt < existing) {
-          earliestByClassId[classId] = startsAt;
+          earliestByCohortId[cohortId] = startsAt;
         }
       }
-      for (const c of classes) {
-        c.firstSessionAt = earliestByClassId[c.id]?.toISOString() ?? null;
+      for (const c of cohorts) {
+        c.firstSessionAt = earliestByCohortId[c.id]?.toISOString() ?? null;
       }
     }
 
@@ -468,15 +468,15 @@ export async function GET(
     // FIX #556: the consultant's own userId is excluded — reuse the
     // consultantUser already fetched for org-scope resolution above (the
     // old code re-fetched the identical row here).
-    const classIds = classes.map((c) => c.id);
+    const cohortIds = cohorts.map((c) => c.id);
     const participantCounts = {
       ...countWebinarParticipants(webinars, consultantUser?.userId),
-      ...(await getClassParticipantCounts(classIds, consultantUser?.userId)),
+      ...(await getCohortParticipantCounts(cohortIds, consultantUser?.userId)),
     };
 
     const plannerData: PlannerData = {
       webinars,
-      classes,
+      cohorts,
       participantCounts,
     };
 

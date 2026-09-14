@@ -22,7 +22,7 @@ import { sumPaise } from "@/lib/payments/utils/money";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
-  "CLASS",
+  "COHORT",
   "WEBINAR",
   "SUBSCRIPTION",
 ]);

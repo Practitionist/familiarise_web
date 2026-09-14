@@ -410,7 +410,7 @@ export async function GET(
               },
             },
             webinar: { select: { webinarPlan: { select: { title: true } } } },
-            class: { select: { classPlan: { select: { title: true } } } },
+            cohort: { select: { cohortPlan: { select: { title: true } } } },
             payment: { select: { expiresAt: true, paymentStatus: true } },
           },
         }),

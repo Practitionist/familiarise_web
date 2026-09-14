@@ -275,8 +275,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
     return {
       success: result.success,
       webinarsCompleted: result.webinarsCompleted,
-      classesCompleted: result.classesCompleted,
-      totalProcessed: result.webinarsCompleted + result.classesCompleted,
+      cohortsCompleted: result.cohortsCompleted,
+      totalProcessed: result.webinarsCompleted + result.cohortsCompleted,
       errorCount: result.errors.length,
     };
   },

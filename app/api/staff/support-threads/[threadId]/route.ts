@@ -64,7 +64,7 @@ async function loadThread(threadId: string) {
             select: { subscriptionPlan: { select: { title: true } } },
           },
           webinar: { select: { webinarPlan: { select: { title: true } } } },
-          class: { select: { classPlan: { select: { title: true } } } },
+          cohort: { select: { cohortPlan: { select: { title: true } } } },
         },
       },
     },

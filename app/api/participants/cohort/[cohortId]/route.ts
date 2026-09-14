@@ -35,7 +35,7 @@ const PARTICIPANT_USER_SELECT = {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -45,16 +45,16 @@ export async function GET(
   if (rl) return rl;
 
   try {
-    const { classId } = await params;
+    const { cohortId } = await params;
     // Non-privileged users can view the roster if they own the plan OR are an
     // accepted PRESENTER collaborator (#1580). Everyone else 404s.
-    const classEvent = await prisma.class.findFirst({
+    const cohortEvent = await prisma.cohort.findFirst({
       where: {
-        id: classId,
+        id: cohortId,
         ...(isPrivileged(session.user.role)
           ? {}
           : {
-              classPlan: {
+              cohortPlan: {
                 OR: [
                   {
                     consultantProfileId:
@@ -75,7 +75,7 @@ export async function GET(
             }),
       },
       include: {
-        classPlan: true,
+        cohortPlan: true,
         appointment: {
           select: {
             id: true,
@@ -88,14 +88,14 @@ export async function GET(
       },
     });
 
-    if (!classEvent) {
+    if (!cohortEvent) {
       return new NextResponse("Class not found", { status: 404 });
     }
 
     // Get unique participants by user ID
     const participants = Array.from(
       new Map(
-        classEvent.appointment?.participants.map((participant) => [
+        cohortEvent.appointment?.participants.map((participant) => [
           participant.user.id,
           participant.user,
         ]) || [],
@@ -103,12 +103,12 @@ export async function GET(
     );
 
     const seatPayments = await readSeatPayments(
-      classEvent.appointment ? [classEvent.appointment.id] : [],
+      cohortEvent.appointment ? [cohortEvent.appointment.id] : [],
       participants.map((u) => u.id),
     );
 
     return NextResponse.json({
-      classEvent,
+      cohortEvent,
       participants,
       seatPayments,
     });
@@ -117,14 +117,14 @@ export async function GET(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },
     );
-    console.error("[CLASS_PARTICIPANTS_GET]", error);
+    console.error("[COHORT_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
 }
 
 export async function DELETE(
   request: Request,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -134,7 +134,7 @@ export async function DELETE(
   if (rl) return rl;
 
   try {
-    const { classId } = await params;
+    const { cohortId } = await params;
 
     const { searchParams } = new URL(request.url);
     const parsedUserId = z
@@ -161,13 +161,13 @@ export async function DELETE(
 
     // Ownership check for organiser removals; self-leave only needs the event
     // to exist and the caller to be on the roster (the seat release below matches zero rows otherwise).
-    const classEvent = await prisma.class.findFirst({
+    const cohortEvent = await prisma.cohort.findFirst({
       where: {
-        id: classId,
+        id: cohortId,
         ...(isSelfLeave || isPrivileged(session.user.role)
           ? {}
           : {
-              classPlan: {
+              cohortPlan: {
                 consultantProfileId:
                   session.user.consultantProfileId ?? "__none__",
               },
@@ -176,7 +176,7 @@ export async function DELETE(
       select: { id: true },
     });
 
-    if (!classEvent) {
+    if (!cohortEvent) {
       return new NextResponse("Class not found", { status: 404 });
     }
 
@@ -187,7 +187,7 @@ export async function DELETE(
     // gate permanently 400s after week 1 while the UI still offers Leave.
     // Organiser removals keep working mid/post session for moderation.
     if (isSelfLeave) {
-      const lastLive = await findLiveEventSlot({ classId }, { order: "desc" });
+      const lastLive = await findLiveEventSlot({ cohortId }, { order: "desc" });
       if (lastLive && lastLive.startsAt.getTime() <= Date.now()) {
         return NextResponse.json(
           { error: "Cannot leave a class after its last session has started." },
@@ -214,7 +214,7 @@ export async function DELETE(
           // WHERE makes the loser of a concurrent removal match zero rows, so
           // a `removed: false` answer never refunds a seat twice.
           return releaseParticipant(tx, {
-            appointment: { classId },
+            appointment: { cohortId },
             userId,
           });
         },
@@ -241,7 +241,7 @@ export async function DELETE(
     // #1005 — pass initiatedBy so self-leave does not get organiser-fault 100%.
     const refund = await refundRemovedAttendeeSeat({
       kind: "class",
-      eventId: classId,
+      eventId: cohortId,
       attendeeUserId: userId,
       initiatedByUserId: session.user.id,
       initiatedBy: isSelfLeave ? "attendee" : "organiser",
@@ -251,7 +251,7 @@ export async function DELETE(
     // chat until the nightly expiry job notices. Non-throwing by contract.
     const channelRemoval = await removeUserFromEventChannel(
       "class",
-      classId,
+      cohortId,
       userId,
     );
     if (!channelRemoval.success) {
@@ -259,7 +259,7 @@ export async function DELETE(
         JSON.stringify({
           event: "attendee_channel_removal_failed",
           eventType: "class",
-          eventId: classId,
+          eventId: cohortId,
           userId,
           timestamp: new Date().toISOString(),
         }),
@@ -272,7 +272,7 @@ export async function DELETE(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "bookings" } },
     );
-    console.error("[CLASS_PARTICIPANT_DELETE]", error);
+    console.error("[COHORT_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
 }

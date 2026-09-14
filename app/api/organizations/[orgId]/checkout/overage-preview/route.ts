@@ -16,7 +16,7 @@ import type { CoveredPlanType } from "@prisma/client";
  * is still computed at checkout by `recordOverageAtCheckout`.
  */
 const QuerySchema = z.object({
-  planType: z.enum(["CONSULTATION", "CLASS", "WEBINAR", "SUBSCRIPTION"]),
+  planType: z.enum(["CONSULTATION", "COHORT", "WEBINAR", "SUBSCRIPTION"]),
   planId: z.string().min(1),
   sessions: z.coerce.number().int().min(1).max(1000).default(1),
 });
@@ -53,10 +53,10 @@ async function planListPricePaise(
           })
         )?.price ?? null
       );
-    case "CLASS":
+    case "COHORT":
       return (
         (
-          await prisma.classPlan.findUnique({
+          await prisma.cohortPlan.findUnique({
             where: { id: planId },
             select: { price: true },
           })

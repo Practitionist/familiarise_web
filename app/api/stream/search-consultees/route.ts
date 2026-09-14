@@ -197,9 +197,9 @@ export async function GET(req: NextRequest) {
     }
 
     // 4. Get attendees from classes — everyone connected to a session slot.
-    const classes = await prisma.class.findMany({
+    const cohorts = await prisma.cohort.findMany({
       where: {
-        classPlan: {
+        cohortPlan: {
           consultantProfileId: consultantProfileId,
         },
         status: {
@@ -222,10 +222,10 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    for (const classItem of classes) {
-      const classAttendees =
-        classItem.appointment?.participants.map((seat) => seat.user) ?? [];
-      for (const attendeeUser of classAttendees) {
+    for (const cohortItem of cohorts) {
+      const cohortAttendees =
+        cohortItem.appointment?.participants.map((seat) => seat.user) ?? [];
+      for (const attendeeUser of cohortAttendees) {
         if (
           attendeeUser &&
           !seenUserIds.has(attendeeUser.id) &&

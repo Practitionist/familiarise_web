@@ -4,16 +4,16 @@ import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    const [classCount, webinarCount] = await Promise.all([
-      prisma.classPlan.count(),
+    const [cohortCount, webinarCount] = await Promise.all([
+      prisma.cohortPlan.count(),
       prisma.webinarPlan.count(),
     ]);
 
     return NextResponse.json({
       data: {
-        classCount,
+        cohortCount,
         webinarCount,
-        totalPrograms: classCount + webinarCount,
+        totalPrograms: cohortCount + webinarCount,
       },
     });
   } catch (error) {

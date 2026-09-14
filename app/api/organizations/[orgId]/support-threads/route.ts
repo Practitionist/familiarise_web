@@ -63,7 +63,7 @@ const THREAD_METADATA_SELECT = {
         select: { subscriptionPlan: { select: { title: true } } },
       },
       webinar: { select: { webinarPlan: { select: { title: true } } } },
-      class: { select: { classPlan: { select: { title: true } } } },
+      cohort: { select: { cohortPlan: { select: { title: true } } } },
     },
   },
 } satisfies Prisma.AppointmentSupportThreadSelect;
@@ -135,7 +135,7 @@ export async function GET(
             t.appointment.consultation?.consultationPlan?.title ??
             t.appointment.subscription?.subscriptionPlan?.title ??
             t.appointment.webinar?.webinarPlan?.title ??
-            t.appointment.class?.classPlan?.title ??
+            t.appointment.cohort?.cohortPlan?.title ??
             null,
         },
         // Deliberately NO transcript, NO last-message preview: metadata triage

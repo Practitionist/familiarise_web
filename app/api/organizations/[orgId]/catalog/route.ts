@@ -8,7 +8,7 @@
  * somebody else's plans.
  *
  * #778 collapsed the standalone `OrganizationPlan` table into the per-type
- * plans, so "an org's catalog" is exactly its `WebinarPlan` / `ClassPlan` rows
+ * plans, so "an org's catalog" is exactly its `WebinarPlan` / `CohortPlan` rows
  * with `organizationId` set. Consultation and Subscription are deliberately
  * absent: both require a `consultantProfileId` in the schema and so can never
  * be solely org-owned. See docs/enterprise/30-programs-and-lifecycle/05-public-pages-and-discovery.md.
@@ -23,7 +23,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { planLevelSchema, planPositioningShape } from "@/schemas/plans";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
 
-const PlanKindSchema = z.enum(["WEBINAR", "CLASS"]);
+const PlanKindSchema = z.enum(["WEBINAR", "COHORT"]);
 
 const VisibilitySchema = z.enum(["PUBLIC", "ORG_ONLY", "ORG_AND_PUBLIC"]);
 
@@ -60,7 +60,7 @@ const CreateBodySchema = z.discriminatedUnion("kind", [
     durationInHours: z.number().positive().default(1),
   }),
   BaseCreateSchema.extend({
-    kind: z.literal("CLASS"),
+    kind: z.literal("COHORT"),
     durationInMonths: z.number().int().positive().default(1),
     sessionsPerWeek: z.number().int().positive().default(1),
     sessionDurationInHours: z.number().positive().default(1),
@@ -84,13 +84,13 @@ export async function GET(
   const includeArchived = url.searchParams.get("includeArchived") === "true";
   const archiveFilter = includeArchived ? {} : { archivedAt: null };
 
-  const [webinars, classes] = await Promise.all([
+  const [webinars, cohorts] = await Promise.all([
     prisma.webinarPlan.findMany({
       where: { organizationId: orgId, ...archiveFilter },
       orderBy: { createdAt: "desc" },
       include: { consultantProfile: { select: { id: true, userId: true } } },
     }),
-    prisma.classPlan.findMany({
+    prisma.cohortPlan.findMany({
       where: { organizationId: orgId, ...archiveFilter },
       orderBy: { createdAt: "desc" },
       include: { consultantProfile: { select: { id: true, userId: true } } },
@@ -101,7 +101,7 @@ export async function GET(
   // the money convention the rest of the org surfaces use.
   return NextResponse.json({
     webinars: webinars.map((w) => ({ ...w, price: w.price.toString() })),
-    classes: classes.map((c) => ({ ...c, price: c.price.toString() })),
+    cohorts: cohorts.map((c) => ({ ...c, price: c.price.toString() })),
   });
 }
 
@@ -190,7 +190,7 @@ export async function POST(
                 maxParticipants: body.maxParticipants ?? 100,
               },
             })
-          : await tx.classPlan.create({
+          : await tx.cohortPlan.create({
               data: {
                 ...common,
                 durationInMonths: body.durationInMonths,
@@ -211,7 +211,7 @@ export async function POST(
 
       // Create the sellable INSTANCE too, not just the plan.
       //
-      // This route used to author a WebinarPlan/ClassPlan and stop, so an
+      // This route used to author a WebinarPlan/CohortPlan and stop, so an
       // org-authored offering had no Webinar/Class row, no appointment and no
       // slots — it appeared in the catalog and there was nothing to join. It
       // lands in DRAFT because no session has been scheduled yet, which is the
@@ -221,10 +221,10 @@ export async function POST(
           data: { status: "DRAFT", webinarPlan: { connect: { id: plan.id } } },
         });
       } else {
-        await tx.class.create({
+        await tx.cohort.create({
           data: {
             status: "DRAFT",
-            classPlan: { connect: { id: plan.id } },
+            cohortPlan: { connect: { id: plan.id } },
             schedulingTimezone: resolveSchedulingTimezone(
               expert.consultantProfile?.user.timezone,
             ),
@@ -314,7 +314,10 @@ export async function DELETE(
               where: scope,
               data: { archivedAt },
             })
-          : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
+          : await tx.cohortPlan.updateMany({
+              where: scope,
+              data: { archivedAt },
+            });
 
       if (affected > 0) {
         await tx.orgAuditLog.create({

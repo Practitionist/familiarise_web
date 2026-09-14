@@ -22,21 +22,21 @@ import {
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const includeClasses = searchParams.get("include")?.includes("classes");
+    const includeCohorts = searchParams.get("include")?.includes("cohorts");
     const includeRegistration =
       searchParams.get("includeRegistration") === "true";
 
     const filters = parsePlanFilters(searchParams);
     const { sort, page, limit, skip } = filters;
-    const where = buildPlanWhereClause(filters) as Prisma.ClassPlanWhereInput;
+    const where = buildPlanWhereClause(filters) as Prisma.CohortPlanWhereInput;
     const orderBy = buildPlanOrderBy(sort) as
-      | Prisma.ClassPlanOrderByWithRelationInput
+      | Prisma.CohortPlanOrderByWithRelationInput
       | undefined;
 
     // Build classes include based on whether registration data is requested
-    let classesInclude: boolean | Record<string, unknown> = true;
+    let cohortsInclude: boolean | Record<string, unknown> = true;
     if (includeRegistration) {
-      classesInclude = {
+      cohortsInclude = {
         include: {
           appointment: {
             include: {
@@ -54,15 +54,15 @@ export async function GET(request: NextRequest) {
     const includeOptions = {
       consultantProfile: { select: planConsultantSelect },
       topics: true,
-      classContents: true,
+      cohortContents: true,
       collaborators: {
         where: { status: CollaboratorStatus.ACCEPTED },
         include: {
           consultantProfile: { select: planCollaboratorConsultantSelect },
         },
       },
-      ...((includeClasses || includeRegistration) && {
-        classes: classesInclude,
+      ...((includeCohorts || includeRegistration) && {
+        cohorts: cohortsInclude,
       }),
     };
 
@@ -74,11 +74,11 @@ export async function GET(request: NextRequest) {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const plansForRanking = await prisma.classPlan.findMany({
+      const plansForRanking = await prisma.cohortPlan.findMany({
         where,
         select: {
           id: true,
-          classes: {
+          cohorts: {
             select: {
               appointment: {
                 select: {
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
       const ranked = plansForRanking
         .map((p) => ({
           id: p.id,
-          count: p.classes.reduce(
+          count: p.cohorts.reduce(
             (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
             0,
           ),
@@ -119,7 +119,7 @@ export async function GET(request: NextRequest) {
       return rankAndPaginate(
         ranked,
         (ids) =>
-          prisma.classPlan.findMany({
+          prisma.cohortPlan.findMany({
             where: { ...where, id: { in: ids } },
             include: includeOptions,
           }),
@@ -129,18 +129,18 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const [classPlans, total] = await Promise.all([
-      prisma.classPlan.findMany({
+    const [cohortPlans, total] = await Promise.all([
+      prisma.cohortPlan.findMany({
         where,
         include: includeOptions,
         skip,
         take: limit,
         ...(orderBy && { orderBy }),
       }),
-      prisma.classPlan.count({ where }),
+      prisma.cohortPlan.count({ where }),
     ]);
 
-    return paginatedResponse(classPlans, total, page, limit);
+    return paginatedResponse(cohortPlans, total, page, limit);
   } catch (error) {
     console.error("Error fetching class plans:", error);
     return NextResponse.json(
@@ -174,7 +174,7 @@ export async function POST(request: NextRequest) {
       learningOutcomes,
       consultantProfileId,
       topicIds,
-      classContents,
+      cohortContents,
       recordingEnabled,
       recordingStoragePolicy,
     } = body;
@@ -224,17 +224,17 @@ export async function POST(request: NextRequest) {
     }
 
     // `body` is untyped JSON and the required-field check above never asked for
-    // `classContents`, so a request that omitted it threw inside the mapper
+    // `cohortContents`, so a request that omitted it threw inside the mapper
     // below and the caller was told 500 for a malformed request. Absent means
     // no curriculum rows; present-but-not-a-list is the client's error.
-    if (classContents !== undefined && !Array.isArray(classContents)) {
+    if (cohortContents !== undefined && !Array.isArray(cohortContents)) {
       return NextResponse.json(
-        { error: "classContents must be an array" },
+        { error: "cohortContents must be an array" },
         { status: 400 },
       );
     }
 
-    const newClassPlan = await prisma.classPlan.create({
+    const newCohortPlan = await prisma.cohortPlan.create({
       data: {
         title,
         description,
@@ -255,9 +255,9 @@ export async function POST(request: NextRequest) {
         topics: topicIds
           ? { connect: topicIds.map((id: string) => ({ id })) }
           : undefined,
-        classContents: {
-          create: (classContents ?? []).map(
-            (content: Prisma.ClassContentCreateWithoutClassPlanInput) => ({
+        cohortContents: {
+          create: (cohortContents ?? []).map(
+            (content: Prisma.CohortContentCreateWithoutCohortPlanInput) => ({
               title: content.title,
               description: content.description,
               contentType: content.contentType,
@@ -292,11 +292,11 @@ export async function POST(request: NextRequest) {
           },
         },
         topics: true,
-        classContents: true,
+        cohortContents: true,
       },
     });
 
-    return NextResponse.json({ data: newClassPlan }, { status: 201 });
+    return NextResponse.json({ data: newCohortPlan }, { status: 201 });
   } catch (error) {
     console.error("Error creating class plan:", error);
     return NextResponse.json(

@@ -51,19 +51,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       const appointment =
         recording.meeting?.occurrence?.appointment;
 
-      let planType: "webinar" | "class" | null = null;
-      let planId: string | null = null;
-      let planTitle: string | null = null;
+        let planType: "webinar" | "class" | null = null;
+        let planId: string | null = null;
+        let planTitle: string | null = null;
 
-      if (appointment?.webinar?.webinarPlan) {
-        planType = "webinar";
-        planId = appointment.webinar.webinarPlan.id ?? null;
-        planTitle = appointment.webinar.webinarPlan.title ?? null;
-      } else if (appointment?.class?.classPlan) {
-        planType = "class";
-        planId = appointment.class.classPlan.id ?? null;
-        planTitle = appointment.class.classPlan.title ?? null;
-      }
+        if (appointment?.webinar?.webinarPlan) {
+          planType = "webinar";
+          planId = appointment.webinar.webinarPlan.id ?? null;
+          planTitle = appointment.webinar.webinarPlan.title ?? null;
+        } else if (appointment?.cohort?.cohortPlan) {
+          planType = "class";
+          planId = appointment.cohort.cohortPlan.id ?? null;
+          planTitle = appointment.cohort.cohortPlan.title ?? null;
+        }
 
       return {
         id: recording.id,

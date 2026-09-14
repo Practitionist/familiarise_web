@@ -98,14 +98,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
           });
           hasAccess = !!collab;
         }
-      } else if (appointment?.class?.classPlan) {
+      } else if (appointment?.cohort?.cohortPlan) {
         hasAccess =
-          appointment.class.classPlan.consultantProfileId ===
+          appointment.cohort.cohortPlan.consultantProfileId ===
           consultantProfileId;
         if (!hasAccess) {
           const collab = await prisma.collaborator.findFirst({
             where: {
-              classPlanId: appointment.class.classPlan.id,
+              cohortPlanId: appointment.cohort.cohortPlan.id,
               consultantProfileId,
               status: "ACCEPTED",
             },
@@ -122,8 +122,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       // allocation slot, not the attendee's enrollment slot, so we check by plan ID.
       const planFilter = appointment?.webinar?.webinarPlan?.id
         ? { webinar: { webinarPlanId: appointment.webinar.webinarPlan.id } }
-        : appointment?.class?.classPlan?.id
-          ? { class: { classPlanId: appointment.class.classPlan.id } }
+        : appointment?.cohort?.cohortPlan?.id
+          ? { cohort: { cohortPlanId: appointment.cohort.cohortPlan.id } }
           : null;
       if (planFilter) {
         const payments = await prisma.payment.findMany({

@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         data: {
           webinarCollaborations: [],
-          classCollaborations: [],
+          cohortCollaborations: [],
           hostedWebinarPlans: [],
-          hostedClassPlans: [],
+          hostedCohortPlans: [],
         },
       });
     }
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
       data: {
         ...collaborations,
         hostedWebinarPlans: hosted.webinarPlans,
-        hostedClassPlans: hosted.classPlans,
+        hostedCohortPlans: hosted.cohortPlans,
         hostUser: {
           name: session.user.name ?? null,
           image: session.user.image ?? null,

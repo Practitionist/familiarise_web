@@ -17,7 +17,7 @@
  *
  * Query params on GET:
  *   scope=current|all           (default current — live cards only)
- *   planType=CONSULTATION|CLASS|WEBINAR|SUBSCRIPTION
+ *   planType=CONSULTATION|COHORT|WEBINAR|SUBSCRIPTION
  *   planId=<plan id>
  *   contractId=<contract id>    org-scoped by default; narrow via contractId
  */
@@ -37,7 +37,7 @@ import { bumpRateCard } from "@/lib/api/organizations/rate-card";
 
 const CoveredPlanTypeSchema = z.enum([
   "CONSULTATION",
-  "CLASS",
+  "COHORT",
   "WEBINAR",
   "SUBSCRIPTION",
 ]);

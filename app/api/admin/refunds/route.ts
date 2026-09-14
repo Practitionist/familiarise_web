@@ -103,16 +103,16 @@ export async function GET(req: NextRequest) {
 const RefundBodySchema = z
   .object({
     paymentId: z.string().min(1).optional(),
-    classId: z.string().min(1).optional(),
+    cohortId: z.string().min(1).optional(),
     webinarId: z.string().min(1).optional(),
     amountPaise: z.number().int().positive().optional(),
     reason: z.string().min(1).max(500),
   })
   .refine(
-    (b) => [b.paymentId, b.classId, b.webinarId].filter(Boolean).length === 1,
-    { message: "Provide exactly one of paymentId, classId, webinarId" },
+    (b) => [b.paymentId, b.cohortId, b.webinarId].filter(Boolean).length === 1,
+    { message: "Provide exactly one of paymentId, cohortId, webinarId" },
   )
-  .refine((b) => !(b.amountPaise && (b.classId || b.webinarId)), {
+  .refine((b) => !(b.amountPaise && (b.cohortId || b.webinarId)), {
     message: "amountPaise applies only to a single paymentId refund",
   });
 
@@ -170,8 +170,8 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ kind: "payment", result });
         }
 
-        const eventKind = body.classId ? "class" : "webinar";
-        const eventId = (body.classId ?? body.webinarId)!;
+        const eventKind = body.cohortId ? "class" : "webinar";
+        const eventId = (body.cohortId ?? body.webinarId)!;
         const summary = await refundWholeEventPayments(
           eventKind,
           eventId,

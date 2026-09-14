@@ -218,8 +218,8 @@ export async function POST(
             },
           },
           {
-            classPlan: {
-              classes: { some: { appointment: { id: appointmentId } } },
+            cohortPlan: {
+              cohorts: { some: { appointment: { id: appointmentId } } },
             },
           },
         ],

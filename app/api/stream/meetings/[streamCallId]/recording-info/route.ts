@@ -59,9 +59,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       select: {
                         recordingEnabled: true,
                         consultantProfileId: true,
@@ -122,7 +122,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Authorization check - verify user has access to this meeting
     const consultantProfileId =
       appointment?.webinar?.webinarPlan?.consultantProfileId ||
-      appointment?.class?.classPlan?.consultantProfileId ||
+      appointment?.cohort?.cohortPlan?.consultantProfileId ||
       appointment?.consultation?.consultationPlan?.consultantProfileId ||
       appointment?.subscription?.subscriptionPlan?.consultantProfileId;
 
@@ -168,15 +168,15 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Attendee path: paid enrollment for webinars/classes.
     if (!hasAccess) {
       const webinarId = appointment?.webinar?.id;
-      const classId = appointment?.class?.id;
+      const cohortId = appointment?.cohort?.id;
 
-      if (webinarId || classId) {
+      if (webinarId || cohortId) {
         const enrollmentConditions = [];
         if (webinarId) {
           enrollmentConditions.push({ webinarId });
         }
-        if (classId) {
-          enrollmentConditions.push({ classId });
+        if (cohortId) {
+          enrollmentConditions.push({ cohortId });
         }
 
         const enrollments = await prisma.payment.findMany({

@@ -140,7 +140,7 @@ export async function DELETE(request: NextRequest) {
  * Writes imageUrl for any plan type.
  *
  * Exhaustive on TPlanImageType, for the same reason verifyPlanOwnership is:
- * both verbs used to be a binary `class-plans ? classPlan : webinarPlan`, so a
+ * both verbs used to be a binary `class-plans ? cohortPlan : webinarPlan`, so a
  * consultation or subscription upload would have written to a WEBINAR row —
  * corrupting an unrelated plan rather than failing (#1060).
  */
@@ -153,7 +153,7 @@ async function writePlanImageUrl(
 
   switch (planType) {
     case "class-plans":
-      await prisma.classPlan.update(args);
+      await prisma.cohortPlan.update(args);
       return;
     case "webinar-plans":
       await prisma.webinarPlan.update(args);
@@ -182,7 +182,7 @@ async function verifyPlanOwnership(
 
   switch (planType) {
     case "class-plans": {
-      const plan = await prisma.classPlan.findUnique(ownerSelect);
+      const plan = await prisma.cohortPlan.findUnique(ownerSelect);
       return plan?.consultantProfile?.userId === userId;
     }
     case "webinar-plans": {

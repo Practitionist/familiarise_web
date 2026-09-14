@@ -112,8 +112,8 @@ const webinarInclude = {
   },
 } satisfies Prisma.WebinarInclude;
 
-const classInclude = {
-  classPlan: {
+const cohortInclude = {
+  cohortPlan: {
     include: {
       consultantProfile: {
         select: {
@@ -128,7 +128,7 @@ const classInclude = {
           },
         },
       },
-      classContents: {
+      cohortContents: {
         orderBy: {
           order: "asc" as const,
         },
@@ -141,7 +141,7 @@ const classInclude = {
       payment: true,
     },
   },
-} satisfies Prisma.ClassInclude;
+} satisfies Prisma.CohortInclude;
 
 // =============================================================================
 // Route Handler
@@ -212,7 +212,7 @@ export async function GET(
     // pathological account (or an import bug) can't turn this endpoint into
     // a multi-MB payload.
     const PER_USER_TAKE = 250;
-    const [consultations, subscriptions, webinars, classes] = await Promise.all(
+    const [consultations, subscriptions, webinars, cohorts] = await Promise.all(
       [
         // Fetch consultations for this consultee
         prisma.consultation.findMany({
@@ -265,7 +265,7 @@ export async function GET(
           take: PER_USER_TAKE,
         }),
         // Classes the consultee enrolled in
-        prisma.class.findMany({
+        prisma.cohort.findMany({
           where: {
             OR: [
               // Get classes where consultee is registered through appointments
@@ -283,7 +283,7 @@ export async function GET(
             ],
           },
           include: {
-            ...classInclude,
+            ...cohortInclude,
           },
           orderBy: [
             {
@@ -305,7 +305,7 @@ export async function GET(
         consultations: consultations || [],
         subscriptions: subscriptions || [],
         webinars: webinars || [],
-        classes: classes || [],
+        cohorts: cohorts || [],
       },
     });
   } catch (error) {

@@ -35,7 +35,7 @@ import { parsePagination } from "@/lib/enterprise/validators";
 
 const QuerySchema = z.object({
   appointmentType: z
-    .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS", "TRIAL"])
+    .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "COHORT", "TRIAL"])
     .optional(),
 });
 

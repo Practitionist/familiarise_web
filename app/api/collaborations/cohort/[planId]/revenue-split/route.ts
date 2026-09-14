@@ -22,7 +22,7 @@ export async function GET(
 
     // Only the plan owner, accepted collaborators, or admin/staff may view revenue splits
     if (!isPrivileged(session.user.role)) {
-      const plan = await prisma.classPlan.findUnique({
+      const plan = await prisma.cohortPlan.findUnique({
         where: { id: planId },
         select: { consultantProfileId: true },
       });
@@ -34,7 +34,7 @@ export async function GET(
       if (!isOwner) {
         const collab = await prisma.collaborator.findFirst({
           where: {
-            classPlanId: planId,
+            cohortPlanId: planId,
             consultantProfileId: session.user.consultantProfileId ?? "__none__",
             status: "ACCEPTED",
           },

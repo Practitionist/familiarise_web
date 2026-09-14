@@ -52,9 +52,9 @@ async function isAppointmentParticipant(
           },
         },
       },
-      class: {
+      cohort: {
         select: {
-          classPlan: {
+          cohortPlan: {
             select: {
               consultantProfileId: true,
               collaborators: {
@@ -112,14 +112,14 @@ async function isAppointmentParticipant(
   }
 
   // Check class ownership/collaboration
-  if (appointment.class) {
+  if (appointment.cohort) {
     if (
-      consultantProfileId === appointment.class.classPlan.consultantProfileId
+      consultantProfileId === appointment.cohort.cohortPlan.consultantProfileId
     )
       return true;
     if (
       consultantProfileId &&
-      appointment.class.classPlan.collaborators.some(
+      appointment.cohort.cohortPlan.collaborators.some(
         (c) => c.consultantProfileId === consultantProfileId,
       )
     )
@@ -232,9 +232,9 @@ type _AppointmentInclude = Prisma.AppointmentGetPayload<{
         };
       };
     };
-    class: {
+    cohort: {
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -382,9 +382,9 @@ export async function GET(
             },
           },
         },
-        class: {
+        cohort: {
           include: {
-            classPlan: {
+            cohortPlan: {
               include: {
                 consultantProfile: {
                   include: {

@@ -67,9 +67,9 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       select: {
                         consultantProfileId: true,
                         recordingEnabled: true,

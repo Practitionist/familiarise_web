@@ -30,8 +30,8 @@ interface ValidationResult extends SlotConflictResult {
   }[];
 }
 
-const classInclude = {
-  classPlan: {
+const cohortInclude = {
+  cohortPlan: {
     include: {
       consultantProfile: {
         select: {
@@ -47,18 +47,18 @@ const classInclude = {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   try {
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
 
-    const { classId } = await params;
+    const { cohortId } = await params;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
       "class",
-      classId,
+      cohortId,
     );
     if (authzError) return authzError;
 
@@ -72,23 +72,23 @@ export async function POST(
     // LAYER 1: Zod Schema Validation (type-safe, automatic type inference)
     try {
       // Validate class ID from URL params
-      eventIdSchema.parse(classId);
+      eventIdSchema.parse(cohortId);
 
       // Validate request body and get typed data
       const body = validationRequestSchema.parse(await request.json());
 
       // Fetch class with necessary relations
-      const classEntity = await prisma.class.findUnique({
-        where: { id: classId },
-        include: classInclude,
+      const cohortEntity = await prisma.cohort.findUnique({
+        where: { id: cohortId },
+        include: cohortInclude,
       });
 
-      if (!classEntity) {
+      if (!cohortEntity) {
         return NextResponse.json({ error: "Class not found" }, { status: 404 });
       }
 
-      const { classPlan } = classEntity;
-      const { consultantProfile } = classPlan;
+      const { cohortPlan } = cohortEntity;
+      const { consultantProfile } = cohortPlan;
 
       if (!consultantProfile) {
         return NextResponse.json(
@@ -104,7 +104,7 @@ export async function POST(
       const validationService = new ScheduleValidationService(prisma);
       const validationResult = await validationService.validate(
         "class",
-        classId,
+        cohortId,
         slotDates,
         {
           userId: consultantProfile.user.id,
@@ -116,13 +116,13 @@ export async function POST(
           timezone: consultantProfile.user.timezone || undefined,
         },
         {
-          durationInMonths: classPlan.durationInMonths || 1,
-          sessionsPerWeek: classPlan.sessionsPerWeek || 2,
-          sessionDurationInHours: classPlan.sessionDurationInHours || 1,
+          durationInMonths: cohortPlan.durationInMonths || 1,
+          sessionsPerWeek: cohortPlan.sessionsPerWeek || 2,
+          sessionDurationInHours: cohortPlan.sessionDurationInHours || 1,
           schedulingPeriodStartsAt:
-            classEntity.schedulingPeriodStartsAt ?? undefined,
+            cohortEntity.schedulingPeriodStartsAt ?? undefined,
           schedulingPeriodEndsAt:
-            classEntity.schedulingPeriodEndsAt ?? undefined,
+            cohortEntity.schedulingPeriodEndsAt ?? undefined,
         },
       );
 

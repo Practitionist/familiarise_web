@@ -9,11 +9,11 @@ import {
   faqCreateNested,
   faqReplaceNested,
 } from "@/lib/api/plans/content";
-import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
-import { ClassStatus, Prisma } from "@prisma/client";
+import { CohortPlanSchema, CohortContentSchema } from "@/schemas/plans";
+import { CohortStatus, Prisma } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
-  transitionClassEvent,
+  transitionCohortEvent,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NextRequest, NextResponse } from "next/server";
@@ -38,18 +38,18 @@ import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   ScheduleLockedError,
-  CLASS_SCHEDULE_LOCKED_MESSAGE,
+  COHORT_SCHEDULE_LOCKED_MESSAGE,
 } from "@/lib/events/schedule-lock";
-// Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, classPlanId)
-const ClassContentInputSchema = ClassContentSchema.omit({
+// Schema for class content input (without Prisma-managed fields like createdAt, updatedAt, cohortPlanId)
+const CohortContentInputSchema = CohortContentSchema.omit({
   createdAt: true,
   updatedAt: true,
-  classPlanId: true,
+  cohortPlanId: true,
 });
 
-// Schema for POST request body based on ClassPlanSchema
+// Schema for POST request body based on CohortPlanSchema
 // Topics are now accepted as names (strings) - API handles finding/creating
-const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
+const PostCohortWithPlanBodySchema = CohortPlanSchema.omit({
   planType: true,
   consultantProfile: true,
   // The form's Date-valued field; this endpoint takes an ISO `startDate`
@@ -57,14 +57,14 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   schedulingStartDate: true,
   endDate: true,
   topics: true,
-  classContents: true, // Omit to override with input schema
+  cohortContents: true, // Omit to override with input schema
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
   // Topics as names - API will find or create them
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
     .min(1, "At least one topic is required"),
-  status: z.nativeEnum(ClassStatus).optional().default(ClassStatus.SCHEDULED),
+  status: z.nativeEnum(CohortStatus).optional().default(CohortStatus.SCHEDULED),
   startDate: z
     .string()
     .optional()
@@ -72,9 +72,9 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
     .refine((val) => !val || !isNaN(Date.parse(val)), {
       message: "Invalid date format for startDate",
     }),
-  // Override classContents with input schema (without Prisma-managed date fields)
-  classContents: z
-    .array(ClassContentInputSchema)
+  // Override cohortContents with input schema (without Prisma-managed date fields)
+  cohortContents: z
+    .array(CohortContentInputSchema)
     .min(1, "At least one class content item is required")
     .default([])
     .refine((contents) => {
@@ -84,11 +84,11 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
 });
 
 // Schema for PATCH request body
-// Makes most fields optional, requires plan 'id', adds 'classId'
-const PatchClassWithPlanBodySchema =
-  PostClassWithPlanBodySchema.partial().extend({
+// Makes most fields optional, requires plan 'id', adds 'cohortId'
+const PatchCohortWithPlanBodySchema =
+  PostCohortWithPlanBodySchema.partial().extend({
     id: z.string().min(1, "Class Plan ID is required for update"), // Plan ID is required
-    classId: z.string().optional().nullable(), // Class Instance ID is optional
+    cohortId: z.string().optional().nullable(), // Class Instance ID is optional
     // topics is already optional via partial()
     // Add endDate specific to PATCH updates
     endDate: z
@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     // --- Zod Validation ---
-    const validationResult = PostClassWithPlanBodySchema.safeParse(body);
+    const validationResult = PostCohortWithPlanBodySchema.safeParse(body);
 
     if (!validationResult.success) {
       console.error("Validation Error (POST):", validationResult.error.issues);
@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
       recordingStoragePolicy,
       sessionsPerWeek,
       emailSupport,
-      classContents,
+      cohortContents,
       status,
       startDate,
     } = validatedData;
@@ -245,7 +245,7 @@ export async function POST(request: NextRequest) {
       prisma.$transaction(
         async (tx) => {
           // 1. Create the class plan using validated data
-          const classPlan = await tx.classPlan.create({
+          const cohortPlan = await tx.cohortPlan.create({
             data: {
               title,
               description,
@@ -274,12 +274,12 @@ export async function POST(request: NextRequest) {
               topics: topicIds // Use validated topics here
                 ? { connect: topicIds.map((id: string) => ({ id })) }
                 : undefined,
-              classContents: curriculumCreateNested(classContents),
+              cohortContents: curriculumCreateNested(cohortContents),
             },
             include: {
               consultantProfile: true,
               topics: true,
-              classContents: true,
+              cohortContents: true,
               faqs: { orderBy: { order: "asc" } },
             },
           });
@@ -289,8 +289,8 @@ export async function POST(request: NextRequest) {
           // this very transaction has none, so this only bites once a plan can
           // carry collaborators before its sessions are laid down.
           await assertCollaboratorsAvailableForWindows(tx, {
-            planType: "CLASS",
-            planId: classPlan.id,
+            planType: "COHORT",
+            planId: cohortPlan.id,
             windows: sessionStarts.map((startsAt) => ({
               startsAt,
               endsAt: new Date(
@@ -300,7 +300,7 @@ export async function POST(request: NextRequest) {
           });
 
           // 2. Create the class instance with appointments
-          const classEvent = await tx.class.create({
+          const cohortEvent = await tx.cohort.create({
             data: {
               status,
               schedulingPeriodStartsAt: start, // Will be undefined if not provided
@@ -308,14 +308,14 @@ export async function POST(request: NextRequest) {
               schedulingTimezone: resolveSchedulingTimezone(
                 consultantProfile.user.timezone,
               ),
-              classPlan: { connect: { id: classPlan.id } },
+              cohortPlan: { connect: { id: cohortPlan.id } },
               // #1554 — one wrapper with one tentative occurrence per session
               // (allocator parity); only when a start date is defined.
               appointment:
                 sessionStarts.length > 0
                   ? {
                       create: {
-                        appointmentType: "CLASS" as const,
+                        appointmentType: "COHORT" as const,
                         occurrences: {
                           create: sessionStarts.map((slotStart, index) =>
                             buildOccurrence({
@@ -332,11 +332,11 @@ export async function POST(request: NextRequest) {
                   : undefined,
             },
             include: {
-              classPlan: {
+              cohortPlan: {
                 include: {
                   consultantProfile: true,
                   topics: true,
-                  classContents: true,
+                  cohortContents: true,
                 },
               },
               appointment: {
@@ -350,16 +350,16 @@ export async function POST(request: NextRequest) {
           // #1554 — the roster is AppointmentParticipant; the planner seats the
           // consultant on the wrapper exactly as the allocator does, or the
           // reconcile sweep reads every planner-scheduled class as drift.
-          if (classEvent.appointment) {
+          if (cohortEvent.appointment) {
             await recordParticipants(
               tx,
-              classEvent.appointment.id,
+              cohortEvent.appointment.id,
               [{ userId: session.user.id, role: "CONSULTANT" }],
               { status: "CONFIRMED" },
             );
           }
 
-          return { classPlan, classEvent };
+          return { cohortPlan, cohortEvent };
         },
         {
           timeout: 25000,
@@ -371,8 +371,8 @@ export async function POST(request: NextRequest) {
 
     // Transform topics to strings in response
     const transformedEvent = transformNestedPlanTopics(
-      result.classEvent,
-      "classPlan",
+      result.cohortEvent,
+      "cohortPlan",
     );
     return NextResponse.json({ data: transformedEvent }, { status: 201 });
   } catch (error) {
@@ -447,14 +447,14 @@ export async function PATCH(request: NextRequest) {
     );
 
     // Grandfather legacy non-30-min session durations on unrelated PATCHes.
-    // ClassPlanSchema now rejects non-aligned values, but the planner often
+    // CohortPlanSchema now rejects non-aligned values, but the planner often
     // re-sends the full form — without this, editing title/price on a 0.75h
     // plan would 400 even though duration is unchanged (#1071 / PR #1091).
     if (
       typeof body?.id === "string" &&
       typeof body?.sessionDurationInHours === "number"
     ) {
-      const existingDuration = await prisma.classPlan.findUnique({
+      const existingDuration = await prisma.cohortPlan.findUnique({
         where: { id: body.id },
         select: { sessionDurationInHours: true },
       });
@@ -467,7 +467,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     // --- Zod Validation ---
-    const validationResult = PatchClassWithPlanBodySchema.safeParse(body);
+    const validationResult = PatchCohortWithPlanBodySchema.safeParse(body);
 
     if (!validationResult.success) {
       console.error("Validation Error (PATCH):", validationResult.error.issues);
@@ -480,7 +480,7 @@ export async function PATCH(request: NextRequest) {
     const validatedData = validationResult.data;
     const {
       id,
-      classId,
+      cohortId,
       title,
       description,
       durationInMonths,
@@ -501,7 +501,7 @@ export async function PATCH(request: NextRequest) {
       faqs,
       consultantProfileId,
       topics: topicNames,
-      classContents,
+      cohortContents,
       status,
       startDate: startDateString,
       endDate: endDateString,
@@ -518,20 +518,20 @@ export async function PATCH(request: NextRequest) {
 
     console.log("Validated fields for update:", {
       id,
-      classId,
+      cohortId,
       title,
       status,
       topicIds,
     });
 
     // First, check if the class plan exists
-    const existingPlan = await prisma.classPlan.findUnique({
+    const existingPlan = await prisma.cohortPlan.findUnique({
       where: { id },
       include: {
         consultantProfile: true,
         topics: true,
-        classContents: true,
-        classes: true,
+        cohortContents: true,
+        cohorts: true,
       },
     });
 
@@ -553,18 +553,18 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // Get the class instance - use the provided classId or the first one associated with the plan
-    const classToUpdate = classId
-      ? await prisma.class.findUnique({
-          where: { id: classId },
+    // Get the class instance - use the provided cohortId or the first one associated with the plan
+    const cohortToUpdate = cohortId
+      ? await prisma.cohort.findUnique({
+          where: { id: cohortId },
         })
-      : existingPlan.classes.length > 0
-        ? existingPlan.classes[0]
+      : existingPlan.cohorts.length > 0
+        ? existingPlan.cohorts[0]
         : null;
 
     // Check if trying to update instance fields without an instance (still necessary)
     if (
-      !classToUpdate &&
+      !cohortToUpdate &&
       (status !== undefined ||
         startDateString !== undefined ||
         endDateString !== undefined)
@@ -590,27 +590,27 @@ export async function PATCH(request: NextRequest) {
           );
 
           // Handle class contents update logic (only if provided in validated data)
-          let classContentsUpdateData = {};
-          if (classContents && Array.isArray(classContents)) {
+          let cohortContentsUpdateData = {};
+          if (cohortContents && Array.isArray(cohortContents)) {
             // Zod validation for contents already happened via main schema parse
 
             // Delete existing class contents first
-            await tx.classContent.deleteMany({
-              where: { classPlanId: id },
+            await tx.cohortContent.deleteMany({
+              where: { cohortPlanId: id },
             });
             // Prepare new class contents for creation
-            classContentsUpdateData = {
-              classContents: curriculumCreateNested(classContents),
+            cohortContentsUpdateData = {
+              cohortContents: curriculumCreateNested(cohortContents),
             };
             console.log(
-              `Updating class contents for plan ${id}. Creating ${classContents.length} new entries.`,
+              `Updating class contents for plan ${id}. Creating ${cohortContents.length} new entries.`,
             );
           } else {
             console.log(`No class contents provided for update on plan ${id}.`);
           }
 
           // Prepare the main update data, only including fields present in validatedData
-          const updateData: Prisma.ClassPlanUpdateInput = {};
+          const updateData: Prisma.CohortPlanUpdateInput = {};
           if (title !== undefined) updateData.title = title;
           if (description !== undefined) updateData.description = description;
           if (durationInMonths !== undefined)
@@ -655,7 +655,7 @@ export async function PATCH(request: NextRequest) {
           }
           // Capacity is per instance. Only move the plan's default when the
           // caller is editing the plan itself rather than one of its classes.
-          if (maxParticipants !== undefined && !classToUpdate)
+          if (maxParticipants !== undefined && !cohortToUpdate)
             updateData.maxParticipants = maxParticipants;
           if (language !== undefined) updateData.language = language;
           if (level !== undefined) updateData.level = level;
@@ -676,9 +676,9 @@ export async function PATCH(request: NextRequest) {
               connect: { id: consultantProfileId },
             };
 
-          // Spread the contents update if any (only if classContents was in validatedData)
-          if (classContents !== undefined) {
-            Object.assign(updateData, classContentsUpdateData);
+          // Spread the contents update if any (only if cohortContents was in validatedData)
+          if (cohortContents !== undefined) {
+            Object.assign(updateData, cohortContentsUpdateData);
           }
 
           // Handle topics: topicIds are already validated/created by findOrCreateTopics
@@ -696,38 +696,38 @@ export async function PATCH(request: NextRequest) {
           }
 
           // Execute the plan update only if there's data to update
-          let updatedClassPlan = existingPlan; // Start with existing if no updates
+          let updatedCohortPlan = existingPlan; // Start with existing if no updates
           // Check if updateData has keys, or if topics/contents were explicitly provided for update
           if (
             Object.keys(updateData).length > 0 ||
             topicIds !== undefined ||
-            classContents !== undefined
+            cohortContents !== undefined
           ) {
-            updatedClassPlan = await tx.classPlan.update({
+            updatedCohortPlan = await tx.cohortPlan.update({
               where: { id }, // Use validated id
               data: updateData,
               include: {
                 consultantProfile: true,
                 topics: true,
-                classContents: true,
-                classes: true, // Keep included to match existingPlan type
+                cohortContents: true,
+                cohorts: true, // Keep included to match existingPlan type
               },
             });
           }
 
           console.log("Updated class plan:", {
-            id: updatedClassPlan.id,
-            title: updatedClassPlan.title,
-            topicsCount: updatedClassPlan.topics.length,
-            contentsCount: updatedClassPlan.classContents.length,
+            id: updatedCohortPlan.id,
+            title: updatedCohortPlan.title,
+            topicsCount: updatedCohortPlan.topics.length,
+            contentsCount: updatedCohortPlan.cohortContents.length,
           });
 
           // Update the class instance if it exists and relevant fields are provided
-          let updatedClass = classToUpdate;
-          if (updatedClass) {
+          let updatedCohort = cohortToUpdate;
+          if (updatedCohort) {
             // Prepare update data for the Class instance, handling optional validated fields
-            const classUpdateData: {
-              status?: ClassStatus;
+            const cohortUpdateData: {
+              status?: CohortStatus;
               schedulingPeriodStartsAt?: Date | null;
               schedulingPeriodEndsAt?: Date | null;
               maxParticipants?: number;
@@ -737,11 +737,11 @@ export async function PATCH(request: NextRequest) {
             // stale tab must not resurrect a CANCELLED class after refunds.
             // The else-branch below re-reads the row when no other field
             // changed, so a status-only PATCH still returns the moved status.
-            if (status !== undefined && status !== updatedClass.status) {
+            if (status !== undefined && status !== updatedCohort.status) {
               const publishing =
-                status === "SCHEDULED" && updatedClass.status === "DRAFT";
-              await transitionClassEvent(tx, {
-                where: { id: updatedClass.id },
+                status === "SCHEDULED" && updatedCohort.status === "DRAFT";
+              await transitionCohortEvent(tx, {
+                where: { id: updatedCohort.id },
                 to: status,
                 fromIn: publishing ? EVENT_PUBLISHABLE_FROM : undefined,
               });
@@ -751,8 +751,8 @@ export async function PATCH(request: NextRequest) {
             // paying learners. Checked inside the tx (the old guard ran before
             // it and left a TOCTOU window).
             if (maxParticipants !== undefined) {
-              const classAppointment = await tx.appointment.findUnique({
-                where: { classId: updatedClass.id },
+              const cohortAppointment = await tx.appointment.findUnique({
+                where: { cohortId: updatedCohort.id },
                 include: {
                   participants: {
                     where: liveParticipant(),
@@ -762,7 +762,7 @@ export async function PATCH(request: NextRequest) {
               });
               const consultantUserId = existingPlan.consultantProfile?.userId;
               const enrolledCount = countWebinarParticipants(
-                classAppointment,
+                cohortAppointment,
                 consultantUserId ? [consultantUserId] : [],
               );
               if (maxParticipants < enrolledCount) {
@@ -773,19 +773,19 @@ export async function PATCH(request: NextRequest) {
                   ),
                 );
               }
-              classUpdateData.maxParticipants = maxParticipants;
+              cohortUpdateData.maxParticipants = maxParticipants;
             }
 
             // Handle startDate: update if provided, set to null if explicitly null, otherwise leave unchanged
             // Need to parse the string date from validated data
             if (startDateString !== undefined) {
-              classUpdateData.schedulingPeriodStartsAt = startDateString
+              cohortUpdateData.schedulingPeriodStartsAt = startDateString
                 ? new Date(startDateString)
                 : null;
-              // Optional: Add check for valid date parsing: !isNaN(classUpdateData.schedulingPeriodStartsAt?.getTime())
+              // Optional: Add check for valid date parsing: !isNaN(cohortUpdateData.schedulingPeriodStartsAt?.getTime())
               if (
-                classUpdateData.schedulingPeriodStartsAt &&
-                isNaN(classUpdateData.schedulingPeriodStartsAt.getTime())
+                cohortUpdateData.schedulingPeriodStartsAt &&
+                isNaN(cohortUpdateData.schedulingPeriodStartsAt.getTime())
               ) {
                 console.warn(
                   "Invalid startDate received in PATCH:",
@@ -793,26 +793,26 @@ export async function PATCH(request: NextRequest) {
                 );
                 // Decide how to handle: throw error, ignore, set null?
                 // For now, let's ignore the invalid date update for startDate
-                delete classUpdateData.schedulingPeriodStartsAt;
+                delete cohortUpdateData.schedulingPeriodStartsAt;
               }
             }
 
             // Handle endDate: update if provided, set to null if explicitly null, otherwise leave unchanged
             if (endDateString !== undefined) {
-              classUpdateData.schedulingPeriodEndsAt = endDateString
+              cohortUpdateData.schedulingPeriodEndsAt = endDateString
                 ? new Date(endDateString)
                 : null;
               // Optional: Add check for valid date parsing
               if (
-                classUpdateData.schedulingPeriodEndsAt &&
-                isNaN(classUpdateData.schedulingPeriodEndsAt.getTime())
+                cohortUpdateData.schedulingPeriodEndsAt &&
+                isNaN(cohortUpdateData.schedulingPeriodEndsAt.getTime())
               ) {
                 console.warn(
                   "Invalid endDate received in PATCH:",
                   endDateString,
                 );
                 // Ignore invalid date update for endDate
-                delete classUpdateData.schedulingPeriodEndsAt;
+                delete cohortUpdateData.schedulingPeriodEndsAt;
               }
             }
 
@@ -825,8 +825,8 @@ export async function PATCH(request: NextRequest) {
             // Compared at DAY granularity, and only for a value actually sent:
             // the planner client re-sends startDate/endDate even for a
             // title-only edit.
-            const liveClass = await tx.class.findUnique({
-              where: { id: updatedClass.id },
+            const liveCohort = await tx.cohort.findUnique({
+              where: { id: updatedCohort.id },
               select: {
                 schedulingPeriodStartsAt: true,
                 schedulingPeriodEndsAt: true,
@@ -837,24 +837,24 @@ export async function PATCH(request: NextRequest) {
             const startChanged =
               startDateString !== undefined &&
               startDateString !== null &&
-              dayKey(liveClass?.schedulingPeriodStartsAt) !==
+              dayKey(liveCohort?.schedulingPeriodStartsAt) !==
                 dayKey(new Date(startDateString));
             const endChanged =
               endDateString !== undefined &&
               endDateString !== null &&
-              dayKey(liveClass?.schedulingPeriodEndsAt) !==
+              dayKey(liveCohort?.schedulingPeriodEndsAt) !==
                 dayKey(new Date(endDateString));
             const periodMoved = startChanged || endChanged;
 
             if (periodMoved) {
               const activePayments = await tx.payment.count({
                 where: {
-                  appointment: { classId: updatedClass.id },
+                  appointment: { cohortId: updatedCohort.id },
                   paymentStatus: { notIn: ["FAILED", "EXPIRED"] },
                 },
               });
               if (activePayments > 0) {
-                throw new ScheduleLockedError(CLASS_SCHEDULE_LOCKED_MESSAGE);
+                throw new ScheduleLockedError(COHORT_SCHEDULE_LOCKED_MESSAGE);
               }
             }
 
@@ -865,7 +865,7 @@ export async function PATCH(request: NextRequest) {
             // other check here sees their clash.
             if (periodMoved) {
               const liveSessions = await tx.appointment.findMany({
-                where: { classId: updatedClass.id, deletedAt: null },
+                where: { cohortId: updatedCohort.id, deletedAt: null },
                 select: {
                   id: true,
                   occurrences: {
@@ -875,23 +875,23 @@ export async function PATCH(request: NextRequest) {
                 },
               });
               await assertCollaboratorsAvailableForWindows(tx, {
-                planType: "CLASS",
+                planType: "COHORT",
                 planId: id,
                 windows: liveSessions.flatMap((a) => a.occurrences),
                 excludeAppointmentIds: liveSessions.map((a) => a.id),
               });
             }
 
-            if (Object.keys(classUpdateData).length > 0) {
-              updatedClass = await tx.class.update({
-                where: { id: updatedClass.id },
-                data: classUpdateData,
+            if (Object.keys(cohortUpdateData).length > 0) {
+              updatedCohort = await tx.cohort.update({
+                where: { id: updatedCohort.id },
+                data: cohortUpdateData,
                 include: {
-                  classPlan: {
+                  cohortPlan: {
                     include: {
                       consultantProfile: true,
                       topics: true,
-                      classContents: true,
+                      cohortContents: true,
                     },
                   },
                   appointment: {
@@ -904,14 +904,14 @@ export async function PATCH(request: NextRequest) {
             } else {
               // No field updates (or only the status moved above): fetch it
               // with all its relations so the response reflects the current row.
-              updatedClass = await tx.class.findUnique({
-                where: { id: updatedClass.id },
+              updatedCohort = await tx.cohort.findUnique({
+                where: { id: updatedCohort.id },
                 include: {
-                  classPlan: {
+                  cohortPlan: {
                     include: {
                       consultantProfile: true,
                       topics: true,
-                      classContents: true,
+                      cohortContents: true,
                     },
                   },
                   appointment: {
@@ -926,8 +926,8 @@ export async function PATCH(request: NextRequest) {
 
           // Return the results
           return {
-            classPlan: updatedClassPlan,
-            class: updatedClass,
+            cohortPlan: updatedCohortPlan,
+            cohort: updatedCohort,
           };
         },
         {
@@ -945,12 +945,12 @@ export async function PATCH(request: NextRequest) {
     // Return the appropriate response based on whether we had a class instance
     // Transform topics to strings in response
     let responseData;
-    if (result.class) {
-      responseData = transformNestedPlanTopics(result.class, "classPlan");
+    if (result.cohort) {
+      responseData = transformNestedPlanTopics(result.cohort, "cohortPlan");
     } else {
       responseData = {
-        ...result.classPlan,
-        topics: result.classPlan.topics.map((t) => t.name),
+        ...result.cohortPlan,
+        topics: result.cohortPlan.topics.map((t) => t.name),
       };
     }
 

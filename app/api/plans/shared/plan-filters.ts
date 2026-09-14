@@ -54,7 +54,7 @@ export function parsePlanFilters(
 
 /**
  * Shared plan WHERE clause — structurally compatible with both
- * Prisma.WebinarPlanWhereInput and Prisma.ClassPlanWhereInput.
+ * Prisma.WebinarPlanWhereInput and Prisma.CohortPlanWhereInput.
  */
 export interface PlanWhereClause {
   consultantProfileId?: string;
@@ -72,7 +72,7 @@ export interface PlanWhereClause {
 /**
  * Build a Prisma where clause from parsed plan filters.
  * The returned object is structurally compatible with both
- * Prisma.WebinarPlanWhereInput and Prisma.ClassPlanWhereInput.
+ * Prisma.WebinarPlanWhereInput and Prisma.CohortPlanWhereInput.
  */
 export function buildPlanWhereClause(
   filters: PlanFilterParams,
@@ -126,7 +126,7 @@ export function buildPlanWhereClause(
 
 /**
  * Shared plan ORDER BY clause — structurally compatible with both
- * Prisma.WebinarPlanOrderByWithRelationInput and Prisma.ClassPlanOrderByWithRelationInput.
+ * Prisma.WebinarPlanOrderByWithRelationInput and Prisma.CohortPlanOrderByWithRelationInput.
  */
 export interface PlanOrderByClause {
   createdAt?: Prisma.SortOrder;

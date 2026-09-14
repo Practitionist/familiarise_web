@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
 
   // Get specific event IDs for filtering
   const webinarId = searchParams.get("webinarId");
-  const classId = searchParams.get("classId");
+  const cohortId = searchParams.get("cohortId");
   const consultationId = searchParams.get("consultationId");
   const subscriptionId = searchParams.get("subscriptionId");
 
@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
     .get("subscriptionStatus")
     ?.toUpperCase();
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
-  const classStatus = searchParams.get("classStatus")?.toUpperCase();
+  const cohortStatus = searchParams.get("cohortStatus")?.toUpperCase();
 
   // Non-privileged users must scope to their own data
   if (!isPrivileged(session.user.role)) {
@@ -103,7 +103,7 @@ export async function GET(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (classStatus && !validEventStatuses.includes(classStatus)) {
+  if (cohortStatus && !validEventStatuses.includes(cohortStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
       { status: 400 },
@@ -148,13 +148,13 @@ export async function GET(request: NextRequest) {
         consultation: consultationStatus || undefined,
         subscription: subscriptionStatus || undefined,
         webinar: webinarStatus || undefined,
-        class: classStatus || undefined,
+        cohort: cohortStatus || undefined,
       },
       startDate,
       endDate,
       eventIds: {
         webinarId,
-        classId,
+        cohortId,
         consultationId,
         subscriptionId,
       },

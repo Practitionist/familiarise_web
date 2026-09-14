@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     const normalizedTitle = title.trim().toLowerCase();
 
     // Check class plans
-    const existingClass = await prisma.classPlan.findFirst({
+    const existingCohort = await prisma.cohortPlan.findFirst({
       where: {
         title: {
           mode: "insensitive",
@@ -32,7 +32,10 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ isDuplicate: !!existingClass }, { status: 200 });
+    return NextResponse.json(
+      { isDuplicate: !!existingCohort },
+      { status: 200 },
+    );
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
     console.error("Error checking duplicate class title:", error);

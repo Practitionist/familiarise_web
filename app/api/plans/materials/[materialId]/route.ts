@@ -57,7 +57,7 @@ export async function GET(
             },
           },
         },
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               select: { userId: true },
@@ -83,7 +83,7 @@ export async function GET(
       material.consultationPlan?.consultantProfile?.userId ||
       material.subscriptionPlan?.consultantProfile?.userId ||
       material.webinarPlan?.consultantProfile?.userId ||
-      material.classPlan?.consultantProfile?.userId;
+      material.cohortPlan?.consultantProfile?.userId;
 
     if (!isDevelopment() && ownerUserId !== session.user.id) {
       return NextResponse.json(
@@ -101,7 +101,7 @@ export async function GET(
       consultationPlan,
       subscriptionPlan,
       webinarPlan,
-      classPlan,
+      cohortPlan,
       ...materialData
     } = material;
     return NextResponse.json({ data: materialData });

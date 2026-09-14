@@ -22,7 +22,7 @@ import { parsePagination } from "@/lib/enterprise/validators";
 // that an org does not have any. See lib/api/scope/list-appointments.ts.
 const QuerySchema = z.object({
   appointmentType: z
-    .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"])
+    .enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "COHORT"])
     .optional(),
 });
 

@@ -109,9 +109,9 @@ export async function GET(
                   webinarPlan: { select: { title: true } },
                 },
               },
-              class: {
+              cohort: {
                 select: {
-                  classPlan: { select: { title: true } },
+                  cohortPlan: { select: { title: true } },
                 },
               },
             },
@@ -175,7 +175,7 @@ export async function GET(
         apt?.consultation?.consultationPlan?.title ??
         apt?.subscription?.subscriptionPlan?.title ??
         apt?.webinar?.webinarPlan?.title ??
-        apt?.class?.classPlan?.title ??
+        apt?.cohort?.cohortPlan?.title ??
         "Payment";
 
       // BigInt → Number at the serialization boundary; refund amounts are

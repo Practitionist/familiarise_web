@@ -63,9 +63,9 @@ export async function POST(req: NextRequest) {
                     },
                   },
                 },
-                class: {
+                cohort: {
                   include: {
-                    classPlan: {
+                    cohortPlan: {
                       select: {
                         consultantProfileId: true,
                         // #1580 C-P1-4 — the accepted co-presenter may stop too.

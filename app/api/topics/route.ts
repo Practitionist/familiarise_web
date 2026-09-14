@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
           _count: {
             select: {
               ...(planType === "all" || planType === "class"
-                ? { classPlans: true }
+                ? { cohortPlans: true }
                 : {}),
               ...(planType === "all" || planType === "webinar"
                 ? { webinarPlans: true }
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
           const count = topic._count;
           let programCount = 0;
           if (planType === "class") {
-            programCount = count.classPlans ?? 0;
+            programCount = count.cohortPlans ?? 0;
           } else if (planType === "webinar") {
             programCount = count.webinarPlans ?? 0;
           } else if (planType === "consultation") {
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
             programCount = count.subscriptionPlans ?? 0;
           } else {
             programCount =
-              (count.classPlans ?? 0) +
+              (count.cohortPlans ?? 0) +
               (count.webinarPlans ?? 0) +
               (count.consultationPlans ?? 0) +
               (count.subscriptionPlans ?? 0);

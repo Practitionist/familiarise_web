@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   try {
     // Authentication check
@@ -18,17 +18,17 @@ export async function DELETE(
     }
 
     const awaitedParams = await params;
-    const { classId } = awaitedParams;
+    const { cohortId } = awaitedParams;
 
     // Replace UUID validation with simple string check
-    if (!classId || typeof classId !== "string") {
+    if (!cohortId || typeof cohortId !== "string") {
       return NextResponse.json(
         { error: "Invalid or missing Class ID" }, // Updated error message
         { status: 400 },
       );
     }
 
-    console.log(`Attempting to delete class instance with ID: ${classId}`);
+    console.log(`Attempting to delete class instance with ID: ${cohortId}`);
 
     // Start transaction
     const result = await withSerializableRetry(
@@ -36,11 +36,11 @@ export async function DELETE(
         prisma.$transaction(
           async (tx) => {
             // 1. Find the class instance, get plan ID, title, and owner info
-            const classInstance = await tx.class.findUnique({
-              where: { id: classId },
+            const cohortInstance = await tx.cohort.findUnique({
+              where: { id: cohortId },
               select: {
-                classPlanId: true,
-                classPlan: {
+                cohortPlanId: true,
+                cohortPlan: {
                   select: {
                     title: true,
                     consultantProfile: {
@@ -51,14 +51,14 @@ export async function DELETE(
               },
             });
 
-            if (!classInstance) {
-              throw new Error(`Class instance with ID ${classId} not found.`);
+            if (!cohortInstance) {
+              throw new Error(`Class instance with ID ${cohortId} not found.`);
             }
 
             // Verify ownership - user must own this class
             if (
-              !classInstance.classPlan.consultantProfile ||
-              classInstance.classPlan.consultantProfile.userId !==
+              !cohortInstance.cohortPlan.consultantProfile ||
+              cohortInstance.cohortPlan.consultantProfile.userId !==
                 session.user.id
             ) {
               throw new Error(
@@ -66,32 +66,32 @@ export async function DELETE(
               );
             }
 
-            const classPlanId = classInstance.classPlanId;
-            const eventTitle = classInstance.classPlan.title; // Store the title
+            const cohortPlanId = cohortInstance.cohortPlanId;
+            const eventTitle = cohortInstance.cohortPlan.title; // Store the title
             console.log(
-              `Found class plan ID: ${classPlanId} (Title: "${eventTitle}") for instance ${classId}`,
+              `Found class plan ID: ${cohortPlanId} (Title: "${eventTitle}") for instance ${cohortId}`,
             );
 
             // 2. Delete the class instance
-            console.log(`Deleting class instance: ${classId}`);
-            await tx.class.delete({ where: { id: classId } });
+            console.log(`Deleting class instance: ${cohortId}`);
+            await tx.cohort.delete({ where: { id: cohortId } });
 
             // 3. Check if other instances use the same plan
-            const remainingInstancesCount = await tx.class.count({
-              where: { classPlanId: classPlanId },
+            const remainingInstancesCount = await tx.cohort.count({
+              where: { cohortPlanId: cohortPlanId },
             });
 
             let planWasDeleted = false; // Flag to know if plan deletion happened
             if (remainingInstancesCount === 0) {
               // 4. Delete the plan if needed
               console.log(
-                `Deleting class plan: ${classPlanId} as no other instances exist`,
+                `Deleting class plan: ${cohortPlanId} as no other instances exist`,
               );
-              await tx.classPlan.delete({ where: { id: classPlanId } });
+              await tx.cohortPlan.delete({ where: { id: cohortPlanId } });
               planWasDeleted = true;
             } else {
               console.log(
-                `Class plan ${classPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
+                `Class plan ${cohortPlanId} is still used by ${remainingInstancesCount} other instance(s), not deleting plan.`,
               );
             }
 
@@ -141,12 +141,12 @@ export async function DELETE(
 }
 
 // Add dummy GET, POST, PATCH handlers if needed to satisfy Next.js file conventions
-// export async function GET(request: NextRequest, { params }: { params: Promise<{ classId: string }> }) {
+// export async function GET(request: NextRequest, { params }: { params: Promise<{ cohortId: string }> }) {
 //   return NextResponse.json({ message: "GET not implemented" }, { status: 405 });
 // }
-// export async function POST(request: NextRequest, { params }: { params: Promise<{ classId: string }> }) {
+// export async function POST(request: NextRequest, { params }: { params: Promise<{ cohortId: string }> }) {
 //   return NextResponse.json({ message: "POST not implemented" }, { status: 405 });
 // }
-// export async function PATCH(request: NextRequest, { params }: { params: Promise<{ classId: string }> }) {
+// export async function PATCH(request: NextRequest, { params }: { params: Promise<{ cohortId: string }> }) {
 //   return NextResponse.json({ message: "PATCH not implemented" }, { status: 405 });
 // }

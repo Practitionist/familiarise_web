@@ -1,32 +1,32 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
-import { Prisma, ClassStatus } from "@prisma/client";
+import { Prisma, CohortStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
   requireApiAuth,
   isPrivileged,
   authorizeEventAccess,
 } from "@/lib/auth-helpers";
-import { CLASS_EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
+import { COHORT_EVENT_ALLOWED_FROM } from "@/lib/booking/transitions";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
   try {
-    const { classId } = await params;
+    const { cohortId } = await params;
 
-    const authz = await authorizeEventAccess(session, "class", classId);
+    const authz = await authorizeEventAccess(session, "class", cohortId);
     if (authz) return authz;
 
-    const classData = await prisma.class.findUniqueOrThrow({
-      where: { id: classId },
+    const cohortData = await prisma.cohort.findUniqueOrThrow({
+      where: { id: cohortId },
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -34,7 +34,7 @@ export async function GET(
               },
             },
             topics: true,
-            classContents: {
+            cohortContents: {
               orderBy: {
                 order: "asc",
               },
@@ -52,7 +52,7 @@ export async function GET(
       },
     });
 
-    return NextResponse.json({ data: classData }, { status: 200 });
+    return NextResponse.json({ data: cohortData }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -71,7 +71,7 @@ export async function GET(
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
@@ -82,31 +82,33 @@ export async function PUT(
   let statusWriteAttempted = false;
 
   try {
-    const { classId } = await params;
+    const { cohortId } = await params;
     const body = await request.json();
 
     // Doctrine #1 — status writes go through the CAS map. `body.status` used
     // to be written raw, so an owner could drive illegal edges that
-    // CLASS_EVENT_ALLOWED_FROM exists to prevent. The allowed-from set rides
+    // COHORT_EVENT_ALLOWED_FROM exists to prevent. The allowed-from set rides
     // the UPDATE's WHERE below, so a racing transition matches zero rows.
     const requestedStatus =
-      typeof body.status === "string" ? (body.status as ClassStatus) : undefined;
+      typeof body.status === "string"
+        ? (body.status as CohortStatus)
+        : undefined;
     if (
       requestedStatus &&
-      !Object.values(ClassStatus).includes(requestedStatus)
+      !Object.values(CohortStatus).includes(requestedStatus)
     ) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
-    let allowedFrom: ClassStatus[] | null = null;
+    let allowedFrom: CohortStatus[] | null = null;
     if (requestedStatus) {
-      const current = await prisma.class.findUnique({
-        where: { id: classId },
+      const current = await prisma.cohort.findUnique({
+        where: { id: cohortId },
         select: { status: true },
       });
       if (!current) {
         return NextResponse.json({ error: "Class not found" }, { status: 404 });
       }
-      allowedFrom = CLASS_EVENT_ALLOWED_FROM[requestedStatus];
+      allowedFrom = COHORT_EVENT_ALLOWED_FROM[requestedStatus];
       if (!allowedFrom.includes(current.status)) {
         return NextResponse.json(
           {
@@ -120,13 +122,13 @@ export async function PUT(
     statusWriteAttempted = Boolean(requestedStatus);
 
     // Only the owning consultant or ADMIN/STAFF can update a class instance
-    const classData = await prisma.class.update({
+    const cohortData = await prisma.cohort.update({
       where: {
-        id: classId,
+        id: cohortId,
         ...(isPrivileged(session.user.role)
           ? {}
           : {
-              classPlan: {
+              cohortPlan: {
                 consultantProfileId:
                   session.user.consultantProfileId ?? "__none__",
               },
@@ -143,7 +145,7 @@ export async function PUT(
         feedbackSummary: body.feedbackSummary,
       },
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -151,7 +153,7 @@ export async function PUT(
               },
             },
             topics: true,
-            classContents: {
+            cohortContents: {
               orderBy: {
                 order: "asc",
               },
@@ -169,7 +171,7 @@ export async function PUT(
       },
     });
 
-    return NextResponse.json({ data: classData }, { status: 200 });
+    return NextResponse.json({ data: cohortData }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -198,48 +200,59 @@ export async function PUT(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: Promise<{ classId: string }> },
+  { params }: { params: Promise<{ cohortId: string }> },
 ) {
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
   try {
-    const { classId } = await params;
+    const { cohortId } = await params;
 
     // FIX #425: Check for active bookings/payments before allowing deletion.
     // Use same ownership filter as the delete to prevent info disclosure.
     // Use DB-side existence checks to avoid loading all appointments into memory.
-    const classOwnershipFilter = isPrivileged(session.user.role)
+    const cohortOwnershipFilter = isPrivileged(session.user.role)
       ? {}
-      : { classPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
+      : {
+          cohortPlan: {
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
+          },
+        };
     const now = new Date();
 
-    const classExists = await prisma.class.findUnique({
-      where: { id: classId, ...classOwnershipFilter },
+    const cohortExists = await prisma.cohort.findUnique({
+      where: { id: cohortId, ...cohortOwnershipFilter },
       select: { id: true },
     });
-    if (!classExists) {
+    if (!cohortExists) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
 
-    const hasActivePayments = !!(await prisma.class.findFirst({
+    const hasActivePayments = !!(await prisma.cohort.findFirst({
       where: {
-        id: classId,
-        appointment: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
+        id: cohortId,
+        appointment: {
+          payment: {
+            some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } },
+          },
+        },
       },
       select: { id: true },
     }));
     if (hasActivePayments) {
       return NextResponse.json(
-        { error: "Cannot delete class with active payments. Cancel or refund first." },
+        {
+          error:
+            "Cannot delete class with active payments. Cancel or refund first.",
+        },
         { status: 400 },
       );
     }
 
-    const hasUpcomingSlots = !!(await prisma.class.findFirst({
+    const hasUpcomingSlots = !!(await prisma.cohort.findFirst({
       where: {
-        id: classId,
+        id: cohortId,
         appointment: { occurrences: { some: { endsAt: { gt: now } } } },
       },
       select: { id: true },
@@ -252,20 +265,20 @@ export async function DELETE(
     }
 
     // Only the owning consultant or ADMIN/STAFF can delete a class instance
-    const classData = await prisma.class.delete({
+    const cohortData = await prisma.cohort.delete({
       where: {
-        id: classId,
+        id: cohortId,
         ...(isPrivileged(session.user.role)
           ? {}
           : {
-              classPlan: {
+              cohortPlan: {
                 consultantProfileId:
                   session.user.consultantProfileId ?? "__none__",
               },
             }),
       },
       include: {
-        classPlan: {
+        cohortPlan: {
           include: {
             consultantProfile: {
               include: {
@@ -273,7 +286,7 @@ export async function DELETE(
               },
             },
             topics: true,
-            classContents: {
+            cohortContents: {
               orderBy: {
                 order: "asc",
               },
@@ -291,7 +304,7 @@ export async function DELETE(
       },
     });
 
-    return NextResponse.json({ data: classData }, { status: 200 });
+    return NextResponse.json({ data: cohortData }, { status: 200 });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&

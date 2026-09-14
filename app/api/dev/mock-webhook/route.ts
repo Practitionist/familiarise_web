@@ -101,8 +101,8 @@ async function handleMockPaymentCaptured(
         webinar: {
           include: { webinarPlan: { select: { consultantProfileId: true } } },
         },
-        class: {
-          include: { classPlan: { select: { consultantProfileId: true } } },
+        cohort: {
+          include: { cohortPlan: { select: { consultantProfileId: true } } },
         },
       },
     },
@@ -153,7 +153,7 @@ async function handleMockPaymentCaptured(
       apt.consultation?.consultationPlan?.consultantProfileId ||
       apt.subscription?.subscriptionPlan?.consultantProfileId ||
       apt.webinar?.webinarPlan?.consultantProfileId ||
-      apt.class?.classPlan?.consultantProfileId ||
+      apt.cohort?.cohortPlan?.consultantProfileId ||
       ""
     );
   };

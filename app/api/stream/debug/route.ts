@@ -160,12 +160,12 @@ export async function GET(req: NextRequest) {
             },
           }),
       user.consultantProfileId
-        ? prisma.class.count({
+        ? prisma.cohort.count({
             where: {
-              classPlan: { consultantProfileId: user.consultantProfileId },
+              cohortPlan: { consultantProfileId: user.consultantProfileId },
             },
           })
-        : prisma.class.count({
+        : prisma.cohort.count({
             where: {
               appointment: {
                 participants: { some: liveParticipant(userId) },
@@ -197,7 +197,7 @@ export async function GET(req: NextRequest) {
         consultations: eventCounts[0],
         subscriptions: eventCounts[1],
         webinars: eventCounts[2],
-        classes: eventCounts[3],
+        cohorts: eventCounts[3],
       },
       // Include additional details only in development
       ...(isDev && {
