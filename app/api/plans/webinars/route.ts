@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import {
@@ -49,10 +50,10 @@ export async function GET(request: NextRequest) {
         include: {
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: { select: { id: true } },
-                },
+              // #1554 — seat ids only; the explore card's registration check.
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -75,7 +76,7 @@ export async function GET(request: NextRequest) {
             select: {
               appointment: {
                 select: {
-                  slotsOfAppointment: {
+                  occurrences: {
                     where: { createdAt: { gte: thirtyDaysAgo } },
                     select: { id: true },
                   },
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest) {
         .map((p) => ({
           id: p.id,
           count: p.webinars.reduce(
-            (sum, w) => sum + (w.appointment?.slotsOfAppointment?.length ?? 0),
+            (sum, w) => sum + (w.appointment?.occurrences?.length ?? 0),
             0,
           ),
         }))

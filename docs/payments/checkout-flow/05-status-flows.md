@@ -213,7 +213,7 @@ flowchart TD
     end
 
     subgraph "Registration State"
-        WEBHOOK --> JOINED["User Added to Webinar<br/>SlotOfAppointment created<br/>isTentative=false"]
+        WEBHOOK --> JOINED["User Added to Webinar<br/>AppointmentOccurrence created<br/>isTentative=false"]
         MOCK_SUCCESS --> JOINED
 
         JOINED --> MULTI_USERS["Multiple Users Can Join<br/>Same Shared Appointment"]

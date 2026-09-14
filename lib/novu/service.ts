@@ -62,8 +62,8 @@ import {
   type RescheduleOutcomeFields,
   type SubscriptionPayload,
   type SupportTicketPayload,
-  type TrialSessionInput,
-  type TrialSessionPayload,
+  type TrialInput,
+  type TrialPayload,
   type VerificationPayload,
 } from "./workflows";
 import {
@@ -498,10 +498,7 @@ function rescheduledWire(
   };
 }
 
-function trialWire(
-  input: TrialSessionInput,
-  timezone: string,
-): TrialSessionPayload {
+function trialWire(input: TrialInput, timezone: string): TrialPayload {
   const { dateTime: rawDateTime, ...rest } = input;
   const dateTime = formatNotificationDateTime(rawDateTime, timezone);
   return {
@@ -777,9 +774,9 @@ export async function notifyNewReview(
 // Trial Session Notifications
 // ============================================================================
 
-export async function notifyTrialSessionRequested(
+export async function notifyTrialRequested(
   consultantUserId: string,
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerWorkflowZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_REQUESTED,
@@ -788,9 +785,9 @@ export async function notifyTrialSessionRequested(
   );
 }
 
-export async function notifyTrialSessionScheduled(
+export async function notifyTrialScheduled(
   consulteeUserId: string,
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerWorkflowZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_SCHEDULED,
@@ -799,9 +796,9 @@ export async function notifyTrialSessionScheduled(
   );
 }
 
-export async function notifyTrialSessionCompleted(
+export async function notifyTrialCompleted(
   userIds: string[],
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_COMPLETED,
@@ -810,9 +807,9 @@ export async function notifyTrialSessionCompleted(
   );
 }
 
-export async function notifyTrialSessionCancelled(
+export async function notifyTrialCancelled(
   userIds: string[],
-  payload: TrialSessionInput,
+  payload: TrialInput,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.TRIAL_SESSION_CANCELLED,

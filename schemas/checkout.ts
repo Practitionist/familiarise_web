@@ -37,8 +37,8 @@ export type SupportedCheckoutGateway = z.infer<typeof paymentGatewaySchema>;
 
 // Search params validation (URL query parameters)
 export const searchParamsSchema = z.object({
-  slotOfAvailabilityWeeklyId: z.string().optional(),
-  slotOfAvailabilityCustomId: z.string().optional(),
+  availabilityWindowWeeklyId: z.string().optional(),
+  availabilityWindowCustomId: z.string().optional(),
   startsAt: z.string().datetime().optional(),
   endsAt: z.string().datetime().optional(),
   discountCode: z.string().optional(),
@@ -54,12 +54,12 @@ export const consultationSearchParamsSchema = searchParamsSchema
   })
   .refine(
     (data) =>
-      (data.slotOfAvailabilityWeeklyId && !data.slotOfAvailabilityCustomId) ||
-      (!data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId),
+      (data.availabilityWindowWeeklyId && !data.availabilityWindowCustomId) ||
+      (!data.availabilityWindowWeeklyId && data.availabilityWindowCustomId),
     {
       message:
-        "Exactly one of slotOfAvailabilityWeeklyId or slotOfAvailabilityCustomId must be provided",
-      path: ["slotOfAvailabilityWeeklyId"],
+        "Exactly one of availabilityWindowWeeklyId or availabilityWindowCustomId must be provided",
+      path: ["availabilityWindowWeeklyId"],
     },
   )
   .refine((data) => new Date(data.startsAt) < new Date(data.endsAt), {
@@ -91,8 +91,8 @@ export const checkoutSchema = z
     eventId: z.string().optional(),
     startsAt: z.string().datetime().optional(),
     endsAt: z.string().datetime().optional(),
-    slotOfAvailabilityWeeklyId: z.string().optional(),
-    slotOfAvailabilityCustomId: z.string().optional(),
+    availabilityWindowWeeklyId: z.string().optional(),
+    availabilityWindowCustomId: z.string().optional(),
     schedulingPeriodStartsAt: z.string().datetime().optional(),
     schedulingPeriodEndsAt: z.string().datetime().optional(),
     discountCode: z.string().optional(),
@@ -153,13 +153,13 @@ export const checkoutSchema = z
 
       // Require slot availability ID
       if (
-        !data.slotOfAvailabilityWeeklyId &&
-        !data.slotOfAvailabilityCustomId
+        !data.availabilityWindowWeeklyId &&
+        !data.availabilityWindowCustomId
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Consultation requires slot availability ID",
-          path: ["slotOfAvailabilityWeeklyId"],
+          path: ["availabilityWindowWeeklyId"],
         });
       }
     }
@@ -183,13 +183,13 @@ export const checkoutSchema = z
       // If slot data provided, require availability ID
       if (
         hasSlotData &&
-        !data.slotOfAvailabilityWeeklyId &&
-        !data.slotOfAvailabilityCustomId
+        !data.availabilityWindowWeeklyId &&
+        !data.availabilityWindowCustomId
       ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Subscription with slots requires slot availability ID",
-          path: ["slotOfAvailabilityWeeklyId"],
+          path: ["availabilityWindowWeeklyId"],
         });
       }
     }
@@ -208,11 +208,11 @@ export const checkoutSchema = z
     // === Cross-field validation ===
 
     // Ensure only one type of slot availability ID
-    if (data.slotOfAvailabilityWeeklyId && data.slotOfAvailabilityCustomId) {
+    if (data.availabilityWindowWeeklyId && data.availabilityWindowCustomId) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Cannot provide both weekly and custom slot availability IDs",
-        path: ["slotOfAvailabilityCustomId"],
+        path: ["availabilityWindowCustomId"],
       });
     }
 
@@ -339,8 +339,8 @@ export const createCheckoutData = (params: {
   eventId?: string;
   startsAt?: string;
   endsAt?: string;
-  slotOfAvailabilityWeeklyId?: string;
-  slotOfAvailabilityCustomId?: string;
+  availabilityWindowWeeklyId?: string;
+  availabilityWindowCustomId?: string;
   schedulingPeriodStartsAt?: string;
   schedulingPeriodEndsAt?: string;
   discountCode?: string;
@@ -357,8 +357,8 @@ export const createCheckoutData = (params: {
     eventId: params.eventId,
     startsAt: params.startsAt,
     endsAt: params.endsAt,
-    slotOfAvailabilityWeeklyId: params.slotOfAvailabilityWeeklyId,
-    slotOfAvailabilityCustomId: params.slotOfAvailabilityCustomId,
+    availabilityWindowWeeklyId: params.availabilityWindowWeeklyId,
+    availabilityWindowCustomId: params.availabilityWindowCustomId,
     schedulingPeriodStartsAt: params.schedulingPeriodStartsAt,
     schedulingPeriodEndsAt: params.schedulingPeriodEndsAt,
     discountCode: params.discountCode,

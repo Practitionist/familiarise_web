@@ -38,19 +38,19 @@ jest.mock("../../utils/appointmentlock", () => ({
 }));
 
 import prisma from "../../lib/prisma";
-import { SlotAllocationService } from "../../utils/slotAllocation/SlotAllocationService";
-import { SlotCalculationService } from "../../utils/slotAllocation/SlotCalculationService";
+import { SchedulingService } from "../../utils/scheduling-engine/SchedulingService";
+import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import {
   isEmptyPreference,
   maxPreferenceScore,
   scoreCandidateStart,
   type AllocationPreference,
-} from "../../utils/slotAllocation/preferenceScoring";
+} from "../../utils/scheduling-engine/preferenceScoring";
 import type {
   ConsultantAllocationData,
   EventConfig,
   EventType,
-} from "../../utils/slotAllocation/types";
+} from "../../utils/scheduling-engine/types";
 
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
@@ -71,7 +71,7 @@ const findAvailableSlots = (
   preference?: AllocationPreference,
 ): Promise<Date[]> =>
   (
-    SlotAllocationService as unknown as {
+    SchedulingService as unknown as {
       findAvailableSlots: (...a: unknown[]) => Promise<Date[]>;
     }
   ).findAvailableSlots(
@@ -94,7 +94,7 @@ function weeklyConsultant(
   return {
     userId: "consultant-user",
     scheduleType: "WEEKLY",
-    slotsOfAvailabilityWeekly: rows.map((r, i) => ({
+    availabilityWindowsWeekly: rows.map((r, i) => ({
       id: `weekly-${i}`,
       startDay: r.day,
       startTimeUtc: r.startUtc,
@@ -102,7 +102,7 @@ function weeklyConsultant(
       endTimeUtc: r.endUtc,
       utcOffsetMinutes: IST_OFFSET,
     })),
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsCustom: [],
   };
 }
 
@@ -129,8 +129,8 @@ const recurringConfig = (weeks: number): EventConfig => {
   };
 };
 
-const istHour = (d: Date) => SlotCalculationService.hourInTz(d, IST);
-const istWeekday = (d: Date) => SlotCalculationService.weekdayInTz(d, IST);
+const istHour = (d: Date) => ScheduleCalculationService.hourInTz(d, IST);
+const istWeekday = (d: Date) => ScheduleCalculationService.weekdayInTz(d, IST);
 
 // Same pinned Wednesday the availability-window-scan suite uses: it keeps every
 // weekly row a clear whole number of days away, so no case turns on the hour CI
@@ -375,12 +375,12 @@ describe("among equally-valid candidates the preferred one wins", () => {
     // cap already closed — that is the invariant the validator re-checks.
     const perWeek = new Map<string, number>();
     for (const slot of slots) {
-      const key = SlotCalculationService.weekKey(slot, IST);
+      const key = ScheduleCalculationService.weekKey(slot, IST);
       perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
     }
     for (const count of perWeek.values()) expect(count).toBe(1);
 
-    const dayKeys = slots.map((s) => SlotCalculationService.dayKey(s, IST));
+    const dayKeys = slots.map((s) => ScheduleCalculationService.dayKey(s, IST));
     expect(new Set(dayKeys).size).toBe(dayKeys.length);
   });
 });
@@ -397,8 +397,8 @@ describe("a partly satisfiable day preference tops itself up", () => {
     return {
       userId: "consultant-user",
       scheduleType: "CUSTOM",
-      slotsOfAvailabilityWeekly: [],
-      slotsOfAvailabilityCustom: days.map((startsAt, i) => ({
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: days.map((startsAt, i) => ({
         id: `custom-${i}`,
         startsAt,
         endsAt: new Date(startsAt.getTime() + 3 * 60 * MINUTE),
@@ -454,7 +454,7 @@ describe("a partly satisfiable day preference tops itself up", () => {
     // And the caps still hold across the two sweeps.
     const perWeek = new Map<string, number>();
     for (const slot of slots) {
-      const key = SlotCalculationService.weekKey(slot, IST);
+      const key = ScheduleCalculationService.weekKey(slot, IST);
       perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
     }
     for (const count of perWeek.values()) expect(count).toBe(1);
@@ -569,7 +569,7 @@ describe("bands are read in the event's scheduling timezone", () => {
     expect(istWeekday(slots[0])).toBe(5); // Friday
     expect(istHour(slots[0])).toBe(9);
     // The same instant read in UTC is 03:30 — nowhere near a morning.
-    expect(SlotCalculationService.hourInTz(slots[0], "UTC")).toBe(3);
+    expect(ScheduleCalculationService.hourInTz(slots[0], "UTC")).toBe(3);
   });
 });
 
@@ -578,15 +578,15 @@ describe("bands are read in the event's scheduling timezone", () => {
 describe("findAllocationPreference", () => {
   /** Private, and the seam where the preference is either found or silently lost. */
   const findAllocationPreference = (
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
   ): Promise<AllocationPreference | undefined> =>
     (
-      SlotAllocationService as unknown as {
+      SchedulingService as unknown as {
         findAllocationPreference: (
           ids: string[],
         ) => Promise<AllocationPreference | undefined>;
       }
-    ).findAllocationPreference(releasedSlotIds);
+    ).findAllocationPreference(releasedOccurrenceIds);
 
   const findFirst = prisma.rescheduleRequest.findFirst as jest.Mock;
 
@@ -614,7 +614,7 @@ describe("findAllocationPreference", () => {
     const where = findFirst.mock.calls[0][0].where;
     // Matched by what was RELEASED, which is the same on every appointment of
     // the booking...
-    expect(where.releasedSlotIds).toEqual({
+    expect(where.releasedOccurrenceIds).toEqual({
       hasSome: ["a3-slot-1", "a3-slot-2"],
     });
     // ...and never by the appointment the row happens to be filed against.
@@ -750,15 +750,15 @@ describe("hourInTz / weekdayInTz", () => {
   it("reads the wall clock of the given zone, not the server's", () => {
     // 2026-08-09T20:00:00Z is Sunday in UTC and Monday 01:30 in IST.
     const instant = new Date("2026-08-09T20:00:00Z");
-    expect(SlotCalculationService.hourInTz(instant, "UTC")).toBe(20);
-    expect(SlotCalculationService.hourInTz(instant, IST)).toBe(1);
-    expect(SlotCalculationService.weekdayInTz(instant, "UTC")).toBe(0);
-    expect(SlotCalculationService.weekdayInTz(instant, IST)).toBe(1);
+    expect(ScheduleCalculationService.hourInTz(instant, "UTC")).toBe(20);
+    expect(ScheduleCalculationService.hourInTz(instant, IST)).toBe(1);
+    expect(ScheduleCalculationService.weekdayInTz(instant, "UTC")).toBe(0);
+    expect(ScheduleCalculationService.weekdayInTz(instant, IST)).toBe(1);
   });
 
   it("reports midnight as hour 0", () => {
     expect(
-      SlotCalculationService.hourInTz(
+      ScheduleCalculationService.hourInTz(
         new Date(new Date("2026-08-10T00:00:00Z").getTime() - HALF_HOUR * 0),
         "UTC",
       ),
@@ -785,7 +785,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
 
   interface SweepWhere {
     id?: { not?: string };
-    proposedSlots?: unknown;
+    proposedTimes?: unknown;
   }
 
   /** A transaction stub that answers the sweep's reads the way Postgres would. */
@@ -796,7 +796,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
         // Two reads in order: the preference-only rows first, then every OTHER
         // open proposal on the same released slots.
         findMany: jest.fn(async ({ where }: { where: SweepWhere }) => {
-          if (where.proposedSlots) return [];
+          if (where.proposedTimes) return [];
           const excluded = where.id?.not;
           return openProposalIds
             .filter((id) => id !== excluded)
@@ -826,16 +826,16 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
 
   const runSweep = (
     tx: unknown,
-    releasedSlotIds: string[],
+    releasedOccurrenceIds: string[],
     excludeRescheduleRequestId?: string,
   ): Promise<void> =>
     (
-      SlotAllocationService as unknown as {
+      SchedulingService as unknown as {
         resolveConsumedPreferenceRequests: (...a: unknown[]) => Promise<void>;
       }
     ).resolveConsumedPreferenceRequests(
       tx,
-      releasedSlotIds,
+      releasedOccurrenceIds,
       excludeRescheduleRequestId,
     );
 
@@ -847,7 +847,7 @@ describe("#1340 — resolveConsumedPreferenceRequests and the confirming proposa
     expect(declined).toEqual([STALE]);
     const supersedeRead = tx.rescheduleRequest.findMany.mock.calls
       .map(([arg]) => arg.where)
-      .find((where) => !where.proposedSlots);
+      .find((where) => !where.proposedTimes);
     expect(supersedeRead?.id).toEqual({ not: SELF });
   });
 

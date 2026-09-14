@@ -99,7 +99,7 @@ describe("fall-through 2 — the consultee events read", () => {
         subscription: { findMany },
         webinar: { findMany },
         class: { findMany },
-        trialSession: { findMany },
+        trial: { findMany },
       },
     }));
     const { readConsulteeEvents } =
@@ -123,7 +123,7 @@ describe("fall-through 3 — the trial list", () => {
       __esModule: true,
       default: {
         membership: { findMany: jest.fn(async () => learnerAt(ORG)) },
-        trialSession: {
+        trial: {
           findMany: trialFindMany,
           count: jest.fn(async () => 0),
         },
@@ -226,11 +226,11 @@ describe("fall-through 5 — the consultant appointments list", () => {
       __esModule: true,
       getConsultantAppointments,
     }));
-    const { GET } = await import("../../app/api/slots/appointments/route");
+    const { GET } = await import("../../app/api/scheduling/appointments/route");
 
     const res = await GET(
       new Request(
-        `http://localhost/api/slots/appointments?consulteeProfileId=consultee-1&orgScope=${ORG}`,
+        `http://localhost/api/scheduling/appointments?consulteeProfileId=consultee-1&orgScope=${ORG}`,
       ) as never,
     );
 

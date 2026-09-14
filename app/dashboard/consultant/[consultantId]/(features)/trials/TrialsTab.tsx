@@ -52,14 +52,14 @@ import type { MeetingSlot } from "@/lib/meeting";
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import {
   CONSULTANT_JOIN_WINDOW_MS,
-  getJoinableSession,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+} from "@/lib/appointments/occurrences";
 import {
   TrialScheduleCalendar,
   SelectedSlot,
 } from "./components/TrialScheduleCalendar";
 
-interface TrialSession {
+interface Trial {
   id: string;
   status: string;
   notes: string | null;
@@ -81,7 +81,7 @@ interface TrialSession {
   };
   appointment: {
     id: string;
-    slotsOfAppointment: Array<{
+    occurrences: Array<{
       id: string;
       startsAt: string;
       endsAt: string;
@@ -142,9 +142,9 @@ export function TrialsTab() {
   const { toast } = useToast();
   const joinMeeting = useLazyJoinMeeting();
 
-  const [trials, setTrials] = useState<TrialSession[]>([]);
+  const [trials, setTrials] = useState<Trial[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedTrial, setSelectedTrial] = useState<TrialSession | null>(null);
+  const [selectedTrial, setSelectedTrial] = useState<Trial | null>(null);
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isJoining, setIsJoining] = useState<string | null>(null);
@@ -273,7 +273,7 @@ export function TrialsTab() {
     fetchPlans();
   }, [fetchStats, fetchPlans]);
 
-  const handleApprove = async (trial: TrialSession) => {
+  const handleApprove = async (trial: Trial) => {
     setSelectedTrial(trial);
     setShowScheduleDialog(true);
   };
@@ -292,7 +292,7 @@ export function TrialsTab() {
           slotData: {
             startsAt: slot.startsAt.toISOString(),
             endsAt: slot.endsAt.toISOString(),
-            slotOfAvailabilityId: slot.slotOfAvailabilityId,
+            availabilityWindowId: slot.availabilityWindowId,
             slotType: slot.slotType,
           },
         }),
@@ -416,31 +416,24 @@ export function TrialsTab() {
 
   /**
    * #1270 — was a hand-rolled 10-minute comparison against
-   * `slotsOfAppointment[0]`. Two things were wrong with it: the host window is
+   * `occurrences[0]`. Two things were wrong with it: the host window is
    * 15 minutes everywhere else, and reading one row treats a 30-minute slot as
    * the whole session, so a longer trial stopped being joinable half an hour
    * in (#1061). The shared session helper answers both.
    */
-  const isTrialJoinable = (trial: TrialSession): boolean => {
+  const isTrialJoinable = (trial: Trial): boolean => {
     if (trial.status !== "SCHEDULED") return false;
     const appointment = trial.appointment;
     if (!appointment) return false;
     return (
-      getJoinableSession(
-        // `groupSlotsIntoRuns` buckets rows by appointment and the trials
-        // payload omits the FK, so without stamping it every 30-minute row
-        // would be its own session (#1061).
-        appointment.slotsOfAppointment.map((slot) => ({
-          ...slot,
-          appointmentId: appointment.id,
-        })),
-        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
-      ) !== null
+      getJoinableOccurrence(appointment.occurrences, {
+        joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
+      }) !== null
     );
   };
 
-  const handleJoinMeeting = async (trial: TrialSession) => {
-    if (!trial.appointment?.slotsOfAppointment?.[0]) {
+  const handleJoinMeeting = async (trial: Trial) => {
+    if (!trial.appointment?.occurrences?.[0]) {
       toast({
         title: "Unable to join",
         description: "Meeting information is not available.",
@@ -450,14 +443,14 @@ export function TrialsTab() {
     }
 
     setIsJoining(trial.id);
-    const slot = trial.appointment.slotsOfAppointment[0];
+    const slot = trial.appointment.occurrences[0];
     // Minimal appointment shape for the meeting helper; the shared hook
     // lazy-loads the Stream SDK at click time (#248).
     const navigating = await joinMeeting(
       {
         id: trial.appointment.id,
         appointmentType: "TRIAL",
-        slotsOfAppointment: trial.appointment.slotsOfAppointment,
+        occurrences: trial.appointment.occurrences,
       },
       slot as MeetingSlot,
     );
@@ -745,16 +738,16 @@ export function TrialsTab() {
                   </div>
                 )}
 
-                {trial.appointment?.slotsOfAppointment?.[0] && (
+                {trial.appointment?.occurrences?.[0] && (
                   <div className="bg-blue-50 rounded-lg p-3 mb-4">
                     <p className="text-sm text-blue-700">
                       <span className="font-medium">Scheduled: </span>
                       {formatDate(
-                        trial.appointment.slotsOfAppointment[0].startsAt,
+                        trial.appointment.occurrences[0].startsAt,
                       )}{" "}
                       at{" "}
                       {formatTime(
-                        trial.appointment.slotsOfAppointment[0].startsAt,
+                        trial.appointment.occurrences[0].startsAt,
                       )}
                     </p>
                   </div>

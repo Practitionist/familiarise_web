@@ -116,7 +116,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               appointment: {
                 select: {
                   id: true,
-                  slotsOfAppointment: {
+                  occurrences: {
                     select: {
                       startsAt: true,
                     },

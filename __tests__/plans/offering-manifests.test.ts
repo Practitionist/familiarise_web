@@ -181,7 +181,7 @@ describe("declared slots are all supplied", () => {
 describe("slot status tokens", () => {
   it("defines a label, cell class and swatch for every state", async () => {
     const { SLOT_STATUS_TOKENS } = await import(
-      "@/lib/scheduling/slot-status-tokens"
+      "@/lib/scheduling/interval-status-tokens"
     );
     // The legend surfaces `hint` as a title, so an empty one is a silent gap.
     const incomplete = Object.entries(SLOT_STATUS_TOKENS)
@@ -196,7 +196,7 @@ describe("slot status tokens", () => {
 
   it("legends reference only states that exist", async () => {
     const { SLOT_STATUS_TOKENS, BUYER_LEGEND_KEYS, CONSULTANT_LEGEND_KEYS } =
-      await import("@/lib/scheduling/slot-status-tokens");
+      await import("@/lib/scheduling/interval-status-tokens");
     const known = new Set(Object.keys(SLOT_STATUS_TOKENS));
     expect(BUYER_LEGEND_KEYS.filter((k) => !known.has(k))).toEqual([]);
     expect(CONSULTANT_LEGEND_KEYS.filter((k) => !known.has(k))).toEqual([]);
@@ -204,7 +204,7 @@ describe("slot status tokens", () => {
 
   it("explains every state the consultant grid can render", async () => {
     const { SLOT_STATUS_TOKENS, CONSULTANT_LEGEND_KEYS } = await import(
-      "@/lib/scheduling/slot-status-tokens"
+      "@/lib/scheduling/interval-status-tokens"
     );
     // The allocate calendar can show all of them, so its legend must too — a
     // state with no legend entry is a colour nobody can interpret.

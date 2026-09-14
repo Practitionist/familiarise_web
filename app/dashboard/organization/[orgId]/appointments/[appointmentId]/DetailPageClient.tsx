@@ -5,7 +5,7 @@ import { useMemo } from "react";
 import { AppointmentDetailClient } from "@/components/appointments/detail/AppointmentDetailClient";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
 import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consultee/ConsulteeAppointmentsAdapter";
-import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/slots";
+import { CONSULTEE_JOIN_WINDOW_MS } from "@/lib/appointments/occurrences";
 import { isConfirmedStatus } from "@/lib/appointments/status";
 import { supportsDocuments } from "@/lib/appointments/kind-capabilities";
 

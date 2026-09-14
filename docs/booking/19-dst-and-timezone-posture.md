@@ -6,7 +6,7 @@
 
 ## What the launch model is
 
-- `SlotOfAvailabilityWeekly` stores **minutes-since-midnight UTC**
+- `AvailabilityWindowWeekly` stores **minutes-since-midnight UTC**
   (`startTimeUtc`/`endTimeUtc`) plus a **frozen `utcOffsetMinutes`** captured
   at row creation. That frozen offset — NOT an IANA zone — is the live source
   of truth for projecting weekly rows onto concrete dates.
@@ -18,7 +18,7 @@
   flip inherits correct values for every row written from that date onward
   without a backfill; going DST-aware still needs no migration, only the
   algorithm and UI work tracked in #872.
-- Custom availability (`SlotOfAvailabilityCustom`) stores absolute UTC instants
+- Custom availability (`AvailabilityWindowCustom`) stores absolute UTC instants
   — unaffected by the stub.
 - Event bucketing (`dayKey`/`weekKey`, ADR B9) uses each event's
   `schedulingTimezone` via date-fns-tz, which IS DST-correct for the zones it
@@ -66,7 +66,7 @@ every surface renders in viewer-local time.
 
 ## Related
 
-- Schema doc-comment block on `SlotOfAvailabilityWeekly` (prisma/schema.prisma)
+- Schema doc-comment block on `AvailabilityWindowWeekly` (prisma/schema.prisma)
 - #1168 — draw the slot grid in `schedulingTimezone` (prerequisite for #872)
 - #1200 — the travel-hazard operational caveat this page documents; folded into
   #872 as a single post-MVP DST issue (2026-09-02 decision, tracked under

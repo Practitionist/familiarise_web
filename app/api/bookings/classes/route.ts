@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
@@ -108,18 +109,11 @@ export async function GET(request: NextRequest) {
           OR: [
             // Get classes where consultee is registered through appointments
             {
-              appointments: {
-                some: {
-                  slotsOfAppointment: {
-                    some: {
-                      user: {
-                        some: {
-                          consulteeProfile: {
-                            id: consulteeProfileId,
-                          },
-                        },
-                      },
-                    },
+              appointment: {
+                participants: {
+                  some: {
+                    ...liveParticipant(),
+                    user: { consulteeProfile: { id: consulteeProfileId } },
                   },
                 },
               },
@@ -150,21 +144,9 @@ export async function GET(request: NextRequest) {
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: {
-                include: {
-                  user: {
-                    select: {
-                      id: true,
-                      name: true,
-                      email: true,
-                      image: true,
-                      consulteeProfileId: true,
-                    },
-                  },
-                },
-              },
+              occurrences: true,
               payment: true,
             },
           },
@@ -200,11 +182,11 @@ export async function GET(request: NextRequest) {
             },
           },
           // #1346 — the planner card shows a class's first session, so the
-          // allocated slots have to travel with the run; `appointments: true`
+          // allocated slots have to travel with the run; `appointment: true`
           // alone left the card falling back to the authoring window.
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: { orderBy: { startsAt: "asc" } },
+              occurrences: { orderBy: { startsAt: "asc" } },
             },
           },
         },
@@ -221,7 +203,7 @@ export async function GET(request: NextRequest) {
               topics: true,
             },
           },
-          appointments: true,
+          appointment: true,
         },
       });
     }

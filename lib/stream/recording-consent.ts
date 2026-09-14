@@ -59,7 +59,7 @@ export function consentRegimeFor(
  * majority of sessions.
  */
 export async function getRecordingNotice(
-  meetingSessionId: string,
+  meetingId: string,
   userId: string,
   appointment: AppointmentWithOwnership | null | undefined,
 ): Promise<RecordingNotice> {
@@ -74,8 +74,8 @@ export async function getRecordingNotice(
     };
   }
 
-  const existing = await prisma.meetingRecordingConsent.findUnique({
-    where: { meetingSessionId_userId: { meetingSessionId, userId } },
+  const existing = await prisma.recordingConsent.findUnique({
+    where: { meetingId_userId: { meetingId, userId } },
     select: { decision: true },
   });
 
@@ -93,15 +93,15 @@ export async function getRecordingNotice(
  * the record always reflects the standing answer.
  */
 export async function recordRecordingConsent(
-  meetingSessionId: string,
+  meetingId: string,
   userId: string,
   decision: RecordingConsentDecision,
 ): Promise<void> {
   const now = new Date();
-  await prisma.meetingRecordingConsent.upsert({
-    where: { meetingSessionId_userId: { meetingSessionId, userId } },
+  await prisma.recordingConsent.upsert({
+    where: { meetingId_userId: { meetingId, userId } },
     create: {
-      meetingSessionId,
+      meetingId,
       userId,
       decision,
       decidedAt: now,
@@ -148,7 +148,7 @@ export interface RecordingBlock {
  * has no effect for the remainder of the session, which is not what "opt out"
  * promises.
  *
- * Closing it means the decline path reading `MeetingSession.isRecording` and, if
+ * Closing it means the decline path reading `Meeting.isRecording` and, if
  * a recording is live, stopping it through the same route the stop endpoint uses
  * and clearing `isRecording` / `recordingStartedAt` / `recordingStartedBy`. That
  * is a product decision, not a refactor: it hands any participant the ability to
@@ -171,13 +171,13 @@ export interface RecordingBlock {
  * the dry run before believing otherwise; it prints the live grants.
  */
 export async function getRecordingBlock(
-  meetingSessionId: string,
+  meetingId: string,
   appointment: AppointmentWithOwnership | null | undefined,
 ): Promise<RecordingBlock> {
   if (consentRegimeFor(appointment) !== "OPT_OUT") return { blocked: false };
 
-  const declined = await prisma.meetingRecordingConsent.count({
-    where: { meetingSessionId, decision: RecordingConsentDecision.DECLINED },
+  const declined = await prisma.recordingConsent.count({
+    where: { meetingId, decision: RecordingConsentDecision.DECLINED },
   });
 
   if (declined > 0) {

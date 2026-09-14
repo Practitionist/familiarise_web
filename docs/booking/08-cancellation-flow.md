@@ -70,7 +70,7 @@ flowchart TD
     S --> CAS
     T --> CAS
     CAS -->|0| CAS409["409 NOT_CANCELLABLE"]
-    CAS -->|1| U["updateMany SlotOfAppointment:\ncompletionStatus = CANCELLED"]
+    CAS -->|1| U["updateMany AppointmentOccurrence:\ncompletionStatus = CANCELLED"]
     U --> U2["Close any open RescheduleRequest\n(status = DECLINED)"]
     U2 --> W[Commit transaction]
     W --> RF{Paid 1:1 booking?}
@@ -460,7 +460,7 @@ LEFT JOIN "ConsultantProfile" consultant_profile ON ...
 LEFT JOIN "User" consultant_user ON ...
 LEFT JOIN "ConsulteeProfile" consultee_profile ON ...
 LEFT JOIN "User" consultee_user ON ...
-LEFT JOIN "SlotOfAppointment" slots ON ... LIMIT 1
+LEFT JOIN "AppointmentOccurrence" slots ON ... LIMIT 1
 WHERE appointment.id = 'appt_abc123'
 ```
 
@@ -478,7 +478,7 @@ Before the transaction opens, we extract everything the later phases need for no
 | `consulteeName`    | `"Alice Johnson"`            | `appointment.consultation.requestedBy.user.name`                        |
 | `planTitle`        | `"Career Strategy Session"`  | `appointment.consultation.consultationPlan.title`                       |
 | `appointmentType`  | `"CONSULTATION"`             | `appointment.appointmentType`                                           |
-| `dateTime`         | `"2025-06-17T10:00:00.000Z"` | `appointment.slotsOfAppointment[0].startsAt`                            |
+| `dateTime`         | `"2025-06-17T10:00:00.000Z"` | `appointment.appointmentOccurrences[0].startsAt`                            |
 
 **Why this matters**: the records survive the cancellation, so these values could in principle be re-read afterwards — but doing so would mean a second heavy join for data we already hold. The genuinely order-dependent read is the refund context that follows, which must run now because the transaction is about to terminalise the very slots it measures.
 
@@ -518,7 +518,7 @@ The second predicate is the whole state machine. `CANCELLABLE_FROM` (`lib/bookin
 **Operation 2** -- Soft-cancel every live slot:
 
 ```sql
-UPDATE "SlotOfAppointment"
+UPDATE "AppointmentOccurrence"
 SET "completionStatus" = 'CANCELLED'
 WHERE "appointmentId" = 'appt_abc123'
   AND "completionStatus" IN ('SCHEDULED', 'RESCHEDULED')
@@ -677,7 +677,7 @@ erDiagram
 Notice what changes:
 
 - The `Consultation` record -- `status` moves to `CANCELLED` and the four audit columns are filled in
-- The `SlotOfAppointment` records -- `completionStatus` moves to `CANCELLED`, which releases the time without erasing that it was held
+- The `AppointmentOccurrence` records -- `completionStatus` moves to `CANCELLED`, which releases the time without erasing that it was held
 
 Notice what remains:
 
@@ -856,7 +856,7 @@ This section provides a comprehensive before-and-after view of every database re
 flowchart TD
     subgraph BEFORE["BEFORE Cancellation"]
         direction TB
-        A1["Appointment\n(appt_abc123)\nExists"] --- B1["SlotOfAppointment\n(1 or more slots)\nExists"]
+        A1["Appointment\n(appt_abc123)\nExists"] --- B1["AppointmentOccurrence\n(1 or more slots)\nExists"]
         A1 --- C1["Event Record\n(Consultation/Subscription/\nWebinar/Class)\nActive status"]
         D1["Payment Records\nExists, various statuses"] --- A1
     end
@@ -864,14 +864,14 @@ flowchart TD
     subgraph TRANSACTION["TRANSACTION"]
         direction TB
         T1["1. UPDATE Event Record\n   set status to CANCELLED\n   (+audit fields if applicable)"]
-        T2["2. UPDATE all SlotOfAppointment\n   set completionStatus = CANCELLED"]
+        T2["2. UPDATE all AppointmentOccurrence\n   set completionStatus = CANCELLED"]
         T3["3. CLOSE any open RescheduleRequest"]
         T1 --> T2 --> T3
     end
 
     subgraph AFTER["AFTER Cancellation"]
         direction TB
-        A2["Appointment\nPRESERVED"] --- B2["SlotOfAppointment\nstatus = CANCELLED"]
+        A2["Appointment\nPRESERVED"] --- B2["AppointmentOccurrence\nstatus = CANCELLED"]
         C2["Event Record\nstatus = CANCELLED\n(preserved for audit)"]
         D2["Payment Records\nPRESERVED\n(+ Refund row when due)"]
     end
@@ -892,8 +892,8 @@ Green marks a row that comes through untouched, amber a row whose status column 
 | Record                         | Before                                             | After                                                 | Why                                                                                            |
 | ------------------------------ | -------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `Appointment`                  | Exists with type and foreign keys                  | **Preserved**, untouched                              | `Payment.appointment` cascades on delete, so removing it would destroy the money trail (#1074) |
-| `SlotOfAppointment` (live)     | `completionStatus` is `SCHEDULED` or `RESCHEDULED` | `completionStatus = "CANCELLED"`                      | The time is released by status; the record of it having been held survives                     |
-| `SlotOfAppointment` (terminal) | Already `COMPLETED`/`CANCELLED`/`UNVERIFIED`       | Untouched                                             | A delivered session is history, and the proration denominator counts it                        |
+| `AppointmentOccurrence` (live)     | `completionStatus` is `SCHEDULED` or `RESCHEDULED` | `completionStatus = "CANCELLED"`                      | The time is released by status; the record of it having been held survives                     |
+| `AppointmentOccurrence` (terminal) | Already `COMPLETED`/`CANCELLED`/`UNVERIFIED`       | Untouched                                             | A delivered session is history, and the proration denominator counts it                        |
 | `RescheduleRequest` (open)     | `PENDING_REVIEW` or similar                        | `status = "DECLINED"`, `openForAppointmentId` cleared | An open proposal would reserve the appointment forever and feed the expiry cron                |
 | `Consultation` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Preserved for refund decisions and analytics                                                   |
 | `Subscription` (if applicable) | `status = "APPROVED"`                              | `status = "CANCELLED"` + audit fields                 | Same reasoning as consultation                                                                 |
@@ -915,7 +915,7 @@ The event record (consultation, subscription, webinar, or class) is intentionall
 
 The appointment record is preserved for a harder reason than any of those, and it is worth being blunt about it. `Payment` declares `onDelete: Cascade` against `Appointment`, so deleting an appointment silently takes its payments, refunds and disputes with it. A trial cancellation once did exactly that and destroyed a real `Payment` row (#1074). An appointment is therefore never a candidate for deletion, whatever its status: the slot is freed by `completionStatus` alone, and reads of live availability filter dead rows rather than expecting them to be gone.
 
-The same reasoning extends to the slots. `MeetingSession` and `Recording` rows from Stream hang off slots, so deleting a slot would orphan or cascade into the session artefacts that prove a session took place. This is why reschedule flips replaced slots to `RESCHEDULED` and re-confirms them in place rather than deleting and re-creating them.
+The same reasoning extends to the slots. `Meeting` and `Recording` rows from Stream hang off slots, so deleting a slot would orphan or cascade into the session artefacts that prove a session took place. This is why reschedule flips replaced slots to `RESCHEDULED` and re-confirms them in place rather than deleting and re-creating them.
 
 ---
 
@@ -948,7 +948,7 @@ The three operations inside the transaction execute in a specific order that mat
 sequenceDiagram
     participant TX as Transaction
     participant EventTable as Event Table<br/>(Consultation/Subscription/Webinar/Class)
-    participant SlotTable as SlotOfAppointment Table
+    participant SlotTable as AppointmentOccurrence Table
     participant RRTable as RescheduleRequest Table
 
     TX->>EventTable: 1. CAS updateMany status to CANCELLED<br/>WHERE status IN (allowed-from)
@@ -1025,7 +1025,7 @@ For webinars and classes the organiser is read off the plan and every paid atten
 | `consultantName`  | e.g., `"Bob Smith"` or `"Consultant"` (fallback)              | Extracted in Phase 1, with fallback                                                                                                                |
 | `consulteeName`   | e.g., `"Alice Johnson"` or `"Consultee"` (fallback)           | Extracted in Phase 1, with fallback                                                                                                                |
 | `planTitle`       | e.g., `"Career Strategy Session"` or `"N/A"` (fallback)       | From consultation/subscription plan                                                                                                                |
-| `dateTime`        | ISO 8601 string or `undefined`                                | `slotsOfAppointment[0].startsAt`                                                                                                                   |
+| `dateTime`        | ISO 8601 string or `undefined`                                | `appointmentOccurrences[0].startsAt`                                                                                                                   |
 | `dashboardUrl`    | An org or personal appointments href                          | `notificationHref(appointment.organizationId, "appointments")` — both parties share one payload, so the href must suit either                      |
 | `reason`          | e.g., `"SCHEDULE_CONFLICT"` or `undefined`                    | From validated body                                                                                                                                |
 | `cancelledBy`     | `"consultant"`, `"consultee"`, or `"system"`                  | Three-way: the consultant's user ID, then the consultee's, then `system` for a platform or org actor and for group events, which have no consultee |
@@ -1309,7 +1309,7 @@ sequenceDiagram
         API->>DB: BEGIN TRANSACTION
         API->>DB: updateMany consultation/subscription/webinar/class<br/>SET status = CANCELLED (+ audit fields)<br/>WHERE status IN (allowed-from)
         Note over API,DB: 0 rows matched -> throw 409 NOT_CANCELLABLE<br/>(rolls back, no refund attempted)
-        API->>DB: UPDATE SlotOfAppointment SET completionStatus = CANCELLED<br/>WHERE appointmentId = ? AND status IN (SCHEDULED, RESCHEDULED)
+        API->>DB: UPDATE AppointmentOccurrence SET completionStatus = CANCELLED<br/>WHERE appointmentId = ? AND status IN (SCHEDULED, RESCHEDULED)
         API->>DB: UPDATE RescheduleRequest SET status = DECLINED<br/>WHERE appointmentId = ? AND status IN (open)
         DB-->>API: COMMIT<br/>(success, cancellationReason,<br/>cancelledAt, webinarId, classId)
     end

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import {
   CreditCard,
   ExternalLink,
   FileText,
+  LifeBuoy,
   Users,
   Video,
 } from "lucide-react";
@@ -33,19 +34,31 @@ import {
   paymentStatusDot,
   recordingStatusBadge,
   resolveSponsoringOrgName,
-  type PaymentDisplayStatus,
 } from "@/lib/labels/session-labels";
 import { useSession } from "@/lib/auth-client";
 import { useHoldCountdown } from "@/hooks/useHoldCountdown";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import {
   isGroupKind,
+  isSingleSessionKind,
   supportsDocuments,
 } from "@/lib/appointments/kind-capabilities";
 import {
+  isSponsoredPayment,
+  paymentRailLabel,
+  receiptHref,
+  type PaymentDisplayLike,
+} from "@/lib/appointments/payment-display";
+import {
+  paymentDisplayStatus,
   seatPaymentsByUser,
   summarizeSeatPayments,
 } from "@/lib/appointments/seat-payments";
+import {
+  getOccurrenceVMJoinState,
+  isDeadOccurrence,
+  isOccurrenceOver,
+} from "@/lib/appointments/occurrences";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
@@ -63,7 +76,7 @@ const PARTICIPANTS_PREVIEW = 5;
  * hold right now", so the timeline row and the payment card cannot drift.
  *
  * Past `Payment.expiresAt` the hold is already DEAD for availability
- * (`buildDeadHoldFilter`, utils/slotAllocation/occupancyPolicy.ts counts a
+ * (`buildDeadHoldFilter`, utils/scheduling-engine/occupancyPolicy.ts counts a
  * PENDING payment with a lapsed window as free), so another buyer can take
  * the slot before any sweep runs. Checkout also refuses to resume a stale
  * order (`findReusablePendingOrderPayment` matches only `expiresAt > now`)
@@ -127,6 +140,102 @@ function ResourceSubgroup({
   );
 }
 
+type MoneyRow = PaymentDisplayLike & {
+  amount: number | string;
+  currency: string | null;
+  createdAt: string | Date;
+};
+
+/** One line per charge: amount, status, the rail it rode, the date — and the receipt. */
+function MoneyLine({ payment }: { payment: MoneyRow }) {
+  const rail = paymentRailLabel(payment);
+  const receipt = receiptHref(payment);
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
+      <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="font-medium text-foreground tabular-nums">
+        {formatCurrencyAmount(
+          Number(payment.amount),
+          payment.currency ?? "INR",
+        )}
+      </span>
+      <StatusBadge
+        {...paymentStatusBadge(paymentDisplayStatus(payment))}
+        size="sm"
+      />
+      <span className="text-xs text-muted-foreground">
+        {rail ? `via ${rail} · ` : ""}
+        {format(new Date(payment.createdAt), "d MMM yyyy")}
+      </span>
+      {receipt && (
+        <a
+          href={receipt}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-xs font-medium text-foreground underline underline-offset-4"
+        >
+          View receipt
+        </a>
+      )}
+    </div>
+  );
+}
+
+/** A failed ratings read must not render as "unrated" — say so, offer a retry. */
+function RatingsUnavailable({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2">
+      <p className="text-sm text-muted-foreground">
+        Couldn&apos;t load the ratings for these sessions.
+      </p>
+      <Button variant="outline" size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The rating of a single-sitting booking's one session, in the header's
+ * primary slot once the Sessions card is folded away. Same gates as the
+ * session row: stars only where a rating would be accepted, the consultant
+ * reads what it scored and sets nothing.
+ */
+function SoleSessionRating({
+  appointmentId,
+  session,
+  role,
+  feedback,
+}: {
+  appointmentId: string;
+  session: AppointmentVM["occurrences"][number];
+  role: "consultee" | "consultant";
+  feedback: ReturnType<typeof useSessionFeedback>;
+}) {
+  const rating = feedback.ratings[session.occurrenceId] ?? null;
+  const canRate = feedback.rateable.has(session.occurrenceId);
+  const readOnly = role !== "consultee" || !canRate;
+  if (rating === null && readOnly) return null;
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-1.5 text-xs">
+      <span className="font-medium text-foreground">
+        {readOnly
+          ? "Attendee's rating"
+          : rating === null
+            ? "Rate this session"
+            : "Your rating"}
+      </span>
+      <SessionRatingRow
+        appointmentId={session.appointmentId ?? appointmentId}
+        bookingAppointmentId={appointmentId}
+        occurrenceId={session.occurrenceId}
+        existingRating={rating}
+        readOnly={readOnly}
+      />
+    </div>
+  );
+}
+
 interface AppointmentDetailClientProps {
   appointmentId: string;
   role: "consultee" | "consultant";
@@ -166,11 +275,7 @@ export function AppointmentDetailClient({
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
   // #1540 — which calls of this booking the viewer has already rated, in ONE
-  // request. The sessions of a subscription each carry their own child
-  // appointment id, and this used to fan out a request per id — up to 25 — each
-  // re-authorizing and re-reading the appointment graph. `scope=booking` covers
-  // the page's appointment and its siblings, which is every id those sessions
-  // can belong to.
+  // request; #1554 made the booking one Appointment, so that is one row.
   const sessionFeedback = useSessionFeedback(appointmentId);
   useSetBreadcrumbLabel(mapped?.vm.title);
 
@@ -185,6 +290,11 @@ export function AppointmentDetailClient({
       .map((p) => new Date(p.expiresAt!))
       .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
   const { isExpired: holdExpired } = useHoldCountdown(holdDeadline);
+  // One support sheet, two doors: "Get help" opens on the intent chips,
+  // "Problem with this charge" opens already on PAYMENT_STATUS.
+  const [help, setHelp] = useState<{ open: boolean; seed?: string }>({
+    open: false,
+  });
   const tentativeCta = tentativeHoldCta({
     isConsultee: role === "consultee",
     holdDeadline,
@@ -239,9 +349,7 @@ export function AppointmentDetailClient({
     );
   const participants = Array.from(
     new Map(
-      detail.appointment.slotsOfAppointment
-        .flatMap((slot) => slot.user)
-        .map((u) => [u.id, u]),
+      detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
     ).values(),
   );
   const previewParticipants = participants.slice(0, PARTICIPANTS_PREVIEW);
@@ -255,16 +363,61 @@ export function AppointmentDetailClient({
   // just their own (scopeAppointmentDetail).
   const isGroup = isGroupKind(vm.kind);
   const seatPayments = seatPaymentsByUser(payments);
+  // The plan's settlement currency names the total, not whichever row came
+  // first.
   const seatSummary = summarizeSeatPayments(
     seatPayments,
-    payments[0]?.currency?.toString() ?? "INR",
+    detail.appointment.webinar?.webinarPlan?.priceCurrency ??
+      detail.appointment.class?.classPlan?.priceCurrency ??
+      "INR",
   );
+  // #1163 — the read narrows to open statuses and takes one, so [0] is THE
+  // live proposal; the card is the answer surface "Awaiting schedule
+  // confirmation" never offered.
+  const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
   const showSeatSummary = role === "consultant" && isGroup;
+  const viewerId = session?.user?.id ?? null;
+  // Sponsorship is what the money says, not the org tag: checkout stamps
+  // `Appointment.organizationId` on a PERSONAL-funded booking too, and that
+  // member paid their own card. A group event keeps the tag as its label.
+  const sponsoredBy =
+    orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
+  // Who funded THIS row. A seat on someone else's webinar is sponsored by the
+  // attendee's own organisation, which is not the event's tag.
+  const sponsorOf = (p: { organizationId: string | null }) =>
+    (p.organizationId &&
+    p.organizationId !== detail.appointment.organization?.id
+      ? resolveSponsoringOrgName(
+          p.organizationId,
+          session?.user?.organizationMemberships ?? [],
+        )
+      : orgName) ?? "the organisation";
+  // Did the viewer pay anything on this page themselves? Names the money door.
+  const hasOwnCharge = payments.some(
+    (p) =>
+      !isSponsoredPayment(p) ||
+      p.childPayments.some((c) => c.userId === viewerId),
+  );
+  // A single-sitting booking's one confirmed session is already the header's
+  // date line; the Sessions card stays only while it carries something the
+  // header cannot — a held row awaiting payment, or an open proposal.
+  const soleSession =
+    isSingleSessionKind(vm.kind) &&
+    vm.occurrences.length === 1 &&
+    !vm.occurrences[0].isTentative &&
+    !openProposal
+      ? vm.occurrences[0]
+      : null;
+  const soleSessionOver =
+    !!soleSession &&
+    !isDeadOccurrence(soleSession) &&
+    getOccurrenceVMJoinState(soleSession, { joinWindowMs }) !== "joinable" &&
+    isOccurrenceOver(soleSession);
   const anchorSession = vm.nextAt
-    ? vm.sessions.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
+    ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
-  const hasConfirmedSessions = vm.sessions.some((s) => !s.isTentative);
-  const hasTentativeSessions = vm.sessions.some((s) => s.isTentative);
+  const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
+  const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
   // #1429 F2 — a trial's Pay Now lands on our branded trial checkout, which
   // names the amount and the hold deadline; only a non-trial booking falls
   // through to the raw gateway link. #1428 added a second Pay Now here without
@@ -279,10 +432,6 @@ export function AppointmentDetailClient({
       window.open(vm.pendingPaymentUrl, "_blank", "noopener,noreferrer");
     }
   };
-  // #1163 — the read narrows to open statuses and takes one, so [0] is THE
-  // live proposal; the card is the answer surface "Awaiting schedule
-  // confirmation" never offered.
-  const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
 
   return (
     <DashboardErrorBoundary>
@@ -315,9 +464,9 @@ export function AppointmentDetailClient({
                   {KIND_LABEL[vm.kind]}
                 </span>
                 <StatusBadge {...badge} withDot size="sm" />
-                {orgName && (
+                {sponsoredBy && (
                   <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
-                    Sponsored · {orgName}
+                    Sponsored · {sponsoredBy}
                   </span>
                 )}
               </div>
@@ -361,6 +510,18 @@ export function AppointmentDetailClient({
             {action.kind !== "view" && (
               <RowPrimaryAction action={action} size="default" />
             )}
+            {/* #705 — with the Sessions card folded away, the rating of the
+                one session that happened takes the primary slot. Same gates
+                as the session row: attended (or nobody could have recorded
+                it), never on a dead or still-running call. */}
+            {soleSession && soleSessionOver && !sessionFeedback.isError && (
+              <SoleSessionRating
+                appointmentId={appointmentId}
+                session={soleSession}
+                role={role}
+                feedback={sessionFeedback}
+              />
+            )}
             {overflow.map((item) => (
               <Button
                 key={item.key}
@@ -377,11 +538,21 @@ export function AppointmentDetailClient({
                 {item.label}
               </Button>
             ))}
-            <SupportThreadSheet
-              appointmentId={appointmentId}
-              isOrgContext={!!orgName}
-            />
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setHelp({ open: true })}
+            >
+              <LifeBuoy className="mr-1.5 h-4 w-4" />
+              Get help
+            </Button>
           </div>
+
+          {soleSession && soleSessionOver && sessionFeedback.isError && (
+            <div className="mt-3">
+              <RatingsUnavailable onRetry={() => sessionFeedback.retry()} />
+            </div>
+          )}
 
           {/* #support-hub — the live support conversation for THIS appointment:
               status + latest exchange inline; nothing renders until a thread
@@ -449,90 +620,143 @@ export function AppointmentDetailClient({
                 .
               </p>
             )}
-            <Section title="Sessions">
-              {/* A failed ratings read must not render as "unrated". Without
-                  this the stars below simply disappeared (or showed empty) on a
-                  call the viewer had already rated, which reads as "your rating
-                  never happened". */}
-              {sessionFeedback.isError ? (
-                <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2">
-                  <p className="text-sm text-muted-foreground">
-                    Couldn&apos;t load the ratings for these sessions.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => sessionFeedback.retry()}
-                  >
-                    Retry
-                  </Button>
-                </div>
-              ) : null}
-              {hasConfirmedSessions || hasTentativeSessions ? (
-                <SessionTimeline
-                  // #705 — the private per-call rating sits on the session it
-                  // rates. Attendees only: the API authorizes any participant,
-                  // and a consultant rating their own session would feed the
-                  // org quality average.
-                  renderSessionExtra={(session) => {
-                    const rating =
-                      sessionFeedback.ratings[session.slotId] ?? null;
-                    // Offer stars only where a rating would be ACCEPTED —
-                    // you attended, or nobody could have recorded it. Showing
-                    // them on a call the viewer never joined invited a click
-                    // that the route then refused.
-                    const canRate = sessionFeedback.rateable.has(
-                      session.slotId,
-                    );
-                    // While the read is failing, `rateable` is empty and
-                    // `rating` is null for every row — indistinguishable from
-                    // the truth. Show nothing per row and let the notice above
-                    // say why, rather than inviting a click we cannot honour.
-                    if (sessionFeedback.isError) return null;
-                    if (role === "consultee" && !canRate && rating === null) {
-                      return null;
+            {!soleSession && (
+              <Section title="Sessions">
+                {/* Without this the stars below simply disappeared (or showed
+                  empty) on a call the viewer had already rated, which reads as
+                  "your rating never happened". */}
+                {sessionFeedback.isError ? (
+                  <div className="mb-3">
+                    <RatingsUnavailable
+                      onRetry={() => sessionFeedback.retry()}
+                    />
+                  </div>
+                ) : null}
+                {hasConfirmedSessions || hasTentativeSessions ? (
+                  <SessionTimeline
+                    // #705 — the private per-call rating sits on the session it
+                    // rates. Attendees only: the API authorizes any participant,
+                    // and a consultant rating their own session would feed the
+                    // org quality average.
+                    renderSessionExtra={(session) => {
+                      const rating =
+                        sessionFeedback.ratings[session.occurrenceId] ?? null;
+                      // Offer stars only where a rating would be ACCEPTED —
+                      // you attended, or nobody could have recorded it. Showing
+                      // them on a call the viewer never joined invited a click
+                      // that the route then refused.
+                      const canRate = sessionFeedback.rateable.has(
+                        session.occurrenceId,
+                      );
+                      // While the read is failing, `rateable` is empty and
+                      // `rating` is null for every row — indistinguishable from
+                      // the truth. Show nothing per row and let the notice above
+                      // say why, rather than inviting a click we cannot honour.
+                      if (sessionFeedback.isError) return null;
+                      if (role === "consultee" && !canRate && rating === null) {
+                        return null;
+                      }
+                      return (
+                        <SessionRatingRow
+                          appointmentId={session.appointmentId ?? appointmentId}
+                          bookingAppointmentId={appointmentId}
+                          occurrenceId={session.occurrenceId}
+                          existingRating={rating}
+                          // The consultant sees what a call scored; only the
+                          // attendee can set it.
+                          readOnly={role !== "consultee" || !canRate}
+                        />
+                      );
+                    }}
+                    occurrences={vm.occurrences}
+                    joinWindowMs={joinWindowMs}
+                    defaultExpanded
+                    isJoining={action.kind === "join" && !!action.busy}
+                    onJoinSession={
+                      action.kind === "join" && action.onClick
+                        ? () => action.onClick!()
+                        : undefined
                     }
-                    return (
-                      <SessionRatingRow
-                        appointmentId={session.appointmentId ?? appointmentId}
-                        bookingAppointmentId={appointmentId}
-                        slotId={session.slotId}
-                        existingRating={rating}
-                        // The consultant sees what a call scored; only the
-                        // attendee can set it.
-                        readOnly={role !== "consultee" || !canRate}
-                      />
-                    );
-                  }}
-                  sessions={vm.sessions}
-                  joinWindowMs={joinWindowMs}
-                  defaultExpanded
-                  isJoining={action.kind === "join" && !!action.busy}
-                  onJoinSession={
-                    action.kind === "join" && action.onClick
-                      ? () => action.onClick!()
-                      : undefined
-                  }
-                  showHeld
-                  holdDeadline={holdDeadline}
-                  // #1428 — consultee sees the CTA while the window is live;
-                  // the consultant, and anyone once the hold has lapsed, sees
-                  // the same held row read-only ("awaiting payment").
-                  onCompletePayment={
-                    tentativeCta === "PAY" ? openPendingPayment : undefined
-                  }
-                />
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  No sessions scheduled yet.
-                </p>
-              )}
-            </Section>
+                    showHeld
+                    holdDeadline={holdDeadline}
+                    // #1428 — consultee sees the CTA while the window is live;
+                    // the consultant, and anyone once the hold has lapsed, sees
+                    // the same held row read-only ("awaiting payment").
+                    onCompletePayment={
+                      tentativeCta === "PAY" ? openPendingPayment : undefined
+                    }
+                  />
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No sessions scheduled yet.
+                  </p>
+                )}
+              </Section>
+            )}
 
-            <Section
-              title={showSeatSummary ? "Payments" : "Payment & sponsorship"}
-            >
-              {payments.length === 0 && !orgName ? (
+            {role === "consultant" && (
+              <Section title="Participants">
+                {participants.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No participants on this session yet.
+                  </p>
+                ) : (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {previewParticipants.map((u) => {
+                      const seat = isGroup ? seatPayments.get(u.id) : undefined;
+                      const seatStatus = seat
+                        ? paymentDisplayStatus(seat)
+                        : null;
+                      const seatBadge = seatStatus
+                        ? paymentStatusBadge(seatStatus)
+                        : null;
+                      return (
+                        <span
+                          key={u.id}
+                          title={seatBadge?.label}
+                          className="flex items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-1 pr-2.5 text-xs text-foreground"
+                        >
+                          <Avatar className="h-5 w-5">
+                            <AvatarImage
+                              src={u.image ?? undefined}
+                              alt={u.name}
+                            />
+                            <AvatarFallback className="text-[9px]">
+                              {initials(u.name) || "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          {u.name}
+                          {seat && seatBadge && (
+                            <>
+                              <span
+                                aria-hidden
+                                className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seatStatus)}`}
+                              />
+                              <span className="sr-only">{seatBadge.label}</span>
+                            </>
+                          )}
+                        </span>
+                      );
+                    })}
+                    {hiddenParticipantCount > 0 && (
+                      <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
+                        +{hiddenParticipantCount} more
+                      </span>
+                    )}
+                  </div>
+                )}
+                {manageHref && (
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href={manageHref}>
+                      <Users className="mr-1.5 h-3.5 w-3.5" />
+                      Manage participants
+                    </Link>
+                  </Button>
+                )}
+              </Section>
+            )}
+            <Section title={showSeatSummary ? "Payments" : "Payment"}>
+              {payments.length === 0 ? (
                 <p className="text-xs text-muted-foreground">
                   {showSeatSummary
                     ? "No seat has been paid for yet."
@@ -570,38 +794,72 @@ export function AppointmentDetailClient({
                           </span>
                         </>
                       )}
+                      {seatSummary.refunded > 0 && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">
+                            {seatSummary.refunded} refunded
+                          </span>
+                        </>
+                      )}
+                      {seatSummary.otherCurrency > 0 && (
+                        <>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">
+                            {seatSummary.otherCurrency} in another currency
+                          </span>
+                        </>
+                      )}
                     </div>
                   ) : (
-                    payments.map((payment) => (
-                      <div
-                        key={payment.id}
-                        className="flex items-center justify-between gap-2 rounded-lg bg-muted border border-border px-3 py-2"
-                      >
-                        <div className="flex items-center gap-2 text-sm">
-                          <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="font-medium text-foreground tabular-nums">
-                            {formatCurrencyAmount(
-                              Number(payment.amount),
-                              payment.currency?.toString() ?? "INR",
-                            )}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {format(new Date(payment.createdAt), "d MMM yyyy")}
-                          </span>
-                        </div>
-                        <StatusBadge
-                          {...paymentStatusBadge(
-                            payment.paymentStatus as PaymentDisplayStatus,
+                    payments.map((payment) => {
+                      // The member did not pay a sponsored booking, so no
+                      // amount: the organisation's price on their page reads
+                      // as a bug. What they DID pay themselves — a CHARGE_MEMBER
+                      // overage side-charge — is its own line with its receipt.
+                      // The consultant keeps the amount; it is what was sold.
+                      const sponsored =
+                        role === "consultee" && isSponsoredPayment(payment);
+                      const own = payment.childPayments.filter(
+                        (c) => c.userId === viewerId,
+                      );
+                      return (
+                        <div key={payment.id} className="space-y-2">
+                          {sponsored ? (
+                            <p className="text-sm text-foreground">
+                              Sponsored by <strong>{sponsorOf(payment)}</strong>
+                              .
+                            </p>
+                          ) : (
+                            <MoneyLine payment={payment} />
                           )}
-                          size="sm"
-                        />
-                      </div>
-                    ))
+                          {own.map((c) => (
+                            <MoneyLine key={c.id} payment={c} />
+                          ))}
+                          {!sponsored && isSponsoredPayment(payment) && (
+                            <p className="text-xs text-muted-foreground">
+                              Sponsored by <strong>{sponsorOf(payment)}</strong>
+                              .
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })
                   )}
-                  {orgName && (
-                    <p className="text-xs text-muted-foreground">
-                      This booking is sponsored by <strong>{orgName}</strong>.
-                    </p>
+                  {/* The locked money door: the same support sheet as "Get
+                      help", opened already on PAYMENT_STATUS. */}
+                  {role === "consultee" && (
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-foreground underline underline-offset-4"
+                      onClick={() =>
+                        setHelp({ open: true, seed: "PAYMENT_STATUS" })
+                      }
+                    >
+                      {hasOwnCharge
+                        ? "Problem with this charge"
+                        : "Problem with this booking"}
+                    </button>
                   )}
                   {/* #1428 — TENTATIVE (held pending payment) reaches this
                       branch too now, gated by the same `tentativeHoldCta`
@@ -653,67 +911,6 @@ export function AppointmentDetailClient({
                 </div>
               )}
             </Section>
-
-            {role === "consultant" && (
-              <Section title="Participants">
-                {participants.length === 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    No participants on this session yet.
-                  </p>
-                ) : (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {previewParticipants.map((u) => {
-                      const seat = isGroup ? seatPayments.get(u.id) : undefined;
-                      const seatBadge = seat
-                        ? paymentStatusBadge(
-                            seat.paymentStatus as PaymentDisplayStatus,
-                          )
-                        : null;
-                      return (
-                        <span
-                          key={u.id}
-                          title={seatBadge?.label}
-                          className="flex items-center gap-1.5 rounded-full border border-border bg-muted py-0.5 pl-1 pr-2.5 text-xs text-foreground"
-                        >
-                          <Avatar className="h-5 w-5">
-                            <AvatarImage
-                              src={u.image ?? undefined}
-                              alt={u.name}
-                            />
-                            <AvatarFallback className="text-[9px]">
-                              {initials(u.name) || "?"}
-                            </AvatarFallback>
-                          </Avatar>
-                          {u.name}
-                          {seat && seatBadge && (
-                            <>
-                              <span
-                                aria-hidden
-                                className={`ml-0.5 inline-block h-1.5 w-1.5 rounded-full ${paymentStatusDot(seat.paymentStatus)}`}
-                              />
-                              <span className="sr-only">{seatBadge.label}</span>
-                            </>
-                          )}
-                        </span>
-                      );
-                    })}
-                    {hiddenParticipantCount > 0 && (
-                      <span className="inline-flex items-center rounded-full border border-border bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">
-                        +{hiddenParticipantCount} more
-                      </span>
-                    )}
-                  </div>
-                )}
-                {manageHref && (
-                  <Button variant="outline" size="sm" asChild>
-                    <Link href={manageHref}>
-                      <Users className="mr-1.5 h-3.5 w-3.5" />
-                      Manage participants
-                    </Link>
-                  </Button>
-                )}
-              </Section>
-            )}
           </div>
 
           <aside className="min-w-0 lg:sticky lg:top-20">
@@ -791,6 +988,13 @@ export function AppointmentDetailClient({
           and was: the consultee's detail page never did, leaving Reschedule,
           Cancel and Report issue setting state nothing was listening for. */}
       {adapter.renderDialogs()}
+      <SupportThreadSheet
+        appointmentId={appointmentId}
+        isOrgContext={!!orgName}
+        open={help.open}
+        onOpenChange={(open) => setHelp(open ? { ...help, open } : { open })}
+        seedCategory={help.seed}
+      />
     </DashboardErrorBoundary>
   );
 }

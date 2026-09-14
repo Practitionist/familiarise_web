@@ -11,7 +11,7 @@
  * excludes them from the member scope too). The filter was therefore a control
  * that always answered "no trials", which reads as "this org has none yet"
  * rather than the truth — an org does not have trials at all. The row shape
- * carried `trialSession` columns for the same never-populated case.
+ * carried `trial` columns for the same never-populated case.
  */
 
 import fs from "fs";
@@ -87,8 +87,10 @@ describe("the org appointments table (source contract)", () => {
     "utf8",
   );
 
-  it("has no trialSession column left to render", () => {
-    expect(src).not.toContain("trialSession");
+  it("has no trial column left to render", () => {
+    // The relation field is `trial` (#1554); the word survives only in the
+    // comment explaining why the column is gone, so pin the accessor shapes.
+    expect(src).not.toMatch(/\.trial\b|\btrial:|\btrialId\b/);
   });
 
   it("does not offer TRIAL in the type filter", () => {

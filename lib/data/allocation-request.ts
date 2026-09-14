@@ -1,6 +1,6 @@
 import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
-import type { SlotLike } from "@/lib/appointments/view-model";
+import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
 
 /**
@@ -43,7 +43,7 @@ export interface AllocationRequest {
    * rows `hasReleasedSlots` is derived from; the picker opens on the earliest
    * of them (#1073).
    */
-  slots: SlotLike[];
+  slots: OccurrenceLike[];
 }
 
 const requestedBySelect = {
@@ -88,8 +88,8 @@ export async function readAllocationRequest(
             totalSessions: true,
           },
         },
-        appointments: {
-          select: { slotsOfAppointment: slotSelect },
+        appointment: {
+          select: { occurrences: slotSelect },
         },
       },
     });
@@ -111,12 +111,10 @@ export async function readAllocationRequest(
       schedulingTimezone: subscription.schedulingTimezone,
       allowedStart: subscription.schedulingPeriodStartsAt,
       allowedEnd: subscription.schedulingPeriodEndsAt,
-      hasReleasedSlots: subscription.appointments.some((appointment) =>
-        appointment.slotsOfAppointment.some((slot) => slot.isTentative),
-      ),
-      slots: subscription.appointments.flatMap(
-        (appointment) => appointment.slotsOfAppointment,
-      ),
+      hasReleasedSlots:
+        subscription.appointment?.occurrences.some((slot) => slot.isTentative) ??
+        false,
+      slots: subscription.appointment?.occurrences ?? [],
     });
   }
 
@@ -133,7 +131,7 @@ export async function readAllocationRequest(
           durationInHours: true,
         },
       },
-      appointment: { select: { slotsOfAppointment: slotSelect } },
+      appointment: { select: { occurrences: slotSelect } },
     },
   });
   if (!consultation?.consultationPlan) return null;
@@ -149,8 +147,8 @@ export async function readAllocationRequest(
     consulteeName: consultation.requestedBy?.user?.name,
     durationInHours: plan.durationInHours,
     hasReleasedSlots: (
-      consultation.appointment?.slotsOfAppointment ?? []
+      consultation.appointment?.occurrences ?? []
     ).some((slot) => slot.isTentative),
-    slots: consultation.appointment?.slotsOfAppointment ?? [],
+    slots: consultation.appointment?.occurrences ?? [],
   });
 }

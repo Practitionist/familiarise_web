@@ -71,7 +71,7 @@ graph TB
     end
 
     subgraph Database["Database"]
-        MeetingSession[(MeetingSession)]
+        Meeting[(Meeting)]
         Recording[(Recording)]
     end
 
@@ -81,7 +81,7 @@ graph TB
     StreamAPI -->|Stores video| StreamS3
 
     StreamAPI -->|Webhook events| WebhookHandler
-    WebhookHandler --> MeetingSession
+    WebhookHandler --> Meeting
     WebhookHandler --> Recording
 
     TransferService -->|Download| StreamS3
@@ -174,8 +174,8 @@ model Recording {
   lastTransferError        String?   // Message from the most recent failed transfer
   transferFailureAlertedAt DateTime? // Set when engineering has been paged for this recording (dedupe)
 
-  meetingSessionId    String
-  meetingSession      MeetingSession  @relation(...)
+  meetingId    String
+  meeting      Meeting  @relation(...)
 
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
@@ -197,10 +197,10 @@ enum RecordingStatus {
 }
 ```
 
-### MeetingSession Recording Fields
+### Meeting Recording Fields
 
 ```prisma
-model MeetingSession {
+model Meeting {
   id                  String    @id @default(cuid())
   streamCallId        String    @unique
 
@@ -220,9 +220,9 @@ model MeetingSession {
 
 ```mermaid
 erDiagram
-    MeetingSession ||--o{ Recording : "has many"
-    MeetingSession ||--|| SlotOfAppointment : "belongs to"
-    SlotOfAppointment ||--|| Appointment : "belongs to"
+    Meeting ||--o{ Recording : "has many"
+    Meeting ||--|| AppointmentOccurrence : "belongs to"
+    AppointmentOccurrence ||--|| Appointment : "belongs to"
     Appointment ||--o| Webinar : "may have"
     Appointment ||--o| Class : "may have"
     Webinar ||--|| WebinarPlan : "belongs to"
@@ -241,7 +241,7 @@ erDiagram
         string storageType
     }
 
-    MeetingSession {
+    Meeting {
         string id PK
         string streamCallId UK
         boolean isRecording
@@ -266,7 +266,7 @@ sequenceDiagram
     participant DB as Database
 
     C->>UI: Click "Start Recording"
-    UI->>API: POST {streamCallId, meetingSessionId}
+    UI->>API: POST {streamCallId, meetingId}
 
     API->>API: Verify consultant role
     API->>API: Verify ownership of session
@@ -276,14 +276,14 @@ sequenceDiagram
     Service->>Stream: call.startRecording()
     Stream-->>Service: OK
 
-    API->>DB: Update MeetingSession.isRecording = true
+    API->>DB: Update Meeting.isRecording = true
     API-->>UI: {success: true}
     UI-->>C: Show recording indicator
 
     Note over Stream: Recording in progress...
 
     Stream->>Webhook: call.recording_started
-    Webhook->>DB: Update MeetingSession (redundant but ensures consistency)
+    Webhook->>DB: Update Meeting (redundant but ensures consistency)
 ```
 
 ### Stop Recording Sequence
@@ -299,28 +299,28 @@ sequenceDiagram
     participant DB as Database
 
     C->>UI: Click "Stop Recording"
-    UI->>API: POST {streamCallId, meetingSessionId}
+    UI->>API: POST {streamCallId, meetingId}
 
     API->>API: Verify consultant & ownership
     API->>Service: stopRecording(streamCallId)
     Service->>Stream: call.stopRecording()
     Stream-->>Service: OK
 
-    API->>DB: Update MeetingSession.isRecording = false
+    API->>DB: Update Meeting.isRecording = false
     API-->>UI: {success: true}
     UI-->>C: Hide recording indicator
 
     Note over Stream: Processing video...
 
     Stream->>Webhook: call.recording_stopped
-    Webhook->>DB: Update MeetingSession.isRecording = false
+    Webhook->>DB: Update Meeting.isRecording = false
 
     Note over Stream: Processing complete
 
     Stream->>Webhook: call.recording_ready
     Webhook->>DB: Check idempotency (existing recording?)
     Webhook->>DB: Create Recording record
-    Webhook->>DB: Update MeetingSession.isRecording = false
+    Webhook->>DB: Update Meeting.isRecording = false
 ```
 
 ---
@@ -339,6 +339,12 @@ sequenceDiagram
 | `call.ended`                      | The entire call has ended            | `handleCallEnded()`                |
 | `call.session_participant_joined` | A participant joined the call        | `handleSessionParticipantJoined()` |
 | `call.session_participant_left`   | A participant left the call          | `handleSessionParticipantLeft()`   |
+
+### End Events and the `endedAt` Column
+
+Three rules govern how the two end events write `Meeting.endedAt` and `endedReason`, all from #1607. First, the last end wins: Stream reuses a call id across sessions, so a `call.session_ended` fired by the inactivity timeout after a host's pre-start device check must not be the end of record for the real call an hour later. Both handlers therefore accept an event only when its timestamp is later than the recorded `endedAt`, which also means a replayed or out-of-order older event can never move the column backwards. Second, a `call.ended` that arrives before the booked start is stamped `ended_early` rather than `call_ended`, and the slot is left `SCHEDULED`; `ended_early` is not a deliberate end, so every join gate re-lights and the same room is re-entered for the real session. Third, a `call.session_participant_joined` on a session whose recorded end is not deliberate (`session_timeout`, `ended_early`, or one of the reconciler's guesses) clears `endedAt` and `endedReason`, because a participant joining means Stream has opened a new session on that call id. That clear is compare-and-set on the end the handler read, so a real end committed concurrently is never overwritten. A deliberate end — the host closing the room after the start, or the maintenance drain — is never cleared. `heldOccurrence`'s attendance arm and the maintenance drain both read `endedAt` as "the room is closed", and these rules are what keep that reading true while a call is live.
+
+One more rule sits on the provisioning side rather than in a handler. A Stream call's own `ended_at` never clears, so after a `call.ended` the SDK renders the room as ended even though Stream opens a new session for a re-entrant participant. `provisionAppointmentMeeting` therefore treats an `ended_early` row as the one case in which an existing `Meeting` is not simply handed back: it runs the same entitlement and refusal gates as a first mint, creates a fresh call under `slot-<anchorSlotId>-r<suffix>`, and rebinds the row to it (compare-and-set on the reason, so two concurrent joins share one rebuilt room). The dashboard buckets and the session timeline follow the same reading through `meetingClosedAt`: only a deliberate end is the session's end, so a timed-out or early-ended booking stays under Upcoming with Join offered.
 
 ### Per-Attendee Attendance Capture
 
@@ -441,7 +447,7 @@ flowchart TD
     D -->|call_ended| J[handleCallEnded]
     D -->|Other| K[Log & Return OK]
 
-    E --> L{MeetingSession exists?}
+    E --> L{Meeting exists?}
     L -->|No| M[Log warning, return]
     L -->|Yes| N[Update isRecording=true]
 
@@ -468,7 +474,7 @@ Webhooks may be delivered multiple times. The handler uses multiple idempotency 
 // Check if recording already exists (idempotency)
 const existingRecording = await prisma.recording.findFirst({
   where: {
-    meetingSessionId: meetingSession.id,
+    meetingId: meeting.id,
     streamRecordingId: filename, // Unique per recording
   },
 });
@@ -603,7 +609,7 @@ Start recording for a video call.
 ```json
 {
   "streamCallId": "abc123",
-  "meetingSessionId": "clx123..."
+  "meetingId": "clx123..."
 }
 ```
 
@@ -636,7 +642,7 @@ Stop recording for a video call.
 ```json
 {
   "streamCallId": "abc123",
-  "meetingSessionId": "clx123..."
+  "meetingId": "clx123..."
 }
 ```
 
@@ -798,7 +804,7 @@ reintroduce incorrectly.
 
 Neither handler loads the meeting a second time. `resolveMeetingAccess` already
 joins the session, its slot and all four plan relations in order to decide
-whether the caller is the host, so it returns `meetingSessionId` and
+whether the caller is the host, so it returns `meetingId` and
 `appointment` and the handlers read them off the result. Both used to re-run the
 same `findUnique` immediately after the access check, which on this deployment
 is serialized latency rather than parallel work. See the
@@ -891,8 +897,8 @@ The route deliberately offers no playback arm at all, not even a short-lived sig
 
 ```typescript
 // Consultant access check
-const isOwner = getMeetingSessionOwnershipInfo(
-  meetingSession,
+const isOwner = getgetMeetingOwnershipInfo(
+  meeting,
   user.consultantProfileId,
 ).isOwner;
 
@@ -1027,7 +1033,7 @@ so that a manual dispatch cannot race the schedule, and writes a
 
 A recording reaches the database exactly one way in normal operation: Stream
 delivers `call.recording_ready` and the webhook route writes a `Recording` row.
-When that delivery is lost, nothing in the system notices. The `MeetingSession`
+When that delivery is lost, nothing in the system notices. The `Meeting`
 still carries `recordingStartedAt`, because our own code wrote it rather than a
 webhook, so the database records that a recording was started and simply has no
 row for the recording itself.

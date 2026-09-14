@@ -266,7 +266,7 @@ export async function POST(req: NextRequest) {
                 ratingUnitId: reviewable.ratingUnitId,
                 // `heldAt` is the slot's end, never now(). Kept when unknown (offline).
                 ...(reviewable.heldAt
-                  ? { ratedSessionAt: reviewable.heldAt }
+                  ? { ratedOccurrenceAt: reviewable.heldAt }
                   : {}),
                 isAnonymous: validatedData.isAnonymous ?? undefined,
                 ...(withdrawnByAuthor
@@ -289,7 +289,7 @@ export async function POST(req: NextRequest) {
                 // the review is already one data point.
                 ratingUnitId: reviewable.ratingUnitId,
                 // The SESSION's clock: provenance, never refreshed by an edit.
-                ratedSessionAt: reviewable.heldAt,
+                ratedOccurrenceAt: reviewable.heldAt,
               },
               select,
             });

@@ -55,7 +55,7 @@ Sponsored bookings consume **engagements** against the member's program cap (#71
 
 - **CONSULTATION / WEBINAR** debit **1** engagement at checkout.
 - **CLASS** debits **N** engagements at checkout — the count of class appointments the learner enrolled in, all known up front because the consultant pre-allocated the sessions (`classResult.engagementsConsumed`).
-- **SUBSCRIPTION** debits **nothing** at checkout (`engagementsForCap` stays `null`). Slots are allocated lazily by the consultant later, so the debit lands in `SlotAllocationService.createAppointments`, one per allocation batch.
+- **SUBSCRIPTION** debits **nothing** at checkout (`engagementsForCap` stays `null`). Slots are allocated lazily by the consultant later, so the debit lands in `SchedulingService.createAppointments`, one per allocation batch.
 
 The debit is `recordBookingUtilization()`, which writes the `BookingUtilization` row and the `PaymentLeg` describing where the money or commitment actually came from. Breaching a `BLOCK`-behavior cap throws `ProgramAssignmentLimitError`, rolls the transaction back, and fires a bell notification to the assignee and org operators.
 
@@ -99,7 +99,7 @@ The pointers below are the fastest paths into the code and the neighboring docs.
 | ADR 18 allowlist/exclusivity (in-lock)               | `lib/payments/operations/checkout.ts`, the `revalidateInsideLock()` function; `docs/enterprise/70-design-decisions/18-open-b2b-b2c-boundary.md`                                                          |
 | Gateway skip + synthetic ids                         | `lib/payments/operations/checkout.ts`, the `isOrgWalletPayment` / `isOrgInvoicedPayment` / `isOrgLicensedPayment` / `isOrgSponsoredPayment` booleans and the `skipPayment` flag                          |
 | Wallet debit (atomic conditional updateMany)         | `lib/api/organizations/wallet.ts`, `walletDebit()`                                                                                                                                                       |
-| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; lazy SUBSCRIPTION debit in `SlotAllocationService.createAppointments`                        |
+| Engagement debits + caps                             | `recordBookingUtilization()` in `lib/api/organizations/program-helpers.ts`, called from `handleCheckout()`; lazy SUBSCRIPTION debit in `SchedulingService.createAppointments`                        |
 | Inline settlement + ledger posting                   | `lib/payments/operations/checkout.ts`, the sponsored-family branch of the settlement block; `lib/payments/payouts/earnings-service.ts`, `createEarningsFromPayment()`                                    |
 | Cancellation policy resolution + publishing          | `lib/payments/operations/cancellation-policy-store.ts`, `resolveCheckoutCancellationPolicyId()` and `publishOrgCancellationPolicy()`; the tier maths is `lib/payments/operations/cancellation-policy.ts` |
 | Payments-side seam (legs, refunds, wallet lifecycle) | `docs/payments/05-b2c-b2b-funding-seam.md`                                                                                                                                                               |

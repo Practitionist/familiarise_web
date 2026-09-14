@@ -31,6 +31,11 @@ jest.mock("../../lib/prisma", () => ({
     user: {
       findUnique: jest.fn(async () => ({ banned: true, banExpires: null })),
     },
+    // #1593 — the sweep also drains the erasure revocation outbox.
+    streamRevocationRetry: {
+      findMany: jest.fn(async () => []),
+      update: jest.fn(async () => ({})),
+    },
     $disconnect: jest.fn(async () => undefined),
   },
 }));
@@ -62,6 +67,8 @@ import { revokeCollaboratorAccess } from "../../lib/collaborators/service";
 
 const findMany = prisma.moderationAction.findMany as jest.Mock;
 const update = prisma.moderationAction.update as jest.Mock;
+const outboxFindMany = prisma.streamRevocationRetry.findMany as jest.Mock;
+const outboxUpdate = prisma.streamRevocationRetry.update as jest.Mock;
 const findUser = prisma.user.findUnique as jest.Mock;
 const enforce = applyStreamEnforcement as jest.Mock;
 
@@ -245,5 +252,33 @@ describe("retryModerationEnforcement", () => {
     // The ban state is irrelevant to a message delete, so it is not consulted.
     expect(findUser).not.toHaveBeenCalled();
     expect(result.recovered).toBe(1);
+  });
+
+  it("drains the erasure revocation outbox and marks a landed row SUCCEEDED (#1593)", async () => {
+    findMany.mockResolvedValue([]);
+    outboxFindMany.mockResolvedValue([
+      {
+        id: "retry-1",
+        planType: "CLASS",
+        planId: "cp-9",
+        attempts: 1,
+        erasureRequest: { userId: "u-erased" },
+      },
+    ]);
+
+    const result = await retryModerationEnforcement();
+
+    expect(revokeCollaboratorAccess).toHaveBeenCalledWith(
+      "class",
+      "cp-9",
+      "u-erased",
+      { notify: false },
+    );
+    expect(outboxUpdate).toHaveBeenCalledWith({
+      where: { id: "retry-1" },
+      data: { status: "SUCCEEDED", attempts: 2, completedAt: expect.any(Date) },
+    });
+    expect(result.erasureRevocationsRecovered).toBe(1);
+    expect(result.success).toBe(true);
   });
 });

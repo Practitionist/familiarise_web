@@ -1,13 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { SlotPicker } from "@/components/scheduling/SlotPicker";
+import { TimePicker } from "@/components/scheduling/TimePicker";
 import {
   rescheduleConsultantPolicy,
-  type SlotPickerSubject,
-} from "@/components/scheduling/slot-picker-policy";
+  type TimePickerSubject,
+} from "@/components/scheduling/time-picker-policy";
 import { useConsultantEventActions } from "../../components/useConsultantEventActions";
-import type { BookingTypeLabel } from "@/lib/scheduling/slot-picker-subject";
+import type { BookingTypeLabel } from "@/lib/scheduling/time-picker-subject";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
@@ -30,7 +30,7 @@ export function RescheduleClient({
   appointmentId: string;
   title: string;
   typeLabel: BookingTypeLabel;
-  subject: SlotPickerSubject;
+  subject: TimePickerSubject;
   backHref: string;
 }>) {
   const router = useRouter();
@@ -40,7 +40,7 @@ export function RescheduleClient({
   const actions = useConsultantEventActions({
     consultantId,
     appointmentId,
-    rawSlots: [],
+    rawOccurrences: [],
     title,
     type: typeLabel,
   });
@@ -62,7 +62,7 @@ export function RescheduleClient({
   });
 
   return (
-    <SlotPicker
+    <TimePicker
       className="min-h-0 flex-1"
       policy={policy}
       subject={subject}

@@ -44,7 +44,7 @@ graph TD
 const abandonedAppointments = await prisma.appointment.findMany({
   where: {
     createdAt: { lt: abandonedThreshold }, // 30+ minutes old
-    slotsOfAppointment: { some: { isTentative: true } }, // Tentative slots
+    appointmentOccurrences: { some: { isTentative: true } }, // Tentative slots
     payment: { some: { paymentStatus: "PENDING" } }, // Pending payments
   },
 });
@@ -182,7 +182,7 @@ on:
 SELECT a.id, a.createdAt, p.paymentStatus, s.isTentative
 FROM "Appointment" a
 JOIN "Payment" p ON p.appointmentId = a.id
-JOIN "SlotOfAppointment" s ON s.appointmentId = a.id
+JOIN "AppointmentOccurrence" s ON s.appointmentId = a.id
 WHERE a.createdAt < NOW() - INTERVAL '30 minutes'
   AND p.paymentStatus = 'PENDING'
   AND s.isTentative = true;

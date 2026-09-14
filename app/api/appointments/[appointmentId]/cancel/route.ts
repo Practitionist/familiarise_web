@@ -44,7 +44,7 @@ import {
   transitionClassEvent,
   transitionConsultationRequest,
   transitionRescheduleRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
@@ -58,23 +58,12 @@ type CancelAuditMeta = {
 };
 
 /**
- * Which rows this cancel sweeps. A whole-subscription or whole-class cancel
- * also ends the sessions of its sibling appointments; every other booking ends
- * only its own. The slot sweep and the participant sweep must never disagree
- * about that, so both read the scope from here (#1383).
+ * Which rows this cancel sweeps. #1554 — a booking is ONE Appointment, so a
+ * whole-subscription or whole-class cancel ends every occurrence of that one
+ * wrapper. The slot sweep and the participant sweep must never disagree about
+ * the scope, so both read it from here (#1383).
  */
-function cancelSweepScope(appointment: {
-  id: string;
-  subscription: { id: string } | null;
-  class: { id: string } | null;
-}) {
-  if (appointment.subscription) {
-    return { appointment: { subscriptionId: appointment.subscription.id } };
-  }
-  if (appointment.class) {
-    return { appointment: { classId: appointment.class.id } };
-  }
-  // Consultation/webinar/trial — single appointment.
+function cancelSweepScope(appointment: { id: string }) {
   return { appointmentId: appointment.id };
 }
 
@@ -204,7 +193,7 @@ export async function POST(
         // Notification copy only. The refund tier reads the whole booking's
         // next undelivered session instead (#1006, cancellation-scope.ts) —
         // this row's earliest slot is the wrong answer for a subscription.
-        slotsOfAppointment: {
+        occurrences: {
           take: 1,
           orderBy: { startsAt: "asc" },
           select: { startsAt: true },
@@ -276,8 +265,7 @@ export async function POST(
     let consulteeName: string | undefined;
     let planTitle: string | undefined;
     const appointmentType: string = appointment.appointmentType;
-    const dateTime =
-      appointment.slotsOfAppointment?.[0]?.startsAt?.toISOString();
+    const dateTime = appointment.occurrences?.[0]?.startsAt?.toISOString();
 
     if (appointment.consultation) {
       consultantUserId =
@@ -356,10 +344,7 @@ export async function POST(
     };
 
     // Audit attribution for every BookingStatusHistory row this cancel writes
-    // (#1322 A12). `appointmentId` is added per call site rather than here: a
-    // subscription/class cancel sweeps slots belonging to sibling appointments,
-    // and stamping this appointment on those rows would file another session's
-    // history under this booking's timeline.
+    // (#1322 A12).
     const auditMeta: CancelAuditMeta = {
       actorUserId: session.user.id,
       reason: validatedData.reason ?? null,
@@ -454,7 +439,7 @@ export async function POST(
           // The from-set rides in `fromIn`, never in `where`: the helper
           // overwrites `completionStatus` in the caller's WHERE with its own
           // from-set, so a status left there is silently discarded.
-          await transitionSlotCompletion(tx, {
+          await transitionOccurrenceCompletion(tx, {
             ...auditMeta,
             where: sweepScope,
             to: "CANCELLED",

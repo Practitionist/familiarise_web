@@ -8,7 +8,7 @@ import { Prisma } from "@prisma/client";
  * @property {Object} user - The user associated with this consultee profile.
  * @property {Object[]} consultationRequests - Consultation requests made by the consultee.
  * @property {Object[]} subscriptionRequests - Subscription requests made by the consultee.
- * @property {Object[]} slotsOfAppointment - Appointment slots booked by the consultee.
+ * @property {Object[]} occurrences - Appointment slots booked by the consultee.
  * @property {Object[]} consultantReviews - Reviews given by the consultee to consultants.
  */
 export type TConsulteeProfile = Prisma.ConsulteeProfileGetPayload<{
@@ -16,7 +16,7 @@ export type TConsulteeProfile = Prisma.ConsulteeProfileGetPayload<{
     user: true;
     consultationRequests: true;
     subscriptionRequests: true;
-    slotsOfAppointment: true;
+    occurrences: true;
     consultantReviews: true;
   };
 }>;
@@ -41,7 +41,7 @@ export type TConsulteeProfileWithBackground = Prisma.ConsulteeProfileGetPayload<
     };
     consultationRequests: true;
     subscriptionRequests: true;
-    slotsOfAppointment: true;
+    occurrences: true;
     consultantReviews: true;
   };
 }>;

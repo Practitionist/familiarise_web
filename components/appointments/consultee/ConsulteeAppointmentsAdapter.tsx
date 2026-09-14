@@ -10,7 +10,7 @@ import { useSession } from "@/lib/auth-client";
 // #248: the shared hook reads the connected client singleton at click time and
 // lazy-imports lib/meeting, so the Stream SDK stays off this bundle.
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
-import type { SlotOfAppointment } from "@prisma/client";
+import type { AppointmentOccurrence } from "@prisma/client";
 import type {
   AppointmentActionAdapter,
   OverflowItem,
@@ -18,9 +18,9 @@ import type {
 } from "@/lib/appointments/adapter";
 import {
   CONSULTEE_JOIN_WINDOW_MS,
-  getJoinableSlot,
-  slotsAllowReschedule,
-} from "@/lib/appointments/slots";
+  getJoinableOccurrence,
+  occurrencesAllowReschedule,
+} from "@/lib/appointments/occurrences";
 import {
   consulteeDestructiveAction,
   consulteeMayReschedule,
@@ -35,7 +35,7 @@ import {
 } from "@/lib/appointments/status";
 import type {
   AppointmentVM,
-  SlotLike,
+  OccurrenceLike,
 } from "@/lib/appointments/view-model";
 import { useEventActions } from "@/components/appointments/consultee/useEventActions";
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
@@ -50,7 +50,7 @@ type DialogKind = "cancel" | "leave" | "report" | "documents";
  * ## Why two lookups?
  *
  * `map-consultee` sets `raw.source` to the webinar/class/trial row (has `.id`).
- * `map-detail` sets `raw.source` to `{ appointment, siblings }` — no event id.
+ * `map-detail` sets `raw.source` to `{ appointment }` — no event id.
  * The same adapter mounts on list AND detail, so gating on `source.id` alone
  * hid Leave / Cancel trial on `/appointments/[appointmentId]` after #1005.
  *
@@ -69,7 +69,7 @@ function sourceId(vm: AppointmentVM): string | null {
         classId?: string | null;
         consultationId?: string | null;
         subscriptionId?: string | null;
-        trialSession?: { id?: string } | null;
+        trial?: { id?: string } | null;
       }
     | undefined;
   if (!appt) return null;
@@ -80,7 +80,7 @@ function sourceId(vm: AppointmentVM): string | null {
     case "CLASS":
       return appt.classId ?? null;
     case "TRIAL":
-      return appt.trialSession?.id ?? null;
+      return appt.trial?.id ?? null;
     case "CONSULTATION":
       return appt.consultationId ?? null;
     case "SUBSCRIPTION":
@@ -155,7 +155,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
     appointmentId: activeVm?.appointmentId ?? undefined,
-    rawSlots: (activeVm?.raw.rawSlots ?? []) as SlotOfAppointment[],
+    rawOccurrences: (activeVm?.raw.rawOccurrences ?? []) as AppointmentOccurrence[],
     title: activeVm?.title ?? "",
     consultant: activeVm?.counterpart.name ?? "",
     type: typeLabel,
@@ -182,7 +182,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
    * successful join left the row spinning until the route changed. The shared
    * hook already has the right contract and returns whether navigation began.
    */
-  const joinNow = async (vm: AppointmentVM, slot: SlotLike) => {
+  const joinNow = async (vm: AppointmentVM, slot: OccurrenceLike) => {
     const appointment = vm.raw.appointment;
     if (!appointment) {
       toast({
@@ -208,7 +208,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const isDev = process.env.NEXT_PUBLIC_ENABLE_DEV_TOOLS === "true";
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
-    const joinable = getJoinableSlot(vm.raw.rawSlots ?? [], {
+    const joinable = getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
       joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
     });
     if (joinable && isConfirmedStatus(vm.status) && vm.raw.appointment) {
@@ -232,7 +232,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const overflowItems = (vm: AppointmentVM): OverflowItem[] => {
     const items: OverflowItem[] = [];
     const inactive = isInactiveStatus(vm.status);
-    const slots = vm.raw.rawSlots ?? [];
+    const slots = vm.raw.rawOccurrences ?? [];
     // #1163 — a live proposal outranks every other action: until it is
     // answered the row just says "awaiting confirmation". Navigation, not a
     // dialog — the detail page hosts the card with accept/decline/withdraw.
@@ -256,7 +256,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
       consulteeId &&
       !inactive &&
       isApprovedStatus(vm.status) &&
-      slotsAllowReschedule(slots)
+      occurrencesAllowReschedule(slots)
     ) {
       items.push({
         key: "reschedule",
@@ -324,15 +324,15 @@ export function useConsulteeAppointmentsAdapter(options?: {
     if (
       isDev &&
       vm.raw.appointment &&
-      (vm.raw.rawSlots?.length ?? 0) > 0 &&
-      !getJoinableSlot(vm.raw.rawSlots ?? [], {
+      (vm.raw.rawOccurrences?.length ?? 0) > 0 &&
+      !getJoinableOccurrence(vm.raw.rawOccurrences ?? [], {
         joinWindowMs: CONSULTEE_JOIN_WINDOW_MS,
       })
     ) {
       items.push({
         key: "dev-join",
         label: "Force join (dev)",
-        onClick: () => void joinNow(vm, vm.raw.rawSlots![0]),
+        onClick: () => void joinNow(vm, vm.raw.rawOccurrences![0]),
       });
     }
     return items;

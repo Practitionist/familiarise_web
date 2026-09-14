@@ -10,15 +10,18 @@ export interface SlotSchedule {
   startsAt: string;
   endsAt: string;
   isTentative: boolean;
-  _count: { user: number };
+}
+
+/** Enrolment is counted on the appointment (#1554), not per occurrence. */
+export interface AppointmentSchedule {
+  occurrences: SlotSchedule[];
+  _count: { participants: number };
 }
 
 export interface WebinarEventSchedule {
   id: string;
   status: string;
-  appointment: {
-    slotsOfAppointment: SlotSchedule[];
-  } | null;
+  appointment: AppointmentSchedule | null;
 }
 
 export interface ClassEventSchedule {
@@ -26,9 +29,7 @@ export interface ClassEventSchedule {
   status: string;
   schedulingPeriodStartsAt: string | null;
   schedulingPeriodEndsAt: string | null;
-  appointments: {
-    slotsOfAppointment: SlotSchedule[];
-  }[];
+  appointments: AppointmentSchedule[];
 }
 
 // ─── Collaborator perspective types ──────────────────────────────────────────

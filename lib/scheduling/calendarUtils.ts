@@ -1,18 +1,19 @@
 import { TCustomSlot, TWeeklySlot } from "@/types/slots";
 import {
-  SlotOfAvailabilityCustom,
-  SlotOfAvailabilityWeekly,
+  AvailabilityWindowCustom,
+  AvailabilityWindowWeekly,
   DayOfWeek,
   ScheduleType,
   AppointmentsType,
 } from "@prisma/client";
 import { startOfWeek } from "date-fns";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
-import { minuteUtcToDate } from "@/utils/slotAllocation/slotTimeUtils";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import { formatDayKey, formatWeekKey } from "./allocationMessages";
 
-// Core types for the unified calendar system
-export interface TimeSlot {
+// Core types for the unified calendar system. CalendarInterval is the UI cell:
+// a BookableInterval plus display-only flags and the tooltip payload (#1554).
+export interface CalendarInterval {
   startTime: Date;
   endTime: Date;
   isAvailable: boolean;
@@ -41,7 +42,7 @@ export interface AppointmentSlot {
 export interface Appointment {
   id: string;
   appointmentType: AppointmentsType;
-  slotsOfAppointment?: AppointmentSlot[];
+  occurrences?: AppointmentSlot[];
   webinar?: { status: string; webinarPlan?: { title: string } };
   class?: { status: string; classPlan?: { title: string } };
   consultation?: {
@@ -58,8 +59,8 @@ export interface Appointment {
 
 export interface ConsultantData {
   scheduleType: ScheduleType;
-  slotsOfAvailabilityWeekly: SlotOfAvailabilityWeekly[];
-  slotsOfAvailabilityCustom: SlotOfAvailabilityCustom[];
+  availabilityWindowsWeekly: AvailabilityWindowWeekly[];
+  availabilityWindowsCustom: AvailabilityWindowCustom[];
   user?: {
     timezone?: string;
   };
@@ -96,10 +97,10 @@ export function mapWeeklySlots(
   currentDate: Date,
   view: "week" | "month" = "week",
   intervalMinutes: number = 30, // Configurable interval duration
-): TimeSlot[] {
+): CalendarInterval[] {
   if (
     consultantData.scheduleType !== ScheduleType.WEEKLY ||
-    !consultantData.slotsOfAvailabilityWeekly?.length
+    !consultantData.availabilityWindowsWeekly?.length
   ) {
     return [];
   }
@@ -118,12 +119,12 @@ export function mapWeeklySlots(
   }
 
   // Create slots for each weekly pattern within the date range
-  const slots: TimeSlot[] = [];
+  const slots: CalendarInterval[] = [];
   const iterDate = new Date(startDate);
 
   while (iterDate <= endDate) {
     const dayOfWeek = iterDate.getDay();
-    const matchingSlots = consultantData.slotsOfAvailabilityWeekly.filter(
+    const matchingSlots = consultantData.availabilityWindowsWeekly.filter(
       (slot) => DAY_INDEX[slot.startDay] === dayOfWeek,
     );
 
@@ -171,17 +172,17 @@ export function mapWeeklySlots(
 export function mapCustomSlots(
   consultantData: ConsultantData,
   intervalMinutes: number = 30, // Configurable interval duration
-): TimeSlot[] {
+): CalendarInterval[] {
   if (
     consultantData.scheduleType !== ScheduleType.CUSTOM ||
-    !consultantData.slotsOfAvailabilityCustom?.length
+    !consultantData.availabilityWindowsCustom?.length
   ) {
     return [];
   }
 
-  const slots: TimeSlot[] = [];
+  const slots: CalendarInterval[] = [];
 
-  consultantData.slotsOfAvailabilityCustom.forEach((slot) => {
+  consultantData.availabilityWindowsCustom.forEach((slot) => {
     const startTime = new Date(slot.startsAt);
     const endTime = new Date(slot.endsAt);
 
@@ -211,7 +212,10 @@ export function mapCustomSlots(
 /**
  * Checks if two time slots overlap
  */
-export function slotsOverlap(slot1: TimeSlot, slot2: AppointmentSlot): boolean {
+export function slotsOverlap(
+  slot1: CalendarInterval,
+  slot2: AppointmentSlot,
+): boolean {
   const slot1Start = slot1.startTime.getTime();
   const slot1End = slot1.endTime.getTime();
   const slot2Start = new Date(slot2.startsAt).getTime();
@@ -226,7 +230,7 @@ export function slotsOverlap(slot1: TimeSlot, slot2: AppointmentSlot): boolean {
 export function getSlotStatus(
   interval: { hour: number; minute: number },
   date: Date,
-  availableSlots: TimeSlot[],
+  availableSlots: CalendarInterval[],
   existingAppointments: Appointment[],
   intervalMinutes: number = 30, // Configurable interval duration
 ): SlotStatus {
@@ -251,7 +255,7 @@ export function getSlotStatus(
   let isPartiallyBooked = false;
 
   existingAppointments.forEach((appointment) => {
-    appointment.slotsOfAppointment?.forEach((apptSlot) => {
+    appointment.occurrences?.forEach((apptSlot) => {
       const apptStart = new Date(apptSlot.startsAt);
       const apptEnd = new Date(apptSlot.endsAt);
 
@@ -318,13 +322,13 @@ export function getSlotStatus(
 /**
  * Formats appointment slots for API submission
  */
-export function formatSlotsForAPI(slots: TimeSlot[]): string[] {
+export function formatSlotsForAPI(slots: CalendarInterval[]): string[] {
   return slots.map((slot) => slot.startTime.toISOString());
 }
 
 /**
  * Calculate required 30-minute slots for different event types.
- * Delegates to SlotCalculationService as the single source of truth,
+ * Delegates to ScheduleCalculationService as the single source of truth,
  * adapting the legacy parameter signature for backward compatibility.
  */
 export function calculateRequiredSlots(
@@ -336,7 +340,7 @@ export function calculateRequiredSlots(
   endDate?: Date,
   totalSessions?: number,
 ): number {
-  return SlotCalculationService.calculateRequiredSlots(eventType, {
+  return ScheduleCalculationService.calculateRequiredSlots(eventType, {
     durationInMonths,
     sessionsPerWeek,
     durationInHours,
@@ -349,25 +353,23 @@ export function calculateRequiredSlots(
 
 /**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
- * Delegates to SlotCalculationService.countWeeks as the single source of truth.
+ * Delegates to ScheduleCalculationService.countWeeks as the single source of truth.
  */
-export const countSundayWeeksInclusive = SlotCalculationService.countWeeks.bind(
-  SlotCalculationService,
-);
+export const countSundayWeeksInclusive =
+  ScheduleCalculationService.countWeeks.bind(ScheduleCalculationService);
 
 /**
  * Get the Sunday at 00:00:00 of the week that contains the given date.
- * Delegates to SlotCalculationService.startOfWeekSunday as the single source of truth.
+ * Delegates to ScheduleCalculationService.startOfWeekSunday as the single source of truth.
  */
-export const startOfWeekSunday = SlotCalculationService.startOfWeekSunday.bind(
-  SlotCalculationService,
-);
+export const startOfWeekSunday =
+  ScheduleCalculationService.startOfWeekSunday.bind(ScheduleCalculationService);
 
 /**
  * Validates selected slots for a specific event type
  */
 export function validateSelectedSlots(
-  selectedSlots: TimeSlot[],
+  selectedSlots: CalendarInterval[],
   eventType: "consultation" | "subscription" | "webinar" | "class",
   requiredSlots?: number,
   sessionDurationInHours?: number,
@@ -398,12 +400,12 @@ export function validateSelectedSlots(
       // Same-UTC-day requirement first (before consecutive check) — matches
       // the server's same-day rule.
       if (selectedSlots.length > 1) {
-        const firstSlotDay = SlotCalculationService.dayKey(
+        const firstSlotDay = ScheduleCalculationService.dayKey(
           selectedSlots[0].startTime,
         );
         const allSameDay = selectedSlots.every(
           (slot) =>
-            SlotCalculationService.dayKey(slot.startTime) === firstSlotDay,
+            ScheduleCalculationService.dayKey(slot.startTime) === firstSlotDay,
         );
         if (!allSameDay) {
           return {
@@ -496,13 +498,13 @@ export function validateSelectedSlots(
  * same bucketing the server validates with.
  */
 export function groupSlotsByWeek(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   schedulingTimezone?: string,
-): Map<string, TimeSlot[]> {
-  const slotsByWeek = new Map<string, TimeSlot[]>();
+): Map<string, CalendarInterval[]> {
+  const slotsByWeek = new Map<string, CalendarInterval[]>();
 
   slots.forEach((slot) => {
-    const weekKey = SlotCalculationService.weekKey(
+    const weekKey = ScheduleCalculationService.weekKey(
       slot.startTime,
       schedulingTimezone,
     );
@@ -520,7 +522,7 @@ export function groupSlotsByWeek(
  * Validates slot distribution for subscriptions/classes
  */
 export function validateSlotDistribution(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   slotsPerWeek: number,
   schedulingTimezone?: string,
 ): { isValid: boolean; errorMessage?: string } {
@@ -581,7 +583,7 @@ export function getAppointmentUser(appointment: Appointment): string {
  * Uses tolerance for timezone/precision issues (within 1 second)
  */
 export function validateDayBasedConsecutiveSlots(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   schedulingTimezone?: string,
 ): boolean {
   if (slots.length <= 1) return true;
@@ -591,13 +593,13 @@ export function validateDayBasedConsecutiveSlots(
   );
 
   // Check that all slots are on the same scheduling-timezone day (server parity)
-  const firstSlotDay = SlotCalculationService.dayKey(
+  const firstSlotDay = ScheduleCalculationService.dayKey(
     sortedSlots[0].startTime,
     schedulingTimezone,
   );
   const allSameDay = sortedSlots.every(
     (slot) =>
-      SlotCalculationService.dayKey(slot.startTime, schedulingTimezone) ===
+      ScheduleCalculationService.dayKey(slot.startTime, schedulingTimezone) ===
       firstSlotDay,
   );
   if (!allSameDay) {
@@ -627,7 +629,7 @@ export function validateDayBasedConsecutiveSlots(
  * Returns a clean, organized string showing progress with visual hierarchy
  */
 export function calculateCallProgress(
-  slots: TimeSlot[],
+  slots: CalendarInterval[],
   sessionDurationInHours?: number,
   maxTotalCalls?: number,
   schedulingTimezone?: string,
@@ -641,9 +643,9 @@ export function calculateCallProgress(
   const incompleteCallSlots = slots.length % slotsPerCall;
 
   // Group by scheduling-timezone day
-  const slotsByDay = new Map<string, TimeSlot[]>();
+  const slotsByDay = new Map<string, CalendarInterval[]>();
   slots.forEach((slot) => {
-    const dayKey = SlotCalculationService.dayKey(
+    const dayKey = ScheduleCalculationService.dayKey(
       slot.startTime,
       schedulingTimezone,
     );

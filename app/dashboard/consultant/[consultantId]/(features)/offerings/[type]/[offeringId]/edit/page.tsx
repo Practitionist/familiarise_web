@@ -41,12 +41,12 @@ function wrapPlanAsEvent(
     const webinars = plan.webinars as
       | Array<{
           appointment?: {
-            slotsOfAppointment?: Array<{ startsAt?: string | Date | null }>;
+            occurrences?: Array<{ startsAt?: string | Date | null }>;
           } | null;
         }>
       | undefined;
     const scheduledAt =
-      webinars?.[0]?.appointment?.slotsOfAppointment?.[0]?.startsAt ?? null;
+      webinars?.[0]?.appointment?.occurrences?.[0]?.startsAt ?? null;
     return {
       type,
       id,

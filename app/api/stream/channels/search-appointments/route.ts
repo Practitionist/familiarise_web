@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { getSession } from "@/lib/auth-server";
 import { bookingOrgId, getDmChannelId } from "@/lib/stream-utils";
 import {
@@ -263,16 +264,8 @@ export async function GET(request: NextRequest) {
         // org-tagged rows because `take: 1` truncates server-side, before
         // bookingOrgId can pick — an unfiltered `take: 1` on a mixed
         // subscription can hand back a personal row and resolve `null`.
-        appointments: {
-          where: { organizationId: { not: null } },
-          select: { organizationId: true },
-          // Deterministic, not just filtered: `take: 1` over an
-          // unordered result can hand different callers different
-          // rows if a subscription ever carries two org-tagged
-          // appointments, which is the same divergence one layer down.
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          take: 1,
-        },
+        // #1554 — one wrapper per subscription carries the org tag.
+        appointment: { select: { organizationId: true } },
       },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
       take: 10,
@@ -296,12 +289,10 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on an appointment slot
+              // User holds a seat on the appointment (#1554)
               {
                 appointment: {
-                  slotsOfAppointment: {
-                    some: { user: { some: { id: userId } } },
-                  },
+                  participants: { some: liveParticipant(userId) },
                 },
               },
               // User is the consultant
@@ -354,14 +345,10 @@ export async function GET(request: NextRequest) {
           },
           {
             OR: [
-              // User is on an appointment slot
+              // User holds a seat on the appointment (#1554)
               {
-                appointments: {
-                  some: {
-                    slotsOfAppointment: {
-                      some: { user: { some: { id: userId } } },
-                    },
-                  },
+                appointment: {
+                  participants: { some: liveParticipant(userId) },
                 },
               },
               // User is the consultant

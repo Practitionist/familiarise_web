@@ -31,13 +31,13 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn(),
 }));
 
-import { SlotAllocationService } from "../../utils/slotAllocation/SlotAllocationService";
-import { SlotCalculationService } from "../../utils/slotAllocation/SlotCalculationService";
+import { SchedulingService } from "../../utils/scheduling-engine/SchedulingService";
+import { ScheduleCalculationService } from "../../utils/scheduling-engine/ScheduleCalculationService";
 import type {
   ConsultantAllocationData,
   EventConfig,
   EventType,
-} from "../../utils/slotAllocation/types";
+} from "../../utils/scheduling-engine/types";
 
 const IST = "Asia/Kolkata";
 const IST_OFFSET = 330;
@@ -55,7 +55,7 @@ const findAvailableSlots = (
   consulteeUserId?: string,
 ): Promise<Date[]> =>
   (
-    SlotAllocationService as unknown as {
+    SchedulingService as unknown as {
       findAvailableSlots: (...a: unknown[]) => Promise<Date[]>;
     }
   ).findAvailableSlots(
@@ -77,7 +77,7 @@ function weeklyConsultant(
   return {
     userId: "consultant-user",
     scheduleType: "WEEKLY",
-    slotsOfAvailabilityWeekly: rows.map((r, i) => ({
+    availabilityWindowsWeekly: rows.map((r, i) => ({
       id: `weekly-${i}`,
       startDay: r.day,
       startTimeUtc: r.startUtc,
@@ -85,7 +85,7 @@ function weeklyConsultant(
       endTimeUtc: r.endUtc,
       utcOffsetMinutes: IST_OFFSET,
     })),
-    slotsOfAvailabilityCustom: [],
+    availabilityWindowsCustom: [],
   };
 }
 
@@ -105,7 +105,7 @@ function dbOccupying(instants: Date[]) {
                 consultation: { status: "SCHEDULED" },
                 subscription: null,
                 payment: [],
-                slotsOfAppointment: instants.map((startsAt, i) => ({
+                occurrences: instants.map((startsAt, i) => ({
                   id: `booked-slot-${i}`,
                   startsAt,
                 })),
@@ -268,8 +268,8 @@ describe("findAvailableSlots — scanning within an availability row", () => {
     const custom: ConsultantAllocationData = {
       userId: "consultant-user",
       scheduleType: "CUSTOM",
-      slotsOfAvailabilityWeekly: [],
-      slotsOfAvailabilityCustom: [
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [
         {
           id: "custom-0",
           startsAt: start,
@@ -328,7 +328,7 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
     // The invariant the validator enforces: at most sessionsPerWeek per IST week.
     const perWeek = new Map<string, number>();
     for (const s of slots) {
-      const key = SlotCalculationService.weekKey(s, IST);
+      const key = ScheduleCalculationService.weekKey(s, IST);
       perWeek.set(key, (perWeek.get(key) ?? 0) + 1);
     }
     expect(perWeek.size).toBe(4);
@@ -357,7 +357,7 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
       },
     );
 
-    const dayKeys = slots.map((s) => SlotCalculationService.dayKey(s, IST));
+    const dayKeys = slots.map((s) => ScheduleCalculationService.dayKey(s, IST));
     expect(new Set(dayKeys).size).toBe(dayKeys.length);
   });
 
@@ -394,14 +394,14 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
       [
         {
           id: "surviving-appointment",
-          slotsOfAppointment: [{ id: "s1", startsAt: survivor }],
+          occurrences: [{ id: "s1", startsAt: survivor }],
         },
       ],
     );
 
-    const occupiedDay = SlotCalculationService.dayKey(survivor, IST);
+    const occupiedDay = ScheduleCalculationService.dayKey(survivor, IST);
     for (const s of slots) {
-      expect(SlotCalculationService.dayKey(s, IST)).not.toBe(occupiedDay);
+      expect(ScheduleCalculationService.dayKey(s, IST)).not.toBe(occupiedDay);
     }
   });
 
@@ -476,14 +476,14 @@ describe("findAvailableSlots — recurring placement buckets by scheduling timez
       [
         {
           id: "surviving-appointment",
-          slotsOfAppointment: [{ id: "s1", startsAt: firstSaturday }],
+          occurrences: [{ id: "s1", startsAt: firstSaturday }],
         },
       ],
     );
 
-    const occupiedWeek = SlotCalculationService.weekKey(firstSaturday, IST);
+    const occupiedWeek = ScheduleCalculationService.weekKey(firstSaturday, IST);
     for (const s of slots) {
-      expect(SlotCalculationService.weekKey(s, IST)).not.toBe(occupiedWeek);
+      expect(ScheduleCalculationService.weekKey(s, IST)).not.toBe(occupiedWeek);
     }
   });
 });

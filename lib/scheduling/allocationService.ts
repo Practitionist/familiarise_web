@@ -1,7 +1,7 @@
 import { reportSentryError } from "@/lib/observability/report";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
-import { TimeSlot } from "./calendarUtils";
-import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { CalendarInterval } from "./calendarUtils";
+import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 /** #997 Phase 2 — tooltip display metadata for a booked slot, computed
  * server-side (only present when `includeAppointmentDetails` was authorized). */
@@ -167,7 +167,7 @@ export class AllocationService {
       console.error(`Allocation request failed (${url}):`, error);
       reportSentryError(error, {
         subsystem: "client",
-        tags: { feature: "slot-allocation" },
+        tags: { feature: "scheduling" },
       });
       return {
         success: false,
@@ -213,7 +213,7 @@ export class AllocationService {
       console.error("Error validating consultation slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -259,7 +259,7 @@ export class AllocationService {
       console.error("Error validating subscription slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -275,7 +275,7 @@ export class AllocationService {
   static async allocateSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
-    slots: TimeSlot[],
+    slots: CalendarInterval[],
     allocationOptions?: AllocationCallOptions,
   ): Promise<AllocationResponse> {
     // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
@@ -361,7 +361,7 @@ export class AllocationService {
       console.error("Error validating class slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -407,7 +407,7 @@ export class AllocationService {
       console.error("Error validating webinar slots:", error);
       reportSentryError(error, {
         subsystem: "scheduling",
-        op: "slot-allocation",
+        op: "scheduling",
       });
       return {
         success: false,
@@ -423,7 +423,7 @@ export class AllocationService {
   static async validateSlots(
     eventType: "consultation" | "subscription" | "webinar" | "class",
     eventId: string,
-    slots: TimeSlot[],
+    slots: CalendarInterval[],
   ): Promise<ValidationResponse> {
     const slotStrings = slots.map((slot) => slot.startTime.toISOString());
 
@@ -476,7 +476,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { consultantId, httpStatus },
       });
@@ -567,7 +567,7 @@ export class AllocationService {
           ? { headers: { "If-None-Match": ifNoneMatch } }
           : undefined;
       const response = await fetch(
-        `/api/slots/availability-with-allocation/${consultantId}?${params}`,
+        `/api/scheduling/availability-with-allocation/${consultantId}?${params}`,
         bypassHttpCache ? { cache: "no-store" } : conditional,
       );
       // 304 — the marker says nothing this grid reads has changed. The caller
@@ -611,7 +611,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { consultantId, httpStatus },
       });
@@ -655,7 +655,7 @@ export class AllocationService {
         params.append("consultationId", eventId);
       }
 
-      const response = await fetch(`/api/slots/appointments?${params}`);
+      const response = await fetch(`/api/scheduling/appointments?${params}`);
 
       if (!response.ok) {
         // See fetchConsultantData: httpStatus lets the catch distinguish a
@@ -683,7 +683,7 @@ export class AllocationService {
         typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
       reportSentryError(error, {
         subsystem: "client",
-        op: "slot-allocation",
+        op: "scheduling",
         expected,
         extra: { eventType, eventId, httpStatus },
       });

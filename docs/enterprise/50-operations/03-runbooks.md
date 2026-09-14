@@ -654,7 +654,10 @@ race with expiry):
 4. In the Razorpay dashboard, update the webhook's signing secret to
    match; Razorpay will start retrying failed webhooks immediately.
 5. Run `POST /api/admin/reconcile-ledgers` after the dust settles to
-   confirm no events were lost in the transition.
+   confirm no events were lost in the transition. A full-scope run answers
+   `202 { data: { reportId } }` and finishes in the background (#1454);
+   poll `GET /api/admin/reconcile-ledgers?id=<reportId>` until
+   `summary.status` is `COMPLETED`, then read `ok` and `findings`.
 
 ---
 

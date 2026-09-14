@@ -7,7 +7,7 @@
 
 import "./setup";
 
-import { enqueueToast } from "@/hooks/scheduling/useSlotAllocation";
+import { enqueueToast } from "@/hooks/scheduling/useScheduling";
 import type { AllocationToast } from "@/lib/scheduling/allocationMessages";
 
 const msg = (title: string, description = "d"): AllocationToast => ({

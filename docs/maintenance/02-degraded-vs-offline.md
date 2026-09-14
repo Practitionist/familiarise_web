@@ -49,7 +49,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | **Participants** (`/api/participants/*`)                                                           | Allowed                                 | Blocked                    | LOW        |
 | **Trials** (`/api/trials`, `/api/trials/[id]`)                                                     | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Plans** (`/api/plans/*`)                                                                         | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
-| **Slot appointments** (`/api/slots/appointments`)                                                  | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Slot appointments** (`/api/scheduling/appointments`)                                                  | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
 | **Waitlist / newsletter** (`/api/waitlist`)                                                        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | LOW        |
 | **Referrals** (`/api/referrals`)                                                                   | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
 | **Collaborators** (`/api/collaborators`)                                                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
@@ -82,7 +82,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 | Route                     | Reason                                        |
 | ------------------------- | --------------------------------------------- |
-| `/api/slots/appointments` | Prevent slot modifications during maintenance |
+| `/api/scheduling/appointments` | Prevent slot modifications during maintenance |
 | `/api/waitlist`           | Prevent newsletter signups                    |
 | `/api/referrals`          | Prevent referral creation                     |
 | `/api/collaborators`      | Prevent collaborator changes                  |

@@ -11,7 +11,7 @@
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
 | **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | `sessionsPerWeek`                                           | N/A                              |
-| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialSessionStatus)    |
+| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)    |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
 | **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
@@ -58,11 +58,11 @@ Recurring sessions over a period of months. Most complex event type.
 **Rules**:
 
 - All slots within scheduling period [startDate, endDate]
-- Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `SlotCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
-- Weekly limit: `sessionsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`SlotCalculationService.weekKey()`)
+- Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `ScheduleCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
+- Weekly limit: `sessionsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`ScheduleCalculationService.weekKey()`)
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
-**Important**: Total weeks uses `SlotCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
+**Important**: Total weeks uses `ScheduleCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
 
 ```mermaid
 flowchart TD
@@ -181,9 +181,9 @@ flowchart TD
     I -->|No| K[Remains COMPLETED]
 ```
 
-**Data model**: `TrialSession` links to `ConsulteeProfile`, `ConsultantProfile`, `SubscriptionPlan`, and optionally to `Appointment` (when scheduled) and `Subscription` (when converted via `convertedToSubscriptionId`).
+**Data model**: `Trial` links to `ConsulteeProfile`, `ConsultantProfile`, `SubscriptionPlan`, and optionally to `Appointment` (when scheduled) and `Subscription` (when converted via `convertedToSubscriptionId`).
 
-For full details see [09-trial-sessions.md](./09-trial-sessions.md).
+For full details see [09-trials.md](./09-trials.md).
 
 ---
 
@@ -232,9 +232,9 @@ eventIdSchema = z
 
 **Error handling**: `formatZodError()` converts Zod errors to `"field: message; field2: message2"` format. `safeParse()` wrapper returns `{success, data}` or `{success: false, error}`.
 
-### Layer 2: Business Rules (SlotValidationService)
+### Layer 2: Business Rules (ScheduleValidationService)
 
-**File**: `utils/slotAllocation/SlotValidationService.ts`
+**File**: `utils/scheduling-engine/ScheduleValidationService.ts`
 
 Server-side enforcement of all business rules. Runs inside the allocation transaction.
 
@@ -288,7 +288,7 @@ Consultants configure one of two schedule types:
 
 ### Weekly
 
-Recurring weekly patterns stored in `SlotOfAvailabilityWeekly`:
+Recurring weekly patterns stored in `AvailabilityWindowWeekly`:
 
 - `startDay`: DayOfWeek enum (SUNDAY, MONDAY, ..., SATURDAY) -- **source of truth** for which day, expressed in the consultant's own local calendar
 - `startTimeUtc`: Int (minutes since midnight UTC, 0-1439)
@@ -298,7 +298,7 @@ Recurring weekly patterns stored in `SlotOfAvailabilityWeekly`:
 
 ### Custom
 
-Specific date/time ranges stored in `SlotOfAvailabilityCustom`:
+Specific date/time ranges stored in `AvailabilityWindowCustom`:
 
 - `startsAt`: Exact DateTime
 - `endsAt`: Exact DateTime

@@ -11,7 +11,7 @@ This document records the three considered approaches to collaborator scheduling
 Scheduling remains exclusively the host's action, and two things are true for collaborators:
 
 1. **They can see the schedule.** Collaborators with `ACCEPTED` status get a read-only schedule section on each active collaboration card in the Collaborations dashboard page.
-2. **They cannot be double-booked by it.** When the host schedules a webinar or a class, the proposed windows are checked against every accepted co-host's confirmed commitments, and a clash is rejected with HTTP 409 rather than silently proceeding (`assertCollaboratorsAvailable` and `assertCollaboratorsAvailableForWindows` in `lib/collaborators/availability.ts`, called from `app/api/bookings/webinars/crud-with-plan/route.ts`, `app/api/bookings/classes/crud-with-plan/route.ts` and `utils/slotAllocation/SlotAllocationService.ts` — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
+2. **They cannot be double-booked by it.** When the host schedules a webinar or a class, the proposed windows are checked against every accepted co-host's confirmed commitments, and a clash is rejected with HTTP 409 rather than silently proceeding (`assertCollaboratorsAvailable` and `assertCollaboratorsAvailableForWindows` in `lib/collaborators/availability.ts`, called from `app/api/bookings/webinars/crud-with-plan/route.ts`, `app/api/bookings/classes/crud-with-plan/route.ts` and `utils/scheduling-engine/SchedulingService.ts` — see [01-architecture.md §5](./01-architecture.md#5-scheduling-with-enforced-co-host-availability)).
 
 ### What collaborators see
 
@@ -19,7 +19,7 @@ For webinar collaborations the card shows the event status badge and tentative i
 
 ### How it works
 
-On the backend, `getMyCollaborations` (`lib/collaborators/service.ts`) includes each plan's nested `webinars`/`classes` with their appointments and `slotsOfAppointment`, limited to the five most recent `SCHEDULED`/`IN_PROGRESS` events, plus the plan owner via `consultantProfile.user`. On the frontend, `InvitationsPanel` and the `ScheduleSummaries` components render the expandable schedule section and handle the empty states — no events yet, an event without a time slot, a class with no sessions.
+On the backend, `getMyCollaborations` (`lib/collaborators/service.ts`) includes each plan's nested `webinars`/`classes` with their appointments and `appointmentOccurrences`, limited to the five most recent `SCHEDULED`/`IN_PROGRESS` events, plus the plan owner via `consultantProfile.user`. On the frontend, `InvitationsPanel` and the `ScheduleSummaries` components render the expandable schedule section and handle the empty states — no events yet, an event without a time slot, a class with no sessions.
 
 The edge cases render as follows.
 

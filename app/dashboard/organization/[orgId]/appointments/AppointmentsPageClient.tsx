@@ -57,7 +57,7 @@ interface AppointmentRow {
   appointmentType: string;
   createdAt: string;
   organizationId: string | null;
-  slotsOfAppointment: AppointmentSlot[];
+  occurrences: AppointmentSlot[];
   consultation: {
     consultationPlan: { title: string };
     requestedBy: { user: { id: string; name: string | null; email: string } };
@@ -98,7 +98,7 @@ const APPOINTMENT_TYPES = [
   "CLASS",
 ] as const;
 
-/** SlotCompletionStatus, plus the derived TENTATIVE state. */
+/** OccurrenceCompletionStatus, plus the derived TENTATIVE state. */
 const STATUS_OPTIONS = [
   "SCHEDULED",
   "COMPLETED",
@@ -165,7 +165,7 @@ function displaySlot(slots: AppointmentSlot[]): AppointmentSlot | null {
 }
 
 function rowStatus(row: AppointmentRow): string {
-  const slot = displaySlot(row.slotsOfAppointment);
+  const slot = displaySlot(row.occurrences);
   if (!slot) return "—";
   // isTentative predates the RESCHEDULED enum value and still drives the
   // pending-reallocation state, so it takes precedence in display.
@@ -174,7 +174,7 @@ function rowStatus(row: AppointmentRow): string {
 }
 
 function rowSessionDate(row: AppointmentRow): string {
-  const slot = displaySlot(row.slotsOfAppointment);
+  const slot = displaySlot(row.occurrences);
   if (!slot) return "—";
   return new Date(slot.startsAt).toLocaleString("en-IN", {
     // Fixed IST, matching the member view and the compensation page.

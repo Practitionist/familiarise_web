@@ -12,8 +12,8 @@ import { AppointmentsType } from "@prisma/client";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { AllocationService } from "@/lib/scheduling/allocationService";
-import { TimeSlot } from "@/lib/scheduling/calendarUtils";
-import type { SlotConflictResult } from "@/utils/slotAllocation/types";
+import { CalendarInterval } from "@/lib/scheduling/calendarUtils";
+import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 
 // Slot with tentative status
 interface SlotWithStatus {
@@ -86,8 +86,8 @@ export function RequestedSlotsDialog({
           ? "subscription"
           : "consultation";
 
-      // Convert requested slots to TimeSlot objects
-      const timeSlots: TimeSlot[] = requestedSlots.map((slotString) => {
+      // Convert requested slots to CalendarInterval objects
+      const timeSlots: CalendarInterval[] = requestedSlots.map((slotString) => {
         const startTime = new Date(slotString);
         const endTime = new Date(startTime.getTime() + 30 * 60 * 1000); // 30 minutes later
         return {

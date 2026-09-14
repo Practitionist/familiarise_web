@@ -145,7 +145,7 @@ describe("cap messages carry the bucket", () => {
 
 describe("isPreservedAllocationMessage", () => {
   it("recognises the server's slot-conflict wording verbatim", () => {
-    // SlotAllocationService wraps SlotValidationService's error, so the whole
+    // SchedulingService wraps ScheduleValidationService's error, so the whole
     // string is what reaches the dialog.
     expect(
       isPreservedAllocationMessage(

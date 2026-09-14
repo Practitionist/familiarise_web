@@ -59,7 +59,7 @@ export async function checkActiveAppointments(
         webinarPlan: { consultantProfileId: consultantId },
         status: { in: ["SCHEDULED", "IN_PROGRESS"] },
         appointment: {
-          slotsOfAppointment: {
+          occurrences: {
             some: { startsAt: { gte: new Date() } },
           },
         },

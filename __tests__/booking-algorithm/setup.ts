@@ -12,7 +12,7 @@ if (typeof global.TextDecoder === "undefined") {
   (global as any).TextDecoder = TextDecoder;
 }
 
-// PR 2c — SlotAllocationService now imports lib/novu (allocation-time
+// PR 2c — SchedulingService now imports lib/novu (allocation-time
 // notification). @novu/node pulls undici's Request at import time, which the
 // Jest environment lacks; every suite that loads the allocator would fail to
 // even parse. The notification itself is fire-and-forget and asserted via

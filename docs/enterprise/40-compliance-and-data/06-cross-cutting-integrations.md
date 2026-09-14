@@ -38,7 +38,7 @@ flowchart TB
   subgraph BOOK["A · Booking plane"]
     APPT["Appointments<br/>Appointment.organizationId"]:::wired
     DOCR["Docs-for-review<br/>via Appointment"]:::wired
-    MEET["Stream meeting/recording<br/>MeetingSession.organizationId"]:::wired
+    MEET["Stream meeting/recording<br/>Meeting.organizationId"]:::wired
   end
 
   subgraph MONEY["B · Money plane"]
@@ -168,8 +168,8 @@ Each section also lists:
 
 ### A.4 Bookings — Stream meeting/video — 🟡 Partial → ✅ as of `#674` C.4
 
-- **Schema:** `MeetingSession.organizationId` (denorm, added in C.4 migration `20260528_meeting_session_organization_id_denorm`). `Recording.organizationId` already denormalized in PR `#655`.
-- **Code paths:** [`actions/stream/meetings/meeting.action.ts`](../../../actions/stream/meetings/meeting.action.ts) writes `organizationId` at create; [`app/api/organizations/[orgId]/stream/calls/route.ts`](../../../app/api/organizations/[orgId]/stream/calls/route.ts) indexes directly on `(organizationId, createdAt)` instead of joining through `SlotOfAppointment`.
+- **Schema:** `Meeting.organizationId` (denorm, added in C.4 migration `20260528_meeting_session_organization_id_denorm`). `Recording.organizationId` already denormalized in PR `#655`.
+- **Code paths:** [`actions/stream/meetings/meeting.action.ts`](../../../actions/stream/meetings/meeting.action.ts) writes `organizationId` at create; [`app/api/organizations/[orgId]/stream/calls/route.ts`](../../../app/api/organizations/[orgId]/stream/calls/route.ts) indexes directly on `(organizationId, createdAt)` instead of joining through `AppointmentOccurrence`.
 - **Org dashboard surface:** `/recordings`
 - **Why:** Org admins need audit + retention queries that are constant-time per page load. Network round-trips to Stream's `queryCalls` are too slow for a dashboard list view; the local join-free path is what makes the surface viable.
 - **Future work:** Stream transcription retention enforcement remains global; per-org retention only applies to recordings today.
@@ -334,7 +334,7 @@ Each section also lists:
 - **Why:** DMs are private 1:1 communication. Tagging them with org context creates a surveillance surface (org admins could query "DMs my members had with consultants"). Org-tagged consultation channels already cover the legitimate audit need.
 - **Future work:** none. Reopen only if a customer with a documented compliance requirement asks.
 
-### E.3 Stream video / MeetingSession — ✅ Wired (C.4)
+### E.3 Stream video / Meeting — ✅ Wired (C.4)
 
 See A.4. Recording retention sweeps per-org via `Organization.streamRecordingRetentionDays` in [`scripts/cleanup/cleanup-old-stream-recordings.ts`](../../../scripts/cleanup/cleanup-old-stream-recordings.ts).
 

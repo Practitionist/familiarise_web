@@ -12,6 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type { AppointmentFeedbackRole } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 
@@ -35,8 +36,7 @@ const recordingsSelect = {
 const slotsInclude = {
   orderBy: { startsAt: "asc" },
   include: {
-    user: userSelect,
-    meetingSession: {
+    meeting: {
       select: {
         id: true,
         endedAt: true,
@@ -53,6 +53,32 @@ const consultantProfileSelect = {
 
 const consulteeProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
+} as const;
+
+/**
+ * What a payer may read of their own row: the amount line, the rail it rode,
+ * and the receipt behind it. One Payment per attendee per appointment, so the
+ * host needs `userId` to put a status on each seat; attendees only ever
+ * receive their own rows (scopeAppointmentDetail).
+ */
+const paymentDisplaySelect = {
+  id: true,
+  amount: true,
+  currency: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  paymentGateway: true,
+  receiptUrl: true,
+  createdAt: true,
+  userId: true,
+  // #1365 — the buyer's tax invoice is the receipt; a link, not the row.
+  consumerInvoice: { select: { id: true } },
+  // `PaymentStatus` never reaches REFUNDED; the shown status is derived from
+  // the refunds that went through (lib/appointments/seat-payments.ts).
+  refunds: {
+    where: { deletedAt: null, status: "SUCCEEDED" as const },
+    select: { amountPaise: true },
+  },
 } as const;
 
 const collaboratorsInclude = {
@@ -103,7 +129,7 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      trialSession: {
+      trial: {
         include: {
           consulteeProfile: consulteeProfileSelect,
           subscriptionPlan: {
@@ -115,18 +141,21 @@ export async function readAppointmentDetail(appointmentId: string) {
       // booking must not receive gateway ids / tax internals.
       payment: {
         select: {
-          id: true,
-          amount: true,
-          currency: true,
-          paymentStatus: true,
-          createdAt: true,
+          ...paymentDisplaySelect,
           // #1428 — the tentative-hold deadline shown on the detail page;
           // without it a held slot has no way to say when it releases.
           expiresAt: true,
-          // One Payment per attendee per appointment: the host needs the
-          // payer to put a status on each seat. Attendees only ever receive
-          // their own rows (scopeAppointmentDetail).
-          userId: true,
+          // Which rail funded the row (lib/appointments/payment-display.ts):
+          // an org-funded booking shows its sponsor and no amount.
+          organizationId: true,
+          legs: { select: { source: true } },
+          // #775 — a CHARGE_MEMBER overage side-charge is the one co-pay a
+          // sponsored member pays themselves; it hangs off the booking
+          // payment with no appointmentId of its own.
+          childPayments: {
+            where: { deletedAt: null },
+            select: paymentDisplaySelect,
+          },
         },
       },
       organization: { select: { id: true, name: true } },
@@ -144,7 +173,7 @@ export async function readAppointmentDetail(appointmentId: string) {
           expiresAt: true,
           initiatorRole: true,
           initiatedById: true,
-          proposedSlots: {
+          proposedTimes: {
             orderBy: { startsAt: "asc" },
             // round: a COUNTERED request carries both rounds; the card must
             // show only the current offer.
@@ -152,26 +181,20 @@ export async function readAppointmentDetail(appointmentId: string) {
           },
         },
       },
-      slotsOfAppointment: slotsInclude,
+      occurrences: slotsInclude,
+      // #1554 — the roster: every live seat holder, with display fields.
+      participants: {
+        where: liveParticipant(),
+        select: { userId: true, role: true, user: userSelect },
+      },
     },
   });
 
   if (!appointment) return null;
 
-  // Whole-program timeline: sibling sessions of the same subscription/class.
-  const siblingWhere = appointment.subscriptionId
-    ? { subscriptionId: appointment.subscriptionId }
-    : appointment.classId
-      ? { classId: appointment.classId }
-      : null;
-  const siblings = siblingWhere
-    ? await prisma.appointment.findMany({
-        where: { ...siblingWhere, id: { not: appointment.id } },
-        include: { slotsOfAppointment: slotsInclude },
-      })
-    : [];
-
-  return toPlain({ appointment, siblings });
+  // #1554 — the whole programme is this one wrapper's occurrences; there are
+  // no sibling appointments to fetch.
+  return toPlain({ appointment });
 }
 
 export type TAppointmentDetail = NonNullable<
@@ -225,19 +248,41 @@ export function scopeAppointmentDetail<T extends TAppointmentDetail>(
   viewerUserId: string,
   privileged = false,
 ): T {
-  const { webinarId, classId } = detail.appointment;
-  if (!webinarId && !classId) return detail;
-  if (privileged || appointmentRaterRole(viewerUserId, detail) === "PROVIDER") {
-    return detail;
-  }
+  const { webinarId, classId, payment } = detail.appointment;
+  const isGroup = !!webinarId || !!classId;
+  const everySeat =
+    !isGroup ||
+    privileged ||
+    appointmentRaterRole(viewerUserId, detail) === "PROVIDER";
+  const rows = everySeat
+    ? payment
+    : payment.filter((p) => p.userId === viewerUserId);
   return {
     ...detail,
     appointment: {
       ...detail.appointment,
-      payment: detail.appointment.payment.filter(
-        (p) => p.userId === viewerUserId,
+      // A receipt is the buyer's document. The host may read a seat's status
+      // and amount; staff may fetch the invoice for a support case; nobody
+      // else carries a pointer to a document they cannot open.
+      payment: rows.map((p) =>
+        privileged || p.userId === viewerUserId ? p : withoutReceipt(p),
       ),
     },
+  };
+}
+
+type PaymentDisplayRow = TAppointmentDetail["appointment"]["payment"][number];
+
+function withoutReceipt(p: PaymentDisplayRow): PaymentDisplayRow {
+  return {
+    ...p,
+    receiptUrl: null,
+    consumerInvoice: null,
+    childPayments: p.childPayments.map((c) => ({
+      ...c,
+      receiptUrl: null,
+      consumerInvoice: null,
+    })),
   };
 }
 
@@ -246,17 +291,15 @@ function participantUserIds(detail: TAppointmentDetail) {
   const consulteeUserIds = [
     appointment.consultation?.requestedBy?.userId,
     appointment.subscription?.requestedBy?.userId,
-    appointment.trialSession?.consulteeProfile?.userId,
-    ...appointment.slotsOfAppointment.flatMap((slot) =>
-      slot.user.map((u) => u.id),
-    ),
+    appointment.trial?.consulteeProfile?.userId,
+    ...appointment.participants.map((seat) => seat.userId),
   ];
   const consultantUserIds = [
     appointment.consultation?.consultationPlan?.consultantProfile?.userId,
     appointment.subscription?.subscriptionPlan?.consultantProfile?.userId,
     appointment.webinar?.webinarPlan?.consultantProfile?.userId,
     appointment.class?.classPlan?.consultantProfile?.userId,
-    appointment.trialSession?.subscriptionPlan?.consultantProfile?.userId,
+    appointment.trial?.subscriptionPlan?.consultantProfile?.userId,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.userId,
     ),
@@ -268,8 +311,8 @@ function participantUserIds(detail: TAppointmentDetail) {
 }
 export type TDetailAppointment = TAppointmentDetail["appointment"];
 export type TDetailRecording =
-  TDetailAppointment["slotsOfAppointment"][number] extends {
-    meetingSession: infer M;
+  TDetailAppointment["occurrences"][number] extends {
+    meeting: infer M;
   }
     ? M extends { recordings: Array<infer R> } | null
       ? R

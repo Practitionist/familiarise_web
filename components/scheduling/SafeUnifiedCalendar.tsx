@@ -8,7 +8,7 @@ import { SlotStatusLegend } from "./SlotStatusLegend";
 import {
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
-} from "@/lib/scheduling/slot-status-tokens";
+} from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
 
 const UnifiedCalendar = dynamic(
@@ -28,7 +28,7 @@ const UnifiedCalendar = dynamic(
  * whether it was bookable. Putting the legend here rather than inside
  * UnifiedCalendar means every caller gets it and none can forget it.
  *
- * UnifiedCalendar itself is code-split here so SlotPicker / allocate /
+ * UnifiedCalendar itself is code-split here so TimePicker / allocate /
  * reschedule routes do not pay the calendar module on first paint of the
  * surrounding page chrome.
  */

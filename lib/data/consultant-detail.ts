@@ -31,11 +31,9 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       id: true,
       description: true,
       experience: true,
-      // The raw `rating` mean is INTERNAL (CONSULTANT_INTERNAL_SCORE_FIELDS)
-      // and is not selected into public client props; the profile shows the
-      // two published scores below.
-      publishedRating: true,
-      reviewCount: true,
+      // #1554 — the visible review count, live rows only; the blended
+      // `reviewCount` column is gone with the reset.
+      _count: { select: { reviews: { where: { deletedAt: null } } } },
       // #1300 (ADR 29) — the two tracks the profile shows side by side. A
       // twelve-session 1:1 engagement and a 200-seat webinar are different
       // products, and one blended number tells a buyer of either one nothing.
@@ -52,7 +50,7 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       languages: true,
       toolsAndTechnologies: true,
       mentoringStyle: true,
-      sessionTypes: true,
+      offeringFormats: true,
       profileCompletionPercentage: true,
       isVerified: true,
       verificationStatus: true,
@@ -91,8 +89,8 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       domain: true,
       subDomains: true,
       tags: true,
-      slotsOfAvailabilityWeekly: true,
-      slotsOfAvailabilityCustom: true,
+      availabilityWindowsWeekly: true,
+      availabilityWindowsCustom: true,
       consultationPlans: true,
       subscriptionPlans: {
         include: {
@@ -135,7 +133,7 @@ export const getConsultantReviews = cache(
       // #1300 — the ALLOWLIST, not a bare `include`. `sanitisePublicReviews` only
       // strips the anonymous reviewer and a removed reply; swapping the sanitiser
       // while leaving the projection wide still shipped `removedBy`,
-      // `revisionNo`, `ratedSessionAt` and the reviewer's whole ConsulteeProfile
+      // `revisionNo`, `ratedOccurrenceAt` and the reviewer's whole ConsulteeProfile
       // row into this page's client props.
       select: publicReviewSelect,
       orderBy: { rating: "desc" },

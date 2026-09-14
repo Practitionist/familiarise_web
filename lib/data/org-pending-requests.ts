@@ -64,7 +64,7 @@ export async function readOrgPendingRequests(
     prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.PENDING,
-        appointments: { some: orgPin },
+        appointment: orgPin,
       },
       select: {
         id: true,

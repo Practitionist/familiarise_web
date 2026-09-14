@@ -34,7 +34,7 @@ import {
   AppointmentStatus,
   CancellationReason,
   PaymentStatus,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
   SupportIssueType,
 } from "@prisma/client";
 import {
@@ -54,7 +54,7 @@ import {
   NO_SHOW_GRACE_MINUTES,
   attendedAnySession,
   classifyConsultantAttendance,
-  meetingSessionsOf,
+  meetingsOf,
 } from "@/lib/booking/attendance";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -94,7 +94,7 @@ export async function detectConsultantNoShows(): Promise<NoShowResult> {
 
 // Candidate consultations: still active (not already cancelled/completed),
 // paid, whose slots have all ended past the grace window and where a
-// MeetingSession actually happened (the call took place — a precondition for
+// Meeting actually happened (the call took place — a precondition for
 // "the consultee showed up but the consultant didn't").
 function findNoShowCandidates(graceCutoff: Date) {
   return prisma.consultation.findMany({
@@ -112,11 +112,11 @@ function findNoShowCandidates(graceCutoff: Date) {
             deletedAt: null,
           },
         },
-        slotsOfAppointment: {
+        occurrences: {
           every: { endsAt: { lt: graceCutoff } },
           some: {
             endsAt: { lt: graceCutoff },
-            meetingSession: { isNot: null },
+            meeting: { isNot: null },
           },
         },
       },
@@ -143,9 +143,9 @@ function findNoShowCandidates(graceCutoff: Date) {
               paymentStatus: true,
             },
           },
-          slotsOfAppointment: {
+          occurrences: {
             include: {
-              meetingSession: {
+              meeting: {
                 include: { attendances: { select: { userId: true } } },
               },
             },
@@ -188,7 +188,7 @@ function evaluateConsultantNoShow(
 
   // Presence across every session tied to this booking's slots.
   const verdict = classifyConsultantAttendance(
-    consultation.appointment?.slotsOfAppointment ?? [],
+    consultation.appointment?.occurrences ?? [],
     { consultantUserId, consulteeUserId },
   );
   if (verdict !== "consultant-absent") return null;
@@ -219,8 +219,8 @@ export async function refusalFromStreamEvidence(
   consultation: NoShowCandidate,
   lookup: PresenceLookup = makePresenceLookup(),
 ): Promise<string | null> {
-  const callIds = (consultation.appointment?.slotsOfAppointment ?? [])
-    .map((slot) => slot.meetingSession?.streamCallId)
+  const callIds = (consultation.appointment?.occurrences ?? [])
+    .map((slot) => slot.meeting?.streamCallId)
     .filter((id): id is string => !!id);
 
   if (callIds.length === 0) return "no Stream call on any slot";
@@ -336,9 +336,7 @@ export async function detectBothAbsent(
       const consulteeUserId = consultation.requestedBy?.userId;
       if (!consultantUserId || !consulteeUserId) continue;
 
-      const sessions = meetingSessionsOf(
-        consultation.appointment?.slotsOfAppointment ?? [],
-      );
+      const sessions = meetingsOf(consultation.appointment?.occurrences ?? []);
       if (sessions.length === 0) continue;
 
       const anyoneJoined =
@@ -438,17 +436,17 @@ async function claimConsultantNoShow(
         },
       });
 
-      await tx.slotOfAppointment.updateMany({
+      await tx.appointmentOccurrence.updateMany({
         where: {
           appointmentId,
           completionStatus: {
             in: [
-              SlotCompletionStatus.SCHEDULED,
-              SlotCompletionStatus.UNVERIFIED,
+              OccurrenceCompletionStatus.SCHEDULED,
+              OccurrenceCompletionStatus.UNVERIFIED,
             ],
           },
         },
-        data: { completionStatus: SlotCompletionStatus.CANCELLED },
+        data: { completionStatus: OccurrenceCompletionStatus.CANCELLED },
       });
     });
   } catch (error) {

@@ -43,10 +43,8 @@ export default async function AppointmentDetailPage({
   const owns =
     appointment.consultation?.requestedBy?.id === consulteeId ||
     appointment.subscription?.requestedBy?.id === consulteeId ||
-    appointment.trialSession?.consulteeProfile?.id === consulteeId ||
-    appointment.slotsOfAppointment.some((slot) =>
-      slot.user.some((u) => u.id === profile.userId),
-    );
+    appointment.trial?.consulteeProfile?.id === consulteeId ||
+    appointment.participants.some((seat) => seat.userId === profile.userId);
   if (!owns) notFound();
 
   const queryClient = new QueryClient();

@@ -5,7 +5,10 @@ import { notFound } from "next/navigation";
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { Badge } from "@/components/ui/badge";
-import { allowsManageTimings, upcomingSlots } from "@/lib/appointments/slots";
+import {
+  allowsManageTimings,
+  upcomingOccurrences,
+} from "@/lib/appointments/occurrences";
 import { readAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   readManageTimingsTarget,
@@ -19,7 +22,7 @@ import { ManageTimingsClient } from "./ManageTimingsClient";
 
 /**
  * The consultant setting the times of their own event instance — the fourth
- * caller of the shared slot-picker surface, and the one `SlotPicker` was
+ * caller of the shared slot-picker surface, and the one `TimePicker` was
  * generalised FROM. It stayed a dialog the longest because nothing here felt
  * per-appointment enough to deserve a URL; cramped on a real calendar grid
  * regardless, so it gets the same page treatment as the other three.
@@ -59,13 +62,11 @@ async function manageTimingsAllowed(
 
   const detail = await loadDetail(appointmentId);
   if (!detail) return false;
-  // Program-wide, same as the menu's group card: a subscription session is one
-  // Appointment among several and any of them may carry the committed time.
-  const slots = [
-    ...detail.appointment.slotsOfAppointment,
-    ...detail.siblings.flatMap((sibling) => sibling.slotsOfAppointment),
-  ];
-  return allowsManageTimings(kind, upcomingSlots(slots));
+  // #1554 — the wrapper's rows are the whole programme.
+  return allowsManageTimings(
+    kind,
+    upcomingOccurrences(detail.appointment.occurrences),
+  );
 }
 
 /**

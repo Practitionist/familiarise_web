@@ -84,7 +84,6 @@ export const impossibleCases: ValidationTestCase[] = [
         data: {
           userId: user.id,
           domainId: "non-existent-domain-id-12345", // Invalid FK
-          rating: 4.5,
           experience: 5,
           scheduleType: "WEEKLY",
         },
@@ -103,9 +102,10 @@ export const impossibleCases: ValidationTestCase[] = [
     category: "constraint",
     expectedError: "Foreign key constraint failed",
     execute: async () => {
-      await prisma.slotOfAppointment.create({
+      await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: "non-existent-appointment-id",
+          ordinal: 1,
           startsAt: new Date(),
           endsAt: new Date(Date.now() + 3600000),
           isTentative: false,
@@ -222,11 +222,13 @@ export const impossibleCases: ValidationTestCase[] = [
         },
       });
 
+      // #1554 — the profile's blended `rating` column is gone; the invalid
+      // value now targets the published 1:1 score the recompute writes.
       await prisma.consultantProfile.create({
         data: {
           userId: user.id,
           domainId: domain.id,
-          rating: 10.0, // Invalid rating > 5
+          publishedRatingOneToOne: 10.0, // Invalid rating > 5
           experience: 5,
           scheduleType: "WEEKLY",
         },
@@ -256,9 +258,10 @@ export const impossibleCases: ValidationTestCase[] = [
       const appointment = await prisma.appointment.findFirst();
       if (!appointment) throw new Error("No appointment found for test");
 
-      await prisma.slotOfAppointment.create({
+      await prisma.appointmentOccurrence.create({
         data: {
           appointmentId: appointment.id,
+          ordinal: 99,
           startsAt: new Date("2025-01-15T14:00:00Z"),
           endsAt: new Date("2025-01-15T10:00:00Z"), // Before start - should fail
           isTentative: false,
@@ -277,7 +280,7 @@ export const impossibleCases: ValidationTestCase[] = [
       if (!consultant) throw new Error("No consultant found for test");
 
       // Create first slot (9:00-12:00 UTC = 540-720 minutes since midnight)
-      await prisma.slotOfAvailabilityWeekly.create({
+      await prisma.availabilityWindowWeekly.create({
         data: {
           consultantProfileId: consultant.id,
           startDay: "MONDAY",
@@ -288,7 +291,7 @@ export const impossibleCases: ValidationTestCase[] = [
       });
 
       // Create overlapping slot (10:00-14:00 UTC = 600-840 minutes since midnight)
-      await prisma.slotOfAvailabilityWeekly.create({
+      await prisma.availabilityWindowWeekly.create({
         data: {
           consultantProfileId: consultant.id,
           startDay: "MONDAY",

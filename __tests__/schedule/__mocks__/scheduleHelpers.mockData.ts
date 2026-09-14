@@ -31,7 +31,7 @@ export const mockEvents: EventWithType[] = [
       {
         id: "appointment-1",
         appointmentType: "SUBSCRIPTION",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "slot-1",
             startsAt: new Date("2024-12-30T13:00:00Z"),
@@ -81,7 +81,7 @@ export const mockEvents: EventWithType[] = [
       {
         id: "appointment-2",
         appointmentType: "CLASS",
-        slotsOfAppointment: [
+        occurrences: [
           {
             id: "slot-2",
             startsAt: new Date("2024-12-18T15:00:00Z"),
@@ -150,7 +150,7 @@ export const mockEvents: EventWithType[] = [
     appointment: {
       id: "appointment-3",
       appointmentType: "CONSULTATION",
-      slotsOfAppointment: [],
+      occurrences: [],
       payment: [],
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -198,7 +198,7 @@ export const pastEvent: EventWithType = {
       id: "past-appt",
       appointmentType: "CLASS",
       payment: [],
-      slotsOfAppointment: [
+      occurrences: [
         {
           id: "past-slot-1",
           startsAt: new Date("2024-11-01T10:00:00Z"),

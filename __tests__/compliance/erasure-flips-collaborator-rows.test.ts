@@ -37,6 +37,10 @@ const tx = {
   },
   session: { deleteMany: jest.fn(async () => ({ count: 0 })) },
   account: { deleteMany: jest.fn(async () => ({ count: 0 })) },
+  // #1593 — the outbox: the request being processed and the rows the scrub
+  // writes for it inside the transaction.
+  erasureRequest: { findFirst: jest.fn(async () => ({ id: "er-1" })) },
+  streamRevocationRetry: { createMany: jest.fn(async () => ({ count: 1 })) },
 };
 const db = {
   user: {
@@ -47,8 +51,11 @@ const db = {
     })),
   },
   membership: { findMany: jest.fn(async () => []) },
+  streamRevocationRetry: { update: jest.fn(async () => ({})) },
   $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) => fn(tx)),
 };
+
+beforeEach(() => jest.clearAllMocks());
 
 describe("DPDP erasure flips collaborator rows", () => {
   it("moves PENDING/ACCEPTED rows to REMOVED in the transaction and revokes each plan after it", async () => {
@@ -69,6 +76,37 @@ describe("DPDP erasure flips collaborator rows", () => {
       "wp-1",
       "u1",
       { notify: false },
+    );
+  });
+
+  it("writes the outbox row inside the transaction and settles it after the attempt (#1593)", async () => {
+    // The revocation fails this time: the row was already durable before the
+    // attempt, and is left FAILED with its first retry slot for the sweep.
+    (revokeCollaboratorAccess as jest.Mock).mockResolvedValueOnce({
+      success: false,
+    });
+
+    await scrubUser(db as never, "u1");
+
+    expect(tx.streamRevocationRetry.createMany).toHaveBeenCalledWith({
+      data: [{ erasureRequestId: "er-1", planType: "WEBINAR", planId: "wp-1" }],
+      skipDuplicates: true,
+    });
+    expect(db.streamRevocationRetry.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          erasureRequestId_planType_planId: {
+            erasureRequestId: "er-1",
+            planType: "WEBINAR",
+            planId: "wp-1",
+          },
+        },
+        data: expect.objectContaining({
+          status: "FAILED",
+          attempts: 1,
+          nextRetryAt: expect.any(Date),
+        }),
+      }),
     );
   });
 });

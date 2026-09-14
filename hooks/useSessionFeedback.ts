@@ -1,24 +1,16 @@
 /**
- * #705 / #1540 — this viewer's per-call ratings for a whole BOOKING, keyed by slot.
+ * The timeline's per-call feedback for one booking, in ONE request (#1540).
  *
- * ONE request, not one per child appointment. The sessions of a subscription each
- * belong to a different child `Appointment`, and this hook used to fan out a
- * request per id through `useQueries` — up to 25 for one booking, each of them
- * re-authorizing and re-reading the appointment graph, so rendering a single page
- * cost roughly a hundred Prisma operations. Under `PG_POOL_MAX=1` on Netlify every
- * one of those serialises, so the parallelism `useQueries` appeared to buy did not
- * exist at the database.
- *
- * `scope=booking` widens the server's answer to the booking and its siblings, which
- * costs it no extra query because the authorization it already performed had loaded
- * them.
+ * #1554 — a booking is one `Appointment` carrying every call as an occurrence
+ * row, so one read covers the whole timeline; `scope=booking` is kept on the
+ * URL for the server's older callers and reads the same row.
  */
 
 import { useQuery } from "@tanstack/react-query";
 import { throwSupportError } from "@/lib/support/error-copy";
 
 interface SlotFeedback {
-  slotOfAppointmentId: string | null;
+  appointmentOccurrenceId: string | null;
   rating: number;
 }
 
@@ -75,11 +67,11 @@ export function useSessionFeedback(
       // the group score.
       const bySlot = new Map<string, { total: number; n: number }>();
       for (const r of rows) {
-        if (!r.slotOfAppointmentId) continue;
-        const acc = bySlot.get(r.slotOfAppointmentId) ?? { total: 0, n: 0 };
+        if (!r.appointmentOccurrenceId) continue;
+        const acc = bySlot.get(r.appointmentOccurrenceId) ?? { total: 0, n: 0 };
         acc.total += r.rating;
         acc.n += 1;
-        bySlot.set(r.slotOfAppointmentId, acc);
+        bySlot.set(r.appointmentOccurrenceId, acc);
       }
       return {
         ratings: Object.fromEntries(

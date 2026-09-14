@@ -1,7 +1,7 @@
 // Structured Postgres-error predicates: pins the SQLSTATE detection and the
 // quarantined exclusion-constraint text fallback (Prisma's unmodelled-constraint
 // gap, prisma/prisma#25562). Replaces the message-substring matching that used
-// to live inline in SlotAllocationService.classifyError.
+// to live inline in SchedulingService.classifyError.
 import { isUniqueViolation, isExclusionViolation } from "@/lib/db/pg-errors";
 
 describe("pg-errors predicates", () => {
@@ -35,7 +35,7 @@ describe("pg-errors predicates", () => {
       expect(
         isExclusionViolation({
           message:
-            'conflicting key value violates exclusion constraint "slot_no_confirmed_overlap"',
+            'conflicting key value violates exclusion constraint "occurrence_no_confirmed_overlap"',
         }),
       ).toBe(true);
     });

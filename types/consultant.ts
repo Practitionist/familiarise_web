@@ -6,8 +6,8 @@ import { Prisma } from "@prisma/client";
  *
  * @typedef {Object} TConsultantProfile
  * @property {Object} user - The user associated with this consultant profile.
- * @property {Object[]} slotOfAvailabilityWeekly - Weekly availability slots for recurring schedules.
- * @property {Object[]} slotOfAvailabilityCustom - Custom availability slots for flexible scheduling.
+ * @property {Object[]} availabilityWindowWeekly - Weekly availability slots for recurring schedules.
+ * @property {Object[]} availabilityWindowCustom - Custom availability slots for flexible scheduling.
  * @property {Object[]} consultationPlans - Consultation plans offered by the consultant.
  * @property {Object[]} subscriptionPlans - Subscription plans offered by the consultant.
  * @property {Object[]} webinarPlans - Webinar plans offered by the consultant.
@@ -20,8 +20,8 @@ export type TConsultantProfile = Prisma.ConsultantProfileGetPayload<{
     domain: true;
     subDomains: true;
     tags: true;
-    slotsOfAvailabilityWeekly: true;
-    slotsOfAvailabilityCustom: true;
+    availabilityWindowsWeekly: true;
+    availabilityWindowsCustom: true;
     consultationPlans: true;
     subscriptionPlans: {
       include: {

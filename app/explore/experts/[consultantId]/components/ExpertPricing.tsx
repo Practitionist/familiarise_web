@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
-import { TSlotTiming } from "@/types/slots";
+import { TIntervalTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ConsultationPricingToggle from "./ConsultationPricingToggle";
 import SubscriptionPricingToggle from "./SubscriptionPricingToggle";
@@ -40,9 +40,9 @@ interface ExpertPricingProps {
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
   renderCalendar: () => JSX.Element[];
-  slotTimings: TSlotTiming[];
-  selectedSlot: TSlotTiming | null;
-  setSelectedSlot: (slot: TSlotTiming | null) => void;
+  slotTimings: TIntervalTiming[];
+  selectedSlot: TIntervalTiming | null;
+  setSelectedSlot: (slot: TIntervalTiming | null) => void;
   timezone: string;
   autoOpenTrial?: boolean;
   onRefreshSlots?: () => void;

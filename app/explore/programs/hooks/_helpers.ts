@@ -10,9 +10,7 @@ import type {
 } from "@/lib/explore/programs";
 
 interface WebinarWithAppointment {
-  appointment?: {
-    slotsOfAppointment?: { user?: { id: string }[] }[];
-  } | null;
+  appointment?: { participants?: { userId: string }[] } | null;
 }
 
 export interface ClassPlanApiItem {

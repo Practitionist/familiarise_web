@@ -20,7 +20,7 @@ The table below lists the files the reviews subsystem is built from.
 
 | File                                                   | Purpose                                                                                                                                      |
 | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib/reviews.ts`                                       | The scoring constants, `heldSlot`, `trackForAppointment`, `recomputeConsultantRating`, `computePlatformPriors`, eligibility                  |
+| `lib/reviews.ts`                                       | The scoring constants, `heldOccurrence`, `trackForAppointment`, `recomputeConsultantRating`, `computePlatformPriors`, eligibility                  |
 | `lib/reviews-display.ts`                               | `displayedScore` and `displayedScoreCount`, safe to import from a client component                                                           |
 | `lib/data/review-public.ts`                            | `publicReviewSelect`, the one projection every public read uses, and `sanitisePublicReview`                                                  |
 | `lib/data/review-privacy.ts`                           | `stripAnonymousReviewer`                                                                                                                     |

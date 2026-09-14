@@ -14,12 +14,12 @@ export default function MessagesTab() {
   // Connection state from the Stream provider: render the chat UI only once
   // the chat client is live; surface failures instead of a blank box (same
   // contract as the consultant Chats tab).
-  const { chatConnected, error, retryConnection } = useStreamConnection();
+  const { chatConnected, failure, retryConnection } = useStreamConnection();
 
   return (
     <div className="-m-4 h-dashboard-fill overflow-hidden border-border bg-card sm:-m-6 lg:-m-8">
-      {error ? (
-        <ChatUnavailable description={error} onRetry={retryConnection} />
+      {failure ? (
+        <ChatUnavailable failure={failure} onRetry={retryConnection} />
       ) : chatConnected ? (
         <StreamChatScope>
           <ChatLayout />

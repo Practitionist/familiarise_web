@@ -37,8 +37,8 @@ import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appo
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
 import { cleanupStalePendingConsultations } from "@/scripts/appointments/cleanup-stale-pending-consultations";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
-import { cleanupTentativeSlots } from "@/scripts/appointments/cleanup-tentative-slots";
-import { reconcileSlotAvailability } from "@/scripts/appointments/reconcile-slot-availability";
+import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
+import { reconcileOccurrenceAvailability } from "@/scripts/appointments/reconcile-occurrence-availability";
 
 // Payouts — FIX #620: Use canonical service for batch/process (has distributed locking).
 // Keep handleStuckPayouts and reconcilePayoutStatus from scripts (no canonical lib equivalent yet).
@@ -294,8 +294,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "tentative-slots": async () => {
-    const result = await cleanupTentativeSlots();
+  "tentative-occurrences": async () => {
+    const result = await cleanupTentativeOccurrences();
     return {
       success: result.success,
       slotsReleased: result.slotsReleased,
@@ -325,8 +325,8 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       errorCount: result.errors.length,
     };
   },
-  "reconcile-slot-availability": async () => {
-    const result = await reconcileSlotAvailability();
+  "reconcile-occurrence-availability": async () => {
+    const result = await reconcileOccurrenceAvailability();
     return {
       success: result.success,
       tentativeFlagsCleared: result.tentativeFlagsCleared,

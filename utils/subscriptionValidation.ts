@@ -1,13 +1,10 @@
 import type { PrismaLike } from "@/lib/prisma";
 import { isWithinInterval } from "date-fns";
-import { SlotCalculationService } from "@/utils/slotAllocation/SlotCalculationService";
-import { OCCUPIED_REQUEST_STATUSES } from "@/utils/slotAllocation/occupancyPolicy";
+import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPolicy";
 
-type AppointmentSlotRecord = { startsAt: Date };
-type AppointmentWithSlots = {
-  id: string;
-  slotsOfAppointment: AppointmentSlotRecord[];
-};
+/** One live occurrence of the subscription's wrapper (#1554): one call. */
+type ExistingOccurrence = { id: string; startsAt: Date };
 
 interface WeeklyCallInfo {
   weekStart: Date;
@@ -58,6 +55,7 @@ export class SubscriptionValidationService {
     subscriptionId: string,
     proposedSlots: string[],
     excludeAppointmentIds: string[] = [],
+    excludeOccurrenceIds: string[] = [],
   ): Promise<SubscriptionValidationResult> {
     // Get subscription details
     const subscription = await this.prisma.subscription.findUnique({
@@ -81,11 +79,11 @@ export class SubscriptionValidationService {
     // scheduling timezone (column default Asia/Kolkata).
     const schedulingTimezone =
       subscription.schedulingTimezone ??
-      SlotCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
+      ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
     const proposedSlotDates = proposedSlots.map((slot) => new Date(slot));
 
     // FIXED: Use the correct Sunday-to-Saturday week counting logic
-    const exactWeeks = SlotCalculationService.countWeeks(
+    const exactWeeks = ScheduleCalculationService.countWeeks(
       subscription.schedulingPeriodStartsAt,
       subscription.schedulingPeriodEndsAt,
     );
@@ -116,15 +114,16 @@ export class SubscriptionValidationService {
       result.errors.push(...subscriptionPeriodValid.errors);
     }
 
-    // Get existing appointments for this subscription
-    const existingAppointments = await this.getExistingSubscriptionAppointments(
+    // Get the existing calls for this subscription
+    const existingOccurrences = await this.getExistingSubscriptionOccurrences(
       subscriptionId,
       excludeAppointmentIds,
+      excludeOccurrenceIds,
     );
 
-    // Group existing appointments by week
-    const existingCallsByWeek = this.groupAppointmentsByWeek(
-      existingAppointments,
+    // Group existing calls by week
+    const existingCallsByWeek = this.groupOccurrencesByWeek(
+      existingOccurrences,
       schedulingTimezone,
     );
 
@@ -204,57 +203,48 @@ export class SubscriptionValidationService {
   }
 
   /**
-   * Gets existing appointments for a subscription
+   * The subscription's existing calls: live occurrence rows on its wrapper,
+   * minus the rows (or wrappers) the caller is replacing (#1554).
    */
-  private async getExistingSubscriptionAppointments(
+  private async getExistingSubscriptionOccurrences(
     subscriptionId: string,
     excludeAppointmentIds: string[] = [],
-  ): Promise<AppointmentWithSlots[]> {
-    return await this.prisma.appointment.findMany({
+    excludeOccurrenceIds: string[] = [],
+  ): Promise<ExistingOccurrence[]> {
+    return await this.prisma.appointmentOccurrence.findMany({
       where: {
-        subscriptionId,
-        id: {
-          notIn: excludeAppointmentIds,
-        },
-        // FIX Bug #15: Use centralized occupancy statuses for consistency
-        subscription: {
-          status: {
-            in: OCCUPIED_REQUEST_STATUSES,
+        id: { notIn: excludeOccurrenceIds },
+        deletedAt: null,
+        completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
+        appointment: {
+          subscriptionId,
+          id: { notIn: excludeAppointmentIds },
+          // FIX Bug #15: Use centralized occupancy statuses for consistency
+          subscription: {
+            status: {
+              in: OCCUPIED_REQUEST_STATUSES,
+            },
           },
         },
       },
-      include: {
-        slotsOfAppointment: true,
-      },
+      select: { id: true, startsAt: true },
     });
   }
 
   /**
-   * Groups appointments by week, counting each appointment as one call.
+   * Groups calls by week, counting each occurrence row as one call.
    */
-  private groupAppointmentsByWeek(
-    appointments: AppointmentWithSlots[],
+  private groupOccurrencesByWeek(
+    occurrences: ExistingOccurrence[],
     schedulingTimezone: string,
   ): Map<string, number> {
     const weeklyCallCount = new Map<string, number>();
 
-    for (const appointment of appointments) {
-      if (appointment.slotsOfAppointment.length === 0) continue;
-
-      // FIX: Previously iterated over each slot and incremented by 1 per slot.
-      // A 1-hour session (2 slots) was counted as 2 calls instead of 1.
-      // Now counts each appointment as 1 call using the earliest slot's week.
-      const firstSlot = appointment.slotsOfAppointment.reduce(
-        (earliest, slot) =>
-          new Date(slot.startsAt) < new Date(earliest.startsAt)
-            ? slot
-            : earliest,
-      );
-      const weekKey = SlotCalculationService.weekKey(
-        new Date(firstSlot.startsAt),
+    for (const occurrence of occurrences) {
+      const weekKey = ScheduleCalculationService.weekKey(
+        new Date(occurrence.startsAt),
         schedulingTimezone,
       );
-
       weeklyCallCount.set(weekKey, (weeklyCallCount.get(weekKey) || 0) + 1);
     }
 
@@ -275,7 +265,7 @@ export class SubscriptionValidationService {
     // matches the client's dayKey bucketing).
     const slotsByDay = new Map<string, Date[]>();
     for (const slotDate of slotDates) {
-      const dayKey = SlotCalculationService.dayKey(
+      const dayKey = ScheduleCalculationService.dayKey(
         slotDate,
         schedulingTimezone,
       );
@@ -287,11 +277,11 @@ export class SubscriptionValidationService {
 
     const getWeekString = (date: Date): string =>
       // Must match the key format used by generateWeeklyInfo and
-      // groupAppointmentsByWeek — all three use SlotCalculationService.weekKey.
-      SlotCalculationService.weekKey(date, schedulingTimezone);
+      // groupAppointmentsByWeek — all three use ScheduleCalculationService.weekKey.
+      ScheduleCalculationService.weekKey(date, schedulingTimezone);
 
     // FIX: Use 1-second tolerance for floating-point precision issues
-    // Matches SlotValidationService behavior for consistency
+    // Matches ScheduleValidationService behavior for consistency
     // WHY: Date arithmetic and timezone conversions can introduce sub-second precision errors
     const TOLERANCE_MS = 1000; // 1 second tolerance
 
@@ -382,7 +372,7 @@ export class SubscriptionValidationService {
     let weekCount = 0;
 
     const weeklyInfo: WeeklyCallInfo[] = [];
-    let currentWeek = SlotCalculationService.startOfWeekSundayInTz(
+    let currentWeek = ScheduleCalculationService.startOfWeekSundayInTz(
       subscriptionStart,
       schedulingTimezone,
     );
@@ -401,12 +391,12 @@ export class SubscriptionValidationService {
 
       // Next Sunday 00:00 in the scheduling timezone; +8 days then normalize
       // stays correct across DST transitions.
-      const nextWeek = SlotCalculationService.startOfWeekSundayInTz(
+      const nextWeek = ScheduleCalculationService.startOfWeekSundayInTz(
         new Date(currentWeek.getTime() + 8 * 24 * 60 * 60 * 1000),
         schedulingTimezone,
       );
       const weekEnd = new Date(nextWeek.getTime() - 1);
-      const weekKey = SlotCalculationService.weekKey(
+      const weekKey = ScheduleCalculationService.weekKey(
         currentWeek,
         schedulingTimezone,
       );
@@ -521,11 +511,11 @@ export function getSubscriptionWeek(
   subscriptionStartDate: Date,
   schedulingTimezone?: string,
 ): number {
-  const weekStart = SlotCalculationService.startOfWeekSundayInTz(
+  const weekStart = ScheduleCalculationService.startOfWeekSundayInTz(
     subscriptionStartDate,
     schedulingTimezone,
   );
-  const targetWeekStart = SlotCalculationService.startOfWeekSundayInTz(
+  const targetWeekStart = ScheduleCalculationService.startOfWeekSundayInTz(
     targetDate,
     schedulingTimezone,
   );

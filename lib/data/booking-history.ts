@@ -143,10 +143,10 @@ export async function getBookingTimeline(
       subscriptionId: true,
       webinarId: true,
       classId: true,
-      trialSession: { select: { id: true } },
+      trial: { select: { id: true } },
       // Every slot, including the CANCELLED and RESCHEDULED tombstones: a
       // released slot is exactly what the operator came here to see.
-      slotsOfAppointment: { select: { id: true } },
+      occurrences: { select: { id: true } },
       rescheduleRequests: {
         select: {
           id: true,
@@ -159,7 +159,7 @@ export async function getBookingTimeline(
           // Allow-list, not `include`: the initiator is a person, so the
           // select stops at id and name (#946).
           initiatedBy: { select: { id: true, name: true } },
-          _count: { select: { proposedSlots: true } },
+          _count: { select: { proposedTimes: true } },
         },
         orderBy: { createdAt: "desc" },
       },
@@ -178,10 +178,10 @@ export async function getBookingTimeline(
     { entity: "SUBSCRIPTION", ids: [appointment.subscriptionId] },
     { entity: "WEBINAR", ids: [appointment.webinarId] },
     { entity: "CLASS", ids: [appointment.classId] },
-    { entity: "TRIAL", ids: [appointment.trialSession?.id] },
+    { entity: "TRIAL", ids: [appointment.trial?.id] },
     {
-      entity: "SLOT",
-      ids: appointment.slotsOfAppointment.map((slot) => slot.id),
+      entity: "OCCURRENCE",
+      ids: appointment.occurrences.map((slot) => slot.id),
     },
     {
       entity: "RESCHEDULE_REQUEST",
@@ -255,7 +255,7 @@ export async function getBookingTimeline(
         ? { id: request.initiatedBy.id, name: request.initiatedBy.name }
         : null,
       createdAt: request.createdAt.toISOString(),
-      proposedSlotCount: request._count.proposedSlots,
+      proposedSlotCount: request._count.proposedTimes,
       round: request.round,
       initiatorRole: request.initiatorRole,
       resolvedAt: request.resolvedAt ? request.resolvedAt.toISOString() : null,

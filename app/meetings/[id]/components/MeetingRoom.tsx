@@ -157,7 +157,7 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
     useCallStateHooks();
 
   // Get recording info for this meeting
-  const { meetingSessionId, recordingEnabled } = useMeetingRecording(call?.id);
+  const { meetingId, recordingEnabled } = useMeetingRecording(call?.id);
 
   const callingState = useCallCallingState();
   const callEndedAt = useCallEndedAt();
@@ -165,7 +165,7 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
 
   // #1134 — Stream's default disconnection timeout is 0, i.e. a participant
   // whose connection dies stays in the call indefinitely and never emits
-  // `call.session_participant_left`. That is where the 1,417 MeetingSession
+  // `call.session_participant_left`. That is where the 1,417 Meeting
   // rows that never closed came from, and why attendance cannot be trusted.
   useEffect(() => {
     call?.setDisconnectionTimeout(DISCONNECTION_TIMEOUT_SECONDS);
@@ -346,9 +346,9 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
               <ScreenShareButton />
 
               {/* Recording BUTTON for the host - Left of Leave Call (only if recording enabled) */}
-              {isHost && recordingEnabled && meetingSessionId && (
+              {isHost && recordingEnabled && meetingId && (
                 <RecordingControls
-                  meetingSessionId={meetingSessionId}
+                  meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyButton={true}
                 />
@@ -433,9 +433,9 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
               <div className="w-px h-8 bg-zinc-700 mx-1" />
 
               {/* REC TIME Indicator for the host - Before End Call (only if recording enabled) */}
-              {isHost && meetingSessionId && recordingEnabled && (
+              {isHost && meetingId && recordingEnabled && (
                 <RecordingControls
-                  meetingSessionId={meetingSessionId}
+                  meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyIndicator={true}
                 />
@@ -476,9 +476,9 @@ const MeetingRoom = ({ onRejoin }: MeetingRoomProps) => {
               )}
 
               {/* Recording Indicator for the guest - At the very end (only if recording enabled) */}
-              {isGuest && meetingSessionId && recordingEnabled && (
+              {isGuest && meetingId && recordingEnabled && (
                 <RecordingControls
-                  meetingSessionId={meetingSessionId}
+                  meetingId={meetingId}
                   recordingEnabled={recordingEnabled}
                   showOnlyIndicator={true}
                 />

@@ -4,13 +4,20 @@
       "command": "npx",
       "args": ["-y", "chrome-devtools-mcp@latest"]
     },
+    "netlify": {
+      "command": "npx",
+      "args": ["-y", "@netlify/mcp@1.15.1"]
+    },
     "supabase": {
       "command": "npx",
       "args": [
         "-y",
-        "-p", "@modelcontextprotocol/sdk",
-        "-p", "zod",
-        "-p", "@supabase/mcp-server-supabase@0.8.1",
+        "-p",
+        "@modelcontextprotocol/sdk",
+        "-p",
+        "zod",
+        "-p",
+        "@supabase/mcp-server-supabase@0.8.1",
         "mcp-server-supabase"
       ],
       "env": {

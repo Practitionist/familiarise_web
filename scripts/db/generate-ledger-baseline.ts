@@ -16,6 +16,7 @@ import path from "node:path";
 
 import prisma from "../../lib/prisma";
 import { findingIdentity } from "../../lib/payments/ledger/baseline";
+import { isReconcileRunInProgress } from "../reconcile/reconcile-ledgers";
 
 const OUT = path.join(
   __dirname,
@@ -47,11 +48,14 @@ async function main(): Promise<void> {
     "known drift — see the report this was generated from",
   );
 
-  const report = await prisma.ledgerReconciliationReport.findFirst({
+  // #1454 — a chunked run's row exists before its findings are complete.
+  const recent = await prisma.ledgerReconciliationReport.findMany({
     where: { scope: "full" },
     orderBy: { runAt: "desc" },
-    select: { id: true, runAt: true, findings: true },
+    take: 5,
+    select: { id: true, runAt: true, findings: true, summary: true },
   });
+  const report = recent.find((r) => !isReconcileRunInProgress(r));
 
   if (!report) {
     console.error("No reconciler report found — run the reconciler first.");

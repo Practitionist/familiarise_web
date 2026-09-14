@@ -105,7 +105,7 @@ function buildWhere(
         OR: [
           { consultation: { requestedBy: { userId: params.userId } } },
           { subscription: { requestedBy: { userId: params.userId } } },
-          { trialSession: { consulteeProfile: { userId: params.userId } } },
+          { trial: { consulteeProfile: { userId: params.userId } } },
         ],
       },
     };
@@ -129,7 +129,7 @@ function buildWhere(
         OR: [
           { consultation: { requestedBy: { userId: params.scope.userId } } },
           { subscription: { requestedBy: { userId: params.scope.userId } } },
-          { trialSession: { consulteeProfile: { userId: params.scope.userId } } },
+          { trial: { consulteeProfile: { userId: params.scope.userId } } },
           {
             consultation: {
               consultationPlan: {

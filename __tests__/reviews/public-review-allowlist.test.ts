@@ -47,7 +47,7 @@ const MUST_NOT_BE_PUBLIC = [
   "revisionNo",
   // The session clock, used for recency weighting. Publishing it dates the
   // engagement more precisely than the review's own timestamp does.
-  "ratedSessionAt",
+  "ratedOccurrenceAt",
   // Moderation tombstone. Public reads filter on it in the WHERE instead, so it
   // never needs to be selected to be honoured.
   "deletedAt",

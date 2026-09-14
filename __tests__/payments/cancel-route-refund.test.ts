@@ -5,7 +5,7 @@
 /**
  * The cancel route must actually refund. There was no test that it did.
  *
- * Both existing cancel-route suites stub `appointment.findMany -> []`, which
+ * Both existing cancel-route suites stub the wrapper read to nothing, which
  * makes the payment lookup come back empty and kills the entire refund block —
  * so every check on those suites was compatible with the refund path being
  * dead. It was: resolving the booking context AFTER the cancel transaction
@@ -13,7 +13,7 @@
  * CANCELLED, the "next undelivered session" came back empty, and every
  * consultee-initiated cancellation silently fell to the 0% tier.
  *
- * The prisma stub here models that ordering honestly: `appointment.findMany`
+ * The prisma stub here models that ordering honestly: the wrapper read
  * answers with live slots before `$transaction` runs and with CANCELLED slots
  * afterwards, exactly as the database would. A resolver called on the wrong
  * side of the transaction therefore scores 0% and these tests fail.
@@ -51,9 +51,9 @@ const txStub = {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
-  // transitionSlotCompletion reads the from-status, then moves the cohort with
+  // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
-  slotOfAppointment: {
+  appointmentOccurrence: {
     findMany: jest.fn().mockResolvedValue([]),
     updateManyAndReturn: jest
       .fn()
@@ -80,6 +80,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
+      // #1554 — the refund context reads the ONE wrapper.
+      findFirst: async (...a: unknown[]) =>
+        (await mockAppointmentFindMany(...a))[0] ?? null,
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -169,7 +172,7 @@ function consultationAppointment() {
     consultationId: "cons-1",
     subscriptionId: null,
     cancellationPolicy: null,
-    slotsOfAppointment: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
+    occurrences: [{ startsAt: new Date(Date.now() + 120 * HOUR) }],
     consultation: {
       id: "cons-1",
       requestedById: CONSULTEE_PROFILE,
@@ -215,7 +218,7 @@ function bookingRows(opts: {
   completedSlotHours?: number[];
   /** Sessions terminalised BEFORE this cancellation — a session the plan held. */
   cancelledSlotHours?: number[];
-  /** Past sessions with no MeetingSession row (offline, most likely held). */
+  /** Past sessions with no Meeting row (offline, most likely held). */
   unverifiedSlotHours?: number[];
   paymentRefunds?: { amountPaise: number; status: string }[];
   noPayment?: boolean;
@@ -254,7 +257,7 @@ function bookingRows(opts: {
               disputes: [],
             },
           ],
-      slotsOfAppointment: [...done, ...gone, ...unverified, ...live],
+      occurrences: [...done, ...gone, ...unverified, ...live],
     },
   ];
 }
@@ -294,8 +297,8 @@ beforeEach(() => {
   txCommitted = false;
   txStub.consultation.updateMany.mockResolvedValue({ count: 1 });
   txStub.subscription.updateMany.mockResolvedValue({ count: 1 });
-  txStub.slotOfAppointment.findMany.mockResolvedValue([]);
-  txStub.slotOfAppointment.updateManyAndReturn.mockResolvedValue([
+  txStub.appointmentOccurrence.findMany.mockResolvedValue([]);
+  txStub.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
     { id: "slot-1" },
     { id: "slot-2" },
   ]);
@@ -506,7 +509,7 @@ describe("subscriptions", () => {
   });
 
   it("counts an unverified past session as delivered, not as owed", async () => {
-    // UNVERIFIED is "past, no MeetingSession row" — an offline session that most
+    // UNVERIFIED is "past, no Meeting row" — an offline session that most
     // likely happened. It is neither COMPLETED nor live, so a completed+live
     // denominator made a 30%-consumed plan score 7/7 and refund the whole price.
     mockGetSession.mockResolvedValue(sessionAs("consultee"));
@@ -820,8 +823,12 @@ describe("a cancel leaves an audit trail", () => {
     );
     // One per slot the CAS actually moved — the ids come from the UPDATE's own
     // RETURNING, so a slot a racing writer pulled out never gets a row.
-    expect(historyRows.filter((row) => row.entity === "SLOT")).toHaveLength(2);
-    expect(txStub.slotOfAppointment.updateManyAndReturn).toHaveBeenCalledWith(
+    expect(
+      historyRows.filter((row) => row.entity === "OCCURRENCE"),
+    ).toHaveLength(2);
+    expect(
+      txStub.appointmentOccurrence.updateManyAndReturn,
+    ).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { completionStatus: "CANCELLED", deletedAt: expect.any(Date) },
       }),

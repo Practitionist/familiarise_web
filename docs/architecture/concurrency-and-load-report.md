@@ -99,7 +99,7 @@ Eight rate-limit rules run at the Netlify edge before the request reaches the Ne
 | `GET /api/user/consultants` | 60 requests | 1 minute | IP |
 | `GET /api/trials/check-eligibility` | 100 requests | 1 hour | IP |
 | `POST /api/newsletter/subscribe` | 30 requests | 1 hour | IP |
-| `GET /api/slots/availability/*` | 60 requests | 1 minute | IP |
+| `GET /api/scheduling/availability/*` | 60 requests | 1 minute | IP |
 | `POST /api/organizations/.../invitations/accept` | 30 requests | 1 minute | IP |
 | `GET /api/auth/sso/domain-check` | 60 requests | 1 hour | IP |
 | `POST /api/checkout` | 5 requests | 1 minute | User ID |
@@ -117,7 +117,7 @@ Every money flow has an idempotency key that prevents duplicate processing on re
 
 ### 4.4 Race Condition Guards for Slot Booking
 
-A test endpoint at `POST /api/test-race-condition` demonstrates the booking safety guarantee: N concurrent requests for the last available slot should produce exactly one 201 Created and N−1 409 Conflict responses. This is enforced by a unique constraint on `(slotId, tentativeUserId)` in the `SlotOfAppointment` table, combined with a Redis lock acquired in `utils/appointmentlock.ts` before the Prisma write.
+A test endpoint at `POST /api/test-race-condition` demonstrates the booking safety guarantee: N concurrent requests for the last available slot should produce exactly one 201 Created and N−1 409 Conflict responses. This is enforced by a unique constraint on `(slotId, tentativeUserId)` in the `AppointmentOccurrence` table, combined with a Redis lock acquired in `utils/appointmentlock.ts` before the Prisma write.
 
 ### 4.5 Serializable Transaction Retry
 
@@ -374,7 +374,7 @@ export default function (data) {
   // ── 1. Slot Availability (public, rate-limited 60/min/IP) ──────────────────
   group("slot_availability", function () {
     const res = http.get(
-      `${BASE_URL}/api/slots/availability/${CONSULTANT_ID}`,
+      `${BASE_URL}/api/scheduling/availability/${CONSULTANT_ID}`,
       { headers }
     );
     slotAvailabilityTrend.add(res.timings.duration);
@@ -517,7 +517,7 @@ const AUTH_TOKEN = __ENV.AUTH_TOKEN || "replace-with-session-token";
 
 export default function () {
   const res = http.post(
-    `${BASE_URL}/api/slots/appointments`,
+    `${BASE_URL}/api/scheduling/appointments`,
     JSON.stringify({ slotId: SLOT_ID }),
     {
       headers: {

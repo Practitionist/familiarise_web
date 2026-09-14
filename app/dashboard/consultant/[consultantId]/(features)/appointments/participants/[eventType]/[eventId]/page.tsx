@@ -77,13 +77,14 @@ type SeatPayment = {
   currency: string;
 };
 
+// Registered-participant rows are the route's roster (#1554): every live seat
+// holder on the event's appointment(s), deduplicated by user id server-side.
+type RegisteredParticipant = { id: string; name?: string; email?: string };
+
 type ParticipantsResponse = (
   | { webinarEvent: WebinarEvent; classEvent?: never }
   | { classEvent: ClassEvent; webinarEvent?: never }
-) & { seatPayments?: SeatPayment[] };
-
-// Registered-participant rows are flattened from the event's slot users.
-type RegisteredParticipant = { id: string; name?: string; email?: string };
+) & { participants?: RegisteredParticipant[]; seatPayments?: SeatPayment[] };
 
 /**
  * What the DELETE handler answers (#1003). `refund` is null when the seat was
@@ -262,27 +263,7 @@ export default function EventParticipantsPage() {
 
   const plan = "webinarPlan" in event ? event.webinarPlan : event.classPlan;
 
-  // A class has many appointments; a webinar has at most one. Normalise so
-  // the flattening below is identical for both.
-  const appointments =
-    "appointments" in event
-      ? event.appointments
-      : event.appointment
-        ? [event.appointment]
-        : [];
-
-  // Unique participants by user id, flattened out of the event's slots.
-  const participants = Array.from(
-    new Map(
-      appointments
-        .flatMap((appointment) =>
-          (appointment.slotsOfAppointment || []).flatMap(
-            (slot) => slot.user || [],
-          ),
-        )
-        .map((user) => [user.id, user]),
-    ).values(),
-  );
+  const participants: RegisteredParticipant[] = data?.participants ?? [];
 
   // The instance may override the plan's capacity.
   const effectiveCapacity = effectiveMaxParticipants(event, plan);

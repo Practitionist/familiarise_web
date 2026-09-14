@@ -133,3 +133,7 @@ it may only be applied once the `EndCallButton` that posts to the new route is
 deployed and serving traffic. Until then any participant can still end a call
 from devtools, which is the state this change makes fixable rather than the
 state it fixes.
+
+---
+
+Addendum (2026-09-14): `MeetingSession` is `Meeting` and `SlotOfAppointment` is `AppointmentOccurrence` since #1554.

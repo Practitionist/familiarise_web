@@ -1,9 +1,9 @@
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
-import { Prisma, TrialSessionStatus } from "@prisma/client";
+import { Prisma, TrialStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
-import { notifyTrialSessionRequested } from "@/lib/novu";
+import { notifyTrialRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
 import { getSession } from "@/lib/auth-server";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
   const subscriptionPlanId = searchParams.get("subscriptionPlanId");
-  const status = searchParams.get("status") as TrialSessionStatus | null;
+  const status = searchParams.get("status") as TrialStatus | null;
   const page = parseInt(searchParams.get("page") || "1");
   const limit = parseInt(searchParams.get("limit") || "10");
   const search = searchParams.get("search");
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
       applyOwnershipOr = !consultantProfileId && !consulteeProfileId;
     }
 
-    // #674 org-scope filter. TrialSession.organizationId is populated by
+    // #674 org-scope filter. Trial.organizationId is populated by
     // the backfill — keeps Acme-context views from leaking Zeta trial
     // bookings into the consultant's "Trials" tab.
     const callerMemberships = await prisma.membership.findMany({
@@ -103,14 +103,14 @@ export async function GET(request: NextRequest) {
     // alone dropped them into the unfiltered arm, so asking for one org's
     // trials returned every org's plus the personal ones. scopeToWhereOrgId is
     // the single place that knows which kinds pin.
-    const whereClause: Prisma.TrialSessionWhereInput = scopeToWhereOrgId(
+    const whereClause: Prisma.TrialWhereInput = scopeToWhereOrgId(
       scopeResolution.scope,
     );
 
     if (applyOwnershipOr) {
       // #org-appts — dual-identity union; AND-nested so it composes with the
       // search OR below without clobbering it.
-      const ownershipArms: Prisma.TrialSessionWhereInput[] = [];
+      const ownershipArms: Prisma.TrialWhereInput[] = [];
       if (session.user.consultantProfileId) {
         ownershipArms.push({
           consultantProfileId: session.user.consultantProfileId,
@@ -156,10 +156,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Dynamic orderBy mapping
-    const orderByMap: Record<
-      string,
-      Prisma.TrialSessionOrderByWithRelationInput
-    > = {
+    const orderByMap: Record<string, Prisma.TrialOrderByWithRelationInput> = {
       requestedAt: { requestedAt: sortOrder as "asc" | "desc" },
       status: { status: sortOrder as "asc" | "desc" },
       name: {
@@ -169,8 +166,8 @@ export async function GET(request: NextRequest) {
     };
     const orderBy = orderByMap[sortBy] || orderByMap.requestedAt;
 
-    const [trialSessions, total] = await Promise.all([
-      prisma.trialSession.findMany({
+    const [trials, total] = await Promise.all([
+      prisma.trial.findMany({
         where: whereClause,
         include: {
           consulteeProfile: {
@@ -201,7 +198,7 @@ export async function GET(request: NextRequest) {
           subscriptionPlan: true,
           appointment: {
             include: {
-              slotsOfAppointment: true,
+              occurrences: true,
             },
           },
           convertedToSubscription: true,
@@ -210,11 +207,11 @@ export async function GET(request: NextRequest) {
         skip: (page - 1) * limit,
         take: limit,
       }),
-      prisma.trialSession.count({ where: whereClause }),
+      prisma.trial.count({ where: whereClause }),
     ]);
 
     return NextResponse.json({
-      data: trialSessions,
+      data: trials,
       meta: {
         total,
         page,
@@ -276,7 +273,7 @@ export async function POST(request: NextRequest) {
     if (rl) return rl;
 
     // Check if a trial already exists for this consultee-consultant pair
-    const existingTrial = await prisma.trialSession.findUnique({
+    const existingTrial = await prisma.trial.findUnique({
       where: {
         consulteeProfileId_consultantProfileId: {
           consulteeProfileId,
@@ -306,7 +303,7 @@ export async function POST(request: NextRequest) {
       // violation below can turn it into the calm 409 this pair already has an
       // answer for. A count of 0 means somebody else freed it; either way the
       // slot is clear and the insert decides who gets it.
-      await prisma.trialSession.deleteMany({ where: { id: existingTrial.id } });
+      await prisma.trial.deleteMany({ where: { id: existingTrial.id } });
     }
 
     // Verify the subscription plan exists and has trials enabled
@@ -401,14 +398,14 @@ export async function POST(request: NextRequest) {
     // same pair both pass the eligibility read and race into the insert — the
     // loser used to surface as a 500. It is the same "already requested"
     // answer the sequential path gives, so say so.
-    const trialSession = await prisma.trialSession
+    const trial = await prisma.trial
       .create({
         data: {
           consulteeProfileId,
           consultantProfileId,
           subscriptionPlanId,
           notes,
-          status: TrialSessionStatus.PENDING,
+          status: TrialStatus.PENDING,
           organizationId: resolvedOrgId,
         },
         include: {
@@ -445,7 +442,7 @@ export async function POST(request: NextRequest) {
         throw error;
       });
 
-    if (!trialSession) {
+    if (!trial) {
       return NextResponse.json(
         {
           error: "You have already requested a trial with this consultant",
@@ -458,7 +455,7 @@ export async function POST(request: NextRequest) {
     // Log the activity
     await logTrialRequested(
       consultantProfileId,
-      trialSession.id,
+      trial.id,
       {
         id: consulteeProfile.user.id,
         name: consulteeProfile.user.name,
@@ -468,15 +465,15 @@ export async function POST(request: NextRequest) {
     );
 
     // Notify the consultant about the new trial request
-    void notifyTrialSessionRequested(trialSession.consultantProfile.user.id, {
-      consultantName: trialSession.consultantProfile.user.name || "Consultant",
-      consulteeName: trialSession.consulteeProfile.user.name || "User",
+    void notifyTrialRequested(trial.consultantProfile.user.id, {
+      consultantName: trial.consultantProfile.user.name || "Consultant",
+      consulteeName: trial.consulteeProfile.user.name || "User",
       planTitle: subscriptionPlan.title,
-      status: trialSession.status,
+      status: trial.status,
       dashboardUrl: "/dashboard/consultant/trials",
     });
 
-    return NextResponse.json({ data: trialSession }, { status: 201 });
+    return NextResponse.json({ data: trial }, { status: 201 });
   } catch (error) {
     console.error("Error creating trial session:", error);
     return NextResponse.json(

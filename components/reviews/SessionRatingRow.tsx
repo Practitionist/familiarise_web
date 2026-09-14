@@ -24,7 +24,7 @@ import { bookingFeedbackKey } from "@/hooks/useSessionFeedback";
 export function SessionRatingRow({
   appointmentId,
   bookingAppointmentId,
-  slotId,
+  occurrenceId,
   existingRating,
   readOnly = false,
 }: Readonly<{
@@ -35,7 +35,7 @@ export function SessionRatingRow({
    *  invalidating this row's own child id would leave the stars unchanged after a
    *  save. */
   bookingAppointmentId: string;
-  slotId: string;
+  occurrenceId: string;
   existingRating: number | null;
   /** The consultant's view: what this call scored, not something to set. */
   readOnly?: boolean;
@@ -47,14 +47,14 @@ export function SessionRatingRow({
 
   useEffect(() => {
     setRating(existingRating ?? 0);
-  }, [existingRating, slotId]);
+  }, [existingRating, occurrenceId]);
 
   const save = useMutation({
     mutationFn: async (value: number) => {
       const res = await fetch(`/api/appointments/${appointmentId}/feedback`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rating: value, slotId }),
+        body: JSON.stringify({ rating: value, occurrenceId }),
       });
       if (!res.ok) await throwSupportError(res, "session rating");
       return res.json();

@@ -42,12 +42,12 @@ const BLOCKED = [
   "/api/appointments/appt_1/support",
 
   // Slots: approval-rail bookings and every availability write.
-  "/api/slots/request-for-approval",
-  "/api/slots/availability/weekly",
-  "/api/slots/availability/weekly/avail_1",
-  "/api/slots/availability/custom",
-  "/api/slots/availability/custom/avail_1",
-  "/api/slots/availability/consultant_1",
+  "/api/scheduling/request-for-approval",
+  "/api/scheduling/availability/weekly",
+  "/api/scheduling/availability/weekly/avail_1",
+  "/api/scheduling/availability/custom",
+  "/api/scheduling/availability/custom/avail_1",
+  "/api/scheduling/availability/consultant_1",
 
   // Org money rails, none of which were reachable by the old list.
   "/api/organizations/org_1/billing-account/wallet/top-ups",
@@ -83,11 +83,11 @@ const NOT_BLOCKED = [
   "/api/organizations/org_1/settings",
   "/api/organizations/org_1/support-threads",
   // A different prefix that merely starts with a blocked one.
-  "/api/slots/availability-with-allocation/consultant_1",
-  // `/api/slots/appointments` was removed from the list: both of its routes
+  "/api/scheduling/availability-with-allocation/consultant_1",
+  // `/api/scheduling/appointments` was removed from the list: both of its routes
   // are GET-only, so the pattern only ever pretended to guard something.
-  "/api/slots/appointments",
-  "/api/slots/appointments/appt_1",
+  "/api/scheduling/appointments",
+  "/api/scheduling/appointments/appt_1",
   // The wildcard stands for one non-empty segment, never for nothing.
   "/api/bookings/allocate",
   "/api/appointments/reschedule",

@@ -1,31 +1,27 @@
 import prisma, { type Tx } from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import type {
   AppointmentsType,
   ReviewTrack,
-  SlotCompletionStatus,
+  OccurrenceCompletionStatus,
 } from "@prisma/client";
 
 /**
- * #705 — how many distinct RATED SESSIONS a consultant needs before their score
- * is published.
- *
- * A code constant, not a column and not an env var: this is one platform-wide
- * trust policy that has to be byte-identical in the explore sort, the profile
- * page and any structured-data `aggregateRating`. A per-consultant column would
- * invite tuning, which is exactly the gaming vector the threshold exists to
- * close, and an env var makes preview and production disagree about a number
- * users can see. Same call as MIN_COHORT in the org feedback summary.
+ * #705 / #1300 — the publication gates are code constants, not columns and not
+ * env vars: one platform-wide trust policy that has to be byte-identical in the
+ * explore sort, the profile page and any structured-data `aggregateRating`. A
+ * per-consultant column would invite tuning, which is exactly the gaming vector
+ * the threshold exists to close, and an env var makes preview and production
+ * disagree about a number users can see. Same call as MIN_COHORT in the org
+ * feedback summary.
  *
  * Five rather than Practo's ten: at launch a threshold of ten would leave
  * almost every consultant with no visible score at all, and an honest "not
  * enough yet" only helps if some consultants clear it.
  */
-export const MIN_RATED_UNITS_FOR_PUBLIC_SCORE = 5;
 
 /**
- * #1300 — the publication gate, per track.
- *
- * 1:1 counts distinct CLIENTS: a 1:1 review row is one per (consultant, client)
+ * The 1:1 gate. 1:1 counts distinct CLIENTS: a 1:1 review row is one per (consultant, client)
  * pair, so "five" means five different people — under a per-purchase model it
  * could have meant five bookings from two people.
  */
@@ -69,12 +65,12 @@ export function trackForAppointment(row: {
 export class ModeratedReviewError extends Error {}
 
 /**
- * A slot counts as held when it completed, or when it is UNVERIFIED — that
- * status means "past, with no MeetingSession recorded", which is what an
+ * An occurrence counts as held when it completed, or when it is UNVERIFIED —
+ * that status means "past, with no Meeting recorded", which is what an
  * offline session looks like. Excluding it would silently deny a review to
  * everyone whose session did not run through the video stack.
  */
-export function heldSlot(userId: string) {
+export function heldOccurrence(userId: string) {
   return {
     deletedAt: null,
     // A call that was called off never happened, whoever joined the room
@@ -82,7 +78,7 @@ export function heldSlot(userId: string) {
     // only the UNVERIFIED arm actually pinned a status, so an attended slot
     // later stamped CANCELLED stayed rateable through the API.
     completionStatus: {
-      notIn: ["CANCELLED", "RESCHEDULED"] as SlotCompletionStatus[],
+      notIn: ["CANCELLED", "RESCHEDULED"] as OccurrenceCompletionStatus[],
     },
     // Not "the call happened" — "YOU were at the call". A COMPLETED slot the
     // user never joined used to qualify, so a no-show could rate a session they
@@ -102,22 +98,25 @@ export function heldSlot(userId: string) {
       //    Testing `endedAt` rather than the clock keeps the property above:
       //    the host closing the room releases everyone, including whoever left
       //    first. The booked window is the fallback when nothing closed it.
+      //
+      //    #1554 — attendance is keyed to the call itself
+      //    (MeetingAttendance.appointmentOccurrenceId), so no Meeting join.
       {
         AND: [
-          { meetingSession: { attendances: { some: { userId } } } },
+          { attendances: { some: { userId } } },
           {
             OR: [
-              { meetingSession: { endedAt: { not: null } } },
+              { meeting: { endedAt: { not: null } } },
               { endsAt: { lt: new Date() } },
             ],
           },
         ],
       },
       // 2. Nobody COULD have recorded it. UNVERIFIED means "past, with no
-      //    MeetingSession", which is what an offline session looks like —
+      //    Meeting", which is what an offline session looks like —
       //    excluding it would deny feedback to everyone who met in person.
       {
-        completionStatus: "UNVERIFIED" as SlotCompletionStatus,
+        completionStatus: "UNVERIFIED" as OccurrenceCompletionStatus,
       },
     ],
   };
@@ -206,13 +205,6 @@ export type ScoringTx = {
  * tells a buyer of either one nothing. Airbnb shows a listing rating beside a
  * host rating for the same reason.
  *
- * The legacy `rating` / `publishedRating` / `ratingUnitCount` / `reviewCount`
- * columns are still written, from the same rows, so every existing reader keeps
- * working while the surfaces move over. They are computed here rather than by a
- * second query: `ratingUnitId` is now NULL on 1:1 reviews, so each of those is
- * its own unit, which is what the old legacy-fold branch already did for
- * pre-#705 rows. Same numbers, one read instead of two.
- *
  * Every create/update/delete must call this inside a Serializable transaction
  * with retry — it is a read-then-write over rows two concurrent reviewers both
  * touch, so at READ COMMITTED the second write overwrites an average computed
@@ -241,32 +233,8 @@ export async function recomputeConsultantRating(
   const one = scoreTrack(oneToOnePoints(rows), MIN_RATED_CLIENTS_ONE_TO_ONE);
   const group = scoreTrack(groupPoints(rows), MIN_RATED_EVENTS_GROUP);
 
-  // The legacy blended columns, kept in step for readers that have not moved.
-  // One unit per NULL-`ratingUnitId` row, one per distinct event key.
-  const legacyUnits = new Map<string, number[]>();
-  let legacySoloSum = 0;
-  let legacySoloCount = 0;
-  for (const r of rows) {
-    if (r.ratingUnitId) {
-      const acc = legacyUnits.get(r.ratingUnitId);
-      if (acc) acc.push(r.rating);
-      else legacyUnits.set(r.ratingUnitId, [r.rating]);
-    } else {
-      legacySoloSum += r.rating;
-      legacySoloCount += 1;
-    }
-  }
-  const legacyUnitMeans = [...legacyUnits.values()].map(
-    (rs) => rs.reduce((a, b) => a + b, 0) / rs.length,
-  );
-  const legacyUnitCount = legacyUnitMeans.length + legacySoloCount;
-  const legacyMean = legacyUnitCount
-    ? round2(
-        (legacyUnitMeans.reduce((a, b) => a + b, 0) + legacySoloSum) /
-          legacyUnitCount,
-      )
-    : 0;
-
+  // #1554 — the blended `rating` / `publishedRating` / `ratingUnitCount` /
+  // `reviewCount` columns are gone with the reset; the two tracks are the score.
   await tx.consultantProfile.update({
     where: { id: consultantProfileId },
     data: {
@@ -274,11 +242,6 @@ export async function recomputeConsultantRating(
       publishedRatingGroup: group.published,
       ratedClientsOneToOne: one.count,
       ratedEventsGroup: group.count,
-      rating: legacyMean,
-      ratingUnitCount: legacyUnitCount,
-      reviewCount: liveRows.length,
-      publishedRating:
-        legacyUnitCount >= MIN_RATED_UNITS_FOR_PUBLIC_SCORE ? legacyMean : null,
       ratingAggregatedAt: now,
     },
   });
@@ -337,7 +300,7 @@ function loadReviewableAppointments(
               ? { consultationPlan: { consultantProfileId } }
               : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
         {
           subscription: {
@@ -346,20 +309,19 @@ function loadReviewableAppointments(
               ? { subscriptionPlan: { consultantProfileId } }
               : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
         {
-          trialSession: {
+          trial: {
             consulteeProfileId,
             status: { in: ["COMPLETED", "CONVERTED"] },
             ...(consultantProfileId ? { consultantProfileId } : {}),
           },
-          slotsOfAppointment: { some: heldSlot(userId) },
+          occurrences: { some: heldOccurrence(userId) },
         },
-        // Group arms — there is no Attendee model: registration IS the m:n
-        // between the user and every slot of the shared appointment. A paid
-        // seat is required as well, so a cancelled or comped registration
-        // cannot buy a review.
+        // Group arms — registration is a live AppointmentParticipant row on
+        // the event's one wrapper (#1554). A paid seat is required as well, so
+        // a cancelled or comped registration cannot buy a review.
         // #1580 C-P0-2 — an ACCEPTED collaborator on the plan is a consultant-
         // side party and cannot review the host as a consultee of their own event.
         {
@@ -376,9 +338,8 @@ function loadReviewableAppointments(
               },
             },
           },
-          slotsOfAppointment: {
-            some: { ...heldSlot(userId), user: { some: { id: userId } } },
-          },
+          occurrences: { some: heldOccurrence(userId) },
+          participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
         {
@@ -395,9 +356,8 @@ function loadReviewableAppointments(
               },
             },
           },
-          slotsOfAppointment: {
-            some: { ...heldSlot(userId), user: { some: { id: userId } } },
-          },
+          occurrences: { some: heldOccurrence(userId) },
+          participants: { some: liveParticipant(userId) },
           payment: { some: { userId, paymentStatus: "SUCCEEDED" } },
         },
       ],
@@ -434,7 +394,7 @@ function loadReviewableAppointments(
           },
         },
       },
-      trialSession: {
+      trial: {
         select: {
           consultantProfileId: true,
           consultantProfile: { select: { user: { select: { name: true } } } },
@@ -466,8 +426,8 @@ function loadReviewableAppointments(
           },
         },
       },
-      slotsOfAppointment: {
-        where: heldSlot(userId),
+      occurrences: {
+        where: heldOccurrence(userId),
         select: { endsAt: true },
         orderBy: { endsAt: "desc" },
         take: 1,
@@ -503,7 +463,7 @@ function describe(
   const consultantProfileId =
     row.consultation?.consultationPlan?.consultantProfileId ??
     row.subscription?.subscriptionPlan?.consultantProfileId ??
-    row.trialSession?.consultantProfileId ??
+    row.trial?.consultantProfileId ??
     row.webinar?.webinarPlan?.consultantProfileId ??
     row.class?.classPlan?.consultantProfileId ??
     null;
@@ -525,7 +485,7 @@ function describe(
     consultantName:
       row.consultation?.consultationPlan?.consultantProfile?.user?.name ??
       row.subscription?.subscriptionPlan?.consultantProfile?.user?.name ??
-      row.trialSession?.consultantProfile?.user?.name ??
+      row.trial?.consultantProfile?.user?.name ??
       row.webinar?.webinarPlan?.consultantProfile?.user?.name ??
       row.class?.classPlan?.consultantProfile?.user?.name ??
       null,
@@ -538,7 +498,7 @@ function describe(
       row.webinar?.webinarPlan?.title ??
       row.class?.classPlan?.title ??
       "Session",
-    heldAt: row.slotsOfAppointment[0]?.endsAt ?? null,
+    heldAt: row.occurrences[0]?.endsAt ?? null,
     // Keyed on the CONSULTANT and the (track, event), not this appointment: a 1:1
     // review may hang off a different booking, and a webinar's review is that
     // webinar's, not another one's (#1549).

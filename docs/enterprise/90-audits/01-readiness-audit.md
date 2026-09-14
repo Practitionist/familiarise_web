@@ -288,7 +288,7 @@ All 60+ enterprise models are production-final. No placeholder or nullable-where
 
 ### 3.7 Slot Allocation & Booking Guards
 
-- [x] ✅ `SlotAllocationService` — Redis lock, P2002 → 409, overnight UTC support
+- [x] ✅ `SchedulingService` — Redis lock, P2002 → 409, overnight UTC support
 - [x] ✅ `validateNoConflicts` — scoped to consultant via M2M relation
 - [x] ✅ Concurrent auto-allocate guard for classes
 - [x] ✅ `planId` + `paymentGateway` required at checkout for all event types
@@ -582,7 +582,7 @@ GST derivation, MSME deadline calculator, and IRP connector are all live. Cron s
 - [x] ✅ TDS derivation tests; MSME deadline tests; payout/refund coverage
 - [x] ✅ Booking algorithm E2E tests (Agents 001–006): all 4 event types, overnight slots, concurrent auto-allocate, validation, filtering, waitlist
 - [x] ✅ 6 UI E2E test runs via Chrome DevTools MCP + Supabase MCP
-- [x] ✅ `SlotAllocationService.classifyError` — P2002 → 409 tested
+- [x] ✅ `SchedulingService.classifyError` — P2002 → 409 tested
 - [x] 🟡 No load/stress test on: PENDING_TRUST gate under concurrent INVOICE checkouts, reconcile cron under high volume
 - [x] 🔴 No integration tests for enterprise API routes (only unit tests for helpers/services)
 

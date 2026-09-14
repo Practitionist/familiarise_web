@@ -9,14 +9,11 @@ Netlify's official server is `@netlify/mcp` (version 1.15.1 at the time of writi
 ```json
 "netlify": {
   "command": "npx",
-  "args": ["-y", "@netlify/mcp@latest"],
-  "env": {
-    "NETLIFY_PERSONAL_ACCESS_TOKEN": "<NETLIFY_PERSONAL_ACCESS_TOKEN>"
-  }
+  "args": ["-y", "@netlify/mcp@1.15.1"]
 }
 ```
 
-Authentication comes from the logged-in Netlify CLI session (`netlify status` shows the user and the linked project); the token variable is a documented fallback for machines with no CLI session and can be omitted when the CLI is logged in. `netlify login` is interactive and must be run by a person.
+Authentication comes from the logged-in Netlify CLI session (`netlify status` shows the user and the linked project); `netlify login` is interactive and must be run by a person. On a machine with no CLI session, set `NETLIFY_PERSONAL_ACCESS_TOKEN` in the block's `env`. Do not ship a placeholder for it: the server returns that variable as the bearer token before it ever consults the CLI session (`getNetlifyAccessToken` in `dist/netlify-mcp.js`), so an unchanged placeholder breaks authentication that would otherwise have worked. The version is pinned because the process inherits write-capable credentials and a mutable `@latest` would let the same config run different code; bump it deliberately.
 
 ### The first-connect trap
 
@@ -94,6 +91,12 @@ comm -13 /tmp/b /tmp/a   # on Netlify only
 ```
 
 On 2026-09-12 the `.env`-only keys were `NEXT_PUBLIC_TEST_USERID`, `SEED_PASSWORD`, the four `R2_*` keys for the unimplemented recording bucket (#1314), and a dead `REDIS_URL` that nothing reads (the code and production both use `UPSTASH_REDIS_REST_URL`/`_TOKEN`); the Netlify-only keys were build and observability configuration. `comm` needs the same collation on both inputs, hence `LC_ALL=C`.
+
+## Two GitHub-side traps met on 2026-09-13
+
+`gh pr update-branch --rebase` moved the branch ref but GitHub's pull-request record did not register the new head — no `synchronize` event, no CI run, `mergeStateStatus` stuck — twice in a row during a GitHub incident, and the same call worked normally later. When a PR must re-trigger CI, rebase locally in a throwaway worktree and `git push --force-with-lease`; a real push always registers. If a PR page shows commits or files that belong to other merged PRs, its recorded `base_sha` is stale rather than the branch contaminated: `git diff --stat origin/dev...origin/<branch>` is the truth, and `gh pr edit <n> --base dev` forces GitHub to recompute.
+
+Netlify's build can fail at "preparing repo" with `Host key verification failed` on the SSH clone from GitHub, immediately after a force-push and during GitHub degradation; it hit deploy previews and the `dev` branch deploy alike, about half the time. The public API has no retry method, but the dashboard's endpoint works with the CLI's token and returns 201 with a new deploy: `curl -X POST https://api.netlify.com/api/v1/deploys/<deploy-id>/retry -H "Authorization: Bearer $TOKEN"`, where the token is `users[userId].auth.token` in `~/Library/Preferences/netlify/config.json`. A failed deploy never replaces the live one, so production fails safe.
 
 ## The other MCP servers in a deployment session
 

@@ -2,8 +2,8 @@
  * Shared list-recordings query for the #674 / B1-hybrid scope split.
  * `Recording.organizationId` is denormalized from the parent appointment
  * (kept in sync by checkout + the backfill script). Listing by org is
- * a single-hop lookup instead of joining through MeetingSession →
- * SlotOfAppointment → Appointment.
+ * a single-hop lookup instead of joining through Meeting →
+ * AppointmentOccurrence → Appointment.
  */
 
 import prisma from "@/lib/prisma";
@@ -43,10 +43,10 @@ const recordingMetadataSelect = {
   recordedAt: true,
   createdAt: true,
   organizationId: true,
-  meetingSession: {
+  meeting: {
     select: {
       id: true,
-      slotOfAppointment: {
+      occurrence: {
         select: {
           appointment: {
             select: { id: true, appointmentType: true, organizationId: true },
@@ -109,13 +109,13 @@ function buildWhere(
     return {
       ...base,
       organizationId: null,
-      meetingSession: {
-        slotOfAppointment: {
+      meeting: {
+        occurrence: {
           appointment: {
             OR: [
               { consultation: { requestedBy: { userId: params.userId } } },
               { subscription: { requestedBy: { userId: params.userId } } },
-              { trialSession: { consulteeProfile: { userId: params.userId } } },
+              { trial: { consulteeProfile: { userId: params.userId } } },
             ],
           },
         },
@@ -134,14 +134,14 @@ function buildWhere(
     return {
       ...base,
       organizationId: params.scope.orgId,
-      meetingSession: {
-        slotOfAppointment: {
+      meeting: {
+        occurrence: {
           appointment: {
             OR: [
               { consultation: { requestedBy: { userId: params.scope.userId } } },
               { subscription: { requestedBy: { userId: params.scope.userId } } },
               {
-                trialSession: {
+                trial: {
                   consulteeProfile: { userId: params.scope.userId },
                 },
               },

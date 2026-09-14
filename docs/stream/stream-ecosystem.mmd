@@ -6,7 +6,7 @@ graph TB
         WEB_I["Webinar Instance"]
         CLS_I["Class Instance"]
         PLAN["Webinar / Class Plan<br/>+ Accepted Collaborators"]
-        SLOT["SlotOfAppointment<br/>→ MeetingSession"]
+        SLOT["AppointmentOccurrence<br/>→ Meeting"]
     end
 
     subgraph STREAM_CHAT["Stream Chat"]
@@ -23,7 +23,7 @@ graph TB
     end
 
     subgraph STREAM_VIDEO["Stream Video"]
-        CALL["Call<br/>type: default<br/>ID: MeetingSession.streamCallId<br/>Participants join via SDK token"]
+        CALL["Call<br/>type: default<br/>ID: Meeting.streamCallId<br/>Participants join via SDK token"]
         subgraph REC["Recording Status Machine"]
             direction LR
             R1["RECORDING"] --> R2["PROCESSING"] --> R3["READY<br/>Stream S3 — expires 14 d"]
@@ -36,7 +36,7 @@ graph TB
     subgraph INFRA["Shared Infrastructure"]
         TOK["Token Provider<br/>Chat JWT · Video JWT — 1 h expiry"]
         CACHE["Cache<br/>user sync: 5 min<br/>channel exists: 2 min<br/>membership: 1 min<br/>session init: once per process"]
-        HOOK["Webhooks<br/>call.session_ended → end MeetingSession<br/>call.ended → end MeetingSession"]
+        HOOK["Webhooks<br/>call.session_ended → end Meeting<br/>call.ended → end Meeting"]
     end
 
     U1      --> DM

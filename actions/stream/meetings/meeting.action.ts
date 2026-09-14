@@ -4,7 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
-import { findSessionRun } from "@/lib/appointments/slots";
+import { isDeadOccurrence } from "@/lib/appointments/occurrences";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
 import { resolveMaxCallDurationSeconds } from "@/lib/meetings/duration-cap";
 import { resolvePlanOwnerIds } from "@/lib/booking/plan-owners";
@@ -23,7 +23,7 @@ interface MeetingSlot {
   isTentative?: boolean;
   appointmentId?: string | null;
 }
-import { MeetingSession } from "@prisma/client";
+import { Meeting } from "@prisma/client";
 import type { AppointmentsType } from "@prisma/client";
 import { upsertUsersToStream } from "@/actions/stream/chat/user.action";
 import { streamLogger } from "@/lib/stream-logger";
@@ -33,30 +33,27 @@ import {
   withStreamCircuitBreaker,
 } from "@/lib/stream-client";
 import { STREAM_CALL_TYPE } from "@/lib/stream/call-cid";
+import { liveParticipant } from "@/lib/booking/participants";
 
 // Input validation schemas
 const slotIdSchema = z.string().min(1, "Slot ID is required");
 const streamCallIdSchema = z.string().min(1, "Stream Call ID is required");
 
-/**
- * Only what `findSessionRun` and `MeetingSlot` need — see #1061.
- * `completionStatus` is selected because the grouping helper, not this file,
- * decides which rows are dead.
- */
-const anchorSlotSelect = {
+/** #1607 — stamped by the call.ended webhook when the host ends before the booked start. */
+const ENDED_EARLY_REASON = "ended_early";
+
+/** Only what `MeetingSlot` and the call profile need. */
+const occurrenceSelect = {
   id: true,
   startsAt: true,
   endsAt: true,
   isTentative: true,
   appointmentId: true,
   completionStatus: true,
-  // E2E-audit P1 fix — lets anchor selection prefer the consultant-owned row
-  // of a run (group events carry parallel per-buyer rows spanning only the
-  // first atom, and whichever row sorted first used to decide the room id).
   consultantProfileId: true,
 } as const;
 
-export type AnchorSlot = {
+export type OccurrenceRow = {
   id: string;
   startsAt: Date;
   endsAt: Date;
@@ -78,20 +75,20 @@ const collaboratorsSelect = {
 
 /**
  * The plan graph both resolvers authorize against and read identity from.
- * `slotsOfAppointment` is filtered to the caller: a non-empty array is the
- * consultee-side proof of participation, and `take: 1` keeps it an existence
- * check rather than a fetch of every attendee.
+ * `participants` is filtered to the caller: a non-empty array is the
+ * consultee-side proof of a held seat (#1554), and `take: 1` keeps it an
+ * existence check rather than a fetch of every attendee.
  */
 const appointmentAccessSelect = (userId: string) =>
   ({
     appointmentType: true,
     // #1270 — read here rather than in a second query. The org tag used to be
     // supplied by the browser (an argument the caller chose), and the audit
-    // column on MeetingSession was then read back separately; one column on a
+    // column on Meeting was then read back separately; one column on a
     // query that already runs answers both.
     organizationId: true,
-    slotsOfAppointment: {
-      where: { user: { some: { id: userId } } },
+    participants: {
+      where: liveParticipant(userId),
       select: { id: true },
       take: 1,
     },
@@ -131,7 +128,7 @@ const appointmentAccessSelect = (userId: string) =>
         },
       },
     },
-    trialSession: {
+    trial: {
       select: {
         subscriptionPlan: {
           select: { title: true, consultantProfile: ownerProfileSelect },
@@ -164,10 +161,10 @@ async function readSlotForCaller(slotId: string) {
   const userId = session?.user?.id;
   if (!userId || session.user.banned === true) return null;
 
-  const row = await prisma.slotOfAppointment.findUnique({
+  const row = await prisma.appointmentOccurrence.findUnique({
     where: { id: slotId },
     select: {
-      ...anchorSlotSelect,
+      ...occurrenceSelect,
       appointment: { select: appointmentAccessSelect(userId) },
     },
   });
@@ -176,7 +173,7 @@ async function readSlotForCaller(slotId: string) {
   const { appointment, ...slot } = row;
   const consultantProfileId = session.user.consultantProfileId;
   const entitled =
-    appointment.slotsOfAppointment.length > 0 ||
+    appointment.participants.length > 0 ||
     (!!consultantProfileId &&
       resolvePlanOwnerIds(appointment).includes(consultantProfileId)) ||
     isPrivileged(session.user.role);
@@ -205,7 +202,7 @@ async function readSlotForCaller(slotId: string) {
  * Not exported: a "use server" module may only export async functions, and
  * nothing outside this file needs to narrow on it.
  */
-class MeetingSessionRefusal extends Error {}
+class MeetingRefusal extends Error {}
 
 /**
  * `readSlotForCaller` as a hard gate rather than a soft one.
@@ -218,9 +215,7 @@ class MeetingSessionRefusal extends Error {}
  */
 async function requireEntitledCaller(slotId: string): Promise<void> {
   if (!(await readSlotForCaller(slotId))) {
-    throw new MeetingSessionRefusal(
-      "You are not a participant in this session.",
-    );
+    throw new MeetingRefusal("You are not a participant in this session.");
   }
 }
 
@@ -231,81 +226,6 @@ const slotSchema = z.object({
   isTentative: z.boolean().optional(),
   appointmentId: z.string().nullable().optional(),
 });
-
-/**
- * Resolves the slot row a session's video room is keyed to (#1061).
- *
- * A booking longer than 30 minutes is stored as N consecutive rows, and the
- * three dashboard surfaces each hand us a different one — so the room has to
- * be anchored to the run's FIRST row or the two sides of the same call end up
- * in different Stream rooms. This must be resolved server-side: the planner
- * builds a `MeetingAppointment` carrying a single slot, so the client cannot
- * see the run it belongs to.
- *
- * What counts as one session is defined in exactly one place —
- * `groupSlotsIntoRuns` in lib/appointments/slots — and this reads it rather
- * than restating it. The clients compute their join window from the same
- * helper over the same rows, and two drifting definitions of "one session"
- * would put the server's room key and the client's window back out of step,
- * which is the defect this whole change removes.
- *
- * Gated by `readSlotForCaller`: it takes a raw slot id, and even though it
- * discloses less than the profile below, it still confirms that a slot exists
- * and which appointment owns it.
- *
- * @param slotId Any row of the session.
- * @returns The anchor row, or null when it cannot be resolved (caller falls
- *   back to the row it was given, preserving today's behaviour).
- */
-export async function resolveSessionAnchorSlot(
-  slotId: string,
-): Promise<AnchorSlot | null> {
-  const validatedSlotId = slotIdSchema.parse(slotId);
-
-  try {
-    const slot = (await readSlotForCaller(validatedSlotId))?.slot;
-    // An appointment-less row has no siblings to walk, and querying for them
-    // would ask Prisma for `appointmentId IS NULL` — every orphan in the
-    // table. The column is required today, so this is a guard, not a fix.
-    if (!slot?.appointmentId) return slot ?? null;
-
-    // Served by @@index([appointmentId]). Only the soft-delete tombstone is
-    // filtered here — it is a storage concern the grouping helper has no
-    // business knowing about; every session rule is left to the helper.
-    // The `id` tiebreak makes equal-start rows order deterministically in
-    // every query that fetches them, so two surfaces can't disagree about
-    // which row leads a run merely by fetching in a different order.
-    const siblings = await prisma.slotOfAppointment.findMany({
-      where: { appointmentId: slot.appointmentId, deletedAt: null },
-      orderBy: [{ startsAt: "asc" }, { id: "asc" }],
-      select: anchorSlotSelect,
-    });
-
-    // No run means the row we were handed is itself cancelled, rescheduled or
-    // soft-deleted, so it anchors only itself — which keeps a stale Join click
-    // on the room it already has.
-    const run = findSessionRun(siblings, slot.id);
-    if (!run) return slot;
-
-    // Prefer a consultant-owned anchor when one exists in this run. Webinar
-    // and class buyers get their own parallel slot row spanning only the
-    // first atom; if such a row sorts ahead of the consultant's contiguous
-    // N-atom run, the buyer's Join minted a SECOND room on a different key
-    // and split the audience (#1061 class). The consultant's rows are the
-    // canonical spine every attendee is grouped around.
-    const consultantAnchor = run.slots.find((s) => s.consultantProfileId);
-    return consultantAnchor ?? run.anchor ?? slot;
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "stream" } },
-    );
-    streamLogger.error("Failed to resolve session anchor slot", error, {
-      slotId: validatedSlotId,
-    });
-    return null;
-  }
-}
 
 /**
  * The one role every member of an appointment call is named with (#1270).
@@ -356,7 +276,7 @@ export type SessionCallProfile = {
 
 /**
  * Everything about a session a Stream call should describe itself with — the
- * run's real bounds, the offering it belongs to, and who is hosting it (#1070).
+ * occurrence's bounds, the offering it belongs to, and who is hosting it (#1070).
  *
  * Resolved server-side and once, at call-creation time, rather than left to
  * each dashboard surface to infer. Only read on the branch that actually mints
@@ -390,21 +310,10 @@ export async function resolveSessionCallProfile(
     const isGroupEvent =
       appointment.appointmentType === "WEBINAR" ||
       appointment.appointmentType === "CLASS";
-    const siblings = await prisma.slotOfAppointment.findMany({
-      where: { appointmentId: anchor.appointmentId, deletedAt: null },
-      orderBy: { startsAt: "asc" },
-      select: {
-        ...anchorSlotSelect,
-        // `take: 0` rather than a narrower select, so the row type stays the
-        // same shape on both branches.
-        user: {
-          select: { id: true, name: true },
-          ...(isGroupEvent ? { take: 0 } : {}),
-        },
-      },
-    });
-    const run = findSessionRun(siblings, validatedSlotId);
-    if (!run) return null;
+    // #1554 — the occurrence IS the session: a cancelled, rescheduled or
+    // soft-deleted row describes no call.
+    if (isDeadOccurrence(anchor)) return null;
+    const run = { startsAt: anchor.startsAt, endsAt: anchor.endsAt };
 
     // Ownership stays defined by resolvePlanOwnerIds — the same predicate the
     // reschedule and timings routes authorize with. It answers in consultant
@@ -426,7 +335,7 @@ export async function resolveSessionCallProfile(
     remember(appointment.subscription?.subscriptionPlan?.consultantProfile);
     remember(appointment.webinar?.webinarPlan?.consultantProfile);
     remember(appointment.class?.classPlan?.consultantProfile);
-    remember(appointment.trialSession?.subscriptionPlan?.consultantProfile);
+    remember(appointment.trial?.subscriptionPlan?.consultantProfile);
     for (const collaborator of [
       ...(appointment.webinar?.webinarPlan?.collaborators ?? []),
       ...(appointment.class?.classPlan?.collaborators ?? []),
@@ -454,7 +363,7 @@ export async function resolveSessionCallProfile(
       appointment.subscription?.subscriptionPlan?.consultantProfile?.id ??
       appointment.webinar?.webinarPlan?.consultantProfile?.id ??
       appointment.class?.classPlan?.consultantProfile?.id ??
-      appointment.trialSession?.subscriptionPlan?.consultantProfile?.id ??
+      appointment.trial?.subscriptionPlan?.consultantProfile?.id ??
       null;
     const hostControlUserIds = [
       ...new Set(
@@ -464,26 +373,30 @@ export async function resolveSessionCallProfile(
       ),
     ];
 
-    // Attendees are named only for the 1:1 types, where both sides are
-    // connected to the slot. A webinar or class can hold hundreds of them and
-    // Stream would reject the oversized request, which would turn a working
-    // join into a failure — so group events name their hosts and nobody else.
+    // Attendees are named only for the 1:1 types. A webinar or class can hold
+    // hundreds of them and Stream would reject the oversized request, which
+    // would turn a working join into a failure — so group events name their
+    // hosts and nobody else. #1554 — the roster is AppointmentParticipant.
     const hosts = new Set(hostUserIds);
-    for (const attendee of run.slots.flatMap((slot) => slot.user)) {
+    const attendees = isGroupEvent
+      ? []
+      : await prisma.appointmentParticipant.findMany({
+          where: { appointmentId: anchor.appointmentId, ...liveParticipant() },
+          select: { user: { select: { id: true, name: true } } },
+        });
+    for (const { user: attendee } of attendees) {
       if (attendee.name) userToName.set(attendee.id, attendee.name);
     }
-    const guestUserIds = isGroupEvent
-      ? []
-      : [
-          ...new Set(run.slots.flatMap((slot) => slot.user.map((u) => u.id))),
-        ].filter((userId) => !hosts.has(userId));
+    const guestUserIds = [
+      ...new Set(attendees.map(({ user }) => user.id)),
+    ].filter((userId) => !hosts.has(userId));
 
     const offeringTitle =
       appointment.consultation?.consultationPlan?.title ??
       appointment.subscription?.subscriptionPlan?.title ??
       appointment.webinar?.webinarPlan?.title ??
       appointment.class?.classPlan?.title ??
-      appointment.trialSession?.subscriptionPlan?.title ??
+      appointment.trial?.subscriptionPlan?.title ??
       null;
 
     // #1270 — Stream rejects the whole GetOrCreateCall when `members` names a
@@ -560,7 +473,7 @@ export async function resolveSessionCallProfile(
  * Deliberately NOT entitlement-gated, unlike the writer below.
  *
  * The only thing it returns that an attacker would want is `streamCallId`, and
- * that is `slot-<anchorSlotId>` — derivable from the slot id the caller had to
+ * that is `occurrence-<occurrenceId>` — derivable from the id the caller had to
  * supply to ask the question. A gate here would therefore buy no
  * confidentiality, while putting a hard refusal on the read that EVERY join
  * makes: `readSlotForCaller` returns null for a transient database failure as
@@ -569,22 +482,22 @@ export async function resolveSessionCallProfile(
  * /api/meetings/[id]/validate-access.
  *
  * @param slotId The ID of the appointment slot.
- * @returns The MeetingSession object if found, otherwise null.
+ * @returns The Meeting object if found, otherwise null.
  */
-export async function findDbMeetingSessionBySlot(
+export async function findDbMeetingBySlot(
   slotId: string,
-): Promise<MeetingSession | null> {
+): Promise<Meeting | null> {
   // Validate input
   const validatedSlotId = slotIdSchema.parse(slotId);
 
   try {
-    const meetingSession = await prisma.meetingSession.findUnique({
-      where: { slotOfAppointmentId: validatedSlotId },
+    const meeting = await prisma.meeting.findUnique({
+      where: { appointmentOccurrenceId: validatedSlotId },
     });
 
-    if (meetingSession) {
+    if (meeting) {
       streamLogger.debug("Found existing meeting session", {
-        sessionId: meetingSession.id,
+        sessionId: meeting.id,
         slotId: validatedSlotId,
       });
     } else {
@@ -593,7 +506,7 @@ export async function findDbMeetingSessionBySlot(
       });
     }
 
-    return meetingSession;
+    return meeting;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -652,7 +565,7 @@ async function refuseMeetingCreation(
   // the row's actual persisted state instead of trusting the payload. The
   // booking's status lives on its PARENT row (consultation/subscription/
   // webinar/class/trial), not on Appointment itself.
-  const dbSlot = await prisma.slotOfAppointment.findUnique({
+  const dbSlot = await prisma.appointmentOccurrence.findUnique({
     where: { id: parsedSlot.data.id },
     select: {
       isTentative: true,
@@ -665,7 +578,7 @@ async function refuseMeetingCreation(
           subscription: { select: { status: true } },
           webinar: { select: { status: true } },
           class: { select: { status: true } },
-          trialSession: { select: { status: true } },
+          trial: { select: { status: true } },
         },
       },
     },
@@ -696,8 +609,7 @@ async function refuseMeetingCreation(
     appt.subscription?.status ??
     appt.webinar?.status ??
     appt.class?.status ??
-    (appt.trialSession?.status === "CANCELLED" ||
-    appt.trialSession?.status === "REJECTED"
+    (appt.trial?.status === "CANCELLED" || appt.trial?.status === "REJECTED"
       ? "CANCELLED"
       : null);
   if (
@@ -725,13 +637,13 @@ const TERMINAL_APPOINTMENT_STATUSES = new Set([
  * The refusal check, hoisted for `getOrCreateAppointmentMeeting` to run BEFORE
  * `call.getOrCreate` (#1077).
  *
- * Blocked after the mint, Stream keeps a call no `MeetingSession` row points
+ * Blocked after the mint, Stream keeps a call no `Meeting` row points
  * at, stamped with whatever bounds and members were computed at the blocked
  * moment — and nothing ever corrects them, because only the mint branch writes
  * that data.
  *
  * Fails OPEN. An unexpected throw here must not turn a working join into a
- * refusal: the authoritative gate is still `createDbMeetingSession`, which runs
+ * refusal: the authoritative gate is still `createDbMeeting`, which runs
  * a moment later on the same request.
  *
  * Deliberately NOT entitlement-gated, and the only export here that is not.
@@ -761,7 +673,7 @@ export async function getMeetingCreationRefusal(
     });
     // #1270 — a refusal we could not evaluate is a refusal, not a pass.
     // Answering `null` here meant "nothing refuses this", so a slot read that
-    // threw let the mint proceed; `createDbMeetingSession` then re-ran the same
+    // threw let the mint proceed; `createDbMeeting` then re-ran the same
     // check, and a second read that succeeded threw — leaving the orphaned,
     // billable Stream room the caller's ordering exists to prevent. The
     // caller's own message is deliberately vague: a transient read failure is
@@ -771,14 +683,14 @@ export async function getMeetingCreationRefusal(
 }
 
 /**
- * The org an appointment belongs to, for the audit column on MeetingSession.
+ * The org an appointment belongs to, for the audit column on Meeting.
  *
  * Deliberately still fatal on failure rather than degrading to null: the column
  * is written once and never updated, so a null recorded because a read blipped
  * would hide this call from its own org's audit queries permanently. A failed
  * join is retryable; that is not.
  *
- * Extracted from `createDbMeetingSession` only to keep that function under the
+ * Extracted from `createDbMeeting` only to keep that function under the
  * cognitive-complexity limit the pipeline enforces.
  */
 async function readAppointmentOrganizationId(
@@ -796,12 +708,12 @@ async function readAppointmentOrganizationId(
  * Creates a new meeting session in the database.
  * @param slot The appointment slot for which to create the session.
  * @param streamCallId The Stream Call ID to associate with the new session.
- * @returns The newly created MeetingSession object.
+ * @returns The newly created Meeting object.
  */
-export async function createDbMeetingSession(
+export async function createDbMeeting(
   slot: MeetingSlot,
   streamCallId: string,
-): Promise<MeetingSession> {
+): Promise<Meeting> {
   // The maintenance read, the input validation and the organization lookup
   // all used to sit OUTSIDE this guard. Anything they threw left the server
   // action raw: Next replaces an uncaught server-action error with an opaque
@@ -815,7 +727,7 @@ export async function createDbMeetingSession(
     // because this module is `"use server"` and any client can reach this
     // function directly with arguments of its choosing.
     const refusal = await refuseMeetingCreation(slot);
-    if (refusal) throw new MeetingSessionRefusal(refusal);
+    if (refusal) throw new MeetingRefusal(refusal);
 
     // The row written here decides which Stream call BOTH sides are sent to,
     // it is unique per slot and never updated, and every later join reuses its
@@ -835,11 +747,11 @@ export async function createDbMeetingSession(
       slot.appointmentId,
     );
 
-    const meetingSession = await prisma.meetingSession.create({
+    const meeting = await prisma.meeting.create({
       data: {
         streamCallId: validatedStreamCallId,
         platform: "STREAM",
-        slotOfAppointment: {
+        occurrence: {
           connect: { id: slot.id },
         },
         ...(organizationId
@@ -849,12 +761,12 @@ export async function createDbMeetingSession(
     });
 
     streamLogger.info("Meeting session created", {
-      sessionId: meetingSession.id,
+      sessionId: meeting.id,
       slotId: slot.id,
       streamCallId: validatedStreamCallId,
     });
 
-    return meetingSession;
+    return meeting;
   } catch (error) {
     // Race condition: another caller already created a session for this slot.
     // Return the existing session instead of throwing.
@@ -866,13 +778,13 @@ export async function createDbMeetingSession(
         "Meeting session already exists (concurrent creation), returning existing",
         { slotId: slot.id },
       );
-      const existing = await prisma.meetingSession.findUnique({
-        where: { slotOfAppointmentId: slot.id },
+      const existing = await prisma.meeting.findUnique({
+        where: { appointmentOccurrenceId: slot.id },
       });
       if (existing) return existing;
     }
 
-    if (error instanceof MeetingSessionRefusal) {
+    if (error instanceof MeetingRefusal) {
       streamLogger.warn("Refused to create meeting session", {
         slotId: slot.id,
         streamCallId,
@@ -900,7 +812,7 @@ export async function createDbMeetingSession(
 }
 
 /*
- * `getOrCreateMeetingSession` and `updateMeetingSessionCallId` were removed
+ * `getOrCreateMeeting` and `updateMeetingCallId` were removed
  * here. Neither had a single caller, and both were exported from a
  * `"use server"` module: the first wrapped the ungated find+create pair, and
  * the second rewrote an existing session's `streamCallId` outright, which is a
@@ -964,7 +876,7 @@ function describeCall(
  * cognitive-complexity limit the pipeline enforces.
  */
 function buildCallCustom(args: {
-  anchorSlotId: string;
+  occurrenceId: string;
   appointmentId: string | null | undefined;
   appointmentType: AppointmentsType;
   organizationId: string | null;
@@ -991,11 +903,10 @@ function buildCallCustom(args: {
     title,
     description,
     appointmentId: args.appointmentId ?? null,
-    slotId: args.anchorSlotId,
-    // Named explicitly so a Stream dashboard or recording entry says which row
-    // keys the room without anyone having to know `slotId` means the anchor
-    // (#1061).
-    anchorSlotId: args.anchorSlotId,
+    // #1554 — the occurrence keys the room; `slotId` stays for the screens
+    // that read it.
+    slotId: args.occurrenceId,
+    occurrenceId: args.occurrenceId,
     appointmentType: args.appointmentType,
     ...(args.organizationId ? { organizationId: args.organizationId } : {}),
     ...(consultantUserId ? { consultantUserId } : {}),
@@ -1054,9 +965,10 @@ export type ProvisionedMeeting =
  *      release them afterwards; a room minted server-side cannot open them at
  *      all.
  *
- * The room id is unchanged — `slot-<anchorSlotId>`, derived from the run's
- * first row (#1061) — because both sides and every existing MeetingSession row
- * depend on it.
+ * The room id is `occurrence-<occurrenceId>` (#1554): both sides resolve the
+ * same row, so they resolve the same call. The one exception is a room rebuilt
+ * after a pre-start end, which carries an `-r<suffix>` (#1607); the row's
+ * `streamCallId` is the truth.
  *
  * Deliberately NOT sent (still deferred to #1070): `backstage`,
  * `join_ahead_time_seconds`, and `settings_override.limits.max_duration_seconds`.
@@ -1070,26 +982,21 @@ export type ProvisionedMeeting =
 export async function provisionAppointmentMeeting(
   slot: MeetingSlot,
 ): Promise<ProvisionedMeeting> {
-  // #1061 — a session longer than 30 minutes is N consecutive slot rows, and
-  // each dashboard surface hands us a different one. Key the room to the run's
-  // first row so both sides, at any point in the hour, resolve the same call.
-  //
-  // The `?? slot` fallback is NOT safe, and is chosen anyway: if the anchor
-  // lookup fails for one of two people clicking Join at the same moment, that
-  // person mints `slot-<their row>` and leaves a stray MeetingSession on a
-  // non-anchor row. It is still better than refusing, which would take the
-  // whole meeting down for both sides rather than degrading for one.
+  // #1554 — one occurrence row per held call, so the row every surface hands
+  // us IS the room key; there is no run to anchor to any more (#1061).
   // Pinned by __tests__/stream/session-room-identity.test.ts.
-  const anchorSlot: MeetingSlot =
-    (await resolveSessionAnchorSlot(slot.id)) ?? slot;
+  const anchorSlot: MeetingSlot = slot;
 
   // An existing session is the common case and short-circuits everything else:
-  // the room already exists, and nothing below may rewrite it.
-  const existingMeetingSession = await findDbMeetingSessionBySlot(
-    anchorSlot.id,
-  );
-  if (existingMeetingSession) {
-    return { ok: true, streamCallId: existingMeetingSession.streamCallId };
+  // the room already exists, and nothing below may rewrite it — with one
+  // exception. #1607: a room the host closed BEFORE the booked start is dead on
+  // Stream (a call's `ended_at` never clears, so the SDK renders "ended" even
+  // though a new session opens), so an `ended_early` row gets a fresh call id
+  // through the same entitlement and refusal gates as a first mint.
+  const existingMeeting = await findDbMeetingBySlot(anchorSlot.id);
+  const rebuildEndedEarly = existingMeeting?.endedReason === ENDED_EARLY_REASON;
+  if (existingMeeting && !rebuildEndedEarly) {
+    return { ok: true, streamCallId: existingMeeting.streamCallId };
   }
 
   // Entitlement FIRST — ahead of the booking-state refusal, not just ahead of
@@ -1101,7 +1008,7 @@ export async function provisionAppointmentMeeting(
   // or moved." A stranger gets one answer now, and it tells them nothing.
   //
   // It is also ahead of the Stream write for the original #1077 reason: the
-  // browser used to mint the call and only then call `createDbMeetingSession`,
+  // browser used to mint the call and only then call `createDbMeeting`,
   // where the check lived, so an unentitled caller left a real billable Stream
   // room behind that the database refused to record.
   const authorized = await readSlotForCaller(anchorSlot.id);
@@ -1110,12 +1017,12 @@ export async function provisionAppointmentMeeting(
   }
 
   // #1077 — anything that can refuse this join runs BEFORE the mint. Blocked
-  // after it, Stream keeps a call no MeetingSession row points at, stamped with
+  // after it, Stream keeps a call no Meeting row points at, stamped with
   // whatever bounds and members were computed at the blocked moment.
   //
   // #1270 review: `getMeetingCreationRefusal` swallows every error and answers
   // `null`, so a slot read that THREW used to read as "nothing refuses this"
-  // and the mint proceeded — then `createDbMeetingSession` re-ran the same
+  // and the mint proceeded — then `createDbMeeting` re-ran the same
   // check, and if that second read succeeded it threw, leaving exactly the
   // orphaned billable room the ordering above exists to prevent. A refusal we
   // could not evaluate is now a refusal.
@@ -1129,11 +1036,13 @@ export async function provisionAppointmentMeeting(
     return { ok: false, refusal: "Video is not available right now." };
   }
 
-  const streamCallId = `slot-${anchorSlot.id}`;
+  // A rebuilt room carries a suffix so it never collides with the dead call.
+  const streamCallId = rebuildEndedEarly
+    ? `occurrence-${anchorSlot.id}-r${Date.now().toString(36)}`
+    : `occurrence-${anchorSlot.id}`;
   const callProfile = await resolveSessionCallProfile(anchorSlot.id);
 
-  // The RUN's start, not the clicked row's: joining a 10:00–11:00 session from
-  // its 10:30 row must not tell Stream the meeting starts at 10:30.
+  // The occurrence's own bounds, resolved server-side.
   const startsAt =
     callProfile?.startsAt ??
     (anchorSlot.startsAt ? new Date(anchorSlot.startsAt) : new Date());
@@ -1211,7 +1120,7 @@ export async function provisionAppointmentMeeting(
               }
             : {}),
           custom: buildCallCustom({
-            anchorSlotId: anchorSlot.id,
+            occurrenceId: anchorSlot.id,
             appointmentId: anchorSlot.appointmentId,
             appointmentType: authorized.appointment.appointmentType,
             organizationId: authorized.appointment.organizationId ?? null,
@@ -1243,11 +1152,42 @@ export async function provisionAppointmentMeeting(
       : new Error("Failed to create meeting session.", { cause: error });
   }
 
-  // Attached to the anchor, so MeetingSession.slotOfAppointmentId stays
+  if (rebuildEndedEarly && existingMeeting) {
+    // Rebind the run's one row to the fresh call. CAS on the reason: if a
+    // concurrent join already rebuilt it, keep that room rather than a third.
+    const rebound = await prisma.meeting.updateMany({
+      where: { id: existingMeeting.id, endedReason: ENDED_EARLY_REASON },
+      data: {
+        streamCallId,
+        endedAt: null,
+        endedReason: null,
+        isRecording: false,
+      },
+    });
+    if (rebound.count === 0) {
+      const current = await prisma.meeting.findUnique({
+        where: { id: existingMeeting.id },
+        select: { streamCallId: true },
+      });
+      return {
+        ok: true,
+        streamCallId: current?.streamCallId ?? streamCallId,
+      };
+    }
+    streamLogger.info("Rebuilt the room after a pre-start end", {
+      sessionId: existingMeeting.id,
+      slotId: anchorSlot.id,
+      previousStreamCallId: existingMeeting.streamCallId,
+      streamCallId,
+    });
+    return { ok: true, streamCallId };
+  }
+
+  // Attached to the anchor, so Meeting.appointmentOccurrenceId stays
   // @unique-correct: one session per run, not one per half hour. Re-checks the
   // refusal and the entitlement itself; it is the authoritative write gate and
   // is deliberately not weakened by the hoisted copies above.
-  await createDbMeetingSession(anchorSlot, streamCallId);
+  await createDbMeeting(anchorSlot, streamCallId);
 
   return { ok: true, streamCallId };
 }

@@ -15,6 +15,7 @@
  */
 import "dotenv/config";
 import prisma from "../../../../../lib/prisma";
+import { liveParticipant } from "../../../../../lib/booking/participants";
 import {
   apiFetch,
   check,
@@ -39,7 +40,12 @@ async function run() {
         include: { consultantProfile: { select: { userId: true } } },
       },
       appointment: {
-        include: { slotsOfAppointment: { include: { user: true } } },
+        include: {
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
+        },
       },
     },
   });
@@ -50,9 +56,7 @@ async function run() {
 
   const consultantUserId = webinar.webinarPlan.consultantProfile?.userId;
   const enrolledUserIds = new Set<string>(
-    webinar.appointment.slotsOfAppointment.flatMap((s) =>
-      s.user.map((u) => u.id),
-    ),
+    webinar.appointment.participants.map((seat) => seat.userId),
   );
   const currentParticipants = countWebinarParticipants(webinar.appointment, [
     consultantUserId || "",
@@ -125,7 +129,12 @@ async function run() {
       include: {
         webinarPlan: true,
         appointment: {
-          include: { slotsOfAppointment: { include: { user: true } } },
+        include: {
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
+          },
+        },
         },
       },
     });
@@ -176,31 +185,15 @@ async function run() {
         `⚠️ payment cleanup incomplete — rows left in place: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`,
       );
     }
-    // Disconnect any stormer from the webinar's slots (winner or tentative
-    // residue) so reruns start from the same occupancy.
-    const slots = await prisma.slotOfAppointment.findMany({
+    // Release any stormer's seat (winner or tentative residue) so reruns
+    // start from the same occupancy (#1554: the seat is the participant row).
+    await prisma.appointmentParticipant.deleteMany({
       where: {
         appointmentId: webinar.appointment.id,
-        user: { some: { id: { in: stormerIds } } },
+        userId: { in: stormerIds },
+        createdAt: { gte: testStart },
       },
-      select: { id: true, user: { select: { id: true } }, createdAt: true },
     });
-    for (const slot of slots) {
-      if (slot.createdAt >= testStart) {
-        await prisma.slotOfAppointment.delete({ where: { id: slot.id } });
-      } else {
-        await prisma.slotOfAppointment.update({
-          where: { id: slot.id },
-          data: {
-            user: {
-              disconnect: slot.user
-                .filter((u) => stormerIds.includes(u.id))
-                .map((u) => ({ id: u.id })),
-            },
-          },
-        });
-      }
-    }
   }
 
   finish("last-seat-storm");

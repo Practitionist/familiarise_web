@@ -130,10 +130,10 @@ Each type has a dedicated handler called inside the Serializable transaction:
 
 | Type         | Handler                        | What It Creates                                                                                                                                                            |
 | ------------ | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + SlotOfAppointment (`isTentative: !skipPayment`)                                                                                     |
+| CONSULTATION | `handleConsultationCheckout()` | Consultation (PENDING) + Appointment + AppointmentOccurrence (`isTentative: !skipPayment`)                                                                                     |
 | SUBSCRIPTION | `handleSubscriptionCheckout()` | Subscription (PENDING) + placeholder Appointment (no slots). Slots allocated later by consultant via Requests tab. Links completed trial sessions for conversion tracking. |
-| WEBINAR      | `handleWebinarCheckout()`      | Adds SlotOfAppointment to existing shared appointment. Validates: not full, not ended, user not already registered.                                                        |
-| CLASS        | `handleClassCheckout()`        | Creates SlotOfAppointment for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                                |
+| WEBINAR      | `handleWebinarCheckout()`      | Adds AppointmentOccurrence to existing shared appointment. Validates: not full, not ended, user not already registered.                                                        |
+| CLASS        | `handleClassCheckout()`        | Creates AppointmentOccurrence for the user across ALL class sessions (appointments). Validates: not full, not ended, user not already enrolled.                                |
 
 ### PaymentIntentManager
 

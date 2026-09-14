@@ -16,7 +16,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { setParticipantStatus } from "@/lib/booking/participants";
-import { PaymentStatus, SlotCompletionStatus } from "@prisma/client";
+import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
 import {
@@ -52,10 +52,10 @@ export async function softCancelTrialAppointment(
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    await tx.slotOfAppointment.updateMany({
+    await tx.appointmentOccurrence.updateMany({
       where: { appointmentId, deletedAt: null },
       data: {
-        completionStatus: SlotCompletionStatus.CANCELLED,
+        completionStatus: OccurrenceCompletionStatus.CANCELLED,
         deletedAt: now,
       },
     });
@@ -89,7 +89,7 @@ export async function refundCancelledTrial(args: {
 }): Promise<TrialRefundOutcome | null> {
   const { trialId, appointmentId, paymentId, initiatedByUserId } = args;
 
-  // TrialSession.paymentId is ledger truth once a paid trial settles, but the
+  // Trial.paymentId is ledger truth once a paid trial settles, but the
   // webhook writes it after capture — fall back to the appointment's payment so
   // a cancellation racing that write still refunds.
   const payment = await prisma.payment.findFirst({
@@ -113,7 +113,7 @@ export async function refundCancelledTrial(args: {
         where: { id: appointmentId },
         select: {
           cancellationPolicy: POLICY_TERMS_INCLUDE,
-          slotsOfAppointment: {
+          occurrences: {
             orderBy: { startsAt: "asc" },
             take: 1,
             select: { startsAt: true },
@@ -122,7 +122,7 @@ export async function refundCancelledTrial(args: {
       })
     : null;
 
-  const startsAt = appointment?.slotsOfAppointment[0]?.startsAt;
+  const startsAt = appointment?.occurrences[0]?.startsAt;
   const hoursUntilStart = startsAt
     ? (startsAt.getTime() - Date.now()) / 3_600_000
     : -1;

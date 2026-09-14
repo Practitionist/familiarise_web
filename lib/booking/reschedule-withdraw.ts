@@ -4,7 +4,7 @@ import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
   transitionRescheduleRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -41,7 +41,7 @@ export async function withdrawRescheduleRequest(args: {
       id: true,
       status: true,
       initiatedById: true,
-      releasedSlotIds: true,
+      releasedOccurrenceIds: true,
       appointmentId: true,
       appointment: {
         select: {
@@ -87,9 +87,9 @@ export async function withdrawRescheduleRequest(args: {
       // No appointmentId: a whole-subscription reschedule releases slots across
       // sibling appointments, so each row's history belongs to the appointment
       // it actually sits on, not to the one the proposal was opened against.
-      restored = await transitionSlotCompletion(tx, {
+      restored = await transitionOccurrenceCompletion(tx, {
         actorUserId: withdrawnById,
-        where: { id: { in: request.releasedSlotIds } },
+        where: { id: { in: request.releasedOccurrenceIds } },
         to: "SCHEDULED",
         data: { isTentative: false },
         fromIn: ["RESCHEDULED"],
@@ -152,7 +152,10 @@ export async function withdrawRescheduleRequest(args: {
     reportSentryError(err, {
       subsystem: "bookings",
       op: "reschedule-withdraw",
-      extra: { rescheduleRequestId, releasedSlotIds: request.releasedSlotIds },
+      extra: {
+        rescheduleRequestId,
+        releasedOccurrenceIds: request.releasedOccurrenceIds,
+      },
     });
     throw err;
   }
@@ -167,10 +170,10 @@ export async function withdrawRescheduleRequest(args: {
   // does. Withdrawing after that is a no-op the user cannot have intended, not
   // a fault in this code. A PARTIAL restore is the genuine anomaly the check
   // was written for, because it leaves one booking in two states at once.
-  if (restored !== request.releasedSlotIds.length) {
+  if (restored !== request.releasedOccurrenceIds.length) {
     reportSentryError(
       new Error(
-        `Withdrawal restored ${restored} of ${request.releasedSlotIds.length} released slots.`,
+        `Withdrawal restored ${restored} of ${request.releasedOccurrenceIds.length} released slots.`,
       ),
       {
         subsystem: "bookings",
@@ -178,7 +181,7 @@ export async function withdrawRescheduleRequest(args: {
         expected: restored === 0,
         extra: {
           rescheduleRequestId,
-          releasedSlotIds: request.releasedSlotIds,
+          releasedOccurrenceIds: request.releasedOccurrenceIds,
           restored,
         },
       },

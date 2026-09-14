@@ -8,12 +8,12 @@
  * the menu should never have offered.
  */
 
-import { slotsAllowReschedule } from "@/lib/appointments/slots";
+import { occurrencesAllowReschedule } from "@/lib/appointments/occurrences";
 
-describe("slotsAllowReschedule", () => {
+describe("occurrencesAllowReschedule", () => {
   it("allows a booking with confirmed sessions", () => {
     expect(
-      slotsAllowReschedule([
+      occurrencesAllowReschedule([
         { isTentative: false, completionStatus: "SCHEDULED" },
         { isTentative: false, completionStatus: "SCHEDULED" },
       ]),
@@ -23,12 +23,14 @@ describe("slotsAllowReschedule", () => {
   it("refuses an approved booking with nothing allocated", () => {
     // "Not scheduled · 0/0" — the proposal window is derived from the earliest
     // released session, so there is nothing to derive it from.
-    expect(slotsAllowReschedule([])).toBe(false);
+    expect(occurrencesAllowReschedule([])).toBe(false);
   });
 
   it("refuses a request still awaiting its first allocation", () => {
     expect(
-      slotsAllowReschedule([{ isTentative: true, completionStatus: null }]),
+      occurrencesAllowReschedule([
+        { isTentative: true, completionStatus: null },
+      ]),
     ).toBe(false);
   });
 
@@ -36,7 +38,7 @@ describe("slotsAllowReschedule", () => {
     // openForAppointmentId is a nullable-unique, so a second live request is
     // impossible — offering the action again only earns a 409.
     expect(
-      slotsAllowReschedule([
+      occurrencesAllowReschedule([
         { isTentative: false, completionStatus: "SCHEDULED" },
         { isTentative: true, completionStatus: "RESCHEDULED" },
       ]),
@@ -47,7 +49,7 @@ describe("slotsAllowReschedule", () => {
     // COMPLETED is not RESCHEDULED: a subscription with past sessions and
     // future ones is still movable.
     expect(
-      slotsAllowReschedule([
+      occurrencesAllowReschedule([
         { isTentative: false, completionStatus: "COMPLETED" },
         { isTentative: false, completionStatus: "SCHEDULED" },
       ]),

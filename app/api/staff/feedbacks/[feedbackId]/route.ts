@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "lib/prisma";
-import { FeedbackStatus } from "@prisma/client";
+import { PlatformFeedbackStatus } from "@prisma/client";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 export async function GET(
@@ -14,7 +14,7 @@ export async function GET(
 
     const { feedbackId } = await params;
 
-    const feedback = await prisma.feedback.findUnique({
+    const feedback = await prisma.platformFeedback.findUnique({
       where: { id: feedbackId },
       include: {
         user: {
@@ -60,11 +60,11 @@ export async function PATCH(
     const body = await req.json();
 
     // Validate status if provided
-    if (body.status && !Object.values(FeedbackStatus).includes(body.status)) {
+    if (body.status && !Object.values(PlatformFeedbackStatus).includes(body.status)) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
-    const feedback = await prisma.feedback.update({
+    const feedback = await prisma.platformFeedback.update({
       where: { id: feedbackId },
       data: {
         ...(body.status && { status: body.status }),

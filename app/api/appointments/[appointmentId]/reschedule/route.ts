@@ -6,6 +6,7 @@ import {
   withAppointmentLock,
 } from "@/utils/appointmentlock";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
@@ -43,7 +44,7 @@ import {
   SLOT_RESCHEDULABLE_FROM,
   transitionClassEvent,
   transitionConsultationRequest,
-  transitionSlotCompletion,
+  transitionOccurrenceCompletion,
   transitionSubscriptionRequest,
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
@@ -187,7 +188,7 @@ export async function POST(
           const appointment = await tx.appointment.findUnique({
             where: { id: appointmentId },
             include: {
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { startsAt: "asc" },
               },
               consultation: {
@@ -309,29 +310,12 @@ export async function POST(
             );
           }
 
-          // For SUBSCRIPTION and CLASS types, we need to get ALL slots across ALL appointments
-          // because the UI collects slots from all appointments but only passes one appointmentId
-          let allSubscriptionSlots: typeof appointment.slotsOfAppointment = [];
-
-          if (derivedType === "SUBSCRIPTION" && appointment.subscription) {
-            // Fetch all appointments for this subscription with their slots
-            const allAppointments = await tx.appointment.findMany({
-              where: { subscriptionId: appointment.subscription.id },
-              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
-            });
-            allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.slotsOfAppointment,
-            );
-          } else if (derivedType === "CLASS" && appointment.class) {
-            // Fetch all appointments for this class with their slots
-            const allAppointments = await tx.appointment.findMany({
-              where: { classId: appointment.class.id },
-              include: { slotsOfAppointment: { orderBy: { startsAt: "asc" } } },
-            });
-            allSubscriptionSlots = allAppointments.flatMap(
-              (apt) => apt.slotsOfAppointment,
-            );
-          }
+          // #1554 — a subscription or class is ONE wrapper, so every session
+          // of the programme is already on `appointment.occurrences`.
+          let allSubscriptionSlots: typeof appointment.occurrences =
+            derivedType === "SUBSCRIPTION" || derivedType === "CLASS"
+              ? appointment.occurrences
+              : [];
 
           // E2E-audit fix — whole-series flows must act on LIVE slots only.
           // The 24-hour gate and the proposal-count check used to iterate every
@@ -351,7 +335,7 @@ export async function POST(
             (!slotIds || slotIds.length === 0) &&
             allSubscriptionSlots.length > 0
               ? allSubscriptionSlots
-              : appointment.slotsOfAppointment;
+              : appointment.occurrences;
 
           // For SUBSCRIPTION/CLASS with slotIds, only reschedule the specific
           // slots. CLASS previously fell through to the whole-class branch, so
@@ -391,9 +375,7 @@ export async function POST(
           }
 
           // Audit attribution for every BookingStatusHistory row this
-          // reschedule writes (#1322 A12). `appointmentId` is added per call
-          // site: a whole-subscription or whole-class release moves slots of
-          // sibling appointments, whose history belongs on their own timeline.
+          // reschedule writes (#1322 A12).
           const auditMeta = {
             actorUserId: session.user.id,
             reason: reason ?? null,
@@ -401,7 +383,7 @@ export async function POST(
           };
           // Every slot flip below releases the row in place: RESCHEDULED plus
           // tentative, never a tombstone. The reschedule keeps these rows —
-          // the proposal's releasedSlotIds point at them and a withdrawal
+          // the proposal's releasedOccurrenceIds point at them and a withdrawal
           // restores them — so `deletedAt` is the cancel path's business only.
           //
           // From-state guard on every slot flip: a reschedule must never
@@ -410,8 +392,10 @@ export async function POST(
           // `completionStatus` in the caller's WHERE with its own from-set.
           // `allowZero` keeps the pre-existing contract: a release that matches
           // no live row answers 200 with `slotsAffected: 0`, not a 409.
-          const releaseSlots = (where: Prisma.SlotOfAppointmentWhereInput) =>
-            transitionSlotCompletion(tx, {
+          const releaseSlots = (
+            where: Prisma.AppointmentOccurrenceWhereInput,
+          ) =>
+            transitionOccurrenceCompletion(tx, {
               ...auditMeta,
               where,
               to: "RESCHEDULED",
@@ -427,39 +411,15 @@ export async function POST(
             ((derivedType === "SUBSCRIPTION" && appointment.subscription) ||
               (derivedType === "CLASS" && appointment.class))
           ) {
-            // Individual/multiple session reschedule - mark ALL slots of the affected appointments
-            // (e.g. a 1.5h session has 3 consecutive slots; all must be marked tentative together)
-            const affectedAppointmentIds = Array.from(
-              new Set(slotsToReschedule.map((s) => s.appointmentId)),
-            );
+            // #1554 — one occurrence row is one session, so a per-session
+            // reschedule releases exactly the rows named; releasing by
+            // appointment would free every session of the programme.
             await releaseSlots({
-              appointmentId: { in: affectedAppointmentIds },
+              appointmentId,
+              id: { in: slotsToReschedule.map((s) => s.id) },
             });
-          } else if (
-            derivedType === "SUBSCRIPTION" &&
-            appointment.subscription
-          ) {
-            // Entire subscription reschedule - mark ALL slots in ALL appointments
-            const allAppointmentIds = (
-              await tx.appointment.findMany({
-                where: { subscriptionId: appointment.subscription.id },
-                select: { id: true },
-              })
-            ).map((a) => a.id);
-
-            await releaseSlots({ appointmentId: { in: allAppointmentIds } });
-          } else if (derivedType === "CLASS" && appointment.class) {
-            // Entire class reschedule - mark ALL slots in ALL appointments
-            const allAppointmentIds = (
-              await tx.appointment.findMany({
-                where: { classId: appointment.class.id },
-                select: { id: true },
-              })
-            ).map((a) => a.id);
-
-            await releaseSlots({ appointmentId: { in: allAppointmentIds } });
           } else {
-            // Non-multi-appointment: mark all slots in the single appointment
+            // Whole booking: every live row of the one wrapper.
             await releaseSlots({ appointmentId });
           }
 
@@ -608,7 +568,7 @@ export async function POST(
                 initiatorRole,
                 initiatedById: session.user.id,
                 reason,
-                releasedSlotIds: slotsToReschedule.map((s) => s.id),
+                releasedOccurrenceIds: slotsToReschedule.map((s) => s.id),
                 expiresAt,
                 // Reserves the appointment: the nullable @unique makes a second
                 // live reschedule a DB-level conflict rather than a race. Claimed
@@ -618,7 +578,7 @@ export async function POST(
                 organizationId: appointment.organizationId ?? null,
                 preferredTimeOfDay,
                 preferredDays,
-                proposedSlots: {
+                proposedTimes: {
                   create: (proposedSlots ?? []).map((s) => ({
                     startsAt: s.startsAt,
                     endsAt: s.endsAt,
@@ -634,12 +594,9 @@ export async function POST(
             if (proposedSlots?.length) rescheduleRequestId = created.id;
           }
 
-          // #448 — count SESSIONS, not raw slots: one Appointment is one session
-          // (a 1-hour session is 2 × 30-min slots), so a single 1h-session
-          // reschedule must report 1 session, not "2 sessions"/multiple_sessions.
-          const sessionsAffected = new Set(
-            slotsToReschedule.map((s) => s.appointmentId),
-          ).size;
+          // #448 / #1554 — one occurrence row is one session, so the count
+          // is the number of rows released.
+          const sessionsAffected = slotsToReschedule.length;
 
           // Determine reschedule type for response — session-based (#448)
           const getRescheduleType = () => {
@@ -852,10 +809,10 @@ export async function POST(
               },
             },
           },
-          slotsOfAppointment: {
-            select: {
-              user: { select: { id: true, name: true } },
-            },
+          // #1554 — every live seat holder (webinar/class attendees included).
+          participants: {
+            where: liveParticipant(),
+            select: { userId: true },
           },
         },
       });
@@ -884,13 +841,9 @@ export async function POST(
         if (requestedBy?.userId) {
           userIds.push(requestedBy.userId);
         }
-        // FIX #624: Add all participants from slots (webinar/class attendees)
-        if (appointment.slotsOfAppointment) {
-          for (const slot of appointment.slotsOfAppointment) {
-            for (const user of slot.user) {
-              userIds.push(user.id);
-            }
-          }
+        // FIX #624: Add every seat holder (webinar/class attendees)
+        for (const seat of appointment.participants) {
+          userIds.push(seat.userId);
         }
 
         // #1580 C-P1-5 — a group event's accepted collaborators are moved too.

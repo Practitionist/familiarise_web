@@ -73,12 +73,12 @@ export async function POST(
         meetingId,
       );
 
-      // A MeetingSession row does not guarantee the Stream call exists, and
+      // A Meeting row does not guarantee the Stream call exists, and
       // updateCallMembers on a missing call throws — which this route reports as
       // a 500 after resolveMeetingAccess has already told the user they are
       // allowed in. Three ways a row outlives (or precedes) its call: the seeds
-      // mint `MeetingSession` rows with faker ids and no Stream object at all;
-      // `createDbMeetingSession` is a "use server" action whose id validator is
+      // mint `Meeting` rows with faker ids and no Stream object at all;
+      // `createDbMeeting` is a "use server" action whose id validator is
       // `z.string().min(1)`, so an entitled caller can write any string; and
       // maintenance drain ends the call while keeping the row. lib/meeting.ts
       // skips its own getOrCreate whenever a row already exists, and P0-2 removed

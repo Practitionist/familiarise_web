@@ -19,8 +19,8 @@ import type {
   Prisma,
   AppointmentStatus,
   RescheduleRequestStatus,
-  SlotCompletionStatus,
-  TrialSessionStatus,
+  OccurrenceCompletionStatus,
+  TrialStatus,
   WebinarStatus,
 } from "@prisma/client";
 
@@ -86,16 +86,11 @@ export async function appendCreationHistory(
   await appendHistory(tx, entity, entityId, "CREATED", initialStatus, meta);
 }
 
-/**
- * Resolves the appointment id to stamp on a history row for an entity that owns
- * `Appointment[]` rather than a single appointment. A multi-appointment
- * aggregate has no single id, so the column stays null and the timeline falls
- * back to the `{ entity, entityId }` arm of its OR.
- */
-function soleAppointmentId(
-  appointments: { id: string }[] | undefined,
+/** The purchase wrapper's id for a history row, unless it was tombstoned. */
+function liveWrapperId(
+  appointment: { id: string; deletedAt: Date | null } | null | undefined,
 ): string | null {
-  return appointments?.length === 1 ? appointments[0].id : null;
+  return appointment && !appointment.deletedAt ? appointment.id : null;
 }
 
 //////////////////////////////////////////////// Consultation / Subscription ////////////////////////////////////////////////
@@ -202,16 +197,12 @@ export async function transitionSubscriptionRequest(
   },
 ): Promise<void> {
   // #1333 — `take: 2` is the whole question: one live appointment resolves, two
-  // proves the aggregate has no single id.
+  // #1554 — one wrapper per purchase, so its id is the history's anchor.
   const before = await tx.subscription.findUnique({
     where: { id: args.where.id },
     select: {
       status: true,
-      appointments: {
-        where: { deletedAt: null },
-        select: { id: true },
-        take: 2,
-      },
+      appointment: { select: { id: true, deletedAt: true } },
     },
   });
   const res = await tx.subscription.updateMany({
@@ -231,8 +222,7 @@ export async function transitionSubscriptionRequest(
     args.to,
     {
       ...args,
-      appointmentId:
-        args.appointmentId ?? soleAppointmentId(before?.appointments),
+      appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
     },
   );
 }
@@ -301,17 +291,13 @@ export async function transitionClassEvent(
     fromIn?: ClassStatus[];
   },
 ): Promise<void> {
-  // A class owns one appointment per SESSION, so a multi-session class leaves
-  // the id null and only a single-session one resolves — see `soleAppointmentId`.
+  // #1554 — a class is one wrapper with N occurrences, so its id is the
+  // history's anchor.
   const before = await tx.class.findUnique({
     where: args.where,
     select: {
       status: true,
-      appointments: {
-        where: { deletedAt: null },
-        select: { id: true },
-        take: 2,
-      },
+      appointment: { select: { id: true, deletedAt: true } },
     },
   });
   const res = await tx.class.updateMany({
@@ -324,18 +310,17 @@ export async function transitionClassEvent(
   if (res.count === 0) throw new IllegalTransitionError("Class", args.to);
   await appendHistory(tx, "CLASS", args.where.id, before?.status, args.to, {
     ...args,
-    appointmentId:
-      args.appointmentId ?? soleAppointmentId(before?.appointments),
+    appointmentId: args.appointmentId ?? liveWrapperId(before?.appointment),
   });
 }
 
-//////////////////////////////////////////////// SlotOfAppointment ////////////////////////////////////////////////
+//////////////////////////////////////////////// AppointmentOccurrence ////////////////////////////////////////////////
 
 // A reschedule may re-mark a SCHEDULED or already-RESCHEDULED slot tentative,
 // but must never resurrect COMPLETED/CANCELLED history or touch UNVERIFIED
 // past sessions (#837 — a COMPLETED past session inside a still-active
 // subscription stayed COMPLETED on cancel but was resurrected on reschedule).
-export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
+export const SLOT_RESCHEDULABLE_FROM: OccurrenceCompletionStatus[] = [
   "SCHEDULED",
   "RESCHEDULED",
 ];
@@ -345,9 +330,9 @@ export const SLOT_RESCHEDULABLE_FROM: SlotCompletionStatus[] = [
 // `where: { id }`, so a webhook landing after a cancel resurrected a CANCELLED
 // slot as COMPLETED (the #837 shape, on the column that gates earnings).
 // Keyed by TARGET like REQUEST_ALLOWED_FROM.
-export const SLOT_COMPLETION_ALLOWED_FROM: Record<
-  SlotCompletionStatus,
-  SlotCompletionStatus[]
+export const OCCURRENCE_COMPLETION_ALLOWED_FROM: Record<
+  OccurrenceCompletionStatus,
+  OccurrenceCompletionStatus[]
 > = {
   SCHEDULED: ["RESCHEDULED"],
   COMPLETED: ["SCHEDULED", "UNVERIFIED"],
@@ -363,41 +348,41 @@ export const SLOT_COMPLETION_ALLOWED_FROM: Record<
 /**
  * Two deliberate departures from the five request/event helpers above, both
  * load-bearing: `where` is a full WhereInput because every caller sweeps by
- * appointmentId or a user relation rather than by slot id, and `allowZero`
+ * appointmentId or a user relation rather than by occurrence id, and `allowZero`
  * exists because cancel/reschedule sweeps legitimately match zero live rows
  * and must not 409. Returns the matched count so sweeps can report honestly.
  *
- * The history guarantee is exact in both directions: a SLOT row exists only
- * for a slot THIS call moved, because the ids come from the UPDATE's own
+ * The history guarantee is exact in both directions: an OCCURRENCE row exists only
+ * for an occurrence THIS call moved, because the ids come from the UPDATE's own
  * RETURNING rather than from the pre-read. The pre-read supplies from-status
  * only, so the documented A12 limitation stays what it is — a stale
  * `fromStatus` on a row that did move, never a row that did not.
  */
-export async function transitionSlotCompletion(
-  tx: Pick<Tx, "slotOfAppointment" | "bookingStatusHistory">,
+export async function transitionOccurrenceCompletion(
+  tx: Pick<Tx, "appointmentOccurrence" | "bookingStatusHistory">,
   args: HistoryMeta & {
-    where: Prisma.SlotOfAppointmentWhereInput;
-    to: SlotCompletionStatus;
+    where: Prisma.AppointmentOccurrenceWhereInput;
+    to: OccurrenceCompletionStatus;
     data?: Omit<
-      Prisma.SlotOfAppointmentUncheckedUpdateManyInput,
+      Prisma.AppointmentOccurrenceUncheckedUpdateManyInput,
       "completionStatus"
     >;
-    fromIn?: SlotCompletionStatus[];
+    fromIn?: OccurrenceCompletionStatus[];
     allowZero?: boolean;
   },
 ): Promise<number> {
-  const fromIn = args.fromIn ?? SLOT_COMPLETION_ALLOWED_FROM[args.to];
+  const fromIn = args.fromIn ?? OCCURRENCE_COMPLETION_ALLOWED_FROM[args.to];
   const casWhere = { ...args.where, completionStatus: { in: fromIn } };
   // The pre-read carries the CAS's own from-set, not just the caller's where,
   // so it is a from-status lookup for the cohort the UPDATE may move. It does
   // NOT decide who gets a history row: a concurrent writer can pull a row out
   // of the from-set between the two statements, and logging the pre-read would
-  // fabricate an audit row for a slot this call never touched.
-  const before = await tx.slotOfAppointment.findMany({
+  // fabricate an audit row for an occurrence this call never touched.
+  const before = await tx.appointmentOccurrence.findMany({
     where: casWhere,
     select: { id: true, completionStatus: true },
   });
-  const moved = await tx.slotOfAppointment.updateManyAndReturn({
+  const moved = await tx.appointmentOccurrence.updateManyAndReturn({
     where: casWhere,
     data: { completionStatus: args.to, ...args.data },
     // #1333 — the owning appointment comes from the moved row itself, which is
@@ -405,30 +390,34 @@ export async function transitionSlotCompletion(
     select: { id: true, appointmentId: true },
   });
   if (moved.length === 0 && !args.allowZero) {
-    throw new IllegalTransitionError("SlotOfAppointment", args.to);
+    throw new IllegalTransitionError("AppointmentOccurrence", args.to);
   }
   const fromById = new Map(before.map((row) => [row.id, row.completionStatus]));
   for (const row of moved) {
     // A row that entered the from-set after the pre-read has no entry here and
     // logs UNKNOWN — the A12 stale-from-status limitation, not a missing row.
-    await appendHistory(tx, "SLOT", row.id, fromById.get(row.id), args.to, {
-      ...args,
-      appointmentId: args.appointmentId ?? row.appointmentId ?? null,
-    });
+    await appendHistory(
+      tx,
+      "OCCURRENCE",
+      row.id,
+      fromById.get(row.id),
+      args.to,
+      {
+        ...args,
+        appointmentId: args.appointmentId ?? row.appointmentId ?? null,
+      },
+    );
   }
   return moved.length;
 }
 
-//////////////////////////////////////////////// TrialSession ////////////////////////////////////////////////
+//////////////////////////////////////////////// Trial ////////////////////////////////////////////////
 
 // #1319 — trials were the one lifecycle with no helper: accept, reject, cancel,
 // auto-complete and convert all wrote `status` bare. The capture webhook and
 // the unpaid-expiry sweep already narrowed their updateMany by status; this
 // makes the rest match. PENDING is entry-only. Keyed by TARGET.
-export const TRIAL_ALLOWED_FROM: Record<
-  TrialSessionStatus,
-  TrialSessionStatus[]
-> = {
+export const TRIAL_ALLOWED_FROM: Record<TrialStatus, TrialStatus[]> = {
   PENDING: [],
   AWAITING_PAYMENT: ["PENDING"],
   SCHEDULED: ["PENDING", "AWAITING_PAYMENT"],
@@ -438,28 +427,27 @@ export const TRIAL_ALLOWED_FROM: Record<
   REJECTED: ["PENDING"],
 };
 
-export async function transitionTrialSession(
-  tx: Pick<Tx, "trialSession" | "bookingStatusHistory">,
+export async function transitionTrial(
+  tx: Pick<Tx, "trial" | "bookingStatusHistory">,
   args: HistoryMeta & {
     where: { id: string };
-    to: TrialSessionStatus;
-    data?: Omit<Prisma.TrialSessionUncheckedUpdateManyInput, "status">;
-    fromIn?: TrialSessionStatus[];
+    to: TrialStatus;
+    data?: Omit<Prisma.TrialUncheckedUpdateManyInput, "status">;
+    fromIn?: TrialStatus[];
   },
 ): Promise<void> {
-  const before = await tx.trialSession.findUnique({
+  const before = await tx.trial.findUnique({
     where: { id: args.where.id },
     select: { status: true, appointmentId: true },
   });
-  const res = await tx.trialSession.updateMany({
+  const res = await tx.trial.updateMany({
     where: {
       ...args.where,
       status: { in: args.fromIn ?? TRIAL_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
   });
-  if (res.count === 0)
-    throw new IllegalTransitionError("TrialSession", args.to);
+  if (res.count === 0) throw new IllegalTransitionError("Trial", args.to);
   // A PENDING trial has no appointment yet, so the id is null until acceptance
   // places the session — the scalar is nullable for exactly that reason.
   await appendHistory(tx, "TRIAL", args.where.id, before?.status, args.to, {

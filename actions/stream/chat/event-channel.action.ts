@@ -4,6 +4,7 @@ import * as Sentry from "@sentry/nextjs";
 import type { StreamChat } from "stream-chat";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { liveParticipant } from "@/lib/booking/participants";
 import {
   getStreamChatClient,
   isExpectedStreamError,
@@ -33,6 +34,7 @@ import {
   queryChannelsPaged,
 } from "@/lib/stream/batch";
 import { ConsentRequiredError } from "@/lib/compliance/dpdp";
+import { isUpsertRefusal } from "@/lib/stream/connect-failure";
 import {
   DEFAULT_RETENTION_DAYS,
   isPastRetention,
@@ -133,7 +135,13 @@ async function syncUserOrSkipOnConsent(
   channelId: string,
 ): Promise<boolean> {
   try {
-    await upsertUserToStream(userId);
+    if (isUpsertRefusal(await upsertUserToStream(userId))) {
+      streamLogger.info(
+        "Skipping event channel join — Stream refused the account",
+        { userId, channelId },
+      );
+      return false;
+    }
     return true;
   } catch (err) {
     if (err instanceof ConsentRequiredError) {
@@ -436,8 +444,9 @@ async function getEventData(eventType: EventType, eventId: string) {
           },
           appointment: {
             include: {
-              slotsOfAppointment: {
-                include: { user: { select: { id: true } } },
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -452,9 +461,7 @@ async function getEventData(eventType: EventType, eventId: string) {
         ...(webinar.webinarPlan.collaborators ?? []).map(
           (c) => c.consultantProfile.userId,
         ),
-        ...(webinar.appointment?.slotsOfAppointment?.flatMap((s) =>
-          s.user.map((u) => u.id),
-        ) || []),
+        ...(webinar.appointment?.participants.map((p) => p.userId) || []),
       ];
 
       // #1280 PR 7 — the funding org, resolved by the SAME `bookingOrgId`
@@ -492,10 +499,11 @@ async function getEventData(eventType: EventType, eventId: string) {
               },
             },
           },
-          appointments: {
+          appointment: {
             include: {
-              slotsOfAppointment: {
-                include: { user: { select: { id: true } } },
+              participants: {
+                where: liveParticipant(),
+                select: { userId: true },
               },
             },
           },
@@ -510,18 +518,13 @@ async function getEventData(eventType: EventType, eventId: string) {
         ...(classData.classPlan.collaborators ?? []).map(
           (c) => c.consultantProfile.userId,
         ),
-        ...(classData.appointments?.flatMap(
-          (a) =>
-            a.slotsOfAppointment?.flatMap((s) => s.user.map((u) => u.id)) || [],
-        ) || []),
+        ...(classData.appointment?.participants.map((p) => p.userId) || []),
       ];
 
       const organizationId = bookingOrgId({
-        // A class is funded once but holds many appointments, so `bookingOrgId`
-        // takes the first org-tagged one — the same `find`, not `[0]`, that the
-        // DM path relies on for a subscription.
+        // #1554 — a class is one wrapper, so the org tag is its own.
         classPlan: classData.classPlan,
-        appointments: classData.appointments,
+        appointment: classData.appointment,
       });
 
       return {
@@ -585,9 +588,8 @@ async function getEventData(eventType: EventType, eventId: string) {
             },
           },
           requestedBy: { include: { user: { select: { id: true } } } },
-          // Plural here — a subscription holds many appointments and is funded
-          // once, so `bookingOrgId` takes the first org-tagged one.
-          appointments: { select: { organizationId: true } },
+          // #1554 — one wrapper per subscription carries the org tag.
+          appointment: { select: { organizationId: true } },
         },
       });
       if (!subscription) return null;
@@ -603,7 +605,7 @@ async function getEventData(eventType: EventType, eventId: string) {
         name: subscription.subscriptionPlan.title,
         organizationId: bookingOrgId({
           subscriptionPlan: subscription.subscriptionPlan,
-          appointments: subscription.appointments,
+          appointment: subscription.appointment,
         }),
       };
     }
@@ -678,7 +680,18 @@ export async function syncUserEventChannels(
     // it bubble as an unhandled error through the dashboard-load path. The gate
     // is unchanged — we simply don't crash the page for a non-consenting user.
     try {
-      await upsertUserToStream(userId);
+      if (isUpsertRefusal(await upsertUserToStream(userId))) {
+        // Same shape as the consent gate below: nothing to sync for an
+        // account Stream will not connect, and nothing to retry per visit.
+        streamLogger.info(
+          "Skipping channel sync — Stream refused the account",
+          {
+            userId,
+          },
+        );
+        initialSyncCompletedUsers.add(userId);
+        return { success: true, skipped: true };
+      }
     } catch (err) {
       if (err instanceof ConsentRequiredError) {
         streamLogger.info(
@@ -936,16 +949,8 @@ async function getDmPairsForUser(
         include: {
           requestedBy: { include: { user: { select: { id: true } } } },
           subscriptionPlan: { select: { organizationId: true } },
-          appointments: {
-            where: { organizationId: { not: null } },
-            select: { organizationId: true },
-            // Deterministic, not just filtered: `take: 1` over an
-            // unordered result can hand different callers different
-            // rows if a subscription ever carries two org-tagged
-            // appointments, which is the same divergence one layer down.
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-            take: 1,
-          },
+          // #1554 — one wrapper per subscription carries the org tag.
+          appointment: { select: { organizationId: true } },
         },
       }),
     ]);
@@ -998,16 +1003,8 @@ async function getDmPairsForUser(
               },
             },
           },
-          appointments: {
-            where: { organizationId: { not: null } },
-            select: { organizationId: true },
-            // Deterministic, not just filtered: `take: 1` over an
-            // unordered result can hand different callers different
-            // rows if a subscription ever carries two org-tagged
-            // appointments, which is the same divergence one layer down.
-            orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-            take: 1,
-          },
+          // #1554 — one wrapper per subscription carries the org tag.
+          appointment: { select: { organizationId: true } },
         },
       }),
     ]);
@@ -1082,7 +1079,7 @@ interface RetentionWindow {
 /** Structural shape of one event's retention-relevant appointment data. */
 interface AppointmentWindow {
   organization: { streamRecordingRetentionDays: number | null } | null;
-  slotsOfAppointment: { endsAt: Date }[];
+  occurrences: { endsAt: Date }[];
 }
 
 function isPastRetentionWindow(window: RetentionWindow): boolean {
@@ -1098,7 +1095,7 @@ function webinarRetentionWindow(
     // No session yet — the cron can't have expired something that never ran.
     return { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS };
   }
-  const endsAt = appointment.slotsOfAppointment.reduce<Date | null>(
+  const endsAt = appointment.occurrences.reduce<Date | null>(
     (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
     null,
   );
@@ -1108,40 +1105,6 @@ function webinarRetentionWindow(
       appointment.organization?.streamRecordingRetentionDays ??
       DEFAULT_RETENTION_DAYS,
   };
-}
-
-/**
- * A class spans many appointments (one per attendee cohort) but ONE channel;
- * collapse to the latest end across all of them, carrying THAT cohort's org
- * dial — the same collapse rule the expire cron applies per channel.
- */
-function latestClassRetentionWindow(
-  appointments: AppointmentWindow[] | undefined,
-): RetentionWindow {
-  // Undefined/empty = no session info — treat as live; the retention cron
-  // can never have expired an event it has no slot evidence for.
-  if (!appointments || appointments.length === 0) {
-    return { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS };
-  }
-  return appointments.reduce<RetentionWindow>(
-    (latest, apt) => {
-      const aptLatest = apt.slotsOfAppointment.reduce<Date | null>(
-        (max, s) => (!max || s.endsAt > max ? s.endsAt : max),
-        null,
-      );
-      if (!aptLatest) return latest;
-      if (!latest.endsAt || aptLatest > latest.endsAt) {
-        return {
-          endsAt: aptLatest,
-          retentionDays:
-            apt.organization?.streamRecordingRetentionDays ??
-            DEFAULT_RETENTION_DAYS,
-        };
-      }
-      return latest;
-    },
-    { endsAt: null, retentionDays: DEFAULT_RETENTION_DAYS },
-  );
 }
 
 /** Dedupe ids and drop any whose channel is past retention (F-HIGH-2). */
@@ -1188,7 +1151,7 @@ async function getWebinarIdsForUser(
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { endsAt: "desc" },
                 take: 1,
                 select: { endsAt: true },
@@ -1205,7 +1168,7 @@ async function getWebinarIdsForUser(
     prisma.webinar.findMany({
       where: {
         appointment: {
-          slotsOfAppointment: { some: { user: { some: { id: userId } } } },
+          participants: { some: liveParticipant(userId) },
         },
       },
       select: {
@@ -1213,7 +1176,7 @@ async function getWebinarIdsForUser(
         appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },
@@ -1240,7 +1203,7 @@ async function getClassIdsForUser(
   },
 ): Promise<string[]> {
   const queries: Promise<
-    { id: string; appointments: AppointmentWindow[] }[]
+    { id: string; appointment: AppointmentWindow | null }[]
   >[] = [];
 
   // Consultant: get classes they host
@@ -1252,12 +1215,12 @@ async function getClassIdsForUser(
         },
         select: {
           id: true,
-          appointments: {
+          appointment: {
             select: {
               organization: {
                 select: { streamRecordingRetentionDays: true },
               },
-              slotsOfAppointment: {
+              occurrences: {
                 orderBy: { endsAt: "desc" },
                 take: 1,
                 select: { endsAt: true },
@@ -1273,18 +1236,16 @@ async function getClassIdsForUser(
   queries.push(
     prisma.class.findMany({
       where: {
-        appointments: {
-          some: {
-            slotsOfAppointment: { some: { user: { some: { id: userId } } } },
-          },
+        appointment: {
+          participants: { some: liveParticipant(userId) },
         },
       },
       select: {
         id: true,
-        appointments: {
+        appointment: {
           select: {
             organization: { select: { streamRecordingRetentionDays: true } },
-            slotsOfAppointment: {
+            occurrences: {
               orderBy: { endsAt: "desc" },
               take: 1,
               select: { endsAt: true },
@@ -1296,7 +1257,6 @@ async function getClassIdsForUser(
   );
 
   const results = await Promise.all(queries);
-  return dedupeLive(results, (row) =>
-    latestClassRetentionWindow(row.appointments),
-  );
+  // #1554 — a class is one wrapper, so its window reads like a webinar's.
+  return dedupeLive(results, (row) => webinarRetentionWindow(row.appointment));
 }

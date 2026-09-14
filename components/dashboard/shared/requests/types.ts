@@ -1,4 +1,4 @@
-import { AppointmentStatus, SlotCompletionStatus } from "@prisma/client";
+import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
 interface UserInfo {
@@ -31,7 +31,7 @@ interface AppointmentSlot {
   endsAt: string;
   isTentative?: boolean; // Indicates if slot needs rescheduling
   /** RESCHEDULED means startsAt is the time being moved AWAY from, not a request. */
-  completionStatus?: SlotCompletionStatus;
+  completionStatus?: OccurrenceCompletionStatus;
 }
 
 /** A live reschedule proposal: the times the consultee actually wants. */
@@ -45,12 +45,12 @@ export interface RescheduleProposalInfo {
   /** #1065 — stated instead of naming times; both may be absent. */
   preferredTimeOfDay?: "MORNING" | "AFTERNOON" | "EVENING" | null;
   preferredDays?: "WEEKDAYS" | "WEEKENDS" | null;
-  proposedSlots: { startsAt: string; endsAt: string; round: number }[];
+  proposedTimes: { startsAt: string; endsAt: string; round: number }[];
 }
 
 interface AppointmentInfo {
   id: string;
-  slotsOfAppointment?: AppointmentSlot[];
+  occurrences?: AppointmentSlot[];
   rescheduleRequests?: RescheduleProposalInfo[];
 }
 

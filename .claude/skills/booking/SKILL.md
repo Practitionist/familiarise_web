@@ -1,6 +1,6 @@
 ---
 name: booking
-description: How this repo's booking subsystem is built and kept correct — the non-negotiable doctrine (CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, no-backfill reset posture), how published availability becomes bookable slots (weekly vs custom rows, the 30-minute atom, union coverage, the three allocation modes), how concurrent booking writes are serialized (Redis lock atoms, global lock order, CAS-in-WHERE, Serializable retries), where booking touches money (the tentative hold, price derivation, refund quotes, funding rails, the earnings healer), and how to actually verify a booking change (jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook). Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund, availability, allocation, checkout or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/slotAllocation/, utils/appointmentlock.ts, utils/timeSlotsProcessing.ts, lib/db/serializable-retry.ts, lib/payments/pricing/, lib/payments/operations/, scripts/appointments/, prisma/sql/, app/api/slots/, or app/api/appointments|bookings|checkout.
+description: How this repo's booking subsystem is built and kept correct — the non-negotiable doctrine (CAS status transitions through the seven helpers, never deleting a row a Payment points at, the refund front doors, explicit org scoping, one terminal status for an approved-but-unpaid request, no-backfill reset posture), how published availability becomes bookable slots (weekly vs custom rows, the 30-minute atom, union coverage, the three allocation modes), how concurrent booking writes are serialized (Redis lock atoms, global lock order, CAS-in-WHERE, Serializable retries), where booking touches money (the tentative hold, price derivation, refund quotes, funding rails, the earnings healer), and how to actually verify a booking change (jest suites, prisma-mocking patterns, the seeded dev-server recipe, the chaos runbook). Load when working on booking, appointment, slot, trial, reschedule, cancellation, refund, availability, allocation, checkout or expiry-sweep code — anything under lib/booking/, lib/appointments/, utils/scheduling-engine/, utils/appointmentlock.ts, utils/timeSlotsProcessing.ts, lib/db/serializable-retry.ts, lib/payments/pricing/, lib/payments/operations/, scripts/appointments/, prisma/sql/, app/api/scheduling/, or app/api/appointments|bookings|checkout.
 ---
 
 # Booking
@@ -34,8 +34,8 @@ complete:
 | `transitionSubscriptionRequest` | `Subscription.status`                | `REQUEST_ALLOWED_FROM`         |
 | `transitionWebinarEvent`        | `Webinar.status`                     | `EVENT_ALLOWED_FROM`           |
 | `transitionClassEvent`          | `Class.status`                       | `CLASS_EVENT_ALLOWED_FROM`     |
-| `transitionSlotCompletion`      | `SlotOfAppointment.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
-| `transitionTrialSession`        | `TrialSession.status`                | `TRIAL_ALLOWED_FROM`           |
+| `transitionOccurrenceCompletion`      | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
+| `transitionTrial`        | `Trial.status`                | `TRIAL_ALLOWED_FROM`           |
 | `transitionRescheduleRequest`   | `RescheduleRequest.status`           | `RESCHEDULE_ALLOWED_FROM`      |
 
 Every map is keyed by **target** state: `ALLOWED_FROM[to]` lists the only states
@@ -46,8 +46,8 @@ corrupting state, and the helper throws `IllegalTransitionError` (409,
 clause is the state machine; application-level pre-checks are only friendly
 error text. Never swallow the zero-row case.
 
-Two helpers depart deliberately. `transitionSlotCompletion` takes a full
-`Prisma.SlotOfAppointmentWhereInput` because callers sweep by appointment rather
+Two helpers depart deliberately. `transitionOccurrenceCompletion` takes a full
+`Prisma.AppointmentOccurrenceWhereInput` because callers sweep by appointment rather
 than by slot id, accepts `allowZero` because a cancel or reschedule sweep
 legitimately matches no live rows, and returns the matched count.
 `transitionRescheduleRequest` also clears `openForAppointmentId` and stamps
@@ -65,7 +65,7 @@ appointment, so `appointmentId` is stamped without a caller supplying it, and
 added `appendCreationHistory` — the one row that is not a transition, written
 from the literal `"CREATED"` in the same transaction as the create, because a
 booking that has never moved still needs a timeline. The three creation call
-sites are `app/api/slots/request-for-approval` and the consultation and
+sites are `app/api/scheduling/request-for-approval` and the consultation and
 subscription checkout handlers; the capture webhook's legacy creators do not
 write it yet.
 
@@ -80,7 +80,7 @@ in an earlier read.
 The allocator's form is `tx.appointment.deleteMany({ where: { id, payment:
 { none: {} } } })`. A count of zero means a Payment committed between the read
 and the write, so the caller keeps the appointment and strips only its
-sessionless slots (`utils/slotAllocation/SlotAllocationService.ts`, #1189 audit
+sessionless slots (`utils/scheduling-engine/SchedulingService.ts`, #1189 audit
 B-P1-05, #898). Requests are retired by status: `DELETE
 /api/bookings/consultations/{id}` and its subscription twin answer **405** with
 `code: "DELETE_NOT_SUPPORTED"`, and
@@ -88,12 +88,12 @@ B-P1-05, #898). Requests are retired by status: `DELETE
 scripts free of the forbidden call shapes.
 
 Slot rows are soft-deleted uniformly as of #1380/#1424: `cleanup-abandoned-payments`,
-`expire-stale-requests.ts`, and `cleanup-tentative-slots.ts` all release a
-tentative hold the same way, through `transitionSlotCompletion` to `CANCELLED`
+`expire-stale-requests.ts`, and `cleanup-tentative-occurrences.ts` all release a
+tentative hold the same way, through `transitionOccurrenceCompletion` to `CANCELLED`
 with `deletedAt` set in the same call, so the row's history survives the
 release. If you think you need a delete on an Appointment or a confirmed slot,
 you are almost certainly wrong: reconcile in place, as `replaceContiguousSlotRun`
-does precisely so Stream `MeetingSession` and `Recording` rows survive.
+does precisely so Stream `Meeting` and `Recording` rows survive.
 
 ### 3. Refunds have exactly two front doors
 

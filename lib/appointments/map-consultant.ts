@@ -3,17 +3,21 @@
  * plus the trials / unscheduled-events side-queries → AppointmentVM[].
  * Subscription and class appointments sharing a parent collapse to ONE group
  * row (the old AppointmentGroupCard grouping), with per-session detail in
- * vm.sessions.
+ * vm.occurrences.
  */
 
 import type { TAppointment } from "@/types/appointment";
 import { deriveBucket } from "./bucket";
-import { sessionsOfAppointment } from "./sessions-of";
-import { getAnchorTime, isSessionOver } from "./slots";
+import { occurrencesOfAppointment } from "./occurrences";
+import {
+  getAnchorTime,
+  isOccurrenceOver,
+  liveOccurrences,
+} from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
 import {
-  sortSessions,
+  sortOccurrences,
   toDate,
   type AppointmentVM,
   type PersonVM,
@@ -37,7 +41,7 @@ export interface ConsultantTrialLike {
   };
   appointment: {
     id: string;
-    slotsOfAppointment: Array<{
+    occurrences: Array<{
       id: string;
       startsAt: string | Date;
       endsAt: string | Date;
@@ -177,7 +181,7 @@ function collaboratorRoleOf(
 }
 
 function firstSlotTime(appointment: TAppointment): number {
-  const slot = appointment.slotsOfAppointment?.[0];
+  const slot = appointment.occurrences?.[0];
   return slot ? toDate(slot.startsAt).getTime() : Infinity;
 }
 
@@ -190,9 +194,9 @@ function nextActionableChild(
   );
   return (
     sorted.find((c) =>
-      sessionsOfAppointment(c).some((s) => !isSessionOver(s, now)),
+      occurrencesOfAppointment(c).some((s) => !isOccurrenceOver(s, now)),
     ) ??
-    sorted.find((c) => (c.slotsOfAppointment?.length ?? 0) > 0) ??
+    sorted.find((c) => (c.occurrences?.length ?? 0) > 0) ??
     sorted[0]
   );
 }
@@ -202,7 +206,7 @@ function mapSingle(
   consultantId: string,
   now: Date,
 ): AppointmentVM {
-  const sessions = sortSessions(sessionsOfAppointment(appointment));
+  const occurrences = sortOccurrences(occurrencesOfAppointment(appointment));
   const { title, counterpart, status } = eventFacts(appointment);
   return {
     id: `appointment-${appointment.id}`,
@@ -213,9 +217,9 @@ function mapSingle(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: null,
     meta: null,
     organizationId: appointment.organizationId ?? null,
@@ -232,16 +236,13 @@ function mapGroup(
   now: Date,
 ): AppointmentVM {
   const first = children[0];
-  const sessions = sortSessions(
-    children.flatMap((c) => sessionsOfAppointment(c)),
+  const occurrences = sortOccurrences(
+    children.flatMap((c) => occurrencesOfAppointment(c)),
   );
   const { title, counterpart, status } = eventFacts(first);
-  const withSlots = children.filter(
-    (c) => (c.slotsOfAppointment?.length ?? 0) > 0,
-  );
-  const completed = withSlots.filter((c) =>
-    sessionsOfAppointment(c).every((s) => isSessionOver(s, now)),
-  ).length;
+  // #1554 — progress is counted over live occurrence rows, not wrappers.
+  const live = liveOccurrences(occurrences);
+  const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   const target = nextActionableChild(children, now);
   const groupId =
     first.appointmentType === "SUBSCRIPTION"
@@ -256,10 +257,10 @@ function mapGroup(
     title,
     counterpart,
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
-    group: { total: withSlots.length, completed },
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
+    group: { total: live.length, completed },
     meta: null,
     organizationId: first.organizationId ?? null,
     pendingPaymentUrl: null,
@@ -281,13 +282,14 @@ function mapTrial(
   // A trial's rows are shown as confirmed regardless of the placeholder flag,
   // so the override is applied BEFORE grouping — the grouper splits a run on a
   // change of `isTentative`, and masking afterwards would leave the split.
-  const sessions = sessionsOfAppointment(
+  const occurrences = occurrencesOfAppointment(
     t.appointment
       ? {
           id: t.appointment.id,
-          slotsOfAppointment: (t.appointment.slotsOfAppointment ?? []).map(
-            (slot) => ({ ...slot, isTentative: false }),
-          ),
+          occurrences: (t.appointment.occurrences ?? []).map((slot) => ({
+            ...slot,
+            isTentative: false,
+          })),
         }
       : null,
   );
@@ -301,9 +303,9 @@ function mapTrial(
     title: t.subscriptionPlan.title,
     counterpart: person(t.consulteeProfile.user),
     status,
-    ...deriveBucket({ status, sessions, now }),
-    nextAt: getAnchorTime(sessions, now),
-    sessions,
+    ...deriveBucket({ status, occurrences, now }),
+    nextAt: getAnchorTime(occurrences, now),
+    occurrences,
     group: null,
     meta: trialMeta(t.subscriptionPlan.trialPriceInPaise ?? null, null),
     organizationId: null,
@@ -330,9 +332,9 @@ function mapUnscheduledClass(
     title: plan.title,
     counterpart: person(plan.consultantProfile?.user, "You"),
     status,
-    ...deriveBucket({ status, sessions: [], isUnscheduled: true, now }),
+    ...deriveBucket({ status, occurrences: [], isUnscheduled: true, now }),
     nextAt: null,
-    sessions: [],
+    occurrences: [],
     group: { total: plan.totalSessions, completed: 0 },
     meta: `${plan.sessionsPerWeek} meeting${plan.sessionsPerWeek !== 1 ? "s" : ""}/week · ${plan.totalSessions} sessions · ${plan.sessionDurationInHours}h each`,
     organizationId: null,
@@ -358,9 +360,9 @@ function mapUnscheduledWebinar(
     title: w.webinarPlan.title,
     counterpart: person(w.webinarPlan.consultantProfile?.user, "You"),
     status,
-    ...deriveBucket({ status, sessions: [], isUnscheduled: true, now }),
+    ...deriveBucket({ status, occurrences: [], isUnscheduled: true, now }),
     nextAt: null,
-    sessions: [],
+    occurrences: [],
     group: null,
     meta: `Single session · ${w.webinarPlan.durationInHours}h`,
     organizationId: null,

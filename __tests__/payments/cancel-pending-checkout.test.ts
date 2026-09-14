@@ -24,11 +24,21 @@ interface SlotRow {
   userIds: string[];
 }
 
+/** #1554 — a seat is an AppointmentParticipant row; classId rides along so
+ *  the class-wide release (`appointment: { classId }`) can be matched. */
+interface SeatRow {
+  appointmentId: string;
+  classId: string | null;
+  userId: string;
+  status: string;
+}
+
 interface Store {
   payments: Map<string, Row>;
   consultations: Map<string, Row>;
   subscriptions: Map<string, Row>;
   slots: SlotRow[];
+  seats: SeatRow[];
 }
 
 let state: Store;
@@ -39,13 +49,30 @@ function newStore(): Store {
     consultations: new Map(),
     subscriptions: new Map(),
     slots: [],
+    seats: [],
   };
 }
 
-function matchesUserSome(slot: SlotRow, where: Row): boolean {
-  const user = where.user as { some?: { id?: string } } | undefined;
-  if (!user?.some?.id) return true;
-  return slot.userIds.includes(user.some.id);
+interface SeatWhere {
+  appointmentId?: string;
+  appointment?: { classId?: string };
+  userId?: string;
+  status?: { in?: string[] };
+}
+
+function matchSeats(where: Row): SeatRow[] {
+  const w = where as SeatWhere;
+  return state.seats.filter((seat) => {
+    let match = true;
+    if (w.appointmentId !== undefined)
+      match = match && seat.appointmentId === w.appointmentId;
+    if (w.appointment?.classId !== undefined)
+      match = match && seat.classId === w.appointment.classId;
+    if (w.userId !== undefined) match = match && seat.userId === w.userId;
+    if (w.status?.in !== undefined)
+      match = match && w.status.in.includes(seat.status);
+    return match;
+  });
 }
 
 interface SlotWhere {
@@ -69,7 +96,6 @@ function matchSlots(where: Row): SlotRow[] {
     if (w.deletedAt === null) match = match && slot.deletedAt === null;
     if (w.completionStatus?.in !== undefined)
       match = match && w.completionStatus.in.includes(slot.completionStatus);
-    match = match && matchesUserSome(slot, where);
     return match;
   });
 }
@@ -141,22 +167,13 @@ function makeTx() {
         return { count: 1 };
       }),
     },
-    slotOfAppointment: {
+    appointmentOccurrence: {
       findMany: jest.fn(async ({ where }: any) =>
         matchSlots(where).map((slot) => ({
           id: slot.id,
           completionStatus: slot.completionStatus,
         })),
       ),
-      update: jest.fn(async ({ where, data }: any) => {
-        const slot = state.slots.find((s) => s.id === where.id);
-        if (!slot) return null;
-        const disconnectId = data?.user?.disconnect?.id;
-        if (disconnectId) {
-          slot.userIds = slot.userIds.filter((id) => id !== disconnectId);
-        }
-        return { id: slot.id };
-      }),
       updateManyAndReturn: jest.fn(
         async ({ where, data }: { where: Row; data: Row }) => {
           const moved = matchSlots(where);
@@ -165,6 +182,15 @@ function makeTx() {
             id: slot.id,
             appointmentId: slot.appointmentId,
           }));
+        },
+      ),
+    },
+    appointmentParticipant: {
+      updateMany: jest.fn(
+        async ({ where, data }: { where: Row; data: Row }) => {
+          const moved = matchSeats(where);
+          for (const seat of moved) Object.assign(seat, data);
+          return { count: moved.length };
         },
       ),
     },
@@ -271,7 +297,7 @@ describe("cancelPendingCheckout — happy path (consultation)", () => {
     // #1333 — the slot history rows name the appointment the rows came back with.
     const slotHistory = (
       tx.bookingStatusHistory.create as jest.Mock
-    ).mock.calls.filter(([call]) => call.data.entity === "SLOT");
+    ).mock.calls.filter(([call]) => call.data.entity === "OCCURRENCE");
     expect(slotHistory.length).toBeGreaterThan(0);
     for (const [call] of slotHistory) {
       expect(call.data).toEqual(
@@ -455,7 +481,7 @@ describe("cancelPendingCheckout — subscription parent", () => {
 });
 
 describe("cancelPendingCheckout — webinar scoping", () => {
-  it("releases only the caller's tentative seat on a shared webinar appointment", async () => {
+  it("releases only the caller's seat on a shared webinar appointment", async () => {
     state.payments.set("pay-w", {
       id: "pay-w",
       userId: "user-1",
@@ -469,33 +495,27 @@ describe("cancelPendingCheckout — webinar scoping", () => {
       webinarId: "web-1",
       classId: null,
     });
-    state.slots.push(
+    state.slots.push({
+      id: "slot-shared",
+      appointmentId: "appt-w",
+      classId: null,
+      isTentative: false,
+      completionStatus: "SCHEDULED",
+      deletedAt: null,
+      userIds: [],
+    });
+    state.seats.push(
       {
-        id: "slot-mine",
         appointmentId: "appt-w",
         classId: null,
-        isTentative: true,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-1"],
+        userId: "user-1",
+        status: "HELD",
       },
       {
-        id: "slot-theirs",
         appointmentId: "appt-w",
         classId: null,
-        isTentative: true,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-2"],
-      },
-      {
-        id: "slot-confirmed",
-        appointmentId: "appt-w",
-        classId: null,
-        isTentative: false,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-1"],
+        userId: "user-2",
+        status: "HELD",
       },
     );
 
@@ -504,22 +524,30 @@ describe("cancelPendingCheckout — webinar scoping", () => {
       userId: "user-1",
     });
 
-    // Both of the caller's slots on the shared webinar appointment release
-    // their seat; the rows survive because other attendees share them.
-    expect(result).toEqual({ ok: true, slotsReleased: 2 });
-    expect(state.slots.map((s) => s.id).sort()).toEqual([
-      "slot-confirmed",
-      "slot-mine",
-      "slot-theirs",
+    // #1554 — the caller's seat is released by status; the shared occurrence
+    // survives untouched because other attendees share it.
+    expect(result).toEqual({ ok: true, slotsReleased: 1 });
+    expect(state.slots.map((s) => s.id)).toEqual(["slot-shared"]);
+    expect(state.slots[0].completionStatus).toBe("SCHEDULED");
+    expect(state.seats).toEqual([
+      {
+        appointmentId: "appt-w",
+        classId: null,
+        userId: "user-1",
+        status: "CANCELLED",
+      },
+      {
+        appointmentId: "appt-w",
+        classId: null,
+        userId: "user-2",
+        status: "HELD",
+      },
     ]);
-    expect(
-      state.slots.filter((s) => s.userIds.includes("user-1")).map((s) => s.id),
-    ).toEqual([]);
   });
 });
 
 describe("cancelPendingCheckout — class scoping", () => {
-  it("releases the caller's tentative slots across all class session appointments", async () => {
+  it("releases the caller's seat across all class session appointments", async () => {
     state.payments.set("pay-c", {
       id: "pay-c",
       userId: "user-1",
@@ -533,33 +561,24 @@ describe("cancelPendingCheckout — class scoping", () => {
       webinarId: null,
       classId: "class-1",
     });
-    state.slots.push(
+    state.seats.push(
       {
-        id: "c1-mine",
         appointmentId: "appt-c1",
         classId: "class-1",
-        isTentative: true,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-1"],
+        userId: "user-1",
+        status: "HELD",
       },
       {
-        id: "c2-mine",
         appointmentId: "appt-c2",
         classId: "class-1",
-        isTentative: true,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-1"],
+        userId: "user-1",
+        status: "HELD",
       },
       {
-        id: "c2-theirs",
         appointmentId: "appt-c2",
         classId: "class-1",
-        isTentative: true,
-        completionStatus: "SCHEDULED",
-        deletedAt: null,
-        userIds: ["user-2"],
+        userId: "user-2",
+        status: "HELD",
       },
     );
 
@@ -569,15 +588,12 @@ describe("cancelPendingCheckout — class scoping", () => {
     });
 
     expect(result).toEqual({ ok: true, slotsReleased: 2 });
-    // Session rows are shared with the other students, so they stay put.
-    expect(state.slots.map((s) => s.id)).toEqual([
-      "c1-mine",
-      "c2-mine",
-      "c2-theirs",
+    // The other student's seat stays put.
+    expect(state.seats.map((seat) => `${seat.userId}:${seat.status}`)).toEqual([
+      "user-1:CANCELLED",
+      "user-1:CANCELLED",
+      "user-2:HELD",
     ]);
-    expect(
-      state.slots.filter((s) => s.userIds.includes("user-1")).map((s) => s.id),
-    ).toEqual([]);
   });
 });
 

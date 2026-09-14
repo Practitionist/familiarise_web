@@ -16,7 +16,7 @@ const TRIAL_VM_ID_PREFIX = "trial-";
  * trial path back to the raw link (#1429 F2). Keeping it here means a new
  * surface inherits the answer instead of re-deriving it.
  *
- * The TrialSession id only survives inside the synthetic vm id, which is why
+ * The Trial id only survives inside the synthetic vm id, which is why
  * the prefix is parsed rather than read from a field.
  */
 export function trialCheckoutHref(
