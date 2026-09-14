@@ -5,7 +5,7 @@ import {
   TConsultation,
   TSubscription,
   TWebinar,
-  TClass,
+  TCohort,
   TAppointment,
 } from "@/types/appointment";
 
@@ -21,7 +21,7 @@ export type TWebinarWithPlan = TWebinar & {
   appointment: TAppointment | null;
 };
 
-export type TClassWithPlan = TClass & {
+export type TCohortWithPlan = TCohort & {
   appointment: TAppointment[];
 };
 
@@ -65,7 +65,7 @@ interface IEventsResult {
   consultations: TConsultationWithPlan[];
   subscriptions: TSubscriptionWithPlan[];
   webinars: TWebinarWithPlan[];
-  classes: TClassWithPlan[];
+  cohorts: TCohortWithPlan[];
   isLoading: boolean;
   error: Error | null;
 }
@@ -80,7 +80,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
     [],
   );
   const [webinars, setWebinars] = useState<TWebinarWithPlan[]>([]);
-  const [classes, setClasses] = useState<TClassWithPlan[]>([]);
+  const [cohorts, setCohorts] = useState<TCohortWithPlan[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
@@ -134,7 +134,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
             setConsultations([]);
             setSubscriptions([]);
             setWebinars([]);
-            setClasses([]);
+            setCohorts([]);
             setIsLoading(false);
             return;
           }
@@ -144,19 +144,19 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
           queryParam = `consulteeProfileId=${identifier}`;
         }
 
-        const [consultationsRes, subscriptionsRes, webinarsRes, classesRes] =
+        const [consultationsRes, subscriptionsRes, webinarsRes, cohortsRes] =
           await Promise.all([
             fetch(`/api/bookings/consultations?${queryParam}`),
             fetch(`/api/bookings/subscriptions?${queryParam}`),
             fetch(`/api/bookings/webinars?${queryParam}`),
-            fetch(`/api/bookings/classes?${queryParam}`),
+            fetch(`/api/bookings/cohorts?${queryParam}`),
           ]);
 
         if (
           !consultationsRes.ok ||
           !subscriptionsRes.ok ||
           !webinarsRes.ok ||
-          !classesRes.ok
+          !cohortsRes.ok
         ) {
           throw new Error("Failed to fetch events");
         }
@@ -164,13 +164,13 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
         const consultationsData = await consultationsRes.json();
         const subscriptionsData = await subscriptionsRes.json();
         const webinarsData = await webinarsRes.json();
-        const classesData = await classesRes.json();
+        const cohortsData = await cohortsRes.json();
 
         if (cancelled) return;
         setConsultations(consultationsData.data);
         setSubscriptions(subscriptionsData.data);
         setWebinars(webinarsData.data);
-        setClasses(classesData.data);
+        setCohorts(cohortsData.data);
       } catch (err: unknown) {
         console.error("Error fetching events:", err);
         if (cancelled) return;
@@ -197,7 +197,7 @@ function useEventsInternal(mode: TEventQueryMode): IEventsResult {
     };
   }, [modeType, identifier, toast]);
 
-  return { consultations, subscriptions, webinars, classes, isLoading, error };
+  return { consultations, subscriptions, webinars, cohorts, isLoading, error };
 }
 
 // --- Public API (signatures unchanged) ---

@@ -12,25 +12,25 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle } from "lucide-react";
-import { ClassPlanProgram } from "@/lib/explore/programs";
+import { CohortPlanProgram } from "@/lib/explore/programs";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
-import { getClassCapacity } from "@/lib/events/capacity";
+import { getCohortCapacity } from "@/lib/events/capacity";
 
-type ClientClassRegistrationProps = {
-  readonly plan: ClassPlanProgram;
+type ClientCohortRegistrationProps = {
+  readonly plan: CohortPlanProgram;
   maxParticipants?: number;
   consultantUserId?: string;
 };
 
-export function ClientClassRegistration({
+export function ClientCohortRegistration({
   plan,
   maxParticipants,
   consultantUserId,
-}: ClientClassRegistrationProps) {
-  const { id: classId, price, classes } = plan;
-  const startDate = classes?.[0]?.schedulingPeriodStartsAt;
+}: ClientCohortRegistrationProps) {
+  const { id: cohortId, price, cohorts } = plan;
+  const startDate = cohorts?.[0]?.schedulingPeriodStartsAt;
   const { data: session } = useSession();
   const { formatPrice } = useCurrency();
 
@@ -46,15 +46,15 @@ export function ClientClassRegistration({
   const userId = session?.user?.id;
 
   // Check if user is already enrolled in this class (#1554: one wrapper)
-  const appointment = classes?.[0]?.appointment ?? null;
+  const appointment = cohorts?.[0]?.appointment ?? null;
   const isAlreadyEnrolled = userId
     ? isUserEnrolled(appointment, userId)
     : false;
 
   // Capacity comes from the class instance when it sets one, else the plan.
-  const capacity = getClassCapacity({
-    classInstance: {
-      maxParticipants: classes?.[0]?.maxParticipants ?? null,
+  const capacity = getCohortCapacity({
+    cohortInstance: {
+      maxParticipants: cohorts?.[0]?.maxParticipants ?? null,
       appointment,
     },
     plan: { maxParticipants: maxParticipants ?? plan.maxParticipants ?? 100 },
@@ -63,7 +63,7 @@ export function ClientClassRegistration({
   const isFull = capacity.isFull;
 
   const handleRegistration = () => {
-    const checkoutUrl = `/checkout/plans/class/${classId}`;
+    const checkoutUrl = `/checkout/plans/class/${cohortId}`;
     if (!isLoggedIn) {
       // Preserve the checkout destination as a RELATIVE callbackUrl (the sign-in
       // page drops absolute URLs) so a first-timer lands on checkout after auth +

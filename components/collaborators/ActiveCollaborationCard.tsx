@@ -25,8 +25,8 @@ import {
 } from "./format";
 import { RevenueSplitBar } from "./RevenueSplitBar";
 import {
-  ClassEventList,
-  ClassScheduleSummary,
+  CohortEventList,
+  CohortScheduleSummary,
   WebinarEventList,
   WebinarScheduleSummary,
 } from "./ScheduleSummaries";
@@ -43,12 +43,12 @@ export function ActiveCollaborationCard({
   const owner =
     collab.planType === "webinar"
       ? collab.webinarPlan?.consultantProfile
-      : collab.classPlan?.consultantProfile;
+      : collab.cohortPlan?.consultantProfile;
 
   const allCollaboratorsOnPlan =
     (collab.planType === "webinar"
       ? collab.webinarPlan?.collaborators
-      : collab.classPlan?.collaborators) ?? [];
+      : collab.cohortPlan?.collaborators) ?? [];
   const otherCollaborators = allCollaboratorsOnPlan.filter(
     (c) => c.id !== collab.id,
   );
@@ -70,8 +70,8 @@ export function ActiveCollaborationCard({
       collab.webinarPlan &&
       collab.webinarPlan.webinars.length > 1) ||
     (collab.planType === "class" &&
-      collab.classPlan &&
-      collab.classPlan.classes.length > 1);
+      collab.cohortPlan &&
+      collab.cohortPlan.cohorts.length > 1);
 
   const planTypeLabel = collab.planType === "webinar" ? "Webinar" : "Class";
   const roleLabel = formatRole(collab.role);
@@ -236,8 +236,8 @@ export function ActiveCollaborationCard({
           </p>
           {collab.planType === "webinar" && collab.webinarPlan ? (
             <WebinarScheduleSummary plan={collab.webinarPlan} />
-          ) : collab.planType === "class" && collab.classPlan ? (
-            <ClassScheduleSummary plan={collab.classPlan} />
+          ) : collab.planType === "class" && collab.cohortPlan ? (
+            <CohortScheduleSummary plan={collab.cohortPlan} />
           ) : (
             <p className="text-xs italic text-zinc-400">
               No schedule data available
@@ -262,8 +262,8 @@ export function ActiveCollaborationCard({
                 <div className="mt-2">
                   {collab.planType === "webinar" && collab.webinarPlan ? (
                     <WebinarEventList plan={collab.webinarPlan} />
-                  ) : collab.planType === "class" && collab.classPlan ? (
-                    <ClassEventList plan={collab.classPlan} />
+                  ) : collab.planType === "class" && collab.cohortPlan ? (
+                    <CohortEventList plan={collab.cohortPlan} />
                   ) : null}
                 </div>
               )}

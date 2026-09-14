@@ -2,14 +2,14 @@ import {
   TConsultationWithPlan,
   TSubscriptionWithPlan,
   TWebinarWithPlan,
-  TClassWithPlan,
+  TCohortWithPlan,
 } from "@/hooks/useEvents";
 
 export type EventWithType =
   | (TConsultationWithPlan & { type: "Consultation" })
   | (TSubscriptionWithPlan & { type: "Subscription" })
   | (TWebinarWithPlan & { type: "Webinar" })
-  | (TClassWithPlan & { type: "Class" });
+  | (TCohortWithPlan & { type: "Class" });
 
 export function getEventTitle(event: EventWithType): string {
   switch (event.type) {
@@ -20,7 +20,7 @@ export function getEventTitle(event: EventWithType): string {
     case "Webinar":
       return event.webinarPlan.title;
     case "Class":
-      return event.classPlan.title;
+      return event.cohortPlan.title;
     default:
       return "Unknown Event";
   }
@@ -44,7 +44,7 @@ export function getConsultantName(event: EventWithType): string {
       );
     case "Class":
       return (
-        event.classPlan.consultantProfile?.user?.name || "Unknown Consultant"
+        event.cohortPlan.consultantProfile?.user?.name || "Unknown Consultant"
       );
     default:
       return "Unknown Consultant";
@@ -60,7 +60,7 @@ export function getConsultantImage(event: EventWithType): string | null {
     case "Webinar":
       return event.webinarPlan.consultantProfile?.user?.image || null;
     case "Class":
-      return event.classPlan.consultantProfile?.user?.image || null;
+      return event.cohortPlan.consultantProfile?.user?.image || null;
     default:
       return null;
   }

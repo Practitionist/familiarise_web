@@ -3,7 +3,7 @@
  *
  * This service acts as a unified facade that delegates to specialized services:
  * - WebinarService: Manages webinar events
- * - ClassService: Manages class events
+ * - CohortService: Manages class events
  * - ConsultationService: Manages consultation plans
  * - SubscriptionService: Manages subscription plans
  * - TopicService: Manages topic creation and lookup
@@ -14,18 +14,18 @@
 
 import { toast } from "@/hooks/use-toast";
 import {
-  ClassEvent,
+  CohortEvent,
   Event,
   FormData,
   WebinarEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
-  ClassContentInput,
+  CohortContentInput,
   WebinarFormInput,
-  ClassFormInput,
+  CohortFormInput,
 } from "@/types/planner-events";
 import { WebinarService } from "./events/webinar-service";
-import { ClassService } from "./events/class-service";
+import { CohortService } from "./events/cohort-service";
 import { ConsultationService } from "./plans/consultation-service";
 import { SubscriptionService } from "./plans/subscription-service";
 import { TopicService } from "./topic-service";
@@ -59,7 +59,7 @@ export class PlannerService {
       );
       if (isWebinarDuplicate) return true;
 
-      return ClassService.checkDuplicateTitle(title, consultantId, excludeId);
+      return CohortService.checkDuplicateTitle(title, consultantId, excludeId);
     }
 
     switch (eventType) {
@@ -70,7 +70,11 @@ export class PlannerService {
           excludeId,
         );
       case "class":
-        return ClassService.checkDuplicateTitle(title, consultantId, excludeId);
+        return CohortService.checkDuplicateTitle(
+          title,
+          consultantId,
+          excludeId,
+        );
       case "consultation":
         return ConsultationService.checkDuplicateTitle(
           title,
@@ -107,12 +111,12 @@ export class PlannerService {
   /**
    * Fetch classes for a consultant
    */
-  static async fetchClasses(
+  static async fetchCohorts(
     consultantId: string,
     startDate?: Date,
     endDate?: Date,
-  ): Promise<ClassEvent[]> {
-    return ClassService.fetchClasses(consultantId, startDate, endDate);
+  ): Promise<CohortEvent[]> {
+    return CohortService.fetchCohorts(consultantId, startDate, endDate);
   }
 
   /**
@@ -151,12 +155,12 @@ export class PlannerService {
   /**
    * Save class data with transaction handling
    */
-  static async saveClass(
-    classData: Partial<ClassEvent>,
+  static async saveCohort(
+    cohortData: Partial<CohortEvent>,
     consultantId: string,
     startDate?: string | null,
-  ): Promise<ClassEvent> {
-    return ClassService.saveClass(classData, consultantId, startDate);
+  ): Promise<CohortEvent> {
+    return CohortService.saveCohort(cohortData, consultantId, startDate);
   }
 
   /**
@@ -202,13 +206,13 @@ export class PlannerService {
         );
       }
       case "class": {
-        const classData = this.buildClassDataFromForm(
+        const cohortData = this.buildCohortDataFromForm(
           formData,
-          existingData as ClassEvent | undefined,
+          existingData as CohortEvent | undefined,
         );
-        // Form input is a valid subset of Partial<ClassEvent> - saveClass only uses the fields we provide
-        return this.saveClass(
-          classData as Partial<ClassEvent>,
+        // Form input is a valid subset of Partial<CohortEvent> - saveCohort only uses the fields we provide
+        return this.saveCohort(
+          cohortData as Partial<CohortEvent>,
           consultantId,
           formData.scheduledAt?.toString(),
         );
@@ -257,12 +261,16 @@ export class PlannerService {
   /**
    * Format class contents for API submission
    */
-  static formatClassContents(
-    classContents: ClassContentInput[],
-    classPlanId: string,
+  static formatCohortContents(
+    cohortContents: CohortContentInput[],
+    cohortPlanId: string,
     now: Date,
-  ): ClassContentInput[] {
-    return ClassService.formatClassContents(classContents, classPlanId, now);
+  ): CohortContentInput[] {
+    return CohortService.formatCohortContents(
+      cohortContents,
+      cohortPlanId,
+      now,
+    );
   }
 
   /**
@@ -307,7 +315,7 @@ export class PlannerService {
     return event.type === "webinar";
   }
 
-  static isClassEvent(event: Event): event is ClassEvent {
+  static isCohortEvent(event: Event): event is CohortEvent {
     return event.type === "class";
   }
 
@@ -352,14 +360,14 @@ export class PlannerService {
     };
   }
 
-  private static buildClassDataFromForm(
+  private static buildCohortDataFromForm(
     formData: FormData,
-    existingData?: ClassEvent,
-  ): ClassFormInput {
+    existingData?: CohortEvent,
+  ): CohortFormInput {
     return {
       id: existingData?.id,
-      classPlan: {
-        id: existingData?.classPlan?.id,
+      cohortPlan: {
+        id: existingData?.cohortPlan?.id,
         title: formData.title,
         description: formData.description || null,
         price: formData.price,
@@ -376,10 +384,10 @@ export class PlannerService {
         materialProvided: formData.materialProvided,
         learningOutcomes: formData.learningOutcomes || [],
         topics: formData.topics || [],
-        classContents: formData.classContents || [],
+        cohortContents: formData.cohortContents || [],
         consultantProfileId:
           formData.consultantProfileId ||
-          existingData?.classPlan?.consultantProfileId ||
+          existingData?.cohortPlan?.consultantProfileId ||
           "",
       },
     };

@@ -105,7 +105,7 @@ const fetchOrgBySlug = cache(async (slug: string) => {
         select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
       },
-      classPlans: {
+      cohortPlans: {
         where: eventPlanDiscoverableWhere(),
         select: PUBLIC_PLAN_CARD_SELECT,
         take: 6,
@@ -168,7 +168,7 @@ const fetchOrgBySlug = cache(async (slug: string) => {
       planType: "SUBSCRIPTION" as const,
     })),
     ...row.webinarPlans.map((p) => ({ ...p, planType: "WEBINAR" as const })),
-    ...row.classPlans.map((p) => ({ ...p, planType: "CLASS" as const })),
+    ...row.cohortPlans.map((p) => ({ ...p, planType: "COHORT" as const })),
   ].slice(0, 6);
   // Flatten brandingProfile into the org shape so the rest of the page reads
   // org.logo / org.description / etc. directly (avoids touching ~12 read sites).
@@ -198,7 +198,7 @@ const PLAN_DETAIL_PATH: Record<
   CONSULTATION: "consultations",
   SUBSCRIPTION: "subscriptions",
   WEBINAR: "webinars",
-  CLASS: "classes",
+  COHORT: "classes",
 };
 
 export async function generateMetadata({

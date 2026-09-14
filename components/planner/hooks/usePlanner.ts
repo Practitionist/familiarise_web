@@ -100,20 +100,17 @@ export function useWebinarMutations(consultantId: string) {
 }
 
 // Class mutation hooks
-export function useClassMutations(consultantId: string) {
+export function useCohortMutations(consultantId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const deleteClass = useMutation({
-    mutationFn: async (classId: string) => {
+  const deleteCohort = useMutation({
+    mutationFn: async (cohortId: string) => {
       // FIX #622: Use the guarded route that checks for active payments
       // and upcoming slots before allowing deletion.
-      const response = await fetch(
-        `/api/bookings/classes/${classId}`,
-        {
-          method: "DELETE",
-        },
-      );
+      const response = await fetch(`/api/bookings/cohorts/${cohortId}`, {
+        method: "DELETE",
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -139,7 +136,7 @@ export function useClassMutations(consultantId: string) {
     },
   });
 
-  return { deleteClass };
+  return { deleteCohort };
 }
 
 // Consultation plan hooks
@@ -484,7 +481,7 @@ export function useSubscriptionPlanMutations(consultantId: string) {
 
 /**
  * Archive/restore for webinar and class PLANS (#1494) — distinct from
- * useWebinarMutations/useClassMutations above, which delete a live SESSION
+ * useWebinarMutations/useCohortMutations above, which delete a live SESSION
  * instance. The plan is the sellable offering; a consultant retires it here
  * without touching crud-with-plan's create/reschedule transaction.
  */
@@ -522,14 +519,14 @@ export function useWebinarPlanMutations(consultantId: string) {
   return { archiveWebinarPlan };
 }
 
-export function useClassPlanMutations(consultantId: string) {
+export function useCohortPlanMutations(consultantId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const archiveClassPlan = useMutation({
+  const archiveCohortPlan = useMutation({
     mutationFn: (input: ArchivePlanInput) =>
       patchPlanArchived(
-        "/api/plans/classes",
+        "/api/plans/cohorts",
         input,
         "Failed to update class plan",
       ),
@@ -553,7 +550,7 @@ export function useClassPlanMutations(consultantId: string) {
     },
   });
 
-  return { archiveClassPlan };
+  return { archiveCohortPlan };
 }
 
 // Hook for refetching planner data (useful after saves)

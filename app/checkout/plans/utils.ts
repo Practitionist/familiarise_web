@@ -165,7 +165,7 @@ export function createHandleCheckoutSuccess(
   appointmentType:
     | "CONSULTATION"
     | "WEBINAR"
-    | "CLASS"
+    | "COHORT"
     | "SUBSCRIPTION"
     | "TRIAL",
 ) {
@@ -187,7 +187,7 @@ export function createHandleCheckoutSuccess(
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",
         successTitle: "✅ Webinar Booked Successfully!",
       },
-      CLASS: {
+      COHORT: {
         dev: "You're registered for the class. Check your dashboard for details.",
         mock: "Mock payment processed. Your class has been confirmed. Check your dashboard for details.",
         prod: "Redirecting to secure payment gateway. Complete your payment to confirm the registration.",

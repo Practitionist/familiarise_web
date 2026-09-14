@@ -1446,7 +1446,7 @@ function getRequestTypeLabel(type: AppointmentsType): string {
       return "Subscription";
     case AppointmentsType.WEBINAR:
       return "Webinar";
-    case AppointmentsType.CLASS:
+    case AppointmentsType.COHORT:
       return "Class";
     default:
       return type;

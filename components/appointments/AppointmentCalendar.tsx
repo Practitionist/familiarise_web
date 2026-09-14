@@ -28,7 +28,7 @@ const KIND_DOT: Record<AppointmentKind, string> = {
   CONSULTATION: "bg-blue-500",
   SUBSCRIPTION: "bg-violet-500",
   WEBINAR: "bg-emerald-500",
-  CLASS: "bg-orange-500",
+  COHORT: "bg-orange-500",
   TRIAL: "bg-pink-500",
 };
 

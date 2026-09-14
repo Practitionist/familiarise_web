@@ -10,7 +10,7 @@
 
 import type { ZodTypeAny } from "zod";
 import {
-  ClassPlanSchema,
+  CohortPlanSchema,
   ConsultationPlanSchema,
   SubscriptionPlanSchema,
   WebinarPlanSchema,
@@ -20,7 +20,7 @@ import type { TPlanImageType } from "@/lib/supabase";
 import { ConsultationService } from "@/components/planner/services/plans/consultation-service";
 import { SubscriptionService } from "@/components/planner/services/plans/subscription-service";
 import { WebinarService } from "@/components/planner/services/events/webinar-service";
-import { ClassService } from "@/components/planner/services/events/class-service";
+import { CohortService } from "@/components/planner/services/events/cohort-service";
 import type { OfferingType } from "./manifest";
 
 /** Fields every offering shares, so a new type cannot omit them by accident. */
@@ -180,7 +180,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
   },
 
   class: {
-    schema: ClassPlanSchema,
+    schema: CohortPlanSchema,
     imageType: "class-plans",
     defaults: {
       ...sharedDefaults,
@@ -194,7 +194,7 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       certificateProvided: false,
       recordingEnabled: false,
       recordingStoragePolicy: "STREAM_ONLY",
-      classContents: [],
+      cohortContents: [],
       schedulingStartDate: null,
     },
     // A class's start date is authored on the plan form but persisted on the
@@ -202,20 +202,20 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
     // values here and mapped back to the API's `startDate` on save.
     planOf: (event) => {
       const wrapper = event as {
-        classPlan?: Record<string, unknown>;
+        cohortPlan?: Record<string, unknown>;
         schedulingPeriodStartsAt?: string | Date | null;
       };
-      if (!wrapper?.classPlan) return undefined;
+      if (!wrapper?.cohortPlan) return undefined;
       return {
-        ...toFormValues(wrapper.classPlan),
+        ...toFormValues(wrapper.cohortPlan),
         schedulingStartDate: wrapper.schedulingPeriodStartsAt
           ? new Date(wrapper.schedulingPeriodStartsAt)
           : null,
       };
     },
     save: (values, consultantId) =>
-      ClassService.saveClass(
-        { classPlan: values } as never,
+      CohortService.saveCohort(
+        { cohortPlan: values } as never,
         consultantId,
         toIsoDate(values.schedulingStartDate),
       ),

@@ -132,7 +132,7 @@ function CheckoutSuccessContent() {
           statusIcon: <CheckCircle className="h-6 w-6 text-green-500" />,
           statusText: "Confirmed",
         };
-      case "CLASS":
+      case "COHORT":
         return {
           title: "Class Enrollment Complete!",
           description:

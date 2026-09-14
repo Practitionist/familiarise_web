@@ -14,7 +14,7 @@ import {
 import { cn } from "@/utils/tailwind";
 import {
   PlannerWebinarEvent,
-  PlannerClassEvent,
+  PlannerCohortEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
   Event,
@@ -22,7 +22,7 @@ import {
 import {
   getPlanArchivedAt,
   getPlanId,
-  isClassEvent,
+  isCohortEvent,
   isConsultationPlanEvent,
   isSubscriptionPlanEvent,
   isWebinarEvent,
@@ -43,13 +43,13 @@ interface WebinarCarouselProps {
   archivingPlanId?: string | null;
 }
 
-interface ClassCarouselProps {
-  events: PlannerClassEvent[];
-  onEdit: (event: PlannerClassEvent) => void;
+interface CohortCarouselProps {
+  events: PlannerCohortEvent[];
+  onEdit: (event: PlannerCohortEvent) => void;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
   participantCounts: Record<string, number>;
-  onJoinMeeting?: (event: PlannerClassEvent) => void;
+  onJoinMeeting?: (event: PlannerCohortEvent) => void;
   joinableEventIds?: Set<string>;
   joiningEventId?: string | null;
   onArchiveToggle?: (planId: string, archived: boolean) => void;
@@ -80,7 +80,7 @@ interface SubscriptionCarouselProps {
 
 type EventCarouselProps =
   | WebinarCarouselProps
-  | ClassCarouselProps
+  | CohortCarouselProps
   | ConsultationCarouselProps
   | SubscriptionCarouselProps;
 
@@ -166,19 +166,19 @@ export function EventCarousel({
     eventType === "webinar"
       ? (props as WebinarCarouselProps).onJoinMeeting
       : eventType === "class"
-        ? (props as ClassCarouselProps).onJoinMeeting
+        ? (props as CohortCarouselProps).onJoinMeeting
         : undefined;
   const joinableEventIds =
     eventType === "webinar"
       ? (props as WebinarCarouselProps).joinableEventIds
       : eventType === "class"
-        ? (props as ClassCarouselProps).joinableEventIds
+        ? (props as CohortCarouselProps).joinableEventIds
         : undefined;
   const joiningEventId =
     eventType === "webinar"
       ? (props as WebinarCarouselProps).joiningEventId
       : eventType === "class"
-        ? (props as ClassCarouselProps).joiningEventId
+        ? (props as CohortCarouselProps).joiningEventId
         : undefined;
   const onArchiveToggle = (props as { onArchiveToggle?: (planId: string, archived: boolean) => void })
     .onArchiveToggle;
@@ -208,7 +208,7 @@ export function EventCarousel({
 
   const getEventTitle = (event: Event): string => {
     if (isWebinarEvent(event)) return event.webinarPlan.title;
-    if (isClassEvent(event)) return event.classPlan.title;
+    if (isCohortEvent(event)) return event.cohortPlan.title;
     if (isConsultationPlanEvent(event)) return event.consultationPlan.title;
     if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.title;
     return "";
@@ -219,8 +219,8 @@ export function EventCarousel({
       (onEdit as (e: PlannerWebinarEvent) => void)(
         event as PlannerWebinarEvent,
       );
-    } else if (eventType === "class" && isClassEvent(event)) {
-      (onEdit as (e: PlannerClassEvent) => void)(event as PlannerClassEvent);
+    } else if (eventType === "class" && isCohortEvent(event)) {
+      (onEdit as (e: PlannerCohortEvent) => void)(event as PlannerCohortEvent);
     } else if (eventType === "consultation" && isConsultationPlanEvent(event)) {
       onEdit(event);
     } else if (eventType === "subscription" && isSubscriptionPlanEvent(event)) {
@@ -331,7 +331,7 @@ export function EventCarousel({
                 (eventType === "webinar" || eventType === "class")
                   ? () =>
                       onJoinMeeting(
-                        event as PlannerWebinarEvent & PlannerClassEvent,
+                        event as PlannerWebinarEvent & PlannerCohortEvent,
                       )
                   : undefined
               }

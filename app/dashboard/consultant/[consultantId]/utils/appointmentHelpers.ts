@@ -73,8 +73,8 @@ export function getCollaboratorRole(
       if (collab) return collab.role;
     }
   }
-  if (appointment.appointmentType === "CLASS" && appointment.class) {
-    const plan = appointment.class.classPlan;
+  if (appointment.appointmentType === "COHORT" && appointment.cohort) {
+    const plan = appointment.cohort.cohortPlan;
     const collaborators = (plan as PlanWithCollaborators).collaborators;
     if (plan?.consultantProfileId === consultantId) {
       if (Array.isArray(collaborators) && collaborators.length > 0) {
@@ -135,10 +135,10 @@ export const getConsumeeName = (appointment: TAppointment): string => {
         appointment.webinar?.webinarPlan?.consultantProfile?.user?.name ??
         "Unknown Consultant"
       );
-    case "CLASS":
+    case "COHORT":
       // For classes, show the consultant (instructor) name
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.name ??
+        appointment.cohort?.cohortPlan?.consultantProfile?.user?.name ??
         "Unknown Consultant"
       );
     default:
@@ -169,10 +169,10 @@ export const getConsumeeImage = (appointment: TAppointment): string => {
         appointment.webinar?.webinarPlan?.consultantProfile?.user?.image ??
         "/placeholder.svg"
       );
-    case "CLASS":
+    case "COHORT":
       // For classes, show the consultant (instructor) image
       return (
-        appointment.class?.classPlan?.consultantProfile?.user?.image ??
+        appointment.cohort?.cohortPlan?.consultantProfile?.user?.image ??
         "/placeholder.svg"
       );
     default:
@@ -203,8 +203,8 @@ export const getAppointmentTypeAndPlan = (
     case "WEBINAR":
       plan = appointment.webinar?.webinarPlan?.title ?? "Unknown Plan";
       break;
-    case "CLASS":
-      plan = appointment.class?.classPlan?.title ?? "Unknown Plan";
+    case "COHORT":
+      plan = appointment.cohort?.cohortPlan?.title ?? "Unknown Plan";
       break;
   }
 
@@ -321,7 +321,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
   // Check if appointment is marked as cancelled
   if (
-    appointment.class?.status === "CANCELLED" ||
+    appointment.cohort?.status === "CANCELLED" ||
     appointment.webinar?.status === "CANCELLED"
   ) {
     return "Cancelled";
@@ -329,7 +329,7 @@ export const getAppointmentStatus = (appointment: TAppointment): string => {
 
   // Check if appointment is marked as completed
   if (
-    appointment.class?.status === "COMPLETED" ||
+    appointment.cohort?.status === "COMPLETED" ||
     appointment.webinar?.status === "COMPLETED"
   ) {
     return "Completed";
@@ -450,7 +450,7 @@ export const getTodayAppointments = (
     // Consultations and webinars keep all slots together as one event
     if (
       appointment.appointmentType === "SUBSCRIPTION" ||
-      appointment.appointmentType === "CLASS"
+      appointment.appointmentType === "COHORT"
     ) {
       return liveSlots.map((slot) => ({
         ...appointment,
@@ -502,7 +502,7 @@ export const getUpcomingAppointments = (
     if (
       (appointment.appointmentType === "SUBSCRIPTION" &&
         appointment.subscription) ||
-      (appointment.appointmentType === "CLASS" && appointment.class)
+      (appointment.appointmentType === "COHORT" && appointment.cohort)
     ) {
       // Check if all slots are in the past
       const upcomingSlotTimes = getSlotTimes(appointment);
@@ -545,8 +545,8 @@ export const groupRecurringAppointments = (
       appointment.subscription
     ) {
       groupKey = `subscription-${appointment.subscription.id}`;
-    } else if (appointment.appointmentType === "CLASS" && appointment.class) {
-      groupKey = `class-${appointment.class.id}`;
+    } else if (appointment.appointmentType === "COHORT" && appointment.cohort) {
+      groupKey = `class-${appointment.cohort.id}`;
     } else {
       groupKey = `single-${appointment.id}`;
     }

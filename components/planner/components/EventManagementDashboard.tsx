@@ -26,7 +26,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import {
   PlannerWebinarEvent,
-  PlannerClassEvent,
+  PlannerCohortEvent,
   ConsultationPlanEvent,
   SubscriptionPlanEvent,
 } from "@/types/planner-events";
@@ -34,13 +34,13 @@ import type { ConsultationPlan, SubscriptionPlan } from "@/schemas/plans";
 import { useToast } from "@/hooks/use-toast";
 import {
   useWebinarMutations,
-  useClassMutations,
+  useCohortMutations,
   useConsultationPlans,
   useConsultationPlanMutations,
   useSubscriptionPlans,
   useSubscriptionPlanMutations,
   useWebinarPlanMutations,
-  useClassPlanMutations,
+  useCohortPlanMutations,
 } from "../hooks/usePlanner";
 import {
   LayoutTemplate,
@@ -54,7 +54,7 @@ import {
 
 interface PlannerData {
   webinars: PlannerWebinarEvent[];
-  classes: PlannerClassEvent[];
+  cohorts: PlannerCohortEvent[];
   participantCounts: Record<string, number>;
 }
 
@@ -76,7 +76,7 @@ export function EventManagementDashboard({
   data,
 }: Readonly<Props>) {
   const webinars = data.webinars;
-  const classes = data.classes;
+  const cohorts = data.cohorts;
   const { toast } = useToast();
 
   // React Query hooks for consultation and subscription plans
@@ -87,9 +87,9 @@ export function EventManagementDashboard({
 
   // React Query mutations
   const { deleteWebinar } = useWebinarMutations(consultantId);
-  const { deleteClass } = useClassMutations(consultantId);
+  const { deleteCohort } = useCohortMutations(consultantId);
   const { archiveWebinarPlan } = useWebinarPlanMutations(consultantId);
-  const { archiveClassPlan } = useClassPlanMutations(consultantId);
+  const { archiveCohortPlan } = useCohortPlanMutations(consultantId);
   // Create/update moved to the offering editor, which owns its own save; the
   // planner only deletes now.
   const { deleteConsultationPlan, archiveConsultationPlan } =
@@ -134,7 +134,7 @@ export function EventManagementDashboard({
       if (run && webinar.id) ids.add(webinar.id);
     }
 
-    for (const cls of classes) {
+    for (const cls of cohorts) {
       const run = getJoinableOccurrence(cls.appointment?.occurrences ?? [], {
         joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
         now,
@@ -143,7 +143,7 @@ export function EventManagementDashboard({
     }
 
     return ids;
-  }, [webinars, classes, now]);
+  }, [webinars, cohorts, now]);
 
   // Handle joining a meeting from the planner. Reads the connected video
   // client singleton at click time (HomeTab idiom, #248) so the Stream SDK
@@ -239,10 +239,10 @@ export function EventManagementDashboard({
     }
   };
 
-  const handleJoinClassMeeting = (classEvent: PlannerClassEvent) =>
-    guardJoin(`class:${classEvent.id}`, () => joinClassMeeting(classEvent));
+  const handleJoinCohortMeeting = (cohortEvent: PlannerCohortEvent) =>
+    guardJoin(`class:${cohortEvent.id}`, () => joinCohortMeeting(cohortEvent));
 
-  const joinClassMeeting = async (classEvent: PlannerClassEvent) => {
+  const joinCohortMeeting = async (cohortEvent: PlannerCohortEvent) => {
     const waitStartedAt = Date.now();
     const streamClient = await waitForGlobalVideoClient();
     if (!streamClient) {
@@ -251,7 +251,7 @@ export function EventManagementDashboard({
       // connected at all.
       reportSentryMessage("Video client not ready at Join", {
         subsystem: "client",
-        op: "join-class",
+        op: "join-cohort",
         expected: true,
         extra: describeVideoClientWait(Date.now() - waitStartedAt),
       });
@@ -268,7 +268,7 @@ export function EventManagementDashboard({
     // the same room) past its first half hour instead of reporting "No
     // joinable session found".
     const now = new Date();
-    const targetAppt = classEvent.appointment;
+    const targetAppt = cohortEvent.appointment;
     const targetSlot = getJoinableOccurrence(targetAppt?.occurrences ?? [], {
       joinWindowMs: CONSULTANT_JOIN_WINDOW_MS,
       now,
@@ -283,7 +283,7 @@ export function EventManagementDashboard({
       return;
     }
 
-    setJoiningEventId(classEvent.id ?? null);
+    setJoiningEventId(cohortEvent.id ?? null);
     try {
       const meetingSlot: MeetingSlot = {
         id: targetSlot.id,
@@ -304,7 +304,7 @@ export function EventManagementDashboard({
         failureToast(
           reportClientFailure(error, {
             subsystem: "client",
-            op: "join-class",
+            op: "join-cohort",
             title: "Error joining meeting",
             extra: { appointmentId: targetAppt.id, slotId: targetSlot.id },
           }),
@@ -394,8 +394,8 @@ export function EventManagementDashboard({
     goToEdit("webinar", webinar.id);
   };
 
-  const handleEditClass = (classEvent: PlannerClassEvent) => {
-    goToEdit("class", classEvent.id);
+  const handleEditCohort = (cohortEvent: PlannerCohortEvent) => {
+    goToEdit("class", cohortEvent.id);
   };
 
   // Handle webinar delete event using React Query
@@ -405,9 +405,9 @@ export function EventManagementDashboard({
   };
 
   // Handle class delete event using React Query
-  const handleClassDelete = async (classId: string) => {
-    console.log(`EventManagementDashboard - Deleting class: ${classId}`);
-    deleteClass.mutate(classId);
+  const handleCohortDelete = async (cohortId: string) => {
+    console.log(`EventManagementDashboard - Deleting cohort: ${cohortId}`);
+    deleteCohort.mutate(cohortId);
   };
 
   // Handle consultation plan saved event
@@ -457,13 +457,13 @@ export function EventManagementDashboard({
   const handleWebinarPlanArchiveToggle = (planId: string, archived: boolean) =>
     archiveWebinarPlan.mutate({ id: planId, archived });
 
-  const handleClassPlanArchiveToggle = (planId: string, archived: boolean) =>
-    archiveClassPlan.mutate({ id: planId, archived });
+  const handleCohortPlanArchiveToggle = (planId: string, archived: boolean) =>
+    archiveCohortPlan.mutate({ id: planId, archived });
 
   // Calculate stats
   const totalPlans =
     (consultationPlans?.length ?? 0) + (subscriptionPlans?.length ?? 0);
-  const totalSessions = webinars.length + classes.length;
+  const totalSessions = webinars.length + cohorts.length;
 
   return (
     <div>
@@ -732,18 +732,18 @@ export function EventManagementDashboard({
               </Button>
             </div>
             <EventCarousel
-              events={classes}
-              onEdit={handleEditClass}
-              onDelete={handleClassDelete}
+              events={cohorts}
+              onEdit={handleEditCohort}
+              onDelete={handleCohortDelete}
               eventType="class"
               participantCounts={data.participantCounts ?? {}}
-              onJoinMeeting={handleJoinClassMeeting}
+              onJoinMeeting={handleJoinCohortMeeting}
               joinableEventIds={joinableEventIds}
               joiningEventId={joiningEventId}
-              onArchiveToggle={handleClassPlanArchiveToggle}
+              onArchiveToggle={handleCohortPlanArchiveToggle}
               archivingPlanId={
-                archiveClassPlan.isPending
-                  ? (archiveClassPlan.variables?.id ?? null)
+                archiveCohortPlan.isPending
+                  ? (archiveCohortPlan.variables?.id ?? null)
                   : null
               }
             />

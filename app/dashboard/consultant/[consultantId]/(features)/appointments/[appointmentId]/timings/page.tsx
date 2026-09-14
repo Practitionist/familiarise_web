@@ -136,24 +136,26 @@ export default async function ManageTimingsPage({
       <div className="shrink-0 space-y-4">
         <PanelHeader description={resolved.description} />
 
-        {resolved.classInfo && (
+        {resolved.cohortInfo && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <Badge variant="outline">Plan: {resolved.classInfo.planType}</Badge>
+            <Badge variant="outline">
+              Plan: {resolved.cohortInfo.planType}
+            </Badge>
             <span>
-              {resolved.classInfo.sessionsPerWeek} meetings/week ·{" "}
-              {resolved.classInfo.durationInMonths} month
-              {resolved.classInfo.durationInMonths !== 1 ? "s" : ""} ·{" "}
-              {resolved.classInfo.durationInHours}h/session
+              {resolved.cohortInfo.sessionsPerWeek} meetings/week ·{" "}
+              {resolved.cohortInfo.durationInMonths} month
+              {resolved.cohortInfo.durationInMonths !== 1 ? "s" : ""} ·{" "}
+              {resolved.cohortInfo.durationInHours}h/session
             </span>
           </div>
         )}
 
-        {resolved.classInfo && (
+        {resolved.cohortInfo && (
           <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
             Tip: Each class is{" "}
-            {Math.ceil(resolved.classInfo.durationInHours / 0.5)} consecutive
+            {Math.ceil(resolved.cohortInfo.durationInHours / 0.5)} consecutive
             30-min slots. Complete an in-progress class before starting another.
-            Max {resolved.classInfo.sessionsPerWeek} classes per day; weekly
+            Max {resolved.cohortInfo.sessionsPerWeek} classes per day; weekly
             limit applies.
           </div>
         )}

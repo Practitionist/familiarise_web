@@ -1,6 +1,6 @@
 "use client";
 
-import { ClassPlan, WebinarPlan } from "@prisma/client";
+import { CohortPlan, WebinarPlan } from "@prisma/client";
 import { GraduationCap, BookOpen, Video } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -9,18 +9,18 @@ import ProgramCard from "@/app/explore/programs/components/ProgramCard";
 import ProgramRow from "@/app/explore/programs/components/ProgramRow";
 import {
   generateProgramImageUrl,
-  type ClassPlanProgram,
+  type CohortPlanProgram,
   type WebinarPlanProgram,
 } from "@/lib/explore/programs";
 
 // price is number at runtime via the extended client (#780)
-type ClassPlanRow = Omit<ClassPlan, "price"> & { price: number };
+type CohortPlanRow = Omit<CohortPlan, "price"> & { price: number };
 type WebinarPlanRow = Omit<WebinarPlan, "price"> & { price: number };
 
-interface ClassesAndWebinarsProps {
-  classPlans: ClassPlanRow[];
+interface CohortsAndWebinarsProps {
+  cohortPlans: CohortPlanRow[];
   webinarPlans: WebinarPlanRow[];
-  enrolledClassPlanIds?: Set<string>;
+  enrolledCohortPlanIds?: Set<string>;
   registeredWebinarPlanIds?: Set<string>;
 }
 
@@ -34,31 +34,31 @@ interface ClassesAndWebinarsProps {
  */
 const RAIL_THRESHOLD = 3;
 
-export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
-  classPlans,
+export const CohortsAndWebinars: React.FC<CohortsAndWebinarsProps> = ({
+  cohortPlans,
   webinarPlans,
-  enrolledClassPlanIds = new Set(),
+  enrolledCohortPlanIds = new Set(),
   registeredWebinarPlanIds = new Set(),
 }) => {
   const [activeTab, setActiveTab] = useState<"classes" | "webinars">("classes");
 
-  const hasClasses = classPlans.length > 0;
+  const hasCohorts = cohortPlans.length > 0;
   const hasWebinars = webinarPlans.length > 0;
-  const hasContent = hasClasses || hasWebinars;
+  const hasContent = hasCohorts || hasWebinars;
 
   // Adapt the profile page's plan rows to the `Program` shape ProgramCard
   // consumes, so the card, its badges, price formatting and deep links stay
   // identical to /explore/programs instead of being re-implemented here.
-  const classPrograms = useMemo<ClassPlanProgram[]>(
+  const cohortPrograms = useMemo<CohortPlanProgram[]>(
     () =>
-      classPlans.map((plan) => ({
+      cohortPlans.map((plan) => ({
         ...plan,
         type: "class" as const,
-        classes: [],
+        cohorts: [],
         imageUrl: generateProgramImageUrl(plan.id, 600, 400, plan.imageUrl),
-        isRegistered: enrolledClassPlanIds.has(plan.id),
+        isRegistered: enrolledCohortPlanIds.has(plan.id),
       })),
-    [classPlans, enrolledClassPlanIds],
+    [cohortPlans, enrolledCohortPlanIds],
   );
 
   const webinarPrograms = useMemo<WebinarPlanProgram[]>(
@@ -75,16 +75,18 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
 
   // Auto-select webinars if no classes
   React.useEffect(() => {
-    if (!hasClasses && hasWebinars) {
+    if (!hasCohorts && hasWebinars) {
       setActiveTab("webinars");
     }
-  }, [hasClasses, hasWebinars]);
+  }, [hasCohorts, hasWebinars]);
 
   if (!hasContent) {
     return null;
   }
 
-  const renderPrograms = (programs: (ClassPlanProgram | WebinarPlanProgram)[]) =>
+  const renderPrograms = (
+    programs: (CohortPlanProgram | WebinarPlanProgram)[],
+  ) =>
     programs.length > RAIL_THRESHOLD ? (
       <ProgramRow programs={programs} />
     ) : (
@@ -100,8 +102,8 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
       key: "classes" as const,
       label: "Classes",
       icon: BookOpen,
-      count: classPlans.length,
-      show: hasClasses,
+      count: cohortPlans.length,
+      show: hasCohorts,
     },
     {
       key: "webinars" as const,
@@ -127,14 +129,15 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                   Programs by this Expert
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {classPlans.length} class{classPlans.length !== 1 ? "es" : ""}{" "}
-                  • {webinarPlans.length} webinar
+                  {cohortPlans.length} class
+                  {cohortPlans.length !== 1 ? "es" : ""} • {webinarPlans.length}{" "}
+                  webinar
                   {webinarPlans.length !== 1 ? "s" : ""}
                 </p>
               </div>
             </div>
 
-            {hasClasses && hasWebinars && (
+            {hasCohorts && hasWebinars && (
               <div className="flex bg-muted rounded-xl p-1">
                 {tabs.map(({ key, label, icon: Icon, count }) => (
                   <button
@@ -171,7 +174,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
         {/* Content */}
         <div className="p-6 md:p-8">
           <AnimatePresence mode="wait">
-            {activeTab === "classes" && hasClasses && (
+            {activeTab === "classes" && hasCohorts && (
               <motion.div
                 key="classes"
                 initial={{ opacity: 0, x: -20 }}
@@ -179,7 +182,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
                 exit={{ opacity: 0, x: 20 }}
                 transition={{ duration: 0.3 }}
               >
-                {renderPrograms(classPrograms)}
+                {renderPrograms(cohortPrograms)}
               </motion.div>
             )}
 
@@ -196,7 +199,7 @@ export const ClassesAndWebinars: React.FC<ClassesAndWebinarsProps> = ({
             )}
 
             {/* Empty State */}
-            {((activeTab === "classes" && !hasClasses) ||
+            {((activeTab === "classes" && !hasCohorts) ||
               (activeTab === "webinars" && !hasWebinars)) && (
               <motion.div
                 key="empty"

@@ -21,11 +21,11 @@ import { cn } from "@/utils/tailwind";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import { effectiveMaxParticipants } from "@/lib/events/capacity";
-import { WebinarStatus, ClassStatus } from "@prisma/client";
+import { WebinarStatus, CohortStatus } from "@prisma/client";
 import { Event } from "@/types/planner-events";
 import {
   getPlanArchivedAt,
-  isClassEvent,
+  isCohortEvent,
   isConsultationPlanEvent,
   isSubscriptionPlanEvent,
   isWebinarEvent,
@@ -116,7 +116,7 @@ const formatCurrency = (price: number, currency: string) => {
 
 function getEventTitle(event: Event): string {
   if (isWebinarEvent(event)) return event.webinarPlan.title;
-  if (isClassEvent(event)) return event.classPlan.title;
+  if (isCohortEvent(event)) return event.cohortPlan.title;
   if (isConsultationPlanEvent(event)) return event.consultationPlan.title;
   if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.title;
   return "";
@@ -124,7 +124,7 @@ function getEventTitle(event: Event): string {
 
 function getEventDescription(event: Event): string {
   if (isWebinarEvent(event)) return event.webinarPlan.description ?? "";
-  if (isClassEvent(event)) return event.classPlan.description ?? "";
+  if (isCohortEvent(event)) return event.cohortPlan.description ?? "";
   if (isConsultationPlanEvent(event))
     return event.consultationPlan.description ?? "";
   if (isSubscriptionPlanEvent(event))
@@ -134,7 +134,7 @@ function getEventDescription(event: Event): string {
 
 function getEventPrice(event: Event): number {
   if (isWebinarEvent(event)) return event.webinarPlan.price;
-  if (isClassEvent(event)) return event.classPlan.price;
+  if (isCohortEvent(event)) return event.cohortPlan.price;
   if (isConsultationPlanEvent(event)) return event.consultationPlan.price;
   if (isSubscriptionPlanEvent(event)) return event.subscriptionPlan.price;
   return 0;
@@ -142,7 +142,7 @@ function getEventPrice(event: Event): number {
 
 function getEventCurrency(event: Event): string {
   if (isWebinarEvent(event)) return event.webinarPlan.priceCurrency ?? "INR";
-  if (isClassEvent(event)) return event.classPlan.priceCurrency ?? "INR";
+  if (isCohortEvent(event)) return event.cohortPlan.priceCurrency ?? "INR";
   if (isConsultationPlanEvent(event))
     return event.consultationPlan.priceCurrency ?? "INR";
   if (isSubscriptionPlanEvent(event))
@@ -155,8 +155,8 @@ function getEventDuration(event: Event): string {
     const hours = event.webinarPlan.durationInHours;
     return hours === 1 ? "1 hour" : `${hours} hours`;
   }
-  if (isClassEvent(event)) {
-    const months = event.classPlan.durationInMonths;
+  if (isCohortEvent(event)) {
+    const months = event.cohortPlan.durationInMonths;
     return months === 1 ? "1 month" : `${months} months`;
   }
   if (isConsultationPlanEvent(event)) {
@@ -174,14 +174,14 @@ function getMaxParticipants(event: Event): number {
   // The instance's own capacity wins; the plan supplies the default.
   if (isWebinarEvent(event))
     return effectiveMaxParticipants(event, event.webinarPlan);
-  if (isClassEvent(event))
-    return effectiveMaxParticipants(event, event.classPlan);
+  if (isCohortEvent(event))
+    return effectiveMaxParticipants(event, event.cohortPlan);
   return 1;
 }
 
-function getEventStatus(event: Event): WebinarStatus | ClassStatus | null {
+function getEventStatus(event: Event): WebinarStatus | CohortStatus | null {
   if (isWebinarEvent(event)) return event.status ?? null;
-  if (isClassEvent(event)) return event.status ?? null;
+  if (isCohortEvent(event)) return event.status ?? null;
   return null;
 }
 
@@ -190,14 +190,14 @@ function getEventStartDate(event: Event): Date | null {
     const startTimeString = event.appointment?.occurrences?.[0]?.startsAt;
     return startTimeString ? new Date(startTimeString) : null;
   }
-  if (isClassEvent(event)) {
+  if (isCohortEvent(event)) {
     // #1346 — the planner route's slot include is windowed to ±24h of now
     // (for the Join affordance), so a class whose sessions fall outside that
     // day arrives with zero slots here; firstSessionAt travels as its own,
     // unwindowed field for exactly that consumer and takes priority.
     if (event.firstSessionAt) return new Date(event.firstSessionAt);
     // The card promises the first session, so read the scheduled occurrence
-    // like the webinar arm above (this arm still serves /api/bookings/classes,
+    // like the webinar arm above (this arm still serves /api/bookings/cohorts,
     // which includes occurrences unwindowed). The include carries no ordering,
     // so take the earliest live row rather than trusting position 0.
     // schedulingPeriodStartsAt is only the window the run was authored with
@@ -232,23 +232,23 @@ function formatDateTime(date: Date | null): string {
 }
 
 function getStatusVariant(
-  status: WebinarStatus | ClassStatus,
+  status: WebinarStatus | CohortStatus,
 ): "default" | "secondary" | "destructive" | "outline" {
   switch (status) {
     case WebinarStatus.DRAFT:
-    case ClassStatus.DRAFT:
+    case CohortStatus.DRAFT:
       return "outline";
     case WebinarStatus.SCHEDULED:
-    case ClassStatus.SCHEDULED:
+    case CohortStatus.SCHEDULED:
       return "default";
     case WebinarStatus.IN_PROGRESS:
-    case ClassStatus.IN_PROGRESS:
+    case CohortStatus.IN_PROGRESS:
       return "secondary";
     case WebinarStatus.COMPLETED:
-    case ClassStatus.COMPLETED:
+    case CohortStatus.COMPLETED:
       return "outline";
     case WebinarStatus.CANCELLED:
-    case ClassStatus.CANCELLED:
+    case CohortStatus.CANCELLED:
       return "destructive";
   }
 }

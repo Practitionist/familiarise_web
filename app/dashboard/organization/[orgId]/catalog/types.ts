@@ -1,6 +1,6 @@
 /** Shared shapes for the org catalog surface. */
 
-export type Kind = "WEBINAR" | "CLASS";
+export type Kind = "WEBINAR" | "COHORT";
 
 /** Row as the API returns it — `price` is a paise string (BigInt on the wire). */
 export interface CatalogRow {
@@ -15,5 +15,5 @@ export interface CatalogRow {
 
 export interface CatalogResponse {
   webinars: CatalogRow[];
-  classes: CatalogRow[];
+  cohorts: CatalogRow[];
 }

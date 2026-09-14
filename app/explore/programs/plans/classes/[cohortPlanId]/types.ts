@@ -1,13 +1,13 @@
 import type {
   Prisma,
-  Class as PrismaClass,
+  Cohort as PrismaCohort,
   Appointment as PrismaAppointment,
   AppointmentOccurrence as PrismaAppointmentOccurrence,
 } from "@prisma/client";
 import type { ICollaboratorInfo } from "../../types";
 import type { ConsultantPublicScalars } from "@/lib/data/consultant-public";
 
-type TClassSessionWithSchedule = PrismaClass & {
+type TCohortSessionWithSchedule = PrismaCohort & {
   // #1554 — one wrapper per class, N occurrences.
   appointment:
     | (PrismaAppointment & {
@@ -18,8 +18,8 @@ type TClassSessionWithSchedule = PrismaClass & {
     | null;
 };
 
-export type TClassPlanDetailsData = Omit<
-  Prisma.ClassPlanGetPayload<{
+export type TCohortPlanDetailsData = Omit<
+  Prisma.CohortPlanGetPayload<{
     include: {
       consultantProfile: {
         select: ConsultantPublicScalars & {
@@ -30,7 +30,7 @@ export type TClassPlanDetailsData = Omit<
         };
       };
       topics: true;
-      classContents: true;
+      cohortContents: true;
       faqs: true;
     };
   }>,
@@ -38,7 +38,7 @@ export type TClassPlanDetailsData = Omit<
 > & {
   // price is number at runtime via the extended client (#780)
   price: number;
-  classes: TClassSessionWithSchedule[];
+  cohorts: TCohortSessionWithSchedule[];
   type: "class";
   imageUrl: string;
   collaborators?: ICollaboratorInfo[];

@@ -74,12 +74,12 @@ export interface HomeTabProps {
   onUpdate?: () => void;
 }
 
-export interface UnscheduledClass {
+export interface UnscheduledCohort {
   id: string;
   status: string;
   schedulingPeriodStartsAt: string | null;
   schedulingPeriodEndsAt: string | null;
-  classPlan: {
+  cohortPlan: {
     id: string;
     title: string;
     sessionsPerWeek: number;

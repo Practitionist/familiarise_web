@@ -89,15 +89,15 @@ export default function AppointmentsPageClient({
   });
 
   const {
-    data: classEventsData,
-    isError: classesError,
-    refetch: refetchClasses,
+    data: cohortEventsData,
+    isError: cohortsError,
+    refetch: refetchCohorts,
   } = useQuery({
     placeholderData: keepPreviousData,
     queryKey: ["consultant-classes", consultantId] as const,
     queryFn: async () => {
       const res = await fetch(
-        `/api/bookings/classes?consultantProfileId=${consultantId}`,
+        `/api/bookings/cohorts?consultantProfileId=${consultantId}`,
       );
       if (!res.ok) throw new Error("Failed to fetch classes");
       const { data } = await res.json();
@@ -133,15 +133,21 @@ export default function AppointmentsPageClient({
       mapConsultantAppointments({
         appointments: appointments ?? [],
         scheduledTrials: trialsData ?? [],
-        unscheduledClasses: classEventsData ?? [],
+        unscheduledCohorts: cohortEventsData ?? [],
         unscheduledWebinars: webinarEventsData ?? [],
         consultantId,
       }),
-    [appointments, trialsData, classEventsData, webinarEventsData, consultantId],
+    [
+      appointments,
+      trialsData,
+      cohortEventsData,
+      webinarEventsData,
+      consultantId,
+    ],
   );
 
   const notices =
-    trialsError || classesError || webinarsError ? (
+    trialsError || cohortsError || webinarsError ? (
       <div className="space-y-2">
         {trialsError && (
           <SideQueryNotice
@@ -149,10 +155,10 @@ export default function AppointmentsPageClient({
             onRetry={() => void refetchTrials()}
           />
         )}
-        {classesError && (
+        {cohortsError && (
           <SideQueryNotice
             label="Unscheduled classes"
-            onRetry={() => void refetchClasses()}
+            onRetry={() => void refetchCohorts()}
           />
         )}
         {webinarsError && (

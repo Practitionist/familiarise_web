@@ -13,8 +13,8 @@ import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { eventStatusBadge } from "@/lib/labels/session-labels";
 import { Calendar, Clock, Users, ChevronDown, ChevronUp } from "lucide-react";
 import type {
-  ClassEventSchedule,
-  ClassPlanSchedule,
+  CohortEventSchedule,
+  CohortPlanSchedule,
   WebinarPlanSchedule,
 } from "./types";
 import { formatDateTime, formatTime } from "./format";
@@ -132,8 +132,8 @@ export function WebinarEventList({ plan }: { plan: WebinarPlanSchedule }) {
   );
 }
 
-export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
-  if (plan.classes.length === 0) {
+export function CohortScheduleSummary({ plan }: { plan: CohortPlanSchedule }) {
+  if (plan.cohorts.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic">
         No classes scheduled yet — only the event owner can add scheduling
@@ -141,35 +141,35 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
     );
   }
 
-  const activeClass =
-    plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
-  const allSlots = activeClass.appointments.flatMap((a) => a.occurrences);
+  const activeCohort =
+    plan.cohorts.find((c) => c.status === "IN_PROGRESS") ?? plan.cohorts[0];
+  const allSlots = activeCohort.appointments.flatMap((a) => a.occurrences);
   const now = new Date();
   const upcomingOccurrences = allSlots.filter(
     (s) => new Date(s.startsAt) > now,
   );
   const nextSlot = upcomingOccurrences[0];
-  const totalEnrolled = activeClass.appointments[0]?._count.participants ?? 0;
+  const totalEnrolled = activeCohort.appointments[0]?._count.participants ?? 0;
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
-        <StatusBadge size="sm" {...eventStatusBadge(activeClass.status)} />
-        {plan.classes.length > 1 && (
+        <StatusBadge size="sm" {...eventStatusBadge(activeCohort.status)} />
+        {plan.cohorts.length > 1 && (
           <span className="text-[11px] text-zinc-400">
-            ({plan.classes.length} batches)
+            ({plan.cohorts.length} batches)
           </span>
         )}
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-zinc-600">
-        {activeClass.schedulingPeriodStartsAt &&
-          activeClass.schedulingPeriodEndsAt && (
+        {activeCohort.schedulingPeriodStartsAt &&
+          activeCohort.schedulingPeriodEndsAt && (
             <div className="flex items-center gap-1.5 col-span-2">
               <Calendar className="w-3 h-3 text-zinc-400" />
               <span>
-                {formatDateTime(activeClass.schedulingPeriodStartsAt)} &ndash;{" "}
-                {formatDateTime(activeClass.schedulingPeriodEndsAt)}
+                {formatDateTime(activeCohort.schedulingPeriodStartsAt)} &ndash;{" "}
+                {formatDateTime(activeCohort.schedulingPeriodEndsAt)}
               </span>
             </div>
           )}
@@ -203,7 +203,7 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
         )}
       </div>
 
-      {!activeClass.schedulingPeriodStartsAt && allSlots.length === 0 && (
+      {!activeCohort.schedulingPeriodStartsAt && allSlots.length === 0 && (
         <p className="text-xs text-zinc-400 italic">
           Sessions not yet scheduled
         </p>
@@ -212,7 +212,7 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
   );
 }
 
-function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
+function CohortSessionList({ cls }: { cls: CohortEventSchedule }) {
   const allSlots = cls.appointments.flatMap((a) =>
     a.occurrences.map((slot) => ({ ...slot, enrolled: a._count.participants })),
   );
@@ -273,12 +273,12 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
   );
 }
 
-function ClassEventCard({
+function CohortEventCard({
   cls,
   plan,
 }: {
-  cls: ClassEventSchedule;
-  plan: ClassPlanSchedule;
+  cls: CohortEventSchedule;
+  plan: CohortPlanSchedule;
 }) {
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
   const allSlots = cls.appointments.flatMap((a) => a.occurrences);
@@ -330,7 +330,7 @@ function ClassEventCard({
           </button>
           {sessionsExpanded && (
             <div className="mt-1.5 border-t border-zinc-100 pt-1.5">
-              <ClassSessionList cls={cls} />
+              <CohortSessionList cls={cls} />
             </div>
           )}
         </div>
@@ -339,11 +339,11 @@ function ClassEventCard({
   );
 }
 
-export function ClassEventList({ plan }: { plan: ClassPlanSchedule }) {
+export function CohortEventList({ plan }: { plan: CohortPlanSchedule }) {
   return (
     <div className="space-y-2">
-      {plan.classes.map((cls) => (
-        <ClassEventCard key={cls.id} cls={cls} plan={plan} />
+      {plan.cohorts.map((cls) => (
+        <CohortEventCard key={cls.id} cls={cls} plan={plan} />
       ))}
     </div>
   );

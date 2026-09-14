@@ -66,14 +66,14 @@ export interface MyAppointmentItem {
     requestedBy: RequestedBySide | null;
   } | null;
   webinar: { webinarPlan: PlanSide | null } | null;
-  class: { classPlan: PlanSide | null } | null;
+  cohort: { cohortPlan: PlanSide | null } | null;
 }
 
 const TYPE_LABEL: Record<string, string> = {
   CONSULTATION: "Consultation",
   SUBSCRIPTION: "Subscription",
   WEBINAR: "Webinar",
-  CLASS: "Class",
+  COHORT: "Class",
   TRIAL: "Trial",
 };
 
@@ -134,8 +134,12 @@ function resolveIdentity(
   if (item.webinar) {
     return pick(item.webinar.webinarPlan?.title ?? "Webinar", item.webinar.webinarPlan, null);
   }
-  if (item.class) {
-    return pick(item.class.classPlan?.title ?? "Class", item.class.classPlan, null);
+  if (item.cohort) {
+    return pick(
+      item.cohort.cohortPlan?.title ?? "Class",
+      item.cohort.cohortPlan,
+      null,
+    );
   }
   return {
     title: "Session",

@@ -16,7 +16,7 @@ export const KIND_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
   SUBSCRIPTION: "Subscription",
   WEBINAR: "Webinar",
-  CLASS: "Class",
+  COHORT: "Class",
   TRIAL: "Trial",
 };
 

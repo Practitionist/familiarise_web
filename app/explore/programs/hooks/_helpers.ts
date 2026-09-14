@@ -4,7 +4,7 @@
 
 import type {
   ApiMeta,
-  ClassInstance,
+  CohortInstance,
   ProgramFilters,
   TopicWithCount,
 } from "@/lib/explore/programs";
@@ -13,9 +13,9 @@ interface WebinarWithAppointment {
   appointment?: { participants?: { userId: string }[] } | null;
 }
 
-export interface ClassPlanApiItem {
+export interface CohortPlanApiItem {
   id: string;
-  classes?: ClassInstance[];
+  cohorts?: CohortInstance[];
   imageUrl?: string | null;
 }
 
@@ -25,7 +25,7 @@ export interface WebinarPlanApiItem {
   imageUrl?: string | null;
 }
 
-type PlanApiItem = ClassPlanApiItem | WebinarPlanApiItem;
+type PlanApiItem = CohortPlanApiItem | WebinarPlanApiItem;
 
 export interface PlanApiResponse {
   data?: PlanApiItem[];

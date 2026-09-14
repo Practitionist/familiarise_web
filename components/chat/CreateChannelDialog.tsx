@@ -56,23 +56,26 @@ export const CreateChannelDialog = ({
   // Fetch user's events
   const {
     webinars,
-    classes,
+    cohorts,
     isLoading: isLoadingEvents,
   } = useEventsByUser(client?.userID || "");
 
   // Prepare events for dropdown
-  const events = useMemo(() => [
-    ...webinars.map((webinar) => ({
-      id: `webinar-${webinar.id}`,
-      name: webinar.webinarPlan.title,
-      type: "webinar",
-    })),
-    ...classes.map((classItem) => ({
-      id: `class-${classItem.id}`,
-      name: classItem.classPlan.title,
-      type: "class",
-    })),
-  ], [webinars, classes]);
+  const events = useMemo(
+    () => [
+      ...webinars.map((webinar) => ({
+        id: `webinar-${webinar.id}`,
+        name: webinar.webinarPlan.title,
+        type: "webinar",
+      })),
+      ...cohorts.map((cohortItem) => ({
+        id: `class-${cohortItem.id}`,
+        name: cohortItem.cohortPlan.title,
+        type: "class",
+      })),
+    ],
+    [webinars, cohorts],
+  );
 
   // Update channel name when event is selected
   useEffect(() => {

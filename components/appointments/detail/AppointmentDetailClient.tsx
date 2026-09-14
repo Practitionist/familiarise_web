@@ -368,7 +368,7 @@ export function AppointmentDetailClient({
   const seatSummary = summarizeSeatPayments(
     seatPayments,
     detail.appointment.webinar?.webinarPlan?.priceCurrency ??
-      detail.appointment.class?.classPlan?.priceCurrency ??
+      detail.appointment.cohort?.cohortPlan?.priceCurrency ??
       "INR",
   );
   // #1163 — the read narrows to open statuses and takes one, so [0] is THE

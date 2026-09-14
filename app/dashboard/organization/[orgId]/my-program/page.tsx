@@ -451,7 +451,7 @@ const CATALOG_DETAIL_PATH: Record<string, string> = {
   CONSULTATION: "consultations",
   SUBSCRIPTION: "subscriptions",
   WEBINAR: "webinars",
-  CLASS: "classes",
+  COHORT: "classes",
 };
 
 function EmptyState({ orgId }: { orgId: string }) {

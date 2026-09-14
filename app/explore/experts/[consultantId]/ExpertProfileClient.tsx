@@ -15,7 +15,7 @@ import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
-import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
+import { CohortsAndWebinars } from "./components/CohortsAndWebinars";
 import { ConsultantAvailability } from "./components/ConsultantAvailability";
 import { ExperienceSection } from "./components/ExperienceSection";
 import { ExpertPricing } from "./components/ExpertPricing";
@@ -364,8 +364,8 @@ export function ExpertProfileClient({
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            <ClassesAndWebinars
-              classPlans={consultantDetails.classPlans}
+            <CohortsAndWebinars
+              cohortPlans={consultantDetails.cohortPlans}
               webinarPlans={consultantDetails.webinarPlans}
             />
           </motion.div>

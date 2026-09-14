@@ -20,11 +20,11 @@ import {
   buildSessionsFromAppointment,
   groupSessionsByWeek,
 } from "@/app/explore/programs/plans/schedule-utils";
-import { ClientClassRegistration } from "./ClientClassRegistration";
+import { ClientCohortRegistration } from "./ClientCohortRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
-import type { TClassPlanDetailsData } from "../types";
+import type { TCohortPlanDetailsData } from "../types";
 
 const getBadgeVariant = (
   currentStatus: string,
@@ -34,11 +34,11 @@ const getBadgeVariant = (
   return "default";
 };
 
-interface ClassDetailsProps {
-  readonly plan: TClassPlanDetailsData;
+interface CohortDetailsProps {
+  readonly plan: TCohortPlanDetailsData;
 }
 
-export function ClassDetails({ plan }: ClassDetailsProps) {
+export function CohortDetails({ plan }: CohortDetailsProps) {
   const { formatPrice } = useCurrency();
   const [userTimeZone, setUserTimeZone] = useState("UTC");
   useEffect(() => {
@@ -132,7 +132,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               learningOutcomes={plan.learningOutcomes}
               targetAudience={plan.targetAudience}
               whatsIncluded={plan.whatsIncluded}
-              curriculum={plan.classContents}
+              curriculum={plan.cohortContents}
               curriculumHeading="Course content"
               prerequisites={plan.prerequisites}
               materialProvided={plan.materialProvided}
@@ -146,22 +146,22 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
                 </h2>
-                {plan.classes && plan.classes.length > 0 ? (
+                {plan.cohorts && plan.cohorts.length > 0 ? (
                   <div className="space-y-6">
-                    {plan.classes.map((classInstance, classIndex) => {
+                    {plan.cohorts.map((cohortInstance, cohortIndex) => {
                       const sessions = buildSessionsFromAppointment(
-                        classInstance.appointment,
+                        cohortInstance.appointment,
                       );
                       const weeks = groupSessionsByWeek(sessions);
 
                       return (
                         <div
-                          key={classInstance.id}
+                          key={cohortInstance.id}
                           className="p-4 border border-border rounded-xl"
                         >
-                          {plan.classes.length > 1 && (
+                          {plan.cohorts.length > 1 && (
                             <h3 className="font-medium text-foreground mb-4">
-                              Batch {classIndex + 1}
+                              Batch {cohortIndex + 1}
                             </h3>
                           )}
                           {sessions.length > 0 ? (
@@ -335,7 +335,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
               )}
 
               {/* Registration Card */}
-              <ClientClassRegistration
+              <ClientCohortRegistration
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 consultantUserId={plan.consultantProfile?.user?.id}

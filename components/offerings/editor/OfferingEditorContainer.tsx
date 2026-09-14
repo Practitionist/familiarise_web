@@ -177,12 +177,12 @@ export function OfferingEditorContainer({
       slots={{
         // Shared by all four, so it is wired here rather than four times.
         faq: <FaqEditor control={form.control} name="faqs" />,
-        // ClassPlanSchema requires at least one curriculum item, so a class
+        // CohortPlanSchema requires at least one curriculum item, so a class
         // literally cannot be saved without this.
         curriculum: (
           <ContentItemsEditor
             control={form.control}
-            name="classContents"
+            name="cohortContents"
             itemNoun="sessions"
           />
         ),

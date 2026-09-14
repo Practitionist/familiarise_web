@@ -16,17 +16,17 @@ interface Appointment {
   occurrences: AppointmentOccurrence[];
 }
 
-interface ClassPlan {
+interface CohortPlan {
   id: string;
   title: string;
   maxParticipants: number;
 }
 
-export interface ClassEvent {
+export interface CohortEvent {
   id: string;
   /** Per-instance capacity; null inherits the plan's value. */
   maxParticipants: number | null;
-  classPlan: ClassPlan;
+  cohortPlan: CohortPlan;
   appointments: Appointment[];
 }
 

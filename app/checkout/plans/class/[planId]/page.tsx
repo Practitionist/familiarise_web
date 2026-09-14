@@ -42,11 +42,11 @@ import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 
 import type {
   Appointment,
-  ClassContent,
-  ClassPlan,
+  CohortContent,
+  CohortPlan,
   ConsultantProfile,
   Domain,
-  Class as PrismaClass,
+  Cohort as PrismaCohort,
   Tag as PrismaTag,
   Topic as PrismaTopic,
   AppointmentOccurrence,
@@ -55,7 +55,7 @@ import type {
 } from "@prisma/client";
 
 // price arrives as number: extended client + JSON serialization (#780)
-export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
+export type CheckoutCohortPlanData = Omit<CohortPlan, "price"> & {
   price: number;
   consultantProfile:
     | (ConsultantProfile & {
@@ -71,19 +71,19 @@ export type CheckoutClassPlanData = Omit<ClassPlan, "price"> & {
         tags: PrismaTag[];
       })
     | null;
-  classes: (PrismaClass & {
+  cohorts: (PrismaCohort & {
     appointments: (Appointment & {
       occurrences: AppointmentOccurrence[];
     })[];
   })[];
   topics: PrismaTopic[];
-  classContents: ClassContent[];
+  cohortContents: CohortContent[];
   type: "class";
   imageUrl: string;
 };
 
 type PlanResponse = {
-  data: CheckoutClassPlanData;
+  data: CheckoutCohortPlanData;
 };
 
 type PageProps = {
@@ -91,7 +91,7 @@ type PageProps = {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 };
 
-export default function ClassCheckoutPage({
+export default function CohortCheckoutPage({
   params,
   searchParams,
 }: Readonly<PageProps>) {
@@ -136,11 +136,11 @@ export default function ClassCheckoutPage({
   }, [resolvedSearchParams]);
 
   // Derive the first available class ID — used by both component renders and handleCheckout
-  const availableClassId = useMemo(() => {
-    const availableClass = planData?.data?.classes?.find(
+  const availableCohortId = useMemo(() => {
+    const availableCohort = planData?.data?.cohorts?.find(
       (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
     );
-    return availableClass?.id ?? null;
+    return availableCohort?.id ?? null;
   }, [planData]);
 
   // Apply discount code
@@ -211,7 +211,7 @@ export default function ClassCheckoutPage({
 
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
   const handleCheckoutSuccess = useMemo(
-    () => createHandleCheckoutSuccess(toast, "CLASS"),
+    () => createHandleCheckoutSuccess(toast, "COHORT"),
     [toast],
   );
   const stripeHandlers = createStripeCheckoutHandlers(toast);
@@ -250,16 +250,16 @@ export default function ClassCheckoutPage({
           throw new Error("Class plan not found");
         }
 
-        if (!availableClassId) {
+        if (!availableCohortId) {
           throw new Error(
             "No available class sessions. All sessions may be full, cancelled, or completed.",
           );
         }
 
         const checkoutData = createCheckoutData({
-          appointmentType: "CLASS",
+          appointmentType: "COHORT",
           planId: planData.data.id,
-          eventId: availableClassId,
+          eventId: availableCohortId,
           discountCode: appliedDiscount?.code,
           displayCurrency: currency,
           paymentGateway: gateway,
@@ -331,7 +331,7 @@ export default function ClassCheckoutPage({
       billingState.bodyField,
       validatedSearchParams,
       currency,
-      availableClassId,
+      availableCohortId,
     ],
   );
 
@@ -339,7 +339,7 @@ export default function ClassCheckoutPage({
     async function fetchPlanData() {
       setIsLoading(true);
       try {
-        const endpoint = `/api/plans/classes/${resolvedParams.planId}`;
+        const endpoint = `/api/plans/cohorts/${resolvedParams.planId}`;
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -404,10 +404,10 @@ export default function ClassCheckoutPage({
 
   // Periodic staleness check: detect if all class sessions have ended or been cancelled
   useEffect(() => {
-    if (!planData?.data?.classes) return;
+    if (!planData?.data?.cohorts) return;
 
     const checkStaleness = () => {
-      const hasAvailable = planData.data.classes.some(
+      const hasAvailable = planData.data.cohorts.some(
         (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
       );
       if (!hasAvailable) {
@@ -465,8 +465,8 @@ export default function ClassCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  const nextClassSession =
-    planDetails?.classes?.[0]?.appointments?.[0]?.occurrences?.[0];
+  const nextCohortSession =
+    planDetails?.cohorts?.[0]?.appointments?.[0]?.occurrences?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -526,12 +526,12 @@ export default function ClassCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Class Details</div>
           <div className="grid gap-2">
-            {nextClassSession && (
+            {nextCohortSession && (
               <>
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">First Session</div>
                   <div>
-                    {new Date(nextClassSession.startsAt).toLocaleDateString(
+                    {new Date(nextCohortSession.startsAt).toLocaleDateString(
                       undefined,
                       {
                         weekday: "long",
@@ -545,9 +545,9 @@ export default function ClassCheckoutPage({
                 <div className="flex items-center justify-between">
                   <div className="text-muted-foreground">Time</div>
                   <div>
-                    {new Date(nextClassSession.startsAt).toLocaleTimeString()} -{" "}
-                    {new Date(nextClassSession.endsAt).toLocaleTimeString()} (
-                    {Intl.DateTimeFormat().resolvedOptions().timeZone})
+                    {new Date(nextCohortSession.startsAt).toLocaleTimeString()}{" "}
+                    - {new Date(nextCohortSession.endsAt).toLocaleTimeString()}{" "}
+                    ({Intl.DateTimeFormat().resolvedOptions().timeZone})
                   </div>
                 </div>
               </>
@@ -591,7 +591,7 @@ export default function ClassCheckoutPage({
         <Separator className="bg-border" />
         <OrgPayerSelector
           selectedOrganizationId={selectedOrganizationId}
-          planType="CLASS"
+          planType="COHORT"
           planId={resolvedParams.planId}
           onSelect={(id) => {
             setSelectedOrganizationId(id);
@@ -807,12 +807,12 @@ export default function ClassCheckoutPage({
                   </div>
                   {gateway.isActive ? (
                     <div className="flex gap-2">
-                      {availableClassId && gateway.gateway === "RAZORPAY" ? (
+                      {availableCohortId && gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
-                            appointmentType: "CLASS",
+                            appointmentType: "COHORT",
                             planId: planDetails.id,
-                            eventId: availableClassId,
+                            eventId: availableCohortId,
                             paymentGateway: "RAZORPAY",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
@@ -826,12 +826,12 @@ export default function ClassCheckoutPage({
                           onPaymentError={razorpayHandlers.onPaymentError}
                           disabled={isMaintenanceBlocked}
                         />
-                      ) : availableClassId && gateway.gateway === "STRIPE" ? (
+                      ) : availableCohortId && gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
-                            appointmentType: "CLASS",
+                            appointmentType: "COHORT",
                             planId: planDetails.id,
-                            eventId: availableClassId,
+                            eventId: availableCohortId,
                             paymentGateway: "STRIPE",
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,

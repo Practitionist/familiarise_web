@@ -14,8 +14,8 @@ export const getParticipantManagementUrl = (
   switch (appointment.appointmentType) {
     case "WEBINAR":
       return `${baseUrl}/webinars/${appointment.webinarId}`;
-    case "CLASS":
-      return `${baseUrl}/classes/${appointment.classId}`;
+    case "COHORT":
+      return `${baseUrl}/classes/${appointment.cohortId}`;
     default:
       return "#";
   }
@@ -25,8 +25,5 @@ export const getParticipantManagementUrl = (
 export const supportsParticipantManagement = (
   appointment: TAppointment,
 ): boolean => {
-  return !!(
-    appointment.webinarId ||
-    appointment.classId
-  );
+  return !!(appointment.webinarId || appointment.cohortId);
 };

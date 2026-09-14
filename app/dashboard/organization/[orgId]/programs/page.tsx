@@ -222,7 +222,7 @@ async function fetchContracts(
 
 const COVERED_PLAN_TYPE_OPTIONS = [
   { value: "CONSULTATION", label: "Consultation", description: "1:1 sessions" },
-  { value: "CLASS", label: "Class", description: "Group classes" },
+  { value: "COHORT", label: "Class", description: "Group classes" },
   { value: "WEBINAR", label: "Webinar", description: "Live webinars" },
   { value: "SUBSCRIPTION", label: "Subscription", description: "Recurring plans" },
 ] as const;
@@ -828,9 +828,9 @@ function CreateProgramDialog({
                 />
                 <p className="text-xs text-zinc-500">
                   An engagement is one calendar occurrence — a 1:1 call, a
-                  webinar, or one class day. A 4-hour mentoring call counts
-                  as 1; a 12-call subscription counts as 12 over the cycle;
-                  an 8-week class counts as 8. Per-engagement price cap is
+                  webinar, or one class day. A 4-hour mentoring call counts as
+                  1; a 12-call subscription counts as 12 over the cycle; an
+                  8-week class counts as 8. Per-engagement price cap is
                   separate. Leave blank for unlimited (flat licence).
                 </p>
               </div>

@@ -4,7 +4,7 @@
  * The curriculum / roadmap builder.
  *
  * One component serves both, because `SubscriptionContentSchema` is literally
- * `ClassContentSchema` with the parent key swapped — yet the two dialogs built
+ * `CohortContentSchema` with the parent key swapped — yet the two dialogs built
  * separate editors, and the subscription one quietly lacked `outcomes` and a
  * resource URL. Sharing it is what stops that happening again.
  */
@@ -26,7 +26,7 @@ import { GripVertical, Plus, Trash2 } from "lucide-react";
 
 interface ContentItemsEditorProps<T extends FieldValues = FieldValues> {
   control: Control<T>;
-  /** `classContents` or `subscriptionContents`. */
+  /** `cohortContents` or `subscriptionContents`. */
   name: string;
   /** Shown in the empty state and the add button. */
   itemNoun: string;

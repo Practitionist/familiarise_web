@@ -61,7 +61,7 @@ import {
   getOccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
 
-// Webinars/classes carry WebinarStatus/ClassStatus; consultations and
+// Webinars/classes carry WebinarStatus/CohortStatus; consultations and
 // subscriptions carry AppointmentStatus. One resolver so both card
 // variants render the same shared pills.
 const processedEventBadge = (event: ProcessedEvent) =>

@@ -20,7 +20,7 @@ export class MaterialsService {
       consultation: "consultations",
       subscription: "subscriptions",
       webinar: "webinars",
-      class: "classes",
+      class: "cohorts",
     };
     const pluralType = planTypeMap[planType];
     return `/api/plans/${pluralType}/${planId}/materials`;

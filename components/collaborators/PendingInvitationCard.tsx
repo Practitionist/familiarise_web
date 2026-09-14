@@ -94,7 +94,7 @@ export function PendingInvitationCard({
                 <span>
                   Plan price{" "}
                   {/* Paise: `planPrice` is copied straight off
-                      WebinarPlan/ClassPlan.price. Shown to a collaborator who
+                      WebinarPlan/CohortPlan.price. Shown to a collaborator who
                       is deciding on a revenue share, so a 100x error here is
                       not cosmetic. */}
                   {formatCurrencyAmount(collab.planPrice, "INR")}

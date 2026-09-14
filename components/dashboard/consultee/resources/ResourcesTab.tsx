@@ -31,7 +31,7 @@ interface ResourcesData {
   consultations: EventResource[];
   subscriptions: EventResource[];
   webinars: EventResource[];
-  classes: EventResource[];
+  cohorts: EventResource[];
   trials?: EventResource[];
 }
 
@@ -158,7 +158,7 @@ export function ResourcesTab({
       consultations: keep(data.consultations),
       subscriptions: keep(data.subscriptions),
       webinars: keep(data.webinars),
-      classes: keep(data.classes),
+      cohorts: keep(data.cohorts),
       trials: keep(data.trials ?? []),
     };
   }, [data, artifact]);
@@ -179,7 +179,7 @@ export function ResourcesTab({
         filterEvents(data.webinars, resourceFilter),
         sortDir,
       ),
-      classes: sortEvents(filterEvents(data.classes, resourceFilter), sortDir),
+      cohorts: sortEvents(filterEvents(data.cohorts, resourceFilter), sortDir),
       trials: sortEvents(
         filterEvents(data.trials ?? [], resourceFilter),
         sortDir,
@@ -193,7 +193,7 @@ export function ResourcesTab({
     artifactData.consultations.length +
     artifactData.subscriptions.length +
     artifactData.webinars.length +
-    artifactData.classes.length +
+    artifactData.cohorts.length +
     artifactData.trials.length;
 
   if (totalResources === 0) {

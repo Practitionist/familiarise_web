@@ -57,7 +57,7 @@ interface DebugData {
     consultations: number;
     subscriptions: number;
     webinars: number;
-    classes: number;
+    cohorts: number;
   };
 }
 
@@ -112,7 +112,7 @@ export const DebugDialog = ({
         setIsOpen(true);
         toast({
           title: "Debug data fetched successfully",
-          description: `Found ${data.stream?.channelCount || 0} channels, ${data.database?.consultations || 0} consultations, ${data.database?.subscriptions || 0} subscriptions, ${data.database?.webinars || 0} webinars, and ${data.database?.classes || 0} classes.`,
+          description: `Found ${data.stream?.channelCount || 0} channels, ${data.database?.consultations || 0} consultations, ${data.database?.subscriptions || 0} subscriptions, ${data.database?.webinars || 0} webinars, and ${data.database?.cohorts || 0} classes.`,
         });
       } else {
         toast({
@@ -382,7 +382,7 @@ export const DebugDialog = ({
                       Classes
                     </div>
                     <div className="text-2xl font-bold text-pink-600 dark:text-pink-400">
-                      {debugData.database?.classes || 0}
+                      {debugData.database?.cohorts || 0}
                     </div>
                   </div>
                 </div>

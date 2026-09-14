@@ -2,7 +2,7 @@
  * Type definitions for Planner Service API request payloads
  *
  * NOTE: Response types should use Prisma types directly:
- * - TWebinar, TClass from @/types/appointment.ts
+ * - TWebinar, TCohort from @/types/appointment.ts
  * - ConsultationPlan, SubscriptionPlan from @/schemas/plans.ts (Zod-inferred)
  *
  * These payload types are for API requests only.
@@ -44,7 +44,7 @@ export interface CreateWebinarPayload {
   scheduledAt?: Date | string | null;
 }
 
-export interface CreateClassPayload {
+export interface CreateCohortPayload {
   title: string;
   description: string;
   price: number;
@@ -66,13 +66,13 @@ export interface CreateClassPayload {
   targetAudience?: string[];
   whatsIncluded?: string[];
   faqs?: PlanFaqPayload[];
-  classContents?: ClassContentInput[];
+  cohortContents?: CohortContentInput[];
   consultantProfileId: string;
   /** ISO string to set; `null` clears; omit to leave unchanged on PATCH. */
   startDate?: string | null;
 }
 
-export interface ClassContentInput {
+export interface CohortContentInput {
   id?: string;
   title: string;
   description: string;
@@ -83,9 +83,9 @@ export interface ClassContentInput {
 }
 
 // Update payload types extend create types with optional id fields
-export interface UpdateClassPayload extends CreateClassPayload {
+export interface UpdateCohortPayload extends CreateCohortPayload {
   id: string;
-  classId?: string;
+  cohortId?: string;
 }
 
 export interface UpdateWebinarPayload extends CreateWebinarPayload {
@@ -94,5 +94,5 @@ export interface UpdateWebinarPayload extends CreateWebinarPayload {
 }
 
 // Union types for request bodies
-export type ClassRequestBody = CreateClassPayload | UpdateClassPayload;
+export type CohortRequestBody = CreateCohortPayload | UpdateCohortPayload;
 export type WebinarRequestBody = CreateWebinarPayload | UpdateWebinarPayload;

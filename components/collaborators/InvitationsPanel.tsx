@@ -96,11 +96,11 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
       planTitle: c.webinarPlan?.title ?? "Webinar",
       planPrice: c.webinarPlan?.price ?? 0,
     })) ?? []),
-    ...(data?.classCollaborations.map((c) => ({
+    ...(data?.cohortCollaborations.map((c) => ({
       ...c,
       planType: "class" as const,
-      planTitle: c.classPlan?.title ?? "Class",
-      planPrice: c.classPlan?.price ?? 0,
+      planTitle: c.cohortPlan?.title ?? "Class",
+      planPrice: c.cohortPlan?.price ?? 0,
     })) ?? []),
   ];
 
@@ -116,12 +116,12 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
       collaborators: p.collaborators,
       webinarPlan: p,
     })) ?? []),
-    ...(data?.hostedClassPlans?.map((p) => ({
+    ...(data?.hostedCohortPlans?.map((p) => ({
       planType: "class" as const,
       title: p.title,
       price: p.price,
       collaborators: p.collaborators,
-      classPlan: p,
+      cohortPlan: p,
     })) ?? []),
   ];
 
@@ -175,7 +175,7 @@ export function InvitationsPanel({ orgScope }: { orgScope?: string } = {}) {
             <div className="space-y-3">
               {hostedPlans.map((plan) => (
                 <HostedPlanCard
-                  key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.classPlan?.id}`}
+                  key={`${plan.planType}-${plan.webinarPlan?.id ?? plan.cohortPlan?.id}`}
                   plan={plan}
                   hostUser={data?.hostUser}
                 />

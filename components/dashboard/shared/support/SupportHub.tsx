@@ -76,7 +76,7 @@ interface AppointmentRow {
   consultation?: { consultationPlan?: { title?: string } };
   subscription?: { subscriptionPlan?: { title?: string } };
   webinar?: { webinarPlan?: { title?: string } };
-  class?: { classPlan?: { title?: string } };
+  cohort?: { cohortPlan?: { title?: string } };
   occurrences?: { startsAt: string }[];
   organization?: { id: string; name: string } | null;
 }
@@ -132,7 +132,7 @@ function planTitleOf(a: AppointmentRow): string {
     a.consultation?.consultationPlan?.title ??
     a.subscription?.subscriptionPlan?.title ??
     a.webinar?.webinarPlan?.title ??
-    a.class?.classPlan?.title ??
+    a.cohort?.cohortPlan?.title ??
     "Session"
   );
 }

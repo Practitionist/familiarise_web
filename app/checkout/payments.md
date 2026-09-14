@@ -219,7 +219,7 @@ interface CheckoutInput {
 
 ```typescript
 const checkoutSchema = z.object({
-  appointmentType: z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "CLASS"]),
+  appointmentType: z.enum(["CONSULTATION", "SUBSCRIPTION", "WEBINAR", "COHORT"]),
   planId: z.string().min(1, "Plan ID is required"),
   eventId: z.string().optional(),
   slotStartTimeInUTC: z.string().optional(),
@@ -300,7 +300,7 @@ switch (appointmentType) {
   case "WEBINAR":
     // Joins existing webinar event
     break;
-  case "CLASS":
+  case "COHORT":
     // Joins existing class event
     break;
 }

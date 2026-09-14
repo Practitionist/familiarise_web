@@ -89,9 +89,9 @@ interface AppointmentWebinar {
   webinarPlan?: EventPlanInfo;
 }
 
-interface AppointmentClass {
+interface AppointmentCohort {
   status?: string;
-  classPlan?: EventPlanInfo;
+  cohortPlan?: EventPlanInfo;
 }
 
 interface AppointmentSlotRaw {
@@ -108,7 +108,7 @@ interface Appointment {
   consultation?: AppointmentConsultation;
   subscription?: AppointmentSubscription;
   webinar?: AppointmentWebinar;
-  class?: AppointmentClass;
+  cohort?: AppointmentCohort;
 }
 
 interface ConsultantData {
@@ -498,7 +498,7 @@ export function useCalendarData(
               return false;
           }
           if (appt.webinar?.status === "CANCELLED") return false;
-          if (appt.class?.status === "CANCELLED") return false;
+          if (appt.cohort?.status === "CANCELLED") return false;
           return true;
         });
 

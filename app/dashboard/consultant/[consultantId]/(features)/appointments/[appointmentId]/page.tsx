@@ -37,12 +37,12 @@ export default async function AppointmentDetailPage({
     appointment.consultation?.consultationPlan?.consultantProfile?.id,
     appointment.subscription?.subscriptionPlan?.consultantProfile?.id,
     appointment.webinar?.webinarPlan?.consultantProfile?.id,
-    appointment.class?.classPlan?.consultantProfile?.id,
+    appointment.cohort?.cohortPlan?.consultantProfile?.id,
     appointment.trial?.subscriptionPlan?.consultantProfile?.id,
     ...(appointment.webinar?.webinarPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.id,
     ),
-    ...(appointment.class?.classPlan?.collaborators ?? []).map(
+    ...(appointment.cohort?.cohortPlan?.collaborators ?? []).map(
       (c) => c.consultantProfile?.id,
     ),
   ];

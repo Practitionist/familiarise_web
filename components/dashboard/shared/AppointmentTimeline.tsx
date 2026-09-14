@@ -33,7 +33,7 @@ const ENTITY_LABEL: Record<string, string> = {
   CONSULTATION: "Consultation",
   SUBSCRIPTION: "Subscription",
   WEBINAR: "Webinar",
-  CLASS: "Class",
+  COHORT: "Class",
   TRIAL: "Trial",
   RESCHEDULE_REQUEST: "Reschedule",
   OCCURRENCE: "Session",

@@ -13,7 +13,7 @@ export type TypeFilter =
   | "SUBSCRIPTION"
   | "TRIAL"
   | "WEBINAR"
-  | "CLASS";
+  | "COHORT";
 
 export function matchesTypeFilter(
   kind: AppointmentKind,
@@ -29,7 +29,7 @@ const TYPE_CHIPS: Array<{ value: TypeFilter; label: string }> = [
   { value: "SUBSCRIPTION", label: "Subscriptions" },
   { value: "TRIAL", label: "Trials" },
   { value: "WEBINAR", label: "Webinars" },
-  { value: "CLASS", label: "Classes" },
+  { value: "COHORT", label: "Classes" },
 ];
 
 export interface DateRange {

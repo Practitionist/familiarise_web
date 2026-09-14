@@ -66,7 +66,7 @@ function sourceId(vm: AppointmentVM): string | null {
   const appt = vm.raw.appointment as
     | {
         webinarId?: string | null;
-        classId?: string | null;
+        cohortId?: string | null;
         consultationId?: string | null;
         subscriptionId?: string | null;
         trial?: { id?: string } | null;
@@ -77,8 +77,8 @@ function sourceId(vm: AppointmentVM): string | null {
   switch (vm.kind) {
     case "WEBINAR":
       return appt.webinarId ?? null;
-    case "CLASS":
-      return appt.classId ?? null;
+    case "COHORT":
+      return appt.cohortId ?? null;
     case "TRIAL":
       return appt.trial?.id ?? null;
     case "CONSULTATION":
@@ -118,7 +118,7 @@ const KIND_TO_TYPE: Record<
   CONSULTATION: "Consultation",
   SUBSCRIPTION: "Subscription",
   WEBINAR: "Webinar",
-  CLASS: "Class",
+  COHORT: "Class",
   TRIAL: "Trial",
 };
 
@@ -376,7 +376,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
   };
 
   const leaveEvent = async (
-    kind: Extract<AppointmentVM["kind"], "WEBINAR" | "CLASS">,
+    kind: Extract<AppointmentVM["kind"], "WEBINAR" | "COHORT">,
     id: string,
     userId: string,
     title: string,
@@ -386,8 +386,8 @@ export function useConsulteeAppointmentsAdapter(options?: {
       case "WEBINAR":
         path = `/api/participants/webinar/${id}?userId=${encodeURIComponent(userId)}`;
         break;
-      case "CLASS":
-        path = `/api/participants/class/${id}?userId=${encodeURIComponent(userId)}`;
+      case "COHORT":
+        path = `/api/participants/cohort/${id}?userId=${encodeURIComponent(userId)}`;
         break;
       default: {
         const _exhaustive: never = kind;
@@ -427,7 +427,7 @@ export function useConsulteeAppointmentsAdapter(options?: {
         if (!id) throw new Error("Event id is missing");
         const userId = session?.user?.id;
         if (!userId) throw new Error("You must be signed in to leave");
-        if (activeVm.kind !== "WEBINAR" && activeVm.kind !== "CLASS") {
+        if (activeVm.kind !== "WEBINAR" && activeVm.kind !== "COHORT") {
           throw new Error("Only webinars and classes support leave-event");
         }
         await leaveEvent(activeVm.kind, id, userId, activeVm.title);

@@ -3,7 +3,7 @@
 /**
  * Participant roster for a group session — one route for webinars and classes.
  *
- * There were four of these: `webinars/[webinarId]`, `classes/[classId]`,
+ * There were four of these: `webinars/[webinarId]`, `classes/[cohortId]`,
  * `consultations/[consultationId]` and `subscriptions/[subscriptionId]`.
  *
  * The last two were unreachable — `supportsParticipantManagement()` only
@@ -16,7 +16,7 @@
  *
  * The remaining two were ~270 lines each and collapse to this one route. Most
  * of the difference was the entity noun (`webinarEvent`/`webinarPlan` vs
- * `classEvent`/`classPlan`) and the API path segment, but not all of it: a
+ * `cohortEvent`/`cohortPlan`) and the API path segment, but not all of it: a
  * class carries `appointments: Appointment[]` while a webinar carries a single
  * `appointment | null`, so the two are narrowed rather than cast and the
  * appointment list is normalised before the participant flattening.
@@ -54,12 +54,12 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { paymentStatusBadge } from "@/lib/labels/session-labels";
 
-import type { ClassEvent, WebinarEvent } from "@/types/planner-events";
+import type { CohortEvent, WebinarEvent } from "@/types/planner-events";
 
 /** URL segment → API path segment and the noun used in the count line. */
 const EVENT_KINDS = {
   webinars: { apiSegment: "webinar", countNoun: "registered" },
-  classes: { apiSegment: "class", countNoun: "participants" },
+  classes: { apiSegment: "cohort", countNoun: "participants" },
 } as const;
 
 type EventKind = keyof typeof EVENT_KINDS;
@@ -82,8 +82,8 @@ type SeatPayment = {
 type RegisteredParticipant = { id: string; name?: string; email?: string };
 
 type ParticipantsResponse = (
-  | { webinarEvent: WebinarEvent; classEvent?: never }
-  | { classEvent: ClassEvent; webinarEvent?: never }
+  | { webinarEvent: WebinarEvent; cohortEvent?: never }
+  | { cohortEvent: CohortEvent; webinarEvent?: never }
 ) & { participants?: RegisteredParticipant[]; seatPayments?: SeatPayment[] };
 
 /**
@@ -258,10 +258,10 @@ export default function EventParticipantsPage() {
     );
   }
 
-  const event = data?.webinarEvent ?? data?.classEvent;
+  const event = data?.webinarEvent ?? data?.cohortEvent;
   if (!event) return <div>Event not found</div>;
 
-  const plan = "webinarPlan" in event ? event.webinarPlan : event.classPlan;
+  const plan = "webinarPlan" in event ? event.webinarPlan : event.cohortPlan;
 
   const participants: RegisteredParticipant[] = data?.participants ?? [];
 

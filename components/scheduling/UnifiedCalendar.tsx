@@ -275,7 +275,7 @@ function computeSubscriptionFooter(
 }
 
 /** Counts total completed class sessions across all selected slots. */
-function countCompletedSelectedClasses(
+function countCompletedSelectedCohorts(
   selectedSlots: CalendarInterval[],
   slotsPerSession: number,
   schedulingTimezone?: string,
@@ -315,7 +315,7 @@ function countCompletedSelectedClasses(
  * Class footer: Clear progress without technical jargon
  * Shows user-facing duration (hours) not implementation details (slots)
  */
-function computeClassFooter(params: {
+function computeCohortFooter(params: {
   selectedSlots: CalendarInterval[];
   sessionDurationInHours?: number;
   totalSessions?: number;
@@ -330,7 +330,7 @@ function computeClassFooter(params: {
     schedulingTimezone,
   } = params;
   const slotsPerSession = Math.ceil((sessionDurationInHours || 1) / 0.5);
-  const scheduled = countCompletedSelectedClasses(
+  const scheduled = countCompletedSelectedCohorts(
     selectedSlots,
     slotsPerSession,
     schedulingTimezone,
@@ -1498,7 +1498,7 @@ export function UnifiedCalendar({
                   const slotsPerSession = Math.ceil(
                     (sessionDurationInHours || 1) / 0.5,
                   );
-                  return computeClassFooter({
+                  return computeCohortFooter({
                     selectedSlots,
                     sessionDurationInHours,
                     totalSessions: slotLimits.totalSessions,

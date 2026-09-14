@@ -676,7 +676,7 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                     <SelectItem value="CONSULTATION">Consultation</SelectItem>
                     <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
                     <SelectItem value="WEBINAR">Webinar</SelectItem>
-                    <SelectItem value="CLASS">Class</SelectItem>
+                    <SelectItem value="COHORT">Class</SelectItem>
                   </SelectContent>
                 </Select>
 

@@ -59,7 +59,7 @@ export async function fetchAppointments(
 ): Promise<TAppointment[]> {
   try {
     const response = await fetch(
-      `/api/scheduling/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&classStatus=APPROVED`,
+      `/api/scheduling/appointments?consultantProfileId=${consultantId}&consultationStatus=APPROVED&subscriptionStatus=APPROVED&webinarStatus=APPROVED&cohortStatus=APPROVED`,
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch appointments: ${response.statusText}`);

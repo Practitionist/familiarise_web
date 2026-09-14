@@ -3,19 +3,19 @@
  */
 
 import { toast } from "@/hooks/use-toast";
-import { ClassEvent } from "@/types/planner-events";
+import { CohortEvent } from "@/types/planner-events";
 import {
   positioningPayload,
   priceToPaise,
 } from "@/components/planner/services/shared/plan-payload";
 import {
-  CreateClassPayload,
-  UpdateClassPayload,
-  ClassRequestBody,
-  ClassContentInput,
+  CreateCohortPayload,
+  UpdateCohortPayload,
+  CohortRequestBody,
+  CohortContentInput,
 } from "../types";
 
-export class ClassService {
+export class CohortService {
   /**
    * Check if a class title already exists for a consultant
    */
@@ -34,7 +34,7 @@ export class ClassService {
       }
 
       const response = await fetch(
-        `/api/bookings/classes/check-duplicate-title?${params}`,
+        `/api/bookings/cohorts/check-duplicate-title?${params}`,
       );
       if (!response.ok) {
         const errorData = await response.json();
@@ -46,7 +46,7 @@ export class ClassService {
       const { isDuplicate } = await response.json();
       return isDuplicate;
     } catch (error) {
-      console.error("[ClassService.checkDuplicateTitle] Error:", error);
+      console.error("[CohortService.checkDuplicateTitle] Error:", error);
       return false;
     }
   }
@@ -55,11 +55,11 @@ export class ClassService {
    * Fetch classes for a consultant
    * API returns topics as string[] - no transformation needed
    */
-  static async fetchClasses(
+  static async fetchCohorts(
     consultantId: string,
     startDate?: Date,
     endDate?: Date,
-  ): Promise<ClassEvent[]> {
+  ): Promise<CohortEvent[]> {
     try {
       const params = new URLSearchParams({
         consultantProfileId: consultantId,
@@ -70,19 +70,19 @@ export class ClassService {
         params.append("endDate", endDate.toISOString());
       }
 
-      const response = await fetch(`/api/bookings/classes?${params}`);
+      const response = await fetch(`/api/bookings/cohorts?${params}`);
       if (!response.ok) {
         throw new Error("Failed to fetch classes");
       }
 
       const { data } = await response.json();
       // API returns topics as strings, just add type discriminant
-      return data.map((classEvent: ClassEvent) => ({
-        ...classEvent,
+      return data.map((cohortEvent: CohortEvent) => ({
+        ...cohortEvent,
         type: "class" as const,
       }));
     } catch (error) {
-      console.error("[ClassService.fetchClasses] Error:", error);
+      console.error("[CohortService.fetchCohorts] Error:", error);
       throw error;
     }
   }
@@ -91,16 +91,16 @@ export class ClassService {
    * Save class data
    * API handles topic creation/lookup - just send topic names
    */
-  static async saveClass(
-    classData: Partial<ClassEvent>,
+  static async saveCohort(
+    cohortData: Partial<CohortEvent>,
     consultantId: string,
     startDate?: string | null,
-  ): Promise<ClassEvent> {
+  ): Promise<CohortEvent> {
     try {
-      const title = classData.classPlan?.title;
-      const planId = classData.classPlan?.id ?? "";
+      const title = cohortData.cohortPlan?.title;
+      const planId = cohortData.cohortPlan?.id ?? "";
       const isUpdate = !!planId;
-      const classId = classData.id ?? "";
+      const cohortId = cohortData.id ?? "";
 
       // Check for duplicate title
       if (title) {
@@ -116,17 +116,17 @@ export class ClassService {
         }
       }
 
-      const endpoint = "/api/bookings/classes/crud-with-plan";
+      const endpoint = "/api/bookings/cohorts/crud-with-plan";
       const method = isUpdate ? "PATCH" : "POST";
 
-      const topicNames = classData.classPlan?.topics ?? [];
+      const topicNames = cohortData.cohortPlan?.topics ?? [];
       const requestBody = this.buildRequestBody(
-        classData,
+        cohortData,
         consultantId,
         topicNames,
         isUpdate,
         planId,
-        classId,
+        cohortId,
         startDate,
       );
 
@@ -144,10 +144,10 @@ export class ClassService {
         );
       }
 
-      const { data: classEvent } = await response.json();
-      return { ...classEvent, type: "class" as const };
+      const { data: cohortEvent } = await response.json();
+      return { ...cohortEvent, type: "class" as const };
     } catch (error) {
-      console.error("[ClassService.saveClass] Error:", error);
+      console.error("[CohortService.saveCohort] Error:", error);
       throw error;
     }
   }
@@ -155,9 +155,9 @@ export class ClassService {
   /**
    * Delete a class
    */
-  static async deleteClass(classId: string): Promise<boolean> {
+  static async deleteCohort(cohortId: string): Promise<boolean> {
     try {
-      const response = await fetch(`/api/bookings/classes/${classId}`, {
+      const response = await fetch(`/api/bookings/cohorts/${cohortId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
       });
@@ -169,7 +169,7 @@ export class ClassService {
 
       return true;
     } catch (error) {
-      console.error("[ClassService.deleteClass] Error:", error);
+      console.error("[CohortService.deleteCohort] Error:", error);
       throw error;
     }
   }
@@ -181,15 +181,15 @@ export class ClassService {
    * API accepts topic names directly - no ID conversion needed
    */
   private static buildRequestBody(
-    classData: Partial<ClassEvent>,
+    cohortData: Partial<CohortEvent>,
     consultantId: string,
     topicNames: string[],
     isUpdate: boolean,
     planId: string,
-    classId: string,
+    cohortId: string,
     startDate?: string | null,
-  ): ClassRequestBody {
-    const plan = classData.classPlan;
+  ): CohortRequestBody {
+    const plan = cohortData.cohortPlan;
 
     if (!plan && isUpdate) {
       throw new Error(
@@ -198,7 +198,7 @@ export class ClassService {
     }
 
     // Build base payload with required fields
-    const basePayload: CreateClassPayload = {
+    const basePayload: CreateCohortPayload = {
       title: plan?.title ?? "",
       description: plan?.description ?? "",
       // The form edits rupees; the DB stores paise (#780 money model).
@@ -217,7 +217,7 @@ export class ClassService {
       learningOutcomes: plan?.learningOutcomes,
       ...positioningPayload(plan ?? {}),
       topics: topicNames,
-      classContents: plan?.classContents?.map((content) => ({
+      cohortContents: plan?.cohortContents?.map((content) => ({
         id: content.id,
         title: content.title,
         description: content.description,
@@ -231,10 +231,10 @@ export class ClassService {
     };
 
     if (isUpdate) {
-      const updatePayload: UpdateClassPayload = {
+      const updatePayload: UpdateCohortPayload = {
         ...basePayload,
         id: planId,
-        classId: classId || undefined,
+        cohortId: cohortId || undefined,
       };
       return updatePayload;
     }
@@ -245,12 +245,12 @@ export class ClassService {
   /**
    * Format class contents for API submission
    */
-  static formatClassContents(
-    classContents: ClassContentInput[],
-    _classPlanId: string,
+  static formatCohortContents(
+    cohortContents: CohortContentInput[],
+    _cohortPlanId: string,
     _now: Date,
-  ): ClassContentInput[] {
-    return classContents.map((content, index) => ({
+  ): CohortContentInput[] {
+    return cohortContents.map((content, index) => ({
       id: content.id ?? `temp-${index}`,
       title: content.title,
       description: content.description,

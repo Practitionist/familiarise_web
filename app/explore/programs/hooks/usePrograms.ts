@@ -12,13 +12,13 @@ import {
   type Program,
   type ProgramType,
   type ProgramFilters,
-  type ClassPlanProgram,
+  type CohortPlanProgram,
   type WebinarPlanProgram,
 } from "@/lib/explore/programs";
 import {
   buildFilterParams,
   fetchPlans,
-  type ClassPlanApiItem,
+  type CohortPlanApiItem,
   type WebinarPlanApiItem,
 } from "./_helpers";
 
@@ -58,7 +58,7 @@ export function usePrograms(
 
       if (programType === "all" || programType === "class") {
         requests.push(
-          `/api/plans/classes?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=classes${registrationParam}${filterStr}`,
+          `/api/plans/cohorts?page=${pageParam + 1}&limit=${ITEMS_PER_PAGE}&include=cohorts${registrationParam}${filterStr}`,
         );
       }
       if (programType === "all" || programType === "webinar") {
@@ -72,23 +72,23 @@ export function usePrograms(
       );
 
       let combinedPrograms: Program[] = [];
-      let classMeta, webinarMeta;
+      let cohortMeta, webinarMeta;
 
       if ((programType === "all" || programType === "class") && responses[0]) {
-        const classResponse = responses[0];
-        classMeta = classResponse.meta;
-        if (classResponse.data) {
-          const formattedClasses = classResponse.data.map(
-            (plan): ClassPlanProgram => {
-              const typedPlan = plan as ClassPlanApiItem;
-              const classes = typedPlan.classes || [];
+        const cohortResponse = responses[0];
+        cohortMeta = cohortResponse.meta;
+        if (cohortResponse.data) {
+          const formattedCohorts = cohortResponse.data.map(
+            (plan): CohortPlanProgram => {
+              const typedPlan = plan as CohortPlanApiItem;
+              const cohorts = typedPlan.cohorts || [];
               const isRegistered = userId
-                ? classes.some((c) => isUserEnrolled(c.appointment, userId))
+                ? cohorts.some((c) => isUserEnrolled(c.appointment, userId))
                 : false;
 
               return {
                 ...typedPlan,
-                classes,
+                cohorts,
                 type: "class",
                 imageUrl: generateProgramImageUrl(
                   typedPlan.id,
@@ -97,10 +97,10 @@ export function usePrograms(
                   typedPlan.imageUrl,
                 ),
                 isRegistered,
-              } as ClassPlanProgram;
+              } as CohortPlanProgram;
             },
           );
-          combinedPrograms = [...combinedPrograms, ...formattedClasses];
+          combinedPrograms = [...combinedPrograms, ...formattedCohorts];
         }
       }
 
@@ -138,21 +138,21 @@ export function usePrograms(
         }
       }
 
-      return { programs: combinedPrograms, classMeta, webinarMeta };
+      return { programs: combinedPrograms, cohortMeta, webinarMeta };
     },
     getNextPageParam: (lastPage, pages) => {
-      let hasMoreClasses = false;
+      let hasMoreCohorts = false;
       let hasMoreWebinars = false;
 
       if (programType === "all" || programType === "class") {
-        if (lastPage.classMeta) {
-          hasMoreClasses =
-            lastPage.classMeta.page < lastPage.classMeta.totalPages;
+        if (lastPage.cohortMeta) {
+          hasMoreCohorts =
+            lastPage.cohortMeta.page < lastPage.cohortMeta.totalPages;
         } else if (lastPage.programs?.some((p) => p.type === "class")) {
-          const classesInLastFetch = lastPage.programs.filter(
+          const cohortsInLastFetch = lastPage.programs.filter(
             (p) => p.type === "class",
           ).length;
-          hasMoreClasses = classesInLastFetch >= ITEMS_PER_PAGE;
+          hasMoreCohorts = cohortsInLastFetch >= ITEMS_PER_PAGE;
         }
       }
 
@@ -170,10 +170,10 @@ export function usePrograms(
 
       const hasMore =
         programType === "class"
-          ? hasMoreClasses
+          ? hasMoreCohorts
           : programType === "webinar"
             ? hasMoreWebinars
-            : hasMoreClasses || hasMoreWebinars;
+            : hasMoreCohorts || hasMoreWebinars;
 
       return hasMore ? pages.length : undefined;
     },

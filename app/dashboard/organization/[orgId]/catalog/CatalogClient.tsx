@@ -108,9 +108,9 @@ export function CatalogClient({
       setArchived.mutate({ kind: "WEBINAR", planId, restore }),
     [setArchived],
   );
-  const archiveClass = useCallback(
+  const archiveCohort = useCallback(
     (planId: string, restore: boolean) =>
-      setArchived.mutate({ kind: "CLASS", planId, restore }),
+      setArchived.mutate({ kind: "COHORT", planId, restore }),
     [setArchived],
   );
 
@@ -123,7 +123,7 @@ export function CatalogClient({
   const archivedWebinars = (data?.webinars ?? []).filter(
     (r) => r.archivedAt !== null,
   );
-  const archivedClasses = (data?.classes ?? []).filter(
+  const archivedCohorts = (data?.cohorts ?? []).filter(
     (r) => r.archivedAt !== null,
   );
 
@@ -216,11 +216,11 @@ export function CatalogClient({
                   label: "Classes",
                   content: (
                     <CatalogPanel
-                      kind="CLASS"
-                      rows={live(data?.classes)}
+                      kind="COHORT"
+                      rows={live(data?.cohorts)}
                       isLoading={isLoading}
                       error={error}
-                      onToggleArchive={archiveClass}
+                      onToggleArchive={archiveCohort}
                       isMutating={setArchived.isPending}
                     />
                   ),
@@ -247,18 +247,18 @@ export function CatalogClient({
                       },
                     ]
                   : []),
-                ...(archivedClasses.length > 0
+                ...(archivedCohorts.length > 0
                   ? [
                       {
                         value: "archived-classes",
-                        label: `Archived classes (${archivedClasses.length})`,
+                        label: `Archived classes (${archivedCohorts.length})`,
                         content: (
                           <CatalogPanel
-                            kind="CLASS"
-                            rows={archivedClasses}
+                            kind="COHORT"
+                            rows={archivedCohorts}
                             isLoading={isLoading}
                             error={error}
-                            onToggleArchive={archiveClass}
+                            onToggleArchive={archiveCohort}
                             isMutating={setArchived.isPending}
                           />
                         ),

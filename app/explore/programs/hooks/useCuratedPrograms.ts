@@ -5,12 +5,12 @@ import {
   generateProgramImageUrl,
   type Program,
   type ProgramType,
-  type ClassPlanProgram,
+  type CohortPlanProgram,
   type WebinarPlanProgram,
 } from "@/lib/explore/programs";
 import {
   fetchPlans,
-  type ClassPlanApiItem,
+  type CohortPlanApiItem,
   type PlanApiResponse,
   type WebinarPlanApiItem,
 } from "./_helpers";
@@ -39,7 +39,7 @@ export function useCuratedPrograms(
       if (programType === "all" || programType === "class") {
         requests.push(
           fetchPlans(
-            `/api/plans/classes?page=1&limit=${limit}&include=classes&sort=${sort}`,
+            `/api/plans/cohorts?page=1&limit=${limit}&include=cohorts&sort=${sort}`,
           ),
         );
       }
@@ -57,11 +57,11 @@ export function useCuratedPrograms(
         responses[0]?.data
       ) {
         programs.push(
-          ...responses[0].data.map((plan): ClassPlanProgram => {
-            const typedPlan = plan as ClassPlanApiItem;
+          ...responses[0].data.map((plan): CohortPlanProgram => {
+            const typedPlan = plan as CohortPlanApiItem;
             return {
               ...typedPlan,
-              classes: typedPlan.classes || [],
+              cohorts: typedPlan.cohorts || [],
               type: "class",
               imageUrl: generateProgramImageUrl(
                 typedPlan.id,
@@ -69,7 +69,7 @@ export function useCuratedPrograms(
                 400,
                 typedPlan.imageUrl,
               ),
-            } as ClassPlanProgram;
+            } as CohortPlanProgram;
           }),
         );
       }

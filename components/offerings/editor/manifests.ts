@@ -348,7 +348,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
   ],
 };
 
-export const CLASS_MANIFEST: OfferingManifest = {
+export const COHORT_MANIFEST: OfferingManifest = {
   type: "class",
   noun: "class",
   sections: [
@@ -439,5 +439,5 @@ export const OFFERING_MANIFESTS = {
   consultation: CONSULTATION_MANIFEST,
   subscription: SUBSCRIPTION_MANIFEST,
   webinar: WEBINAR_MANIFEST,
-  class: CLASS_MANIFEST,
+  class: COHORT_MANIFEST,
 } as const;

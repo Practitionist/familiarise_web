@@ -12,7 +12,7 @@ import type {
 import type {
   TConsulteeEventsResponse,
   TConsulteeWebinar,
-  TConsulteeClass,
+  TConsulteeCohort,
 } from "@/types/consultee-events";
 import type { MeetingAppointment, MeetingSlot } from "@/lib/meeting";
 import {
@@ -392,9 +392,9 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 /**
  * Process a class into a ProcessedEvent
  */
-function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
+function processCohort(cohortEvent: TConsulteeCohort): ProcessedEvent | null {
   // #1554 — one wrapper per class, N occurrences.
-  const nextAppointment = classEvent.appointment;
+  const nextAppointment = cohortEvent.appointment;
   const allSlots: SlotWithContext[] = nextAppointment
     ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
     : [];
@@ -407,7 +407,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
     id: nextSlot.appointmentId,
-    appointmentType: "CLASS",
+    appointmentType: "COHORT",
     occurrences:
       nextAppointment?.occurrences?.map((s) => ({
         id: s.id,
@@ -416,21 +416,21 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
         isTentative: s.isTentative,
         appointmentId: s.appointmentId,
       })) ?? [],
-    class: {
-      classPlan: {
-        title: classEvent.classPlan?.title,
+    cohort: {
+      cohortPlan: {
+        title: cohortEvent.cohortPlan?.title,
       },
     },
   };
 
   const bookingStatus: BookingStatus =
-    (classEvent.appointment?.occurrences?.length ?? 0) > 0
+    (cohortEvent.appointment?.occurrences?.length ?? 0) > 0
       ? "CONFIRMED"
       : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
-    classEvent.classPlan?.collaborators ?? []
+    cohortEvent.cohortPlan?.collaborators ?? []
   ).map((c) => ({
     name: c.consultantProfile?.user?.name ?? "Collaborator",
     image: c.consultantProfile?.user?.image,
@@ -438,15 +438,15 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   }));
 
   return {
-    id: classEvent.id,
+    id: cohortEvent.id,
     type: "class",
-    title: classEvent.classPlan?.title ?? "Class",
+    title: cohortEvent.cohortPlan?.title ?? "Class",
     consultantName:
-      classEvent.classPlan?.consultantProfile?.user?.name ?? "Expert",
-    consultantImage: classEvent.classPlan?.consultantProfile?.user?.image,
+      cohortEvent.cohortPlan?.consultantProfile?.user?.name ?? "Expert",
+    consultantImage: cohortEvent.cohortPlan?.consultantProfile?.user?.image,
     startsAt: nextSlot.startsAt,
     endsAt: nextSlot.endsAt,
-    status: classEvent.status ?? "APPROVED",
+    status: cohortEvent.status ?? "APPROVED",
     slots: allSlots.map(toEventSlot),
     appointmentId: nextSlot.appointmentId,
     joinableAppointment,
@@ -521,8 +521,8 @@ export function processAllEvents(
   });
 
   // Process classes
-  eventsData.classes?.forEach((c) => {
-    const processed = processClass(c);
+  eventsData.cohorts?.forEach((c) => {
+    const processed = processCohort(c);
     if (processed) events.push(processed);
   });
 

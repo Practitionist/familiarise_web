@@ -16,8 +16,8 @@ import type { HostedPlanEntry } from "./types";
 import { COLLABORATOR_STATUS_BADGE, formatRole } from "./format";
 import { RevenueSplitBar } from "./RevenueSplitBar";
 import {
-  ClassEventList,
-  ClassScheduleSummary,
+  CohortEventList,
+  CohortScheduleSummary,
   WebinarEventList,
   WebinarScheduleSummary,
 } from "./ScheduleSummaries";
@@ -52,8 +52,8 @@ export function HostedPlanCard({
       plan.webinarPlan &&
       plan.webinarPlan.webinars.length > 1) ||
     (plan.planType === "class" &&
-      plan.classPlan &&
-      plan.classPlan.classes.length > 1);
+      plan.cohortPlan &&
+      plan.cohortPlan.cohorts.length > 1);
 
   const planTypeLabel = plan.planType === "webinar" ? "Webinar" : "Class";
 
@@ -79,7 +79,7 @@ export function HostedPlanCard({
             </p>
             {plan.price > 0 && (
               <p className="mt-0.5 text-sm text-zinc-500">
-                {/* `WebinarPlan.price` / `ClassPlan.price` are BigInt paise and
+                {/* `WebinarPlan.price` / `CohortPlan.price` are BigInt paise and
                     the query selects them raw. The major-unit formatter takes
                     rupees, so a ₹500 plan displayed as ₹50,000. */}
                 {formatCurrencyAmount(plan.price, "INR")}
@@ -162,8 +162,8 @@ export function HostedPlanCard({
           </p>
           {plan.planType === "webinar" && plan.webinarPlan ? (
             <WebinarScheduleSummary plan={plan.webinarPlan} />
-          ) : plan.planType === "class" && plan.classPlan ? (
-            <ClassScheduleSummary plan={plan.classPlan} />
+          ) : plan.planType === "class" && plan.cohortPlan ? (
+            <CohortScheduleSummary plan={plan.cohortPlan} />
           ) : (
             <p className="text-xs italic text-zinc-400">
               No schedule data available
@@ -188,8 +188,8 @@ export function HostedPlanCard({
                 <div className="mt-2">
                   {plan.planType === "webinar" && plan.webinarPlan ? (
                     <WebinarEventList plan={plan.webinarPlan} />
-                  ) : plan.planType === "class" && plan.classPlan ? (
-                    <ClassEventList plan={plan.classPlan} />
+                  ) : plan.planType === "class" && plan.cohortPlan ? (
+                    <CohortEventList plan={plan.cohortPlan} />
                   ) : null}
                 </div>
               )}

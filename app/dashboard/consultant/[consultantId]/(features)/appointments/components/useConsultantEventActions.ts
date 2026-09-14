@@ -142,7 +142,7 @@ export function useConsultantEventActions({
   /**
    * Withdraw a published group event's date without ending the booking.
    *
-   * Same route as `handleReschedule`, deliberately: for a WEBINAR/CLASS that
+   * Same route as `handleReschedule`, deliberately: for a WEBINAR/COHORT that
    * call never opened a proposal — there is no single counterparty to propose
    * to — it only released the slots back to the allocate queue. That behaviour
    * was correct and is what this names (#1082). Nothing here touches money,

@@ -38,13 +38,13 @@ const TYPE_LABEL: Record<AppointmentVM["kind"], string> = {
   CONSULTATION: "Consultation",
   SUBSCRIPTION: "Subscription",
   WEBINAR: "Webinar",
-  CLASS: "Class",
+  COHORT: "Class",
   TRIAL: "Trial",
 };
 
 /** Webinar/class lifecycle actions are plan-owner only (API rejects collaborators). */
 function canManageBookingLifecycle(vm: AppointmentVM): boolean {
-  if (vm.kind === "WEBINAR" || vm.kind === "CLASS") {
+  if (vm.kind === "WEBINAR" || vm.kind === "COHORT") {
     return !vm.collaboratorRole || vm.collaboratorRole === "HOST";
   }
   return true;

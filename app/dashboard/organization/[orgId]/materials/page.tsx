@@ -29,19 +29,19 @@ export default async function OrgMaterialsPage({
   const [items, total] = await Promise.all([
     prisma.planMaterial.findMany({
       where: { organizationId: orgId },
-    select: {
-      id: true,
-      fileName: true,
-      originalName: true,
-      fileSize: true,
-      mimeType: true,
-      description: true,
-      uploadedAt: true,
-      consultationPlan: { select: { id: true, title: true } },
-      subscriptionPlan: { select: { id: true, title: true } },
-      webinarPlan: { select: { id: true, title: true } },
-      classPlan: { select: { id: true, title: true } },
-    },
+      select: {
+        id: true,
+        fileName: true,
+        originalName: true,
+        fileSize: true,
+        mimeType: true,
+        description: true,
+        uploadedAt: true,
+        consultationPlan: { select: { id: true, title: true } },
+        subscriptionPlan: { select: { id: true, title: true } },
+        webinarPlan: { select: { id: true, title: true } },
+        cohortPlan: { select: { id: true, title: true } },
+      },
       orderBy: { uploadedAt: "desc" },
       take: 200,
     }),
@@ -56,7 +56,7 @@ export default async function OrgMaterialsPage({
         return {
           ...m,
           planTitle: planRef?.title ?? null,
-          planType: planRef?.planType ?? "CLASS",
+          planType: planRef?.planType ?? "COHORT",
         };
       })}
     />

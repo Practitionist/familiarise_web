@@ -112,16 +112,16 @@ export default async function ExplorePrograms() {
 // once, and a held-but-unpaid seat does not count at all.
 const getCachedProgramCounts = unstable_cache(
   async () => {
-    const [publishedClassCount, publishedWebinarCount, learners] =
+    const [publishedCohortCount, publishedWebinarCount, learners] =
       await Promise.all([
-        prisma.classPlan.count({ where: { visibility: "PUBLIC" } }),
+        prisma.cohortPlan.count({ where: { visibility: "PUBLIC" } }),
         prisma.webinarPlan.count({ where: { visibility: "PUBLIC" } }),
         prisma.appointmentParticipant.findMany({
           where: {
             role: "CONSULTEE",
             status: { in: ["CONFIRMED", "ATTENDED"] },
             appointment: {
-              appointmentType: { in: ["WEBINAR", "CLASS"] },
+              appointmentType: { in: ["WEBINAR", "COHORT"] },
               deletedAt: null,
             },
           },
@@ -130,7 +130,7 @@ const getCachedProgramCounts = unstable_cache(
         }),
       ]);
     return {
-      publishedClassCount,
+      publishedCohortCount,
       publishedWebinarCount,
       enrolledLearnerCount: learners.length,
     };
@@ -149,8 +149,8 @@ const getCachedProgramCounts = unstable_cache(
 // and a stray one fails `next build` (which `tsc --noEmit` cannot catch).
 const getCachedProgramLevels = unstable_cache(
   async () => {
-    const [classLevels, webinarLevels] = await Promise.all([
-      prisma.classPlan.findMany({
+    const [cohortLevels, webinarLevels] = await Promise.all([
+      prisma.cohortPlan.findMany({
         select: { level: true },
         distinct: ["level"],
       }),
@@ -162,7 +162,7 @@ const getCachedProgramLevels = unstable_cache(
     // Still read from the DB rather than listing the enum: the facet should
     // only offer levels that some plan actually has.
     return sortPlanLevels([
-      ...new Set([...classLevels, ...webinarLevels].map((row) => row.level)),
+      ...new Set([...cohortLevels, ...webinarLevels].map((row) => row.level)),
     ]);
   },
   ["program-levels"],

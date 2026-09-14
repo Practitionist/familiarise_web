@@ -8,7 +8,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
-import { isClassProgram, Program } from "@/lib/explore/programs";
+import { isCohortProgram, Program } from "@/lib/explore/programs";
 import { displayedScore } from "@/lib/reviews-display";
 
 type ProgramCardVariant = "grid" | "list" | "carousel";
@@ -135,7 +135,7 @@ function GridCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
-    if (isClassProgram(program)) {
+    if (isCohortProgram(program)) {
       router.push(`/explore/programs/plans/classes/${program.id}`);
     } else {
       router.push(`/explore/programs/plans/webinars/${program.id}`);
@@ -168,7 +168,7 @@ function GridCard({
           <TypeBadge type={program.type} />
           {program.isRegistered && (
             <RegistrationBadge
-              type={isClassProgram(program) ? "class" : "webinar"}
+              type={isCohortProgram(program) ? "class" : "webinar"}
               compact
             />
           )}
@@ -258,7 +258,7 @@ function ListCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
-    if (isClassProgram(program)) {
+    if (isCohortProgram(program)) {
       router.push(`/explore/programs/plans/classes/${program.id}`);
     } else {
       router.push(`/explore/programs/plans/webinars/${program.id}`);
@@ -301,7 +301,7 @@ function ListCard({
             </h3>
             {program.isRegistered && (
               <RegistrationBadge
-                type={isClassProgram(program) ? "class" : "webinar"}
+                type={isCohortProgram(program) ? "class" : "webinar"}
                 compact
               />
             )}
@@ -386,7 +386,7 @@ function CarouselCard({
   const workExperiences = getInstructorWorkExperiences(program);
 
   const handleClick = () => {
-    if (isClassProgram(program)) {
+    if (isCohortProgram(program)) {
       router.push(`/explore/programs/plans/classes/${program.id}`);
     } else {
       router.push(`/explore/programs/plans/webinars/${program.id}`);

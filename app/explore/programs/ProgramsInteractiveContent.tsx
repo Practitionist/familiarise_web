@@ -33,7 +33,7 @@ import StaticTopRows from "./components/StaticTopRows";
 import ProgramResults from "./components/ProgramResults";
 
 interface ProgramStats {
-  publishedClassCount: number;
+  publishedCohortCount: number;
   publishedWebinarCount: number;
   enrolledLearnerCount: number;
 }

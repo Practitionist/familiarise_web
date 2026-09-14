@@ -24,7 +24,7 @@ export interface WebinarEventSchedule {
   appointment: AppointmentSchedule | null;
 }
 
-export interface ClassEventSchedule {
+export interface CohortEventSchedule {
   id: string;
   status: string;
   schedulingPeriodStartsAt: string | null;
@@ -68,7 +68,7 @@ export interface Collaboration {
     consultantProfile: PlanOwner | null;
     collaborators: PlanCollaboratorInfo[];
   };
-  classPlan?: {
+  cohortPlan?: {
     id: string;
     title: string;
     price: number;
@@ -77,7 +77,7 @@ export interface Collaboration {
     sessionsPerWeek: number;
     durationInMonths: number;
     totalSessions: number;
-    classes: ClassEventSchedule[];
+    cohorts: CohortEventSchedule[];
     consultantProfile: PlanOwner | null;
     collaborators: PlanCollaboratorInfo[];
   };
@@ -118,7 +118,7 @@ export interface HostedWebinarPlan {
   webinars: WebinarEventSchedule[];
 }
 
-export interface HostedClassPlan {
+export interface HostedCohortPlan {
   id: string;
   title: string;
   price: number;
@@ -128,7 +128,7 @@ export interface HostedClassPlan {
   durationInMonths: number;
   totalSessions: number;
   collaborators: CollaboratorInfo[];
-  classes: ClassEventSchedule[];
+  cohorts: CohortEventSchedule[];
 }
 
 /** A hosted plan flattened to a uniform card entry by the panel. */
@@ -138,16 +138,16 @@ export interface HostedPlanEntry {
   price: number;
   collaborators: CollaboratorInfo[];
   webinarPlan?: HostedWebinarPlan;
-  classPlan?: HostedClassPlan;
+  cohortPlan?: HostedCohortPlan;
 }
 
 // ─── Combined data from API ──────────────────────────────────────────────────
 
 export interface CollaborationsData {
   webinarCollaborations: Collaboration[];
-  classCollaborations: Collaboration[];
+  cohortCollaborations: Collaboration[];
   hostedWebinarPlans: HostedWebinarPlan[];
-  hostedClassPlans: HostedClassPlan[];
+  hostedCohortPlans: HostedCohortPlan[];
   hostUser?: { name: string | null; image: string | null };
 }
 
@@ -159,10 +159,10 @@ export interface WebinarPlanSchedule {
   webinars: WebinarEventSchedule[];
 }
 
-export interface ClassPlanSchedule {
+export interface CohortPlanSchedule {
   sessionDurationInHours: number;
   maxParticipants: number;
   sessionsPerWeek: number;
   totalSessions: number;
-  classes: ClassEventSchedule[];
+  cohorts: CohortEventSchedule[];
 }

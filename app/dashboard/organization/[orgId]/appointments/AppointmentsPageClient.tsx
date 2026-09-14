@@ -67,7 +67,7 @@ interface AppointmentRow {
     requestedBy: { user: { id: string; name: string | null; email: string } };
   } | null;
   webinar: { webinarPlan: { title: string } } | null;
-  class: { classPlan: { title: string } } | null;
+  cohort: { cohortPlan: { title: string } } | null;
   /**
    * Seats in this session that THIS org funded, pre-filtered server-side to the
    * viewing org. Present on the "Everyone" scope only; a group event shares one
@@ -95,7 +95,7 @@ const APPOINTMENT_TYPES = [
   "CONSULTATION",
   "SUBSCRIPTION",
   "WEBINAR",
-  "CLASS",
+  "COHORT",
 ] as const;
 
 /** OccurrenceCompletionStatus, plus the derived TENTATIVE state. */
@@ -124,7 +124,7 @@ function getPlanTitle(row: AppointmentRow): string {
     row.consultation?.consultationPlan?.title ??
     row.subscription?.subscriptionPlan?.title ??
     row.webinar?.webinarPlan?.title ??
-    row.class?.classPlan?.title ??
+    row.cohort?.cohortPlan?.title ??
     "—"
   );
 }

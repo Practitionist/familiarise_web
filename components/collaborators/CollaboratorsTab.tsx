@@ -54,7 +54,7 @@ const WEBINAR_ROLES = [
   { value: "TECHNICAL_SUPPORT", label: "Technical Support" },
 ];
 
-const CLASS_ROLES = [
+const COHORT_ROLES = [
   { value: "CO_INSTRUCTOR", label: "Co-Instructor" },
   { value: "TEACHING_ASSISTANT", label: "Teaching Assistant" },
   { value: "GUEST_LECTURER", label: "Guest Lecturer" },
@@ -87,9 +87,11 @@ export function CollaboratorsTab({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const basePath = `/api/collaborations/${planType}/${planId}`;
+  // #1640 — the "class" plan type lives at /api/collaborations/cohort.
+  const apiPlanType = planType === "class" ? "cohort" : planType;
+  const basePath = `/api/collaborations/${apiPlanType}/${planId}`;
 
-  const roles = planType === "webinar" ? WEBINAR_ROLES : CLASS_ROLES;
+  const roles = planType === "webinar" ? WEBINAR_ROLES : COHORT_ROLES;
 
   const { data: collaborators = [], isLoading } = useQuery<Collaborator[]>({
     queryKey: ["collaborators", planType, planId],

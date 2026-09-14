@@ -16,7 +16,7 @@ const PLAN_PATH: Record<OfferingType, (id: string) => string> = {
   consultation: (id) => `/api/plans/consultations/${id}`,
   subscription: (id) => `/api/plans/subscriptions/${id}`,
   webinar: (id) => `/api/plans/webinars/${id}`,
-  class: (id) => `/api/plans/classes/${id}`,
+  class: (id) => `/api/plans/cohorts/${id}`,
 };
 
 /**
@@ -56,21 +56,21 @@ function wrapPlanAsEvent(
       },
     };
   }
-  const classes = plan.classes as
+  const cohorts = plan.cohorts as
     | Array<{ schedulingPeriodStartsAt?: string | Date | null }>
     | undefined;
   const start =
-    classes?.find(
+    cohorts?.find(
       (row) =>
         row.schedulingPeriodStartsAt !== null &&
         row.schedulingPeriodStartsAt !== undefined,
     )?.schedulingPeriodStartsAt ??
-    classes?.[0]?.schedulingPeriodStartsAt ??
+    cohorts?.[0]?.schedulingPeriodStartsAt ??
     null;
   return {
     type,
     id,
-    classPlan: plan,
+    cohortPlan: plan,
     schedulingPeriodStartsAt: start,
   };
 }

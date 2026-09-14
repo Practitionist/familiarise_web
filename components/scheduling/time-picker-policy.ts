@@ -41,7 +41,7 @@ const APPOINTMENT_TYPE: Record<
   consultation: "CONSULTATION",
   subscription: "SUBSCRIPTION",
   webinar: "WEBINAR",
-  class: "CLASS",
+  class: "COHORT",
 };
 
 /**
