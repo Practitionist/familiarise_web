@@ -200,10 +200,12 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
 
 function batchIdempotencyKey(emails: BroadcastMessage[]): string {
   const first = emails[0];
+  // Code-point order, not localeCompare: a key must not depend on collation.
+  const recipients = emails
+    .map((e) => e.to)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const digest = createHash("sha256")
-    .update(
-      [first.subject, first.html, ...emails.map((e) => e.to).sort()].join("\n"),
-    )
+    .update([first.subject, first.html, ...recipients].join("\n"))
     .digest("hex");
   return `WAITLIST_BROADCAST/${digest.slice(0, 48)}`;
 }
