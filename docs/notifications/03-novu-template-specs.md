@@ -41,15 +41,9 @@ The in-app templates described below are generated from `lib/novu/templates/` an
 
 ---
 
-## Setup: Resend Integration
+## Setup: Resend Integration — not applicable
 
-1. Go to **Novu Dashboard → Integrations → Email**
-2. Select **Resend** as provider
-3. Configure:
-   - **API Key**: Your `RESEND_API_KEY`
-   - **From Email**: `notifications@familiarise.com`
-   - **From Name**: `Familiarise`
-4. Save and activate
+All sixteen Novu workflow families are in-app only; none has an email step, so there is no Resend provider to configure in Novu → Integrations. Email for a Novu-triggered event, if ever wanted, is tracked separately as a product decision and is out of scope for this specs file. See [ADR 30](../enterprise/70-design-decisions/30-novu-templates-as-code-and-workflow-families.md) for why the workflows are in-app only and how they are synced from `lib/novu/templates/`.
 
 ---
 

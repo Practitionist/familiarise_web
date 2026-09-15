@@ -50,8 +50,18 @@ export const InitializeUserChannelsButton = ({
     setIsLoading(true);
 
     try {
-      // console.log(`Initializing channels for user via action: ${userId}`);
-      const _result = await syncUserEventChannels(userId, force);
+      const result = await syncUserEventChannels(userId, force);
+      // The action answers a refusal (no session) as a value, never a throw.
+      if (!result.success) {
+        toast({
+          title: "Error",
+          description:
+            result.refusal?.message ??
+            `Failed to synchronize channels: ${result.error ?? "unknown error"}`,
+          variant: "destructive",
+        });
+        return;
+      }
 
       toast({
         title: "Success",

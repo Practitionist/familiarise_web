@@ -9,6 +9,7 @@ import type {
   AppointmentBucket,
   AppointmentVM,
 } from "@/lib/appointments/view-model";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentRow } from "./AppointmentRow";
 import { DayGroupHeader } from "./DayGroupHeader";
 
@@ -86,6 +87,7 @@ interface AppointmentListProps {
   vms: AppointmentVM[];
   bucket: AppointmentBucket | "all";
   adapter: AppointmentActionAdapter;
+  viewerZone: ViewerZone;
   resolveSponsoredLabel?: (orgId: string | null) => string | null;
   onOpen?: (vm: AppointmentVM) => void;
   /** Rows are only clickable when this returns true (default: all). */
@@ -100,6 +102,7 @@ export function AppointmentList({
   vms,
   bucket,
   adapter,
+  viewerZone,
   resolveSponsoredLabel,
   onOpen,
   canOpen,
@@ -138,6 +141,7 @@ export function AppointmentList({
               key={vm.id}
               vm={vm}
               adapter={adapter}
+              viewerZone={viewerZone}
               sponsoredLabel={resolveSponsoredLabel?.(vm.organizationId) ?? null}
               onOpen={!canOpen || canOpen(vm) ? onOpen : undefined}
               highlighted={highlightedId === vm.id}

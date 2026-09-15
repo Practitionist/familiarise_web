@@ -1,0 +1,39 @@
+# Viewer-timezone formatting of 2026-09-15: hydration error #418 on the Appointments pages
+
+**Date:** 2026-09-15 · **Branch:** `fix/viewer-timezone-formatting` · **PR:** #TBD · **Scope:** `lib/time/`, `components/appointments/{AppointmentRow,NextUpHero,AppointmentList,AppointmentsShell}.tsx`, the two Appointments RSC pages and their page clients, `EarningsSummaryPanel.tsx`.
+
+## What the audit found
+
+A hydration audit of the production dashboards (`temp/hydration-findings.md` in the working tree, not committed) confirmed minified React error #418 on the consultant and consultee Appointments pages and pinned the mechanism exactly: `AppointmentRow.tsx` and `NextUpHero.tsx` formatted absolute `Date`s with date-fns `format(date, "h:mm a")` and `"EEE, d MMM · h:mm a"`, which always read the runtime's local zone. Netlify's Node runtime is UTC and the auditing browser was Asia/Kolkata, so the server wrote `9:00 AM – 10:00 AM` and the client wrote `2:30 PM – 3:30 PM` for the same instant, every pair off by exactly +5:30. React threw #418 and re-rendered the whole page client-side, which is the flicker users saw. The repository had no hydration-safety convention at all: no `suppressHydrationWarning`, no client-mount gate, and `formatInTimeZone` from the installed `date-fns-tz` was unused, while the booking engine threaded `schedulingTimezone` that the display components never reused. The audit also named `EarningsSummaryPanel.tsx`'s `toLocaleDateString` as the same flaw, and noted that the org Appointments page was likely affected; on inspection that page declares its own `AppointmentRow` interface and does not render the component, so it is not part of this change.
+
+## The decision
+
+The owner's locked decision is to format in the viewer's zone on both server and client, deterministically. The zone resolves in this order: the signed-in user's `User.timezone` (an IANA string that onboarding stamps from the browser and the auth session exposes on `session.user.timezone`), else the appointment's scheduling zone where the view model carries one (the Appointments view model does not, today), else `"UTC"`. A short zone label from `formatInTimeZone(date, zone, "zzz")` is shown only when the displayed zone is not the viewer's own.
+
+## The rail
+
+`lib/time/viewer-zone.ts` is pure: `resolveViewerZone({ userTimezone, fallbackZone })` applies the precedence and skips an IANA name the runtime does not know, `describeViewerZone` returns the same zone with an `own` flag, `formatInViewerZone(date, zone, pattern)` wraps `formatInTimeZone`, `zoneLabel` gives the short name, and `formatForViewer` appends the label when the zone is not the viewer's own. Nothing in it reads `new Date()` or the runtime zone. `lib/time/viewer-zone-server.ts` exports `getViewerZone()` for RSC pages, reading the same session field through `getSession()`, and `lib/time/use-viewer-zone.ts` exports `useViewerZone()` for client-only surfaces, reading it through `useSession()`. The hook resolves to the fallback zone until the client session loads, which is why a component whose times are server-rendered takes the zone as a prop from the page rather than calling the hook.
+
+## The call sites
+
+| Site | Before | After |
+|---|---|---|
+| `components/appointments/AppointmentRow.tsx` (start time) | `format(vm.nextAt, "h:mm a")` | `formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")` |
+| `components/appointments/AppointmentRow.tsx` (end time) | `format(endOfAnchor, "h:mm a")` | `formatInViewerZone(endOfAnchor, viewerZone.zone, "h:mm a")` plus a `zoneLabel` suffix when the zone is not the viewer's own |
+| `components/appointments/NextUpHero.tsx` (start) | `format(vm.nextAt, "EEE, d MMM · h:mm a")` | `formatInViewerZone(vm.nextAt, viewerZone.zone, "EEE, d MMM · h:mm a")` |
+| `components/appointments/NextUpHero.tsx` (end) | `format(anchorSession.endsAt, "h:mm a")` | `formatInViewerZone(anchorSession.endsAt, viewerZone.zone, "h:mm a")` plus the same suffix |
+| `app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsSummaryPanel.tsx` (`formatDate`, two cells) | `new Date(dateStr).toLocaleDateString("en-IN", …)` | `formatForViewer(dateStr, viewerZone, "d MMM yyyy")` with the zone from `useViewerZone()` |
+
+The zone reaches the row and the hero as a required `viewerZone` prop: `page.tsx` for both dashboards calls `getViewerZone()` after the ownership guard and passes it to `AppointmentsPageClient`, which hands it to `AppointmentsShell`, which hands it to `NextUpHero` and through `AppointmentList` to every `AppointmentRow`. Because the prop is serialised into the RSC payload, the hydrating client formats from exactly the value the server used.
+
+## What still depends on the runtime
+
+Both components still call `getProximityLabel(vm.nextAt)` from `lib/appointments/occurrences.ts`, which defaults `now` to `new Date()` and computes "Today", "Tomorrow" and "in N days" from local-zone day boundaries, and "in N min" from the current minute; `NextUpHero` also mounts `CountdownBadge`, which seeds its clock with `Date.now()` in a `useState` initialiser. Neither was in scope, and neither was implicated by the audit's text diff, but both are the same class of server-versus-client dependence and can differ across a day boundary or a minute tick. In the same list, `DayGroupHeader.tsx` formats the group date with bare `format()` and `isToday`, and `AppointmentList.tsx` keys groups on local `getFullYear()/getMonth()/getDate()`; the audit noted the date portion survived only because none of that day's instants crossed the UTC/IST boundary.
+
+## Follow-up: the remaining bare `format()` sites
+
+Twenty-five files under `components/` and `app/` still import `format` from `date-fns` and call it on absolute instants. They were deliberately left alone here and are listed for a follow-up sweep onto the same rail: `app/dashboard/consultant/[consultantId]/(features)/analytics/AnalyticsPageClient.tsx`, `app/dashboard/consultant/[consultantId]/(features)/documents/DocumentsTab.tsx`, `app/dashboard/consultant/[consultantId]/(features)/recordings/components/RecordingCard.tsx`, `app/dashboard/consultee/[consulteeId]/(features)/home/HomeTab.tsx`, `app/dashboard/organization/[orgId]/appointments/AppointmentsPageClient.tsx`, `app/dashboard/organization/[orgId]/documents/DocumentsClient.tsx`, `app/dashboard/organization/[orgId]/recordings/RecordingsClient.tsx`, `app/dashboard/organization/[orgId]/reimbursements/page.tsx`, `app/dashboard/staff/[staffId]/(features)/home/HomePageClient.tsx`, `app/explore/experts/[consultantId]/components/SubscriptionPricingToggle.tsx`, `app/form/onboarding/components/experience/CertificationsSection.tsx`, `app/form/onboarding/components/experience/WorkExperienceSection.tsx`, `components/admin/WaitlistManagement.tsx`, `components/appointments/AppointmentCalendar.tsx`, `components/appointments/AppointmentSheet.tsx`, `components/appointments/DayGroupHeader.tsx`, `components/appointments/detail/AppointmentDetailClient.tsx`, `components/appointments/detail/AppointmentDocumentsList.tsx`, `components/appointments/detail/RescheduleProposalCard.tsx`, `components/appointments/HeldSlotBadge.tsx`, `components/appointments/SessionTimeline.tsx`, `components/chat/CustomMessage.tsx`, `components/dashboard/shared/DocumentsPage.tsx`, `components/scheduling/SessionReleasePicker.tsx` and `components/scheduling/UnifiedCalendar.tsx`. The audit's Finding B, #418 on Consultant Earnings and Org Analytics with no visible text diff, was not root-caused and is not addressed by this change.
+
+## Verification
+
+`tsc --noEmit` was clean after a cold Prisma generate, `eslint --max-warnings 0` reported nothing on the touched files, the pin `__tests__/time/viewer-zone.test.ts` and the two suites that import the changed components passed, and `scripts/ci/check-terminology.ts` reported ok.

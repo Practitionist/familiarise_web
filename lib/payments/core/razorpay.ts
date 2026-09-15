@@ -82,7 +82,7 @@ const initializeRazorpayClient = () => {
   });
 };
 
-// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// Lazy singleton (lib/email/deliver.ts getResendClient convention). Instantiating at
 // module scope put the SDK constructor on every cold boot of any route whose
 // import graph reaches this file. MEASURED 2026-08-23 (#1221): this does NOT
 // shrink the #1124 concurrent-instance event-loop stall — that reproduced

@@ -9,6 +9,7 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
@@ -50,7 +51,8 @@ function SideQueryNotice({
 
 export default function AppointmentsPageClient({
   consultantId,
-}: Readonly<{ consultantId: string }>) {
+  viewerZone,
+}: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
   const searchParams = useSearchParams();
   const highlightedId = normalizeHighlight(
     searchParams?.get("highlight") ?? null,
@@ -195,6 +197,7 @@ export default function AppointmentsPageClient({
           <AppointmentsShell
             vms={vms}
             adapter={adapter}
+            viewerZone={viewerZone}
             highlightedId={highlightedId}
             notices={notices}
             // ADR 19 folded trials onto Appointments on the org side because a
