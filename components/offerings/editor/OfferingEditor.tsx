@@ -146,7 +146,14 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           onValueChange={setActiveSection}
           className="contents"
         >
-          <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-3">
+          {/*
+          Full-bleed band: the shell (p-4 sm:p-6 lg:p-8) and DashboardContent
+          (px-6 lg:px-8) stack two paddings, so an inset band leaves gray
+          gutters on both sides. The negative margins cancel both per
+          breakpoint (40/48/64px) and the inner px re-pads the same amount,
+          so the title row and tabs align exactly with the card below.
+        */}
+          <div className="sticky top-0 z-20 -mx-10 mb-6 border-b bg-background px-10 pb-3 pt-3 sm:-mx-12 sm:px-12 lg:-mx-16 lg:px-16">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h1 className="text-xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
@@ -227,8 +234,14 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           (see globals.css): without it, the stacked chrome paddings below this
           bar leave a ~40-56px float above the true bottom edge.
         */}
-        <div className="sticky bottom-0 z-10 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-4">
+        {/*
+          Full-bleed bar, same double-padding cancel as the band above: the
+          background stretches edge to edge while the buttons align with the
+          card edges. No max-w centering — a centered narrow inner is what
+          left the buttons floating inside the card measure.
+        */}
+        <div className="sticky bottom-0 z-10 -mx-10 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur sm:-mx-12 lg:-mx-16">
+          <div className="flex flex-wrap items-center justify-end gap-3 px-10 py-4 sm:px-12 lg:px-16">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">
                 {publishBlockedReason}
