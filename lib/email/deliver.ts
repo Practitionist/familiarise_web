@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Resend, type CreateEmailResponse } from "resend";
 import prisma from "@/lib/prisma";
 import { supportEmail } from "./config";
-import { terminalSendReason } from "./classify";
+import { resendErrorText, terminalSendReason } from "./classify";
 import { idempotencyKeyFor } from "./idempotency";
 
 // #474 — the already-RENDERED message a sender handed to Resend. We persist
@@ -121,7 +121,9 @@ export async function deliver(
     const data = await client.emails.send(payload, { idempotencyKey });
     // Resend resolves (does not throw) on API-level errors — a non-null
     // `error` must dead-letter, not report a false success.
-    if (data.error) throw new Error(data.error.message || "Resend API error");
+    // #1298 — keep Resend's error name in the text: `validation_error` is what
+    // classify.ts keys on, and a 4xx body rejection never succeeds on replay.
+    if (data.error) throw new Error(resendErrorText(data.error));
 
     console.log(`[email] ${emailType} sent id=${data.data?.id ?? "unknown"}`);
     return { success: true, data };

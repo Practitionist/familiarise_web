@@ -42,6 +42,7 @@ import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
 import {
   EMAIL_TTL_MS,
   isExpiredForReplay,
+  resendErrorText,
   terminalSendReason,
 } from "@/lib/email/classify";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
@@ -170,7 +171,7 @@ export async function runEmailRetryTick(params: {
       // Resend resolves (does not throw) on API-level errors — a non-null
       // `error` is still a failure, so it must not be mistaken for a success.
       if (result.error) {
-        sendError = result.error.message || "Resend API error";
+        sendError = resendErrorText(result.error);
       }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);

@@ -167,6 +167,7 @@ Support and contact mail still goes to a real mailbox through `NEXT_PUBLIC_SUPPO
 ### Step 7: Smoke Test
 
 - [ ] Sign up as new user → verify welcome email arrives
+- [ ] Use a real inbox you control or one of Resend's test recipients (`delivered@resend.dev`, `bounced@resend.dev`, `complained@resend.dev`) for any throwaway signup. Resend rejects `example.com` and similar reserved domains with a 422 `validation_error`, and until that row is dead-lettered the retry worker will replay it on every backoff step (this happened on 2026-09-14 with a preview QA address).
 - [ ] Subscribe to newsletter → verify DB record
 - [ ] Unsubscribe via link → verify `unsubscribed = true`
 - [ ] Trigger a test Novu workflow → verify in-app bell notification appears

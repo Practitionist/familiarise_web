@@ -246,7 +246,7 @@ describe("runEmailRetryTick — success path", () => {
     expect(result.retried).toBe(1);
     expect(stub.updates[0].data).toMatchObject({
       status: "RETRY",
-      lastError: "rate_limited",
+      lastError: "rate_limit_exceeded: rate_limited",
     });
   });
 });
@@ -275,8 +275,36 @@ describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
     expect(stub.updates[0].data).toMatchObject({
       status: "DEAD_LETTER",
       attempts: 1,
-      lastError: "API key is invalid",
+      lastError: "validation_error: API key is invalid",
     });
+  });
+
+  it("treats a 422 validation_error (e.g. an example.com recipient) as terminal on attempt 1", async () => {
+    // #1298 — the retry worker replayed such a row four times on 2026-09-14;
+    // a body Resend rejects is never accepted by re-sending it unchanged.
+    const stub = makePrismaStub(makeRow());
+    const resend = mockResend(async () => ({
+      data: null,
+      error: {
+        message:
+          "Invalid `to` field. Please use our testing email address instead of domains like `example.com`.",
+        name: "validation_error",
+        statusCode: 422,
+      },
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({ status: "DEAD_LETTER" });
+    expect(String(stub.updates[0].data.lastError)).toMatch(
+      /^validation_error: Invalid `to` field/,
+    );
   });
 
   it("dead-letters an expired verification row without sending", async () => {

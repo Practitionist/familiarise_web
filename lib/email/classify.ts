@@ -9,6 +9,15 @@ const TERMINAL_PATTERNS: ReadonlyArray<[reason: string, pattern: RegExp]> = [
   ["restricted_api_key", /restricted_api_key/i],
 ];
 
+/** `name: message` for a Resend error body, so the name survives into lastError. */
+export function resendErrorText(error: {
+  name?: string | null;
+  message?: string | null;
+}): string {
+  const message = error.message || "Resend API error";
+  return error.name ? `${error.name}: ${message}` : message;
+}
+
 /** The reason slug for a terminal Resend error, or null when a retry may help. */
 export function terminalSendReason(
   message: string | null | undefined,

@@ -12,6 +12,7 @@ import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
 import { createHash } from "node:crypto";
+import { resendErrorText } from "@/lib/email/classify";
 import { companyPostalAddress } from "@/lib/email/config";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
@@ -150,7 +151,7 @@ async function sendBatch(
       idempotencyKey: batchIdempotencyKey(emails),
     });
     if (result.error) {
-      throw new Error(result.error.message || "Resend batch error");
+      throw new Error(resendErrorText(result.error));
     }
     return { ok: true, sent: result.data?.data?.length ?? emails.length };
   } catch (batchError) {
