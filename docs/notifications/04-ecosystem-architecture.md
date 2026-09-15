@@ -111,6 +111,8 @@ flowchart TB
         DEL_RESEND["Resend API\nresend.emails.send()\nresend.batch.send()"]
         DEL_WS["Novu WebSocket\nReal-time in-app"]
         DEL_EMAIL["User Email Inbox"]
+        DEL_HOOK["POST /api/webhooks/resend\nsvix-signed delivery events (#1647)"]
+        DEL_EVENTS[("EmailEvent\nEmailSuppression")]
     end
 
     %% Trigger → Pipeline 1 (Resend Direct)
@@ -155,6 +157,11 @@ flowchart TB
     DEL_RESEND --> DEL_EMAIL
     DEL_WS --> CL_INBOX
 
+    %% Delivery events back into the outbox (#1647)
+    DEL_RESEND -->|"email.delivered / bounced /\ncomplained / failed"| DEL_HOOK
+    DEL_HOOK --> DEL_EVENTS
+    DEL_EVENTS -.->|"stage() and the relay\nrefuse a suppressed address"| P1_STAGE
+
     %% Client → Backend
     CL_PREFS -->|"PUT /api/novu/preferences"| P2_SUB
     CL_HOOK -->|"POST /api/novu/subscriber"| P2_SUB
@@ -185,6 +192,9 @@ flowchart TB
 4. `deliver()` first stages the rendered message as a `PENDING` `FailedEmail` row (`stage()`), then attempts one send via `resend.emails.send()` under a content-hash Idempotency-Key and an `AbortSignal` for the budget (`attempt()`); success marks the row `SENT` with the Resend id, a terminal failure dead-letters it, a transient failure or a timeout leaves it `PENDING` for the relay (#1654)
 5. A caller inside a database transaction (the payment webhook) calls `stage()` inside the transaction and `attempt()` after the commit, so a rollback takes the row with it
 6. `jobs/email/retry-failed-emails.ts` is the relay: the Netlify ticker runs it every fifteen minutes through `/api/cleanup/retry-failed-emails`, paced under Resend's rate limit, and the GitHub Actions workflow is the unbounded backstop
+7. Resend reports what happened after acceptance to `POST /api/webhooks/resend` (#1647), which stores every signed event as an `EmailEvent` row and, for a permanent bounce or a complaint, writes the address to `EmailSuppression`; `stage()` and the relay dead-letter a message to a suppressed address with `suppressed:<REASON>` instead of sending it
+
+The delivery events close the loop that the outbox opened. A `FailedEmail` row records that a message was handed to Resend and under which id; the `EmailEvent` rows for that id record whether it was delivered, delayed, bounced or complained about, and the suppression list built from those events is consulted before the next message to the same address is staged. The receiver is idempotent on the svix id, answers 200 for a duplicate, and only reaches production because Resend's event hook is registered against the production URL; the wiring steps are in [05-pre-production-checklist.md](05-pre-production-checklist.md).
 
 **10 React Email templates behind 11 senders** (the contact-inquiry sender builds inline HTML instead of a template):
 
@@ -280,9 +290,12 @@ Send:
   Admin calls POST /api/admin/waitlist/broadcast {subject, htmlBody, textBody?}
     → Auth check (ADMIN role only, requireAdminAuth())
     → listSendableSubscribers() from lib/waitlist/service.ts
-    → For each batch of 100: resend.batch.send() via getResendClient() from lib/email
+    → findSuppressed() drops every address on EmailSuppression (#1647)
+    → For each batch of 100: a FailedEmailBatch row is upserted under the
+      batch's idempotency key, then resend.batch.send() via getResendClient()
+      from lib/email; a failed send leaves the row PENDING for the relay
     → Each email gets: unsubscribe footer + List-Unsubscribe header
-    → Returns {sent, failed, total}
+    → Returns {sent, failed, total, skippedSuppressed}
 
   There is no `/api/admin/newsletter/send` route; the broadcast endpoint lives
   under `/api/admin/waitlist/broadcast` because the send list and the double
@@ -480,7 +493,7 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | Consultant/Consultee preferences panel | Users can't manage notification preferences  | Add `NotificationPreferencesPanel` to their settings pages |
 | Newsletter subscribe UI component      | No way for users to subscribe on the website | Build footer/sidebar email input form                      |
 | Push notifications (FCM)               | No browser push                              | Defer until significant user base                          |
-| Email analytics (opens/clicks/bounces) | No deliverability monitoring                 | Add Resend webhook handler post-launch                     |
+| Email analytics (opens/clicks)         | No open or click tracking                    | Widen the #1647 webhook subscription once tracking is on   |
 | Notification logging/audit             | No delivery audit trail                      | Novu Dashboard activity feed covers this                   |
 | Promotional email automation           | 16 templates sit unused                      | Use external tool (Lemlist) for cold outreach              |
 
@@ -491,6 +504,7 @@ The two relays are the outbox halves of #1654: every email and every Novu trigge
 | Variable                             | Required | Used By                                                                              |
 | ------------------------------------ | -------- | ------------------------------------------------------------------------------------ |
 | `RESEND_API_KEY`                     | Yes      | Resend direct emails, waitlist broadcast                                             |
+| `RESEND_WEBHOOK_SECRET`              | Yes      | Signature verification in `/api/webhooks/resend` (#1647); production context only    |
 | `EMAIL_TRANSACTIONAL_DOMAIN`         | No       | Transactional sender domain (defaults to `mail.familiarisenow.com`)                  |
 | `EMAIL_NEWSLETTER_DOMAIN`            | No       | Waitlist/newsletter sender domain (defaults to `news.familiarisenow.com`)            |
 | `NEXT_PUBLIC_SUPPORT_EMAIL`          | No       | Public support mailbox, default Reply-To                                             |
