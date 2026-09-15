@@ -48,12 +48,15 @@ import {
 import { ZodError } from "zod";
 import {
   attempt as attemptEmail,
+  attemptStaged,
   EMAIL_BUDGET_MS,
   renderPaymentFailedEmail,
   renderPaymentSuccessEmail,
   stage as stageEmail,
+  stageAppointmentBookedEmail,
   type RenderedEmail,
   type StagedEmail,
+  type StagedRecipientEmail,
 } from "@/lib/email";
 import {
   createEarningsFromPayment,
@@ -187,6 +190,8 @@ type PaymentSuccessTxResult =
       doubleBookingBlocked: boolean;
       // #1654 — the receipt row staged inside Phase 1; Phase 2 attempts it.
       successEmail: StagedOutboxEmail | null;
+      // #1653 — the booked-confirmation rows, staged and attempted the same way.
+      bookedEmails: StagedRecipientEmail[];
     };
 
 /** #1654 — an outbox row plus the rendered message the inline attempt sends. */
@@ -633,17 +638,30 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
 
           // #1654 — the receipt is staged in THIS transaction so a rollback
           // takes it too; the send waits for the commit. The two blocked
-          // outcomes refund in Phase 2 and get no receipt.
-          const successEmail =
+          // outcomes refund in Phase 2 and get no receipt. #1653 — the
+          // booked confirmation rides the same read and the same rule.
+          const blocked =
             confirmResult.capturedAfterTerminal ||
-            confirmResult.doubleBookingBlocked
-              ? null
-              : await stagePaymentSuccessEmail(
-                  tx,
-                  payment,
-                  appointment.id,
-                  metadata.appointmentType,
-                );
+            confirmResult.doubleBookingBlocked;
+          const appointmentForEmails = blocked
+            ? null
+            : await loadAppointmentForEmails(tx, appointment.id);
+          const successEmail = appointmentForEmails
+            ? await stagePaymentSuccessEmail(
+                tx,
+                payment,
+                appointmentForEmails,
+                metadata.appointmentType,
+              )
+            : null;
+          const bookedEmails = appointmentForEmails
+            ? await stageBookedEmails(
+                tx,
+                payment,
+                appointmentForEmails,
+                metadata.appointmentType,
+              )
+            : [];
 
           // Return data needed for Phase 2
           return {
@@ -662,6 +680,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             // auto-refunds the loser and releases its tentative hold.
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
             successEmail,
+            bookedEmails,
           };
         },
         {
@@ -871,6 +890,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       txResult.successEmail.message,
       "PAYMENT_SUCCESS",
       { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+    );
+  }
+  // #1653 — the booked confirmation to both parties, same contract.
+  if (txResult.bookedEmails.length > 0) {
+    await attemptStaged(
+      txResult.bookedEmails,
+      "APPOINTMENT_BOOKED",
+      EMAIL_BUDGET_MS.WEBHOOK,
     );
   }
 
@@ -2097,20 +2124,21 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
 // ============================================================================
 
 /**
- * #1654 — reads the receipt's inputs through the caller's transaction, renders
- * it, and stages the outbox row in that transaction. Returns null (reported)
- * when there is nothing to send; a database failure propagates so the
- * business write and the row roll back together.
+ * #1654 / #1653 — the one appointment read both Phase-1 emails share, through
+ * the caller's transaction. Null is reported here so neither stager has to.
  */
-async function stagePaymentSuccessEmail(
-  tx: Tx,
-  payment: PaymentWithUser,
-  appointmentId: string,
-  appointmentType: string,
-): Promise<StagedOutboxEmail | null> {
+async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
   const appointment = await tx.appointment.findUnique({
     where: { id: appointmentId },
     include: {
+      // #1653 — the booked email names a time; a subscription placeholder
+      // has none yet and is skipped, as Phase 2's bell is.
+      occurrences: {
+        where: liveOccurrenceWhere,
+        orderBy: { startsAt: "asc" },
+        take: 1,
+        select: { startsAt: true },
+      },
       consultation: {
         include: {
           consultationPlan: {
@@ -2142,7 +2170,7 @@ async function stagePaymentSuccessEmail(
           webinarPlan: {
             include: {
               consultantProfile: {
-                include: { user: { select: { name: true } } },
+                include: { user: { select: { id: true, name: true } } },
               },
             },
           },
@@ -2153,7 +2181,7 @@ async function stagePaymentSuccessEmail(
           classPlan: {
             include: {
               consultantProfile: {
-                include: { user: { select: { name: true } } },
+                include: { user: { select: { id: true, name: true } } },
               },
             },
           },
@@ -2172,32 +2200,41 @@ async function stagePaymentSuccessEmail(
     console.error(
       `Cannot send payment success email: appointment ${appointmentId} not found`,
     );
-    return null;
   }
+  return appointment;
+}
 
-  let consultantName = "Consultant";
+type AppointmentForEmails = NonNullable<
+  Awaited<ReturnType<typeof loadAppointmentForEmails>>
+>;
+
+// Whichever of the four plan shapes the appointment has.
+function planForEmails(appointment: AppointmentForEmails) {
+  return (
+    appointment.consultation?.consultationPlan ??
+    appointment.subscription?.subscriptionPlan ??
+    appointment.webinar?.webinarPlan ??
+    appointment.class?.classPlan ??
+    null
+  );
+}
+
+/**
+ * #1654 — renders the receipt from the shared read and stages the outbox row
+ * in the caller's transaction. Returns null (reported) when there is nothing
+ * to send; a database failure propagates so the business write and the row
+ * roll back together.
+ */
+async function stagePaymentSuccessEmail(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<StagedOutboxEmail | null> {
+  const consultantName =
+    planForEmails(appointment)?.consultantProfile?.user?.name || "Consultant";
   const amount = payment.amount;
   const currency = payment.currency;
-
-  // Get consultant name based on appointment type
-  if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
-    consultantName =
-      appointment.consultation.consultationPlan.consultantProfile.user.name ||
-      "Consultant";
-  } else if (
-    appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-  ) {
-    consultantName =
-      appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
-      "Consultant";
-  } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
-    consultantName =
-      appointment.webinar.webinarPlan.consultantProfile.user.name ||
-      "Consultant";
-  } else if (appointment.class?.classPlan?.consultantProfile?.user) {
-    consultantName =
-      appointment.class.classPlan.consultantProfile.user.name || "Consultant";
-  }
 
   // Render is pure CPU; a render failure has nothing to replay, so it is
   // reported and the receipt skipped, never the payment.
@@ -2228,6 +2265,40 @@ async function stagePaymentSuccessEmail(
     entityRef: `payment:${payment.id}`,
   });
   return staged ? { staged, message } : null;
+}
+
+/**
+ * #1653 — the booked confirmation to payer and consultant, staged next to
+ * the receipt. Mirrors Phase 2's bell: the plan title is resolved the same
+ * way (#1484), a placeholder with no session yet sends nothing (B9), and the
+ * href is the org route or the /dashboard bounce. Recipients are read
+ * through `tx`; a render failure is dropped inside, a staging failure
+ * propagates with the transaction.
+ */
+async function stageBookedEmails(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<StagedRecipientEmail[]> {
+  const startsAt = appointment.occurrences[0]?.startsAt;
+  if (!startsAt) return [];
+  const plan = planForEmails(appointment);
+  const planTitle =
+    appointmentType === AppointmentsType.TRIAL
+      ? "Trial session"
+      : planTitleOrSessionLabel(plan?.title ?? null, appointmentType);
+  return stageAppointmentBookedEmail(tx, {
+    appointmentId: appointment.id,
+    consulteeUserId: payment.userId,
+    consultantUserId: plan?.consultantProfile?.user?.id ?? null,
+    consulteeName: payment.user.name || "User",
+    consultantName: plan?.consultantProfile?.user?.name || "Consultant",
+    planTitle,
+    appointmentType,
+    startsAt,
+    dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
+  });
 }
 
 /** #1654 — the failure notice's twin of {@link stagePaymentSuccessEmail}. */

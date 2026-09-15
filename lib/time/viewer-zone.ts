@@ -67,8 +67,17 @@ export function formatInViewerZone(
 }
 
 /** Short zone name for a label ("IST", "UTC", "GMT+8"); DST-aware, hence the date. */
+/**
+ * ICU prints "GMT+5:30" for India on Linux and "IST" on macOS, so the label a
+ * user actually reads is pinned here and Intl only names the rest (#1653).
+ */
+export const ZONE_ABBREVIATION: Record<string, string> = {
+  "Asia/Kolkata": "IST",
+  "Asia/Calcutta": "IST",
+};
+
 export function zoneLabel(date: Date | string | number, zone: string): string {
-  return formatInTimeZone(date, zone, "zzz");
+  return ZONE_ABBREVIATION[zone] ?? formatInTimeZone(date, zone, "zzz");
 }
 
 /**

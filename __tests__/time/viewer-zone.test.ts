@@ -10,6 +10,7 @@ import {
   formatForViewer,
   formatInViewerZone,
   resolveViewerZone,
+  zoneLabel,
 } from "../../lib/time/viewer-zone";
 
 const instant = new Date("2026-09-15T09:00:00Z");
@@ -64,5 +65,12 @@ describe("resolveViewerZone", () => {
       zone: "Asia/Kolkata",
       own: false,
     });
+  });
+});
+
+describe("zoneLabel", () => {
+  // #1653 — ICU says "GMT+5:30" on Linux; the pinned abbreviation wins.
+  it("prints IST for India on every runtime", () => {
+    expect(zoneLabel(instant, "Asia/Kolkata")).toBe("IST");
   });
 });
