@@ -1,6 +1,5 @@
 "use client";
 
-import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { CalendarCheck } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -9,6 +8,11 @@ import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import { getProximityLabel } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import {
+  formatInViewerZone,
+  zoneLabel,
+  type ViewerZone,
+} from "@/lib/time/viewer-zone";
 import { CountdownBadge } from "./CountdownBadge";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { KIND_LABEL } from "./AppointmentRow";
@@ -22,6 +26,8 @@ interface NextUpHeroProps {
   /** The next upcoming appointment, or null → slim "no upcoming" strip. */
   vm: AppointmentVM | null;
   adapter: AppointmentActionAdapter;
+  /** Times render in this zone on the server and the client alike (hydration #418). */
+  viewerZone: ViewerZone;
   stats: HeroStat[];
   onOpen?: (vm: AppointmentVM) => void;
 }
@@ -35,7 +41,13 @@ function initials(name: string): string {
     .join("");
 }
 
-export function NextUpHero({ vm, adapter, stats, onOpen }: NextUpHeroProps) {
+export function NextUpHero({
+  vm,
+  adapter,
+  viewerZone,
+  stats,
+  onOpen,
+}: NextUpHeroProps) {
   if (!vm) {
     return (
       <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-sm">
@@ -95,11 +107,25 @@ export function NextUpHero({ vm, adapter, stats, onOpen }: NextUpHeroProps) {
               {vm.nextAt && (
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
                   <span className="font-medium text-foreground tabular-nums">
-                    {format(vm.nextAt, "EEE, d MMM · h:mm a")}
+                    {formatInViewerZone(
+                      vm.nextAt,
+                      viewerZone.zone,
+                      "EEE, d MMM · h:mm a",
+                    )}
                     {anchorSession?.endsAt && (
                       <span className="text-muted-foreground font-normal">
                         {" – "}
-                        {format(anchorSession.endsAt, "h:mm a")}
+                        {formatInViewerZone(
+                          anchorSession.endsAt,
+                          viewerZone.zone,
+                          "h:mm a",
+                        )}
+                      </span>
+                    )}
+                    {!viewerZone.own && (
+                      <span className="text-muted-foreground font-normal">
+                        {" "}
+                        {zoneLabel(vm.nextAt, viewerZone.zone)}
                       </span>
                     )}
                   </span>
