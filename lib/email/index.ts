@@ -36,6 +36,7 @@ export {
   type StageOptions,
 } from "./deliver";
 export * from "./senders/booking";
+export * from "./senders/money";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
 

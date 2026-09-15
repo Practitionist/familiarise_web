@@ -15,6 +15,8 @@ import {
 } from "@prisma/client";
 import { computeOverageForBooking } from "@/lib/payments/billing/overage";
 import { notifyOrgProgramOverageDue } from "@/lib/novu/org-workflows";
+import { sendOrgOverageDueEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/url";
 import { PaymentError } from "@/lib/payments/core/types";
 import type { Tx } from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -43,6 +45,8 @@ export interface PendingOverageNotification {
   userId: string;
   programAssignmentId: string;
   marginalPaise: number;
+  /** #1653 — the email formats the amount; the bell keeps its INR default. */
+  currency: Currency;
   overageEventId: string;
 }
 
@@ -279,6 +283,7 @@ export async function recordOverageAtCheckout(
       userId,
       programAssignmentId,
       marginalPaise,
+      currency,
       overageEventId: memberOverageEvent.id,
     };
   }
@@ -457,6 +462,7 @@ async function recordWalletCollectedOrgOverage(
 /**
  * Ring the member-due bell for a committed overage. Fire-and-forget: a booking
  * that is already paid for must not fail because a notification did not go out.
+ * #1653 — the email twin is awaited inside the same chain, after the bell.
  */
 export function notifyOverageDueAfterCommit(
   pending: PendingOverageNotification,
@@ -475,13 +481,23 @@ export function notifyOverageDueAfterCommit(
         },
       },
     })
-    .then((ctx) => {
+    .then(async (ctx) => {
       if (!ctx) return;
-      return notifyOrgProgramOverageDue(pending.userId, {
-        orgName: ctx.program.contract.organization.name,
+      const orgName = ctx.program.contract.organization.name;
+      await notifyOrgProgramOverageDue(pending.userId, {
+        orgName,
         programName: ctx.program.name,
         amountPaise: pending.marginalPaise,
         payUrl: `/dashboard/overage?charge=${pending.overageEventId}`,
+      });
+      await sendOrgOverageDueEmail({
+        userId: pending.userId,
+        overageEventId: pending.overageEventId,
+        orgName,
+        programTitle: ctx.program.name,
+        amountPaise: pending.marginalPaise,
+        currency: pending.currency,
+        payUrl: `${getAppUrl()}/dashboard/overage?charge=${pending.overageEventId}`,
       });
     })
     .catch((notifyErr) => {

@@ -99,7 +99,8 @@ lib/email/
 ├── preferences.ts     -- loadEmailRecipients(), the NotificationPreference gate
 ├── send-to-recipients.ts -- sendToRecipients() / stageToRecipients() / attemptStaged(), the per-recipient fan-out
 └── senders/
-    └── booking.ts     -- the six booking lifecycle senders (#1653), re-exported from index.ts
+    ├── booking.ts     -- the six booking lifecycle senders (#1653), re-exported from index.ts
+    └── money.ts       -- the six money senders (#1653), re-exported from index.ts
 
 sendWelcomeEmail()         -- from: SENDERS.onboarding (onboarding@mail.familiarisenow.com)
 sendPasswordResetEmail()   -- from: SENDERS.security (security@mail.familiarisenow.com)
@@ -123,6 +124,17 @@ sendTrialScheduledEmail()         -- from: SENDERS.notifications, category trial
 ```
 
 The six booking senders in `lib/email/senders/booking.ts` (#1653) differ from the eleven above in shape: each takes user ids plus the raw domain values its call site already holds (Dates, names, ids and the href the sibling Novu bell computed), resolves the recipients through `loadEmailRecipients()`, and renders one message per recipient in that recipient's zone through `sendToRecipients()`, so the subject and body of the booked and trial emails switch on whether the reader is the consultee or the consultant. Every time is written as `formatInViewerZone(d, zone, "EEE, d MMM yyyy 'at' h:mm a")` followed by the zone label. A booking sender never throws: an unexpected error is reported to Sentry with `tags: { subsystem: "email", emailType }` and returned as a failed count, and the caller's budget (`REQUEST` from an API route, `JOB` from a sweep or script, `WEBHOOK` from the payment webhook) bounds how long the caller waits. The templates live in `emails/booking/` and render inside `EmailLayout`. Each sender is called right after the Novu bell it twins, with the same recipients and the same href, and the bell itself is unchanged.
+
+sendRefundProcessedEmail() / stageRefundProcessedEmail(tx, …) -- from: SENDERS.payments, category payments, entityRef payment:<id>
+sendRefundFailedEmail() -- from: SENDERS.payments, category payments, entityRef payment:<id>
+sendOrgPayoutFailedEmail() -- from: SENDERS.finance, category orgBilling, entityRef orgPayout:<id>
+sendOrgInvoiceOverdueEmail() -- from: SENDERS.finance, category orgBilling, entityRef orgInvoice:<id>
+sendOrgWalletLowEmail() -- from: SENDERS.finance, category orgBilling, entityRef org:<id>
+sendOrgOverageDueEmail() -- from: SENDERS.finance, category orgBilling, entityRef overage:<id>
+
+````
+
+The six money senders in `lib/email/senders/money.ts` (#1653) are the first lifecycle senders built on the preference gate: each takes user ids plus raw domain values, resolves the recipients with `loadEmailRecipients()`, fans out with `sendToRecipients()`, and never throws, because a missed email must never fail the request, webhook or job that moved the money (ADR 21). The org senders take `recipientUserIds` rather than an org id on purpose: the call site computes the roster once with `rosterForOrg(orgId, VISIBILITY_ROLES)`, now exported from `lib/novu/org-workflows.ts`, so the bell and the email always reach the same people. Every call site awaits its email after the bell, and the budget is the caller's: `WEBHOOK` from the refund and payout webhooks, `REQUEST` from the rejection, event-refund and overage routes, and `JOB` from the dunning, wallet, no-show and refund-reconcile jobs.
 
 Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` at call time (defaults `mail.familiarisenow.com` / `news.familiarisenow.com`), not hardcoded, so an environment can point sends at a different verified domain without a code change.
 
@@ -160,7 +172,7 @@ sequenceDiagram
         DL-->>Fn: {success: false, staged: true}
     end
     Fn-->>API: DeliverResult
-```
+````
 
 The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/config.ts`) and chosen per caller, because the caller's request is what a slow provider would otherwise hold open until Netlify's ~26-second ceiling. The table below lists the budgets and who uses each.
 
@@ -178,7 +190,7 @@ Every sender stamps the row's `entityRef` with the business anchor it knows: the
 
 #### Staging inside a transaction
 
-A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Since #1653 the booked confirmation rides the same read: `loadAppointmentForEmails()` is the one appointment read Phase 1 makes for mail, `stagePaymentSuccessEmail()` and `stageBookedEmails()` both render from it, and `stageAppointmentBookedEmail(tx, …)` reads the two recipients through the transaction and stages one row per allowed recipient; Phase 2 runs `attemptStaged()` next to the receipt's attempt. A subscription placeholder with no session yet stages no booked email, as its bell is skipped, and the two blocked outcomes stage nothing. Nothing else in the money transaction changed (ADR 21).
+A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Since #1653 the booked confirmation rides the same read: `loadAppointmentForEmails()` is the one appointment read Phase 1 makes for mail, `stagePaymentSuccessEmail()` and `stageBookedEmails()` both render from it, and `stageAppointmentBookedEmail(tx, …)` reads the two recipients through the transaction and stages one row per allowed recipient; Phase 2 runs `attemptStaged()` next to the receipt's attempt. A subscription placeholder with no session yet stages no booked email, as its bell is skipped, and the two blocked outcomes stage nothing. Nothing else in the money transaction changed (ADR 21). The refund webhook (`handleRefundCreated` in `app/api/webhooks/utils.ts`) is the third caller since #1653: `stageRefundProcessedEmail(tx, …)` reads the payer through the Serializable transaction with `loadEmailRecipients([userId], "payments", tx)`, stages with `stageToRecipients()` right after the bell is staged, and `attemptStaged()` runs after commit next to the bell's attempt under the `WEBHOOK` budget. The list of staged rows is reset at the top of the transaction callback because a serialization retry re-runs it. The receipt omits the credit-note number, since the Sec 34 `CreditNote` is minted inside the refund cascade and is not in scope at the staging point; adding a query for it would be a change inside a money transaction.
 
 ### The relay
 

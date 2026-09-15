@@ -145,7 +145,7 @@ const ORG_DEFAULT_CURRENCY = "INR";
  * of the requested `roles`. Excludes REMOVED / SUSPENDED memberships so
  * we don't page ex-employees.
  */
-async function rosterForOrg(
+export async function rosterForOrg(
   orgId: string,
   roles: MemberRole[],
   // #691 — a tx caller's roster must read through its tx: PG_POOL_MAX=1
@@ -165,13 +165,17 @@ async function rosterForOrg(
 }
 
 /** OWNER + MAINTAINER — the "operator roster" who can act on the org. */
-const OPERATOR_ROLES: MemberRole[] = ["OWNER", "MAINTAINER"];
+export const OPERATOR_ROLES: MemberRole[] = ["OWNER", "MAINTAINER"];
 
 /** OWNER + MAINTAINER + MANAGER — the "visibility roster" who can see bills + payouts. */
-const VISIBILITY_ROLES: MemberRole[] = ["OWNER", "MAINTAINER", "MANAGER"];
+export const VISIBILITY_ROLES: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+];
 
 /** OWNER only — security-critical events get a narrower blast radius. */
-const OWNER_ONLY: MemberRole[] = ["OWNER"];
+export const OWNER_ONLY: MemberRole[] = ["OWNER"];
 
 // ============================================================================
 // Per-event helpers
