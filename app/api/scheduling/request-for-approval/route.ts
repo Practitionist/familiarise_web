@@ -12,6 +12,8 @@ import {
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendNewBookingRequestEmail } from "@/lib/email";
+import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
@@ -359,6 +361,14 @@ export async function POST(req: NextRequest) {
         // pins organizationId: null. Single recipient with a known side, so this
         // resolves to a precise route rather than the /dashboard bounce.
         const requestOrgId = consultation.appointment?.organizationId ?? null;
+        const reviewUrl = scopedHref({
+          organizationId: requestOrgId,
+          surface: "requests",
+          personal: {
+            kind: "consultant",
+            profileId: consultation.consultationPlan.consultantProfile.id,
+          },
+        });
         await notifyNewBookingRequest(
           consultation.consultationPlan.consultantProfile.user.id,
           {
@@ -367,15 +377,33 @@ export async function POST(req: NextRequest) {
             planTitle: consultation.consultationPlan.title,
             appointmentType: "CONSULTATION",
             requestedDateTime: startTime.toISOString(),
-            dashboardUrl: scopedHref({
-              organizationId: requestOrgId,
-              surface: "requests",
-              personal: {
-                kind: "consultant",
-                profileId: consultation.consultationPlan.consultantProfile.id,
-              },
-            }),
+            dashboardUrl: reviewUrl,
           },
+        );
+
+        // #1653 — the email twin. The deadline is the stale-request sweep's
+        // window from `requestedAt`, capped at the session itself: an approval
+        // after either is moot. The sender never throws.
+        const sweepExpiry = new Date(
+          consultation.requestedAt.getTime() +
+            PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
+        );
+        await sendNewBookingRequestEmail(
+          {
+            requestId: consultation.id,
+            consultantUserId:
+              consultation.consultationPlan.consultantProfile.user.id,
+            consultantName:
+              consultation.consultationPlan.consultantProfile.user.name ||
+              "Consultant",
+            consulteeName: consultation.requestedBy.user.name || "A consultee",
+            planTitle: consultation.consultationPlan.title,
+            appointmentType: "CONSULTATION",
+            requestedAt: startTime,
+            respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
+            reviewUrl,
+          },
+          EMAIL_BUDGET_MS.REQUEST,
         );
 
         return NextResponse.json(
