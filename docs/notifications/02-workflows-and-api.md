@@ -213,8 +213,8 @@ sequenceDiagram
 
 ### Trial Sessions
 
-| Workflow ID               | Trigger Function                                         | Recipients   | Payload Type          |
-| ------------------------- | -------------------------------------------------------- | ------------ | --------------------- |
+| Workflow ID               | Trigger Function                                  | Recipients   | Payload Type   |
+| ------------------------- | ------------------------------------------------- | ------------ | -------------- |
 | `trial-session-requested` | `notifyTrialRequested(consultantUserId, payload)` | Consultant   | `TrialPayload` |
 | `trial-session-scheduled` | `notifyTrialScheduled(consulteeUserId, payload)`  | Consultee    | `TrialPayload` |
 | `trial-session-completed` | `notifyTrialCompleted(userIds[], payload)`        | Both parties | `TrialPayload` |
@@ -281,23 +281,36 @@ sequenceDiagram
 
 ## Resend Direct Emails
 
-These emails bypass Novu and are sent directly through Resend with React Email templates.
+These emails bypass Novu and are sent directly through Resend, through `lib/email/index.ts`'s eleven sender functions. Every sender renders a React Email template (or, for the contact inquiry, builds inline HTML) and calls `deliver()` in `lib/email/deliver.ts`, the single send core described in [01-architecture.md](./01-architecture.md). The `From` addresses below are the defaults `SENDERS` returns when `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` are unset (`mail.familiarisenow.com` / `news.familiarisenow.com`).
 
-### Auth Emails (`lib/email.ts`)
+### Auth Emails (`lib/email/index.ts`)
 
-| Function                                                         | Subject                                               | From                       |
-| ---------------------------------------------------------------- | ----------------------------------------------------- | -------------------------- |
-| `sendWelcomeEmail({email, name, dashboardUrl?})`                 | "Welcome to Familiarise!"                             | onboarding@familiarise.com |
-| `sendPasswordResetEmail({email, name, token})`                   | "Reset your Familiarise password"                     | security@familiarise.com   |
-| `sendAccountLinkedEmail({email, name, provider, dashboardUrl?})` | "Your Familiarise account now linked with {provider}" | security@familiarise.com   |
+| Function                                                         | Subject                                               | From                               |
+| ---------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------- |
+| `sendWelcomeEmail({email, name, dashboardUrl?})`                 | "Welcome to Familiarise!"                             | onboarding@mail.familiarisenow.com |
+| `sendPasswordResetEmail({email, name, token})`                   | "Reset your Familiarise password"                     | security@mail.familiarisenow.com   |
+| `sendVerificationEmail({email, name, verificationUrl})`          | "Verify your Familiarise email address"               | onboarding@mail.familiarisenow.com |
+| `sendAccountLinkedEmail({email, name, provider, dashboardUrl?})` | "Your Familiarise account now linked with {provider}" | security@mail.familiarisenow.com   |
 
-### Payment Emails (`lib/email.ts`)
+### Payment Emails (`lib/email/index.ts`)
 
-| Function                                                                                                                         | Subject                                        | From                     |
-| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | ------------------------ |
-| `sendPaymentLinkEmail({email, name, consultantName, appointmentType, amount, currency, paymentUrl, expiresAt})`                  | "Payment Required - {Type} with {Consultant}"  | payments@familiarise.com |
-| `sendPaymentSuccessEmail({email, name, consultantName, appointmentType, amount, currency, receiptUrl?, dashboardUrl?})`          | "Payment Confirmed - {Type} with {Consultant}" | payments@familiarise.com |
-| `sendPaymentFailedEmail({email, name, consultantName, appointmentType, amount, currency, retryUrl, failureReason?, expiresAt?})` | "Payment Failed - {Type} with {Consultant}"    | payments@familiarise.com |
+| Function                                                                                                                         | Subject                                        | From                             |
+| -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | -------------------------------- |
+| `sendPaymentLinkEmail({email, name, consultantName, appointmentType, amount, currency, paymentUrl, expiresAt})`                  | "Payment Required - {Type} with {Consultant}"  | payments@mail.familiarisenow.com |
+| `sendPaymentSuccessEmail({email, name, consultantName, appointmentType, amount, currency, receiptUrl?, dashboardUrl?})`          | "Payment Confirmed - {Type} with {Consultant}" | payments@mail.familiarisenow.com |
+| `sendPaymentFailedEmail({email, name, consultantName, appointmentType, amount, currency, retryUrl, failureReason?, expiresAt?})` | "Payment Failed - {Type} with {Consultant}"    | payments@mail.familiarisenow.com |
+
+### Organization and Waitlist Emails (`lib/email/index.ts`)
+
+| Function                                                                             | Subject                                           | From                                  |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------- | ------------------------------------- |
+| `sendOrgInvitationEmail({email, inviterName, orgName, role, inviteUrl, expiresAt?})` | "You're invited to join {orgName} on Familiarise" | notifications@mail.familiarisenow.com |
+| `sendWaitlistConfirmEmail({email, confirmUrl})`                                      | Double opt-in confirmation                        | newsletter@news.familiarisenow.com    |
+| `sendWaitlistWelcomeEmail({email, name})`                                            | Waitlist welcome after confirmation               | newsletter@news.familiarisenow.com    |
+
+### Contact Inquiry (`lib/email/index.ts`)
+
+`sendContactInquiryEmail({firstName, lastName, email, phone?, subject, message, category?})` routes a `/contactus` submission to `contactInboxAddress()` (defaults to `supportEmail()`) with the visitor's address on Reply-To. It builds an inline HTML table rather than rendering a React Email template, and inherits the same `FailedEmail` retry path as every other sender, so a Resend outage does not lose the lead.
 
 ### POST /api/novu/subscriber
 

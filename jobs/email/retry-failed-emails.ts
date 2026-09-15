@@ -1,18 +1,21 @@
 /**
  * #474 — Transactional-email retry worker.
  *
- * Drains `FailedEmail` rows that lib/email.ts dead-lettered when a Resend
+ * Drains `FailedEmail` rows that lib/email/deliver.ts dead-lettered when a Resend
  * send failed (status PENDING on first persist, RETRY on any subsequent
  * scheduled attempt) and whose `nextRetryAt` is now or earlier. One tick:
  *
  *   1. Picks up to `MAX_BATCH` rows ordered by `nextRetryAt ASC NULLS FIRST`.
- *   2. RE-SENDS the stored message verbatim — `resend.emails.send` with the
+ *   2. Dead-letters a row whose link has expired (EMAIL_TTL_MS) without a
+ *      send — the token is useless by now (#1298).
+ *   3. RE-SENDS the stored message verbatim — `resend.emails.send` with the
  *      persisted html/text/subject/from/replyTo. NO dispatcher, NO re-render:
  *      the row IS the rendered message, so retry can't drift from the original.
- *   3. Records the outcome:
+ *   4. Records the outcome:
  *        - success → status=SENT, sentAt=now.
  *        - failure → status=RETRY with the next backoff slot, OR
- *          status=DEAD_LETTER if we just used the last attempt (5).
+ *          status=DEAD_LETTER if we just used the last attempt (5) or the
+ *          error is terminal (#1298: dead key, unverified domain).
  *
  * Backoff schedule (mirrors the outbound-webhook worker)
  * ------------------------------------------------------
@@ -35,7 +38,14 @@
 import prisma from "@/lib/prisma";
 import type { FailedEmail, Prisma } from "@prisma/client";
 import { Resend } from "resend";
-import { DEFAULT_FROM_ADDRESS } from "@/lib/email";
+import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
+import {
+  EMAIL_TTL_MS,
+  isExpiredForReplay,
+  resendErrorText,
+  terminalSendReason,
+} from "@/lib/email/classify";
+import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -121,22 +131,47 @@ export async function runEmailRetryTick(params: {
   for (const row of dueRows) {
     result.scanned += 1;
 
+    // #1298 — a verification or reset link outlives its token only as spam:
+    // dead-letter it without a send (and without paging) once the TTL passed.
+    if (isExpiredForReplay(row.emailType, row.createdAt, nowDate)) {
+      const minutes = Math.round(EMAIL_TTL_MS[row.emailType] / 60_000);
+      await prisma.failedEmail.update({
+        where: { id: row.id },
+        data: {
+          status: "DEAD_LETTER",
+          lastError: `expired before delivery: ${row.emailType} links are valid for ${minutes} minutes`,
+        },
+      });
+      result.deadLettered += 1;
+      continue;
+    }
+
     let sendError: string | undefined;
     try {
       // Verbatim re-send of the stored rendered message. No dispatcher, no
       // re-render: replay exactly what the original sender handed Resend.
-      const result = await emails.send({
-        from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
-        to: row.recipient,
-        subject: row.subject,
-        html: row.htmlBody,
-        text: row.textBody ?? undefined,
-        replyTo: row.replyTo ?? undefined,
-      });
+      // #1298 — the same key the sender derived, so a replay of a send whose
+      // response was lost is deduplicated by Resend instead of doubled.
+      const result = await emails.send(
+        {
+          from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
+          to: row.recipient,
+          subject: row.subject,
+          html: row.htmlBody,
+          text: row.textBody ?? undefined,
+          replyTo: row.replyTo ?? undefined,
+        },
+        {
+          idempotencyKey: idempotencyKeyFor(
+            { to: row.recipient, subject: row.subject, html: row.htmlBody },
+            row.emailType,
+          ),
+        },
+      );
       // Resend resolves (does not throw) on API-level errors — a non-null
       // `error` is still a failure, so it must not be mistaken for a success.
       if (result.error) {
-        sendError = result.error.message || "Resend API error";
+        sendError = resendErrorText(result.error);
       }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
@@ -159,7 +194,18 @@ export async function runEmailRetryTick(params: {
     const attemptNumber = row.attempts + 1;
     const nextAttemptNumber = attemptNumber + 1;
 
-    if (attemptNumber >= MAX_ATTEMPTS) {
+    // #1298 — a dead key or unverified domain fails every attempt the same
+    // way: dead-letter now and page once per reason, not once per row.
+    const terminalReason = terminalSendReason(sendError);
+    if (terminalReason) {
+      Sentry.captureMessage(`email retry hit a terminal error: ${sendError}`, {
+        level: "error",
+        fingerprint: ["email-retry-terminal", terminalReason],
+        tags: { subsystem: "email", emailType: row.emailType },
+      });
+    }
+
+    if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
       // DEAD_LETTER: retries exhausted, terminal but operator-replayable
       // (the rendered message is still on the row — see optional replay route).
       await prisma.failedEmail.update({

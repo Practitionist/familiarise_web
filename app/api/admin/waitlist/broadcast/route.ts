@@ -10,7 +10,10 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { getResendClient, recordFailedEmail } from "@/lib/email";
+import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
+import { createHash } from "node:crypto";
+import { resendErrorText } from "@/lib/email/classify";
+import { companyPostalAddress } from "@/lib/email/config";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -21,7 +24,6 @@ const sendSchema = z.object({
 });
 
 const BATCH_SIZE = 100;
-const FROM_ADDRESS = "Familiarise <newsletter@familiarise.com>";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
@@ -37,6 +39,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     const { subject, htmlBody, textBody } = parsed.data;
+
+    // #1298 — a marketing send without a postal address is not compliant
+    // (CAN-SPAM §5(a)(5)); refuse in production rather than ship it bare.
+    if (process.env.NODE_ENV === "production" && !companyPostalAddress()) {
+      return NextResponse.json(
+        {
+          error:
+            "NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS is not set; newsletter sends need a postal address in the footer",
+        },
+        { status: 412 },
+      );
+    }
 
     const resend = getResendClient();
     if (!resend) {
@@ -109,7 +123,7 @@ function buildMessage(
 ) {
   const unsubscribeUrl = buildUnsubscribeUrl(email);
   return {
-    from: FROM_ADDRESS,
+    from: SENDERS.newsletter,
     to: email,
     subject,
     html: appendUnsubscribeFooter(htmlBody, unsubscribeUrl),
@@ -131,9 +145,13 @@ async function sendBatch(
   emails: BroadcastMessage[],
 ): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
   try {
-    const result = await resend.batch.send(emails);
+    // #1298 — one key per batch request, derived from its content like the
+    // single-send path, so an admin re-submit inside 24 h cannot double-send.
+    const result = await resend.batch.send(emails, {
+      idempotencyKey: batchIdempotencyKey(emails),
+    });
     if (result.error) {
-      throw new Error(result.error.message || "Resend batch error");
+      throw new Error(resendErrorText(result.error));
     }
     return { ok: true, sent: result.data?.data?.length ?? emails.length };
   } catch (batchError) {
@@ -158,12 +176,16 @@ async function sendBatch(
 }
 
 function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
+  const line = `style="font-size:12px;color:#666;margin:10px 0;line-height:1.5"`;
+  // #1298 — same postal line EmailFooter renders, so marketing mail carries it.
+  const postal = companyPostalAddress();
+  const postalLine = postal ? `\n  <p ${line}>${escapeHtml(postal)}</p>` : "";
   const footer = `
 <div style="text-align:center;margin:30px 0 0;padding:20px 0;border-top:1px solid #eee">
-  <p style="font-size:12px;color:#666;margin:10px 0;line-height:1.5">
+  <p ${line}>
     &copy; ${new Date().getFullYear()} Familiarise. All rights reserved.
-  </p>
-  <p style="font-size:12px;color:#666;margin:10px 0;line-height:1.5">
+  </p>${postalLine}
+  <p ${line}>
     You received this because you joined the Familiarise waitlist.
     <br/>
     <a href="${unsubscribeUrl}" style="color:#666;text-decoration:underline">Unsubscribe</a>
@@ -175,4 +197,21 @@ function appendUnsubscribeFooter(html: string, unsubscribeUrl: string): string {
   if (html.includes("</html>"))
     return html.replace("</html>", `${footer}</html>`);
   return html + footer;
+}
+
+function batchIdempotencyKey(emails: BroadcastMessage[]): string {
+  // Every field Resend compares (to, subject, html, text) per recipient, in
+  // code-point order — a text-only correction must not collide for 24 h (409).
+  const payloads = emails
+    .map((e) => JSON.stringify([e.to, e.subject, e.html, e.text ?? ""]))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const digest = createHash("sha256").update(payloads.join("\n")).digest("hex");
+  return `WAITLIST_BROADCAST/${digest.slice(0, 48)}`;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
