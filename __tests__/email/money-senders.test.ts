@@ -75,7 +75,7 @@ it("stageRefundProcessedEmail reads and stages through tx, and never attempts", 
   const staged = await stageRefundProcessedEmail(tx as never, {
     userId: "payer_1",
     paymentId: "pay_1",
-    amountPaise: 120000n,
+    amountPaise: BigInt(120000),
     currency: "INR",
   });
 
