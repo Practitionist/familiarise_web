@@ -14,6 +14,7 @@ import {
   FormLabel,
   FormMessage,
   FormDescription,
+  RequiredMark,
 } from "@/components/ui/form";
 import { Plus, Trash2, GripVertical } from "lucide-react";
 import { cn } from "@/utils/tailwind";
@@ -36,6 +37,8 @@ interface StringListFieldProps<T extends FieldValues = FieldValues> {
   itemNoun?: string;
   maxItems?: number;
   className?: string;
+  /** Required to publish — appends `*` to the label. */
+  required?: boolean;
 }
 
 export function StringListField<T extends FieldValues = FieldValues>({
@@ -47,6 +50,7 @@ export function StringListField<T extends FieldValues = FieldValues>({
   itemNoun = "items",
   maxItems = 10,
   className,
+  required,
 }: Readonly<StringListFieldProps<T>>) {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -97,8 +101,12 @@ export function StringListField<T extends FieldValues = FieldValues>({
   };
 
   return (
-    <FormItem className={className}>
-      <FormLabel>{label}</FormLabel>
+    // Capped like text inputs: full-grid lists stretch past readable measure.
+    <FormItem className={cn("max-w-2xl", className)}>
+      <FormLabel>
+        {label}
+        {required && <RequiredMark />}
+      </FormLabel>
       {description && <FormDescription>{description}</FormDescription>}
 
       <div className="flex gap-2">

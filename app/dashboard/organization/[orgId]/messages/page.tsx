@@ -1,7 +1,6 @@
 import { notFound } from "next/navigation";
 
 import { requireOrgAccess } from "@/lib/auth-helpers";
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import StreamProvider from "@/providers/StreamProvider";
 
 import { MessagesClient } from "./MessagesClient";
@@ -41,13 +40,11 @@ export default async function OrgMessagesPage({
 
   return (
     <>
-      <DashboardHeader
-        title="Messages"
-        subtitle="Your conversations about this organization's sessions."
-      />
-      {/* Full-bleed: cancel the scaffold padding so the chat fills the column
-          under the context bar, matching the personal Messages tabs. */}
-      <div className="-mx-4 h-[calc(100dvh-3.5rem-4rem-var(--maintenance-banner-height,0px))] overflow-hidden border-border bg-card sm:-mx-6 md:h-[calc(100dvh-3.5rem-var(--maintenance-banner-height,0px))] lg:-mx-8">
+      {/* Full-bleed, no page header: cancels the org shell's flat p-6 so the
+          chat fills the column under the context bar exactly like the personal
+          Messages tabs (the breadcrumb already says Messages). A header above
+          a viewport-height panel is what pushed its bottom off-screen. */}
+      <div className="-m-6 h-dashboard-fill overflow-hidden border-border bg-card">
         <StreamProvider userId={userId} enableChat={true} enableVideo={false}>
           <MessagesClient />
         </StreamProvider>

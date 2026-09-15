@@ -225,6 +225,64 @@ describe("dashboard shell overflow contract", () => {
     }
   });
 
+  it("full-height surfaces share .h-dashboard-fill, which subtracts both banners", () => {
+    // One budget for every viewport-height page (messages, calendars,
+    // skeletons): context bar, the mobile tab bar below md, the maintenance
+    // banner and the shell banner (verification / org status). A page that
+    // hand-rolls its own calc forgets a term and its bottom edge lands under
+    // the fold — the org Messages panel did exactly that.
+    const css = read("app/globals.css");
+    const rule = extractCssRule(css, ".h-dashboard-fill");
+    expect(rule).toContain("100dvh");
+    expect(rule).toContain("--maintenance-banner-height");
+    expect(rule).toContain("--dashboard-banner-height");
+    for (const rel of [
+      "app/dashboard/organization/[orgId]/messages/page.tsx",
+      "app/dashboard/consultant/[consultantId]/(features)/messages/MessagesTab.tsx",
+      "app/dashboard/consultee/[consulteeId]/(features)/messages/MessagesTab.tsx",
+      "components/dashboard/DashboardViewportFill.tsx",
+      "components/dashboard/DashboardSkeletons.tsx",
+    ]) {
+      const src = read(rel);
+      expect(src).toContain("h-dashboard-fill");
+      expect(src).not.toContain("100dvh");
+    }
+    // The org page renders no header above the panel (that is what overflowed).
+    expect(
+      read("app/dashboard/organization/[orgId]/messages/page.tsx"),
+    ).not.toContain("DashboardHeader");
+    // Both shells that can show a banner feed its height to the variable.
+    for (const rel of [
+      "components/dashboard/PersonalDashboardShell.tsx",
+      "app/dashboard/organization/[orgId]/OrgDashboardShell.tsx",
+    ]) {
+      expect(read(rel)).toContain(
+        'useCssVarHeight("--dashboard-banner-height")',
+      );
+    }
+  });
+
+  it("OfferingEditor sections are real tabs with every panel mounted", () => {
+    // The strip used to be scroll-spy jump links over one long form: the
+    // trailing sections could never top-align and the highlight disagreed
+    // with what was under the sticky band. forceMount keeps every field
+    // registered so validation survives a hidden panel; the editor opens the
+    // first tab that owns an error instead of failing silently.
+    const editor = read("components/offerings/editor/OfferingEditor.tsx");
+    expect(editor).toContain("<TabsContent");
+    expect(editor).toContain("forceMount");
+    expect(editor).toContain("revealFirstError");
+    expect(editor).not.toContain("IntersectionObserver");
+    expect(editor).not.toContain("scrollIntoView");
+    // The sticky band is the page's only title: no second h1 from the page.
+    for (const rel of [
+      "app/dashboard/consultant/[consultantId]/(features)/offerings/[type]/new/page.tsx",
+      "app/dashboard/organization/[orgId]/catalog/[type]/new/page.tsx",
+    ]) {
+      expect(read(rel)).not.toContain("DashboardHeader");
+    }
+  });
+
   it("HelpSkeleton does not nest min-h-screen inside the shell", () => {
     const fn = extractFunction(
       read("components/dashboard/DashboardSkeletons.tsx"),

@@ -849,9 +849,11 @@ export const ChatSidebar = () => {
 
             {directMessages.length === 0 && !hasMoreDMChannels && (
               <div className="p-4 text-center text-muted-foreground text-sm">
-                {isConsultant
-                  ? "No conversations yet. Conversations will appear here once clients book sessions."
-                  : "No conversations yet. Book a consultation to start chatting."}
+                {scopeOrgId(scope)
+                  ? "No conversations yet. Threads appear here once you're part of a session in this organization."
+                  : isConsultant
+                    ? "No conversations yet. Conversations will appear here once clients book sessions."
+                    : "No conversations yet. Book a consultation to start chatting."}
               </div>
             )}
 
