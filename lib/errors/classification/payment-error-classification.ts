@@ -203,6 +203,8 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
   code: string;
   errorType: ErrorType;
   httpStatus: number;
+  /** Replaces the thrown message when that message names ids or internals. */
+  userMessage?: string;
 }> = [
   {
     code: "GATEWAY_DISABLED",
@@ -295,6 +297,16 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.WALLET_INSUFFICIENT_FUNDS,
     httpStatus: 402,
   },
+  // FAMILIARISE_WEB-3J — `RefundError("NO_PAYMENT_FOUND")` is the gateway
+  // saying the order was never paid: a refusal the operator can act on, not a
+  // fault, so it must never fall through to 500 UNKNOWN_ERROR.
+  {
+    code: "NO_PAYMENT_FOUND",
+    errorType: ErrorTypes.REFUND_BLOCKED,
+    httpStatus: 409,
+    userMessage:
+      "We couldn't process the refund automatically; support has been notified.",
+  },
 ] as const;
 
 /**
@@ -334,7 +346,7 @@ function classifyByErrorCode(error: Error): ClassifiedError | undefined {
   const typed = BUSINESS_ERROR_CODES.find((entry) => entry.code === code);
   if (!typed) return undefined;
   return {
-    errorMessage: error.message,
+    errorMessage: typed.userMessage ?? error.message,
     errorType: typed.errorType,
     isBusinessError: true,
     httpStatus: typed.httpStatus,

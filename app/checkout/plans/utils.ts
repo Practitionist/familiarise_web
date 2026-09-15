@@ -2,6 +2,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
@@ -11,6 +12,9 @@ import { PaymentGateway } from "@prisma/client";
 // unexpected error the same way; centralising it removed the repeated
 // three-line block flagged as duplication rather than leaving the copies.
 export function reportPaymentsError(error: unknown): void {
+  // A refusal (a time not picked, a 4xx answer) is shown, never captured
+  // (FAMILIARISE_WEB-3X).
+  if (isExpectedRefusal(error)) return;
   Sentry.captureException(
     error instanceof Error ? error : new Error(String(error)),
     {

@@ -27,6 +27,11 @@ import {
 } from "@/utils/scheduling-engine/interval-validation";
 import { formatSlotsForApi } from "@/utils/schedule/formatting";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  isExpectedRefusal,
+  userMessageFrom,
+} from "@/lib/errors/client-refusal";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import type { SlotsType } from "@/utils/schedule/types";
 import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
@@ -482,9 +487,10 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         body: JSON.stringify(updatedData),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to update settings");
-      }
+      // The route answers its validation refusals as 400s with a sentence
+      // ("Cannot switch schedule type while…"); dropping the body turned every
+      // one of them into a captured fault and a blank toast (FAMILIARISE_WEB-2T).
+      await requireJsonResponse(response, "Failed to update settings");
 
       // Refetch the consultant data to show what was actually saved
       const updatedResponse = await fetch(
@@ -513,15 +519,19 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       // regression lands here instead of silently shipping a short or empty
       // availability payload. Worth capturing: the consultant sees a retry toast
       // and would otherwise be the only one who ever knew. (#1125)
-      reportSentryError(error, {
-        subsystem: "consultants",
-        op: "SettingsTab.save",
-        extra: { consultantId: consultant.id, scheduleType },
-      });
+      if (!isExpectedRefusal(error)) {
+        reportSentryError(error, {
+          subsystem: "consultants",
+          op: "SettingsTab.save",
+          extra: { consultantId: consultant.id, scheduleType },
+        });
+      }
       console.error("Error updating settings:", error);
       toast({
         title: "Error",
-        description: "Failed to update settings. Please try again.",
+        description: isExpectedRefusal(error)
+          ? userMessageFrom(error)
+          : "Failed to update settings. Please try again.",
         variant: "destructive",
       });
     } finally {

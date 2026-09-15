@@ -8,6 +8,7 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsulteeEvents } from "@/lib/appointments/map-consultee";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
@@ -15,7 +16,8 @@ import { useConsulteeAppointmentsAdapter } from "@/components/appointments/consu
 
 export default function AppointmentsPageClient({
   consulteeId,
-}: Readonly<{ consulteeId: string }>) {
+  viewerZone,
+}: Readonly<{ consulteeId: string; viewerZone: ViewerZone }>) {
   const eventsQuery = createConsulteeQueries(consulteeId).events;
   // keepPreviousData: refetches show the previous list while the new one
   // loads instead of a skeleton flash (documents-page idiom, #346).
@@ -58,7 +60,11 @@ export default function AppointmentsPageClient({
             }
           />
         ) : (
-          <AppointmentsShell vms={vms} adapter={adapter} />
+          <AppointmentsShell
+            vms={vms}
+            adapter={adapter}
+            viewerZone={viewerZone}
+          />
         )}
       </div>
     </DashboardErrorBoundary>
