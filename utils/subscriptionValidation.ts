@@ -145,9 +145,12 @@ export class SubscriptionValidationService {
     );
 
     result.weeklyInfo = weeklyInfo;
-    // Total calls are determined by counting completed weeks (auto-completed) plus any scheduled/proposed calls within the current and future weeks
+    // Total calls are determined by counting completed weeks (auto-completed) plus any scheduled/proposed calls within the current and future weeks.
+    // Both arms count: the weekly gate above compares existing+proposed per
+    // week, so the plan-total gate must do the same or an over-total spread
+    // across weeks passes validation and oversells the subscription.
     result.totalCallsScheduled = weeklyInfo.reduce(
-      (sum, w) => sum + w.existingCalls,
+      (sum, w) => sum + w.existingCalls + w.proposedCalls,
       0,
     );
 

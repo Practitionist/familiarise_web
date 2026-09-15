@@ -143,7 +143,25 @@ export class AllocationService {
         body: JSON.stringify(request),
       });
 
-      const data = await response.json();
+      // The error body is not always JSON — edge 504s/HTML under spikes throw
+      // out of response.json(). Parse defensively but ALWAYS propagate the
+      // HTTP status, so callers can still take the 409/allocated-elsewhere
+      // branch instead of reporting a status-less network error.
+      let data: {
+        error?: string;
+        errorCode?: string;
+        data?: AllocatedAppointmentDto[];
+        partial?: boolean;
+        placedSessions?: number;
+        requiredSessions?: number;
+        unplacedSessions?: number;
+        placeableSessions?: number;
+      } = {};
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
 
       if (!response.ok) {
         return {
