@@ -85,6 +85,17 @@ The Novu environment holds one workflow per family, not one per event; a family 
 | `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted, org-sso-cert-expiring                                                                                                                  |
 | `org-program`    | org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                           |
 
+### Email twins (#1653)
+
+Six events in the `refund` and `org-billing` families have an email twin since #1653: a React Email template under `emails/` sent by `lib/email/senders/money.ts` alongside the in-app bell, to the same recipients, gated by the same preference category, and never able to fail the request or job that rang the bell. The list below records each pairing.
+
+- `refund-processed` — Email twin: `REFUND_PROCESSED` (`emails/payments/RefundProcessedEmail.tsx`), to the payer from `payments@`, category `payments`; the body repeats the 5–7 working days line, cites the credit-note number when the caller has one, and links `/refund`.
+- `refund-failed` — Email twin: `REFUND_FAILED` (`emails/payments/RefundFailedEmail.tsx`), to the payer from `payments@`, category `payments`; the CTA is a `mailto:` to the support inbox because that is the only address on the domain that can receive mail (#1649).
+- `org-invoice-overdue` — Email twin: `ORG_INVOICE_OVERDUE` (`emails/orgs/OrgInvoiceOverdueEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`; the due date renders in each recipient's zone and the reminder number matches the dunning stage.
+- `org-wallet-low` — Email twin: `ORG_WALLET_LOW` (`emails/orgs/OrgWalletLowEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`.
+- `org-payout-failed` and `org-payout-reversed` — Email twin: `ORG_PAYOUT_FAILED` (`emails/orgs/OrgPayoutFailedEmail.tsx`), one template branching on `kind`, to the visibility roster from `finance@`, category `orgBilling`.
+- `org-program-overage-due` — Email twin: `ORG_PROGRAM_OVERAGE_DUE` (`emails/orgs/OrgOverageDueEmail.tsx`), to the member from `finance@`, category `orgBilling`, awaited inside the same post-commit helper as the bell.
+
 ---
 
 ## Design Notes
@@ -111,6 +122,7 @@ In the Novu editor, replicate this using their visual builder or paste the HTML 
 **Trigger function**: `notifyAppointmentBooked(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_BOOKED` (`emails/booking/AppointmentBookedEmail.tsx`), sent by `sendAppointmentBookedEmail()` / staged by `stageAppointmentBookedEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -208,6 +220,7 @@ Booking Confirmed — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentCancelled(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_CANCELLED` (`emails/booking/AppointmentCancelledEmail.tsx`), sent by `sendAppointmentCancelledEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentCancelledPayload`):
 
@@ -306,6 +319,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentReminder(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` inside the same Redis guard as this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -578,6 +592,7 @@ Payment Failed — Action Required
 **Trigger function**: `notifyNewBookingRequest(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `appointments`
+**Email twin**: `NEW_BOOKING_REQUEST` (`emails/booking/NewBookingRequestEmail.tsx`), sent by `sendNewBookingRequestEmail()` right after this bell (#1653).
 
 **Payload variables** (`BookingRequestPayload`):
 
@@ -846,6 +861,7 @@ New Trial Request — {{payload.planTitle}}
 **Trigger function**: `notifyTrialScheduled(consulteeUserId, payload)`
 **Recipient**: Consultee only
 **Preference category**: `trials`
+**Email twin**: `TRIAL_SESSION_SCHEDULED` (`emails/booking/TrialScheduledEmail.tsx`), sent by `sendTrialScheduledEmail()` to both parties right after this bell (#1653).
 
 **Payload variables** (`TrialPayload`):
 
@@ -1126,6 +1142,7 @@ New Support Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketUpdate(userId, payload)`
 **Recipient**: The ticket's owner, when ops changes its status
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_UPDATE` (`emails/support/SupportTicketUpdateEmail.tsx`), sent by `sendSupportTicketUpdateEmail()` right after this bell from both staff routes (#1653); the body adds a next-step sentence per status.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1195,6 +1212,7 @@ Ticket Activity — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketResponse(userId, payload)`
 **Recipient**: Ticket creator (user)
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_RESPONSE` (`emails/support/SupportTicketResponseEmail.tsx`), sent by `sendSupportTicketResponseEmail()` right after this bell (#1653); the inbox preview is the reply's first 140 characters, the same truncation the bell applies.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1269,6 +1287,7 @@ Update on Your Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifyNewReview(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `feedback`
+**Email twin**: `NEW_REVIEW_RECEIVED` (`emails/reviews/NewReviewEmail.tsx`), sent by `sendNewReviewEmail()` right after this bell with the same anonymised reviewer name and a 140-character excerpt (#1653).
 
 **Payload variables** (`ReviewPayload`):
 
@@ -1442,7 +1461,7 @@ verification-status-changed
 
 These need Dashboard configuration after Tier 1 is done:
 
-- `appointment-rescheduled` — AppointmentRescheduledPayload
+- `appointment-rescheduled` — AppointmentRescheduledPayload. Email twin: `APPOINTMENT_RESCHEDULED` (`emails/booking/AppointmentRescheduledEmail.tsx`), sent by `sendAppointmentRescheduledEmail()` right after each of the four bells with the same `outcome` (#1653); the PROPOSED copy names the reschedule request's `expiresAt` as the deadline.
 - `appointment-completed` — AppointmentPayload
 - `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload
@@ -1455,3 +1474,7 @@ These need Dashboard configuration after Tier 1 is done:
 - `new-consultant-application` — ConsultantApplicationPayload
 - `document-uploaded` — DocumentUploadedPayload (`lib/novu/workflows.ts`). In-app + email to the reviewer (consultant) on a new submission, or to the uploader on a consultant response. Payload carries `versionNo` + `isThreaded` so copy can say "Revision v3 uploaded" vs "New document".
 - `document-reviewed` — DocumentReviewedPayload. In-app to the consultee when their submission moves status; templates branch on `reviewStatus` (APPROVED / REJECTED / NEEDS_REVISION / IN_REVIEW). Both workflows must exist in the Novu dashboard with matching slugs before enabling in production.
+- `account-suspended` — the suspended user, no preference category. Email twin: `ACCOUNT_SUSPENDED` (`emails/account/AccountSuspendedEmail.tsx`), sent by `sendAccountSuspendedEmail()` right after this bell inside the moderation side-effects (#1653); a required notice with the end date in the user's zone, the reason, the cancelled-appointment count and a `mailto:` CTA to support.
+- `account-banned` — the banned user, no preference category. Email twin: `ACCOUNT_BANNED` (`emails/account/AccountBannedEmail.tsx`), sent by `sendAccountBannedEmail()` right after this bell (#1653); the suspension notice without an end date.
+- `org-invite-sent` — the invitee by email, no preference row to read. Email twin: `ORG_INVITATION` (`emails/organizations/OrgInvitationEmail.tsx`), sent by `sendOrgInvitationEmail()` right after this bell from the invitations route and the bulk import (#1653); the bell reaches an invitee who already has an account and the email reaches one who does not, so both are awaited.
+- `org-sso-cert-expiring` — the org's OWNER roster. Email twin: `ORG_SSO_CERT_EXPIRING` (`emails/organizations/OrgSsoCertExpiringEmail.tsx`), sent by `sendOrgSsoCertExpiringEmail()` right after this bell from the certificate sweep to the same roster (#1653); a required notice whose subject switches on `severity`.

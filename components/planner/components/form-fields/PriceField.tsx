@@ -19,6 +19,7 @@ import {
   FormLabel,
   FormMessage,
   FormDescription,
+  RequiredMark,
 } from "@/components/ui/form";
 import { cn } from "@/utils/tailwind";
 
@@ -38,6 +39,8 @@ interface PriceFieldProps<T extends FieldValues = FieldValues> {
   description?: string;
   currencies?: string[];
   className?: string;
+  /** Required to publish — appends `*` to the label. */
+  required?: boolean;
 }
 
 export function PriceField<T extends FieldValues = FieldValues>({
@@ -48,6 +51,7 @@ export function PriceField<T extends FieldValues = FieldValues>({
   description,
   currencies = DEFAULT_CURRENCIES,
   className,
+  required,
 }: Readonly<PriceFieldProps<T>>) {
   const {
     field: priceField,
@@ -71,7 +75,10 @@ export function PriceField<T extends FieldValues = FieldValues>({
 
   return (
     <FormItem className={className}>
-      <FormLabel>{label}</FormLabel>
+      <FormLabel>
+        {label}
+        {required && <RequiredMark />}
+      </FormLabel>
       {description && <FormDescription>{description}</FormDescription>}
 
       <div className="flex gap-2">

@@ -51,6 +51,20 @@ jest.mock("../../lib/novu", () => ({
   notifyAccountBanned: jest.fn(async () => ({ success: true })),
   notifyVerificationStatusChanged: jest.fn(async () => ({ success: true })),
 }));
+// #1653 — the email twins beside the bells; the prisma mock has no `user`.
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { REQUEST: 5_000 },
+  sendAccountSuspendedEmail: jest.fn(async () => ({
+    sent: 1,
+    skipped: 0,
+    failed: 0,
+  })),
+  sendAccountBannedEmail: jest.fn(async () => ({
+    sent: 1,
+    skipped: 0,
+    failed: 0,
+  })),
+}));
 
 jest.mock("../../lib/moderation/cancel-user-engagements", () => ({
   __esModule: true,

@@ -16,6 +16,7 @@
 
 import type { CancellationReason, SupportTicketStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
+import { ZONE_ABBREVIATION } from "@/lib/time/viewer-zone";
 import {
   formatCurrencyAmount,
   formatCurrencyAmountBare,
@@ -31,10 +32,6 @@ export const DEFAULT_NOTIFICATION_TIMEZONE = "Asia/Kolkata";
  * abbreviation (EDT, AEST, …) is both correct and unambiguous, so only the
  * zones this platform actually defaults to are overridden here.
  */
-const ZONE_ABBREVIATION: Record<string, string> = {
-  "Asia/Kolkata": "IST",
-  "Asia/Calcutta": "IST",
-};
 
 /** A junk zone throws inside Intl, which would turn a notification into a 500. */
 function isRenderableTimezone(timezone: string): boolean {

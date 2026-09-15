@@ -23,7 +23,12 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
-import { notifyOrgWalletLow } from "@/lib/novu/org-workflows";
+import {
+  notifyOrgWalletLow,
+  rosterForOrg,
+  VISIBILITY_ROLES,
+} from "@/lib/novu/org-workflows";
+import { sendOrgWalletLowEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -93,6 +98,23 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
     }).catch((err) =>
       console.error("[wallet-low-balance] notify failed:", err),
     );
+    // #1653 — the email twin, to the roster the bell resolves. The roster
+    // lookup is the one call here that can throw, and the loop must outlive it.
+    const roster = await rosterForOrg(ba.ownerOrgId, VISIBILITY_ROLES).catch(
+      (err): string[] => {
+        console.error("[wallet-low-balance] roster lookup failed:", err);
+        return [];
+      },
+    );
+    await sendOrgWalletLowEmail({
+      recipientUserIds: roster,
+      organizationId: ba.ownerOrgId,
+      orgName: ba.organization?.name ?? "",
+      balancePaise: balance,
+      minimumPaise: minimum,
+      currency: ba.currency,
+      topUpUrl: `${getAppUrl()}/dashboard/organization/${ba.ownerOrgId}/billing`,
+    });
   }
 
   return stats;

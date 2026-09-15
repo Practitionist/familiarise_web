@@ -43,6 +43,12 @@ import {
 } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
+import {
+  EMAIL_BUDGET_MS,
+  refundOnItsWay,
+  sendAppointmentCancelledEmail,
+  sendRefundProcessedEmail,
+} from "../../lib/email";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -546,6 +552,26 @@ async function notifyNoShowParties(
     },
   ).catch((e) => console.error(`[no-show] cancellation notify failed:`, e));
 
+  // #1653 — the email twin of the bell above; the refund line goes to the
+  // consultee alone. The sender never throws, so the catch is the same
+  // belt-and-braces the bell wears.
+  await sendAppointmentCancelledEmail(
+    {
+      appointmentId: party.appointmentId,
+      userIds: [party.consultantUserId, party.consulteeUserId],
+      startsAt: consultation.appointment?.occurrences?.[0]?.startsAt ?? null,
+      cancelledBy: "Familiarise",
+      reason: "Consultant did not attend the scheduled session.",
+      refundText:
+        refundedPaise > 0 && paidPayment
+          ? refundOnItsWay(refundedPaise, paidPayment.currency)
+          : undefined,
+      refundUserIds: [party.consulteeUserId],
+      dashboardUrl,
+    },
+    EMAIL_BUDGET_MS.JOB,
+  ).catch((e) => console.error(`[no-show] cancellation email failed:`, e));
+
   if (refundedPaise > 0 && paidPayment) {
     await notifyRefundProcessed(party.consulteeUserId, {
       ...notificationScope(noShowOrgId),
@@ -556,6 +582,17 @@ async function notifyNoShowParties(
       consultantName,
       dashboardUrl,
     }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundProcessedEmail(
+      {
+        userId: party.consulteeUserId,
+        paymentId: paidPayment.id,
+        amountPaise: refundedPaise,
+        currency: paidPayment.currency,
+        planTitle,
+      },
+      { budgetMs: EMAIL_BUDGET_MS.JOB },
+    );
   }
 }
 

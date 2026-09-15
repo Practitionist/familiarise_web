@@ -21,6 +21,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
+  RequiredMark,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -76,7 +77,9 @@ function renderControl<T extends FieldValues = FieldValues>(
       return (
         <Textarea
           placeholder={spec.placeholder}
-          className="min-h-24"
+          // Long-form reads best under ~75 characters a line; uncapped it
+          // spans the full 1008px grid and the eye loses the line.
+          className="min-h-24 max-w-2xl"
           {...field}
           value={field.value ?? ""}
         />
@@ -153,6 +156,7 @@ function renderControl<T extends FieldValues = FieldValues>(
       return (
         <Input
           placeholder={spec.placeholder}
+          className="max-w-2xl"
           {...field}
           value={field.value ?? ""}
         />
@@ -199,6 +203,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           currencyName={spec.currencyName ?? "priceCurrency"}
           label={spec.label}
           description={spec.description}
+          required={spec.required}
         />
       </div>
     );
@@ -213,6 +218,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           label={spec.label}
           description={spec.description}
           maxItems={spec.maxItems}
+          required={spec.required}
         />
       </div>
     );
@@ -228,6 +234,7 @@ export function OfferingField<T extends FieldValues = FieldValues>({
           description={spec.description}
           itemNoun={spec.itemNoun}
           maxItems={spec.maxItems}
+          required={spec.required}
         />
       </div>
     );
@@ -239,10 +246,25 @@ export function OfferingField<T extends FieldValues = FieldValues>({
       name={spec.name as never}
       render={({ field }) => (
         <FormItem className={span}>
-          {spec.label && <FormLabel>{spec.label}</FormLabel>}
-          <FormControl>
-            {renderControl(spec, field, planId, planImageType)}
-          </FormControl>
+          {spec.label && (
+            <FormLabel>
+              {spec.label}
+              {spec.required && <RequiredMark />}
+            </FormLabel>
+          )}
+          {spec.kind === "switch" ? (
+            // A switch is inline, so it sat on the label's line; the h-9 row
+            // stacks it under the label at the same height as its neighbours.
+            <div className="flex h-9 items-center">
+              <FormControl>
+                {renderControl(spec, field, planId, planImageType)}
+              </FormControl>
+            </div>
+          ) : (
+            <FormControl>
+              {renderControl(spec, field, planId, planImageType)}
+            </FormControl>
+          )}
           {spec.description && (
             <FormDescription>{spec.description}</FormDescription>
           )}

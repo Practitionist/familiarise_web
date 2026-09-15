@@ -4,11 +4,12 @@ import {
   type CreateEmailRequestOptions,
   type CreateEmailResponse,
 } from "resend";
-import type { Prisma } from "@prisma/client";
+import type { EmailSuppressionReason, Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { EMAIL_BUDGET_MS, supportEmail } from "./config";
 import { resendErrorText, terminalSendReason } from "./classify";
 import { idempotencyKeyFor } from "./idempotency";
+import { EmailSuppressedError, findSuppression } from "./suppression";
 
 // #474 — the already-RENDERED message a sender handed to Resend. We persist
 // THIS verbatim (not the sender args) so retry is a re-send, not a re-render.
@@ -19,6 +20,9 @@ export interface RenderedEmail {
   html: string;
   text?: string;
   replyTo?: string;
+  // #1653 — List-Unsubscribe and friends. Sent inline only: the row does not
+  // persist them, so the relay's resend of a staged row carries none.
+  headers?: Record<string, string>;
 }
 
 export type DeliverResult =
@@ -31,11 +35,13 @@ export type DeliverResult =
 export interface StagedEmail {
   id: string;
   idempotencyKey: string;
+  /** #1647 — set when the recipient is suppressed; the row is already DEAD_LETTER. */
+  suppressed?: EmailSuppressionReason;
 }
 
 export interface StageOptions {
   /** Stage inside the caller's transaction so a rollback takes the row too. */
-  tx?: Pick<Tx, "failedEmail">;
+  tx?: Pick<Tx, "failedEmail" | "emailSuppression">;
   /** `payment:<id>`, `user:<id>`, `waitlist:<email>`, `contact:<email>`. */
   entityRef?: string;
 }
@@ -153,29 +159,39 @@ export async function stage(
 ): Promise<StagedEmail | null> {
   const payload = withReplyTo(message);
   const idempotencyKey = idempotencyKeyFor(payload, emailType);
-  const data = {
-    recipient: payload.to,
-    fromAddress: payload.from,
-    replyTo: payload.replyTo ?? null,
-    subject: payload.subject,
-    htmlBody: payload.html,
-    textBody: payload.text ?? null,
-    emailType,
-    status: "PENDING" as const,
-    nextRetryAt: new Date(),
-    lastError: null,
-    entityRef: opts.entityRef ?? null,
-  };
-  if (opts.tx) {
-    const row = await opts.tx.failedEmail.create({
-      data,
+  const db = opts.tx ?? prisma;
+  const write = async (): Promise<StagedEmail> => {
+    // #1647 — a bounced or complaining address is dead-lettered at stage time:
+    // the row records the refusal and neither the inline path nor the relay sends.
+    const suppressed = (await findSuppression(payload.to, db))?.reason;
+    if (suppressed) {
+      console.warn(
+        `[email] ${emailType} not sent: recipient is suppressed (${suppressed})`,
+      );
+    }
+    const row = await db.failedEmail.create({
+      data: {
+        recipient: payload.to,
+        fromAddress: payload.from,
+        replyTo: payload.replyTo ?? null,
+        subject: payload.subject,
+        htmlBody: payload.html,
+        textBody: payload.text ?? null,
+        emailType,
+        status: suppressed ? "DEAD_LETTER" : "PENDING",
+        nextRetryAt: new Date(),
+        lastError: suppressed ? `suppressed:${suppressed}` : null,
+        entityRef: opts.entityRef ?? null,
+      },
       select: { id: true },
     });
-    return { id: row.id, idempotencyKey };
-  }
+    return suppressed
+      ? { id: row.id, idempotencyKey, suppressed }
+      : { id: row.id, idempotencyKey };
+  };
+  if (opts.tx) return write();
   try {
-    const row = await prisma.failedEmail.create({ data, select: { id: true } });
-    return { id: row.id, idempotencyKey };
+    return await write();
   } catch (persistError) {
     console.error(`[email] ${emailType} stage failed:`, persistError);
     Sentry.captureException(
@@ -226,6 +242,15 @@ export async function attempt(
   emailType: string,
   opts: { budgetMs: number },
 ): Promise<DeliverResult> {
+  // #1647 — the row is already DEAD_LETTER; the refusal is the intended
+  // outcome, so no send, no row write and no Sentry.
+  if (staged?.suppressed) {
+    return {
+      success: false,
+      error: new EmailSuppressedError(staged.suppressed),
+      staged: true,
+    };
+  }
   const payload = withReplyTo(message);
   const idempotencyKey =
     staged?.idempotencyKey ?? idempotencyKeyFor(payload, emailType);

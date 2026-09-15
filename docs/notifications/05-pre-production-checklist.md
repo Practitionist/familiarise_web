@@ -143,6 +143,7 @@ Support and contact mail still goes to a real mailbox through `NEXT_PUBLIC_SUPPO
 - [ ] Add both sending domains (see [DNS Setup](#dns-setup-for-resend-step-by-step) below)
 - [ ] Verify both domains (DKIM + SPF)
 - [ ] Copy API key → save for Step 5
+- [ ] Register the Resend webhook (`create-webhook`, events sent/delivered/delivery_delayed/bounced/complained/failed) against `https://familiarisenow.com/api/webhooks/resend` and set `RESEND_WEBHOOK_SECRET` in the Netlify production context (#1647). The hook delivers to production only, so a preview never sees an event.
 
 ### Step 3: Novu Setup
 
@@ -312,6 +313,7 @@ Set these in **Netlify Dashboard → Site → Environment Variables**:
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | `NEXT_PUBLIC_APP_URL`                | `https://familiarisenow.com`                                                                            | Yes                                            |
 | `RESEND_API_KEY`                     | From Resend dashboard                                                                                   | Yes                                            |
+| `RESEND_WEBHOOK_SECRET`              | Signing secret shown when the webhook is created (#1647); Netlify production context only               | Yes (for delivery events)                      |
 | `EMAIL_TRANSACTIONAL_DOMAIN`         | `mail.familiarisenow.com`                                                                               | No (this is the default)                       |
 | `EMAIL_NEWSLETTER_DOMAIN`            | `news.familiarisenow.com`                                                                               | No (this is the default)                       |
 | `NEXT_PUBLIC_SUPPORT_EMAIL`          | `support@familiarisenow.com`                                                                            | No (this is the default)                       |
@@ -403,7 +405,7 @@ _Kit free tier covers 10K subscribers. Creator ($39/mo) only needed for drip seq
 
 ### ConvertKit (Kit) — Newsletter
 
-**Current state:** Stubs in `lib/newsletter/convertkit.ts`. Newsletter subscribe/unsubscribe routes work via Resend batch API as interim.
+**Current state:** Stubs in `lib/newsletter/convertkit.ts`. Newsletter subscribe/unsubscribe routes work via Resend batch API as interim. Since #1647 the broadcast route stages a `FailedEmailBatch` row before every batch send, so a batch whose response was lost or whose send failed is replayed by the relay under the same idempotency key, and addresses on `EmailSuppression` are dropped from the recipients before the batches are built.
 
 **When to integrate:**
 

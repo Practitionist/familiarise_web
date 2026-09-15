@@ -9,6 +9,7 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 
@@ -197,6 +198,7 @@ export async function withdrawRescheduleRequest(args: {
         initiatedById: true,
         appointment: {
           select: {
+            id: true,
             organizationId: true,
             appointmentType: true,
             consultation: {
@@ -244,19 +246,30 @@ export async function withdrawRescheduleRequest(args: {
         ? side.consultationPlan.consultantProfile.user
         : side.subscriptionPlan.consultantProfile.user;
       const consulteeUser = side.requestedBy.user;
-      await notifyAppointmentRescheduled(
-        [detail.initiatedById, consultantUser.id, consulteeUser.id].filter(
-          (id, i, arr) => arr.indexOf(id) === i,
-        ),
+      const withdrawnUserIds = [
+        detail.initiatedById,
+        consultantUser.id,
+        consulteeUser.id,
+      ].filter((id, i, arr) => arr.indexOf(id) === i);
+      await notifyAppointmentRescheduled(withdrawnUserIds, {
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: consulteeUser.name || "Consultee",
+        planTitle,
+        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+        outcome: "WITHDRAWN",
+      });
+      // #1653 — the email twin; the sender never throws.
+      await sendAppointmentRescheduledEmail(
         {
-          ...notificationScope(appt.organizationId),
-          appointmentType: appt.appointmentType,
-          consultantName: consultantUser.name || "Consultant",
-          consulteeName: consulteeUser.name || "Consultee",
-          planTitle,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          appointmentId: appt.id,
+          userIds: withdrawnUserIds,
           outcome: "WITHDRAWN",
+          appointmentType: appt.appointmentType,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
         },
+        EMAIL_BUDGET_MS.REQUEST,
       );
     }
   } catch (notifyErr) {
