@@ -21,6 +21,7 @@
 import {
   runEmailRetryTick,
   BACKOFF_MS,
+  SEND_GAP_MS,
   type FailedEmailStore,
 } from "@/jobs/email/retry-failed-emails";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
@@ -180,7 +181,7 @@ describe("runEmailRetryTick — success path", () => {
         text: "Thanks (text)",
         replyTo: "support@familiarisenow.com",
       },
-      {
+      expect.objectContaining({
         idempotencyKey: idempotencyKeyFor(
           {
             to: "user@example.com",
@@ -189,12 +190,14 @@ describe("runEmailRetryTick — success path", () => {
           },
           "PAYMENT_SUCCESS",
         ),
-      },
+      }),
     );
+    // #1654 — the provider id lands on the row so support can trace it.
     expect(stub.updates[0].data).toMatchObject({
       status: "SENT",
       attempts: 1,
       lastError: null,
+      resendId: "re-1",
     });
     expect(
       (stub.updates[0].data as { sentAt: Date }).sentAt.toISOString(),
@@ -251,6 +254,44 @@ describe("runEmailRetryTick — success path", () => {
       status: "RETRY",
       lastError: "rate_limit_exceeded: rate_limited",
     });
+  });
+});
+
+describe("runEmailRetryTick — pacing (#1654)", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("waits the send gap between two rows so the drain stays under Resend's rate limit", async () => {
+    jest.useFakeTimers();
+    const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
+    const prisma: FailedEmailStore = {
+      failedEmail: {
+        findMany: jest.fn().mockResolvedValue(rows),
+        update: jest
+          .fn()
+          .mockImplementation((args) =>
+            Promise.resolve({ ...rows[0], ...args.data }),
+          ),
+      },
+    };
+    const resend = mockResend(async () => ({
+      data: { id: "re-x" },
+      error: null,
+      headers: null,
+    }));
+
+    const tick = runEmailRetryTick({
+      prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(resend.send).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(SEND_GAP_MS - 1);
+    expect(resend.send).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    const result = await tick;
+    expect(resend.send).toHaveBeenCalledTimes(2);
+    expect(result.sent).toBe(2);
   });
 });
 

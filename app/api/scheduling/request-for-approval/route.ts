@@ -359,7 +359,7 @@ export async function POST(req: NextRequest) {
         // pins organizationId: null. Single recipient with a known side, so this
         // resolves to a precise route rather than the /dashboard bounce.
         const requestOrgId = consultation.appointment?.organizationId ?? null;
-        void notifyNewBookingRequest(
+        await notifyNewBookingRequest(
           consultation.consultationPlan.consultantProfile.user.id,
           {
             ...notificationScope(requestOrgId),

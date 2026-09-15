@@ -1671,7 +1671,7 @@ export async function markOrgPayoutReversed(
       // #813 — fire-and-forget: awaiting let a Novu failure throw out of the
       // committed tx, failing the webhook delivery whose redelivery then no-ops
       // (state already REVERSED) → the notification was permanently lost.
-      void notifyOrgPayoutFailed(completedResult.notify.organizationId, {
+      await notifyOrgPayoutFailed(completedResult.notify.organizationId, {
         orgName: completedResult.notify.orgName,
         payoutId,
         amountPaise: completedResult.notify.netPayoutPaise,

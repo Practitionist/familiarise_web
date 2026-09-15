@@ -43,12 +43,20 @@ flowchart TB
             P1_T4["emails/organizations/\nOrgInvitationEmail"]
         end
         P1_RENDER["renderEmail()\nreact-email → {html, text}"]
-        P1_DELIVER["deliver()\nsingle send core, idempotency key"]
+        P1_STAGE["stage()\nPENDING FailedEmail row\nbefore any send (#1654)"]
+        P1_ATTEMPT["attempt()\ninline send under a budget\nidempotency key + AbortSignal"]
+        P1_RELAY["retry-failed-emails\nticker every 15 min + Actions backstop\n8 sends/s, backoff ladder"]
+        P1_RENDER --> P1_STAGE --> P1_ATTEMPT
+        P1_STAGE -. "timed out / transient" .-> P1_RELAY
     end
 
     subgraph PIPE2["PIPELINE 2: Novu Orchestrated — CODE DONE, DASHBOARD NEEDS CONFIG"]
         direction TB
-        P2_SVC["lib/novu/service.ts\n30+ exported trigger functions\nfire-and-forget pattern"]
+        P2_SVC["lib/novu/service.ts\n30+ exported trigger functions\nawaited, outbox-first (#1654)"]
+        P2_OUTBOX["lib/novu/outbox.ts\nstageTrigger() → NotificationOutbox row\nattemptTrigger() → 5 s inline"]
+        P2_DRAIN["drain-notification-outbox\nticker every 5 min\nbackoff ladder, 5 attempts"]
+        P2_SVC --> P2_OUTBOX
+        P2_OUTBOX -. "timed out / transient" .-> P2_DRAIN
         P2_WF["lib/novu/workflows.ts\n40 workflow IDs\n20+ typed payload interfaces"]
         P2_CLIENT["lib/novu/client.ts\nSingleton, lazy init\nGraceful degradation"]
         P2_SUB["lib/novu/subscriber.ts\nsyncSubscriber()\nupdateSubscriberPreferences()\ndeleteSubscriber()"]
@@ -173,8 +181,10 @@ flowchart TB
 
 1. Business logic calls a send function (e.g., `sendWelcomeEmail()`) in `lib/email/index.ts`
 2. The function renders its React Email element via `renderEmail()` (`lib/email/render.ts`) into `{html, text}`
-3. The function calls `deliver()` (`lib/email/deliver.ts`), the single send core: `getResendClient()` (lazy singleton), a content-hash Idempotency-Key, and a `From` address read from `SENDERS`
-4. `deliver()` sends via `resend.emails.send()`; a thrown `EmailNotConfiguredError` or any other terminal failure is dead-lettered into `FailedEmail` rather than dropped
+3. The function calls `deliver()` (`lib/email/deliver.ts`), the single send core, with the entity anchor it knows and its budget from `EMAIL_BUDGET_MS`
+4. `deliver()` first stages the rendered message as a `PENDING` `FailedEmail` row (`stage()`), then attempts one send via `resend.emails.send()` under a content-hash Idempotency-Key and an `AbortSignal` for the budget (`attempt()`); success marks the row `SENT` with the Resend id, a terminal failure dead-letters it, a transient failure or a timeout leaves it `PENDING` for the relay (#1654)
+5. A caller inside a database transaction (the payment webhook) calls `stage()` inside the transaction and `attempt()` after the commit, so a rollback takes the row with it
+6. `jobs/email/retry-failed-emails.ts` is the relay: the Netlify ticker runs it every fifteen minutes through `/api/cleanup/retry-failed-emails`, paced under Resend's rate limit, and the GitHub Actions workflow is the unbounded backstop
 
 **10 React Email templates behind 11 senders** (the contact-inquiry sender builds inline HTML instead of a template):
 
@@ -204,10 +214,10 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 
 **How it works:**
 
-1. Business logic calls a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`)
-2. Function checks `isNovuConfigured()` — if false, logs warning and returns `{success: false}`
-3. Calls `novu.trigger()` (single user), `triggerForMultiple()` (batch of 100), or `triggerBroadcast()` (all subscribers)
-4. Novu Cloud receives the event and executes the workflow:
+1. Business logic awaits a trigger function (e.g., `notifyAppointmentBooked(userIds, payload)`); a caller inside a transaction passes `{ tx, entityRef }` and runs `attemptTrigger()` after the commit
+2. `stageTrigger()` (`lib/novu/outbox.ts`) upserts a `NotificationOutbox` row keyed on a `transactionId` derived from the event, the sorted recipients and the payload (#1654)
+3. If `isNovuConfigured()` is false the row waits for the drain and the function returns `{success: false}`; otherwise `attemptTrigger()` calls `novu.trigger()` (single user or a batch of 100) or `novu.triggerBroadcast()` (all subscribers) under the client's five-second timeout, marks the row `SENT`, dead-letters it on a terminal 4xx, or leaves it `PENDING` on a timeout or 5xx for `jobs/notifications/drain-notification-outbox.ts`, which the Netlify ticker runs every five minutes
+4. Novu Cloud receives the event, deduplicates on the `transactionId`, and executes the workflow:
    - **Email step (not yet created)** → would render a template with `{{payload.variables}}` and send via a Resend integration
    - **In-App step** → pushes to subscriber's WebSocket → appears in bell icon
    - **Digest/Delay steps** → can batch or schedule (configured per-workflow in Dashboard)
@@ -388,11 +398,15 @@ flowchart LR
     subgraph CRONS["Scheduled Jobs"]
         C1["appointment-reminders\nGET /api/cleanup/appointment-reminders\nEvery 15 minutes\nAuth: Bearer CRON_SECRET"]
         C2["auto-complete-appointments\nGET /api/cleanup/auto-complete-appointments\nEvery 1 hour\nAuth: Bearer CRON_SECRET"]
+        C3["retry-failed-emails\nPOST /api/cleanup/retry-failed-emails\nTicker every 15 minutes (limit 20) + Actions backstop\nAuth: Bearer CRON_SECRET"]
+        C4["drain-notification-outbox\nPOST /api/cleanup/drain-notification-outbox\nTicker every 5 minutes (limit 20)\nAuth: Bearer CRON_SECRET"]
     end
 
     subgraph LOGIC["Logic"]
         L1["Query slots starting in 23-25h\nQuery slots starting in 45-75min\nDeduplicate by appointmentId"]
         L2["Find SCHEDULED events\nwhere all slots ended 1h+ ago\nUpdate status → COMPLETED"]
+        L3["FailedEmail PENDING/RETRY due rows\nre-send verbatim, 8/s\nSENT / RETRY / DEAD_LETTER"]
+        L4["NotificationOutbox PENDING/RETRY due rows\nnotBefore passed\nSENT / RETRY / DEAD_LETTER"]
     end
 
     subgraph NOTIFY["Notifications"]
@@ -402,7 +416,11 @@ flowchart LR
 
     C1 --> L1 --> N1
     C2 --> L2 --> N2
+    C3 --> L3
+    C4 --> L4
 ```
+
+The two relays are the outbox halves of #1654: every email and every Novu trigger is a row before it is a network call, and these two jobs finish whatever the inline attempt could not settle within its budget. Both are also runnable as standalone jobs (`jobs/email/retry-failed-emails.ts`, `jobs/notifications/drain-notification-outbox.ts`) under the same fail-closed cron locks.
 
 ---
 

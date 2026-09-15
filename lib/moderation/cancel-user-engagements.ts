@@ -434,10 +434,10 @@ function refundableEngagementPayments(engagement: NormalizedEngagement) {
   );
 }
 
-function notifyExclusiveCancellation(
+async function notifyExclusiveCancellation(
   kind: "consultation" | "subscription",
   engagement: NormalizedEngagement,
-): void {
+): Promise<void> {
   const userIds = [
     engagement.consultantUser?.id,
     engagement.consulteeUser?.id,
@@ -445,7 +445,7 @@ function notifyExclusiveCancellation(
   if (userIds.length === 0) return;
 
   const engagementOrgId = engagement.appointments[0]?.organizationId ?? null;
-  void notifyAppointmentCancelled(userIds, {
+  await notifyAppointmentCancelled(userIds, {
     ...notificationScope(engagementOrgId),
     appointmentType:
       engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
@@ -483,7 +483,7 @@ async function cancelExclusiveEngagement(
     await issueFullRefund(p.id, ctx.initiatedByUserId, ctx.summary);
   }
 
-  notifyExclusiveCancellation(kind, engagement);
+  await notifyExclusiveCancellation(kind, engagement);
 }
 
 async function cancelGroupEvent(
@@ -574,7 +574,7 @@ async function cancelGroupEvent(
         })
       )?.organizationId ??
       null;
-    void notifyAppointmentCancelled(attendeeIds, {
+    await notifyAppointmentCancelled(attendeeIds, {
       ...notificationScope(eventOrgId),
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",
       consultantName: "Consultant",

@@ -886,7 +886,7 @@ export async function POST(
           : null;
 
         if (uniqueUserIds.length > 0) {
-          void notifyAppointmentRescheduled(uniqueUserIds, {
+          await notifyAppointmentRescheduled(uniqueUserIds, {
             ...notificationScope(appointment.organizationId),
             ...rescheduleNotificationVariant({
               releasedAt: result.releasedAt,

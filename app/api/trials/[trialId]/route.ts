@@ -671,7 +671,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // Notify the consultee — "pay to confirm" for a paid trial, plain
           // confirmation for a free one. Sending "your trial is scheduled" for
           // something still awaiting payment would be a lie.
-          void notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
+          await notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
             consultantName:
               existingTrial.consultantProfile.user.name || "Consultant",
             consulteeName: existingTrial.consulteeProfile.user.name || "User",
@@ -933,12 +933,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         },
       });
     });
+    // #1654 — awaited: an un-awaited trigger is dropped when the instance
+    // freezes after the response; each effect still fails on its own.
     for (const effect of afterCommit) {
-      void Promise.resolve()
-        .then(effect)
-        .catch((err) =>
-          console.error("[trial] post-commit effect failed", trialId, err),
-        );
+      try {
+        await effect();
+      } catch (err) {
+        console.error("[trial] post-commit effect failed", trialId, err);
+      }
     }
 
     // #1009 — the trial has left SCHEDULED/AWAITING_PAYMENT, so its slot is
@@ -1077,7 +1079,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
 
     // FIX #554: Send cancellation notification (DELETE path was missing this)
-    void notifyTrialCancelled(
+    await notifyTrialCancelled(
       [
         existingTrial.consultantProfile.user.id,
         existingTrial.consulteeProfile.user.id,

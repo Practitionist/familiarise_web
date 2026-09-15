@@ -111,6 +111,7 @@ export const auth = betterAuth({
         email: user.email,
         name: user.name || "User",
         token,
+        userId: user.id,
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
@@ -132,6 +133,7 @@ export const auth = betterAuth({
         email: user.email,
         name: user.name || "User",
         verificationUrl: url,
+        userId: user.id,
       });
     },
   },
@@ -308,6 +310,7 @@ export const auth = betterAuth({
               await sendWelcomeEmail({
                 email: user.email,
                 name: user.name || "User",
+                userId: user.id,
               });
             } catch (err) {
               console.error("[AUTH_HOOK] Welcome email error:", err);
@@ -405,6 +408,7 @@ export const auth = betterAuth({
                     email: user.email,
                     name: user.name || "User",
                     provider: account.providerId,
+                    userId: account.userId,
                   });
                 } catch (err) {
                   console.error("[AUTH_HOOK] Account linked email error:", err);
@@ -574,7 +578,8 @@ export const auth = betterAuth({
           });
           continue;
         }
-        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
+        const defaultRole =
+          bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
         try {
           // Wrap the role-effect resolution + Membership create in a
           // transaction so the lazy-created profile (LEARNER →

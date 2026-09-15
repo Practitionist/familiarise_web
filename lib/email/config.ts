@@ -82,3 +82,13 @@ export const SENDERS = {
 // #474 — the retry worker's non-null `from` fallback for a row persisted
 // without one. Mirrors the senders' onboarding identity.
 export const DEFAULT_FROM_ADDRESS: string = SENDERS.onboarding;
+
+// #1654 — inline send budgets per caller. A timeout is not a failure: the
+// staged row stays PENDING and the relay finishes it, so the budget only
+// bounds how long the caller's request waits. Shared with the Novu side.
+export const EMAIL_BUDGET_MS = {
+  AUTH: 8_000,
+  CONTACT_AND_WAITLIST: 5_000,
+  WEBHOOK: 3_000,
+  JOB: 10_000,
+} as const;
