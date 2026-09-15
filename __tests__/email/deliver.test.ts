@@ -12,6 +12,7 @@
 const mockSend = jest.fn();
 const mockCreate = jest.fn();
 const mockUpdate = jest.fn();
+const mockFindSuppression = jest.fn();
 const mockCaptureException = jest.fn();
 
 jest.mock("resend", () => ({
@@ -26,6 +27,9 @@ jest.mock("../../lib/prisma", () => ({
     failedEmail: {
       create: (...args: unknown[]) => mockCreate(...args),
       update: (...args: unknown[]) => mockUpdate(...args),
+    },
+    emailSuppression: {
+      findUnique: (...args: unknown[]) => mockFindSuppression(...args),
     },
   },
 }));
@@ -52,6 +56,9 @@ const message: RenderedEmail = {
 };
 
 const OLD_KEY = process.env.RESEND_API_KEY;
+beforeEach(() => {
+  mockFindSuppression.mockResolvedValue(null);
+});
 afterEach(() => {
   if (OLD_KEY === undefined) delete process.env.RESEND_API_KEY;
   else process.env.RESEND_API_KEY = OLD_KEY;
@@ -96,7 +103,11 @@ describe("stage + attempt (#1654)", () => {
 
   it("stages inside the caller's transaction, then a successful attempt marks SENT with the Resend id", async () => {
     const txCreate = jest.fn().mockResolvedValue({ id: "fe-tx" });
-    const tx = { failedEmail: { create: txCreate } } as never;
+    const tx = {
+      failedEmail: { create: txCreate },
+      // #1647 — the suppression read goes through the same transaction.
+      emailSuppression: { findUnique: jest.fn().mockResolvedValue(null) },
+    } as never;
     mockSend.mockResolvedValue({
       data: { id: "re-123" },
       error: null,
@@ -181,6 +192,28 @@ describe("stage + attempt (#1654)", () => {
       level: "error",
       fingerprint: ["email-send-terminal", "invalid_api_key"],
     });
+  });
+});
+
+describe("suppressed recipient (#1647)", () => {
+  it("dead-letters the row at stage time and never calls Resend", async () => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockFindSuppression.mockResolvedValue({
+      email: "user@example.com",
+      reason: "HARD_BOUNCE",
+    });
+    mockCreate.mockResolvedValue({ id: "fe-s" });
+
+    const result = await deliver(message, "EMAIL_VERIFICATION");
+
+    expect(result).toMatchObject({ success: false, staged: true });
+    expect(mockSend).not.toHaveBeenCalled();
+    expect(mockCreate.mock.calls[0][0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      lastError: "suppressed:HARD_BOUNCE",
+    });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockCaptureException).not.toHaveBeenCalled();
   });
 });
 
