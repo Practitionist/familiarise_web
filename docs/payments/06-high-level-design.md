@@ -1,4 +1,4 @@
-# Money subsystem — high-level design in four diagrams
+# Money subsystem — high-level design in five diagrams
 
 This page is the map a newcomer should read before any other payments document. It shows where money truth is written, what is allowed to lag behind it, and which mechanism closes each gap. Everything drawn here runs inside one Next.js application against one Postgres database and one Redis instance. There are no services, no queues and no message brokers; the domain rows themselves carry every pending obligation, and scheduled sweeps read those rows to finish the work (ADR 14, ADR 22 and ADR 27 explain why that posture was chosen over a broker).
 
@@ -163,6 +163,39 @@ flowchart LR
   Recon --> Truth
   Truth --> Audit
 ```
+
+## 5. Four callers, one writer
+
+A captured payment can be reported by four different callers, and the code is built so that only one of them is ever allowed to move money. The checkout modal's own client return, an on-demand status-sync poll, the asynchronous Razorpay webhook, and the `reconcile-payment-status` cron each learn about a capture through a different channel and on a different schedule, yet all four resolve to the same order-level facts — the order's `notes`, the captured amount, and, on every path but the webhook, a gateway payment id fetched fresh from Razorpay — and hand them to the same router, `routeCapturedPayment` (`app/api/webhooks/razorpay-dispatch.ts`), which is the only code allowed to call `handlePaymentSuccess`. A caller that is not the webhook must fetch gateway truth before calling in, because a client-side signature proves the order/payment id pair is genuine but says nothing about whether the money actually moved.
+
+```mermaid
+flowchart TD
+  subgraph Callers["Four callers, same destination"]
+    C1["Checkout modal's client return<br/>POST /api/checkout/verify-signature<br/>verifies the HMAC signature first"]
+    C2["On-demand status sync<br/>GET /api/checkout/verify?sync=true"]
+    C3["Razorpay webhook<br/>POST /api/webhooks/razorpay<br/>payment.captured / order.paid"]
+    C4["reconcile-payment-status cron<br/>scripts/payments/reconcile-payment-status.ts"]
+  end
+  ROUTE["routeCapturedPayment<br/>selects the handler from notes, repeats the amount parity check every time"]
+  WRITER["handlePaymentSuccess — the single writer (ADR 21)<br/>one Serializable transaction"]
+  OUT["Payment SUCCEEDED + Appointment CONFIRMED (CAS-in-WHERE)<br/>+ ConsultantEarnings + LedgerTransaction / LedgerEntry rows"]
+  C1 -- "fetches the payment from Razorpay before calling in" --> ROUTE
+  C2 -- "fetches the order + payments from Razorpay before calling in" --> ROUTE
+  C3 -- "signature-verified; WebhookEvent row saved before the 200<br/>dedup key: x-razorpay-event-id" --> ROUTE
+  C4 -- "polls Razorpay for orders still PENDING in the DB" --> ROUTE
+  ROUTE --> WRITER --> OUT
+```
+
+| Term | One-sentence definition |
+| --- | --- |
+| Webhook | Razorpay's asynchronous callback to `POST /api/webhooks/razorpay`, saved as a `WebhookEvent` row before the request is acknowledged so the platform can redrive it without Razorpay resending it. |
+| Idempotency key | A value that makes a repeated call produce the same result once instead of twice — `x-razorpay-event-id` for webhook dedup, `Refund.id` for a gateway refund, and `booking:<paymentId>` for a ledger transaction. |
+| CAS-in-WHERE | Every status move repeats the money predicate inside the `UPDATE ... WHERE` clause (for example `WHERE status = 'PENDING'`), so a second writer racing the first is rejected by the database rather than silently overwriting it. |
+| Single writer | `Payment.paymentStatus` is written by `handlePaymentSuccess` alone; all four callers above route into it instead of each writing the status themselves (ADR 21). |
+| Payment legs | `PaymentLeg` rows record what funded a `Payment` (card, wallet, invoice, licence seat); their sum must equal `Payment.amount`, excluding `REFERRAL_CREDIT` legs, which record value already subtracted out of `amount`. |
+| Double-entry ledger with reconciled caches | Every money movement posts a balanced `LedgerTransaction` plus two or more `LedgerEntry` rows; a cache such as `BillingAccount.walletBalance` is a read optimisation the reconciler corrects against that journal, never a second source of truth. |
+| State-as-outbox sweep | A scheduled job that finds domain rows whose expected side effect never landed (an unstamped column, a `PENDING` row past its window) and redrives exactly that side effect, instead of a separate outbox table (ADR 27). |
+| Transient vs terminal failure | A transient failure (a timeout, a not-yet-settled gateway lookup) is retried by the next sweep tick; a terminal failure (Razorpay's `BAD_REQUEST_ERROR` / `input_validation_failed` for an id it has no record of) is recorded once with a reason and never retried again. |
 
 ## When this design should change
 
