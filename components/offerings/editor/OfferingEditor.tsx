@@ -146,7 +146,7 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           onValueChange={setActiveSection}
           className="contents"
         >
-          <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-1">
+          <div className="sticky top-0 z-20 mb-8 border-b bg-background pb-3 pt-3">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
@@ -157,14 +157,10 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
 
             <TabsList
               aria-label="Offering sections"
-              className="h-auto flex-wrap gap-2 rounded-none bg-transparent p-0"
+              className="h-auto flex-wrap gap-1 rounded-lg bg-muted p-1"
             >
               {manifest.sections.map((section) => (
-                <TabsTrigger
-                  key={section.id}
-                  value={section.id}
-                  className="px-3 py-1.5 font-normal text-muted-foreground hover:bg-secondary/50 data-[state=active]:bg-secondary data-[state=active]:font-medium data-[state=active]:text-secondary-foreground data-[state=active]:shadow-none"
-                >
+                <TabsTrigger key={section.id} value={section.id}>
                   {section.title}
                 </TabsTrigger>
               ))}
@@ -229,8 +225,8 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           (see globals.css): without it, the stacked chrome paddings below this
           bar leave a ~40-56px float above the true bottom edge.
         */}
-        <div className="sticky bottom-0 z-10 mt-auto border-t bg-background/95 backdrop-blur">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-3">
+        <div className="sticky bottom-0 z-10 mt-auto border-t bg-background/95 shadow-[0_-8px_24px_-12px_rgb(0_0_0/0.15)] backdrop-blur">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-end gap-3 px-4 py-4">
             {publishBlockedReason && (
               <p className="mr-auto text-sm text-muted-foreground">
                 {publishBlockedReason}
