@@ -28,6 +28,8 @@ import {
   classifyConnectFailure,
   type ConnectFailure,
 } from "@/lib/stream/connect-failure";
+import { refusalFromShape } from "@/lib/errors/client-refusal";
+import { isRefusal, type Refusal } from "@/lib/errors/refusal";
 import * as Sentry from "@sentry/nextjs";
 
 /** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
@@ -35,6 +37,21 @@ const MAX_CONNECT_ATTEMPTS = 5;
 
 const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
   result.status === "fulfilled" ? result.value : null;
+
+/**
+ * The token action answered "no session" — a state to show, not an outage to
+ * retry or report. Shaped like a Stream failure so ChatUnavailable renders it.
+ */
+function refusedConnectFailure(refusal: Refusal): ConnectFailure {
+  return {
+    kind: "not-retryable",
+    code: null,
+    detail: refusal.devMessage,
+    title: "Please sign in again",
+    description: refusal.userMessage,
+    action: "reload",
+  };
+}
 
 /**
  * One Sentry event per non-retryable connect outcome — `warning` for an
@@ -212,6 +229,9 @@ const StreamProviderImpl = ({
     chat?: Promise<string>;
     video?: Promise<string>;
   }>({});
+  // The SDKs may wrap what a token provider throws; the ref is the reliable
+  // handle on the refusal by the time connectServices classifies the failure.
+  const tokenRefusalRef = useRef<Refusal | null>(null);
 
   const getCachedToken = useCallback(
     async (type: "chat" | "video"): Promise<string> => {
@@ -239,9 +259,20 @@ const StreamProviderImpl = ({
         throw new Error("Stream token skipped: no signed-in session");
       }
 
-      // Generate new token
-      const request =
-        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId);
+      // Generate new token. The action RETURNS a refusal (an expired cookie)
+      // rather than throwing it, so nothing here reaches Sentry
+      // (FAMILIARISE_WEB-13); rethrown locally so the connect path stops.
+      const request = (
+        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId)
+      ).then((result) => {
+        if (!result.ok) {
+          const refusal = refusalFromShape(result.refusal, 401);
+          tokenRefusalRef.current = refusal;
+          throw refusal;
+        }
+        tokenRefusalRef.current = null;
+        return result.data;
+      });
       if (type === "chat") tokenPromiseRef.current.chat = request;
       else tokenPromiseRef.current.video = request;
 
@@ -561,6 +592,14 @@ const StreamProviderImpl = ({
       connectionAttemptsRef.current = 0; // Reset on success
       setRetryCount(0);
     } catch (error) {
+      const refusal = isRefusal(error) ? error : tokenRefusalRef.current;
+      if (refusal) {
+        // Not retried and not reported: the server answered, and the answer
+        // is "sign in again".
+        setError(refusal.userMessage);
+        setFailure(refusedConnectFailure(refusal));
+        return;
+      }
       const classified = classifyConnectFailure(error);
       setError(classified.detail || "Connection failed");
       setFailure(classified);

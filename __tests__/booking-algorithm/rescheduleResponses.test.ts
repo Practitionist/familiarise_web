@@ -405,7 +405,7 @@ describe("Reschedule — 24-hour policy", () => {
     });
   });
 
-  it("should return 400 when slot is within 24 hours", async () => {
+  it("should refuse with 409 RESCHEDULE_WINDOW when an occurrence is within 24 hours", async () => {
     const appointment = makeConsultationAppointment([
       makeSlot("slot-1", NEAR_DATE),
     ]);
@@ -417,7 +417,7 @@ describe("Reschedule — 24-hour policy", () => {
     const req = makeRequest("apt-1", "CONSULTATION");
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("24 hours");
   });
@@ -452,7 +452,7 @@ describe("Reschedule — 24-hour policy", () => {
     });
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
     const body = await res.json();
     expect(body.error).toContain("24 hours");
   });

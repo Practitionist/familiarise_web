@@ -27,6 +27,8 @@ import {
   refundBookingPayment,
   type FundingRail,
 } from "@/lib/payments/operations/booking-refund";
+import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
@@ -56,6 +58,22 @@ type CancelAuditMeta = {
   reason: string | null;
   organizationId: string | null;
 };
+
+/**
+ * A refund that did not land after the cancel committed. A modelled refusal
+ * (no payment on the order, nothing refundable) is reported `expected` at
+ * `warning` — it still needs a human via `recordSystemError`, but it is not a
+ * fault (FAMILIARISE_WEB-3K). Anything else stays an error.
+ */
+function reportRefundFailure(err: unknown, subsystem: string): void {
+  const modelled = isModelledRefundRefusal(err);
+  reportSentryError(err, {
+    subsystem,
+    op: "cancel.refund",
+    expected: modelled,
+    ...(modelled ? { level: "warning" as const } : {}),
+  });
+}
 
 /**
  * Which rows this cancel sweeps. #1554 — a booking is ONE Appointment, so a
@@ -567,10 +585,7 @@ export async function POST(
               rail: restored.rail,
             };
           } catch (freeErr) {
-            Sentry.captureException(
-              freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
-              { tags: { subsystem: "bookings" } },
-            );
+            reportRefundFailure(freeErr, "bookings");
             // #1513 review — the monetary branch below lands a failed refund on
             // the durable ops surface, and this branch owes the same: a credit
             // the buyer is owed but did not get back is money, and Sentry is an
@@ -615,12 +630,7 @@ export async function POST(
             // not silently swallowed. Sentry alone is not a queue — this is
             // money owed on a booking that is already cancelled, so it lands on
             // the same durable ops surface as the proration escalation.
-            Sentry.captureException(
-              refundErr instanceof Error
-                ? refundErr
-                : new Error(String(refundErr)),
-              { tags: { subsystem: "appointments" } },
-            );
+            reportRefundFailure(refundErr, "appointments");
             console.error(
               `[cancel] refund failed for payment ${paidPayment.id}:`,
               refundErr,

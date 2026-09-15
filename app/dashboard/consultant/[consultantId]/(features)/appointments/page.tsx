@@ -6,6 +6,7 @@ import {
 import AppointmentsPageClient from "./AppointmentsPageClient";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -19,6 +20,9 @@ export default async function AppointmentsPage({
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
   await requirePersonalProfileAccess("consultant", consultantId);
+  // Read here and passed down: the server render and the hydrating client
+  // then format every time from the same zone (hydration #418).
+  const viewerZone = await getViewerZone();
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the DEFAULT ("personal") appointments view so the
@@ -49,7 +53,10 @@ export default async function AppointmentsPage({
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <AppointmentsPageClient consultantId={consultantId} />
+      <AppointmentsPageClient
+        consultantId={consultantId}
+        viewerZone={viewerZone}
+      />
     </HydrationBoundary>
   );
 }

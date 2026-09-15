@@ -95,6 +95,14 @@ Payment system, checkout flows, gateway integrations, payouts, refunds, and more
 
 ---
 
+### Errors
+
+How a modelled outcome travels from a route or a server action to a toast without becoming a Sentry fault.
+
+- [01-refusals.md](./errors/01-refusals.md) - The `Refusal` class, its two messages, `ActionResult`, and the client helpers
+
+---
+
 ### Stream (Chat & Video)
 
 Stream.io integration for messaging and video calls. This is the implemented messaging system.

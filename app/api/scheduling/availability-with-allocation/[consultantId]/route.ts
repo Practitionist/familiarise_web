@@ -24,6 +24,8 @@ import {
   type AppointmentForOverlapMeta,
 } from "@/lib/booking/overlap-meta";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { apiError } from "@/lib/errors/api-error";
+import { Refusal } from "@/lib/errors/refusal";
 import {
   availabilityGridEtag,
   ifNoneMatchSatisfied,
@@ -159,13 +161,18 @@ export async function GET(
       const maySeeCalendar = maySeeDetails || (await isOrgAdmin());
 
       if (!maySeeCalendar) {
-        return NextResponse.json(
-          {
-            error:
+        return apiError({
+          tag: "[Availability.GET]",
+          error: new Refusal({
+            code: "NOT_OWNER",
+            httpStatus: 403,
+            userMessage:
+              "Only this consultant can see their appointment details.",
+            devMessage:
               "Forbidden: appointment details require consultant ownership",
-          },
-          { status: 403 },
-        );
+            context: { consultantId, userId: session?.user?.id },
+          }),
+        });
       }
       includeAppointmentDetails = maySeeDetails;
     }
