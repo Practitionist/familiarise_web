@@ -8,6 +8,7 @@ import {
 } from "@/lib/data/review-public";
 import { Prisma } from "@prisma/client";
 import { notifyNewReview } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendNewReviewEmail } from "@/lib/email";
 import { CreateReviewSchema } from "@/schemas/feedbacks";
 import { apiError } from "@/lib/errors";
 import { getSession } from "@/lib/auth-server";
@@ -309,13 +310,14 @@ export async function POST(req: NextRequest) {
 
     // Only a NEW (or revived) review is news; an edit must not re-notify.
     if (isNew) {
+      // The reviewer withheld their name from the public page; sending it to
+      // the consultant in a notification would hand back exactly what the
+      // flag exists to withhold, and to the one person it is kept from.
+      const reviewerName = newReview.isAnonymous
+        ? "A verified client"
+        : newReview.consulteeProfile?.user?.name || "User";
       await notifyNewReview(newReview.consultantProfile.userId, {
-        // The reviewer withheld their name from the public page; sending it to
-        // the consultant in a notification would hand back exactly what the
-        // flag exists to withhold, and to the one person it is kept from.
-        reviewerName: newReview.isAnonymous
-          ? "A verified client"
-          : newReview.consulteeProfile?.user?.name || "User",
+        reviewerName,
         rating: newReview.rating,
         comment: newReview.reviewDescription || undefined,
         planTitle: reviewable.title,
@@ -324,6 +326,18 @@ export async function POST(req: NextRequest) {
         // tree from a bare /dashboard.
         dashboardUrl: "/dashboard",
       });
+      // #1653 — the email twin of the bell; the sender never throws.
+      await sendNewReviewEmail(
+        {
+          reviewId: newReview.id,
+          consultantUserId: newReview.consultantProfile.userId,
+          reviewerName,
+          rating: newReview.rating,
+          comment: newReview.reviewDescription,
+          reviewUrl: "/dashboard",
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
 
     // Reviews are the landing page's testimonials and they move the expert's

@@ -95,7 +95,11 @@ lib/email/
 ├── deliver.ts         -- deliver() = stage() + attempt(), the single send core; getResendClient(), recordFailedEmail(), EmailNotConfiguredError
 ├── idempotency.ts     -- derives the content-hash Idempotency-Key shared by a sender and the retry worker
 ├── classify.ts        -- classifies a Resend failure as terminal or transient
-└── render.ts          -- renderEmail(), returns { html, text }
+├── render.ts          -- renderEmail(), returns { html, text }
+├── preferences.ts     -- loadEmailRecipients(), the NotificationPreference gate
+├── send-to-recipients.ts -- sendToRecipients() / stageToRecipients() / attemptStaged(), the per-recipient fan-out
+└── senders/
+    └── people.ts      -- the six people and access senders (#1653), re-exported from index.ts
 
 sendWelcomeEmail()         -- from: SENDERS.onboarding (onboarding@mail.familiarisenow.com)
 sendPasswordResetEmail()   -- from: SENDERS.security (security@mail.familiarisenow.com)
@@ -104,11 +108,20 @@ sendAccountLinkedEmail()   -- from: SENDERS.security
 sendPaymentLinkEmail()     -- from: SENDERS.payments (payments@mail.familiarisenow.com)
 sendPaymentSuccessEmail()  -- from: SENDERS.payments
 sendPaymentFailedEmail()   -- from: SENDERS.payments
-sendOrgInvitationEmail()   -- from: SENDERS.notifications (no caller today)
+sendOrgInvitationEmail()   -- from: SENDERS.notifications, entityRef orgInvite:<id> (invitations route) or membership:<id> (bulk import)
 sendWaitlistConfirmEmail() -- from: SENDERS.newsletter (newsletter@news.familiarisenow.com)
 sendWaitlistWelcomeEmail() -- from: SENDERS.newsletter
 sendContactInquiryEmail()  -- from: SENDERS.notifications, to: contactInboxAddress()
+
+sendSupportTicketResponseEmail() -- from: SENDERS.notifications, category support, entityRef ticket:<id>
+sendSupportTicketUpdateEmail()   -- from: SENDERS.notifications, category support, entityRef ticket:<id>
+sendAccountSuspendedEmail()      -- from: SENDERS.security, category null (required notice), entityRef user:<id>
+sendAccountBannedEmail()         -- from: SENDERS.security, category null (required notice), entityRef user:<id>
+sendOrgSsoCertExpiringEmail()    -- from: SENDERS.security, category null (required notice), entityRef org:<id>
+sendNewReviewEmail()             -- from: SENDERS.notifications, category feedback, entityRef review:<id>
 ```
+
+The six people and access senders in `lib/email/senders/people.ts` (#1653) share the shape the booking senders introduced: each takes user ids plus the raw domain values its call site already holds, resolves the recipients through `loadEmailRecipients()`, and renders one message per recipient in that recipient's zone through `sendToRecipients()`, so a suspension's end date and a certificate's expiry are printed in the reader's own zone. The three notices that pass a `null` category are never gated and carry no unsubscribe link, and `sendOrgInvitationEmail()` is never gated either because the invitee has no account row to read; the support and review senders are gated on `support` and `feedback`. A people sender never throws: an unexpected error is reported to Sentry with `tags: { subsystem: "email", emailType }` and returned as a failed count, and the caller's budget (`REQUEST` from an API route or the moderation action, `JOB` from the certificate sweep) bounds how long the caller waits. The templates live in `emails/support/`, `emails/account/`, `emails/organizations/` and `emails/reviews/` and render inside `EmailLayout`. Each sender is called right after the Novu bell it twins, with the same recipient and the same href, and no bell changed except the invitation bell, which is now awaited.
 
 Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` at call time (defaults `mail.familiarisenow.com` / `news.familiarisenow.com`), not hardcoded, so an environment can point sends at a different verified domain without a code change.
 
@@ -160,7 +173,7 @@ The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/co
 
 A timeout is not a failure. The Resend SDK spreads the request options into `fetch`, so the `AbortSignal` genuinely aborts the call, and `attempt()` recognises either a thrown `AbortError`/`TimeoutError` or the SDK's generic "could not be resolved" error while its own signal is aborted; in both cases the row is left `PENDING` and untouched, a single log line is written, and nothing reaches Sentry. The relay sends the row on its next pass under the same content-hash Idempotency-Key (`lib/email/idempotency.ts`, of the form `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>`), which Resend deduplicates for 24 hours, so a send that actually completed after the caller stopped waiting is not delivered twice. `deliver()` defaults Reply-To to `supportEmail()` when the caller does not set one; `stage()` applies the same default so the row and the send agree. A missing key (`EmailNotConfiguredError`) is reported at level `"error"` with fingerprint `["email-send-terminal", "not_configured"]` but leaves the row `PENDING`, because it replays once the key exists (#1298); a dead key, an unverified domain or a body Resend rejects dead-letters the row on the spot, since no replay changes the answer.
 
-Every sender stamps the row's `entityRef` with the business anchor it knows: the auth senders write `user:<id>`, the payment senders `payment:<id>`, the waitlist senders `waitlist:<email>` and the contact form `contact:<email>`. A sender's `DeliverResult` carries `staged: true` on failure when the row exists, which is how `app/api/contact/route.ts` answers success for an inquiry that is durable but not yet delivered and keeps its 502 for the case where even the row could not be written.
+Every sender stamps the row's `entityRef` with the business anchor it knows: the auth senders write `user:<id>`, the payment senders `payment:<id>`, the waitlist senders `waitlist:<email>`, the contact form `contact:<email>`, and the people senders `ticket:<id>`, `user:<id>`, `org:<id>`, `review:<id>`, `orgInvite:<id>` or, for a bulk import that creates no invitation row, `membership:<id>`. A sender's `DeliverResult` carries `staged: true` on failure when the row exists, which is how `app/api/contact/route.ts` answers success for an inquiry that is durable but not yet delivered and keeps its 502 for the case where even the row could not be written.
 
 #### Staging inside a transaction
 
@@ -175,9 +188,9 @@ A caller that owns a database transaction calls the two phases itself rather tha
 | Domain Prefix    | Used For                                                    | Domain                    |
 | ---------------- | ----------------------------------------------------------- | ------------------------- |
 | `onboarding@`    | Welcome, email verification                                 | `mail.familiarisenow.com` |
-| `security@`      | Password reset, account linking                             | `mail.familiarisenow.com` |
+| `security@`      | Password reset, linking, suspension, ban, SSO cert expiry   | `mail.familiarisenow.com` |
 | `payments@`      | Payment link, success, failure                              | `mail.familiarisenow.com` |
-| `notifications@` | Org invitations, contact inquiry                            | `mail.familiarisenow.com` |
+| `notifications@` | Org invitations, contact inquiry, support, reviews (#1653)  | `mail.familiarisenow.com` |
 | `finance@`       | Finance-facing notices                                      | `mail.familiarisenow.com` |
 | `dpdp@`          | DPDP compliance alerts                                      | `mail.familiarisenow.com` |
 | `noreply@`       | Data-export notice (the worker falls back to `onboarding@`) | `mail.familiarisenow.com` |
@@ -450,7 +463,7 @@ Since #1653 every lifecycle email is gated by `NotificationPreference` at send t
 | `orgMembership` | `orgMembershipAlerts`           |
 | `orgProgram`    | `orgProgramAlerts`              |
 
-A `null` category is a required account notice and bypasses the gate entirely: the recipient is always allowed and carries no unsubscribe URL, and the footer says the notice cannot be turned off. Four notices are never gated: an account suspension, a ban, an organisation invitation and an SSO certificate expiry, because the reader must act on each of them whether or not they want mail.
+A `null` category is a required account notice and bypasses the gate entirely: the recipient is always allowed and carries no unsubscribe URL, and the footer says the notice cannot be turned off. Four notices are never gated: an account suspension (`sendAccountSuspendedEmail()`), a ban (`sendAccountBannedEmail()`), an organisation invitation (`sendOrgInvitationEmail()`, whose invitee has no preference row to read) and an SSO certificate expiry (`sendOrgSsoCertExpiringEmail()`), because the reader must act on each of them whether or not they want mail.
 
 One-click unsubscribe follows RFC 8058. `sendToRecipients()` (`lib/email/send-to-recipients.ts`) attaches `List-Unsubscribe: <url>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` to every gated message, so Gmail and Yahoo render their own unsubscribe button and POST to the URL without a click-through. The URL is `/api/notifications/unsubscribe?u=<userId>&t=<token>`, where the token is an HMAC over the user id under the same `WAITLIST_HMAC_SECRET` the newsletter links use (`lib/waitlist/tokens.ts`), bound to its own purpose so a newsletter token cannot be replayed against an account. The token is timeless because an unsubscribe link in a year-old email must still work. `POST` verifies the token, upserts `NotificationPreference` with `emailEnabled = false`, mirrors the flags to Novu the way `PUT /api/novu/preferences` does, and answers `{ ok: true }`; a bad token answers 400 and an id with no user answers 200 all the same, so the route is not an oracle. `GET` is the footer link a human clicks: it verifies the token and redirects to `/email/unsubscribe`, which shows a form that POSTs to the same route, and it flips nothing on its own because link scanners prefetch. One-click turns off the email channel only and leaves the category columns and the in-app bell untouched, because the category columns are shared across channels: the complaint was the inbox, not the bell, and turning off `appointmentReminders` would also silence the in-app reminder. The relay's resend of a staged `FailedEmail` row carries no `List-Unsubscribe` headers, because `stage()` does not persist them; the footer link in the body still works, and the headers return on every inline send.
 

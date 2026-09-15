@@ -8,6 +8,7 @@ import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
 import { notifySupportTicketUpdate } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendSupportTicketUpdateEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { UpdateSupportTicketSchema } from "@/schemas/support";
@@ -339,16 +340,34 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // After the commit — a notification failure must not roll back a status
     // change the queue has already acted on.
     // Notify the ticket owner about the update
+    const reference = updatedTicket.referenceNumber ?? undefined;
+    const ticketTitle = updatedTicket.title || "Support Ticket";
+    const statusLabel = supportTicketStatusLabel(updatedTicket.status);
     await notifySupportTicketUpdate(updatedTicket.user.id, {
       ticketId: updatedTicket.id,
-      reference: updatedTicket.referenceNumber ?? undefined,
-      ticketTitle: updatedTicket.title || "Support Ticket",
-      status: supportTicketStatusLabel(updatedTicket.status),
+      reference,
+      ticketTitle,
+      status: statusLabel,
       statusCode: updatedTicket.status,
       dashboardUrl: "/dashboard",
       // ADR 23 — inherit the ticket's org-ness (attribution only).
       ...notificationScope(updatedTicket.organizationId),
     });
+    // #1653 — the email twin of the bell. The owner's address is loaded above,
+    // but the sender reads it through the preference gate so the category
+    // switch and the zone apply here as everywhere; it never throws.
+    await sendSupportTicketUpdateEmail(
+      {
+        ticketId: updatedTicket.id,
+        ownerUserId: updatedTicket.user.id,
+        reference,
+        title: ticketTitle,
+        statusCode: updatedTicket.status,
+        statusLabel,
+        ticketUrl: "/dashboard",
+      },
+      EMAIL_BUDGET_MS.REQUEST,
+    );
 
     return NextResponse.json(updatedTicket);
   } catch (error) {

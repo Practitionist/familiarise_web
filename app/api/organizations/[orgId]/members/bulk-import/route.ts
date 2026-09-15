@@ -15,7 +15,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { Prisma, UserRole } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import {
@@ -24,6 +24,7 @@ import {
 } from "@/lib/enterprise/governance";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
+import { sendOrgInvitationEmail } from "@/lib/email";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const EntrySchema = z.object({
@@ -91,23 +92,32 @@ export async function POST(
 
   // Auto-send invite emails to successfully imported members (#1230 wave-8).
   // Fire-and-forget per ADR-14 — email failures don't undo the membership.
-  const importedEmails = results
-    .filter((r) => r.ok && r.membershipId)
-    .map((r) => deduped.find((e) => e.email === r.email))
-    .filter((e): e is NonNullable<typeof e> => !!e);
+  const importedMembers = results.flatMap((r) =>
+    r.ok && r.membershipId
+      ? [{ email: r.email, membershipId: r.membershipId }]
+      : [],
+  );
 
-  for (const entry of importedEmails) {
+  for (const { email, membershipId } of importedMembers) {
+    const invite = {
+      inviterName: access.member.id,
+      orgName: access.org.name,
+      role: "LEARNER",
+      inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    };
     try {
-      await notifyOrgInviteSent(entry.email, {
-        inviterName: access.member.id,
-        orgName: access.org.name,
-        role: "LEARNER",
-        inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
-        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-      });
+      await notifyOrgInviteSent(email, invite);
     } catch {
       // Non-fatal: the membership exists; admin can resend manually.
     }
+    // #1653 — the bell reaches an invitee who already has an account; the
+    // email reaches one who does not. No invitation row exists here, so the
+    // membership is the anchor.
+    await sendOrgInvitationEmail(
+      { email, ...invite },
+      { entityRef: `membership:${membershipId}` },
+    ).catch((err) => console.error("[bulk-import] invite email failed:", err));
   }
 
   return NextResponse.json(
@@ -185,8 +195,7 @@ async function importEntry(
             if (claimed.count === 0) {
               return {
                 ok: false as const,
-                error:
-                  "Cannot reactivate: non-LEARNER removed membership",
+                error: "Cannot reactivate: non-LEARNER removed membership",
               };
             }
             return { ok: true as const, membershipId: existing.id };
