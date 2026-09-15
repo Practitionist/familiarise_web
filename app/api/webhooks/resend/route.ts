@@ -15,40 +15,14 @@ import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
 import { getResendClient } from "@/lib/email/deliver";
 import { normaliseEmail, suppressRecipient } from "@/lib/email/suppression";
+import {
+  MAX_WEBHOOK_BODY_BYTES,
+  readBodyWithinCap,
+} from "@/lib/webhooks/read-body";
 
 export const dynamic = "force-dynamic";
 // Signature verification is Node-only (the SDK's standardwebhooks dependency).
 export const runtime = "nodejs";
-
-// #1459 — an event payload is a few kilobytes; anything bigger is not a
-// delivery we have to serve, and buffering it is work an anonymous caller makes us do.
-const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
-
-// Copied from the Razorpay receiver (#1459): count the bytes as they stream in
-// so the cap holds against a caller that omits or understates Content-Length.
-async function readBodyWithinCap(req: NextRequest): Promise<string | null> {
-  const stream = req.body;
-  if (!stream) return req.text();
-
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_WEBHOOK_BODY_BYTES) {
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return new TextDecoder().decode(Buffer.concat(chunks));
-}
 
 function notConfigured(reason: "not_configured" | "no_api_key") {
   Sentry.captureMessage(
