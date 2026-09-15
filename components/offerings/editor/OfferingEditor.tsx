@@ -151,9 +151,12 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           (px-6 lg:px-8) stack two paddings, so an inset band leaves gray
           gutters on both sides. The negative margins cancel both per
           breakpoint (40/48/64px) and the inner px re-pads the same amount,
-          so the title row and tabs align exactly with the card below.
+          so the title row and tabs align exactly with the card below. The
+          negative TOP margin cancels the same stack vertically (40/48/56px:
+          shell p + content py-6) so no gray strip separates the band from
+          the banner above it.
         */}
-          <div className="sticky top-0 z-20 -mx-10 mb-6 border-b bg-background px-10 pb-3 pt-3 sm:-mx-12 sm:px-12 lg:-mx-16 lg:px-16">
+          <div className="sticky top-0 z-20 -mx-10 -mt-10 mb-6 border-b bg-background px-10 pb-3 pt-3 sm:-mx-12 sm:-mt-12 sm:px-12 lg:-mx-16 lg:-mt-14 lg:px-16">
             <div className="mb-3 flex flex-wrap items-center gap-3">
               <h1 className="text-xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
