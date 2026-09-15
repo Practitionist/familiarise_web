@@ -146,13 +146,15 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
           onValueChange={setActiveSection}
           className="contents"
         >
-          <div className="sticky top-0 z-20 mb-8 border-b bg-background pb-3 pt-3">
+          <div className="sticky top-0 z-20 mb-6 border-b bg-background pb-3 pt-3">
             <div className="mb-3 flex flex-wrap items-center gap-3">
-              <h1 className="text-2xl font-semibold">
+              <h1 className="text-xl font-semibold">
                 {planId ? "Edit" : "New"} {manifest.noun}
               </h1>
-              {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
-              {status === "PUBLISHED" && <Badge>Published</Badge>}
+              <span className="ml-auto flex items-center gap-2">
+                {status === "DRAFT" && <Badge variant="outline">Draft</Badge>}
+                {status === "PUBLISHED" && <Badge>Published</Badge>}
+              </span>
             </div>
 
             <TabsList
