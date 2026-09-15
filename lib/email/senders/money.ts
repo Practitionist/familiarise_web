@@ -136,7 +136,7 @@ export async function sendRefundProcessedEmail(
  * with it; a render failure is reported inside `stageToRecipients()`.
  */
 export async function stageRefundProcessedEmail(
-  tx: Pick<Tx, "failedEmail" | "user">,
+  tx: Pick<Tx, "failedEmail" | "emailSuppression" | "user">,
   args: RefundProcessedEmailArgs,
 ): Promise<StagedRecipientEmail[]> {
   const recipients = await loadEmailRecipients([args.userId], "payments", tx);
