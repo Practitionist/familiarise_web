@@ -7,6 +7,8 @@ import { requireOnboarded } from "@/lib/auth-guard";
 import { getUserDetails } from "@/lib/data/user-details";
 import { toPlain } from "@/lib/data/serialize";
 import { ServerUserIdProvider } from "@/components/dashboard/ServerUserId";
+import { StreamInitialTokensProvider } from "@/components/stream/StreamInitialTokens";
+import { mintInitialStreamTokens } from "@/lib/stream/initial-tokens";
 
 /**
  * Seeds the query that both personal dashboard layouts gate their render on.
@@ -58,6 +60,13 @@ export default async function DashboardLayout({
     })
     .catch(() => undefined);
 
+  // Every StreamProvider under /dashboard connects with these, so the first
+  // connect needs no token round trip to a possibly stalled instance (#1124).
+  const streamTokens = mintInitialStreamTokens(session.user.id, {
+    chat: true,
+    video: true,
+  });
+
   return (
     <ServerUserIdProvider
       userId={session.user.id}
@@ -66,9 +75,11 @@ export default async function DashboardLayout({
         session.user.organizationMemberships?.[0]?.organizationId ?? null
       }
     >
-      <HydrationBoundary state={dehydrate(queryClient)}>
-        {children}
-      </HydrationBoundary>
+      <StreamInitialTokensProvider tokens={streamTokens}>
+        <HydrationBoundary state={dehydrate(queryClient)}>
+          {children}
+        </HydrationBoundary>
+      </StreamInitialTokensProvider>
     </ServerUserIdProvider>
   );
 }

@@ -74,7 +74,11 @@ import {
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
+import {
+  notifyOrgPayoutCompleted,
+  notifyOrgPayoutFailed,
+} from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -1428,7 +1432,7 @@ async function markOrgPayoutFailedInternal(
       console.log(
         `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
       );
-      return { wasNoOp: true, status: current.status, notify: null };
+      return { wasNoOp: true, status: current.status, notifyStaged: [] };
     }
 
     // Release the underlying earnings back to READY so the next batch
@@ -1479,32 +1483,40 @@ async function markOrgPayoutFailedInternal(
       },
     });
 
-    return {
-      wasNoOp: false,
-      status: "FAILED" as PayoutStatus,
-      notify: {
-        organizationId: payout.organizationId,
+    // #1654 — staged inside the claim's transaction so a Novu outage or a freeze cannot lose it.
+    const notifyStaged = await notifyOrgPayoutFailed(
+      payout.organizationId,
+      {
         orgName: payout.organization.name,
-        netPayoutPaise: payout.netPayoutPaise,
+        payoutId,
+        amountPaise: payout.netPayoutPaise,
         currency: payout.currency,
+        reason: reason.slice(0, 200),
+        kind,
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
       },
-    };
+      { tx, entityRef: `orgPayout:${payoutId}` },
+    );
+
+    return { wasNoOp: false, status: "FAILED" as PayoutStatus, notifyStaged };
   });
 
-  if (result.notify) {
-    const { notifyOrgPayoutFailed } = await import("@/lib/novu/org-workflows");
-    await notifyOrgPayoutFailed(result.notify.organizationId, {
-      orgName: result.notify.orgName,
-      payoutId,
-      amountPaise: result.notify.netPayoutPaise,
-      currency: result.notify.currency,
-      reason: reason.slice(0, 200),
-      kind,
-      dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
-    });
-  }
+  await attemptStagedBells(result.notifyStaged, kind);
 
   return { wasNoOp: result.wasNoOp, status: result.status };
+}
+
+/** #1654 — the post-commit attempt; `attemptTrigger` never throws, this only guards the loop. */
+async function attemptStagedBells(
+  staged: StagedTrigger[],
+  site: "FAILED" | "REVERSED",
+): Promise<void> {
+  try {
+    for (const row of staged) await attemptTrigger(row);
+  } catch (e) {
+    reportSentryError(e, { subsystem: "payments" });
+    console.error(`[org-payout] ${site} notify attempt failed:`, e);
+  }
 }
 
 /**
@@ -1548,7 +1560,7 @@ export async function markOrgPayoutReversed(
         failedAt: new Date(),
       },
     });
-    if (claim.count === 0) return { claimed: false, notify: null };
+    if (claim.count === 0) return { claimed: false, notifyStaged: [] };
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
       where: { id: payoutId },
@@ -1642,15 +1654,22 @@ export async function markOrgPayoutReversed(
       },
     });
 
-    return {
-      claimed: true,
-      notify: {
-        organizationId: payout.organizationId,
+    // #1654 — staged inside the claim's transaction so a Novu outage or a freeze cannot lose it.
+    const notifyStaged = await notifyOrgPayoutFailed(
+      payout.organizationId,
+      {
         orgName: payout.organization.name,
-        netPayoutPaise: payout.netPayoutPaise,
+        payoutId,
+        amountPaise: payout.netPayoutPaise,
         currency: payout.currency,
+        reason: reason.slice(0, 200),
+        kind: "REVERSED",
+        dashboardUrl: `${getAppUrl()}/dashboard/organization/${payout.organizationId}/payouts`,
       },
-    };
+      { tx, entityRef: `orgPayout:${payoutId}` },
+    );
+
+    return { claimed: true, notifyStaged };
   });
   // #1470 — same shape as markOrgPayoutCompleted: the guard throws inside the
   // transaction so the REVERSED claim rolls back, and the durable report runs
@@ -1665,25 +1684,7 @@ export async function markOrgPayoutReversed(
   );
 
   if (completedResult.claimed) {
-    if (completedResult.notify) {
-      const { notifyOrgPayoutFailed } =
-        await import("@/lib/novu/org-workflows");
-      // #813 — fire-and-forget: awaiting let a Novu failure throw out of the
-      // committed tx, failing the webhook delivery whose redelivery then no-ops
-      // (state already REVERSED) → the notification was permanently lost.
-      await notifyOrgPayoutFailed(completedResult.notify.organizationId, {
-        orgName: completedResult.notify.orgName,
-        payoutId,
-        amountPaise: completedResult.notify.netPayoutPaise,
-        currency: completedResult.notify.currency,
-        reason: reason.slice(0, 200),
-        kind: "REVERSED",
-        dashboardUrl: `${getAppUrl()}/dashboard/organization/${completedResult.notify.organizationId}/payouts`,
-      }).catch((e) => {
-        reportSentryError(e, { subsystem: "payments" });
-        console.error("[org-payout] REVERSED notify failed:", e);
-      });
-    }
+    await attemptStagedBells(completedResult.notifyStaged, "REVERSED");
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }
 
