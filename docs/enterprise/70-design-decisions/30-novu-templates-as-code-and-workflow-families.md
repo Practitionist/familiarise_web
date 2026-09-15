@@ -3,7 +3,7 @@ title: Novu templates as code, grouped into workflow families
 band: 70-design-decisions
 audience: sde3
 status: live
-last-reviewed: 2026-09-13
+last-reviewed: 2026-09-15
 ---
 
 # ADR 30 — Novu templates as code, grouped into workflow families
@@ -40,7 +40,7 @@ The `amount`/`amountFormatted` split on the four payment payloads (#536) exists 
 
 ## What was asked and declined
 
-The owner asked whether notifications should be decoupled behind a broker. They already are decoupled from the response: 32 triggers are `void`-fired, 40 run in `after()`, and #1446 capped the SDK at five seconds. The failure that remains is a Netlify instance freezing after the response is sent, which loses an in-flight trigger — and a broker does not fix that, because the produce call is lost the same way. What fixes it is the transactional outbox this repository already uses for `OutboundWebhookDelivery` and `FailedEmail`: a row in the same transaction as the business change, drained by the five-minute ticker of ADR 27, idempotent on the transaction id. If that is wanted, its table must land before the schema freeze; the drain can follow. Kafka's floor cost (about $385/month on Confluent's production tier) plus a consumer Netlify cannot host, for fewer than a thousand notifications a day, buys ordering and fan-out that nothing here requires — and Novu is already the asynchronous delivery queue behind the trigger.
+The owner asked whether notifications should be decoupled behind a broker. They are already decoupled from the response, and since #1664 they are also durable: every `notify*` call is awaited and first staged as a `NotificationOutbox` row (four money sites stage inside their own transaction), the inline attempt runs under the five-second SDK cap from #1446, and the drain finishes whatever that attempt left pending; since #691's PR E the `ORG_*` family rides the same cores, with the two org-payout bells staged inside the claim transaction. The failure that remains is a Netlify instance freezing after the response is sent, which loses an in-flight trigger — and a broker does not fix that, because the produce call is lost the same way. What fixes it is the transactional outbox this repository already uses for `OutboundWebhookDelivery` and `FailedEmail`: a row in the same transaction as the business change, drained by the five-minute ticker of ADR 27, idempotent on the transaction id. If that is wanted, its table must land before the schema freeze; the drain can follow. Kafka's floor cost (about $385/month on Confluent's production tier) plus a consumer Netlify cannot host, for fewer than a thousand notifications a day, buys ordering and fan-out that nothing here requires — and Novu is already the asynchronous delivery queue behind the trigger.
 
 ## Relations
 
