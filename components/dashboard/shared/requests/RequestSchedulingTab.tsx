@@ -475,6 +475,7 @@ function StoredTimes({ request }: { request: Request }) {
       : request.requestedTimes?.map((startsAt) => ({
           startsAt,
           isTentative: false,
+          completionStatus: null,
         }));
 
   if (slots && slots.length > 0) {
