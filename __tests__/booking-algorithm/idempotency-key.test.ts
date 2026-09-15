@@ -91,4 +91,19 @@ describe("resolveAttemptKey", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
   });
+
+  it("differs across allocation intents (#1206 allowPartial)", () => {
+    // A partial-success batch stamped under one key must never replay as the
+    // answer to a full-intent retry: same mode, same event, same (empty, for
+    // auto) slot list — different intent, different key.
+    const full = computeAttemptFingerprint("auto", "e1", []);
+    const partial = computeAttemptFingerprint("auto", "e1", [], "partial");
+    expect(partial).not.toBe(full);
+  });
+
+  it("defaults to the full intent when omitted (backwards compatible)", () => {
+    expect(computeAttemptFingerprint("auto", "e1", [])).toBe(
+      computeAttemptFingerprint("auto", "e1", [], undefined),
+    );
+  });
 });

@@ -707,3 +707,79 @@ describe("Valid complete submission", () => {
     jest.useRealTimers();
   });
 });
+
+// ─── Plan-total cap counts proposed slots ────────────────────────────────────
+
+describe("Plan-total cap includes proposed calls", () => {
+  it("counts existing + proposed in totalCallsScheduled", async () => {
+    const existingAppointments = [
+      makeAppointmentWithSlots("apt-1", [
+        "2025-01-06T10:00:00.000Z",
+        "2025-01-06T10:30:00.000Z",
+      ]),
+    ];
+
+    const { service } = createService(
+      {
+        subscriptionPlan: makeSubscriptionPlan({
+          sessionsPerWeek: 2,
+          sessionDurationInHours: 1,
+        }),
+      },
+      existingAppointments,
+    );
+
+    const proposed = makeConsecutiveSlotISOs("2025-01-07T10:00:00.000Z", 2);
+
+    const result = await service.validateSubscriptionSlots("sub-1", proposed);
+    // 1 existing call + 1 proposed call. Before the fix the total read 1:
+    // only existingCalls were summed, so an over-total spread across weeks
+    // (no single week overflowing) passed validation.
+    expect(result.totalCallsScheduled).toBe(2);
+  });
+
+  it("rejects a plan-total overflow even when weekly caps also bind", async () => {
+    // Default period 2025-01-06 → 2025-02-02 spans 5 Sundays, so
+    // maxTotalCalls = 2 × 5 = 10. 8 existing calls (2/week, weeks 1–4) plus
+    // 3 proposed calls in week 5: total 11 > 10 must trip the plan-total
+    // gate, not just the weekly one.
+    const existingAppointments = [
+      "2025-01-06T10:00:00.000Z",
+      "2025-01-07T10:00:00.000Z",
+      "2025-01-13T10:00:00.000Z",
+      "2025-01-14T10:00:00.000Z",
+      "2025-01-20T10:00:00.000Z",
+      "2025-01-21T10:00:00.000Z",
+      "2025-01-27T10:00:00.000Z",
+      "2025-01-28T10:00:00.000Z",
+    ].map(
+      (start, i) =>
+        makeAppointmentWithSlots(`apt-${i + 1}`, [
+          start,
+          start.replace("10:00", "10:30"),
+        ]),
+    );
+
+    const { service } = createService(
+      {
+        subscriptionPlan: makeSubscriptionPlan({
+          sessionsPerWeek: 2,
+          sessionDurationInHours: 1,
+        }),
+      },
+      existingAppointments,
+    );
+
+    const proposed = [
+      ...makeConsecutiveSlotISOs("2025-02-02T10:00:00.000Z", 2),
+      ...makeConsecutiveSlotISOs("2025-02-02T11:00:00.000Z", 2),
+      ...makeConsecutiveSlotISOs("2025-02-02T12:00:00.000Z", 2),
+    ];
+
+    const result = await service.validateSubscriptionSlots("sub-1", proposed);
+    expect(result.isValid).toBe(false);
+    expect(
+      result.errors.some((e) => e.includes("exceed subscription limit")),
+    ).toBe(true);
+  });
+});

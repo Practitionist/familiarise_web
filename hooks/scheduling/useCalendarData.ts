@@ -320,7 +320,6 @@ export function useCalendarData(
     if (!consultantId) return;
 
     const requestId = ++availabilityRequestIdRef.current;
-    availabilityFetchedAtRef.current = Date.now();
 
     // Published so the poll can WAIT on this request instead of racing it.
     // Resolve-only, so a waiter's `finally` can never see a rejection.
@@ -435,6 +434,11 @@ export function useCalendarData(
         description: errorMessage,
       });
     } finally {
+      // Freshness is stamped when the fetch SETTLES, not when it is issued:
+      // the poll delay is measured from this stamp, so a slow response (or a
+      // failing endpoint) can no longer drive the delay to zero and turn the
+      // 60s poll into a hot retry loop exactly when the server is struggling.
+      availabilityFetchedAtRef.current = Date.now();
       // Clear only if no LATER request has taken the ref over — that one owns
       // it until it settles itself.
       if (availabilityInFlightRef.current === inFlight) {
