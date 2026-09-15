@@ -1142,6 +1142,7 @@ New Support Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketUpdate(userId, payload)`
 **Recipient**: The ticket's owner, when ops changes its status
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_UPDATE` (`emails/support/SupportTicketUpdateEmail.tsx`), sent by `sendSupportTicketUpdateEmail()` right after this bell from both staff routes (#1653); the body adds a next-step sentence per status.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1211,6 +1212,7 @@ Ticket Activity — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketResponse(userId, payload)`
 **Recipient**: Ticket creator (user)
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_RESPONSE` (`emails/support/SupportTicketResponseEmail.tsx`), sent by `sendSupportTicketResponseEmail()` right after this bell (#1653); the inbox preview is the reply's first 140 characters, the same truncation the bell applies.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1285,6 +1287,7 @@ Update on Your Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifyNewReview(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `feedback`
+**Email twin**: `NEW_REVIEW_RECEIVED` (`emails/reviews/NewReviewEmail.tsx`), sent by `sendNewReviewEmail()` right after this bell with the same anonymised reviewer name and a 140-character excerpt (#1653).
 
 **Payload variables** (`ReviewPayload`):
 
@@ -1471,3 +1474,7 @@ These need Dashboard configuration after Tier 1 is done:
 - `new-consultant-application` — ConsultantApplicationPayload
 - `document-uploaded` — DocumentUploadedPayload (`lib/novu/workflows.ts`). In-app + email to the reviewer (consultant) on a new submission, or to the uploader on a consultant response. Payload carries `versionNo` + `isThreaded` so copy can say "Revision v3 uploaded" vs "New document".
 - `document-reviewed` — DocumentReviewedPayload. In-app to the consultee when their submission moves status; templates branch on `reviewStatus` (APPROVED / REJECTED / NEEDS_REVISION / IN_REVIEW). Both workflows must exist in the Novu dashboard with matching slugs before enabling in production.
+- `account-suspended` — the suspended user, no preference category. Email twin: `ACCOUNT_SUSPENDED` (`emails/account/AccountSuspendedEmail.tsx`), sent by `sendAccountSuspendedEmail()` right after this bell inside the moderation side-effects (#1653); a required notice with the end date in the user's zone, the reason, the cancelled-appointment count and a `mailto:` CTA to support.
+- `account-banned` — the banned user, no preference category. Email twin: `ACCOUNT_BANNED` (`emails/account/AccountBannedEmail.tsx`), sent by `sendAccountBannedEmail()` right after this bell (#1653); the suspension notice without an end date.
+- `org-invite-sent` — the invitee by email, no preference row to read. Email twin: `ORG_INVITATION` (`emails/organizations/OrgInvitationEmail.tsx`), sent by `sendOrgInvitationEmail()` right after this bell from the invitations route and the bulk import (#1653); the bell reaches an invitee who already has an account and the email reaches one who does not, so both are awaited.
+- `org-sso-cert-expiring` — the org's OWNER roster. Email twin: `ORG_SSO_CERT_EXPIRING` (`emails/organizations/OrgSsoCertExpiringEmail.tsx`), sent by `sendOrgSsoCertExpiringEmail()` right after this bell from the certificate sweep to the same roster (#1653); a required notice whose subject switches on `severity`.

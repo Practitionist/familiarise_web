@@ -37,6 +37,11 @@ import {
   notifyVerificationStatusChanged,
 } from "@/lib/novu";
 import {
+  EMAIL_BUDGET_MS,
+  sendAccountBannedEmail,
+  sendAccountSuspendedEmail,
+} from "@/lib/email";
+import {
   cancelFutureEngagementsForUser,
   type BulkCancelSummary,
 } from "./cancel-user-engagements";
@@ -530,7 +535,7 @@ async function runNotification(
   }
 }
 
-function triggerModerationNotification(
+async function triggerModerationNotification(
   input: ModerationSideEffectInput,
   transactional: TransactionalEffectResult,
   summary: SideEffectSummary,
@@ -540,17 +545,41 @@ function triggerModerationNotification(
     case "WARNING_ISSUED":
     case "CONTENT_REMOVED":
       return notifyModerationWarning(report.targetUserId, { reason: notes });
-    case "USER_SUSPENDED":
-      return notifyAccountSuspended(report.targetUserId, {
+    case "USER_SUSPENDED": {
+      const bell = await notifyAccountSuspended(report.targetUserId, {
         reason: notes,
         suspendedUntil: transactional.banExpires ?? "",
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
       });
-    case "USER_BANNED":
-      return notifyAccountBanned(report.targetUserId, {
+      // #1653 — a required notice, never gated; the sender never throws and
+      // the bell's outcome is what the summary records.
+      await sendAccountSuspendedEmail(
+        {
+          userId: report.targetUserId,
+          reason: notes,
+          suspendedUntil: transactional.banExpires,
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+      return bell;
+    }
+    case "USER_BANNED": {
+      const bell = await notifyAccountBanned(report.targetUserId, {
         reason: notes,
         appointmentsCancelled: summary.cancellations?.engagementsCancelled,
       });
+      // #1653 — the ban's email twin; same contract as the suspension.
+      await sendAccountBannedEmail(
+        {
+          userId: report.targetUserId,
+          reason: notes,
+          appointmentsCancelled: summary.cancellations?.engagementsCancelled,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
+      return bell;
+    }
     case "PROFILE_UNVERIFIED":
       return notifyVerificationStatusChanged(report.targetUserId, {
         status: "REJECTED",
