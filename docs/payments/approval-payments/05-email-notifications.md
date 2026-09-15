@@ -66,7 +66,7 @@ proceed with scheduling, please complete your payment:
 complete payment before January 15, 2025 at 3:00 PM, your request
 will be reverted to pending status.
 
-Questions? Contact support@familiarise.com
+Questions? Contact support@familiarisenow.com
 
 Best regards,
 The Familiarise Team
@@ -86,7 +86,7 @@ await sendPaymentSuccessEmail({
   amount: 100,
   currency: "USD",
   receiptUrl: "https://dashboard.stripe.com/receipts/...",
-  dashboardUrl: "https://familiarise.com/dashboard",
+  dashboardUrl: "https://familiarisenow.com/dashboard",
 });
 ```
 
@@ -133,7 +133,7 @@ await sendPaymentFailedEmail({
   appointmentType: "consultation",
   amount: 100,
   currency: "USD",
-  retryUrl: "https://familiarise.com/consultations/clx123/payment",
+  retryUrl: "https://familiarisenow.com/consultations/clx123/payment",
   failureReason: "Card declined",
   expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
 });
@@ -169,7 +169,7 @@ What to do next:
 ⏰ Time Sensitive: This payment link expires in 48 hours. Complete
 payment before the deadline or your request will revert to pending.
 
-Need help? Contact support@familiarise.com
+Need help? Contact support@familiarisenow.com
 
 Best regards,
 The Familiarise Team
@@ -203,10 +203,7 @@ emails/payments/
 
 ```tsx
 // emails/payments/PaymentLinkEmail.tsx
-import { Button } from "@react-email/button";
-import { Container } from "@react-email/container";
-import { Html } from "@react-email/html";
-import { Text } from "@react-email/text";
+import { Button, Container, Html, Text } from "react-email";
 
 interface PaymentLinkEmailProps {
   name: string;
@@ -328,8 +325,10 @@ const warning = {
 
 ### Configuration
 
+The client, `SENDERS` addresses, `deliver()` and the idempotency-key derivation now live in `lib/email/config.ts` and `lib/email/deliver.ts` rather than a single `lib/email.ts` file, and `deliver()` dead-letters into `FailedEmail` instead of returning early on a missing key; see [docs/notifications/01-architecture.md](../../notifications/01-architecture.md) for the current pipeline. The snippet below is illustrative of the pre-#1298 shape and no longer matches the source:
+
 ```typescript
-// lib/email.ts
+// lib/email.ts (superseded by lib/email/deliver.ts)
 import { Resend } from "resend";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
@@ -396,7 +395,7 @@ export async function sendPaymentLinkEmail({
       appointmentType.charAt(0).toUpperCase() + appointmentType.slice(1);
 
     const data = await resend.emails.send({
-      from: "Familiarise Payments <payments@familiarise.com>",
+      from: "Familiarise Payments <payments@mail.familiarisenow.com>", // SENDERS.payments in lib/email/config.ts
       to: email,
       subject: `Payment Required - ${appointmentLabel} with ${consultantName}`,
       html,
@@ -535,7 +534,7 @@ Preview at: http://localhost:3000
 
 ```typescript
 // scripts/test-email.ts
-import { sendPaymentLinkEmail } from "@/lib/email";
+import { sendPaymentLinkEmail } from "@/lib/email"; // still resolves to lib/email/index.ts
 
 async function testEmail() {
   await sendPaymentLinkEmail({
@@ -662,19 +661,22 @@ const html = await render(<PaymentLinkEmail {...props} />);
 RESEND_API_KEY=re_your_api_key_here
 
 # Application URL (for email links)
-NEXT_PUBLIC_APP_URL=https://familiarise.com
+NEXT_PUBLIC_APP_URL=https://familiarisenow.com
 ```
 
 ### Email Sender Addresses
 
+The addresses below are the `SENDERS` getters in `lib/email/config.ts`; every domain is read from `EMAIL_TRANSACTIONAL_DOMAIN` at call time, so the values shown are the defaults, not hardcoded strings.
+
 ```typescript
-const EMAIL_SENDERS = {
-  onboarding: "Familiarise <onboarding@familiarise.com>",
-  payments: "Familiarise Payments <payments@familiarise.com>",
-  security: "Familiarise Security <security@familiarise.com>",
-  support: "Familiarise Support <support@familiarise.com>",
+const SENDERS = {
+  onboarding: "Familiarise <onboarding@mail.familiarisenow.com>",
+  payments: "Familiarise Payments <payments@mail.familiarisenow.com>",
+  security: "Familiarise Security <security@mail.familiarisenow.com>",
 };
 ```
+
+There is no separate `support` sender; `support@familiarisenow.com` is `NEXT_PUBLIC_SUPPORT_EMAIL`, the default Reply-To on every send, read via `supportEmail()` in `lib/email/config.ts`.
 
 ### Rate Limits (Resend)
 

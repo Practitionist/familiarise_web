@@ -11,6 +11,7 @@
  */
 
 import { isValidGstin } from "@/lib/compliance/gst";
+import { billingEmail } from "@/lib/email/config";
 
 export interface PlatformSupplier {
   name: string;
@@ -35,6 +36,6 @@ export function getPlatformSupplier(): PlatformSupplier | null {
     name: "Familiarise Technologies Private Limited",
     gstin,
     address: "Koramangala 1st Block, Bangalore, Karnataka 560034, India",
-    email: "billing@familiarise.com",
+    email: billingEmail(),
   };
 }

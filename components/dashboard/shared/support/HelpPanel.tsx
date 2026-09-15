@@ -29,6 +29,11 @@ import {
 import { cn } from "@/utils/tailwind";
 import { type FAQ } from "./questions";
 
+// #1298 — read the NEXT_PUBLIC var directly: lib/email imports prisma and
+// cannot be bundled into a client component.
+const SUPPORT_EMAIL =
+  process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com";
+
 interface HelpPanelProps {
   faqs: FAQ[];
 }
@@ -378,7 +383,7 @@ export function HelpPanel({ faqs: initialFaqs }: Readonly<HelpPanelProps>) {
           <p className="text-sm sm:text-base text-zinc-500">
             Still have questions?{" "}
             <a
-              href="mailto:support@familiarise.com"
+              href={`mailto:${SUPPORT_EMAIL}`}
               className="text-zinc-900 font-medium hover:underline"
             >
               Contact our support team
