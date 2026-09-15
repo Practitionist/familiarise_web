@@ -88,9 +88,12 @@ export function OfferingEditor<T extends FieldValues = FieldValues>({
   const revealFirstError = (names: string[]) => {
     const errored = new Set(names);
     const section = manifest.sections.find((s) =>
-      [...s.fields.map((f) => f.name), ...(s.slotFields ?? [])].some((n) =>
-        errored.has(n),
-      ),
+      [
+        ...s.fields.flatMap((f) =>
+          f.currencyName ? [f.name, f.currencyName] : [f.name],
+        ),
+        ...(s.slotFields ?? []),
+      ].some((n) => errored.has(n)),
     );
     if (section) setActiveSection(section.id);
   };
