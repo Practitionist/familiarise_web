@@ -47,9 +47,9 @@ import {
   EMAIL_BUDGET_MS,
   refundOnItsWay,
   sendAppointmentCancelledEmail,
+  sendRefundProcessedEmail,
 } from "../../lib/email";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
-import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   CANCELLABLE_FROM,
