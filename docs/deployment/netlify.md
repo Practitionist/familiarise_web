@@ -39,6 +39,49 @@
 | GitHub repo            | `https://github.com/Practitionist/familiarise_web`    |
 | DNS managed by         | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`)         |
 
+### Hosting machinery, end to end
+
+The diagram below is the whole hosting picture in one place: how a request reaches this site, which Netlify context it lands in, and which third-party service reads which environment variable once the Next.js application is running. Each Netlify context — production, deploy-preview, branch-deploy and the `dev` branch itself — holds its own copies of every environment variable, which is why a leaked or rotated key in one context has no effect on the others and why a preview can never page a real user's inbox (`lib/novu/secret-key.ts` picks `NOVU_PRODUCTION_KEY` only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `production`). The registrar for `familiarisenow.com` is out of this repository's view; what the repository can state is that Netlify DNS is the zone's authoritative nameserver today; a request that resolves to it lands on Netlify's `sin` (Singapore) load balancer, the region chosen because it is the closest offered region to the Supabase project's `ap-south-1` database.
+
+```mermaid
+flowchart LR
+  DNS["familiarisenow.com<br/>Netlify DNS (zone $NETLIFY_DNS_ZONE_ID) is the authoritative nameserver"]
+  LB["Netlify load balancer<br/>functions region sin (Singapore)"]
+  subgraph Contexts["Netlify contexts — each holds its own env values"]
+    PROD["production"]
+    PREVIEW["deploy-preview"]
+    BRANCH["branch-deploy"]
+    DEV["dev branch"]
+  end
+  APP["Next.js App Router<br/>AWS Lambda — 60s hard cap<br/>~26s edge cap for a non-streaming Route Handler response"]
+  TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/*"]
+  BG["netlify/functions/reconcile-ledgers-background<br/>never runs on previews or branch deploys"]
+  DB[("Supabase Postgres — ONE project serves dev AND prod<br/>DATABASE_URL, PG_POOL_MAX=1")]
+  REDIS[("Upstash Redis<br/>UPSTASH_REDIS_REST_URL — locks, circuit breaker")]
+  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET")]
+  STREAM[("Stream — chat + video<br/>STREAM_API_KEY / STREAM_API_SECRET")]
+  NOVU[("Novu — in-app bell<br/>NOVU_DEVELOPMENT_KEY or NOVU_PRODUCTION_KEY,<br/>resolved from NEXT_PUBLIC_SENTRY_ENVIRONMENT<br/>NEXT_PUBLIC_NOVU_APP_ID (client)")]
+  RESEND[("Resend — transactional email<br/>RESEND_API_KEY")]
+  SENTRY[("Sentry — errors + traces<br/>release = git sha")]
+
+  DNS --> LB --> Contexts
+  PROD --> APP
+  PREVIEW --> APP
+  BRANCH --> APP
+  DEV --> APP
+  APP --> DB
+  APP --> REDIS
+  APP --> RZP
+  APP --> STREAM
+  APP --> NOVU
+  APP --> RESEND
+  APP --> SENTRY
+  TICK --> APP
+  BG -. "202 only; kick never runs off production (unverified there too, #1635)" .-> APP
+```
+
+Two ceilings bound every request the Lambda serves: a page render is bounded by the 60-second synchronous execution limit because it can stream its shell early, while a Route Handler that awaits everything before returning JSON is bounded by the roughly 26-second, undocumented edge inactivity timeout instead. Because one Supabase project backs both `dev` and production, every script that touches the database — a seed, a one-off backfill, a reconciliation dry run — is a production operation and should be treated with the same care as a change shipped through the app itself.
+
 ---
 
 ## Platform Limits, Plan, Region and the MCP

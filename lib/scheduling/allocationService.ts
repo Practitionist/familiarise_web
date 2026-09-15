@@ -1,4 +1,6 @@
 import { reportSentryError } from "@/lib/observability/report";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
+import { ApiResponseError } from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
@@ -579,12 +581,11 @@ export class AllocationService {
       }
       if (!response.ok) {
         const errorData = await response.json();
-        // See fetchConsultantData: httpStatus lets the catch distinguish a
-        // 4xx business answer from a real fault without changing the thrown
-        // Error's message/shape.
-        throw Object.assign(
-          new Error(errorData.error || "Failed to fetch availability slots"),
-          { httpStatus: response.status },
+        // The status and code ride on the error so the catch can tell a
+        // refusal (a 403 the route answered on purpose) from a fault.
+        throw new ApiResponseError(
+          errorData.error || "Failed to fetch availability slots",
+          { status: response.status, code: errorData.code, detail: errorData },
         );
       }
       const result = await response.json();
@@ -603,18 +604,19 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);
-      const httpStatus =
-        error && typeof error === "object" && "httpStatus" in error
-          ? (error as { httpStatus?: number }).httpStatus
-          : undefined;
-      const expected =
-        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      reportSentryError(error, {
-        subsystem: "client",
-        op: "scheduling",
-        expected,
-        extra: { consultantId, httpStatus },
-      });
+      // A refusal is the route's answer; the caller toasts it and nobody is
+      // paged (FAMILIARISE_WEB-3Z).
+      if (!isExpectedRefusal(error)) {
+        reportSentryError(error, {
+          subsystem: "client",
+          op: "scheduling",
+          extra: {
+            consultantId,
+            httpStatus:
+              error instanceof ApiResponseError ? error.status : undefined,
+          },
+        });
+      }
       throw error;
     }
   }

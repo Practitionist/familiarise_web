@@ -309,7 +309,7 @@ export async function POST(req: NextRequest) {
 
     // Only a NEW (or revived) review is news; an edit must not re-notify.
     if (isNew) {
-      void notifyNewReview(newReview.consultantProfile.userId, {
+      await notifyNewReview(newReview.consultantProfile.userId, {
         // The reviewer withheld their name from the public page; sending it to
         // the consultant in a notification would hand back exactly what the
         // flag exists to withhold, and to the one person it is kept from.

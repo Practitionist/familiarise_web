@@ -1,4 +1,8 @@
 export { getNovuClient, isNovuConfigured, validateNovuConfig } from "./client";
+// #1654 — a caller that staged inside its transaction attempts after commit.
+export { attemptTrigger } from "./outbox";
+export type { StagedTrigger, TriggerResult } from "./outbox";
+export type { TriggerOptions } from "./service";
 export { NOVU_WORKFLOWS, notificationScope } from "./workflows";
 export type { NotificationScope } from "./workflows";
 export { notificationHref, personalHref, scopedHref } from "./resolve-href";

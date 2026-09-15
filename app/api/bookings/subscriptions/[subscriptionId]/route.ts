@@ -773,7 +773,7 @@ export async function PATCH(
           subData.subscriptionPlan?.consultantProfile?.user?.id;
 
         if (status === AppointmentStatus.APPROVED && consulteeUserId) {
-          void notifySubscriptionStarted(consulteeUserId, {
+          await notifySubscriptionStarted(consulteeUserId, {
             subscriptionId: subData.id,
             planTitle: subData.subscriptionPlan?.title || "Subscription",
             consultantName:
@@ -789,7 +789,7 @@ export async function PATCH(
             (id): id is string => !!id,
           );
           if (userIds.length > 0) {
-            void notifySubscriptionCancelled(userIds, {
+            await notifySubscriptionCancelled(userIds, {
               subscriptionId: subData.id,
               planTitle: subData.subscriptionPlan?.title || "Subscription",
               consultantName:

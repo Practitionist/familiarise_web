@@ -343,7 +343,7 @@ async function completeConsultations(): Promise<{
         (id): id is string => !!id,
       );
       if (userIds.length > 0) {
-        void notifyAppointmentCompleted(userIds, {
+        await notifyAppointmentCompleted(userIds, {
           ...notificationScope(consultation.appointment?.organizationId),
           appointmentType: "consultation",
           consultantName:
@@ -463,7 +463,7 @@ async function completeSubscriptions(): Promise<{
         (id): id is string => !!id,
       );
       if (userIds.length > 0) {
-        void notifyAppointmentCompleted(userIds, {
+        await notifyAppointmentCompleted(userIds, {
           ...notificationScope(subscription.appointment?.organizationId),
           appointmentType: "subscription",
           consultantName:

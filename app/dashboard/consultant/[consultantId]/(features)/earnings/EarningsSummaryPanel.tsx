@@ -27,6 +27,8 @@ import {
   ShieldQuestion,
 } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { IndiaOnlyPayoutNotice } from "@/components/payouts/IndiaOnlyPayoutNotice";
 
 interface EarningsSummary {
@@ -103,12 +105,10 @@ const formatSummaryAmount = (amount: number) =>
 const formatEarningAmount = (amount: number, currency: string) =>
   formatCurrencyAmount(amount, currency);
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
+// In the viewer's zone, not the runtime's: `toLocaleDateString` read the
+// browser's zone and would read UTC on the server.
+function formatDate(dateStr: string, viewerZone: ViewerZone): string {
+  return formatForViewer(dateStr, viewerZone, "d MMM yyyy");
 }
 
 /**
@@ -128,6 +128,7 @@ export function EarningsSummaryPanel({
   );
   const [page, setPage] = useState(0);
   const limit = 15;
+  const viewerZone = useViewerZone();
 
   const { data, isLoading, isPlaceholderData, error, refetch } =
     useQuery<EarningsResponse>({
@@ -213,7 +214,9 @@ export function EarningsSummaryPanel({
       key: "date",
       header: "Date",
       cell: (earning) => (
-        <span className="text-zinc-600">{formatDate(earning.createdAt)}</span>
+        <span className="text-zinc-600">
+          {formatDate(earning.createdAt, viewerZone)}
+        </span>
       ),
     },
     {
@@ -288,7 +291,7 @@ export function EarningsSummaryPanel({
               <Clock className="w-3.5 h-3.5 text-amber-500" />
             )}
             {earning.payout.processedAt
-              ? formatDate(earning.payout.processedAt)
+              ? formatDate(earning.payout.processedAt, viewerZone)
               : earning.payout.status}
           </span>
         ) : (

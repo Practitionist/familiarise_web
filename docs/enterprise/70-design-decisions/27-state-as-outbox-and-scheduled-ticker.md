@@ -30,6 +30,19 @@ The worst case for a buyer whose `after()` callback died falls from about a hund
 
 Anyone adding a follow-up to a money path should first ask which row already records the obligation and which sweeper already walks that row, and only then consider a new mechanism.
 
+### Who uses this pattern
+
+The table below lists every side effect that rides an outbox row and a ticker-driven relay under this decision, so a new candidate can be measured against the ones that already exist.
+
+| Side effect                          | Outbox row                                   | Written where                                                                              | Relay (ticker target)                                            | Since |
+| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ----- |
+| Partner webhook delivery             | `OutboundWebhookDelivery`                    | The emitting service, before any POST                                                      | `dispatch-outbound-webhooks`, every tick                         | #1019 |
+| Stream chat channels after a capture | `Appointment.chatChannelEnsuredAt` (a stamp) | The payment pipeline, as a NULL that the sweep re-drives                                   | `reconcile-orphaned-confirmations`, every tick                   | #1356 |
+| Transactional email                  | `FailedEmail` (`PENDING` before the send)    | `stage()` in `lib/email/deliver.ts`, inside the caller's transaction where it has one      | `retry-failed-emails`, every third tick, Actions as the backstop | #1654 |
+| Novu in-app triggers                 | `NotificationOutbox`                         | `stageTrigger()` in `lib/novu/outbox.ts`, inside the caller's transaction where it has one | `drain-notification-outbox`, every tick                          | #1654 |
+
+`FailedEmail` and `NotificationOutbox` are the two places where decision 1 ("no generic outbox table") bends: an email and a bell have no domain row of their own to stamp, so the rendered message or the trigger payload is the row, and the same row doubles as the retry state the relay walks. Both keep the inline fast path: the request that caused the side effect makes the first attempt itself under a time budget, so the ticker's five-minute interval is the worst case, not the common one (#1654).
+
 ## Related
 
 - ADR 05 (GitHub Actions crons), ADR 14 (queue posture), ADR 22 (measurements) — this ADR narrows their remedy, it does not reverse them.

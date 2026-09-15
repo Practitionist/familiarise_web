@@ -31,3 +31,29 @@ Restricting sponsors to org-linked consultants was rejected because it kills the
 ## Consequences
 
 We keep the strongest version of the sponsor value proposition and full collaboration liquidity, and the defaults change nothing at runtime: a Program with no allowlist rows and a membership with `exclusiveEngagement=false` behave exactly as before, so nothing regresses until an operator opts in. Revisit this decision if org-owned plans with external collaborators produce a real brand or quality incident (add an approval gate at invite time), or if a host org reports revenue leakage through an exclusive consultant's still-visible independent plans (extend the flag to marketplace visibility, the unimplemented "hide" half).
+
+## Org scoping: the two role axes and the `Scope` type
+
+Every list endpoint that supports the personal-vs-org toggle resolves an incoming `?orgScope=` value to exactly one `Scope` (`lib/api/scope/parse.ts`) before it touches Prisma, and `scopeToWhereOrgId(scope)` turns that `Scope` into the `organizationId` fragment of the `where` clause: `{ organizationId: null }` for `personal`, `{ organizationId: orgId }` for `org` and `orgMember`, and `{}` (no filter at all) for `all`. A booking's org-ness is decided once, at write time, by `Appointment.organizationId` alone; whether a given read is allowed to see an org's bookings is a completely separate decision made by the caller's resolved `Scope`. The invariant that follows is the one worth remembering: an org-scoped result requires both a non-null `organizationId` on the row **and** an explicit org `Scope` on the read — a row carrying an org id is not itself a permission, and a privileged caller passing no scope does not accidentally see every organisation's data. `pendingConsultationWhere` and `pendingSubscriptionWhere` in `lib/data/needs-you.ts` show the personal half of that pairing directly: a `personal` scope adds `OR: [{ appointment: null }, { appointment: { organizationId: null } }]` rather than trusting the absence of an `orgId` argument.
+
+Two independent role axes sit above this. `UserRole` (`CONSULTANT`, `CONSULTEE`, `ADMIN`, `STAFF`, `ORG_WORKSPACE`) is the platform-wide role that gates `?orgScope=all` to `ADMIN`/`STAFF` alone; the UI relabels `CONSULTEE` as "Client" wherever a consultant-facing screen names the other party (`app/dashboard/consultee/[consulteeId]/layout.tsx`). `MemberRole` (`OWNER`, `MAINTAINER`, `BILLING_ADMIN`, `MANAGER`, `EXPERT`, `LEARNER`, `SUPPORT`) is per-organisation and answers a different question — what a member may do inside the one org they belong to — and has no bearing on whether `?orgScope=all` is allowed.
+
+```mermaid
+flowchart TD
+  Q["?orgScope= query param"] --> RESOLVE["resolveOrgScope(ctx)<br/>lib/api/scope/parse.ts"]
+  RESOLVE -->|"absent, mine, personal"| PERSONAL["Scope: kind = personal"]
+  RESOLVE -->|"an orgId the caller actively belongs to"| ORG["Scope: kind = org<br/>{ orgId }"]
+  RESOLVE -->|"server-constructed only, not URL-addressable"| ORGMEMBER["Scope: kind = orgMember<br/>{ orgId, userId }"]
+  RESOLVE -->|"all — requires ADMIN/STAFF or an owner-scoped route"| ALL["Scope: kind = all"]
+  PERSONAL --> WHERE1["scopeToWhereOrgId -> { organizationId: null }"]
+  ORG --> WHERE2["scopeToWhereOrgId -> { organizationId: orgId }"]
+  ORGMEMBER --> WHERE2
+  ALL --> WHERE3["scopeToWhereOrgId -> {} (no organizationId filter)"]
+```
+
+| `Scope.kind` | Who gets it | `scopeToWhereOrgId` result |
+| --- | --- | --- |
+| `personal` | Default for every caller; the caller's own data only. | `{ organizationId: null }` |
+| `org` | An active member of that one organisation, requesting the org-wide view. | `{ organizationId: orgId }` |
+| `orgMember` | Built by the server only, for one member's own participation inside an org (booked as a learner or delivered as an expert); never addressable via `?orgScope=`. | `{ organizationId: orgId }` |
+| `all` | `ADMIN`/`STAFF` by `UserRole`, or a route that is already self-scoped to the caller's own profile and opts in with `allowAllForOwner`. | `{}` — no filter |
