@@ -95,7 +95,8 @@ lib/email/
 ├── deliver.ts         -- deliver() = stage() + attempt(), the single send core; getResendClient(), recordFailedEmail(), EmailNotConfiguredError
 ├── idempotency.ts     -- derives the content-hash Idempotency-Key shared by a sender and the retry worker
 ├── classify.ts        -- classifies a Resend failure as terminal or transient
-└── render.ts          -- renderEmail(), returns { html, text }
+├── render.ts          -- renderEmail(), returns { html, text }
+└── senders/money.ts   -- #1653 the six money senders below, re-exported from index.ts
 
 sendWelcomeEmail()         -- from: SENDERS.onboarding (onboarding@mail.familiarisenow.com)
 sendPasswordResetEmail()   -- from: SENDERS.security (security@mail.familiarisenow.com)
@@ -108,7 +109,16 @@ sendOrgInvitationEmail()   -- from: SENDERS.notifications (no caller today)
 sendWaitlistConfirmEmail() -- from: SENDERS.newsletter (newsletter@news.familiarisenow.com)
 sendWaitlistWelcomeEmail() -- from: SENDERS.newsletter
 sendContactInquiryEmail()  -- from: SENDERS.notifications, to: contactInboxAddress()
+
+sendRefundProcessedEmail() / stageRefundProcessedEmail(tx, …) -- from: SENDERS.payments, category payments, entityRef payment:<id>
+sendRefundFailedEmail()     -- from: SENDERS.payments, category payments, entityRef payment:<id>
+sendOrgPayoutFailedEmail()  -- from: SENDERS.finance, category orgBilling, entityRef orgPayout:<id>
+sendOrgInvoiceOverdueEmail() -- from: SENDERS.finance, category orgBilling, entityRef orgInvoice:<id>
+sendOrgWalletLowEmail()     -- from: SENDERS.finance, category orgBilling, entityRef org:<id>
+sendOrgOverageDueEmail()    -- from: SENDERS.finance, category orgBilling, entityRef overage:<id>
 ```
+
+The six money senders in `lib/email/senders/money.ts` (#1653) are the first lifecycle senders built on the preference gate: each takes user ids plus raw domain values, resolves the recipients with `loadEmailRecipients()`, fans out with `sendToRecipients()`, and never throws, because a missed email must never fail the request, webhook or job that moved the money (ADR 21). The org senders take `recipientUserIds` rather than an org id on purpose: the call site computes the roster once with `rosterForOrg(orgId, VISIBILITY_ROLES)`, now exported from `lib/novu/org-workflows.ts`, so the bell and the email always reach the same people. Every call site awaits its email after the bell, and the budget is the caller's: `WEBHOOK` from the refund and payout webhooks, `REQUEST` from the rejection, event-refund and overage routes, and `JOB` from the dunning, wallet, no-show and refund-reconcile jobs.
 
 Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` at call time (defaults `mail.familiarisenow.com` / `news.familiarisenow.com`), not hardcoded, so an environment can point sends at a different verified domain without a code change.
 
@@ -164,7 +174,7 @@ Every sender stamps the row's `entityRef` with the business anchor it knows: the
 
 #### Staging inside a transaction
 
-A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Nothing else in the money transaction changed (ADR 21).
+A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Nothing else in the money transaction changed (ADR 21). The refund webhook (`handleRefundCreated` in `app/api/webhooks/utils.ts`) is the third caller since #1653: `stageRefundProcessedEmail(tx, …)` reads the payer through the Serializable transaction with `loadEmailRecipients([userId], "payments", tx)`, stages with `stageToRecipients()` right after the bell is staged, and `attemptStaged()` runs after commit next to the bell's attempt under the `WEBHOOK` budget. The list of staged rows is reset at the top of the transaction callback because a serialization retry re-runs it. The receipt omits the credit-note number, since the Sec 34 `CreditNote` is minted inside the refund cascade and is not in scope at the staging point; adding a query for it would be a change inside a money transaction.
 
 ### The relay
 

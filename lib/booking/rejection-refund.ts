@@ -38,6 +38,7 @@ import { getAppUrl } from "@/lib/url";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { computeRefundPct } from "@/lib/payments/operations/cancellation-policy";
 import {
   isFreeCreditIntent,
@@ -173,6 +174,16 @@ async function notifyRejectedRequestPayer(
       reason: "Your booking request was declined by the consultant.",
       dashboardUrl: `${getAppUrl()}/dashboard`,
     });
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundProcessedEmail(
+      {
+        userId: payment.userId,
+        paymentId,
+        amountPaise,
+        currency: payment.currency,
+      },
+      { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+    );
   } catch (error) {
     // A missed notification must never fail a settled refund.
     Sentry.captureException(

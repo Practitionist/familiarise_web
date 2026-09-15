@@ -44,6 +44,7 @@ import {
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   CANCELLABLE_FROM,
@@ -556,6 +557,17 @@ async function notifyNoShowParties(
       consultantName,
       dashboardUrl,
     }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundProcessedEmail(
+      {
+        userId: party.consulteeUserId,
+        paymentId: paidPayment.id,
+        amountPaise: refundedPaise,
+        currency: paidPayment.currency,
+        planTitle,
+      },
+      { budgetMs: EMAIL_BUDGET_MS.JOB },
+    );
   }
 }
 

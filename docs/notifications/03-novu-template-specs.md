@@ -85,6 +85,17 @@ The Novu environment holds one workflow per family, not one per event; a family 
 | `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted, org-sso-cert-expiring                                                                                                                  |
 | `org-program`    | org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                           |
 
+### Email twins (#1653)
+
+Six events in the `refund` and `org-billing` families have an email twin since #1653: a React Email template under `emails/` sent by `lib/email/senders/money.ts` alongside the in-app bell, to the same recipients, gated by the same preference category, and never able to fail the request or job that rang the bell. The list below records each pairing.
+
+- `refund-processed` — Email twin: `REFUND_PROCESSED` (`emails/payments/RefundProcessedEmail.tsx`), to the payer from `payments@`, category `payments`; the body repeats the 5–7 working days line, cites the credit-note number when the caller has one, and links `/refund`.
+- `refund-failed` — Email twin: `REFUND_FAILED` (`emails/payments/RefundFailedEmail.tsx`), to the payer from `payments@`, category `payments`; the CTA is a `mailto:` to the support inbox because that is the only address on the domain that can receive mail (#1649).
+- `org-invoice-overdue` — Email twin: `ORG_INVOICE_OVERDUE` (`emails/orgs/OrgInvoiceOverdueEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`; the due date renders in each recipient's zone and the reminder number matches the dunning stage.
+- `org-wallet-low` — Email twin: `ORG_WALLET_LOW` (`emails/orgs/OrgWalletLowEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`.
+- `org-payout-failed` and `org-payout-reversed` — Email twin: `ORG_PAYOUT_FAILED` (`emails/orgs/OrgPayoutFailedEmail.tsx`), one template branching on `kind`, to the visibility roster from `finance@`, category `orgBilling`.
+- `org-program-overage-due` — Email twin: `ORG_PROGRAM_OVERAGE_DUE` (`emails/orgs/OrgOverageDueEmail.tsx`), to the member from `finance@`, category `orgBilling`, awaited inside the same post-commit helper as the bell.
+
 ---
 
 ## Design Notes

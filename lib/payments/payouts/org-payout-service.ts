@@ -75,6 +75,7 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgPayoutCompleted } from "@/lib/novu/org-workflows";
+import { sendOrgPayoutFailedEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -1397,6 +1398,44 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
 }
 
 /**
+ * #1653 — the email twin of `notifyOrgPayoutFailed`, sent to the same
+ * visibility roster the bell resolves so the two never disagree about who
+ * hears. Resolved lazily like the bell. A missed email must never fail the
+ * webhook, whose redelivery would no-op on the already-claimed row (#813),
+ * so every failure is reported and swallowed here.
+ */
+async function emailOrgPayoutFailed(
+  payoutId: string,
+  kind: "FAILED" | "REVERSED",
+  reason: string,
+  notify: {
+    organizationId: string;
+    orgName: string;
+    netPayoutPaise: number | bigint;
+    currency: string;
+  },
+): Promise<void> {
+  try {
+    const { rosterForOrg, VISIBILITY_ROLES } =
+      await import("@/lib/novu/org-workflows");
+    const roster = await rosterForOrg(notify.organizationId, VISIBILITY_ROLES);
+    await sendOrgPayoutFailedEmail({
+      recipientUserIds: roster,
+      kind,
+      orgName: notify.orgName,
+      payoutId,
+      amountPaise: notify.netPayoutPaise,
+      currency: notify.currency,
+      reason: reason.slice(0, 200),
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${notify.organizationId}/payouts`,
+    });
+  } catch (e) {
+    reportSentryError(e, { subsystem: "payments" });
+    console.error(`[org-payout] ${kind} email failed:`, e);
+  }
+}
+
+/**
  * A1+A8: shared internal helper for the "payout failed at the gateway"
  * and "payout reversed by the bank" code paths. Both reach this — the
  * `kind` parameter only changes the audit description and the Novu
@@ -1502,6 +1541,10 @@ async function markOrgPayoutFailedInternal(
       kind,
       dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
     });
+  }
+  // #1653 — the email twin, after the bell and never inside its block.
+  if (result.notify) {
+    await emailOrgPayoutFailed(payoutId, kind, reason, result.notify);
   }
 
   return { wasNoOp: result.wasNoOp, status: result.status };
@@ -1683,6 +1726,15 @@ export async function markOrgPayoutReversed(
         reportSentryError(e, { subsystem: "payments" });
         console.error("[org-payout] REVERSED notify failed:", e);
       });
+    }
+    // #1653 — the email twin, after the bell and never inside its block.
+    if (completedResult.notify) {
+      await emailOrgPayoutFailed(
+        payoutId,
+        "REVERSED",
+        reason,
+        completedResult.notify,
+      );
     }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }

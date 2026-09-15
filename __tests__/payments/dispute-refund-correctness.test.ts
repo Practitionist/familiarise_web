@@ -29,10 +29,17 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 
 jest.mock("../../lib/payments/core/razorpay", () => ({
   __esModule: true,
-  razorpayClient: { payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) } },
-  getRazorpayClient: () => ({ payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) } }),
+  razorpayClient: {
+    payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
+  },
+  getRazorpayClient: () => ({
+    payments: { fetch: (...a: unknown[]) => razorpayPaymentsFetch(...a) },
+  }),
 }));
-jest.mock("../../lib/payments/core/stripe", () => ({ stripeClient: null, getStripeClient: () => null }));
+jest.mock("../../lib/payments/core/stripe", () => ({
+  stripeClient: null,
+  getStripeClient: () => null,
+}));
 
 // Minimal stubs for the rest of utils.ts's import graph so module load works.
 jest.mock("../../lib/novu", () => ({
@@ -44,7 +51,18 @@ jest.mock("../../lib/novu/org-workflows", () => ({
   notifyOrgInvoicePaid: jest.fn(),
   notifyOrgWalletTopupConfirmed: jest.fn(),
 }));
-jest.mock("../../lib/referrals/service", () => ({ reverseCreditsForPayment: jest.fn() }));
+// #1653 — the refund receipt is staged through the tx, and the stub has no user model.
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { WEBHOOK: 3_000 },
+  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
+  stageRefundProcessedEmail: jest.fn(async () => []),
+}));
+jest.mock("../../lib/email/send-to-recipients", () => ({
+  attemptStaged: jest.fn(),
+}));
+jest.mock("../../lib/referrals/service", () => ({
+  reverseCreditsForPayment: jest.fn(),
+}));
 jest.mock("../../lib/api/organizations/wallet", () => ({
   confirmTopUp: jest.fn(),
   walletCredit: jest.fn(),
@@ -122,8 +140,9 @@ function txStub() {
       }),
     },
     dispute: {
-      findUnique: jest.fn(async ({ where }: { where: Row }) =>
-        store.disputes.find((d) => d.disputeId === where.disputeId) ?? null,
+      findUnique: jest.fn(
+        async ({ where }: { where: Row }) =>
+          store.disputes.find((d) => d.disputeId === where.disputeId) ?? null,
       ),
       create: jest.fn(async ({ data }: { data: Row }) => {
         store.disputes.push(data);
@@ -131,8 +150,9 @@ function txStub() {
       }),
     },
     refund: {
-      findUnique: jest.fn(async ({ where }: { where: Row }) =>
-        store.refunds.find((r) => r.refundId === where.refundId) ?? null,
+      findUnique: jest.fn(
+        async ({ where }: { where: Row }) =>
+          store.refunds.find((r) => r.refundId === where.refundId) ?? null,
       ),
       create: jest.fn(async ({ data }: { data: Row }) => {
         const created = { id: `refund_${store.refunds.length + 1}`, ...data };

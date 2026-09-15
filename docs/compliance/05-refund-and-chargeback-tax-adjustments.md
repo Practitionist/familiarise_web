@@ -18,7 +18,7 @@ When a payment is refunded (or a chargeback is lost), the **money already moved*
 | **Org earnings ledger** (B2B) | Already credited to org's earnings + accrued in the next invoice | Reverse via existing cascade. ✅ already works. |
 | **Org payout / consultant payout** (already disbursed) | Money is gone | **Clawback** flow needed — see #715/#716 epics. |
 
-Of the first three rows, the **GST credit note** and the **income-tax TDS reversal** are now wired (the latter via a negative `TDSRecord`, #813); the **GST TCS (Sec 52)** reversal is still entirely unimplemented. Until the TCS leg lands, a refund of a TCS-bearing B2C supply leaves the next monthly GSTR-8 **wrong by the refunded amount**, which is a Sec 234E / Sec 122 penalty risk.
+Of the first three rows, the **GST credit note** and the **income-tax TDS reversal** are now wired (the latter via a negative `TDSRecord`, #813); the **GST TCS (Sec 52)** reversal is still entirely unimplemented. The refund receipt email (`REFUND_PROCESSED`, #1653) cites the credit-note number when the caller has one in scope, and omits the line otherwise rather than querying for it inside the refund transaction. Until the TCS leg lands, a refund of a TCS-bearing B2C supply leaves the next monthly GSTR-8 **wrong by the refunded amount**, which is a Sec 234E / Sec 122 penalty risk.
 
 ## When it applies
 
