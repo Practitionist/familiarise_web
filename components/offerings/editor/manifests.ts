@@ -30,6 +30,8 @@ const basicsSection = (noun: string): SectionSpec => ({
       kind: "text",
       label: "Title",
       placeholder: `e.g. Career strategy ${noun}`,
+      description: "Keep it short and specific.",
+      required: true,
       span: 6,
     },
     {
@@ -44,6 +46,9 @@ const basicsSection = (noun: string): SectionSpec => ({
       kind: "textarea",
       label: "Description",
       placeholder: `Describe what someone gets from this ${noun}.`,
+      description:
+        "Two or three sentences on who this is for and what they get.",
+      required: true,
       span: 6,
     },
     {
@@ -64,6 +69,7 @@ const basicsSection = (noun: string): SectionSpec => ({
       itemNoun: "topics",
       maxItems: 10,
       description: "Helps people find this in search.",
+      required: true,
       span: 6,
     },
   ],
@@ -81,6 +87,7 @@ const contentSection = (noun: string): SectionSpec => ({
       kind: "learningOutcomes",
       label: "Learning outcomes",
       maxItems: 10,
+      required: true,
       span: 6,
     },
     {
@@ -182,6 +189,8 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
       name: "recordingStoragePolicy",
       kind: "select",
       label: "Recording storage",
+      description:
+        "Stream keeps recordings 14 days; Permanent library keeps them indefinitely.",
       span: 3,
       options: [
         { value: "STREAM_ONLY", label: "Stream only" },
@@ -217,6 +226,8 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
           kind: "price",
           label: "Price (₹)",
           currencyName: "priceCurrency",
+          description: "Use ₹0 for a free offering.",
+          required: true,
           span: 3,
         },
         {
@@ -225,6 +236,8 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
           label: "Duration (hours)",
           min: 0.5,
           step: 0.5,
+          description: "Hours per session, in 30-minute steps, up to 8.",
+          required: true,
           span: 3,
         },
       ],
@@ -250,6 +263,8 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
           kind: "price",
           label: "Price (₹)",
           currencyName: "priceCurrency",
+          description: "Use ₹0 for a free offering.",
+          required: true,
           span: 2,
         },
         {
@@ -258,6 +273,8 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
           label: "Duration (months)",
           min: 1,
           step: 1,
+          description: "Whole months, from 1 to 24.",
+          required: true,
           span: 2,
         },
         {
@@ -267,6 +284,8 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
           min: 1,
           max: 7,
           step: 1,
+          description: "From 1 to 7 sessions a week.",
+          required: true,
           span: 2,
         },
         {
@@ -275,6 +294,8 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
           label: "Session duration (hours)",
           min: 0.5,
           step: 0.5,
+          description: "Hours per session, from 30 minutes to 4 hours.",
+          required: true,
           span: 2,
         },
         supportLevelField,
@@ -310,6 +331,8 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           kind: "price",
           label: "Price (₹)",
           currencyName: "priceCurrency",
+          description: "Use ₹0 for a free offering.",
+          required: true,
           span: 2,
         },
         {
@@ -318,6 +341,8 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           label: "Duration (hours)",
           min: 0.5,
           step: 0.5,
+          description: "Hours per session, in 30-minute steps, up to 8.",
+          required: true,
           span: 2,
         },
         {
@@ -326,6 +351,8 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           label: "Max participants",
           min: 1,
           step: 1,
+          description: "From 1 to 10,000 people.",
+          required: true,
           span: 2,
         },
       ],
@@ -344,6 +371,8 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           name: "scheduledAt",
           kind: "date",
           label: "Scheduled for",
+          description: "Required before publishing.",
+          required: true,
           span: 3,
         },
       ],
@@ -368,6 +397,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           kind: "price",
           label: "Price (₹)",
           currencyName: "priceCurrency",
+          description: "Use ₹0 for a free offering.",
+          required: true,
           span: 2,
         },
         {
@@ -376,6 +407,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           label: "Duration (months)",
           min: 1,
           step: 1,
+          description: "Whole months, from 1 to 24.",
+          required: true,
           span: 2,
         },
         {
@@ -384,6 +417,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           label: "Max participants",
           min: 1,
           step: 1,
+          description: "From 1 to 10,000 people.",
+          required: true,
           span: 2,
         },
         {
@@ -393,6 +428,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           min: 1,
           max: 7,
           step: 1,
+          description: "From 1 to 7 sessions a week.",
+          required: true,
           span: 2,
         },
         {
@@ -403,6 +440,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           label: "Session duration (hours)",
           min: 0.5,
           step: 0.5,
+          description: "Hours per session, in 30-minute steps, up to 4.",
+          required: true,
           span: 2,
         },
         supportLevelField,
@@ -423,6 +462,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           name: "schedulingStartDate",
           kind: "date",
           label: "Start date",
+          description: "Required before publishing.",
+          required: true,
           span: 3,
         },
       ],
