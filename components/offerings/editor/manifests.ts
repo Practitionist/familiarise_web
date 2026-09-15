@@ -171,7 +171,8 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
       name: "recordingEnabled",
       kind: "switch",
       label: "Record sessions",
-      description: "Sessions are recorded for attendees to revisit.",
+      description:
+        "Sessions can be recorded for attendees to revisit. The host starts recording during a session, subject to consent.",
       span: 3,
     },
     {
