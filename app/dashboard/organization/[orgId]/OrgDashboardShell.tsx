@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import React, { use, useEffect, useMemo } from "react";
+import { useCssVarHeight } from "@/components/dashboard/useCssVarHeight";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { usePrefetchNavPaths } from "@/hooks/usePrefetchNavPaths";
@@ -173,6 +174,7 @@ export default function OrgDashboardShell({
   const { orgId } = use(params);
   const pathname = usePathname();
   const router = useRouter();
+  const bannerRef = useCssVarHeight("--dashboard-banner-height");
   const { data: session, isPending: isSessionLoading } = useSession();
 
   // ADR 23 — the personal dashboards did this and the org tree did not, so a
@@ -739,11 +741,15 @@ export default function OrgDashboardShell({
           })()}
 
         {org && org.organization.status !== "ACTIVE" && (
-          <OrgStatusBanner status={org.organization.status} />
+          <div ref={bannerRef}>
+            <OrgStatusBanner status={org.organization.status} />
+          </div>
         )}
 
         <main className="relative min-h-0 flex-1 overflow-y-auto">
-          <div className="p-6">
+          {/* Flex column with a viewport floor, as in PersonalDashboardShell:
+              the catalog editor's save bar pins to the bottom via mt-auto. */}
+          <div className="flex min-h-full flex-col p-6">
             <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
           </div>
         </main>

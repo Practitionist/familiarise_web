@@ -48,6 +48,12 @@ export interface FieldSpec {
   label: string;
   description?: string;
   placeholder?: string;
+  /**
+   * Required to publish (mirrors the zod schema, not the draft path — drafts
+   * may park partial work). The renderer appends a `*` to the label; keep
+   * this in sync with the schema or the mark lies.
+   */
+  required?: boolean;
   /** Numeric bounds, forwarded to the input. */
   min?: number;
   max?: number;
@@ -80,6 +86,8 @@ export interface SectionSpec {
    * up in its slot map instead of laying out fields.
    */
   slot?: string;
+  /** Form fields the slot registers, so a validation error can open its tab. */
+  slotFields?: string[];
 }
 
 export interface OfferingManifest {
