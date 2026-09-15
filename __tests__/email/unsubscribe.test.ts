@@ -61,9 +61,10 @@ describe("email unsubscribe token", () => {
     const token = generateEmailUnsubscribeToken(USER);
     expect(verifyEmailUnsubscribeToken(USER, token)).toBe(true);
     expect(verifyEmailUnsubscribeToken("user_xyz", token)).toBe(false);
-    expect(verifyEmailUnsubscribeToken(USER, `${token.slice(0, -1)}0`)).toBe(
-      false,
-    );
+    const flipped = token.endsWith("0") ? "1" : "0";
+    expect(
+      verifyEmailUnsubscribeToken(USER, `${token.slice(0, -1)}${flipped}`),
+    ).toBe(false);
   });
 });
 

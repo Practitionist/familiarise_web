@@ -14,6 +14,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
 import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
@@ -23,15 +24,22 @@ export const dynamic = "force-dynamic";
 
 const PAGE_PATH = "/email/unsubscribe";
 
+// The token is a hex HMAC-SHA256 digest; anything else is rejected before
+// the signature check runs.
+const linkSchema = z.object({
+  u: z.string().min(1),
+  t: z.string().regex(/^[0-9a-f]{64}$/),
+});
+
 function readLink(request: NextRequest): { userId: string; valid: boolean } {
   const { searchParams } = new URL(request.url);
-  const userId = searchParams.get("u") ?? "";
-  const token = searchParams.get("t") ?? "";
-  const valid =
-    userId.length > 0 &&
-    token.length > 0 &&
-    verifyEmailUnsubscribeToken(userId, token);
-  return { userId, valid };
+  const parsed = linkSchema.safeParse({
+    u: searchParams.get("u") ?? "",
+    t: searchParams.get("t") ?? "",
+  });
+  if (!parsed.success) return { userId: "", valid: false };
+  const { u: userId, t: token } = parsed.data;
+  return { userId, valid: verifyEmailUnsubscribeToken(userId, token) };
 }
 
 function toPage(query: string): NextResponse {
