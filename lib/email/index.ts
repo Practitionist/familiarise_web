@@ -425,7 +425,7 @@ export async function sendContactInquiryEmail({
 
   return deliver(
     {
-      from: SENDERS.onboarding,
+      from: SENDERS.notifications,
       to: contactInboxAddress(),
       subject: `[Contact] ${subject}`,
       html,

@@ -71,7 +71,7 @@ sendPaymentFailedEmail()   -- from: SENDERS.payments
 sendOrgInvitationEmail()   -- from: SENDERS.notifications (no caller today)
 sendWaitlistConfirmEmail() -- from: SENDERS.newsletter (newsletter@news.familiarisenow.com)
 sendWaitlistWelcomeEmail() -- from: SENDERS.newsletter
-sendContactInquiryEmail()  -- from: SENDERS.onboarding, to: contactInboxAddress()
+sendContactInquiryEmail()  -- from: SENDERS.notifications, to: contactInboxAddress()
 ```
 
 Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEWSLETTER_DOMAIN` at call time (defaults `mail.familiarisenow.com` / `news.familiarisenow.com`), not hardcoded, so an environment can point sends at a different verified domain without a code change.
@@ -110,17 +110,17 @@ Because `EmailNotConfiguredError` is thrown inside `deliver()`'s own try block r
 
 ### From Address Convention
 
-| Domain Prefix    | Used For                                      | Domain                    |
-| ---------------- | --------------------------------------------- | ------------------------- |
-| `onboarding@`    | Welcome emails                                | `mail.familiarisenow.com` |
-| `security@`      | Password reset, verification, account linking | `mail.familiarisenow.com` |
-| `payments@`      | Payment link, success, failure                | `mail.familiarisenow.com` |
-| `notifications@` | Org invitations, contact inquiry              | `mail.familiarisenow.com` |
-| `finance@`       | Finance-facing notices                        | `mail.familiarisenow.com` |
-| `dpdp@`          | DPDP compliance alerts                        | `mail.familiarisenow.com` |
-| `noreply@`       | Retry-worker fallback `from`                  | `mail.familiarisenow.com` |
-| `system` (bare)  | Internal requester id, not a `From` header    | `mail.familiarisenow.com` |
-| `newsletter@`    | Waitlist opt-in + broadcast                   | `news.familiarisenow.com` |
+| Domain Prefix    | Used For                                                    | Domain                    |
+| ---------------- | ----------------------------------------------------------- | ------------------------- |
+| `onboarding@`    | Welcome, email verification                                 | `mail.familiarisenow.com` |
+| `security@`      | Password reset, account linking                             | `mail.familiarisenow.com` |
+| `payments@`      | Payment link, success, failure                              | `mail.familiarisenow.com` |
+| `notifications@` | Org invitations, contact inquiry                            | `mail.familiarisenow.com` |
+| `finance@`       | Finance-facing notices                                      | `mail.familiarisenow.com` |
+| `dpdp@`          | DPDP compliance alerts                                      | `mail.familiarisenow.com` |
+| `noreply@`       | Data-export notice (the worker falls back to `onboarding@`) | `mail.familiarisenow.com` |
+| `system` (bare)  | Internal requester id, not a `From` header                  | `mail.familiarisenow.com` |
+| `newsletter@`    | Waitlist opt-in + broadcast                                 | `news.familiarisenow.com` |
 
 ---
 
