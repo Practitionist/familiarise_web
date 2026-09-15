@@ -11,6 +11,11 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  EMAIL_BUDGET_MS,
+  refundOnItsWay,
+  sendAppointmentCancelledEmail,
+} from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -775,6 +780,44 @@ export async function POST(
               ? "consultee"
               : "system",
       });
+
+      // #1653 — the email twin of the bell: same recipients, same href. The
+      // refund line reaches only the people whose money moved; the sender
+      // never throws, so it cannot fail a cancellation that already committed.
+      const refundText =
+        refund?.status === "REFUNDED"
+          ? refund.rail === "CREDITS"
+            ? "Your credits have been restored."
+            : refund.rail === "INTERNAL"
+              ? "The amount has been returned to the sponsoring organisation's balance."
+              : // The amount is in paise, so the currency is INR by construction.
+                refundOnItsWay(refund.amountRefundedPaise, "INR")
+          : eventRefund && eventRefund.refundsIssued > 0
+            ? "Your payment for this event is being refunded in full."
+            : undefined;
+      await sendAppointmentCancelledEmail(
+        {
+          appointmentId,
+          userIds,
+          startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
+          cancelledBy:
+            notificationMeta.cancelledBy === notificationMeta.consultantUserId
+              ? notificationMeta.consultantName || "The consultant"
+              : notificationMeta.cancelledBy === consulteeUserId
+                ? notificationMeta.consulteeName || "The consultee"
+                : "Familiarise",
+          reason: validatedData.reason || undefined,
+          refundText,
+          refundUserIds: refund
+            ? [consulteeUserId].filter((id): id is string => !!id)
+            : attendeeUserIds,
+          dashboardUrl: notificationHref(
+            appointment.organizationId,
+            "appointments",
+          ),
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
 
     // Log cancellation activity for consultant dashboard (awaited — DB write

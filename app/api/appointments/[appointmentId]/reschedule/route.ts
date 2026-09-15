@@ -33,6 +33,7 @@ import {
 import { apiError } from "@/lib/errors/api-error";
 import { isRefusal } from "@/lib/errors/refusal";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
+import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -528,6 +529,9 @@ export async function POST(
           // it places the replacement times (resolveConsumedPreferenceRequests),
           // so the reservation is released the moment it stops meaning anything.
           let rescheduleRequestId: string | null = null;
+          // #1653 — the deadline the PROPOSED email names; null when no
+          // proposal row was written.
+          let proposalExpiresAt: Date | null = null;
           const hasPreference = Boolean(preferredTimeOfDay || preferredDays);
           if (
             (proposedSlots?.length || hasPreference) &&
@@ -593,7 +597,10 @@ export async function POST(
             // Only a request carrying times can auto-confirm or be answered, and
             // the caller reads this id as "times were sent" — so a preference-only
             // row deliberately leaves it null.
-            if (proposedSlots?.length) rescheduleRequestId = created.id;
+            if (proposedSlots?.length) {
+              rescheduleRequestId = created.id;
+              proposalExpiresAt = expiresAt;
+            }
           }
 
           // #448 / #1554 — one occurrence row is one session, so the count
@@ -656,6 +663,7 @@ export async function POST(
               classId: appointment.class?.id,
             },
             rescheduleRequestId,
+            proposalExpiresAt,
           };
         },
         {
@@ -886,13 +894,14 @@ export async function POST(
           : null;
 
         if (uniqueUserIds.length > 0) {
+          const variant = rescheduleNotificationVariant({
+            releasedAt: result.releasedAt,
+            proposedAt,
+            autoConfirmed,
+          });
           await notifyAppointmentRescheduled(uniqueUserIds, {
             ...notificationScope(appointment.organizationId),
-            ...rescheduleNotificationVariant({
-              releasedAt: result.releasedAt,
-              proposedAt,
-              autoConfirmed,
-            }),
+            ...variant,
             appointmentType,
             consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
             consulteeName: requestedBy?.user?.name ?? "Participant",
@@ -906,6 +915,25 @@ export async function POST(
             ),
           }).catch((err) =>
             console.error("[reschedule] Failed to send notification:", err),
+          );
+          // #1653 — the email twin: same recipients, same outcome, same href.
+          // The initiator is excluded above, so `proposedBy` names them.
+          await sendAppointmentRescheduledEmail(
+            {
+              appointmentId,
+              userIds: uniqueUserIds,
+              outcome: variant.outcome,
+              appointmentType,
+              oldStartsAt: result.releasedAt,
+              newStartsAt: proposedAt,
+              proposedBy: session.user.name || undefined,
+              respondBy: result.proposalExpiresAt,
+              dashboardUrl: notificationHref(
+                appointment.organizationId,
+                "appointments",
+              ),
+            },
+            EMAIL_BUDGET_MS.REQUEST,
           );
         }
       }

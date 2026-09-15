@@ -54,7 +54,8 @@ import {
 // consultant's calendar, so the threshold is measured in hours, not days.
 // Subscriptions hold no slots at request time (lazy allocation), so they
 // keep the generous window below.
-const PENDING_CONSULTATION_EXPIRATION_HOURS = 48;
+// Exported so the request email can name the same deadline (#1653).
+export const PENDING_CONSULTATION_EXPIRATION_HOURS = 48;
 
 // Expire requests in PENDING state for more than 30 days (subscriptions).
 const PENDING_EXPIRATION_DAYS = 30;

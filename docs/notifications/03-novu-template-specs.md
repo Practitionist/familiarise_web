@@ -111,6 +111,7 @@ In the Novu editor, replicate this using their visual builder or paste the HTML 
 **Trigger function**: `notifyAppointmentBooked(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_BOOKED` (`emails/booking/AppointmentBookedEmail.tsx`), sent by `sendAppointmentBookedEmail()` / staged by `stageAppointmentBookedEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -208,6 +209,7 @@ Booking Confirmed — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentCancelled(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_CANCELLED` (`emails/booking/AppointmentCancelledEmail.tsx`), sent by `sendAppointmentCancelledEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentCancelledPayload`):
 
@@ -306,6 +308,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentReminder(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` inside the same Redis guard as this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -578,6 +581,7 @@ Payment Failed — Action Required
 **Trigger function**: `notifyNewBookingRequest(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `appointments`
+**Email twin**: `NEW_BOOKING_REQUEST` (`emails/booking/NewBookingRequestEmail.tsx`), sent by `sendNewBookingRequestEmail()` right after this bell (#1653).
 
 **Payload variables** (`BookingRequestPayload`):
 
@@ -846,6 +850,7 @@ New Trial Request — {{payload.planTitle}}
 **Trigger function**: `notifyTrialScheduled(consulteeUserId, payload)`
 **Recipient**: Consultee only
 **Preference category**: `trials`
+**Email twin**: `TRIAL_SESSION_SCHEDULED` (`emails/booking/TrialScheduledEmail.tsx`), sent by `sendTrialScheduledEmail()` to both parties right after this bell (#1653).
 
 **Payload variables** (`TrialPayload`):
 
@@ -1442,7 +1447,7 @@ verification-status-changed
 
 These need Dashboard configuration after Tier 1 is done:
 
-- `appointment-rescheduled` — AppointmentRescheduledPayload
+- `appointment-rescheduled` — AppointmentRescheduledPayload. Email twin: `APPOINTMENT_RESCHEDULED` (`emails/booking/AppointmentRescheduledEmail.tsx`), sent by `sendAppointmentRescheduledEmail()` right after each of the four bells with the same `outcome` (#1653); the PROPOSED copy names the reschedule request's `expiresAt` as the deadline.
 - `appointment-completed` — AppointmentPayload
 - `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload

@@ -52,6 +52,8 @@ import {
   windowAtoms,
 } from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { EMAIL_BUDGET_MS, sendTrialScheduledEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 
 interface RouteContext {
@@ -682,6 +684,25 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               : TrialStatus.SCHEDULED,
             dashboardUrl: paymentUrl ?? "/dashboard",
           });
+
+          // #1653 — the email twin, to both parties: the consultee's CTA is
+          // the pay link while the trial awaits payment. The sender never throws.
+          await sendTrialScheduledEmail(
+            {
+              trialId,
+              consulteeUserId: existingTrial.consulteeProfile.user.id,
+              consultantUserId: existingTrial.consultantProfile.user.id,
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              planTitle: existingTrial.subscriptionPlan.title,
+              startsAt: startTime,
+              awaitingPayment: requiresPayment,
+              dashboardUrl: `${getAppUrl()}/dashboard`,
+              paymentUrl,
+            },
+            EMAIL_BUDGET_MS.REQUEST,
+          );
 
           return NextResponse.json({ data: result });
         } catch (error) {
