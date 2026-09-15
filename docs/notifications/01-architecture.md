@@ -99,6 +99,7 @@ lib/email/
 ├── preferences.ts     -- loadEmailRecipients(), the NotificationPreference gate
 ├── send-to-recipients.ts -- sendToRecipients() / stageToRecipients() / attemptStaged(), the per-recipient fan-out
 └── senders/
+    ├── booking.ts     -- the six booking lifecycle senders (#1653), re-exported from index.ts
     └── people.ts      -- the six people and access senders (#1653), re-exported from index.ts
 
 sendWelcomeEmail()         -- from: SENDERS.onboarding (onboarding@mail.familiarisenow.com)
@@ -113,13 +114,25 @@ sendWaitlistConfirmEmail() -- from: SENDERS.newsletter (newsletter@news.familiar
 sendWaitlistWelcomeEmail() -- from: SENDERS.newsletter
 sendContactInquiryEmail()  -- from: SENDERS.notifications, to: contactInboxAddress()
 
-sendSupportTicketResponseEmail() -- from: SENDERS.notifications, category support, entityRef ticket:<id>
-sendSupportTicketUpdateEmail()   -- from: SENDERS.notifications, category support, entityRef ticket:<id>
-sendAccountSuspendedEmail()      -- from: SENDERS.security, category null (required notice), entityRef user:<id>
-sendAccountBannedEmail()         -- from: SENDERS.security, category null (required notice), entityRef user:<id>
-sendOrgSsoCertExpiringEmail()    -- from: SENDERS.security, category null (required notice), entityRef org:<id>
-sendNewReviewEmail()             -- from: SENDERS.notifications, category feedback, entityRef review:<id>
+sendAppointmentBookedEmail() / stageAppointmentBookedEmail(tx, …)
+                           -- from: SENDERS.notifications, category appointments, entityRef appointment:<id>
+sendAppointmentCancelledEmail()   -- from: SENDERS.notifications, category appointments, entityRef appointment:<id>
+sendAppointmentRescheduledEmail() -- from: SENDERS.notifications, category appointments, entityRef appointment:<id>
+sendAppointmentReminderEmail()    -- from: SENDERS.notifications, category appointments, entityRef appointment:<id>:<24h|1h>
+sendNewBookingRequestEmail()      -- from: SENDERS.notifications, category appointments, entityRef request:<id>
+sendTrialScheduledEmail()         -- from: SENDERS.notifications, category trials, entityRef trial:<id>
 ```
+
+The six booking senders in `lib/email/senders/booking.ts` (#1653) differ from the eleven above in shape: each takes user ids plus the raw domain values its call site already holds (Dates, names, ids and the href the sibling Novu bell computed), resolves the recipients through `loadEmailRecipients()`, and renders one message per recipient in that recipient's zone through `sendToRecipients()`, so the subject and body of the booked and trial emails switch on whether the reader is the consultee or the consultant. Every time is written as `formatInViewerZone(d, zone, "EEE, d MMM yyyy 'at' h:mm a")` followed by the zone label. A booking sender never throws: an unexpected error is reported to Sentry with `tags: { subsystem: "email", emailType }` and returned as a failed count, and the caller's budget (`REQUEST` from an API route, `JOB` from a sweep or script, `WEBHOOK` from the payment webhook) bounds how long the caller waits. The templates live in `emails/booking/` and render inside `EmailLayout`. Each sender is called right after the Novu bell it twins, with the same recipients and the same href, and the bell itself is unchanged.
+
+sendSupportTicketResponseEmail() -- from: SENDERS.notifications, category support, entityRef ticket:<id>
+sendSupportTicketUpdateEmail() -- from: SENDERS.notifications, category support, entityRef ticket:<id>
+sendAccountSuspendedEmail() -- from: SENDERS.security, category null (required notice), entityRef user:<id>
+sendAccountBannedEmail() -- from: SENDERS.security, category null (required notice), entityRef user:<id>
+sendOrgSsoCertExpiringEmail() -- from: SENDERS.security, category null (required notice), entityRef org:<id>
+sendNewReviewEmail() -- from: SENDERS.notifications, category feedback, entityRef review:<id>
+
+````
 
 The six people and access senders in `lib/email/senders/people.ts` (#1653) share the shape the booking senders introduced: each takes user ids plus the raw domain values its call site already holds, resolves the recipients through `loadEmailRecipients()`, and renders one message per recipient in that recipient's zone through `sendToRecipients()`, so a suspension's end date and a certificate's expiry are printed in the reader's own zone. The three notices that pass a `null` category are never gated and carry no unsubscribe link, and `sendOrgInvitationEmail()` is never gated either because the invitee has no account row to read; the support and review senders are gated on `support` and `feedback`. A people sender never throws: an unexpected error is reported to Sentry with `tags: { subsystem: "email", emailType }` and returned as a failed count, and the caller's budget (`REQUEST` from an API route or the moderation action, `JOB` from the certificate sweep) bounds how long the caller waits. The templates live in `emails/support/`, `emails/account/`, `emails/organizations/` and `emails/reviews/` and render inside `EmailLayout`. Each sender is called right after the Novu bell it twins, with the same recipient and the same href, and no bell changed except the invitation bell, which is now awaited.
 
@@ -159,7 +172,7 @@ sequenceDiagram
         DL-->>Fn: {success: false, staged: true}
     end
     Fn-->>API: DeliverResult
-```
+````
 
 The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/config.ts`) and chosen per caller, because the caller's request is what a slow provider would otherwise hold open until Netlify's ~26-second ceiling. The table below lists the budgets and who uses each.
 
@@ -173,11 +186,11 @@ The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/co
 
 A timeout is not a failure. The Resend SDK spreads the request options into `fetch`, so the `AbortSignal` genuinely aborts the call, and `attempt()` recognises either a thrown `AbortError`/`TimeoutError` or the SDK's generic "could not be resolved" error while its own signal is aborted; in both cases the row is left `PENDING` and untouched, a single log line is written, and nothing reaches Sentry. The relay sends the row on its next pass under the same content-hash Idempotency-Key (`lib/email/idempotency.ts`, of the form `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>`), which Resend deduplicates for 24 hours, so a send that actually completed after the caller stopped waiting is not delivered twice. `deliver()` defaults Reply-To to `supportEmail()` when the caller does not set one; `stage()` applies the same default so the row and the send agree. A missing key (`EmailNotConfiguredError`) is reported at level `"error"` with fingerprint `["email-send-terminal", "not_configured"]` but leaves the row `PENDING`, because it replays once the key exists (#1298); a dead key, an unverified domain or a body Resend rejects dead-letters the row on the spot, since no replay changes the answer.
 
-Every sender stamps the row's `entityRef` with the business anchor it knows: the auth senders write `user:<id>`, the payment senders `payment:<id>`, the waitlist senders `waitlist:<email>`, the contact form `contact:<email>`, and the people senders `ticket:<id>`, `user:<id>`, `org:<id>`, `review:<id>`, `orgInvite:<id>` or, for a bulk import that creates no invitation row, `membership:<id>`. A sender's `DeliverResult` carries `staged: true` on failure when the row exists, which is how `app/api/contact/route.ts` answers success for an inquiry that is durable but not yet delivered and keeps its 502 for the case where even the row could not be written.
+Every sender stamps the row's `entityRef` with the business anchor it knows: the auth senders write `user:<id>`, the payment senders `payment:<id>`, the waitlist senders `waitlist:<email>`, the contact form `contact:<email>`, and the booking senders `appointment:<id>` (suffixed `:24h` or `:1h` for the reminder), `request:<id>` or `trial:<id>`, and the people senders `ticket:<id>`, `user:<id>`, `org:<id>`, `review:<id>`, `orgInvite:<id>` or, for a bulk import that creates no invitation row, `membership:<id>`. A sender's `DeliverResult` carries `staged: true` on failure when the row exists, which is how `app/api/contact/route.ts` answers success for an inquiry that is durable but not yet delivered and keeps its 502 for the case where even the row could not be written.
 
 #### Staging inside a transaction
 
-A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Nothing else in the money transaction changed (ADR 21).
+A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Since #1653 the booked confirmation rides the same read: `loadAppointmentForEmails()` is the one appointment read Phase 1 makes for mail, `stagePaymentSuccessEmail()` and `stageBookedEmails()` both render from it, and `stageAppointmentBookedEmail(tx, …)` reads the two recipients through the transaction and stages one row per allowed recipient; Phase 2 runs `attemptStaged()` next to the receipt's attempt. A subscription placeholder with no session yet stages no booked email, as its bell is skipped, and the two blocked outcomes stage nothing. Nothing else in the money transaction changed (ADR 21).
 
 ### The relay
 
@@ -193,17 +206,17 @@ The list is enforced at both ends of the outbox. `stage()` in `lib/email/deliver
 
 ### From Address Convention
 
-| Domain Prefix    | Used For                                                    | Domain                    |
-| ---------------- | ----------------------------------------------------------- | ------------------------- |
-| `onboarding@`    | Welcome, email verification                                 | `mail.familiarisenow.com` |
-| `security@`      | Password reset, linking, suspension, ban, SSO cert expiry   | `mail.familiarisenow.com` |
-| `payments@`      | Payment link, success, failure                              | `mail.familiarisenow.com` |
-| `notifications@` | Org invitations, contact inquiry, support, reviews (#1653)  | `mail.familiarisenow.com` |
-| `finance@`       | Finance-facing notices                                      | `mail.familiarisenow.com` |
-| `dpdp@`          | DPDP compliance alerts                                      | `mail.familiarisenow.com` |
-| `noreply@`       | Data-export notice (the worker falls back to `onboarding@`) | `mail.familiarisenow.com` |
-| `system` (bare)  | Internal requester id, not a `From` header                  | `mail.familiarisenow.com` |
-| `newsletter@`    | Waitlist opt-in + broadcast                                 | `news.familiarisenow.com` |
+| Domain Prefix    | Used For                                                            | Domain                    |
+| ---------------- | ------------------------------------------------------------------- | ------------------------- |
+| `onboarding@`    | Welcome, email verification                                         | `mail.familiarisenow.com` |
+| `security@`      | Password reset, linking, suspension, ban, SSO cert expiry           | `mail.familiarisenow.com` |
+| `payments@`      | Payment link, success, failure                                      | `mail.familiarisenow.com` |
+| `notifications@` | Org invitations, contact inquiry, booking, support, reviews (#1653) | `mail.familiarisenow.com` |
+| `finance@`       | Finance-facing notices                                              | `mail.familiarisenow.com` |
+| `dpdp@`          | DPDP compliance alerts                                              | `mail.familiarisenow.com` |
+| `noreply@`       | Data-export notice (the worker falls back to `onboarding@`)         | `mail.familiarisenow.com` |
+| `system` (bare)  | Internal requester id, not a `From` header                          | `mail.familiarisenow.com` |
+| `newsletter@`    | Waitlist opt-in + broadcast                                         | `news.familiarisenow.com` |
 
 ---
 

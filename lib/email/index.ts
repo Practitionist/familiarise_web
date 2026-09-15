@@ -35,6 +35,7 @@ export {
   type StagedEmail,
   type StageOptions,
 } from "./deliver";
+export * from "./senders/booking";
 export * from "./senders/people";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";

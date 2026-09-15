@@ -21,17 +21,22 @@ import { notifyAppointmentReminder } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "../../lib/novu/humanize";
+import {
+  EMAIL_BUDGET_MS,
+  sendAppointmentReminderEmail,
+  type ReminderWindowLabel,
+} from "../../lib/email";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 // Reminder windows (in milliseconds)
 const REMINDER_24H = {
-  label: "24h",
+  label: "24h" as const,
   minMs: 23 * 60 * 60 * 1000, // 23 hours
   maxMs: 25 * 60 * 60 * 1000, // 25 hours
 };
 
 const REMINDER_1H = {
-  label: "1h",
+  label: "1h" as const,
   minMs: 45 * 60 * 1000, // 45 minutes
   maxMs: 75 * 60 * 1000, // 75 minutes
 };
@@ -45,7 +50,7 @@ export interface ReminderResult {
 }
 
 async function sendRemindersForWindow(window: {
-  label: string;
+  label: ReminderWindowLabel;
   minMs: number;
   maxMs: number;
 }): Promise<{ sent: number; errors: string[] }> {
@@ -166,6 +171,8 @@ async function sendRemindersForWindow(window: {
       let planTitle = "";
       let consultantName = "Consultant";
       let consulteeName = "Consultee";
+      // #1653 — lets the email name the consultee as the consultant's other party.
+      let consultantUserId: string | undefined;
       const userIds: string[] = [];
 
       if (apt.consultation) {
@@ -178,6 +185,7 @@ async function sendRemindersForWindow(window: {
         const cId =
           apt.consultation.consultationPlan?.consultantProfile?.userId;
         const eId = apt.consultation.requestedBy?.userId;
+        consultantUserId = cId;
         if (cId) userIds.push(cId);
         if (eId) userIds.push(eId);
       } else if (apt.subscription) {
@@ -190,6 +198,7 @@ async function sendRemindersForWindow(window: {
         const cId =
           apt.subscription.subscriptionPlan?.consultantProfile?.userId;
         const eId = apt.subscription.requestedBy?.userId;
+        consultantUserId = cId;
         if (cId) userIds.push(cId);
         if (eId) userIds.push(eId);
       } else if (apt.webinar) {
@@ -204,6 +213,7 @@ async function sendRemindersForWindow(window: {
           userIds.push(seat.userId);
         }
         const hostId = apt.webinar.webinarPlan?.consultantProfile?.userId;
+        consultantUserId = hostId;
         if (hostId) userIds.push(hostId);
         userIds.push(
           ...(await planCollaborators("webinar", apt.webinar.webinarPlanId)),
@@ -218,6 +228,7 @@ async function sendRemindersForWindow(window: {
           userIds.push(seat.userId);
         }
         const hostId = apt.class.classPlan?.consultantProfile?.userId;
+        consultantUserId = hostId;
         if (hostId) userIds.push(hostId);
         userIds.push(
           ...(await planCollaborators("class", apt.class.classPlanId)),
@@ -257,6 +268,24 @@ async function sendRemindersForWindow(window: {
         // 24h and 1h payloads are identical — key the Novu transactionId by
         // window so the second reminder isn't deduped away.
         `${apt.id}:${window.label}`,
+      );
+
+      // #1653 — the email twin, inside the same Redis guard so a re-run does
+      // not send twice. No join link: the meeting route is not known here.
+      await sendAppointmentReminderEmail(
+        {
+          appointmentId: apt.id,
+          userIds: uniqueUserIds,
+          windowLabel: window.label,
+          consultantUserId,
+          consultantName,
+          consulteeName,
+          planTitle: planTitleOrSessionLabel(planTitle, appointmentType),
+          appointmentType,
+          startsAt: slot.startsAt,
+          dashboardUrl: notificationHref(apt.organizationId, "appointments"),
+        },
+        EMAIL_BUDGET_MS.JOB,
       );
 
       sent++;
