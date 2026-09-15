@@ -110,7 +110,8 @@ export async function POST(req: NextRequest) {
           submissionKey,
           sourceCategory: parsed.data.category ?? "",
           companyName: null,
-          contactName: `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
+          contactName:
+            `${parsed.data.firstName} ${parsed.data.lastName}`.trim(),
           contactEmail: parsed.data.email,
           phone: parsed.data.phone || null,
           subject: parsed.data.subject,
@@ -141,9 +142,9 @@ export async function POST(req: NextRequest) {
     category: parsed.data.category || null,
   });
 
-  if (!result.success) {
-    // The send already recorded a FailedEmail row for the retry worker, so the
-    // lead is not lost — but the sender should know it was not delivered yet.
+  // #1654 — a staged row is durable: the relay delivers it, so the visitor
+  // hears success. Only a lead that could not even be staged asks for a retry.
+  if (!result.success && !result.staged) {
     return NextResponse.json(
       {
         error:

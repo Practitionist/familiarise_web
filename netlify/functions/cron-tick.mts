@@ -5,7 +5,8 @@
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
- * sweeps and, since #1633, the ledger reconcile backstop) instead of waiting
+ * sweeps, since #1633 the ledger reconcile backstop and, since #1654, the
+ * email outbox relay on every third tick) instead of waiting
  * on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
@@ -34,6 +35,8 @@ const TARGETS = [
   // #1633 — the backstop for the ledger reconcile driver: one chunk per tick
   // of whatever full-scope run is in flight, IDLE otherwise.
   "reconcile-ledgers",
+  // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
+  "retry-failed-emails",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -52,7 +55,28 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
   // null — send no `limit`; a chunk is bounded by the route's own soft deadline.
   "reconcile-ledgers": null,
+  // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
+  // fits its timeout; the Actions run drains the rest unbounded.
+  "retry-failed-emails": 20,
 };
+
+/**
+ * #1654 — targets that run on a multiple of the five-minute tick. A missing
+ * entry means every tick. The check is on the wall-clock minute, so a late
+ * tick (Netlify fires within the minute) still counts as its slot.
+ */
+const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
+  "retry-failed-emails": 15,
+};
+
+/** The targets due on this tick; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  const minute = now.getUTCMinutes();
+  return TARGETS.filter((name) => {
+    const every = TARGET_EVERY_MINUTES[name];
+    return every === undefined || minute % every < 5;
+  });
+}
 
 /** Extra query a target needs beyond `limit`. */
 const TARGET_QUERIES: Partial<Record<Target, string>> = {
@@ -65,6 +89,8 @@ const PER_TARGET_TIMEOUT_MS = 6_000;
 /** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-ledgers": 20_000,
+  // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
+  "retry-failed-emails": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
@@ -144,9 +170,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   const started = Date.now();
+  const targets = dueTargets(new Date(started));
 
   const settled = await Promise.allSettled(
-    TARGETS.map((name) => hitTarget(baseUrl, secret, name)),
+    targets.map((name) => hitTarget(baseUrl, secret, name)),
   );
 
   const ok: string[] = [];
@@ -154,7 +181,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const failed: { name: string; status: number }[] = [];
 
   settled.forEach((result, i) => {
-    const name = TARGETS[i];
+    const name = targets[i];
     // hitTarget never rejects, but a defensive fallback keeps a Promise API
     // surprise from throwing out of the handler instead of being counted.
     const status = result.status === "fulfilled" ? result.value.status : 0;

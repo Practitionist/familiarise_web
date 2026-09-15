@@ -46,7 +46,15 @@ import {
   validateWebhookMetadata,
 } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
-import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
+import {
+  attempt as attemptEmail,
+  EMAIL_BUDGET_MS,
+  renderPaymentFailedEmail,
+  renderPaymentSuccessEmail,
+  stage as stageEmail,
+  type RenderedEmail,
+  type StagedEmail,
+} from "@/lib/email";
 import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
@@ -176,7 +184,12 @@ type PaymentSuccessTxResult =
       currency: string;
       capturedAfterTerminal: boolean;
       doubleBookingBlocked: boolean;
+      // #1654 — the receipt row staged inside Phase 1; Phase 2 attempts it.
+      successEmail: StagedOutboxEmail | null;
     };
+
+/** #1654 — an outbox row plus the rendered message the inline attempt sends. */
+type StagedOutboxEmail = { staged: StagedEmail; message: RenderedEmail };
 
 /**
  * #1446 — Phase 2 runs inside `after()`, on the same warm instance that is
@@ -617,6 +630,20 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
           );
 
+          // #1654 — the receipt is staged in THIS transaction so a rollback
+          // takes it too; the send waits for the commit. The two blocked
+          // outcomes refund in Phase 2 and get no receipt.
+          const successEmail =
+            confirmResult.capturedAfterTerminal ||
+            confirmResult.doubleBookingBlocked
+              ? null
+              : await stagePaymentSuccessEmail(
+                  tx,
+                  payment,
+                  appointment.id,
+                  metadata.appointmentType,
+                );
+
           // Return data needed for Phase 2
           return {
             outcome: "confirmed",
@@ -633,6 +660,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             // #837 — the #827 first-confirmed-wins guard blocked this booking; Phase 2
             // auto-refunds the loser and releases its tentative hold.
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
+            successEmail,
           };
         },
         {
@@ -833,26 +861,15 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
-  // M5 FIX: Send payment success email in Phase 2 (post-commit) so a
-  // transaction rollback cannot leave the user with a false confirmation.
-  try {
-    const paymentForEmail = await prisma.payment.findUnique({
-      where: { id: txResult.paymentId },
-      include: { user: { include: { consulteeProfile: true } } },
-    });
-    if (paymentForEmail) {
-      await sendPaymentSuccessNotification(
-        prisma,
-        paymentForEmail as PaymentWithUser,
-        txResult.appointmentId,
-        txResult.appointmentType,
-      );
-    }
-  } catch (emailError) {
-    reportSentryError(emailError, { subsystem: "payments", level: "warning" });
-    console.error(
-      "Failed to send payment success email (Phase 2):",
-      emailError,
+  // M5 FIX: the receipt is SENT in Phase 2 (post-commit) so a rollback cannot
+  // leave the user with a false confirmation; #1654 stages its row in Phase 1
+  // so a crash here cannot lose it either. `attempt` never throws.
+  if (txResult.successEmail) {
+    await attemptEmail(
+      txResult.successEmail.staged,
+      txResult.successEmail.message,
+      "PAYMENT_SUCCESS",
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
     );
   }
 
@@ -1166,7 +1183,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
  * Handle failed payment - cleans up tentative appointments
  */
 export async function handlePaymentFailure(paymentIntentId: string) {
-  return await prisma.$transaction(async (tx) => {
+  const staged = await prisma.$transaction(async (tx) => {
     // #734 — narrowed from a 5-level include; the failure path only reads
     // the payer's email/name and the consultant's name for notifications.
     const consultantUserSelect = {
@@ -1271,8 +1288,9 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
 
-    // Send payment failure email
-    await sendPaymentFailureNotification(tx, payment);
+    // #1654 — the failure notice is staged in this transaction and sent
+    // after it commits, below.
+    const failedEmail = await stagePaymentFailedEmail(tx, payment);
 
     // --- Novu notification (fire-and-forget) ---
     try {
@@ -1306,9 +1324,21 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     }
 
     console.log(
-      `📧 Payment failure notification sent for payment ${paymentIntentId}`,
+      `📧 Payment failure notification staged for payment ${paymentIntentId}`,
     );
+    return { failedEmail };
   });
+
+  // #1654 — the inline fast path, after the commit: a timeout leaves the row
+  // PENDING for the relay. `attempt` never throws.
+  if (staged?.failedEmail) {
+    await attemptEmail(
+      staged.failedEmail.staged,
+      staged.failedEmail.message,
+      "PAYMENT_FAILED",
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+    );
+  }
 }
 
 // ============================================================================
@@ -2072,108 +2102,113 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
 // ============================================================================
 
 /**
- * Send payment success email notification
+ * #1654 — reads the receipt's inputs through the caller's transaction, renders
+ * it, and stages the outbox row in that transaction. Returns null (reported)
+ * when there is nothing to send; a database failure propagates so the
+ * business write and the row roll back together.
  */
-async function sendPaymentSuccessNotification(
+async function stagePaymentSuccessEmail(
   tx: Tx,
   payment: PaymentWithUser,
   appointmentId: string,
   appointmentType: string,
-) {
-  try {
-    const appointment = await tx.appointment.findUnique({
-      where: { id: appointmentId },
-      include: {
-        consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        subscription: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  include: { user: { select: { name: true } } },
-                },
-              },
-            },
-          },
-        },
-        class: {
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  include: { user: { select: { name: true } } },
+): Promise<StagedOutboxEmail | null> {
+  const appointment = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    include: {
+      consultation: {
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
                 },
               },
             },
           },
         },
       },
-    });
+      subscription: {
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+      class: {
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { name: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
 
-    if (!appointment) {
-      reportSentryError(
-        new Error(
-          `Cannot send payment success email: appointment ${appointmentId} not found`,
-        ),
-        { subsystem: "payments", level: "warning" },
-      );
-      console.error(
+  if (!appointment) {
+    reportSentryError(
+      new Error(
         `Cannot send payment success email: appointment ${appointmentId} not found`,
-      );
-      return;
-    }
+      ),
+      { subsystem: "payments", level: "warning" },
+    );
+    console.error(
+      `Cannot send payment success email: appointment ${appointmentId} not found`,
+    );
+    return null;
+  }
 
-    let consultantName = "Consultant";
-    const amount = payment.amount;
-    const currency = payment.currency;
+  let consultantName = "Consultant";
+  const amount = payment.amount;
+  const currency = payment.currency;
 
-    // Get consultant name based on appointment type
-    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.consultation.consultationPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-    ) {
-      consultantName =
-        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.webinar.webinarPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (appointment.class?.classPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.class.classPlan.consultantProfile.user.name || "Consultant";
-    }
+  // Get consultant name based on appointment type
+  if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+    consultantName =
+      appointment.consultation.consultationPlan.consultantProfile.user.name ||
+      "Consultant";
+  } else if (
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+  ) {
+    consultantName =
+      appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+      "Consultant";
+  } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
+    consultantName =
+      appointment.webinar.webinarPlan.consultantProfile.user.name ||
+      "Consultant";
+  } else if (appointment.class?.classPlan?.consultantProfile?.user) {
+    consultantName =
+      appointment.class.classPlan.consultantProfile.user.name || "Consultant";
+  }
 
-    // Send email
-    await sendPaymentSuccessEmail({
+  // Render is pure CPU; a render failure has nothing to replay, so it is
+  // reported and the receipt skipped, never the payment.
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentSuccessEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
@@ -2187,21 +2222,21 @@ async function sendPaymentSuccessNotification(
       dashboardUrl: `${getAppUrl()}/dashboard`,
       paymentReference: payment.id,
     });
-
-    console.log(
-      `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
-    );
   } catch (error) {
     reportSentryError(error, { subsystem: "payments", level: "warning" });
-    // Don't throw - email failures shouldn't block payment processing
-    console.error("Failed to send payment success email:", error);
+    console.error("Failed to render payment success email:", error);
+    return null;
   }
+
+  const staged = await stageEmail(message, "PAYMENT_SUCCESS", {
+    tx,
+    entityRef: `payment:${payment.id}`,
+  });
+  return staged ? { staged, message } : null;
 }
 
-/**
- * Send payment failure email notification
- */
-async function sendPaymentFailureNotification(
+/** #1654 — the failure notice's twin of {@link stagePaymentSuccessEmail}. */
+async function stagePaymentFailedEmail(
   tx: Tx,
   payment: {
     id: string;
@@ -2211,63 +2246,63 @@ async function sendPaymentFailureNotification(
     description: string | null;
     user: { email: string | null; name: string | null };
   },
-) {
-  try {
-    const consultantUserSelect = {
-      select: {
-        consultantProfile: {
-          select: { user: { select: { name: true } } },
-        },
+): Promise<StagedOutboxEmail | null> {
+  const consultantUserSelect = {
+    select: {
+      consultantProfile: {
+        select: { user: { select: { name: true } } },
       },
-    } as const;
-    const appointment = await tx.appointment.findUnique({
-      where: { id: payment.appointmentId || "" },
-      select: {
-        consultation: {
-          select: { id: true, consultationPlan: consultantUserSelect },
-        },
-        subscription: {
-          select: { id: true, subscriptionPlan: consultantUserSelect },
-        },
+    },
+  } as const;
+  const appointment = await tx.appointment.findUnique({
+    where: { id: payment.appointmentId || "" },
+    select: {
+      consultation: {
+        select: { id: true, consultationPlan: consultantUserSelect },
       },
-    });
+      subscription: {
+        select: { id: true, subscriptionPlan: consultantUserSelect },
+      },
+    },
+  });
 
-    if (!appointment) {
-      reportSentryError(
-        new Error(
-          `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
-        ),
-        { subsystem: "payments", level: "warning" },
-      );
-      console.error(
+  if (!appointment) {
+    reportSentryError(
+      new Error(
         `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
-      );
-      return;
-    }
+      ),
+      { subsystem: "payments", level: "warning" },
+    );
+    console.error(
+      `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
+    );
+    return null;
+  }
 
-    let consultantName = "Consultant";
-    let appointmentType: "consultation" | "subscription" = "consultation";
-    let retryUrl = `${getAppUrl()}/dashboard`;
+  let consultantName = "Consultant";
+  let appointmentType: "consultation" | "subscription" = "consultation";
+  let retryUrl = `${getAppUrl()}/dashboard`;
 
-    // Get consultant name and appointment type
-    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.consultation.consultationPlan.consultantProfile.user.name ||
-        "Consultant";
-      appointmentType = "consultation";
-      retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
-    } else if (
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-    ) {
-      consultantName =
-        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
-        "Consultant";
-      appointmentType = "subscription";
-      retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
-    }
+  // Get consultant name and appointment type
+  if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+    consultantName =
+      appointment.consultation.consultationPlan.consultantProfile.user.name ||
+      "Consultant";
+    appointmentType = "consultation";
+    retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
+  } else if (
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+  ) {
+    consultantName =
+      appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+      "Consultant";
+    appointmentType = "subscription";
+    retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
+  }
 
-    // Send email
-    await sendPaymentFailedEmail({
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentFailedEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
@@ -2278,13 +2313,15 @@ async function sendPaymentFailureNotification(
       failureReason: payment.description || "Payment could not be processed",
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours from now
     });
-
-    console.log(
-      `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
-    );
   } catch (error) {
     reportSentryError(error, { subsystem: "payments", level: "warning" });
-    // Don't throw - email failures shouldn't block payment processing
-    console.error("Failed to send payment failure email:", error);
+    console.error("Failed to render payment failure email:", error);
+    return null;
   }
+
+  const staged = await stageEmail(message, "PAYMENT_FAILED", {
+    tx,
+    entityRef: `payment:${payment.id}`,
+  });
+  return staged ? { staged, message } : null;
 }
