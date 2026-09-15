@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
@@ -34,6 +35,9 @@ interface UseEventActionsOptions {
  * ANSWER rather than a fault, and everything with a status reports at warning.
  */
 function reportActionFailure(error: unknown, op: string): void {
+  // A refusal (the reschedule window, a 409 on cancel) is the server's answer;
+  // the toast shows it and Sentry never hears of it (FAMILIARISE_WEB-2Z).
+  if (isExpectedRefusal(error)) return;
   const status = error instanceof ApiResponseError ? error.status : undefined;
   reportSentryError(error, {
     subsystem: "client",

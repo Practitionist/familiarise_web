@@ -3,6 +3,11 @@
 import { useState } from "react";
 import * as Sentry from "@sentry/nextjs";
 import { useToast } from "@/hooks/use-toast";
+import {
+  isExpectedRefusal,
+  userMessageFrom,
+} from "@/lib/errors/client-refusal";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { useQueryClient } from "@tanstack/react-query";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
@@ -94,10 +99,10 @@ export function useConsultantEventActions({
         body: Object.keys(payload).length ? JSON.stringify(payload) : undefined,
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to request reschedule");
-      }
+      const data = (await requireJsonResponse(
+        response,
+        "Failed to request reschedule",
+      )) as { sessionsAffected?: number; slotsAffected?: number };
 
       const sessionsAffected =
         data.sessionsAffected ?? data.slotsAffected ?? slotIds?.length ?? 1;
@@ -121,16 +126,17 @@ export function useConsultantEventActions({
       invalidateBookingData();
       return true;
     } catch (error) {
-      Sentry.captureException(
-        error instanceof Error ? error : new Error(String(error)),
-        { tags: { subsystem: "client" } },
-      );
+      // The same refusal the consultee page sees (FAMILIARISE_WEB-2Z): shown,
+      // not captured.
+      if (!isExpectedRefusal(error)) {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
+      }
       toast({
         title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to request reschedule",
+        description: userMessageFrom(error, "Failed to request reschedule"),
         variant: "destructive",
       });
       return false;
