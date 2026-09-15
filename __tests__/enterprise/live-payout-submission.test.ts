@@ -59,7 +59,7 @@ jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
 jest.mock("../../lib/novu/org-workflows", () => ({
   __esModule: true,
   notifyOrgPayoutCompleted: jest.fn().mockResolvedValue(undefined),
-  notifyOrgPayoutFailed: jest.fn().mockResolvedValue(undefined),
+  notifyOrgPayoutFailed: jest.fn().mockResolvedValue([]),
 }));
 
 import prisma from "@/lib/prisma";
@@ -120,9 +120,7 @@ function setupVerifiedAccount() {
   });
 }
 
-function setupGatewayService(opts: {
-  createPayout: jest.Mock;
-}) {
+function setupGatewayService(opts: { createPayout: jest.Mock }) {
   mockedGetService.mockReturnValue({
     generateIdempotencyKey: (id: string) => `payout_${id}`,
     determinePayoutMode: () => "IMPS" as const,

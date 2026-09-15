@@ -253,7 +253,7 @@ graph TD
     H -->|Per workflow config| I[In-App]
 ```
 
-The table below lists the three core functions; each accepts an optional trailing `{ tx?, entityRef? }`.
+The table below lists the three core functions; each accepts an optional trailing `{ tx?, entityRef? }`. The seventeen organisation helpers in `lib/novu/org-workflows.ts` (`notifyOrgInviteSent`, `notifyOrgPayoutFailed`, `notifyOrgWalletLow` and the rest) are thin wrappers over `triggerWorkflow`, `triggerForMultiple` and `triggerForMultipleZoned` since #1669, so they stage, attempt and dead-letter exactly as the B2C helpers do and accept the same `{ tx, entityRef }` option; the only difference is that they resolve the recipient roster from `Membership` first, and when `tx` is passed that roster read goes through the transaction too, because a global-client read while a transaction holds the single pooled connection deadlocks on Netlify (`PG_POOL_MAX=1`).
 
 | Function                                                                | Use Case                                            | Batching             |
 | ----------------------------------------------------------------------- | --------------------------------------------------- | -------------------- |
@@ -279,7 +279,9 @@ When Novu is not configured the row is still staged, so notifications raised bef
 
 #### Staging a trigger inside a transaction
 
-A caller inside a `$transaction` passes `{ tx, entityRef }` as the trailing option of the `notify*` helper; the helper stages only and returns `{ success: true, staged }`, and the caller runs `attemptTrigger(staged)` from `lib/novu` after the commit. Four helpers accept the option because four call sites are inside transactions: `notifyPaymentFailed` in `lib/payments/webhooks/handlers.ts`, and `notifyRefundProcessed`, `notifyDisputeCreated` and `notifyDisputeResolved` in `app/api/webhooks/utils.ts`. Every other `notify*` call site that used to be `void` is now awaited, because an un-awaited trigger is dropped when the Netlify instance freezes after the response (#1616, #691 NTF-1).
+A caller inside a `$transaction` passes `{ tx, entityRef }` as the trailing option of the `notify*` helper; the helper stages only and returns `{ success: true, staged }`, and the caller runs `attemptTrigger(staged)` from `lib/novu` after the commit. Six call sites are inside transactions: `notifyPaymentFailed` in `lib/payments/webhooks/handlers.ts`; `notifyRefundProcessed`, `notifyDisputeCreated` and `notifyDisputeResolved` in `app/api/webhooks/utils.ts`; and, since #1669, `notifyOrgPayoutFailed` at both payout sites in `lib/payments/payouts/org-payout-service.ts` (`markOrgPayoutFailed` and the completed-then-reversed branch of `markOrgPayoutReversed`), where the bell is staged inside the claim transaction under `entityRef: orgPayout:<id>` and attempted after the commit. The organisation helpers return the list of staged rows rather than a single result, because a roster may be split across timezone batches; the list is empty when the helper attempted inline. Every other `notify*` call site that used to be `void` is now awaited, because an un-awaited trigger is dropped when the Netlify instance freezes after the response (#1616, #691 NTF-1).
+
+The figures that circulated before #1664 ("32 triggers are `void`-fired, 40 run in `after()`") described the pre-#1664 tree and are retired. A repo-wide grep after #1664 and #1669 finds no remaining `void notify*` call. Four sites still hand the call to `after()` — `notifyDocumentUploaded` in the two document-upload routes, `notifyDocumentReviewed` in the document-review route, and `notifyRecordingAvailable` in `lib/stream/recording-handlers.ts` — and on those the staging itself runs inside `after()`, so they remain the last NTF-1 residue; every other call is awaited or staged.
 
 ### The Novu relay
 

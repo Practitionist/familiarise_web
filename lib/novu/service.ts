@@ -99,7 +99,9 @@ import {
  * the result carries `staged` for `attemptTrigger` after the commit.
  */
 export interface TriggerOptions {
-  tx?: Pick<Tx, "notificationOutbox">;
+  // #691 — "membership" too, so the org roster reads through the same tx
+  // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
+  tx?: Pick<Tx, "notificationOutbox" | "membership">;
   entityRef?: string;
 }
 
@@ -176,7 +178,7 @@ async function sendUnstaged(
   }
 }
 
-async function triggerWorkflow<T extends NovuPayload>(
+export async function triggerWorkflow<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   subscriberId: string,
   payload: T,
@@ -199,7 +201,7 @@ async function triggerWorkflow<T extends NovuPayload>(
  * Helper to trigger the same workflow for multiple users (e.g. both parties).
  * Uses a single API call with array `to` field (max 100 per call).
  */
-async function triggerForMultiple<T extends NovuPayload>(
+export async function triggerForMultiple<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   userIds: string[],
   payload: T,
@@ -260,7 +262,7 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
  * why that read is bounded and never throws. The zone only shapes the rendered
  * payload; nothing here defers the send, so the row's `notBefore` stays null.
  */
-async function triggerForMultipleZoned(
+export async function triggerForMultipleZoned(
   workflowId: NovuWorkflowId,
   userIds: string[],
   build: (timezone: string) => NovuPayload,
@@ -289,7 +291,7 @@ async function triggerForMultipleZoned(
 }
 
 /** Single-recipient sibling of {@link triggerForMultipleZoned}. */
-async function triggerWorkflowZoned(
+export async function triggerWorkflowZoned(
   workflowId: NovuWorkflowId,
   subscriberId: string,
   build: (timezone: string) => NovuPayload,
