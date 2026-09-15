@@ -416,6 +416,8 @@ For Novu triggers this remains a true fire-and-forget: a failed call is logged a
 
 `lib/auth.ts` awaits `sendWelcomeEmail()` and `sendAccountLinkedEmail()` inside a try/catch instead of firing them without awaiting, because a Netlify instance that freezes immediately after the response is sent drops an un-awaited call before it reaches Resend, which is the same failure class as #1616; the surrounding try/catch makes the send non-fatal (the operation still waits for delivery and for `recordFailedEmail()`, but a thrown error does not abort it).
 
+The tables that turn this send-first shape into the outbox-first shape of #1654 (the `FailedEmail` provider id and business anchor, `FailedEmailBatch`, the `NotificationOutbox` for Novu triggers) and the Resend webhook tables of #1647 (`EmailEvent`, `EmailSuppression`) are documented column by column in [07-schema-reference.md](07-schema-reference.md).
+
 ---
 
 ## Environment Variables
