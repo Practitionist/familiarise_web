@@ -54,9 +54,9 @@ graph LR
 
 ```
 lib/email/
-├── index.ts          -- 11 sender functions; @/lib/email still resolves to this module
-├── config.ts         -- SENDERS getters, supportEmail(), contactInboxAddress(), billingEmail(), companyPostalAddress()
-├── deliver.ts         -- deliver(), the single send core; getResendClient(), recordFailedEmail(), EmailNotConfiguredError
+├── index.ts          -- 11 sender functions plus renderPaymentSuccessEmail()/renderPaymentFailedEmail(); @/lib/email still resolves to this module
+├── config.ts         -- SENDERS getters, EMAIL_BUDGET_MS, supportEmail(), contactInboxAddress(), billingEmail(), companyPostalAddress()
+├── deliver.ts         -- deliver() = stage() + attempt(), the single send core; getResendClient(), recordFailedEmail(), EmailNotConfiguredError
 ├── idempotency.ts     -- derives the content-hash Idempotency-Key shared by a sender and the retry worker
 ├── classify.ts        -- classifies a Resend failure as terminal or transient
 └── render.ts          -- renderEmail(), returns { html, text }
@@ -78,35 +78,60 @@ Every domain in `SENDERS` is read from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NEW
 
 ### Email Rendering Pipeline
 
-Every sender follows render → build → deliver. `renderEmail()` (`lib/email/render.ts`) renders the React Email element once and returns both an HTML string and a plain-text string, so every outbound message carries a text part alongside the HTML part. `deliver()` (`lib/email/deliver.ts`) is the single send core all eleven senders funnel through.
+Every sender follows render → build → deliver. `renderEmail()` (`lib/email/render.ts`) renders the React Email element once and returns both an HTML string and a plain-text string, so every outbound message carries a text part alongside the HTML part. `deliver()` (`lib/email/deliver.ts`) is the single send core all eleven senders funnel through, and since #1654 it is two phases: `stage()` writes the rendered message as a `PENDING` `FailedEmail` row before any network call, and `attempt()` performs one inline send under a time budget and settles the row. The outbox row exists the moment the business change is durable, so a function that freezes between the commit and the send can no longer lose the email; the relay described below finishes whatever the inline attempt left `PENDING`.
 
 ```mermaid
 sequenceDiagram
     participant API as API Route
     participant Fn as Email Function
     participant RE as renderEmail()
-    participant DL as deliver()
-    participant RS as Resend API
+    participant DL as deliver() = stage() + attempt()
     participant FE as FailedEmail table
+    participant RS as Resend API
 
     API->>Fn: sendPaymentLinkEmail({email, name, amount, ...})
     Fn->>RE: renderEmail(PaymentLinkEmail({name, amount, ...}))
     RE-->>Fn: {html, text}
-    Fn->>DL: deliver({from, to, subject, html, text, emailType})
-    DL->>DL: getResendClient() -- lazy init
-    alt RESEND_API_KEY missing or rejected by Resend
-        DL->>DL: throw EmailNotConfiguredError (inside the try block)
-        DL->>FE: recordFailedEmail() -- dead-lettered, not dropped
-        DL-->>Fn: {success: false, error}
-    else
-        DL->>RS: resend.emails.send({from, to, subject, html, text, headers: {Idempotency-Key}})
+    Fn->>DL: deliver({from, to, subject, html, text}, emailType, {entityRef, budgetMs})
+    DL->>FE: stage() -- PENDING row with the rendered body and entityRef
+    DL->>RS: attempt() -- emails.send(payload, {idempotencyKey, signal: AbortSignal.timeout(budgetMs)})
+    alt sent
         RS-->>DL: {id: "email_xxx"}
+        DL->>FE: status SENT, sentAt, resendId
         DL-->>Fn: {success: true, data}
+    else timed out
+        DL->>DL: log once, no Sentry
+        DL-->>Fn: {success: false, staged: true} -- the row stays PENDING for the relay
+    else terminal error (dead key, unverified domain, rejected body)
+        DL->>FE: status DEAD_LETTER, lastError; Sentry error fingerprint ["email-send-terminal", reason]
+        DL-->>Fn: {success: false, staged: true}
+    else transient error or missing key
+        DL->>FE: lastError only -- still PENDING, the relay's backoff starts from its own first try
+        DL-->>Fn: {success: false, staged: true}
     end
     Fn-->>API: DeliverResult
 ```
 
-Because `EmailNotConfiguredError` is thrown inside `deliver()`'s own try block rather than short-circuiting before it, a missing or invalid key takes the same dead-letter path as any other terminal send failure -- the message lands in `FailedEmail` as `PENDING` instead of being lost. `deliver()` also derives a content-hash Idempotency-Key (`lib/email/idempotency.ts`) of the form `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>` and sends it on the Resend request; Resend deduplicates on that header for 24 hours, which covers the whole five-step retry ladder described later in this document. `deliver()` defaults Reply-To to `supportEmail()` when the caller does not set one, and reports a Sentry event at level `"error"` with fingerprint `["email-send-terminal", reason]` for a dead key, an unverified domain or a missing key, and at level `"warning"` otherwise.
+The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/config.ts`) and chosen per caller, because the caller's request is what a slow provider would otherwise hold open until Netlify's ~26-second ceiling. The table below lists the budgets and who uses each.
+
+| Budget                 | Milliseconds | Callers                                                                                                        |
+| ---------------------- | ------------ | -------------------------------------------------------------------------------------------------------------- |
+| `AUTH`                 | 8 000        | The Better Auth hooks (welcome, verification, password reset, account linked) and the organisation invitation. |
+| `CONTACT_AND_WAITLIST` | 5 000        | The contact form and both waitlist senders.                                                                    |
+| `WEBHOOK`              | 3 000        | The payment senders (receipt, failure notice, payment link).                                                   |
+| `JOB`                  | 10 000       | The compliance alert jobs and every send the relay itself makes.                                               |
+
+A timeout is not a failure. The Resend SDK spreads the request options into `fetch`, so the `AbortSignal` genuinely aborts the call, and `attempt()` recognises either a thrown `AbortError`/`TimeoutError` or the SDK's generic "could not be resolved" error while its own signal is aborted; in both cases the row is left `PENDING` and untouched, a single log line is written, and nothing reaches Sentry. The relay sends the row on its next pass under the same content-hash Idempotency-Key (`lib/email/idempotency.ts`, of the form `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>`), which Resend deduplicates for 24 hours, so a send that actually completed after the caller stopped waiting is not delivered twice. `deliver()` defaults Reply-To to `supportEmail()` when the caller does not set one; `stage()` applies the same default so the row and the send agree. A missing key (`EmailNotConfiguredError`) is reported at level `"error"` with fingerprint `["email-send-terminal", "not_configured"]` but leaves the row `PENDING`, because it replays once the key exists (#1298); a dead key, an unverified domain or a body Resend rejects dead-letters the row on the spot, since no replay changes the answer.
+
+Every sender stamps the row's `entityRef` with the business anchor it knows: the auth senders write `user:<id>`, the payment senders `payment:<id>`, the waitlist senders `waitlist:<email>` and the contact form `contact:<email>`. A sender's `DeliverResult` carries `staged: true` on failure when the row exists, which is how `app/api/contact/route.ts` answers success for an inquiry that is durable but not yet delivered and keeps its 502 for the case where even the row could not be written.
+
+#### Staging inside a transaction
+
+A caller that owns a database transaction calls the two phases itself rather than `deliver()`: `stage(message, emailType, { tx, entityRef })` inside the transaction and `attempt(staged, message, emailType, { budgetMs })` after it commits. Inside a transaction a staging failure propagates, so the row and the business write roll back together, which is the whole point of the outbox; an attempt inside the transaction would send before the business write is durable, so the split is deliberate. `lib/payments/webhooks/handlers.ts` is the one caller today: `stagePaymentSuccessEmail()` reads the receipt's inputs through the Phase 1 transaction, renders with `renderPaymentSuccessEmail()` (`lib/email/index.ts`, the render-only half of `sendPaymentSuccessEmail()`), stages the row, and Phase 2 attempts it under the `WEBHOOK` budget; the two blocked outcomes that Phase 2 refunds (a capture after cancellation, a double-booking loser) stage nothing. `handlePaymentFailure()` does the same with `stagePaymentFailedEmail()` and attempts after its own transaction commits. Nothing else in the money transaction changed (ADR 21).
+
+### The relay
+
+`jobs/email/retry-failed-emails.ts` is both the retry worker of #474 and the outbox relay of #1654: it drains `FailedEmail` rows whose status is `PENDING`, or `RETRY` with a `nextRetryAt` that has passed, up to fifty per tick, re-sends each stored message verbatim under its original Idempotency-Key with the `JOB` budget as an abort signal, writes `resendId` on success, and walks the shared backoff ladder in `lib/retry/backoff.ts` on failure. The drain paces itself at one send every 125 milliseconds, because Resend's team limit is ten requests a second and the inline fast path sends alongside the relay. It runs from two places: the Netlify ticker (`netlify/functions/cron-tick.mts`) posts `/api/cleanup/retry-failed-emails?limit=20` on every tick whose wall-clock minute is a multiple of fifteen, and the GitHub Actions workflow `retry-failed-emails.yml` runs the same worker unbounded as the backstop (#1648, ADR 27). Both entries take the fail-closed cron lock `retry-failed-emails`, so an overlap answers 409 instead of sending a row twice.
 
 ### From Address Convention
 
@@ -160,7 +185,7 @@ Singleton pattern matching `lib/stream-client.ts`:
 
 ### Core Trigger Functions (`lib/novu/service.ts`)
 
-Three trigger patterns handle all notification scenarios:
+Three trigger patterns handle all notification scenarios, and since #1654 all three are outbox-first: `lib/novu/outbox.ts` stages a `NotificationOutbox` row, attempts the wire call inline under the client's five-second timeout, and leaves anything unsettled for the drain.
 
 ```mermaid
 graph TD
@@ -169,29 +194,51 @@ graph TD
     B -->|Multiple users| D[triggerForMultiple]
     B -->|All subscribers| E[triggerBroadcastWorkflow]
 
-    C --> F[novu.trigger]
-    D -->|Batches of 100| F
-    E --> G[novu.triggerBroadcast]
+    C --> S[stageTrigger -- NotificationOutbox row, transactionId derived here]
+    D -->|Batches of 100| S
+    E --> S
+    S --> T[attemptTrigger -- inline, 5 s client timeout]
+    T -->|SINGLE / MULTI| F[novu.trigger]
+    T -->|BROADCAST| G[novu.triggerBroadcast]
+    T -->|timeout, 5xx, network| R[row stays PENDING -- drain-notification-outbox]
+    R --> F
 
     F --> H[Novu Cloud]
     G --> H
-    H -->|Per workflow config| I[Email / In-App / Push]
+    H -->|Per workflow config| I[In-App]
 ```
 
-| Function                                             | Use Case                                            | Batching             |
-| ---------------------------------------------------- | --------------------------------------------------- | -------------------- |
-| `triggerWorkflow(workflowId, subscriberId, payload)` | Single recipient (payment success, booking request) | N/A                  |
-| `triggerForMultiple(workflowId, userIds, payload)`   | Both parties or staff group                         | 100 per API call     |
-| `triggerBroadcastWorkflow(workflowId, payload)`      | System announcements to all users                   | Novu handles fan-out |
+The table below lists the three core functions; each accepts an optional trailing `{ tx?, entityRef? }`.
 
-All three follow the same error handling pattern:
+| Function                                                                | Use Case                                            | Batching             |
+| ----------------------------------------------------------------------- | --------------------------------------------------- | -------------------- |
+| `triggerWorkflow(workflowId, subscriberId, payload, dedupeKey?, opts?)` | Single recipient (payment success, booking request) | N/A                  |
+| `triggerForMultiple(workflowId, userIds, payload, dedupeKey?, opts?)`   | Both parties or staff group                         | 100 per API call     |
+| `triggerBroadcastWorkflow(workflowId, payload, opts?)`                  | System announcements to all users                   | Novu handles fan-out |
+
+All three follow the same sequence:
 
 ```
-1. Check isNovuConfigured() -- if false, log warning, return {success: false}
-2. Try novu.trigger() / novu.triggerBroadcast()
-3. On success: log, return {success: true}
-4. On error: log error, return {success: false, error}
+1. stageTrigger() -- upsert the NotificationOutbox row on its transactionId (PENDING, entityRef, notBefore)
+2. If Novu is not configured: report, return {success: false} -- the row waits for the relay
+3. If a tx was passed: return {success: true, staged} -- the caller runs attemptTrigger(staged) after commit
+4. attemptTrigger(): novu.trigger() / novu.triggerBroadcast() under the same transactionId
+5. On success (or a 2xx the SDK could not parse): row SENT, return {success: true}
+6. On a terminal 4xx: row DEAD_LETTER, Sentry error fingerprint ["novu-trigger-terminal", reason]
+7. On a timeout, 5xx or connection failure: row stays PENDING with lastError, return {success: false}
 ```
+
+`transactionId` is derived when the row is staged, by `deriveTransactionId()` in `lib/novu/outbox.ts`, from the event id, the sorted recipient ids and the canonical payload (or an explicit `dedupeKey`); the sort is a code-point comparator, never `localeCompare`, because a collation-dependent sort produced different ids for the same mixed-case recipients on different runtimes. Novu deduplicates on that id, so a relay that triggers, dies before marking the row `SENT`, and triggers again rings the bell once. Staging is an upsert with an empty update on the same key, so a replayed webhook or a re-run job that stages the same notification twice gets the existing row back rather than a unique violation that would roll back its transaction. The zoned variants (`triggerWorkflowZoned`, `triggerForMultipleZoned`) only shape the rendered payload per recipient timezone; they do not defer the send, so the row's `notBefore` stays null today and the column waits for the quiet-hours work.
+
+When Novu is not configured the row is still staged, so notifications raised before the key is set are delivered by the drain once it is; the warning that used to say "dropped" now says "staged".
+
+#### Staging a trigger inside a transaction
+
+A caller inside a `$transaction` passes `{ tx, entityRef }` as the trailing option of the `notify*` helper; the helper stages only and returns `{ success: true, staged }`, and the caller runs `attemptTrigger(staged)` from `lib/novu` after the commit. Four helpers accept the option because four call sites are inside transactions: `notifyPaymentFailed` in `lib/payments/webhooks/handlers.ts`, and `notifyRefundProcessed`, `notifyDisputeCreated` and `notifyDisputeResolved` in `app/api/webhooks/utils.ts`. Every other `notify*` call site that used to be `void` is now awaited, because an un-awaited trigger is dropped when the Netlify instance freezes after the response (#1616, #691 NTF-1).
+
+### The Novu relay
+
+`jobs/notifications/drain-notification-outbox.ts` drains `NotificationOutbox` rows whose status is `PENDING`, or `RETRY` with a `nextRetryAt` that has passed, and whose `notBefore` is null or in the past, fifty per tick, through `attemptTrigger(row, { relay: true })`. In relay mode an attempt counts against the row's five, a transient failure schedules `RETRY` on the ladder in `lib/retry/backoff.ts`, and the fifth failure dead-letters. The inline attempt spends none of those five, so the ladder starts from the relay's first try. It runs under the fail-closed cron lock `drain-notification-outbox`, has the CRON_SECRET twin `/api/cleanup/drain-notification-outbox`, and the Netlify ticker posts it with `?limit=20` on every five-minute tick.
 
 ### 20+ Exported Trigger Functions
 
@@ -352,35 +399,35 @@ When no preferences exist yet, `GET /api/novu/preferences` returns hardcoded def
 
 ---
 
-## Fire-and-Forget Pattern
+## Side Effects and the Essential Path
 
-Notifications are intentionally non-blocking throughout the codebase. Example from payment webhook handler:
+Notifications must never fail, roll back or slow down the business change that caused them, and since #1654 the mechanism for that is the outbox rather than fire-and-forget. Example from the payment webhook handler:
 
 ```
 // In lib/payments/webhooks/handlers.ts
-await prisma.$transaction(async (tx) => {
-  // ... update payment, create appointment ...
+const txResult = await prisma.$transaction(async (tx) => {
+  // ... confirm the payment, confirm the appointment ...
+  const successEmail = await stagePaymentSuccessEmail(tx, payment, appointment.id, type);
+  return { ..., successEmail };
 });
 
 // AFTER the transaction commits:
-try {
-  await notifyAppointmentBooked([consultantId, consulteeId], payload);
-} catch {
-  // Log error, but don't fail the payment flow
+if (txResult.successEmail) {
+  await attemptEmail(txResult.successEmail.staged, txResult.successEmail.message, "PAYMENT_SUCCESS", { budgetMs: EMAIL_BUDGET_MS.WEBHOOK });
 }
 ```
 
-This pattern ensures:
+This shape guarantees three things:
 
-1. Core business operations (payments, bookings) always succeed even if Novu is down
-2. Email delivery failures don't cause transaction rollbacks
-3. The user gets their booking/payment confirmation regardless of notification status
+1. Core business operations (payments, bookings) always succeed even if Resend or Novu is down, because the only thing inside the transaction is a row insert.
+2. A rollback takes the outbox row with it, so no email or bell describes a change that never happened.
+3. A crash or freeze between the commit and the send cannot lose the message, because the row already exists and the relay finishes it.
 
-For Novu triggers this remains a true fire-and-forget: a failed call is logged and forgotten. As of #474 the direct Resend transactional emails behave differently on failure, and #1298 extended the same treatment to a missing or invalid key. When a Resend send throws -- a transient provider outage, a dead key, an unverified domain, or `EmailNotConfiguredError` -- the sender no longer drops the message. Instead `deliver()` persists the already-rendered message (subject, HTML and text body, recipient, from and reply-to) to the `FailedEmail` table via `recordFailedEmail()` in `lib/email/deliver.ts`. A transient failure is retried by `jobs/email/retry-failed-emails.ts` on a fixed backoff schedule of one minute, five minutes, thirty minutes, two hours, and eight hours, replaying the same content-hash Idempotency-Key the original send used so a Resend-side success that never reached the caller is not re-sent as a duplicate. A terminal failure (dead key, unverified domain, missing key) is dead-lettered on the first attempt instead of walking the ladder, and pages through a Sentry message at level `"error"`. An `EMAIL_VERIFICATION` row older than 60 minutes or a `PASSWORD_RESET` row older than 30 minutes is dead-lettered without a send, because a stale link is no longer useful to the recipient. The calling operation still never blocks or rolls back; the difference is that nothing that reaches `deliver()` is silently lost.
+Before #1654 the shape was send-first with a dead-letter safety net: `deliver()` awaited one Resend call with no timeout and wrote a `FailedEmail` row only when the call failed, so a slow provider could hold a signup to Netlify's ceiling and a freeze between the commit and the insert lost the email with no trace; Novu triggers were fired without awaiting and simply forgotten on failure (#691 NTF-1). The retry ladder is unchanged: a transient failure is retried by `jobs/email/retry-failed-emails.ts` on the shared schedule of one minute, five minutes, thirty minutes, two hours and eight hours, replaying the same content-hash Idempotency-Key so a Resend-side success that never reached the caller is not re-sent as a duplicate; a terminal failure (dead key, unverified domain, rejected body) is dead-lettered on the first attempt and pages through Sentry at level `"error"`; an `EMAIL_VERIFICATION` row older than 60 minutes or a `PASSWORD_RESET` row older than 30 minutes is dead-lettered without a send, because a stale link is no longer useful to the recipient.
 
-`lib/auth.ts` awaits `sendWelcomeEmail()` and `sendAccountLinkedEmail()` inside a try/catch instead of firing them without awaiting, because a Netlify instance that freezes immediately after the response is sent drops an un-awaited call before it reaches Resend, which is the same failure class as #1616; the surrounding try/catch makes the send non-fatal (the operation still waits for delivery and for `recordFailedEmail()`, but a thrown error does not abort it).
+`lib/auth.ts` awaits its senders inside a try/catch, and every `notify*` call site is awaited, because a Netlify instance that freezes immediately after the response is sent drops an un-awaited call before it reaches the provider, which is the same failure class as #1616. The await costs at most the caller's budget, and a budget that runs out leaves a row the relay sends.
 
-The tables that turn this send-first shape into the outbox-first shape of #1654 (the `FailedEmail` provider id and business anchor, `FailedEmailBatch`, the `NotificationOutbox` for Novu triggers) and the Resend webhook tables of #1647 (`EmailEvent`, `EmailSuppression`) are documented column by column in [07-schema-reference.md](07-schema-reference.md).
+The tables behind this shape (the `FailedEmail` provider id and business anchor, `FailedEmailBatch`, the `NotificationOutbox` for Novu triggers) and the Resend webhook tables of #1647 (`EmailEvent`, `EmailSuppression`) are documented column by column in [07-schema-reference.md](07-schema-reference.md); the design rationale and the options that were ruled out are in issue #1654.
 
 ---
 
