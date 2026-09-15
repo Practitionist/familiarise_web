@@ -84,7 +84,7 @@ export async function runWalletLowBalance(): Promise<WalletLowStats> {
     // moves and no WalletTopUp is created.
 
     stats.notified += 1;
-    void notifyOrgWalletLow(ba.ownerOrgId, {
+    await notifyOrgWalletLow(ba.ownerOrgId, {
       orgName: ba.organization?.name ?? "",
       balancePaise: balance,
       minimumPaise: minimum,

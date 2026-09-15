@@ -26,7 +26,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
-import { deliver, SENDERS } from "@/lib/email";
+import { deliver, EMAIL_BUDGET_MS, SENDERS } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -168,6 +168,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
               : ""),
         },
         "MSME_PAYMENT_ALERT",
+        { budgetMs: EMAIL_BUDGET_MS.JOB },
       );
       if (!outcome.success) throw outcome.error;
       emailSent = true;

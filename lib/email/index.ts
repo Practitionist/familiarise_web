@@ -12,21 +12,34 @@ import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
 import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
 import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 import { getAppUrl } from "@/lib/url";
-import { SENDERS, contactInboxAddress } from "./config";
-import { deliver, type DeliverResult, type RenderedEmail } from "./deliver";
-import { renderEmail } from "./render";
-
-export { DEFAULT_FROM_ADDRESS, SENDERS } from "./config";
-export {
+import { EMAIL_BUDGET_MS, SENDERS, contactInboxAddress } from "./config";
+import {
   deliver,
-  getResendClient,
-  recordFailedEmail,
-  EmailNotConfiguredError,
+  type DeliverOptions,
   type DeliverResult,
   type RenderedEmail,
 } from "./deliver";
+import { renderEmail } from "./render";
+
+export { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS, SENDERS } from "./config";
+export {
+  attempt,
+  deliver,
+  getResendClient,
+  recordFailedEmail,
+  stage,
+  EmailNotConfiguredError,
+  type DeliverOptions,
+  type DeliverResult,
+  type RenderedEmail,
+  type StagedEmail,
+  type StageOptions,
+} from "./deliver";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
+
+/** Per-call overrides a sender accepts on top of its own entity and budget. */
+export type SendOptions = Partial<DeliverOptions>;
 
 /**
  * #1298 — every sender is render → build → deliver. A render-stage throw has
@@ -37,6 +50,7 @@ async function send(
   emailType: string,
   element: ReactElement,
   envelope: Omit<RenderedEmail, "html" | "text">,
+  opts: DeliverOptions,
 ): Promise<DeliverResult> {
   let rendered: { html: string; text: string };
   try {
@@ -49,61 +63,91 @@ async function send(
     );
     return { success: false, error };
   }
-  return deliver({ ...envelope, ...rendered }, emailType);
+  return deliver({ ...envelope, ...rendered }, emailType, opts);
 }
+
+// #1654 — the entity anchor a sender stamps on its outbox row.
+const userRef = (userId?: string) => (userId ? `user:${userId}` : undefined);
+const paymentRef = (paymentId?: string) =>
+  paymentId ? `payment:${paymentId}` : undefined;
 
 function capitalize(value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 /** Welcome email for a newly registered user. */
-export async function sendWelcomeEmail({
-  email,
-  name,
-  dashboardUrl = `${getAppUrl()}/dashboard`,
-}: {
-  email: string;
-  name: string;
-  dashboardUrl?: string;
-}) {
-  return send("WELCOME", WelcomeEmail({ name, dashboardUrl }), {
-    from: SENDERS.onboarding,
-    to: email,
-    subject: "Welcome to Familiarise!",
-  });
+export async function sendWelcomeEmail(
+  {
+    email,
+    name,
+    userId,
+    dashboardUrl = `${getAppUrl()}/dashboard`,
+  }: {
+    email: string;
+    name: string;
+    userId?: string;
+    dashboardUrl?: string;
+  },
+  opts: SendOptions = {},
+) {
+  return send(
+    "WELCOME",
+    WelcomeEmail({ name, dashboardUrl }),
+    {
+      from: SENDERS.onboarding,
+      to: email,
+      subject: "Welcome to Familiarise!",
+    },
+    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
+  );
 }
 
 /** Password reset link. The token is valid for 30 minutes (lib/auth.ts). */
-export async function sendPasswordResetEmail({
-  email,
-  name,
-  token,
-}: {
-  email: string;
-  name: string;
-  token: string;
-}) {
+export async function sendPasswordResetEmail(
+  {
+    email,
+    name,
+    token,
+    userId,
+  }: {
+    email: string;
+    name: string;
+    token: string;
+    userId?: string;
+  },
+  opts: SendOptions = {},
+) {
   const resetLink = `${getAppUrl()}/auth/reset-password?token=${token}`;
-  return send("PASSWORD_RESET", PasswordResetEmail({ name, resetLink }), {
-    from: SENDERS.security,
-    to: email,
-    subject: "Reset your Familiarise password",
-  });
+  return send(
+    "PASSWORD_RESET",
+    PasswordResetEmail({ name, resetLink }),
+    {
+      from: SENDERS.security,
+      to: email,
+      subject: "Reset your Familiarise password",
+    },
+    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
+  );
 }
 
 /**
  * Email-address verification link. `verificationUrl` is the ready-to-use link
  * BetterAuth hands the hook (token + callbackURL included), passed verbatim.
  */
-export async function sendVerificationEmail({
-  email,
-  name,
-  verificationUrl,
-}: {
-  email: string;
-  name: string;
-  verificationUrl: string;
-}) {
+export async function sendVerificationEmail(
+  {
+    email,
+    name,
+    verificationUrl,
+    userId,
+  }: {
+    email: string;
+    name: string;
+    verificationUrl: string;
+    userId?: string;
+  },
+  opts: SendOptions = {},
+) {
   // Dev affordance gated on NODE_ENV, not on the key being absent: the link is
   // a bearer token, and a misconfigured production must not print it.
   if (process.env.NODE_ENV === "development") {
@@ -117,21 +161,27 @@ export async function sendVerificationEmail({
       to: email,
       subject: "Verify your Familiarise email address",
     },
+    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
   );
 }
 
 /** Notice that an OAuth provider was linked to the account. */
-export async function sendAccountLinkedEmail({
-  email,
-  name,
-  provider,
-  dashboardUrl = `${getAppUrl()}/dashboard`,
-}: {
-  email: string;
-  name: string;
-  provider: string;
-  dashboardUrl?: string;
-}) {
+export async function sendAccountLinkedEmail(
+  {
+    email,
+    name,
+    provider,
+    userId,
+    dashboardUrl = `${getAppUrl()}/dashboard`,
+  }: {
+    email: string;
+    name: string;
+    provider: string;
+    userId?: string;
+    dashboardUrl?: string;
+  },
+  opts: SendOptions = {},
+) {
   return send(
     "ACCOUNT_LINKED",
     AccountLinkedEmail({ name, provider, dashboardUrl }),
@@ -140,29 +190,35 @@ export async function sendAccountLinkedEmail({
       to: email,
       subject: `Your Familiarise account now linked with ${provider}`,
     },
+    { entityRef: userRef(userId), budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
   );
 }
 
 /** Payment link once a consultant approves a request. */
-export async function sendPaymentLinkEmail({
-  email,
-  name,
-  consultantName,
-  appointmentType,
-  amount,
-  currency,
-  paymentUrl,
-  expiresAt,
-}: {
-  email: string;
-  name: string;
-  consultantName: string;
-  appointmentType: AppointmentType;
-  amount: number;
-  currency: string;
-  paymentUrl: string;
-  expiresAt: Date;
-}) {
+export async function sendPaymentLinkEmail(
+  {
+    email,
+    name,
+    consultantName,
+    appointmentType,
+    amount,
+    currency,
+    paymentUrl,
+    expiresAt,
+    paymentId,
+  }: {
+    email: string;
+    name: string;
+    consultantName: string;
+    appointmentType: AppointmentType;
+    amount: number;
+    currency: string;
+    paymentUrl: string;
+    expiresAt: Date;
+    paymentId?: string;
+  },
+  opts: SendOptions = {},
+) {
   return send(
     "PAYMENT_LINK",
     PaymentLinkEmail({
@@ -179,21 +235,15 @@ export async function sendPaymentLinkEmail({
       to: email,
       subject: `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`,
     },
+    {
+      entityRef: paymentRef(paymentId),
+      budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
+      ...opts,
+    },
   );
 }
 
-/** Payment confirmation. */
-export async function sendPaymentSuccessEmail({
-  email,
-  name,
-  consultantName,
-  appointmentType,
-  amount,
-  currency,
-  receiptUrl,
-  dashboardUrl = `${getAppUrl()}/dashboard`,
-  paymentReference,
-}: {
+export interface PaymentSuccessEmailArgs {
   email: string;
   name: string;
   consultantName: string;
@@ -203,11 +253,27 @@ export async function sendPaymentSuccessEmail({
   receiptUrl?: string;
   dashboardUrl?: string;
   paymentReference?: string;
-}) {
+}
+
+/**
+ * #1654 — render only, for a caller that stages inside its own transaction
+ * and attempts after commit (the payment webhook). Throws on a render failure;
+ * the caller reports it and skips the email, as `send()` does.
+ */
+export async function renderPaymentSuccessEmail({
+  email,
+  name,
+  consultantName,
+  appointmentType,
+  amount,
+  currency,
+  receiptUrl,
+  dashboardUrl = `${getAppUrl()}/dashboard`,
+  paymentReference,
+}: PaymentSuccessEmailArgs): Promise<RenderedEmail> {
   // #1298 — the reference is part of the rendered body, so two same-amount
   // receipts to one customer within 24 h get distinct idempotency keys.
-  return send(
-    "PAYMENT_SUCCESS",
+  const rendered = await renderEmail(
     PaymentSuccessEmail({
       name,
       consultantName,
@@ -218,26 +284,39 @@ export async function sendPaymentSuccessEmail({
       dashboardUrl,
       paymentReference,
     }),
-    {
-      from: SENDERS.payments,
-      to: email,
-      subject: `Payment Confirmed - ${capitalize(appointmentType)} with ${consultantName}`,
-    },
   );
+  return {
+    from: SENDERS.payments,
+    to: email,
+    subject: `Payment Confirmed - ${capitalize(appointmentType)} with ${consultantName}`,
+    ...rendered,
+  };
 }
 
-/** Payment failure with a retry link. */
-export async function sendPaymentFailedEmail({
-  email,
-  name,
-  consultantName,
-  appointmentType,
-  amount,
-  currency,
-  retryUrl,
-  failureReason = "Payment could not be processed",
-  expiresAt,
-}: {
+/** Payment confirmation. */
+export async function sendPaymentSuccessEmail(
+  args: PaymentSuccessEmailArgs,
+  opts: SendOptions = {},
+) {
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentSuccessEmail(args);
+  } catch (error) {
+    console.error("[email] PAYMENT_SUCCESS render failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "email", emailType: "PAYMENT_SUCCESS" } },
+    );
+    return { success: false as const, error };
+  }
+  return deliver(message, "PAYMENT_SUCCESS", {
+    entityRef: paymentRef(args.paymentReference),
+    budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
+    ...opts,
+  });
+}
+
+export interface PaymentFailedEmailArgs {
   email: string;
   name: string;
   consultantName: string;
@@ -247,9 +326,22 @@ export async function sendPaymentFailedEmail({
   retryUrl: string;
   failureReason?: string;
   expiresAt?: Date;
-}) {
-  return send(
-    "PAYMENT_FAILED",
+  paymentId?: string;
+}
+
+/** #1654 — render only; see {@link renderPaymentSuccessEmail}. */
+export async function renderPaymentFailedEmail({
+  email,
+  name,
+  consultantName,
+  appointmentType,
+  amount,
+  currency,
+  retryUrl,
+  failureReason = "Payment could not be processed",
+  expiresAt,
+}: PaymentFailedEmailArgs): Promise<RenderedEmail> {
+  const rendered = await renderEmail(
     PaymentFailedEmail({
       name,
       consultantName,
@@ -260,30 +352,57 @@ export async function sendPaymentFailedEmail({
       failureReason,
       expiresAt: expiresAt?.toISOString(),
     }),
-    {
-      from: SENDERS.payments,
-      to: email,
-      subject: `Payment Failed - ${capitalize(appointmentType)} with ${consultantName}`,
-    },
   );
+  return {
+    from: SENDERS.payments,
+    to: email,
+    subject: `Payment Failed - ${capitalize(appointmentType)} with ${consultantName}`,
+    ...rendered,
+  };
+}
+
+/** Payment failure with a retry link. */
+export async function sendPaymentFailedEmail(
+  args: PaymentFailedEmailArgs,
+  opts: SendOptions = {},
+) {
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentFailedEmail(args);
+  } catch (error) {
+    console.error("[email] PAYMENT_FAILED render failed:", error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "email", emailType: "PAYMENT_FAILED" } },
+    );
+    return { success: false as const, error };
+  }
+  return deliver(message, "PAYMENT_FAILED", {
+    entityRef: paymentRef(args.paymentId),
+    budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
+    ...opts,
+  });
 }
 
 /** Organization invitation. */
-export async function sendOrgInvitationEmail({
-  email,
-  inviterName,
-  orgName,
-  role,
-  inviteUrl,
-  expiresAt,
-}: {
-  email: string;
-  inviterName: string;
-  orgName: string;
-  role: string;
-  inviteUrl: string;
-  expiresAt?: string;
-}) {
+export async function sendOrgInvitationEmail(
+  {
+    email,
+    inviterName,
+    orgName,
+    role,
+    inviteUrl,
+    expiresAt,
+  }: {
+    email: string;
+    inviterName: string;
+    orgName: string;
+    role: string;
+    inviteUrl: string;
+    expiresAt?: string;
+  },
+  opts: SendOptions = {},
+) {
   return send(
     "ORG_INVITATION",
     OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
@@ -292,6 +411,7 @@ export async function sendOrgInvitationEmail({
       to: email,
       subject: `You're invited to join ${orgName} on Familiarise`,
     },
+    { budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
   );
 }
 
@@ -303,15 +423,18 @@ export async function sendOrgInvitationEmail({
  * Double opt-in confirmation. The link carries its own issue time so it can
  * expire without a token column — see lib/waitlist/tokens.ts.
  */
-export async function sendWaitlistConfirmEmail({
-  email,
-  name,
-  issuedAt,
-}: {
-  email: string;
-  name?: string | null;
-  issuedAt: number;
-}) {
+export async function sendWaitlistConfirmEmail(
+  {
+    email,
+    name,
+    issuedAt,
+  }: {
+    email: string;
+    name?: string | null;
+    issuedAt: number;
+  },
+  opts: SendOptions = {},
+) {
   let confirmLink: string;
   try {
     // Signing throws when WAITLIST_HMAC_SECRET is unset in production, and a
@@ -328,21 +451,33 @@ export async function sendWaitlistConfirmEmail({
     console.log(`[waitlist-confirm] ${email} -> ${confirmLink}`);
   }
 
-  return send("WAITLIST_CONFIRM", WaitlistConfirmEmail({ name, confirmLink }), {
-    from: SENDERS.newsletter,
-    to: email,
-    subject: "Confirm your Familiarise subscription",
-  });
+  return send(
+    "WAITLIST_CONFIRM",
+    WaitlistConfirmEmail({ name, confirmLink }),
+    {
+      from: SENDERS.newsletter,
+      to: email,
+      subject: "Confirm your Familiarise subscription",
+    },
+    {
+      entityRef: `waitlist:${email}`,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      ...opts,
+    },
+  );
 }
 
 /** Sent once the confirm link is clicked. */
-export async function sendWaitlistWelcomeEmail({
-  email,
-  name,
-}: {
-  email: string;
-  name?: string | null;
-}) {
+export async function sendWaitlistWelcomeEmail(
+  {
+    email,
+    name,
+  }: {
+    email: string;
+    name?: string | null;
+  },
+  opts: SendOptions = {},
+) {
   let unsubscribeLink: string;
   try {
     // Same never-throw contract as the confirm sender. Unreachable in practice:
@@ -360,6 +495,11 @@ export async function sendWaitlistWelcomeEmail({
       to: email,
       subject: "You are on the Familiarise waitlist",
     },
+    {
+      entityRef: `waitlist:${email}`,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      ...opts,
+    },
   );
 }
 
@@ -368,23 +508,26 @@ export async function sendWaitlistWelcomeEmail({
  * visitor on Reply-To. Inherits the FailedEmail retry path so a Resend outage
  * does not lose the lead.
  */
-export async function sendContactInquiryEmail({
-  firstName,
-  lastName,
-  email,
-  phone,
-  subject,
-  message,
-  category,
-}: {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone?: string | null;
-  subject: string;
-  message: string;
-  category?: string | null;
-}) {
+export async function sendContactInquiryEmail(
+  {
+    firstName,
+    lastName,
+    email,
+    phone,
+    subject,
+    message,
+    category,
+  }: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string | null;
+    subject: string;
+    message: string;
+    category?: string | null;
+  },
+  opts: SendOptions = {},
+) {
   const name = `${firstName} ${lastName}`.trim();
   const esc = (s: string) =>
     s
@@ -434,5 +577,10 @@ export async function sendContactInquiryEmail({
       replyTo: email,
     },
     "CONTACT_INQUIRY",
+    {
+      entityRef: `contact:${email}`,
+      budgetMs: EMAIL_BUDGET_MS.CONTACT_AND_WAITLIST,
+      ...opts,
+    },
   );
 }

@@ -530,7 +530,7 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
     notified++;
 
     // Fire-and-forget — committed state, no DB writes in the notify path.
-    void notifyRefundFailed(refund.payment.userId, {
+    await notifyRefundFailed(refund.payment.userId, {
       ...notificationScope(refund.payment.organizationId),
       amount: refund.amountPaise,
       currency: refund.currency,

@@ -1,9 +1,10 @@
 /**
- * #474 — Transactional-email retry worker.
+ * #474 — Transactional-email retry worker; since #1654 also the outbox relay.
  *
- * Drains `FailedEmail` rows that lib/email/deliver.ts dead-lettered when a Resend
- * send failed (status PENDING on first persist, RETRY on any subsequent
- * scheduled attempt) and whose `nextRetryAt` is now or earlier. One tick:
+ * Drains `FailedEmail` rows that lib/email/deliver.ts staged before its inline
+ * send (status PENDING when that send timed out, failed transiently or never
+ * ran; RETRY on any subsequent scheduled attempt) and whose `nextRetryAt` is
+ * now or earlier. One tick:
  *
  *   1. Picks up to `MAX_BATCH` rows ordered by `nextRetryAt ASC NULLS FIRST`.
  *   2. Dead-letters a row whose link has expired (EMAIL_TTL_MS) without a
@@ -37,8 +38,8 @@
 
 import prisma from "@/lib/prisma";
 import type { FailedEmail, Prisma } from "@prisma/client";
-import { Resend } from "resend";
-import { DEFAULT_FROM_ADDRESS } from "@/lib/email/config";
+import { Resend, type CreateEmailRequestOptions } from "resend";
+import { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS } from "@/lib/email/config";
 import {
   EMAIL_TTL_MS,
   isExpiredForReplay,
@@ -55,6 +56,11 @@ import { nextRetryAt } from "@/lib/retry/backoff";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
+// #1654 — Resend's team limit is 10 requests/s; eight a second leaves room for
+// the inline fast path sending alongside the relay.
+export const SEND_GAP_MS = 125;
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * The shared outbox schedule (lib/retry/backoff.ts), re-exported so the
@@ -128,8 +134,11 @@ export async function runEmailRetryTick(params: {
     take: batchLimit,
   });
 
-  for (const row of dueRows) {
+  for (const [index, row] of dueRows.entries()) {
     result.scanned += 1;
+    // #1654 — pace the drain under the provider's rate limit; the first send
+    // goes out at once, every later one waits the gap.
+    if (index > 0) await sleep(SEND_GAP_MS);
 
     // #1298 — a verification or reset link outlives its token only as spam:
     // dead-letter it without a send (and without paging) once the TTL passed.
@@ -147,11 +156,14 @@ export async function runEmailRetryTick(params: {
     }
 
     let sendError: string | undefined;
+    let resendId: string | null = null;
     try {
       // Verbatim re-send of the stored rendered message. No dispatcher, no
       // re-render: replay exactly what the original sender handed Resend.
       // #1298 — the same key the sender derived, so a replay of a send whose
       // response was lost is deduplicated by Resend instead of doubled.
+      // #1654 — bounded by the job budget so one hung call cannot hold the
+      // tick past the function ceiling; the SDK spreads `signal` into fetch.
       const result = await emails.send(
         {
           from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
@@ -166,12 +178,15 @@ export async function runEmailRetryTick(params: {
             { to: row.recipient, subject: row.subject, html: row.htmlBody },
             row.emailType,
           ),
-        },
+          signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
+        } as CreateEmailRequestOptions,
       );
       // Resend resolves (does not throw) on API-level errors — a non-null
       // `error` is still a failure, so it must not be mistaken for a success.
       if (result.error) {
         sendError = resendErrorText(result.error);
+      } else {
+        resendId = result.data?.id ?? null;
       }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
@@ -185,6 +200,8 @@ export async function runEmailRetryTick(params: {
           attempts: row.attempts + 1,
           sentAt: nowDate,
           lastError: null,
+          // #1654 — the provider id, so support can trace the row to Resend's log.
+          resendId,
         },
       });
       result.sent += 1;
@@ -250,9 +267,12 @@ function buildResendEmails(): Pick<Resend["emails"], "send"> | null {
 // fail-open silently allowed two replicas to send every failed email twice.
 // Deferred retries resume next tick once Redis recovers — no message loss,
 // just delay.
-export async function retryFailedEmails(): Promise<EmailRetryRunResult> {
+export async function retryFailedEmails(opts?: {
+  /** #1654 — the ticker's bite; the Actions run omits it and drains MAX_BATCH. */
+  limit?: number;
+}): Promise<EmailRetryRunResult> {
   return withCronLock("retry-failed-emails", { failMode: "closed" }, () =>
-    runEmailRetryTick({ prisma }),
+    runEmailRetryTick({ prisma, maxBatch: opts?.limit }),
   );
 }
 

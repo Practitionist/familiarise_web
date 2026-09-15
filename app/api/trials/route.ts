@@ -465,7 +465,7 @@ export async function POST(request: NextRequest) {
     );
 
     // Notify the consultant about the new trial request
-    void notifyTrialRequested(trial.consultantProfile.user.id, {
+    await notifyTrialRequested(trial.consultantProfile.user.id, {
       consultantName: trial.consultantProfile.user.name || "Consultant",
       consulteeName: trial.consulteeProfile.user.name || "User",
       planTitle: subscriptionPlan.title,

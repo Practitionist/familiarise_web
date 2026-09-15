@@ -524,13 +524,13 @@ export class SchedulingService {
       dashboardUrl: notificationHref(context.organizationId, "appointments"),
     };
 
-    void notifyAppointmentBooked(context.userIds, payload);
+    await notifyAppointmentBooked(context.userIds, payload);
 
     // #1206 — a second, separate notice rather than a flag on the booking one:
     // the times that WERE placed are a real booking and read as one, and the
     // thing the consultee has to be told is what happened to the rest.
     if (partial?.partial && context.consulteeUserIds.length > 0) {
-      void notifyAppointmentPartiallyScheduled(context.consulteeUserIds, {
+      await notifyAppointmentPartiallyScheduled(context.consulteeUserIds, {
         ...payload,
         placedSessions: partial.placedSessions ?? 0,
         requiredSessions: partial.requiredSessions ?? 0,

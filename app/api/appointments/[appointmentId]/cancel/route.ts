@@ -745,7 +745,7 @@ export async function POST(
       ),
     );
     if (userIds.length > 0) {
-      void notifyAppointmentCancelled(userIds, {
+      await notifyAppointmentCancelled(userIds, {
         ...notificationScope(appointment.organizationId),
         appointmentId,
         appointmentType: notificationMeta.appointmentType,
