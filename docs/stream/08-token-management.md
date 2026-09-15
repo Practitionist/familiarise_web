@@ -8,6 +8,7 @@ This document covers Stream token management including token types, server-side 
 - [Server-Side Token Generation](#server-side-token-generation)
 - [Token Caching Strategy](#token-caching-strategy)
 - [Token Provider Pattern](#token-provider-pattern)
+- [The First Token Arrives With the Page](#the-first-token-arrives-with-the-page)
 - [Token Lifecycle](#token-lifecycle)
 - [Security Best Practices](#security-best-practices)
 
@@ -428,6 +429,16 @@ await chatClient.connectUser(
   },
 );
 ```
+
+## The First Token Arrives With the Page
+
+Stream accepts a string token and a `tokenProvider` together: the string serves the initial connect and the provider serves every refresh after it. This app uses that shape indirectly. The two server layouts that already resolve the session, `app/dashboard/layout.tsx` and `app/meetings/layout.tsx`, call `mintInitialStreamTokens` from `lib/stream/initial-tokens.ts` during their render and hand the result to the client through `StreamInitialTokensProvider` in `components/stream/StreamInitialTokens.tsx`. The dashboard layout mints both a chat and a video token because every `StreamProvider` under `/dashboard` sits beneath it; the meetings layout mints only a video token because that route never enables chat.
+
+The connector in `providers/StreamProviderImpl.tsx` reads that context and, once per user id, seeds its token cache through the pure helper `seedFromInitialTokens` in `lib/stream/seed-token-cache.ts`. The helper returns `null` when the tokens were minted for a different user or when their cache horizon has already passed, which is what happens to a tab restored hours later, so the connector then falls back to the token action exactly as before. Because the seed lands in the cache before the prefetch effect and the connect effects run, a direct landing on a meeting or a dashboard page performs no token round trip before the first `connectUser`. The refresh path is unchanged: when the cached token ages past the fifty-minute window, `getCachedToken` calls `tokenProvider` or `chatTokenProvider`, and a tab without a session still receives the action's refusal rather than a token.
+
+The mint costs a few milliseconds of HMAC inside a render that is already running and never throws; when Stream is not configured or minting fails it logs a warning and returns `null`, and the client behaves as it did before the seed existed. The motivating failure was `Call to tokenProvider failed with message: TypeError: Failed to fetch` on the consultant appointments page and on `/meetings` (Sentry FAMILIARISE_WEB-4A and FAMILIARISE_WEB-3N): the page had rendered, but the browser's first server-action call for the token died on a stalled Netlify instance (#1124). The same change reports the fifth consecutive retryable connect failure as a Sentry warning tagged `expected` and `platform: cold-instance` under one fingerprint, so the stall stops counting as an application error while the person in front of it still sees the Retry action.
+
+The lifetime and the cache window live together in `lib/stream/token-ttl.ts` (`STREAM_TOKEN_TTL_SECONDS` and `STREAM_TOKEN_CACHE_MS`) because the server action module is declared `"use server"` and may export only async functions, so the constant the action and the connector share has to live in a plain module.
 
 ### API Route Example
 
