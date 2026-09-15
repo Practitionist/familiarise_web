@@ -26,12 +26,12 @@ The stall lands on exactly the requests a launch depends on: the token fetch tha
 
 ## Decision
 
-Proposed, pending two measurements that together take about a day:
+Proposed, pending the second of two measurements. The decision rule was fixed before either ran so the numbers, not the mood on the day, decide it: **if the bare route stalls on Netlify and the same burst does not stall on Vercel, migrate to Vercel in a scheduled two-to-three-day window before the MVP launch, and send the Netlify ticket regardless for the record.** If the bare route had not stalled, the application would have been back under suspicion and the on-Netlify plan in the research document worked first.
 
-- **The isolation probe** (PR #1656): two additive Route Handlers on a deploy preview, one importing nothing from the application and one importing its full module graph, each running #1124's idle-lag probe, hit with the twelve-request burst protocol after ≥15-minute idle gaps. If the bare route stalls under burst, the application is exonerated and the cause is the platform's instance creation; if only the full route stalls, the hunt returns to the application with evidence.
-- **The Vercel branch-deploy measurement** (`docs/perf/vercel-experiment-runbook.md`): the same burst against the same commit on Fluid Compute in `bom1`.
+- **The isolation probe (PR #1656) ran on 2026-09-15 and the bare route stalled.** Across four twelve-request bursts alternating a route that imports nothing from the application with one that imports its full module graph, every brand-new instance sat idle for 26 s (bare) or 23 s (full) after its module was evaluated, and uptime at handler entry plus the gap came to 27–29 s on all of them — the application's module evaluation is subtracted from a fixed window, not added to the response. Warm instances were held up to 34 s before dispatch while new instances were being created, and sustained bursts produced edge timeouts at 37.9 s. The application is exonerated for the stall; the mechanism is the platform's instance creation under concurrency (`docs/perf/2026-09-15-cold-start-isolation-results.md`).
+- **The Vercel branch-deploy measurement** (`docs/perf/vercel-experiment-runbook.md`) — the same burst against the same commit on Fluid Compute in `bom1` — is the remaining input. If it shows no stall, this ADR moves to `live` with option 2 as the decision.
 
-The decision rule is fixed now so the numbers, not the mood on the day, decide it: **if the bare route stalls on Netlify and the same burst does not stall on Vercel, migrate to Vercel in a scheduled two-to-three-day window before the MVP launch, and send the Netlify ticket regardless for the record.** If the bare route does not stall, the application is back under suspicion and the on-Netlify plan in the research document is worked first. The ticket is sent in either case, because a documented vendor answer is worth having, and it goes out with the probe's numbers attached.
+The Netlify ticket goes out now with the probe's tables attached, whatever the Vercel result, because a documented vendor answer is worth having.
 
 ## Consequences
 
