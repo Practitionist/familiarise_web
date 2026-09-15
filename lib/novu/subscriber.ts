@@ -3,7 +3,10 @@
  * Syncs user data to Novu as subscribers using User.id as subscriberId.
  */
 import * as Sentry from "@sentry/nextjs";
+import { EMAIL_CATEGORY_COLUMN } from "@/lib/email/preferences";
 import { getNovuClient, isNovuConfigured } from "./client";
+import { CATEGORY_FLAG } from "./templates/conditions";
+import type { PreferenceCategory } from "./templates/types";
 
 interface SubscriberData {
   userId: string;
@@ -60,7 +63,10 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
     });
     console.log(`[Novu] Subscriber synced: ${data.userId}`);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "novu" } },
+    );
     console.error("[Novu] Failed to sync subscriber:", error);
   }
 }
@@ -97,6 +103,18 @@ export async function updateSubscriberPreferences(
 ): Promise<void> {
   if (!isNovuConfigured()) return;
 
+  // #1653 — the category → column map is defined once (`lib/email/preferences.ts`)
+  // and read here and by the email gate, so the two cannot drift. Every
+  // category flag defaults on; marketing is not a category and defaults off.
+  const categoryFlags = Object.fromEntries(
+    (Object.keys(EMAIL_CATEGORY_COLUMN) as PreferenceCategory[]).map(
+      (category) => [
+        CATEGORY_FLAG[category],
+        preferences[EMAIL_CATEGORY_COLUMN[category]] ?? true,
+      ],
+    ),
+  );
+
   try {
     const novu = getNovuClient();
     await novu.subscribers.patch(
@@ -107,24 +125,18 @@ export async function updateSubscriberPreferences(
           preferEmail: preferences.email ?? true,
           preferPush: preferences.push ?? false,
           // Category preferences — used in Novu Dashboard workflow conditions
-          categoryAppointments: preferences.appointmentReminders ?? true,
-          categoryPayments: preferences.paymentNotifications ?? true,
-          categorySupport: preferences.supportUpdates ?? true,
-          categoryFeedback: preferences.feedbackAlerts ?? true,
-          categoryTrials: preferences.trialNotifications ?? true,
-          categorySubscriptions: preferences.subscriptionAlerts ?? true,
+          ...categoryFlags,
           categoryMarketing: preferences.marketingEmails ?? false,
-          // ADR 23 — the ORG_* workflow family was unmutable before these.
-          categoryOrgBilling: preferences.orgBillingAlerts ?? true,
-          categoryOrgMembership: preferences.orgMembershipAlerts ?? true,
-          categoryOrgProgram: preferences.orgProgramAlerts ?? true,
         },
       },
       userId,
     );
     console.log(`[Novu] Preferences updated for subscriber: ${userId}`);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "novu" } },
+    );
     console.error("[Novu] Failed to update subscriber preferences:", error);
   }
 }
@@ -140,7 +152,10 @@ export async function deleteSubscriber(userId: string): Promise<void> {
     await novu.subscribers.delete(userId);
     console.log(`[Novu] Subscriber deleted: ${userId}`);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "novu" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "novu" } },
+    );
     console.error("[Novu] Failed to delete subscriber:", error);
   }
 }

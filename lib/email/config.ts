@@ -91,4 +91,6 @@ export const EMAIL_BUDGET_MS = {
   CONTACT_AND_WAITLIST: 5_000,
   WEBHOOK: 3_000,
   JOB: 10_000,
+  // #1653 — API-route senders: the request must not wait on Resend longer than this.
+  REQUEST: 5_000,
 } as const;
