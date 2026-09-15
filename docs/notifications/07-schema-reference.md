@@ -52,7 +52,7 @@ The addresses the senders must not write to. Resend keeps its own suppression li
 
 ## `NotificationOutbox` and `NotificationOutboxKind`
 
-The Novu trigger outbox. A Novu trigger is one HTTPS call, and a function that freezes before the call completes loses the in-app bell with no trace (#691 NTF-1); this table gives the trigger the same durable shape as an email. The table below lists its columns.
+The Novu trigger outbox. A Novu trigger is one HTTPS call, and a function that freezes before the call completes loses the in-app bell with no trace (#691 NTF-1); this table gives the trigger the same durable shape as an email, including every `ORG_*` event since #1669. The table below lists its columns.
 
 | Column or index                                               | Why it exists                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

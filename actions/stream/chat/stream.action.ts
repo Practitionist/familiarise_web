@@ -15,10 +15,8 @@ import {
   type ActionResult,
 } from "@/lib/errors/action-result";
 import { Refusal } from "@/lib/errors/refusal";
+import { STREAM_TOKEN_TTL_SECONDS } from "@/lib/stream/token-ttl";
 import * as Sentry from "@sentry/nextjs";
-
-// Token expiry for both chat and video (1 hour)
-const TOKEN_EXPIRATION_SECONDS = 3600;
 
 // Input validation
 const userIdSchema = z.string().min(1, "User ID is required");
@@ -76,7 +74,7 @@ export async function tokenProvider(
   }
 
   try {
-    const token = generateVideoToken(validatedUserId, TOKEN_EXPIRATION_SECONDS);
+    const token = generateVideoToken(validatedUserId, STREAM_TOKEN_TTL_SECONDS);
 
     streamLogger.debug("Generated video token", { userId: validatedUserId });
 
@@ -113,7 +111,7 @@ export async function chatTokenProvider(
   }
 
   try {
-    const token = generateChatToken(validatedUserId, TOKEN_EXPIRATION_SECONDS);
+    const token = generateChatToken(validatedUserId, STREAM_TOKEN_TTL_SECONDS);
 
     streamLogger.debug("Generated chat token", { userId: validatedUserId });
 

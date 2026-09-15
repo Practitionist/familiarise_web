@@ -8,12 +8,15 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { getResendClient, recordFailedEmail, SENDERS } from "@/lib/email";
+import { getResendClient, SENDERS } from "@/lib/email";
 import { createHash } from "node:crypto";
 import { resendErrorText } from "@/lib/email/classify";
 import { companyPostalAddress } from "@/lib/email/config";
+import { findSuppressed } from "@/lib/email/suppression";
+import prisma from "@/lib/prisma";
 import { listSendableSubscribers } from "@/lib/waitlist/service";
 import { buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 
@@ -60,10 +63,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
 
-    const subscribers = await listSendableSubscribers();
+    const allSubscribers = await listSendableSubscribers();
+    // #1647 — a bounced or complaining address stays SUBSCRIBED only until the
+    // webhook settles it; the suppression list is the authority either way.
+    const suppressed = await findSuppressed(allSubscribers.map((s) => s.email));
+    const subscribers = allSubscribers.filter((s) => !suppressed.has(s.email));
+    const skippedSuppressed = allSubscribers.length - subscribers.length;
     if (subscribers.length === 0) {
       return NextResponse.json(
-        { error: "No confirmed subscribers to send to" },
+        { error: "No confirmed subscribers to send to", skippedSuppressed },
         { status: 404 },
       );
     }
@@ -90,7 +98,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     console.log(
-      `[admin/waitlist/broadcast] sent=${sent} failed=${failed} total=${subscribers.length}`,
+      `[admin/waitlist/broadcast] sent=${sent} failed=${failed} total=${subscribers.length} skippedSuppressed=${skippedSuppressed}`,
     );
 
     return NextResponse.json({
@@ -98,6 +106,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       sent,
       failed,
       total: subscribers.length,
+      skippedSuppressed,
       ...(errors.length > 0 && { errors }),
     });
   } catch (error) {
@@ -136,42 +145,62 @@ function buildMessage(
 }
 
 /**
- * Sends one batch. A failure dead-letters every message in it so the retry
- * worker can replay them — the old route only counted the failure and dropped
- * the content.
+ * Sends one batch. #1647 — the batch is a `FailedEmailBatch` row before the
+ * request goes out, so a lost response or a failed send is replayed by the
+ * relay under the same idempotency key. No per-message rows: a batch replay
+ * plus per-message replays would send twice, since the two keys differ.
  */
 async function sendBatch(
   resend: NonNullable<ReturnType<typeof getResendClient>>,
   emails: BroadcastMessage[],
 ): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
+  // #1298 — one key per batch request, derived from its content like the
+  // single-send path, so an admin re-submit inside 24 h cannot double-send.
+  const idempotencyKey = batchIdempotencyKey(emails);
+  const row = await prisma.failedEmailBatch.upsert({
+    where: { idempotencyKey },
+    create: {
+      idempotencyKey,
+      emailType: "WAITLIST_BROADCAST",
+      // Exactly what resend.batch.send accepts, so the relay passes it through.
+      payload: emails as Prisma.InputJsonValue,
+    },
+    update: {},
+    select: { id: true },
+  });
   try {
-    // #1298 — one key per batch request, derived from its content like the
-    // single-send path, so an admin re-submit inside 24 h cannot double-send.
-    const result = await resend.batch.send(emails, {
-      idempotencyKey: batchIdempotencyKey(emails),
-    });
+    const result = await resend.batch.send(emails, { idempotencyKey });
     if (result.error) {
       throw new Error(resendErrorText(result.error));
     }
+    await settleBatch(row.id, {
+      status: "SENT",
+      sentAt: new Date(),
+      lastError: null,
+    });
     return { ok: true, sent: result.data?.data?.length ?? emails.length };
   } catch (batchError) {
-    for (const email of emails) {
-      await recordFailedEmail(
-        {
-          from: email.from,
-          to: email.to,
-          subject: email.subject,
-          html: email.html,
-          text: email.text,
-        },
-        "WAITLIST_BROADCAST",
-        batchError,
-      );
-    }
-    return {
-      ok: false,
-      error: batchError instanceof Error ? batchError.message : "Unknown error",
-    };
+    const error =
+      batchError instanceof Error ? batchError.message : "Unknown error";
+    // Left PENDING with the cause: the relay replays it on its next tick.
+    await settleBatch(row.id, { lastError: error });
+    return { ok: false, error };
+  }
+}
+
+// Best-effort like deliver.ts's settleRow: the send outcome is decided, and a
+// row left PENDING only costs a replay that Resend's key deduplicates.
+async function settleBatch(
+  id: string,
+  data: Prisma.FailedEmailBatchUpdateInput,
+): Promise<void> {
+  try {
+    await prisma.failedEmailBatch.update({ where: { id }, data });
+  } catch (updateError) {
+    console.error(
+      "[admin/waitlist/broadcast] batch row update failed:",
+      updateError,
+    );
   }
 }
 

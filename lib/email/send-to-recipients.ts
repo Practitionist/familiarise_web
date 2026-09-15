@@ -118,7 +118,7 @@ export async function sendToRecipients(
  * the transaction rolls back with it.
  */
 export async function stageToRecipients(
-  args: PrepareArgs & { tx: Pick<Tx, "failedEmail"> },
+  args: PrepareArgs & { tx: Pick<Tx, "failedEmail" | "emailSuppression"> },
 ): Promise<StagedRecipientEmail[]> {
   const list: StagedRecipientEmail[] = [];
   for (const recipient of args.recipients) {
