@@ -579,15 +579,18 @@ describe("Event Channel Actions", () => {
       expect(mockGetSession).toHaveBeenCalledWith(true);
     });
 
-    it("rejects unauthenticated callers outright", async () => {
+    it("answers an unauthenticated caller with a returned refusal, not a throw", async () => {
       mockGetSession.mockResolvedValue(null);
 
       const { syncUserEventChannels } =
         await import("../../actions/stream/chat/event-channel.action");
 
-      await expect(syncUserEventChannels("anyone")).rejects.toThrow(
-        "Unauthorized: sign in to sync channels",
-      );
+      // Returned, never thrown: a throw from a server action is captured by
+      // onRequestError (FAMILIARISE_WEB-30).
+      await expect(syncUserEventChannels("anyone")).resolves.toMatchObject({
+        success: false,
+        refusal: { code: "UNAUTHENTICATED" },
+      });
       expect(mockPrisma.user.findUnique).not.toHaveBeenCalled();
     });
 
