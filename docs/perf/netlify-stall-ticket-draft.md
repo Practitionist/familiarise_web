@@ -59,3 +59,7 @@ No improvement (possibly worse). We reverted.
 ## Impact
 
 User-visible: landing-page/explore clicks stall 20–30s then render (the "site is down" perception), worst right after deploys and during traffic bursts from a cold pool. We ship ISR-first architecture and deploy-warming workflows, but the tail persists whenever concurrency forces new instances.
+
+## Additions from the 2026-09-15 research pass (fold into the ticket before sending)
+
+Three facts pre-empt the three most likely first responses. First, the pattern is not a preview artifact: it reproduced on the published production deployment on 2026-09-13 with only three concurrent requests. Second, more memory is not the answer and has been measured: at 2048 MB the same twelve-request burst landed 11 of 12 at 35.9–37.6 s plus one platform 500, against 11 of 12 at 27.8–31.0 s at 1024 MB, so the setting was reverted. Third, there is no native Prisma engine to blame: the deployed client is the WASM query compiler with the `pg` driver adapter (`query_compiler_fast_bg.wasm`, no `.node` binary). The framing should be a report of an apparently undocumented pattern backed by isolation evidence — the sequential-versus-concurrent contrast (1.8–2.7 s alone, 27–39 s under concurrent creation, from the same deploy) is what proves these are real new-instance events — rather than a request to fix a known issue. The isolation probe's numbers (`docs/perf/2026-09-15-cold-start-isolation-results.md`) go in as the fourth fact once they exist.

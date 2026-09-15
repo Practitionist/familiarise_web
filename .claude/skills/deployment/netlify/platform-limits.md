@@ -86,6 +86,14 @@ The stall on brand-new instances under concurrent creation (#1124) has no known 
 
 Background invocations are dropped on every non-production deploy of this site. On 2026-09-13 a POST to a `-background` function on three Deploy Previews of #1454 answered 202 in about a second and then nothing ran: one `info` record with an empty message per kick in the function log, no console output, no `Duration` report, no side effect. Two throwaway functions whose only statement was a `console.log` — one declared by the `-background` suffix, one by `config = { background: true }` — behaved identically on preview `6aa6bed52185aa0008a728af`, and a kick on the dev branch deploy `6aa6dc1e9831c30008de6c6e` of the merged #1633 did the same, so the code is not the variable; synchronous and scheduled functions on the same deploys run normally. Whether production executes them is unverified at the time of writing, which is why #1633's follow-up made `cron-tick` advance an in-flight ledger reconcile one chunk per tick (`/api/cleanup/reconcile-ledgers?resume=1`): a run completes within roughly its chunk count times five minutes even if the background function never fires. The question is number 6 in `docs/perf/netlify-stall-ticket-draft.md`.
 
+## DNS and the registrar
+
+`familiarisenow.com` is registered at GoDaddy, but its authoritative name servers are Netlify DNS (`dns1-4.p06.nsone.net`; the SOA contact is `domains+netlify.netlify.com`), verified with `dig NS` and `whois` on 2026-09-14. Every record for the zone — the apex A records to Netlify's Singapore load balancer, and any mail or verification record a vendor asks for (Resend's DKIM `TXT`, the `send.` `MX` and SPF `TXT`, `_dmarc`) — is added under Netlify → Domains → familiarisenow.com → DNS records, or with `netlify api createDnsRecord`. GoDaddy's own DNS panel is not consulted by resolvers and changes made there do nothing. On 2026-09-14 the zone carried no `MX`, `TXT`, DKIM, or DMARC records at all.
+
+## Prisma engine shape
+
+`node_modules/.prisma/client` contains `query_compiler_fast_bg.wasm` and no `libquery_engine-*.node` binary (checked 2026-09-15): the application already runs Prisma's WASM query compiler through the `pg` driver adapter, so the classic Lambda cold-start cost of a native query engine does not apply here and should not be offered as an explanation for the stall.
+
 ## Sources
 
 - Functions configuration (defaults table, memory/vCPU, regions, Node runtime): https://docs.netlify.com/build/functions/configuration/
