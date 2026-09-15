@@ -2,7 +2,7 @@
  * Novu Notification Service
  * High-level methods for triggering notifications in business logic.
  * Non-throwing: logs errors and returns success/failure status.
- * Pattern follows lib/email.ts (graceful degradation).
+ * Pattern follows lib/email/deliver.ts (graceful degradation).
  */
 import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";

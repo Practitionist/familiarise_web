@@ -7,18 +7,26 @@
  * - Structured error data for clients
  */
 
+import { Refusal } from "@/lib/errors/refusal";
+
 /**
- * Thrown when a reschedule is attempted within the restricted time window
+ * Thrown when a reschedule is attempted within the restricted time window.
+ * A `Refusal`: the route answers it as a 409 the caller toasts, never a fault
+ * (FAMILIARISE_WEB-2Z).
  */
-export class ReschedulePolicyError extends Error {
+export class ReschedulePolicyError extends Refusal {
   constructor(
     public readonly hoursUntilSlot: number,
     public readonly minimumHoursRequired: number,
   ) {
-    super(
-      `Cannot reschedule within ${minimumHoursRequired} hours of the session. ` +
-        `The earliest session starts in ${Math.max(0, Math.floor(hoursUntilSlot))} hours.`,
-    );
+    super({
+      code: "RESCHEDULE_WINDOW",
+      httpStatus: 409,
+      userMessage:
+        `Cannot reschedule within ${minimumHoursRequired} hours of the meeting. ` +
+        `The earliest meeting starts in ${Math.max(0, Math.floor(hoursUntilSlot))} hours.`,
+      context: { hoursUntilSlot, minimumHoursRequired },
+    });
     this.name = "ReschedulePolicyError";
 
     if (Error.captureStackTrace) {

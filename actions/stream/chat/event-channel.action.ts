@@ -41,6 +41,7 @@ import {
 } from "@/lib/stream/channel-lifecycle";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { Refusal, type RefusalShape } from "@/lib/errors/refusal";
 
 // Validation schemas
 const eventTypeSchema = z.enum([
@@ -631,6 +632,8 @@ export async function syncUserEventChannels(
   success: boolean;
   skipped?: boolean;
   error?: string;
+  /** Set when the sync was refused rather than attempted (no session). */
+  refusal?: RefusalShape;
   channelsSynced?: number;
   failed?: number;
   staleChannelsRemoved?: number;
@@ -648,7 +651,19 @@ export async function syncUserEventChannels(
   // InitializeUserChannelsButton both pass the signed-in user's own id).
   const session = await getSession(true);
   if (!session?.user?.id) {
-    throw new Error("Unauthorized: sign in to sync channels");
+    // Returned, not thrown: an expired tab is an answer, and every throw from
+    // a server action is captured by onRequestError (FAMILIARISE_WEB-30).
+    const refusal = new Refusal({
+      code: "UNAUTHENTICATED",
+      httpStatus: 401,
+      userMessage: "Please sign in again to continue.",
+      devMessage: "Unauthorized: sign in to sync channels",
+    });
+    return {
+      success: false,
+      error: refusal.devMessage,
+      refusal: refusal.toShape(),
+    };
   }
   if (session.user.banned) {
     throw new Error("Forbidden: account suspended");

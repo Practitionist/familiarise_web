@@ -21,6 +21,8 @@ import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import { reportSentryError } from "@/lib/observability/report";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -653,9 +655,14 @@ async function issueFullRefund(
       id: paymentId,
       error: errMsg(error),
     });
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "moderation" } },
-    );
+    // A modelled refusal (already made whole, nothing refundable) is recorded
+    // on the summary for staff and reported `expected` (FAMILIARISE_WEB-3D).
+    const modelled = isModelledRefundRefusal(error);
+    reportSentryError(error, {
+      subsystem: "moderation",
+      op: "cancel-user-engagements.refund",
+      expected: modelled,
+      ...(modelled ? { level: "warning" as const } : {}),
+    });
   }
 }

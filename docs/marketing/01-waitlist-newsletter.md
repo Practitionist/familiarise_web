@@ -98,10 +98,12 @@ opt-out. When a batch fails, each message in it is dead-lettered through
 `recordFailedEmail` so the retry worker can replay it; the previous
 implementation only counted the failure and dropped the content.
 
-The transactional confirm and welcome emails live in `lib/email.ts` with the
-rest of the platform's senders, and follow the same pattern: build the rendered
-message before sending, check `data.error` because Resend resolves rather than
-throws on API errors, and dead-letter on failure.
+The transactional confirm and welcome emails live in `lib/email/index.ts` with
+the rest of the platform's senders (`@/lib/email` still resolves to that
+module), and follow the same render → build → `deliver()` pattern as every
+other sender: `deliver()` checks `data.error` because Resend resolves rather
+than throws on API errors, and dead-letters on failure into the `FailedEmail`
+table.
 
 ## Administration
 

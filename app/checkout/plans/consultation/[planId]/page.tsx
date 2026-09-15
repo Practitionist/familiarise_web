@@ -29,6 +29,7 @@ import {
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { useSession } from "@/lib/auth-client";
+import { Refusal } from "@/lib/errors/refusal";
 import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -317,9 +318,12 @@ export default function ConsultationCheckoutPage({
 
         // Use pre-validated search params (validated once via useMemo)
         if (!validatedSearchParams) {
-          throw new Error(
-            "Pick a time on the expert's profile — under the plan you want — before checking out.",
-          );
+          throw new Refusal({
+            code: "TIME_NOT_PICKED",
+            httpStatus: 422,
+            userMessage:
+              "Pick a time on the expert's profile — under the plan you want — before checking out.",
+          });
         }
 
         // Create checkout data from validated params
@@ -428,9 +432,12 @@ export default function ConsultationCheckoutPage({
       try {
         // Use pre-validated search params
         if (!validatedSearchParams) {
-          throw new Error(
-            "Pick a time on the expert's profile — under the plan you want — before checking out.",
-          );
+          throw new Refusal({
+            code: "TIME_NOT_PICKED",
+            httpStatus: 422,
+            userMessage:
+              "Pick a time on the expert's profile — under the plan you want — before checking out.",
+          });
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
