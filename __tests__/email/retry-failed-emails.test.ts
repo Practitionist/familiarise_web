@@ -23,10 +23,16 @@ import {
   BACKOFF_MS,
   SEND_GAP_MS,
   type FailedEmailStore,
+  type RelaySender,
 } from "@/jobs/email/retry-failed-emails";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
-import type { FailedEmail, Prisma } from "@prisma/client";
-import type { Resend, CreateEmailResponse } from "resend";
+import type {
+  EmailSuppression,
+  FailedEmail,
+  FailedEmailBatch,
+  Prisma,
+} from "@prisma/client";
+import type { CreateEmailResponse } from "resend";
 
 function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
   return {
@@ -52,8 +58,36 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
   };
 }
 
-function makePrismaStub(initialRow: FailedEmail) {
+function makeBatchRow(
+  overrides: Partial<FailedEmailBatch> = {},
+): FailedEmailBatch {
+  return {
+    id: "feb-1",
+    idempotencyKey: "WAITLIST_BROADCAST/abc",
+    emailType: "WAITLIST_BROADCAST",
+    payload: [{ from: "a@x", to: "b@y", subject: "s", html: "<p/>" }],
+    status: "PENDING",
+    attempts: 0,
+    nextRetryAt: null,
+    lastError: null,
+    sentAt: null,
+    createdAt: new Date("2026-06-16T11:58:00Z"),
+    updatedAt: new Date("2026-06-16T11:58:00Z"),
+    ...overrides,
+  };
+}
+
+// #1647 — the store grew a suppression read and the batch outbox; both are
+// empty unless a test hands them rows.
+function makePrismaStub(
+  initialRow: FailedEmail,
+  extra: {
+    suppressions?: Pick<EmailSuppression, "email" | "reason">[];
+    batches?: FailedEmailBatch[];
+  } = {},
+) {
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
+  const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
   const prisma: FailedEmailStore = {
     failedEmail: {
       findMany: jest.fn().mockResolvedValue([initialRow]),
@@ -64,14 +98,32 @@ function makePrismaStub(initialRow: FailedEmail) {
           return Promise.resolve({ ...initialRow, ...args.data });
         }),
     },
+    emailSuppression: {
+      findMany: jest.fn().mockResolvedValue(extra.suppressions ?? []),
+    },
+    failedEmailBatch: {
+      findMany: jest.fn().mockResolvedValue(extra.batches ?? []),
+      update: jest
+        .fn()
+        .mockImplementation((args: Prisma.FailedEmailBatchUpdateArgs) => {
+          batchUpdates.push(args);
+          return Promise.resolve({ ...makeBatchRow(), ...args.data });
+        }),
+    },
   };
-  return { prisma, updates };
+  return { prisma, updates, batchUpdates };
 }
 
 function mockResend(
   impl: () => Promise<CreateEmailResponse>,
-): Pick<Resend["emails"], "send"> {
-  return { send: jest.fn(impl) };
+  batchImpl: jest.Mock = jest.fn(),
+): RelaySender & { send: jest.Mock } {
+  const send = jest.fn(impl);
+  return {
+    send,
+    emails: { send },
+    batch: { send: batchImpl } as unknown as RelaySender["batch"],
+  };
 }
 
 const FROZEN_NOW_MS = new Date("2026-06-16T12:00:00Z").getTime();
@@ -272,6 +324,11 @@ describe("runEmailRetryTick — pacing (#1654)", () => {
             Promise.resolve({ ...rows[0], ...args.data }),
           ),
       },
+      emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
+      failedEmailBatch: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
     };
     const resend = mockResend(async () => ({
       data: { id: "re-x" },
@@ -376,6 +433,65 @@ describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
     expect((stub.updates[0].data as { lastError: string }).lastError).toContain(
       "expired before delivery",
     );
+  });
+});
+
+describe("runEmailRetryTick — suppression and batch outbox (#1647)", () => {
+  it("dead-letters a pending row whose recipient is suppressed without a send", async () => {
+    const stub = makePrismaStub(makeRow({ recipient: "Dead@Example.com" }), {
+      suppressions: [{ email: "dead@example.com", reason: "COMPLAINT" }],
+    });
+    const resend = mockResend(async () => ({
+      data: { id: "re-never" },
+      error: null,
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      lastError: "suppressed:COMPLAINT",
+    });
+  });
+
+  it("replays a PENDING batch row under its stored idempotency key and marks it SENT", async () => {
+    const batch = makeBatchRow();
+    const stub = makePrismaStub(makeRow({ status: "SENT" }), {
+      batches: [batch],
+    });
+    stub.prisma.failedEmail.findMany = jest.fn().mockResolvedValue([]);
+    const batchSend = jest.fn().mockResolvedValue({
+      data: { data: [{ id: "re-b1" }] },
+      error: null,
+      headers: null,
+    });
+    const resend = mockResend(async () => {
+      throw new Error("single send must not run");
+    }, batchSend);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(batchSend).toHaveBeenCalledWith(
+      batch.payload,
+      expect.objectContaining({ idempotencyKey: "WAITLIST_BROADCAST/abc" }),
+    );
+    expect(result).toMatchObject({ batchesScanned: 1, batchesSent: 1 });
+    expect(stub.batchUpdates[0].data).toMatchObject({
+      status: "SENT",
+      attempts: 1,
+      lastError: null,
+    });
   });
 });
 
