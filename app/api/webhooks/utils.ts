@@ -45,6 +45,15 @@ import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  EMAIL_BUDGET_MS,
+  MONEY_EMAIL_TYPES,
+  stageRefundProcessedEmail,
+} from "@/lib/email";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 
 // Re-export payment handlers from lib (architectural fix)
 export {
@@ -632,9 +641,13 @@ export async function handleRefundCreated(
   // inside the tx.
   // #1654 — the bell is staged inside the tx and sent only after COMMIT.
   let stagedNotification: StagedTrigger | null = null;
+  // #1653 — the refund receipt email rides the same outbox: staged through
+  // `tx`, attempted after commit. A retry re-runs the callback, so reset.
+  let stagedEmails: StagedRecipientEmail[] = [];
   const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
+    stagedEmails = [];
     // Find the payment (B2C appointment path).
     //
     // #1353 — match on EITHER id. A refund webhook carries only the gateway's
@@ -1185,11 +1198,25 @@ export async function handleRefundCreated(
       { tx, entityRef: `payment:${payment.id}` },
     );
     stagedNotification = notification?.staged ?? null;
+    // #1653 — the email twin of the bell. Reads through `tx` only; the credit
+    // note is minted inside the cascade and is not in scope here, so the
+    // receipt omits its number rather than adding a query for it.
+    stagedEmails = await stageRefundProcessedEmail(tx, {
+      userId: payment.userId,
+      paymentId: payment.id,
+      amountPaise: amount,
+      currency,
+    });
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
   await attemptStaged(stagedNotification);
+  await attemptStagedEmails(
+    stagedEmails,
+    MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+    EMAIL_BUDGET_MS.WEBHOOK,
+  );
   return result;
 }
 

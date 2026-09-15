@@ -79,6 +79,7 @@ import {
   notifyOrgPayoutFailed,
 } from "@/lib/novu/org-workflows";
 import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { sendOrgPayoutFailedEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -1401,6 +1402,44 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
 }
 
 /**
+ * #1653 — the email twin of `notifyOrgPayoutFailed`, sent to the same
+ * visibility roster the bell resolves so the two never disagree about who
+ * hears. Resolved lazily like the bell. A missed email must never fail the
+ * webhook, whose redelivery would no-op on the already-claimed row (#813),
+ * so every failure is reported and swallowed here.
+ */
+async function emailOrgPayoutFailed(
+  payoutId: string,
+  kind: "FAILED" | "REVERSED",
+  reason: string,
+  notify: {
+    organizationId: string;
+    orgName: string;
+    netPayoutPaise: number | bigint;
+    currency: string;
+  },
+): Promise<void> {
+  try {
+    const { rosterForOrg, VISIBILITY_ROLES } =
+      await import("@/lib/novu/org-workflows");
+    const roster = await rosterForOrg(notify.organizationId, VISIBILITY_ROLES);
+    await sendOrgPayoutFailedEmail({
+      recipientUserIds: roster,
+      kind,
+      orgName: notify.orgName,
+      payoutId,
+      amountPaise: notify.netPayoutPaise,
+      currency: notify.currency,
+      reason: reason.slice(0, 200),
+      dashboardUrl: `${getAppUrl()}/dashboard/organization/${notify.organizationId}/payouts`,
+    });
+  } catch (e) {
+    reportSentryError(e, { subsystem: "payments" });
+    console.error(`[org-payout] ${kind} email failed:`, e);
+  }
+}
+
+/**
  * A1+A8: shared internal helper for the "payout failed at the gateway"
  * and "payout reversed by the bank" code paths. Both reach this — the
  * `kind` parameter only changes the audit description and the Novu
@@ -1432,7 +1471,12 @@ async function markOrgPayoutFailedInternal(
       console.log(
         `[OrgPayoutService] markOrgPayoutFailedInternal no-op: payout ${payoutId} status=${current.status}`,
       );
-      return { wasNoOp: true, status: current.status, notifyStaged: [] };
+      return {
+        wasNoOp: true,
+        status: current.status,
+        notifyStaged: [],
+        notify: null,
+      };
     }
 
     // Release the underlying earnings back to READY so the next batch
@@ -1498,10 +1542,24 @@ async function markOrgPayoutFailedInternal(
       { tx, entityRef: `orgPayout:${payoutId}` },
     );
 
-    return { wasNoOp: false, status: "FAILED" as PayoutStatus, notifyStaged };
+    return {
+      wasNoOp: false,
+      status: "FAILED" as PayoutStatus,
+      notifyStaged,
+      notify: {
+        organizationId: payout.organizationId,
+        orgName: payout.organization.name,
+        netPayoutPaise: payout.netPayoutPaise,
+        currency: payout.currency,
+      },
+    };
   });
 
   await attemptStagedBells(result.notifyStaged, kind);
+  // #1653 — the email twin, after the bell and outside the transaction.
+  if (result.notify) {
+    await emailOrgPayoutFailed(payoutId, kind, reason, result.notify);
+  }
 
   return { wasNoOp: result.wasNoOp, status: result.status };
 }
@@ -1560,7 +1618,8 @@ export async function markOrgPayoutReversed(
         failedAt: new Date(),
       },
     });
-    if (claim.count === 0) return { claimed: false, notifyStaged: [] };
+    if (claim.count === 0)
+      return { claimed: false, notifyStaged: [], notify: null };
 
     const payout = await tx.organizationPayout.findUniqueOrThrow({
       where: { id: payoutId },
@@ -1669,7 +1728,16 @@ export async function markOrgPayoutReversed(
       { tx, entityRef: `orgPayout:${payoutId}` },
     );
 
-    return { claimed: true, notifyStaged };
+    return {
+      claimed: true,
+      notifyStaged,
+      notify: {
+        organizationId: payout.organizationId,
+        orgName: payout.organization.name,
+        netPayoutPaise: payout.netPayoutPaise,
+        currency: payout.currency,
+      },
+    };
   });
   // #1470 — same shape as markOrgPayoutCompleted: the guard throws inside the
   // transaction so the REVERSED claim rolls back, and the durable report runs
@@ -1685,6 +1753,15 @@ export async function markOrgPayoutReversed(
 
   if (completedResult.claimed) {
     await attemptStagedBells(completedResult.notifyStaged, "REVERSED");
+    // #1653 — the email twin, after the bell and outside the transaction.
+    if (completedResult.notify) {
+      await emailOrgPayoutFailed(
+        payoutId,
+        "REVERSED",
+        reason,
+        completedResult.notify,
+      );
+    }
     return { wasNoOp: false, status: "REVERSED" as PayoutStatus };
   }
 

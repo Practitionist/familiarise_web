@@ -19,6 +19,7 @@ import { isRazorpayUnknownRefundIdError } from "../../lib/payments/core/razorpay
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { notifyRefundFailed } from "../../lib/novu/service";
+import { sendRefundFailedEmail } from "@/lib/email";
 import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -536,6 +537,13 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
       currency: refund.currency,
       reason: failureReason,
       dashboardUrl: `${getAppUrl()}/dashboard`,
+    });
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundFailedEmail({
+      userId: refund.payment.userId,
+      paymentId: refund.paymentId,
+      amountPaise: refund.amountPaise,
+      currency: refund.currency,
     });
   }
 
