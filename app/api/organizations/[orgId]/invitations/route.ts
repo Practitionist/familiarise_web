@@ -305,7 +305,7 @@ export async function POST(
 
   // Side-effect: trigger Novu email delivery to the invitee. Non-blocking
   // — on failure we still return the invitation response. The existing
-  // email-send flow (lib/email.ts / Resend) continues to run; Novu is
+  // email-send flow (lib/email/ / Resend) continues to run; Novu is
   // additive so in-app bell delivery works once the invitee has a user
   // account.
   const origin = new URL(req.url).origin;

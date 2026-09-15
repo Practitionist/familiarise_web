@@ -26,7 +26,7 @@ import "dotenv/config";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import prisma from "@/lib/prisma";
-import { Resend } from "resend";
+import { deliver, SENDERS } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -131,12 +131,11 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
 
   // Email dispatch — opt-in per environment so we don't spam finance
   // during staging/preview deploys. The log above is always emitted.
+  // #1298 — gate on the recipient only; a missing key dead-letters in deliver().
   const to = process.env.MSME_ALERT_EMAIL;
-  const apiKey = process.env.RESEND_API_KEY;
   let emailSent = false;
-  if (to && apiKey) {
+  if (to) {
     try {
-      const resend = new Resend(apiKey);
       const rowsToShow = atRiskRows.slice(0, MAX_ROWS_IN_EMAIL);
       const truncated = atRiskRows.length > MAX_ROWS_IN_EMAIL;
       const appUrl = getAppUrl();
@@ -151,21 +150,26 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
             `<td><a href="${appUrl}/admin/payouts/${r.id}">open</a></td></tr>`,
         )
         .join("");
-      await resend.emails.send({
-        from: "Familiarise Finance <finance@familiarise.com>",
-        to,
-        subject: `[MSME 43B(h)] ${atRisk} payouts approaching deadline`,
-        html:
-          `<p>The MSME alert cron found <strong>${atRisk}</strong> payouts ` +
-          `within ${ALERT_WINDOW_DAYS} days of their Section 43B(h) deadline ` +
-          `and still not in COMPLETED status.</p>` +
-          `<table border="1" cellpadding="6" cellspacing="0">` +
-          `<thead><tr><th>Deadline</th><th>Payout id</th><th>Owner id</th><th>Amount</th><th>Status</th><th></th></tr></thead>` +
-          `<tbody>${tableHtml}</tbody></table>` +
-          (truncated
-            ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the finance dashboard for the full list.</p>`
-            : ""),
-      });
+      // #1298 — through deliver() so a failed alert dead-letters and replays.
+      const outcome = await deliver(
+        {
+          from: SENDERS.finance,
+          to,
+          subject: `[MSME 43B(h)] ${atRisk} payouts approaching deadline`,
+          html:
+            `<p>The MSME alert cron found <strong>${atRisk}</strong> payouts ` +
+            `within ${ALERT_WINDOW_DAYS} days of their Section 43B(h) deadline ` +
+            `and still not in COMPLETED status.</p>` +
+            `<table border="1" cellpadding="6" cellspacing="0">` +
+            `<thead><tr><th>Deadline</th><th>Payout id</th><th>Owner id</th><th>Amount</th><th>Status</th><th></th></tr></thead>` +
+            `<tbody>${tableHtml}</tbody></table>` +
+            (truncated
+              ? `<p>…and ${atRisk - MAX_ROWS_IN_EMAIL} more. Open the finance dashboard for the full list.</p>`
+              : ""),
+        },
+        "MSME_PAYMENT_ALERT",
+      );
+      if (!outcome.success) throw outcome.error;
       emailSent = true;
       console.log(`[MSME] alert email sent to ${to}`);
     } catch (err) {
@@ -175,9 +179,7 @@ async function runMsmePaymentAlertsUnlocked(): Promise<{
       });
     }
   } else {
-    console.log(
-      "[MSME] MSME_ALERT_EMAIL or RESEND_API_KEY not configured; email skipped",
-    );
+    console.log("[MSME] MSME_ALERT_EMAIL not configured; email skipped");
   }
 
   const result = { alerted: emailSent ? atRisk : 0, atRisk, emailSent };

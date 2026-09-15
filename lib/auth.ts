@@ -302,17 +302,20 @@ export const auth = betterAuth({
               );
             }
 
-            // Send welcome email (fire and forget)
-            sendWelcomeEmail({
-              email: user.email,
-              name: user.name || "User",
-            }).catch((err) => {
+            // #1298 — awaited: an un-awaited send is dropped when the instance
+            // freezes after the response (same class as #1616).
+            try {
+              await sendWelcomeEmail({
+                email: user.email,
+                name: user.name || "User",
+              });
+            } catch (err) {
               console.error("[AUTH_HOOK] Welcome email error:", err);
               Sentry.captureException(
                 err instanceof Error ? err : new Error(String(err)),
                 { tags: { subsystem: "auth" }, level: "warning" },
               );
-            });
+            }
 
             // Sync Novu subscriber (fire and forget with error logging)
             const nameParts = (user.name || "User").split(" ");
@@ -395,17 +398,21 @@ export const auth = betterAuth({
                 select: { email: true, name: true },
               });
               if (user?.email) {
-                sendAccountLinkedEmail({
-                  email: user.email,
-                  name: user.name || "User",
-                  provider: account.providerId,
-                }).catch((err) => {
+                // #1298 — awaited: an un-awaited send is dropped when the
+                // instance freezes after the response (same class as #1616).
+                try {
+                  await sendAccountLinkedEmail({
+                    email: user.email,
+                    name: user.name || "User",
+                    provider: account.providerId,
+                  });
+                } catch (err) {
                   console.error("[AUTH_HOOK] Account linked email error:", err);
                   Sentry.captureException(
                     err instanceof Error ? err : new Error(String(err)),
                     { tags: { subsystem: "auth" }, level: "warning" },
                   );
-                });
+                }
               }
             } catch (error) {
               console.error("[AUTH_HOOK] account.create.after error:", error);
