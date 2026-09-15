@@ -55,10 +55,13 @@ import {
 } from "@/hooks/scheduling/useScheduling";
 import { cn } from "@/utils/tailwind";
 
-// Slot with tentative status for reschedule visibility
+// Slot with tentative status for reschedule visibility. completionStatus
+// separates a fresh hold (tentative + SCHEDULED) from a reschedule release
+// (tentative + RESCHEDULED) — only the latter is "needing a new time".
 interface RequestedSlot {
   startsAt: string;
   isTentative: boolean;
+  completionStatus?: string | null;
 }
 
 interface Request {
@@ -422,14 +425,18 @@ function formatRelativeTime(at: Date): string {
 }
 
 function RescheduleBadge({ request }: { request: Request }) {
-  const tentativeSlots = request.tentativeSlotCount ?? 0;
+  // Only actual reschedule releases badge. A fresh REQUEST_SUBMITTED hold is
+  // tentative too, but those times ARE the request — badging them "Full
+  // reschedule" sent consultants hunting for a reschedule that never happened
+  // (E2E on preview #1682).
+  const rescheduledSlots = request.rescheduledSlotCount ?? 0;
   const totalSlots = request.totalSlotCount;
-  if (tentativeSlots === 0 || totalSlots === undefined) return null;
+  if (rescheduledSlots === 0 || totalSlots === undefined) return null;
 
-  const tentative = sessionsFromSlots(request, tentativeSlots);
+  const moved = sessionsFromSlots(request, rescheduledSlots);
   const total = sessionsFromSlots(request, totalSlots);
 
-  if (tentativeSlots === totalSlots) {
+  if (rescheduledSlots === totalSlots) {
     return (
       <Badge
         variant="secondary"
@@ -447,7 +454,7 @@ function RescheduleBadge({ request }: { request: Request }) {
       className="gap-1 border-amber-500/40 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
     >
       <AlertTriangle className="h-3 w-3" />
-      {tentative} of {total} need{tentative === 1 ? "s" : ""} a new time
+      {moved} of {total} need{moved === 1 ? "s" : ""} a new time
     </Badge>
   );
 }
@@ -497,9 +504,10 @@ function StoredTimes({ request }: { request: Request }) {
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
             )}
             <span>{formatDateTime(slot.startsAt)}</span>
-            {slot.isTentative && (
-              <span className="sr-only">(needs rescheduling)</span>
-            )}
+            {slot.isTentative &&
+              slot.completionStatus === "RESCHEDULED" && (
+                <span className="sr-only">(needs rescheduling)</span>
+              )}
           </div>
         ))}
         {hidden > 0 && (
@@ -620,6 +628,7 @@ export function RequestSchedulingTab({
               requestedSlots: slots.map((slot) => ({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
+                completionStatus: slot.completionStatus ?? null,
               })),
               status: consultation.status,
               requiredSlots: Math.ceil(
@@ -679,6 +688,7 @@ export function RequestSchedulingTab({
               requestedSlots: allSlots.map((slot) => ({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
+                completionStatus: slot.completionStatus ?? null,
               })),
               status: subscription.status,
               // When rescheduling (tentative slots exist), only require replacing those slots
@@ -1322,14 +1332,15 @@ export function RequestSchedulingTab({
           }
           confirming={respondInFlight}
           rescheduleNeedsAllocator={
-            // A reschedule without an answerable consultee proposal cannot
-            // confirm its stored times (they are the times being moved away
-            // from) — the dialog shows allocator guidance instead of a
-            // confirm button that the server would always refuse. An
-            // ANSWERABLE proposal still confirms here: its times are the
-            // proposed replacements, accepted via respond (#1163).
+            // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
+            // the stored times un-approvable: they are the times being moved
+            // AWAY from, and the server's requested-slots mode refuses them
+            // by design. A fresh REQUEST_SUBMITTED hold is tentative too, but
+            // its times ARE the request — gating on tentativeSlotCount
+            // blocked every fresh "Use Requested Times" approval (E2E #1682).
+            // Mirrors the row's own button gate (rescheduledSlotCount).
             !!selectedRequestForDialog &&
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0 &&
+            (selectedRequestForDialog.rescheduledSlotCount ?? 0) > 0 &&
             !answerableProposal(selectedRequestForDialog)
           }
           onConfirm={handleRequestedAllocation}
