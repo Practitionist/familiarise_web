@@ -27,10 +27,25 @@
 import { mergeConsecutiveSlots } from "@/utils/scheduling-engine/intervals";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
+import { reconcileOrphanedConfirmations } from "@/scripts/payments/reconcile-orphaned-confirmations";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { payment: { findFirst: jest.fn() } },
+  default: {
+    payment: { findFirst: jest.fn(), findMany: jest.fn() },
+    appointment: { findMany: jest.fn() },
+  },
+}));
+// The #830 sweep's own plumbing; the pin below reads its selector only.
+jest.mock("../../lib/cron/with-cron-lock", () => ({
+  withCronLock: (_k: string, _o: unknown, fn: () => Promise<unknown>) => fn(),
+}));
+jest.mock("../../lib/db/serializable-retry", () => ({
+  withSerializableRetry: (fn: () => Promise<unknown>) => fn(),
+}));
+jest.mock("../../lib/payments/webhooks/ensure-channels", () => ({
+  ensureChannelsForAppointment: jest.fn(),
 }));
 // handlers.ts pulls heavy transitive deps; stub everything the confirm path
 // doesn't exercise.
@@ -120,8 +135,15 @@ describe("#788 → #1320 — mergeConsecutiveSlots merges across rows and keeps 
 // #827 — confirm-time double-booking guard
 // ---------------------------------------------------------------------------
 describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
-  function mockTx(opts: { conflict: boolean }) {
+  function mockTx(opts: { conflict: boolean; alreadyRecorded?: boolean }) {
     const slotUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
+    const slotFindMany = jest.fn().mockResolvedValue([
+      {
+        id: "slot-1",
+        startsAt: new Date("2026-06-26T15:00:00Z"),
+        endsAt: new Date("2026-06-26T16:00:00Z"),
+      },
+    ]);
     const conflictFindFirst = jest
       .fn()
       .mockResolvedValue(
@@ -129,6 +151,7 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       );
     return {
       slotUpdateMany,
+      slotFindMany,
       conflictFindFirst,
       tx: {
         appointmentParticipant: {
@@ -152,15 +175,14 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
           }),
         },
         appointmentOccurrence: {
-          findMany: jest.fn().mockResolvedValue([
-            {
-              id: "slot-1",
-              startsAt: new Date("2026-06-26T15:00:00Z"),
-              endsAt: new Date("2026-06-26T16:00:00Z"),
-            },
-          ]),
+          findMany: slotFindMany,
           findFirst: conflictFindFirst,
           updateMany: slotUpdateMany,
+        },
+        systemEvent: {
+          findFirst: jest
+            .fn()
+            .mockResolvedValue(opts.alreadyRecorded ? { id: "se-1" } : null),
         },
         consultation: {
           update: jest.fn().mockResolvedValue({}),
@@ -213,6 +235,49 @@ describe("#827 — confirmExistingAppointment first-confirmed-wins", () => {
       expect.objectContaining({ data: { isTentative: false } }),
     );
     expect(mockSystemError).not.toHaveBeenCalled();
+  });
+
+  // FAMILIARISE_WEB-46 — a reschedule releases a row IN PLACE (isTentative +
+  // RESCHEDULED). The sweep re-selected such appointments every tick, the
+  // confirm re-checked and re-flipped the dead row, and the guard recorded
+  // the same lost race once per tick. Every isTentative read now carries the
+  // shared live fragment, and the system error is recorded once per appointment.
+  it("ignores a rescheduled-away row at every isTentative read and records a lost race once (FAMILIARISE_WEB-46)", async () => {
+    expect(liveOccurrenceWhere).toEqual({
+      deletedAt: null,
+      completionStatus: { notIn: expect.arrayContaining(["RESCHEDULED"]) },
+    });
+    const live = expect.objectContaining(liveOccurrenceWhere);
+
+    const m = mockTx({ conflict: false });
+    await confirmExistingAppointment(m.tx, "appt-1", "booker");
+    expect(m.slotFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: live }),
+    );
+    expect(m.slotUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: live, data: { isTentative: false } }),
+    );
+
+    const blocked = mockTx({ conflict: true, alreadyRecorded: true });
+    await confirmExistingAppointment(blocked.tx, "appt-1", "booker");
+    expect(blocked.slotUpdateMany).not.toHaveBeenCalled();
+    expect(mockSystemError).not.toHaveBeenCalled();
+
+    const paymentFindMany = (
+      prisma as unknown as { payment: { findMany: jest.Mock } }
+    ).payment.findMany;
+    paymentFindMany.mockResolvedValue([]);
+    (
+      prisma as unknown as { appointment: { findMany: jest.Mock } }
+    ).appointment.findMany.mockResolvedValue([]);
+    await reconcileOrphanedConfirmations();
+    expect(paymentFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          appointment: { occurrences: { some: live } },
+        }),
+      }),
+    );
   });
 });
 

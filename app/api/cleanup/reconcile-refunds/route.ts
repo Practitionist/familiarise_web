@@ -26,6 +26,7 @@ export const { GET, POST } = cleanupRoute({
     failedCount: r.failedCount,
     skippedCount: r.skippedCount,
     skippedFenced: r.skippedFenced,
+    failedUnknownId: r.failedUnknownId,
   }),
   // #1458 — a fenced-gateway skip is a healthy run with something an operator
   // should know about: PENDING refunds exist on a rail this deployment does not

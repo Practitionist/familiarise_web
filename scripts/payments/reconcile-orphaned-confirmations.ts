@@ -26,6 +26,7 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -111,8 +112,10 @@ async function reconcileOrphanedConfirmationsUnlocked(
       paymentStatus: "SUCCEEDED",
       updatedAt: { lt: cutoff },
       appointmentId: { not: null },
+      // FAMILIARISE_WEB-46 — a rescheduled-away row keeps isTentative and
+      // would be re-driven every tick; only a live hold is an orphan.
       appointment: {
-        occurrences: { some: { isTentative: true } },
+        occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
       },
     },
     select: { id: true, appointmentId: true, userId: true },
@@ -146,7 +149,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
         where: {
           appointmentId: orphan.appointmentId!,
           isTentative: true,
-          deletedAt: null,
+          ...liveOccurrenceWhere,
         },
       });
       if (remaining === 0) {
@@ -186,7 +189,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
       deletedAt: null,
       createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
       payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
-      occurrences: { none: { isTentative: true, deletedAt: null } },
+      occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
     },
     select: {
       id: true,

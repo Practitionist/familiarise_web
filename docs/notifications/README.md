@@ -30,7 +30,7 @@ graph TD
 ## Core Principles
 
 - **Non-blocking** -- notification calls are wrapped in try-catch and never block the calling operation; Novu failures are logged, while as of #474 a failed Resend transactional send is also persisted to `FailedEmail` and replayed by a retry worker rather than merely logged
-- **Graceful degradation** -- if `NOVU_SECRET_KEY` or `RESEND_API_KEY` is missing, functions return `{success: false}` instead of throwing
+- **Graceful degradation** -- if the Novu secret key for the current environment (`NOVU_DEVELOPMENT_KEY` or `NOVU_PRODUCTION_KEY`) or `RESEND_API_KEY` is missing, functions return `{success: false}` instead of throwing
 - **Singleton clients** -- both Resend and Novu use lazy-initialized singleton instances
 - **Subscriber = User** -- Novu `subscriberId` is the Prisma `User.id`
 - **67 notification events in 16 Novu workflow families** -- each event has a typed payload; the family is the Novu workflow and carries the event as `payload.event`

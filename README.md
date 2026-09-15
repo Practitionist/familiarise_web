@@ -203,7 +203,8 @@ Create a `.env` file based on `.env.sample`. Never commit `.env` or secrets to t
 
 | Variable | Description | Notes |
 |----------|-------------|-------|
-| `NOVU_SECRET_KEY` | Novu notification API key | From Novu dashboard |
+| `NOVU_DEVELOPMENT_KEY` | Novu secret key for the Development environment; used locally and on every non-production deploy | From Novu dashboard (Development → API Keys) |
+| `NOVU_PRODUCTION_KEY` | Novu secret key for the Production environment; used only where `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production` (the Netlify production context and the GitHub Actions cron twins) | From Novu dashboard (Production → API Keys) |
 | `NEXT_PUBLIC_NOVU_APP_ID` | Novu application ID | Public, safe to expose |
 | `RESEND_API_KEY` | Resend email API key | For transactional emails |
 
