@@ -479,7 +479,8 @@ flowchart LR
 | `CONTACT_INBOX_ADDRESS`              | No       | `/contactus` delivery inbox (defaults to the support mailbox)                        |
 | `BILLING_EMAIL`                      | No       | Supplier contact on tax invoices (defaults to the support mailbox)                   |
 | `NEXT_PUBLIC_COMPANY_POSTAL_ADDRESS` | No       | Optional postal line in `EmailFooter`                                                |
-| `NOVU_SECRET_KEY`                    | Yes      | Novu server-side SDK                                                                 |
+| `NOVU_DEVELOPMENT_KEY`               | Yes      | Novu server-side SDK, Development environment (local, previews)                      |
+| `NOVU_PRODUCTION_KEY`                | Yes      | Novu server-side SDK, Production environment (production only)                       |
 | `NEXT_PUBLIC_NOVU_APP_ID`            | Yes      | Novu React SDK (client-side)                                                         |
 | `NEXT_PUBLIC_APP_URL`                | Yes      | Email link URLs, unsubscribe URLs                                                    |
 | `CRON_SECRET`                        | Yes      | Auth for cron job endpoints                                                          |

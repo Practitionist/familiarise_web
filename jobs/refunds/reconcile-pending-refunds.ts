@@ -34,6 +34,7 @@ function outputToGitHubActions(result: RefundReconciliationResult): void {
       // #1458 — surfaced as its own output so a workflow can alert on refunds
       // stranded behind a gateway fence without parsing the log.
       `skipped_fenced=${result.skippedFenced}`,
+      `failed_unknown_id=${result.failedUnknownId}`,
       `success=${result.success}`,
     ].join("\n");
 

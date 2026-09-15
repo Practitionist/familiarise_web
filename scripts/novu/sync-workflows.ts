@@ -1,19 +1,26 @@
 /**
- * Write lib/novu/templates to the Novu environment NOVU_SECRET_KEY points at.
+ * Write lib/novu/templates to one Novu environment: Development by default
+ * (NOVU_DEVELOPMENT_KEY), Production with `--env production`
+ * (NOVU_PRODUCTION_KEY).
  *
  *   npm run novu:sync -- --dry-run      print the plan, write nothing
  *   npm run novu:check                  exit 1 if anything would change
  *   npm run novu:sync -- --only <id>    one family
  *   npm run novu:sync                   apply
+ *   npm run novu:sync -- --env production   apply to Production
  *
  * One workflow per FAMILY (lib/novu/templates/families.ts); the 19 legacy
  * workflows carry event ids as their workflow id and are retired first, since
- * the plan's 20-workflow cap is what forced the families. Both local and
- * production use the Development environment, so an apply is a production
- * operation — run --dry-run first, and never from CI.
+ * the plan's 20-workflow cap is what forced the families. Production serves
+ * familiarisenow.com, so `--env production` is a production operation — run
+ * --dry-run first, and never from CI.
  */
 
 import { Novu } from "@novu/api";
+import {
+  resolveNovuSecretKey,
+  type NovuEnvironment,
+} from "../../lib/novu/secret-key";
 import type {
   CreateWorkflowDto,
   InAppStepUpsertDto,
@@ -156,9 +163,17 @@ async function apply(novu: Novu, p: Plan, want?: CreateWorkflowDto) {
   }
 }
 
+/** `--env production` targets Production; anything else is Development. */
+function targetEnvironment(): NovuEnvironment {
+  const i = process.argv.indexOf("--env");
+  return i !== -1 && process.argv[i + 1] === "production"
+    ? "production"
+    : "development";
+}
+
 async function main() {
-  const secretKey = process.env.NOVU_SECRET_KEY;
-  if (!secretKey) throw new Error("NOVU_SECRET_KEY is not set");
+  const { name, key: secretKey } = resolveNovuSecretKey(targetEnvironment());
+  if (!secretKey) throw new Error(`${name} is not set`);
   const novu = new Novu({ secretKey });
 
   const families = FAMILIES.filter((f) => !ONLY || f.id === ONLY);

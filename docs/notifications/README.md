@@ -30,7 +30,7 @@ graph TD
 ## Core Principles
 
 - **Non-fatal** -- notification calls are wrapped in try-catch and a failure never rolls back the persisted business work; Novu failures are logged, while a failed or unconfigured Resend transactional send is persisted to `FailedEmail` and replayed by a retry worker rather than merely logged. Some callers still await the send (`lib/auth.ts` hooks) and one surfaces the failure to the caller (`app/api/contact/route.ts` answers 502 so the visitor can retry), so "non-fatal" does not mean "fire-and-forget"
-- **A missing key dead-letters, it does not silently drop** -- `NOVU_SECRET_KEY` missing makes a Novu trigger a no-op; `RESEND_API_KEY` missing or rejected by Resend makes `deliver()` throw `EmailNotConfiguredError` inside its own try block, so the message is captured to `FailedEmail` and paged in Sentry rather than dropped
+- **A missing key dead-letters, it does not silently drop** -- a missing Novu secret key for the current environment (`NOVU_DEVELOPMENT_KEY` or `NOVU_PRODUCTION_KEY`) makes a Novu trigger a no-op; `RESEND_API_KEY` missing or rejected by Resend makes `deliver()` throw `EmailNotConfiguredError` inside its own try block, so the message is captured to `FailedEmail` and paged in Sentry rather than dropped
 - **Singleton clients** -- both Resend and Novu use lazy-initialized singleton instances
 - **Subscriber = User** -- Novu `subscriberId` is the Prisma `User.id`
 - **67 notification events in 16 Novu workflow families** -- each event has a typed payload; the family is the Novu workflow and carries the event as `payload.event`; every family is in-app only, so Novu never carries an email
