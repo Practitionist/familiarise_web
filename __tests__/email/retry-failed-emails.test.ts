@@ -42,6 +42,9 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
     nextRetryAt: new Date("2026-06-16T11:59:00Z"),
     lastError: "rate limited",
     sentAt: null,
+    // #1654 — the outbox columns; a replayed dead-letter row has neither yet.
+    resendId: null,
+    entityRef: null,
     createdAt: new Date("2026-06-16T11:58:00Z"),
     updatedAt: new Date("2026-06-16T11:58:00Z"),
     ...overrides,
