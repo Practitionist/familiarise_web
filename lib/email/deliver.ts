@@ -20,6 +20,9 @@ export interface RenderedEmail {
   html: string;
   text?: string;
   replyTo?: string;
+  // #1653 — List-Unsubscribe and friends. Sent inline only: the row does not
+  // persist them, so the relay's resend of a staged row carries none.
+  headers?: Record<string, string>;
 }
 
 export type DeliverResult =

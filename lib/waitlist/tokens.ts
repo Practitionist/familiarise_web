@@ -36,10 +36,24 @@ function getHmacSecret(): string {
   );
 }
 
-function sign(purpose: TokenPurpose, email: string, issuedAt: number): string {
+/**
+ * #1653 — the one HMAC every stateless link on the platform signs with, so
+ * `lib/email/unsubscribe.ts` shares the secret and the purpose binding
+ * instead of adding a second env var. The subject is signed as given; the
+ * newsletter's `sign()` lowercases the email before calling this.
+ */
+export function signToken(
+  purpose: string,
+  subject: string,
+  issuedAt: number,
+): string {
   return createHmac("sha256", getHmacSecret())
-    .update(`${purpose}|${email.toLowerCase()}|${issuedAt}`)
+    .update(`${purpose}|${subject}|${issuedAt}`)
     .digest("hex");
+}
+
+function sign(purpose: TokenPurpose, email: string, issuedAt: number): string {
+  return signToken(purpose, email.toLowerCase(), issuedAt);
 }
 
 /** Unsubscribe tokens are timeless, so they sign issuedAt = 0. */
@@ -70,7 +84,7 @@ export function verifyConfirmToken(
   return safeEquals(token, () => generateConfirmToken(email, issuedAt));
 }
 
-function safeEquals(token: string, expected: () => string): boolean {
+export function safeEquals(token: string, expected: () => string): boolean {
   try {
     const want = expected();
     if (token.length !== want.length) return false;

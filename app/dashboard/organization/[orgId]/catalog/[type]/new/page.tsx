@@ -1,10 +1,7 @@
 "use client";
 
 import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
-import {
-  DashboardContent,
-  DashboardHeader,
-} from "@/components/dashboard/PageScaffold";
+import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { OfferingEditorContainer } from "@/components/offerings/editor/OfferingEditorContainer";
 import { OFFERING_MANIFESTS } from "@/components/offerings/editor/manifests";
@@ -34,10 +31,6 @@ export default function NewOrgOfferingPage() {
 
   return (
     <>
-      <DashboardHeader
-        title={`New ${OFFERING_MANIFESTS[type].noun}`}
-        subtitle="Save a draft at any point; publishing needs the essentials filled in."
-      />
       <DashboardContent className="content-flush-bottom flex flex-1 flex-col">
         <DashboardErrorBoundary>
           {expertId ? (

@@ -29,6 +29,7 @@
     "db:seed:validation": "npx tsx prisma/seedFiles/validation/impossible-cases.ts",
     "db:studio": "prisma studio",
     "dev": "next dev",
+    "email:dev": "email dev --dir emails",
     "fix:imports": "eslint --fix . --rule 'unused-imports/no-unused-imports: error'",
     "format:check": "prettier --check .",
     "format:write": "prettier --write .",
