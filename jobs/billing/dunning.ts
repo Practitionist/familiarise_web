@@ -159,7 +159,7 @@ export async function runDunning(): Promise<DunningStats> {
     stats.markedOverdue += 1;
 
     // Fire-and-forget notify outside the tx — committed state, no DB writes.
-    void notifyOrgInvoiceOverdue(inv.organizationId, {
+    await notifyOrgInvoiceOverdue(inv.organizationId, {
       invoiceNumber: inv.invoiceNumber,
       orgName: inv.organization.name,
       totalPaise: inv.totalPaise,
@@ -230,7 +230,7 @@ export async function runDunning(): Promise<DunningStats> {
     if (!claimed) continue;
     stats.remindersSent += 1;
 
-    void notifyOrgInvoiceOverdue(inv.organizationId, {
+    await notifyOrgInvoiceOverdue(inv.organizationId, {
       invoiceNumber: inv.invoiceNumber,
       orgName: inv.organization.name,
       totalPaise: inv.totalPaise,

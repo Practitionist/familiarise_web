@@ -394,7 +394,7 @@ export async function refundRemovedAttendeeSeat(args: {
     // licence — the member never paid, so telling them a refund is coming is
     // simply false.
     if (result.rail === "GATEWAY") {
-      void notifyRefundProcessed(args.attendeeUserId, {
+      await notifyRefundProcessed(args.attendeeUserId, {
         ...notificationScope(payment.organizationId),
         amount: amountPaise,
         currency: payment.currency,

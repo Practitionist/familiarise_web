@@ -101,10 +101,12 @@ export async function POST(request: NextRequest) {
     // Announcements fan out to every user (`notifyGeneralAnnouncement`), so
     // BACKOFFICE_PERMISSIONS makes them ADMIN-only. The nav already hid the
     // surface from staff; the route accepted the call regardless.
-    if (!hasBackofficePermission(
-      session.user.role as UserRole,
-      "announcements.manage",
-    )) {
+    if (
+      !hasBackofficePermission(
+        session.user.role as UserRole,
+        "announcements.manage",
+      )
+    ) {
       return NextResponse.json(
         { success: false, error: "Forbidden" },
         { status: 403 },
@@ -150,7 +152,7 @@ export async function POST(request: NextRequest) {
     revalidateTag(ANNOUNCEMENTS_TAG);
 
     // Fire-and-forget: broadcast announcement to all subscribers via Novu
-    void notifyGeneralAnnouncement({
+    await notifyGeneralAnnouncement({
       title: announcement.title,
       content: announcement.content,
       linkUrl: announcement.linkUrl || undefined,

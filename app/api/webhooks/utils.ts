@@ -15,6 +15,8 @@ import {
   notifyRefundProcessed,
   notifyDisputeCreated,
   notifyDisputeResolved,
+  attemptTrigger,
+  type StagedTrigger,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import {
@@ -73,6 +75,15 @@ export class DeferSignal {
  * value. Producers (initiateTopUp, invoice-pay route) set
  * `notes.organizationId` directly.
  */
+/**
+ * #1654 — the post-commit half of a bell staged inside a transaction. A
+ * function parameter, because the variable's only assignment happens inside
+ * the tx callback, which TS's initializer narrowing cannot see past.
+ */
+async function attemptStaged(staged: StagedTrigger | null): Promise<void> {
+  if (staged) await attemptTrigger(staged);
+}
+
 export async function handleOrgPaymentSuccess(
   notes: Record<string, string>,
   razorpayPaymentId?: string,
@@ -619,7 +630,9 @@ export async function handleRefundCreated(
   // readyAmount and over-paying the next payout batch. All gateway lookups
   // are hoisted into the dispatcher before this call, so no network I/O sits
   // inside the tx.
-  return await withSerializableRetry(() =>
+  // #1654 — the bell is staged inside the tx and sent only after COMMIT.
+  let stagedNotification: StagedTrigger | null = null;
+  const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
     // Find the payment (B2C appointment path).
@@ -1156,21 +1169,28 @@ export async function handleRefundCreated(
       payment.amount,
     );
 
-    // --- Novu notification (fire-and-forget) ---
-    void Promise.resolve(notifyRefundProcessed(payment.userId, {
-      // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
-      // inherits the org-ness of the payment it reverses. dashboardUrl stays a
-      // router bounce deliberately: this goes to the PAYER, and an org billing
-      // page is not readable by a LEARNER whose booking was org-sponsored.
-      ...notificationScope(payment.organizationId),
-      amount,
-      currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
-    })).catch(() => {});
+    // --- Novu notification (staged in the tx, attempted after commit) ---
+    const notification = await notifyRefundProcessed(
+      payment.userId,
+      {
+        // Payment.organizationId is the org tag (#PaymentOrgTag), so a refund
+        // inherits the org-ness of the payment it reverses. dashboardUrl stays a
+        // router bounce deliberately: this goes to the PAYER, and an org billing
+        // page is not readable by a LEARNER whose booking was org-sponsored.
+        ...notificationScope(payment.organizationId),
+        amount,
+        currency,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      },
+      { tx, entityRef: `payment:${payment.id}` },
+    );
+    stagedNotification = notification?.staged ?? null;
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
+  await attemptStaged(stagedNotification);
+  return result;
 }
 
 // ============================================================================
@@ -1250,7 +1270,9 @@ export async function handleDisputeCreated(
   // Serializable) reads the same dispute rows. Under READ COMMITTED both could
   // pass their pre-checks against a stale snapshot and commit; under SSI the
   // rw-antidependency aborts one and the retry sees the winner's effect.
-  return await withSerializableRetry(() =>
+  // #1654 — the bell is staged inside the tx and sent only after COMMIT.
+  let stagedNotification: StagedTrigger | null = null;
+  const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         // #1353 — either id resolves the disputed payment: the order id when
@@ -1368,19 +1390,27 @@ export async function handleDisputeCreated(
           );
         }
 
-        // --- Novu notification (fire-and-forget) ---
-        void Promise.resolve(notifyDisputeCreated([payment.userId], {
-          disputeId,
-          amount,
-          currency,
-          reason,
-          status: createdStatus ?? "NEEDS_RESPONSE",
-          dashboardUrl: `${getAppUrl()}/dashboard`,
-        })).catch(() => {});
+        // --- Novu notification (staged in the tx, attempted after commit) ---
+        const notifications = await notifyDisputeCreated(
+          [payment.userId],
+          {
+            disputeId,
+            amount,
+            currency,
+            reason,
+            status: createdStatus ?? "NEEDS_RESPONSE",
+            dashboardUrl: `${getAppUrl()}/dashboard`,
+          },
+          { tx, entityRef: `dispute:${disputeId}` },
+        );
+        // Optional chaining: the barrel is stubbed to `undefined` in tests.
+        stagedNotification = notifications?.[0]?.staged ?? null;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
     ),
   );
+  await attemptStaged(stagedNotification);
+  return result;
 }
 
 /**
@@ -1399,6 +1429,8 @@ export async function handleDisputeUpdated(
     amountPaise: number;
     earnings: number;
   } | null = null;
+  // #1654 — the bell is staged inside the tx and sent only after COMMIT.
+  let stagedNotification: StagedTrigger | null = null;
 
   // #785 — Serializable so SSI detects a refund racing this lost-chargeback on
   // the same payment: refundPayment (also Serializable) reads disputes + writes
@@ -1749,19 +1781,27 @@ export async function handleDisputeUpdated(
         });
 
         if (disputePayment) {
-          void Promise.resolve(notifyDisputeResolved([disputePayment.userId], {
-            disputeId,
-            amount: dispute.amountPaise,
-            currency: dispute.currency,
-            reason: dispute.reason || undefined,
-            status: mappedStatus,
-            dashboardUrl: `${getAppUrl()}/dashboard`,
-          })).catch(() => {});
+          const notifications = await notifyDisputeResolved(
+            [disputePayment.userId],
+            {
+              disputeId,
+              amount: dispute.amountPaise,
+              currency: dispute.currency,
+              reason: dispute.reason || undefined,
+              status: mappedStatus,
+              dashboardUrl: `${getAppUrl()}/dashboard`,
+            },
+            { tx, entityRef: `dispute:${disputeId}` },
+          );
+          stagedNotification = notifications?.[0]?.staged ?? null;
         }
       }
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
   );
+
+  // #1654 — post-commit inline attempt; a timeout leaves the row for the drain.
+  await attemptStaged(stagedNotification);
 
   // Post-commit dispatch: the reversal rows are durable at this point, so
   // exactly one page reaches ops per successful lost-dispute transition. An

@@ -6,8 +6,8 @@
  * running six times slower than their declared cadence. This function POSTs
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
  * sweeps, since #1633 the ledger reconcile backstop and, since #1654, the
- * email outbox relay on every third tick) instead of waiting
- * on Actions. It never writes money state itself: every
+ * Novu outbox relay every tick and the email outbox relay on every third
+ * tick) instead of waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -37,6 +37,8 @@ const TARGETS = [
   "reconcile-ledgers",
   // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
   "retry-failed-emails",
+  // #1654 — the Novu outbox relay, every tick.
+  "drain-notification-outbox",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -58,6 +60,9 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
   // fits its timeout; the Actions run drains the rest unbounded.
   "retry-failed-emails": 20,
+  // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
+  // rows stays inside the target timeout even when Novu is slow.
+  "drain-notification-outbox": 20,
 };
 
 /**
@@ -91,6 +96,7 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-ledgers": 20_000,
   // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
   "retry-failed-emails": 20_000,
+  "drain-notification-outbox": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

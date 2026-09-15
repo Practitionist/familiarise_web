@@ -186,7 +186,7 @@ export async function acceptProposal(args: {
       const userIds = [recipient, other].filter(
         (id): id is string => !!id && id !== recipient,
       );
-      void notifyAppointmentRescheduled([recipient, ...userIds], {
+      await notifyAppointmentRescheduled([recipient, ...userIds], {
         ...notificationScope(appt.organizationId),
         appointmentType: appt.appointmentType,
         consultantName: consultantUser.name || "Consultant",
@@ -283,7 +283,7 @@ export async function declineProposal(args: {
       const consultantUser = isConsultation
         ? side.consultationPlan.consultantProfile.user
         : side.subscriptionPlan.consultantProfile.user;
-      void notifyAppointmentRescheduled(
+      await notifyAppointmentRescheduled(
         [detail.initiatedById, consultantUser.id, side.requestedBy.user.id].filter(
           (id, i, arr) => arr.indexOf(id) === i,
         ),

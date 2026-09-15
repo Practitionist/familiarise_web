@@ -60,6 +60,7 @@ import {
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
 import {
+  attemptTrigger,
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyAppointmentBooked,
@@ -1292,45 +1293,38 @@ export async function handlePaymentFailure(paymentIntentId: string) {
     // after it commits, below.
     const failedEmail = await stagePaymentFailedEmail(tx, payment);
 
-    // --- Novu notification (fire-and-forget) ---
-    try {
-      const consultantUser =
-        payment.appointment?.consultation?.consultationPlan?.consultantProfile
-          ?.user ||
-        payment.appointment?.subscription?.subscriptionPlan?.consultantProfile
-          ?.user;
+    // --- Novu notification (#1654: staged in the tx, attempted after commit) ---
+    const consultantUser =
+      payment.appointment?.consultation?.consultationPlan?.consultantProfile
+        ?.user ||
+      payment.appointment?.subscription?.subscriptionPlan?.consultantProfile
+        ?.user;
 
-      const consultantName = consultantUser?.name || "Consultant";
-      const appointmentType =
-        payment.appointment?.appointmentType || "CONSULTATION";
+    const consultantName = consultantUser?.name || "Consultant";
+    const appointmentType =
+      payment.appointment?.appointmentType || "CONSULTATION";
 
-      void Promise.resolve(
-        notifyPaymentFailed(payment.userId, {
-          amount: payment.amount,
-          currency: payment.currency,
-          consultantName,
-          appointmentType,
-          failureReason:
-            payment.description || "Payment could not be processed",
-          retryUrl: `${getAppUrl()}/dashboard`,
-        }),
-      ).catch(() => {});
-    } catch (novuError) {
-      reportSentryError(novuError, { subsystem: "payments", level: "warning" });
-      console.error(
-        `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
-        novuError,
-      );
-    }
+    const bell = await notifyPaymentFailed(
+      payment.userId,
+      {
+        amount: payment.amount,
+        currency: payment.currency,
+        consultantName,
+        appointmentType,
+        failureReason: payment.description || "Payment could not be processed",
+        retryUrl: `${getAppUrl()}/dashboard`,
+      },
+      { tx, entityRef: `payment:${payment.id}` },
+    );
 
     console.log(
       `📧 Payment failure notification staged for payment ${paymentIntentId}`,
     );
-    return { failedEmail };
+    return { failedEmail, bell: bell?.staged ?? null };
   });
 
-  // #1654 — the inline fast path, after the commit: a timeout leaves the row
-  // PENDING for the relay. `attempt` never throws.
+  // #1654 — the inline fast path, after the commit: a timeout leaves the rows
+  // PENDING for the relays. Neither attempt throws.
   if (staged?.failedEmail) {
     await attemptEmail(
       staged.failedEmail.staged,
@@ -1339,6 +1333,7 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
     );
   }
+  if (staged?.bell) await attemptTrigger(staged.bell);
 }
 
 // ============================================================================

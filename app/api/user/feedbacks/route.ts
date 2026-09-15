@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
       where: { role: { in: ["STAFF", "ADMIN"] } },
       select: { id: true },
     });
-    void notifyFeedbackReceived(
+    await notifyFeedbackReceived(
       adminUsers.map((u) => u.id),
       {
         feedbackId: feedback.id,

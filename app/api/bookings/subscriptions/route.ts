@@ -365,7 +365,7 @@ export async function PATCH(request: NextRequest) {
         // Fire-and-forget: notify consultee that subscription started
         const consulteeUserId = subscription.requestedBy?.user?.id;
         if (consulteeUserId) {
-          void notifySubscriptionStarted(consulteeUserId, {
+          await notifySubscriptionStarted(consulteeUserId, {
             subscriptionId: subscription.id,
             planTitle: subscription.subscriptionPlan?.title || "Subscription",
             consultantName:
@@ -386,7 +386,7 @@ export async function PATCH(request: NextRequest) {
           (id): id is string => !!id,
         );
         if (userIds.length > 0) {
-          void notifySubscriptionCancelled(userIds, {
+          await notifySubscriptionCancelled(userIds, {
             subscriptionId: subscription.id,
             planTitle: subscription.subscriptionPlan?.title || "Subscription",
             consultantName:
