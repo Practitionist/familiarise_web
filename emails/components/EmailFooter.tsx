@@ -4,10 +4,14 @@ import { getAppUrl } from "@/lib/url";
 import { companyPostalAddress, supportEmail } from "@/lib/email/config";
 
 interface EmailFooterProps {
-  /** Newsletter mail only: renders an "Unsubscribe" link first. */
+  /** Newsletter and lifecycle mail: renders an "Unsubscribe" link first. */
   unsubscribeLink?: string;
   /** Adds a "Questions?" line pointing at the support mailbox. */
   showSupport?: boolean;
+  /** #1653 — renders "Manage email preferences" pointing at the profile. */
+  preferencesLink?: string;
+  /** #1653 — says the notice cannot be turned off and drops the unsubscribe link. */
+  requiredNotice?: boolean;
 }
 
 // #1298 — one footer for every template; the fake postal address is gone and
@@ -15,6 +19,8 @@ interface EmailFooterProps {
 export const EmailFooter = ({
   unsubscribeLink,
   showSupport = false,
+  preferencesLink,
+  requiredNotice = false,
 }: EmailFooterProps) => {
   const appUrl = getAppUrl();
   const postalAddress = companyPostalAddress();
@@ -33,11 +39,24 @@ export const EmailFooter = ({
           </Link>
         </Text>
       )}
+      {requiredNotice && (
+        <Text style={footerText}>
+          This is a required account notice and cannot be turned off.
+        </Text>
+      )}
       <Text style={footerLinks}>
-        {unsubscribeLink && (
+        {unsubscribeLink && !requiredNotice && (
           <>
             <Link href={unsubscribeLink} style={link}>
               Unsubscribe
+            </Link>{" "}
+            •{" "}
+          </>
+        )}
+        {preferencesLink && (
+          <>
+            <Link href={preferencesLink} style={link}>
+              Manage email preferences
             </Link>{" "}
             •{" "}
           </>

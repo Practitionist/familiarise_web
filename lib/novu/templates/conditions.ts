@@ -16,7 +16,8 @@
 
 import type { PreferenceCategory } from "./types";
 
-const CATEGORY_FLAG: Record<PreferenceCategory, string> = {
+/** The `subscriber.data` flag a category is written to; the subscriber mirror uses the same names (#1653). */
+export const CATEGORY_FLAG: Record<PreferenceCategory, string> = {
   appointments: "categoryAppointments",
   payments: "categoryPayments",
   subscriptions: "categorySubscriptions",

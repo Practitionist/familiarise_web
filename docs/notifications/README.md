@@ -50,6 +50,9 @@ graph TD
 | `lib/email/index.ts`                | Eleven Resend sender functions (welcome, password reset, verification, account linked, payment link/success/failed, org invitation, waitlist confirm/welcome, contact inquiry); `@/lib/email` still resolves here |
 | `lib/email/config.ts`               | `SENDERS` getters and `supportEmail()`/`contactInboxAddress()`/`billingEmail()`/`companyPostalAddress()`, all read from env at call time                                                                          |
 | `lib/email/deliver.ts`              | `deliver()`, the single send core: content-hash idempotency key, `EmailNotConfiguredError`, `recordFailedEmail`                                                                                                   |
+| `lib/email/preferences.ts`          | `loadEmailRecipients()` and `isEmailAllowed()`, the send-time preference gate; `EMAIL_CATEGORY_COLUMN`, the one category → column map (#1653)                                                                     |
+| `lib/email/unsubscribe.ts`          | Timeless HMAC unsubscribe tokens, `buildEmailUnsubscribeUrl()` and the RFC 8058 `listUnsubscribeHeaders()` (#1653)                                                                                                |
+| `lib/email/send-to-recipients.ts`   | `sendToRecipients()` fan-out over gated recipients, plus `stageToRecipients()`/`attemptStaged()` for a transaction owner (#1653)                                                                                  |
 | `lib/email/idempotency.ts`          | Derives the `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>` idempotency key shared by a sender and the retry worker                                                                                               |
 | `lib/email/classify.ts`             | Classifies a Resend failure as terminal (dead key, unverified domain, missing key) or transient                                                                                                                   |
 | `lib/email/render.ts`               | `renderEmail()` — renders a React Email element to `{ html, text }`                                                                                                                                               |
@@ -64,31 +67,35 @@ graph TD
 
 ### API Routes
 
-| Route                   | Method | Purpose                                                       |
-| ----------------------- | ------ | ------------------------------------------------------------- |
-| `/api/novu/subscriber`  | POST   | Syncs authenticated user to Novu as subscriber                |
-| `/api/novu/preferences` | GET    | Returns user's notification preferences (with defaults)       |
-| `/api/novu/preferences` | PUT    | Updates notification preferences, syncs channel prefs to Novu |
+| Route                            | Method | Purpose                                                                                        |
+| -------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| `/api/novu/subscriber`           | POST   | Syncs authenticated user to Novu as subscriber                                                 |
+| `/api/novu/preferences`          | GET    | Returns user's notification preferences (with defaults)                                        |
+| `/api/novu/preferences`          | PUT    | Updates notification preferences, syncs channel prefs to Novu                                  |
+| `/api/notifications/unsubscribe` | GET    | Verifies the footer link's token and redirects to `/email/unsubscribe`; writes nothing (#1653) |
+| `/api/notifications/unsubscribe` | POST   | RFC 8058 one-click: sets `emailEnabled = false` and mirrors the flags to Novu (#1653)          |
 
 ### Email Templates (`emails/`)
 
 The table below lists the ten React Email templates plus the one sender that builds inline HTML instead of a template; `components/EmailLogo.tsx` and `components/EmailFooter.tsx` are shared building blocks each template composes rather than templates of their own.
 
-| Template                               | Category      | Sent Via                                                                                                    |
-| -------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| `components/EmailLogo.tsx`             | Shared        | Absolute logo URL via `getAppUrl()`, composed into every template                                           |
-| `components/EmailFooter.tsx`           | Shared        | Copyright year, Privacy/Terms links, optional postal line, optional unsubscribe link, optional support line |
-| `auth/WelcomeEmail.tsx`                | Auth          | `lib/email/index.ts` → `sendWelcomeEmail`                                                                   |
-| `auth/PasswordResetEmail.tsx`          | Auth          | `lib/email/index.ts` → `sendPasswordResetEmail`                                                             |
-| `auth/VerificationEmail.tsx`           | Auth          | `lib/email/index.ts` → `sendVerificationEmail`                                                              |
-| `auth/AccountLinkedEmail.tsx`          | Auth          | `lib/email/index.ts` → `sendAccountLinkedEmail`                                                             |
-| `payments/PaymentLinkEmail.tsx`        | Payments      | `lib/email/index.ts` → `sendPaymentLinkEmail`                                                               |
-| `payments/PaymentSuccessEmail.tsx`     | Payments      | `lib/email/index.ts` → `sendPaymentSuccessEmail`                                                            |
-| `payments/PaymentFailedEmail.tsx`      | Payments      | `lib/email/index.ts` → `sendPaymentFailedEmail`                                                             |
-| `organizations/OrgInvitationEmail.tsx` | Organizations | `lib/email/index.ts` → `sendOrgInvitationEmail` (no caller today)                                           |
-| `waitlist/WaitlistConfirmEmail.tsx`    | Newsletter    | `lib/email/index.ts` → `sendWaitlistConfirmEmail`                                                           |
-| `waitlist/WaitlistWelcomeEmail.tsx`    | Newsletter    | `lib/email/index.ts` → `sendWaitlistWelcomeEmail`                                                           |
-| Inline HTML (no `.tsx` file)           | Contact       | `lib/email/index.ts` → `sendContactInquiryEmail`, builds HTML directly instead of rendering a template      |
+| Template                               | Category      | Sent Via                                                                                                                                                                              |
+| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `components/EmailLogo.tsx`             | Shared        | Absolute logo URL via `getAppUrl()`, composed into every template                                                                                                                     |
+| `components/EmailFooter.tsx`           | Shared        | Copyright year, Privacy/Terms links, optional postal line, optional unsubscribe link, optional support line, optional preferences link and required-notice line (#1653)               |
+| `components/EmailLayout.tsx`           | Shared        | The frame new lifecycle templates render inside: `Html > Head > Preview > Body > Container > EmailLogo > Section > EmailFooter`, taking `unsubscribeUrl` and `requiredNotice` (#1653) |
+| `components/styles.ts`                 | Shared        | The inline style objects (`heading`, `paragraph`, `button`, `divider`, `link`, ...) new templates import instead of re-declaring (#1653)                                              |
+| `auth/WelcomeEmail.tsx`                | Auth          | `lib/email/index.ts` → `sendWelcomeEmail`                                                                                                                                             |
+| `auth/PasswordResetEmail.tsx`          | Auth          | `lib/email/index.ts` → `sendPasswordResetEmail`                                                                                                                                       |
+| `auth/VerificationEmail.tsx`           | Auth          | `lib/email/index.ts` → `sendVerificationEmail`                                                                                                                                        |
+| `auth/AccountLinkedEmail.tsx`          | Auth          | `lib/email/index.ts` → `sendAccountLinkedEmail`                                                                                                                                       |
+| `payments/PaymentLinkEmail.tsx`        | Payments      | `lib/email/index.ts` → `sendPaymentLinkEmail`                                                                                                                                         |
+| `payments/PaymentSuccessEmail.tsx`     | Payments      | `lib/email/index.ts` → `sendPaymentSuccessEmail`                                                                                                                                      |
+| `payments/PaymentFailedEmail.tsx`      | Payments      | `lib/email/index.ts` → `sendPaymentFailedEmail`                                                                                                                                       |
+| `organizations/OrgInvitationEmail.tsx` | Organizations | `lib/email/index.ts` → `sendOrgInvitationEmail` (no caller today)                                                                                                                     |
+| `waitlist/WaitlistConfirmEmail.tsx`    | Newsletter    | `lib/email/index.ts` → `sendWaitlistConfirmEmail`                                                                                                                                     |
+| `waitlist/WaitlistWelcomeEmail.tsx`    | Newsletter    | `lib/email/index.ts` → `sendWaitlistWelcomeEmail`                                                                                                                                     |
+| Inline HTML (no `.tsx` file)           | Contact       | `lib/email/index.ts` → `sendContactInquiryEmail`, builds HTML directly instead of rendering a template                                                                                |
 
 ### Schemas
 
@@ -103,11 +110,13 @@ The table below lists the ten React Email templates plus the one sender that bui
 
 ## Quick Navigation
 
-| I want to...                                          | Go to                                                                                                          |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Understand the dual-layer architecture                | [01-architecture.md](./01-architecture.md)                                                                     |
-| See all 69 events, the 16 families and API endpoints  | [02-workflows-and-api.md](./02-workflows-and-api.md)                                                           |
-| Read the #1298 outage diagnosis and the send-core fix | [06-engineering-log-2026-09-14-email-resend-outage.md](./06-engineering-log-2026-09-14-email-resend-outage.md) |
-| Understand the outbox and Resend-event tables         | [07-schema-reference.md](./07-schema-reference.md)                                                             |
-| Understand the payment system                         | [../payments/architecture.md](../payments/architecture.md)                                                     |
-| Check the database schema                             | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                       |
+| I want to...                                                        | Go to                                                                                                                      |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Understand the dual-layer architecture                              | [01-architecture.md](./01-architecture.md)                                                                                 |
+| See all 69 events, the 16 families and API endpoints                | [02-workflows-and-api.md](./02-workflows-and-api.md)                                                                       |
+| Read the #1298 outage diagnosis and the send-core fix               | [06-engineering-log-2026-09-14-email-resend-outage.md](./06-engineering-log-2026-09-14-email-resend-outage.md)             |
+| Understand the outbox and Resend-event tables                       | [07-schema-reference.md](./07-schema-reference.md)                                                                         |
+| Gate a lifecycle email on preferences, or add one-click unsubscribe | [01-architecture.md § Email gating and one-click unsubscribe](./01-architecture.md#email-gating-and-one-click-unsubscribe) |
+| Read how outbox-first delivery and the email core were built        | [08-engineering-log-2026-09-15-outbox-first.md](./08-engineering-log-2026-09-15-outbox-first.md)                           |
+| Understand the payment system                                       | [../payments/architecture.md](../payments/architecture.md)                                                                 |
+| Check the database schema                                           | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                                   |
