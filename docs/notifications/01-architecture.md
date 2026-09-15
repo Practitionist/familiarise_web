@@ -156,6 +156,7 @@ The inline attempt runs under a budget named in `EMAIL_BUDGET_MS` (`lib/email/co
 | `CONTACT_AND_WAITLIST` | 5 000        | The contact form and both waitlist senders.                                                                    |
 | `WEBHOOK`              | 3 000        | The payment senders (receipt, failure notice, payment link).                                                   |
 | `JOB`                  | 10 000       | The compliance alert jobs and every send the relay itself makes.                                               |
+| `REQUEST`              | 5 000        | API-route senders of lifecycle mail (#1653): the request must not wait on Resend longer than this.             |
 
 A timeout is not a failure. The Resend SDK spreads the request options into `fetch`, so the `AbortSignal` genuinely aborts the call, and `attempt()` recognises either a thrown `AbortError`/`TimeoutError` or the SDK's generic "could not be resolved" error while its own signal is aborted; in both cases the row is left `PENDING` and untouched, a single log line is written, and nothing reaches Sentry. The relay sends the row on its next pass under the same content-hash Idempotency-Key (`lib/email/idempotency.ts`, of the form `<EMAIL_TYPE>/<sha256(to\nsubject\nhtml)[:48]>`), which Resend deduplicates for 24 hours, so a send that actually completed after the caller stopped waiting is not delivered twice. `deliver()` defaults Reply-To to `supportEmail()` when the caller does not set one; `stage()` applies the same default so the row and the send agree. A missing key (`EmailNotConfiguredError`) is reported at level `"error"` with fingerprint `["email-send-terminal", "not_configured"]` but leaves the row `PENDING`, because it replays once the key exists (#1298); a dead key, an unverified domain or a body Resend rejects dead-letters the row on the spot, since no replay changes the answer.
 
@@ -432,6 +433,26 @@ sequenceDiagram
 ```
 
 When no preferences exist yet, `GET /api/novu/preferences` returns hardcoded defaults (all enabled except push and marketing).
+
+### Email gating and one-click unsubscribe
+
+Since #1653 every lifecycle email is gated by `NotificationPreference` at send time. `loadEmailRecipients(userIds, category)` in `lib/email/preferences.ts` reads the recipients' rows in one query and returns an `EmailRecipient` per user with `allowed` already decided, the IANA zone the message should render times in (`User.timezone`, else `Asia/Kolkata`), and a signed unsubscribe URL. The gate reads the database row and not Novu's copy of the flags, because Novu is in-app only and its copy is a mirror written after the fact by `updateSubscriberPreferences()`. A user with no row has never changed anything and gets the defaults, which allow every category. A recipient is allowed when `allNotifications` and `emailEnabled` are both true and the category's own column is not false. The table below lists which column each category reads; the same map, `EMAIL_CATEGORY_COLUMN`, is what `lib/novu/subscriber.ts` uses to write the `category*` flags onto the Novu subscriber, so the two cannot drift.
+
+| Category        | `NotificationPreference` column |
+| --------------- | ------------------------------- |
+| `appointments`  | `appointmentReminders`          |
+| `payments`      | `paymentNotifications`          |
+| `subscriptions` | `subscriptionAlerts`            |
+| `trials`        | `trialNotifications`            |
+| `support`       | `supportUpdates`                |
+| `feedback`      | `feedbackAlerts`                |
+| `orgBilling`    | `orgBillingAlerts`              |
+| `orgMembership` | `orgMembershipAlerts`           |
+| `orgProgram`    | `orgProgramAlerts`              |
+
+A `null` category is a required account notice and bypasses the gate entirely: the recipient is always allowed and carries no unsubscribe URL, and the footer says the notice cannot be turned off. Four notices are never gated: an account suspension, a ban, an organisation invitation and an SSO certificate expiry, because the reader must act on each of them whether or not they want mail.
+
+One-click unsubscribe follows RFC 8058. `sendToRecipients()` (`lib/email/send-to-recipients.ts`) attaches `List-Unsubscribe: <url>` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` to every gated message, so Gmail and Yahoo render their own unsubscribe button and POST to the URL without a click-through. The URL is `/api/notifications/unsubscribe?u=<userId>&t=<token>`, where the token is an HMAC over the user id under the same `WAITLIST_HMAC_SECRET` the newsletter links use (`lib/waitlist/tokens.ts`), bound to its own purpose so a newsletter token cannot be replayed against an account. The token is timeless because an unsubscribe link in a year-old email must still work. `POST` verifies the token, upserts `NotificationPreference` with `emailEnabled = false`, mirrors the flags to Novu the way `PUT /api/novu/preferences` does, and answers `{ ok: true }`; a bad token answers 400 and an id with no user answers 200 all the same, so the route is not an oracle. `GET` is the footer link a human clicks: it verifies the token and redirects to `/email/unsubscribe`, which shows a form that POSTs to the same route, and it flips nothing on its own because link scanners prefetch. One-click turns off the email channel only and leaves the category columns and the in-app bell untouched, because the category columns are shared across channels: the complaint was the inbox, not the bell, and turning off `appointmentReminders` would also silence the in-app reminder. The relay's resend of a staged `FailedEmail` row carries no `List-Unsubscribe` headers, because `stage()` does not persist them; the footer link in the body still works, and the headers return on every inline send.
 
 ---
 
