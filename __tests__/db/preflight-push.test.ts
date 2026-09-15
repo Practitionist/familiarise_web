@@ -17,6 +17,8 @@ import {
   findDestructive,
   normalise,
   planStatements,
+  sidecarOwnedUniqueIndexes,
+  droppedIndexName,
 } from "@/scripts/db/preflight-push";
 
 /** Verbatim output of
@@ -143,5 +145,26 @@ describe("the allowlist match", () => {
     const entry =
       'ALTER TABLE "ConsultantReviewRevision"\n  DROP CONSTRAINT "ConsultantReviewRevision_reviewId_fkey";';
     expect(normalise(entry)).toBe(normalise(planned));
+  });
+});
+
+describe("sidecar-owned unique indexes", () => {
+  it("reads every CREATE UNIQUE INDEX name from the sidecar files, and only those", () => {
+    // #1554 / #1569 — the NULLS NOT DISTINCT uniques live only in prisma/sql, so
+    // every push plans to drop them; db:sidecars restores them right after.
+    const owned = sidecarOwnedUniqueIndexes();
+    expect(owned.has("appointment_feedback_level_key")).toBe(true);
+    expect(owned.has("consultant_earnings_occurrence_key")).toBe(true);
+    expect(owned.has("Payment_pkey")).toBe(false);
+  });
+
+  it("names the index a DROP INDEX statement targets, and nothing else", () => {
+    expect(
+      droppedIndexName('DROP INDEX "consultant_earnings_occurrence_key"'),
+    ).toBe("consultant_earnings_occurrence_key");
+    expect(droppedIndexName('DROP INDEX IF EXISTS "x_key"')).toBe("x_key");
+    expect(
+      droppedIndexName('ALTER TABLE "Payment" DROP CONSTRAINT "p_fkey"'),
+    ).toBeNull();
   });
 });

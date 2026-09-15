@@ -30,6 +30,8 @@ import {
   AppointmentTypeMismatchError,
   AppointmentNotFoundError,
 } from "@/utils/errors/RescheduleErrors";
+import { apiError } from "@/lib/errors/api-error";
+import { isRefusal } from "@/lib/errors/refusal";
 import { notifyAppointmentRescheduled } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
@@ -884,7 +886,7 @@ export async function POST(
           : null;
 
         if (uniqueUserIds.length > 0) {
-          void notifyAppointmentRescheduled(uniqueUserIds, {
+          await notifyAppointmentRescheduled(uniqueUserIds, {
             ...notificationScope(appointment.organizationId),
             ...rescheduleNotificationVariant({
               releasedAt: result.releasedAt,
@@ -937,6 +939,10 @@ export async function POST(
       message: resultMessage(),
     });
   } catch (error) {
+    // A typed refusal (the reschedule window) answers with its own status.
+    if (isRefusal(error)) {
+      return apiError({ tag: "[Reschedule.POST]", error });
+    }
     // #1319 — lock outcomes are structured, never a 500.
     if (error instanceof BookingLockUnavailableError) {
       return NextResponse.json(
@@ -986,10 +992,6 @@ export async function POST(
     }
 
     if (error instanceof AppointmentTypeMismatchError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-
-    if (error instanceof ReschedulePolicyError) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
 

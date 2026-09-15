@@ -21,6 +21,7 @@ import type {
   AppointmentBucket,
   AppointmentVM,
 } from "@/lib/appointments/view-model";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
 import { AppointmentCalendar } from "./AppointmentCalendar";
 import { AppointmentList } from "./AppointmentList";
@@ -109,6 +110,9 @@ export interface AppointmentsExtraTab {
 interface AppointmentsShellProps {
   vms: AppointmentVM[];
   adapter: AppointmentActionAdapter;
+  /** From the RSC page's session, so the server render and the hydrating
+   *  client format every time from one zone (hydration #418). */
+  viewerZone: ViewerZone;
   orgFilterSlot?: ReactNode;
   /** Side-query error/retry banners (consultant trials/unscheduled). */
   notices?: ReactNode;
@@ -120,6 +124,7 @@ interface AppointmentsShellProps {
 export function AppointmentsShell({
   vms,
   adapter,
+  viewerZone,
   orgFilterSlot,
   notices,
   highlightedId = null,
@@ -265,7 +270,13 @@ export function AppointmentsShell({
 
   return (
     <div className="space-y-5">
-      <NextUpHero vm={heroVm} adapter={adapter} stats={stats} onOpen={openVm} />
+      <NextUpHero
+        vm={heroVm}
+        adapter={adapter}
+        viewerZone={viewerZone}
+        stats={stats}
+        onOpen={openVm}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -355,6 +366,7 @@ export function AppointmentsShell({
                 vms={value === "all" ? filtered : byBucket[value]}
                 bucket={value}
                 adapter={adapter}
+                viewerZone={viewerZone}
                 resolveSponsoredLabel={resolveSponsoredLabel}
                 onOpen={openVm}
                 highlightedId={flashId}

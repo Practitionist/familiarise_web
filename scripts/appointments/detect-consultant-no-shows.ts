@@ -516,13 +516,13 @@ async function refundNoShowConsultation(
   }
 }
 
-// Fire-and-forget notifications (non-blocking, reusing the Novu service).
-function notifyNoShowParties(
+// #1654 — awaited notifications (staged, then attempted) reusing the Novu service.
+async function notifyNoShowParties(
   consultation: NoShowCandidate,
   party: NoShowParty,
   refundedPaise: number,
   paidPayment: PaidPayment | undefined,
-): void {
+): Promise<void> {
   const consultantName =
     consultation.consultationPlan?.consultantProfile?.user?.name ??
     "Consultant";
@@ -531,7 +531,7 @@ function notifyNoShowParties(
   const noShowOrgId = consultation.appointment?.organizationId ?? null;
   const dashboardUrl = notificationHref(noShowOrgId, "appointments");
 
-  void notifyAppointmentCancelled(
+  await notifyAppointmentCancelled(
     [party.consultantUserId, party.consulteeUserId],
     {
       ...notificationScope(noShowOrgId),
@@ -547,7 +547,7 @@ function notifyNoShowParties(
   ).catch((e) => console.error(`[no-show] cancellation notify failed:`, e));
 
   if (refundedPaise > 0 && paidPayment) {
-    void notifyRefundProcessed(party.consulteeUserId, {
+    await notifyRefundProcessed(party.consulteeUserId, {
       ...notificationScope(noShowOrgId),
       amount: refundedPaise,
       currency: paidPayment.currency,
@@ -622,7 +622,12 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
         await refundNoShowConsultation(consultation, errors);
       if (succeeded) refunded++;
 
-      notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
+      await notifyNoShowParties(
+        consultation,
+        party,
+        refundedPaise,
+        paidPayment,
+      );
     } catch (error) {
       const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
       console.error(`   ❌ ${msg}`);

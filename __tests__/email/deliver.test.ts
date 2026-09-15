@@ -11,6 +11,7 @@
 
 const mockSend = jest.fn();
 const mockCreate = jest.fn();
+const mockUpdate = jest.fn();
 const mockCaptureException = jest.fn();
 
 jest.mock("resend", () => ({
@@ -22,7 +23,10 @@ jest.mock("resend", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    failedEmail: { create: (...args: unknown[]) => mockCreate(...args) },
+    failedEmail: {
+      create: (...args: unknown[]) => mockCreate(...args),
+      update: (...args: unknown[]) => mockUpdate(...args),
+    },
   },
 }));
 
@@ -30,7 +34,12 @@ jest.mock("@sentry/nextjs", () => ({
   captureException: (...args: unknown[]) => mockCaptureException(...args),
 }));
 
-import { deliver, type RenderedEmail } from "@/lib/email/deliver";
+import {
+  attempt,
+  deliver,
+  stage,
+  type RenderedEmail,
+} from "@/lib/email/deliver";
 import { idempotencyKeyFor } from "@/lib/email/idempotency";
 import { isExpiredForReplay, isTerminalSendError } from "@/lib/email/classify";
 
@@ -52,12 +61,14 @@ afterEach(() => {
 describe("deliver — missing key (#1298 Fix 3)", () => {
   it("dead-letters the message instead of returning early", async () => {
     delete process.env.RESEND_API_KEY;
-    mockCreate.mockResolvedValue({});
+    mockCreate.mockResolvedValue({ id: "fe-1" });
+    mockUpdate.mockResolvedValue({});
 
     const result = await deliver(message, "EMAIL_VERIFICATION");
 
     expect(result.success).toBe(false);
     expect(mockSend).not.toHaveBeenCalled();
+    // #1654 — the row is staged BEFORE the send, then annotated with the cause.
     expect(mockCreate).toHaveBeenCalledTimes(1);
     const data = mockCreate.mock.calls[0][0].data;
     expect(data).toMatchObject({
@@ -69,7 +80,107 @@ describe("deliver — missing key (#1298 Fix 3)", () => {
       // Every transactional message gets a real Reply-To.
       replyTo: "support@familiarisenow.com",
     });
-    expect(data.lastError).toContain("not configured");
+    expect(mockUpdate.mock.calls[0][0].data.lastError).toContain(
+      "not configured",
+    );
+    // A missing key stays PENDING: the row replays once the key exists.
+    expect(mockUpdate.mock.calls[0][0].data.status).toBeUndefined();
+  });
+});
+
+describe("stage + attempt (#1654)", () => {
+  beforeEach(() => {
+    process.env.RESEND_API_KEY = "re_test";
+    mockUpdate.mockResolvedValue({});
+  });
+
+  it("stages inside the caller's transaction, then a successful attempt marks SENT with the Resend id", async () => {
+    const txCreate = jest.fn().mockResolvedValue({ id: "fe-tx" });
+    const tx = { failedEmail: { create: txCreate } } as never;
+    mockSend.mockResolvedValue({
+      data: { id: "re-123" },
+      error: null,
+      headers: null,
+    });
+
+    const staged = await stage(message, "PAYMENT_SUCCESS", {
+      tx,
+      entityRef: "payment:pay-1",
+    });
+    expect(staged).toEqual({
+      id: "fe-tx",
+      idempotencyKey: idempotencyKeyFor(message, "PAYMENT_SUCCESS"),
+    });
+    // The row went through the transaction, not the global client.
+    expect(txCreate.mock.calls[0][0].data).toMatchObject({
+      status: "PENDING",
+      lastError: null,
+      entityRef: "payment:pay-1",
+    });
+    expect(mockCreate).not.toHaveBeenCalled();
+
+    const result = await attempt(staged, message, "PAYMENT_SUCCESS", {
+      budgetMs: 3_000,
+    });
+    expect(result.success).toBe(true);
+    // The send carries the staged key and an abort signal under the budget.
+    const options = mockSend.mock.calls[0][1];
+    expect(options.idempotencyKey).toBe(staged?.idempotencyKey);
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "fe-tx" },
+      data: expect.objectContaining({
+        status: "SENT",
+        resendId: "re-123",
+        lastError: null,
+      }),
+    });
+  });
+
+  it("leaves the row PENDING and untouched on a timeout, without paging", async () => {
+    mockSend.mockRejectedValue(
+      new DOMException("The operation was aborted", "AbortError"),
+    );
+
+    const result = await attempt(
+      { id: "fe-2", idempotencyKey: "k" },
+      message,
+      "EMAIL_VERIFICATION",
+      { budgetMs: 10 },
+    );
+
+    expect(result).toMatchObject({ success: false, staged: true });
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockCaptureException).not.toHaveBeenCalled();
+  });
+
+  it("dead-letters the row on a terminal error and pages once per reason", async () => {
+    mockSend.mockResolvedValue({
+      data: null,
+      error: { message: "API key is invalid", name: "validation_error" },
+      headers: null,
+    });
+
+    const result = await attempt(
+      { id: "fe-3", idempotencyKey: "k" },
+      message,
+      "EMAIL_VERIFICATION",
+      { budgetMs: 3_000 },
+    );
+
+    expect(result.success).toBe(false);
+    expect(mockUpdate).toHaveBeenCalledWith({
+      where: { id: "fe-3" },
+      data: {
+        status: "DEAD_LETTER",
+        lastError: "validation_error: API key is invalid",
+      },
+    });
+    expect(mockCaptureException.mock.calls[0][1]).toMatchObject({
+      level: "error",
+      fingerprint: ["email-send-terminal", "invalid_api_key"],
+    });
   });
 });
 
@@ -94,7 +205,8 @@ describe("idempotencyKeyFor", () => {
       error: { message: "rate_limited", name: "rate_limit_exceeded" },
       headers: null,
     });
-    mockCreate.mockResolvedValue({});
+    mockCreate.mockResolvedValue({ id: "fe-1" });
+    mockUpdate.mockResolvedValue({});
 
     await deliver(message, "EMAIL_VERIFICATION");
 

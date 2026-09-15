@@ -41,6 +41,38 @@ import path from "node:path";
 const ROOT = path.join(__dirname, "..", "..");
 const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
 const KNOWN_DRIFT = path.join(ROOT, "prisma", "sql", "known-drift.json");
+const SIDECAR_DIR = path.join(ROOT, "prisma", "sql");
+
+/**
+ * Unique indexes the sidecar files own. They are deliberately absent from the
+ * schema (NULLS NOT DISTINCT and partial predicates, #1554 / #1569), so every
+ * push plans to drop them and `db:sidecars` re-creates them straight after.
+ * Dropping one is therefore not destructive; dropping any other `*_key` still is.
+ */
+export function sidecarOwnedUniqueIndexes(
+  dir: string = SIDECAR_DIR,
+): Set<string> {
+  const names = new Set<string>();
+  if (!fs.existsSync(dir)) return names;
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith(".sql")) continue;
+    const sql = fs.readFileSync(path.join(dir, file), "utf8");
+    for (const m of sql.matchAll(
+      /CREATE\s+UNIQUE\s+INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi,
+    )) {
+      names.add(m[1]);
+    }
+  }
+  return names;
+}
+
+/** The index a `DROP INDEX` statement names, or null for any other statement. */
+export function droppedIndexName(statement: string): string | null {
+  return (
+    /^\s*DROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?"([^"]+)"/i.exec(statement)?.[1] ??
+    null
+  );
+}
 
 type AllowedEntry = {
   statement: string;
@@ -197,7 +229,15 @@ function main(): void {
   const now = new Date();
   const offences: { statement: string; label: string }[] = [];
 
+  const sidecarOwned = sidecarOwnedUniqueIndexes();
   for (const { statement, label } of findDestructive(plan)) {
+    const dropped = droppedIndexName(statement);
+    if (dropped && sidecarOwned.has(dropped)) {
+      console.log(
+        `db:preflight: sidecar-owned, re-created by db:sidecars — ${normalise(statement)}`,
+      );
+      continue;
+    }
     const entry = allowed.find(
       (a) => normalise(a.statement) === normalise(statement),
     );

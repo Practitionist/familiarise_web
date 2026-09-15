@@ -651,7 +651,9 @@ async function processSinglePayout(payout: {
       where: {
         payoutId: payout.id,
         payment: {
-          disputes: { some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } } },
+          disputes: {
+            some: { status: { notIn: DISPUTE_INACTIVE_FOR_GATING } },
+          },
         },
       },
       select: { id: true },
@@ -1166,7 +1168,13 @@ export async function handlePayoutWebhook(
       where: {
         id: payout.id,
         status: terminalIncoming
-          ? { notIn: [PayoutStatus.COMPLETED, PayoutStatus.CANCELLED, PayoutStatus.REVERSED] }
+          ? {
+              notIn: [
+                PayoutStatus.COMPLETED,
+                PayoutStatus.CANCELLED,
+                PayoutStatus.REVERSED,
+              ],
+            }
           : { in: [PayoutStatus.PROCESSING] },
       },
       data: {
@@ -1326,7 +1334,7 @@ export async function handlePayoutWebhook(
       select: { userId: true },
     });
     if (profile?.userId) {
-      void notifyPayoutProcessed(profile.userId, {
+      await notifyPayoutProcessed(profile.userId, {
         amount: Number(payout.amount),
         currency: payout.currency,
         payoutId: payout.id,

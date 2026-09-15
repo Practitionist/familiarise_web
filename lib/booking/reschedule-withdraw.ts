@@ -244,7 +244,7 @@ export async function withdrawRescheduleRequest(args: {
         ? side.consultationPlan.consultantProfile.user
         : side.subscriptionPlan.consultantProfile.user;
       const consulteeUser = side.requestedBy.user;
-      void notifyAppointmentRescheduled(
+      await notifyAppointmentRescheduled(
         [detail.initiatedById, consultantUser.id, consulteeUser.id].filter(
           (id, i, arr) => arr.indexOf(id) === i,
         ),

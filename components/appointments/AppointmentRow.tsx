@@ -1,6 +1,5 @@
 "use client";
 
-import { format } from "date-fns";
 import { motion } from "framer-motion";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
@@ -8,6 +7,11 @@ import { eventUnionStatusBadge } from "@/lib/appointments/status";
 import { getProximityLabel } from "@/lib/appointments/occurrences";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
+import {
+  formatInViewerZone,
+  zoneLabel,
+  type ViewerZone,
+} from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
 import { RowPrimaryAction } from "./RowPrimaryAction";
 import { RowOverflowMenu } from "./RowOverflowMenu";
@@ -32,6 +36,8 @@ function initials(name: string): string {
 interface AppointmentRowProps {
   vm: AppointmentVM;
   adapter: AppointmentActionAdapter;
+  /** Times render in this zone on the server and the client alike (hydration #418). */
+  viewerZone: ViewerZone;
   /** "Sponsored · <Org>" label resolved by the shell from session memberships. */
   sponsoredLabel?: string | null;
   onOpen?: (vm: AppointmentVM) => void;
@@ -42,6 +48,7 @@ interface AppointmentRowProps {
 export function AppointmentRow({
   vm,
   adapter,
+  viewerZone,
   sponsoredLabel,
   onOpen,
   highlighted = false,
@@ -55,12 +62,19 @@ export function AppointmentRow({
       ? getProximityLabel(vm.nextAt)
       : null;
 
-  const timeLabel = vm.nextAt ? format(vm.nextAt, "h:mm a") : "Not scheduled";
+  const timeLabel = vm.nextAt
+    ? formatInViewerZone(vm.nextAt, viewerZone.zone, "h:mm a")
+    : "Not scheduled";
   const endOfAnchor = vm.nextAt
     ? vm.occurrences.find(
         (s) => s.startsAt.getTime() === vm.nextAt?.getTime() && s.endsAt,
       )?.endsAt
     : null;
+  // Labelled only when the zone is not the viewer's own (a fallback zone).
+  const zoneSuffix =
+    vm.nextAt && !viewerZone.own
+      ? ` ${zoneLabel(vm.nextAt, viewerZone.zone)}`
+      : "";
 
   const open = onOpen ? () => onOpen(vm) : undefined;
 
@@ -142,7 +156,12 @@ export function AppointmentRow({
             {endOfAnchor && (
               <span className="text-muted-foreground font-normal">
                 {" – "}
-                {format(endOfAnchor, "h:mm a")}
+                {formatInViewerZone(endOfAnchor, viewerZone.zone, "h:mm a")}
+              </span>
+            )}
+            {zoneSuffix && (
+              <span className="text-muted-foreground font-normal">
+                {zoneSuffix}
               </span>
             )}
           </p>

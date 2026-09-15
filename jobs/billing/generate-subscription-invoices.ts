@@ -168,7 +168,8 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
             {
               id: sub.contract.organization.id,
               slug: sub.contract.organization.slug,
-              invoiceNumberPrefix: sub.contract.organization.invoiceNumberPrefix,
+              invoiceNumberPrefix:
+                sub.contract.organization.invoiceNumberPrefix,
             },
             now,
           );
@@ -236,7 +237,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         // forget, mirroring notifyOrgLicenseRenewalUpcoming below.
         const origin = getAppUrl();
         const orgId = sub.contract.organization.id;
-        void notifyOrgInvoiceIssued(orgId, {
+        await notifyOrgInvoiceIssued(orgId, {
           invoiceNumber: result.invoiceNumber,
           orgName: sub.contract.organization.name,
           totalPaise: result.totalPaise,
@@ -317,7 +318,9 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
         skipped++;
         continue;
       }
-      Sentry.captureException(err, { tags: { subsystem: "jobs", job: "generate-subscription-invoices" } });
+      Sentry.captureException(err, {
+        tags: { subsystem: "jobs", job: "generate-subscription-invoices" },
+      });
       console.error(
         `[cron] Failed to generate invoice for subscription ${sub.id}:`,
         err,
@@ -363,8 +366,7 @@ async function sendRenewalReminders(now: Date): Promise<number> {
     const daysUntilRenewal = Math.max(
       0,
       Math.ceil(
-        (sub.nextInvoiceDate.getTime() - now.getTime()) /
-          (24 * 60 * 60 * 1000),
+        (sub.nextInvoiceDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000),
       ),
     );
 
@@ -418,5 +420,7 @@ async function main() {
 }
 
 if (require.main === module) {
-  runJob("generate-subscription-invoices", () => main().finally(() => prisma.$disconnect()));
+  runJob("generate-subscription-invoices", () =>
+    main().finally(() => prisma.$disconnect()),
+  );
 }

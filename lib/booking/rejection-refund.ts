@@ -133,7 +133,7 @@ export async function refundRejectedRequest(args: {
     // agree, and quoting a figure the buyer never receives is worse than
     // quoting none.
     if (result.rail === "GATEWAY") {
-      void notifyRejectedRequestPayer(
+      await notifyRejectedRequestPayer(
         ctx.paidPayment.id,
         result.amountRefundedPaise,
       );

@@ -18,6 +18,8 @@ import { appointmentRaterRole } from "@/lib/data/appointment-detail";
 import { heldOccurrence } from "@/lib/reviews";
 import { AppointmentIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
+import { apiError } from "@/lib/errors/api-error";
+import { Refusal } from "@/lib/errors/refusal";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -192,12 +194,21 @@ export async function POST(
       select: { id: true, consultantProfileId: true },
     });
     if (!slot) {
-      return supportError({
-        status: 404,
-        code: "NOT_FOUND",
-        message:
-          "That session isn't part of this booking, or it didn't take place",
-        context: { route: FEEDBACK_ROUTE, action: "save", appointmentId },
+      // A stale rating row, not a fault: answered as a refusal so it never
+      // becomes a Sentry warning (FAMILIARISE_WEB-35).
+      return apiError({
+        tag: "[Feedback.POST]",
+        error: new Refusal({
+          code: "OCCURRENCE_NOT_FOUND",
+          httpStatus: 404,
+          userMessage:
+            "That meeting isn't part of this booking, or it didn't take place",
+          context: {
+            route: FEEDBACK_ROUTE,
+            appointmentId,
+            occurrenceId: body.data.occurrenceId ?? null,
+          },
+        }),
       });
     }
 
