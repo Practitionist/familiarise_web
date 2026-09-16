@@ -3,7 +3,9 @@
  */
 
 /**
- * #768 lockdown #17 — pin the 7 reachable funding-program paths.
+ * #768 lockdown #17 — pin the 10 reachable funding-program paths.
+ * #1676 S4 — HYBRID enumerates the 4 sponsor pairs; the `any/any` wildcard
+ * is gone, so refused intersections stay refused for dual-capability orgs.
  *
  * Any drift to the (capability x fundingSource x programType) matrix
  * (e.g., re-introducing Programs v2 or adding a new fundingSource) must
@@ -18,8 +20,17 @@ import {
 } from "@/lib/enterprise/reachable-paths";
 
 describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
-  it("contains exactly 7 reachable shapes", () => {
-    expect(REACHABLE_ORG_FUNDING_PATHS.length).toBe(7);
+  it("contains exactly 10 reachable shapes (4 SPONSOR + 4 HYBRID + 2 program-less)", () => {
+    expect(REACHABLE_ORG_FUNDING_PATHS.length).toBe(10);
+  });
+
+  it("contains no wildcard rows", () => {
+    for (const path of REACHABLE_ORG_FUNDING_PATHS) {
+      expect((path as { programType: unknown }).programType).not.toBe("any");
+      expect((path as { fundingSource: unknown }).fundingSource).not.toBe(
+        "any",
+      );
+    }
   });
 
   it("rejects Programs v2 fundingSource values", () => {
@@ -67,6 +78,35 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
       expect(
         isReachableOrgFundingPath("HYBRID", "LICENSE", "LICENSED_SEAT"),
       ).toBe(true);
+      expect(
+        isReachableOrgFundingPath("HYBRID", "INVOICE", "CREDIT_POOL"),
+      ).toBe(true);
+      expect(
+        isReachableOrgFundingPath("HYBRID", "INVOICE", "LICENSED_SEAT"),
+      ).toBe(true);
+    });
+
+    // #1676 S4 — the old `any/any` wildcard accepted every pair for HYBRID,
+    // silently re-opening the refused intersections. Enumeration keeps the
+    // refusals refused for dual-capability orgs too.
+    it("rejects refused pairs for HYBRID exactly as for SPONSOR", () => {
+      const refused: Array<[Parameters<typeof isReachableOrgFundingPath>[1], Parameters<typeof isReachableOrgFundingPath>[2]]> = [
+        ["WALLET", "LICENSED_SEAT"],
+        ["LICENSE", "CREDIT_POOL"],
+        ["INVOICE", null],
+        ["WALLET", null],
+      ];
+      for (const [funding, program] of refused) {
+        expect(isReachableOrgFundingPath("SPONSOR", funding, program)).toBe(
+          false,
+        );
+        expect(isReachableOrgFundingPath("HYBRID", funding, program)).toBe(
+          false,
+        );
+      }
+      // Program-less HYBRID is not a program-funding question: HOST-side
+      // earnings with no program never consult this matrix.
+      expect(isReachableOrgFundingPath("HYBRID", null, null)).toBe(false);
     });
   });
 

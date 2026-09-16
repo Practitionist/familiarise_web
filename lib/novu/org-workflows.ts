@@ -457,6 +457,13 @@ export async function notifyOrgPayoutCompleted(
   const wire: OrgPayoutCompletedPayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
+    // #1474 — `amount` is the received (post-withholding) figure; surface the
+    // withheld slice alongside so the bell reconciles with Form 16A, not just
+    // the bank credit.
+    withheld:
+      Number(payload.tdsAmountPaise ?? 0) > 0
+        ? formatNotificationMoney(payload.tdsAmountPaise ?? 0, payload.currency)
+        : undefined,
   };
   return triggerMany(
     NOVU_WORKFLOWS.ORG_PAYOUT_COMPLETED,
@@ -490,6 +497,12 @@ export async function notifyOrgPayoutFailed(
   const wire: OrgPayoutFailedPayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
+    // #1474 — same withheld split as the COMPLETED bell; FAILED carries no
+    // withholding so the clause stays absent there.
+    withheld:
+      Number(payload.tdsAmountPaise ?? 0) > 0
+        ? formatNotificationMoney(payload.tdsAmountPaise ?? 0, payload.currency)
+        : undefined,
   };
   return triggerMany(workflowId, recipients, wire, opts);
 }
