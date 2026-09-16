@@ -99,6 +99,51 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "drain-notification-outbox": 20_000,
 };
 
+/**
+ * Keep-warm — Netlify support ticket #1112198 (2026-09-16): a burst of new
+ * instances stalls ~28 s at the platform and there is no provisioned
+ * concurrency on any plan; their mitigation is N PARALLEL pings, since one
+ * warm instance serves one request. The pings hit the zero-import probe
+ * route so they cost nothing on our side; the answer is not awaited beyond
+ * a short abort because reaching the edge is what creates the instance.
+ * KEEP_WARM_CONCURRENCY=0 disables it (a redeploy applies env changes).
+ */
+export const KEEP_WARM_PATH = "/api/perf/probe-bare";
+const KEEP_WARM_TIMEOUT_MS = 4_000;
+
+/** How many instances to keep warm; defaults to 5 (Netlify's suggested 3–5). */
+export function keepWarmConcurrency(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return 5;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= 20 ? n : 5;
+}
+
+/** One unique-key URL per ping so no cache and no coalescing answers them. */
+export function keepWarmUrls(baseUrl: string, n: number): string[] {
+  return Array.from(
+    { length: n },
+    (_, i) => `${baseUrl}${KEEP_WARM_PATH}?k=${Date.now().toString(36)}-${i}`,
+  );
+}
+
+async function keepWarm(baseUrl: string, n: number): Promise<number> {
+  if (n === 0) return 0;
+  await Promise.allSettled(
+    keepWarmUrls(baseUrl, n).map(async (url) => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), KEEP_WARM_TIMEOUT_MS);
+      try {
+        await fetch(url, { signal: controller.signal });
+      } catch {
+        // A stalled instance answers after our abort; the ping still created it.
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+  return n;
+}
+
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
 export function targetRequest(
   baseUrl: string,
@@ -122,6 +167,7 @@ interface TickBody {
   ok: string[];
   lockHeld: string[];
   failed: { name: string; status: number }[];
+  warmed: number;
   durationMs: number;
 }
 
@@ -178,9 +224,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const started = Date.now();
   const targets = dueTargets(new Date(started));
 
-  const settled = await Promise.allSettled(
-    targets.map((name) => hitTarget(baseUrl, secret, name)),
-  );
+  const [settled, warmed] = await Promise.all([
+    Promise.allSettled(targets.map((name) => hitTarget(baseUrl, secret, name))),
+    keepWarm(baseUrl, keepWarmConcurrency(process.env.KEEP_WARM_CONCURRENCY)),
+  ]);
 
   const ok: string[] = [];
   const lockHeld: string[] = [];
@@ -201,6 +248,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
     ok,
     lockHeld,
     failed,
+    warmed,
     durationMs: Date.now() - started,
   };
   console.log(JSON.stringify(body));
