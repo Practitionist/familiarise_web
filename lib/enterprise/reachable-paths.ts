@@ -134,6 +134,26 @@ export function overageBehaviorUnsupportedReason(
 }
 
 /**
+ * Money-positive default: which overage behaviour a NEW programme gets when
+ * the operator doesn't pick one.
+ *
+ * INVOICE programmes default to CHARGE_ORG — the over-cap marginal rides the
+ * monthly invoice the org already pays, so expansion revenue accrues with no
+ * refused booking and no member friction (Datadog/Snowflake-style overage).
+ * The server still requires the circuit-breaker ceiling for any non-BLOCK
+ * behaviour, and the payer sentence surfaces it before pay.
+ *
+ * Every other rail defaults to BLOCK: WALLET collects the whole price at
+ * commit (a member charge-back doesn't exist, #715) and LICENSE moves no
+ * money per booking at all.
+ */
+export function defaultOverageBehaviorForFunding(
+  fundingSource: FundingSource | null,
+): OverageBehavior {
+  return fundingSource === "INVOICE" ? "CHARGE_ORG" : "BLOCK";
+}
+
+/**
  * Resolve a capability label from the canSponsor / canHost booleans.
  * SPONSOR-only (canSponsor=true, canHost=false) → "SPONSOR".
  * HOST-only (false, true) → "HOST".

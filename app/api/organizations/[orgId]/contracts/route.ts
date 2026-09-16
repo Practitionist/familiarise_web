@@ -35,8 +35,15 @@ const CreateBodySchema = z
     // takes effect immediately unless the caller specifies otherwise.
     effectiveFrom: z.coerce.date().default(() => new Date()),
     effectiveTo: z.coerce.date().nullable().optional(),
-    paymentTermsDays: z.coerce.number().int().min(1).max(120).default(60),
-    autoRenew: z.coerce.boolean().default(false),
+    // NET-30 is the Indian B2B standard (and the MSME-healthy one): cash comes
+    // back in one month, not two. Negotiated terms up to 120d stay available
+    // per-contract; this default only binds rows created without an explicit
+    // term. Existing contracts are untouched.
+    paymentTermsDays: z.coerce.number().int().min(1).max(120).default(30),
+    // Evergreen by default with termination-for-convenience (supersede flow):
+    // a lapsed contract silently closes programmes and stops bookings, which
+    // is churn by inaction. The 7d renewal reminder covers the comms.
+    autoRenew: z.coerce.boolean().default(true),
     terms: z.unknown().optional(),
     status: ContractStatusSchema.default("DRAFT"),
     // LICENSE-funded contracts can include a flat-fee BillingSubscription
@@ -189,6 +196,26 @@ export async function POST(
         { status: 409 },
       );
     }
+  }
+
+  // LICENSE economics guard: a LICENSE-funded contract with no fee recorded
+  // anywhere settles every booking on ₹0 legs with no invoice ever raised —
+  // the product given away free by omission. Fail closed with the fix in the
+  // message (pass licenseModel + fee/cycle) rather than persisting a feefree
+  // contract nobody notices until the quarter closes.
+  if (
+    billingAccount.fundingSource === "LICENSE" &&
+    !wantsLicenseSubscription &&
+    !billingAccount.subscription
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "LICENSE-funded contracts must record their economics: pass licenseModel (FLAT_FEE with licenseFeePaise, or PER_SEAT with licenseRatePerSeatPaise) plus licenseCycle, so the fee is invoiced instead of silently unbilled.",
+        code: "LICENSE_ECONOMICS_REQUIRED",
+      },
+      { status: 400 },
+    );
   }
 
   if (body.purchaseOrderId) {
