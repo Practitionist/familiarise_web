@@ -1,4 +1,8 @@
-# Netlify Pro support ticket — FINAL, ready to paste (prepared 2026-09-13)
+# Netlify Pro support ticket — SENT 2026-09-15 as #1112198, ANSWERED 2026-09-16
+
+> Status: sent by the owner on 2026-09-15 (with the four additional facts below), misrouted by triage as a timeout-extension request and corrected the same day, and answered on 2026-09-16 by a Netlify engineer who confirmed the stall as platform-side, stated that no plan offers provisioned concurrency, named the ~37–38 s edge receive-timeout, and recommended parallel keep-warm pings. The answer is recorded in `.claude/skills/deployment/netlify/platform-limits.md` ("What Netlify said"); the keep-warm shipped as PR #1685; the decision is ADR 32. The text below is kept as the record of what was asked.
+
+# Original draft (prepared 2026-09-13)
 
 Paste everything from the Subject line to the end of the Impact section into the Netlify support form as the account owner; the ticket needs the owner's session. Record the ticket number on #1124 once filed.
 
