@@ -1521,10 +1521,6 @@ async function markOrgPayoutFailedInternal(
         id: true,
         organizationId: true,
         netPayoutPaise: true,
-        // #1474 — selected for the bell triple even though a payout that
-        // never left PROCESSING withheld nothing (stays null/0 → no
-        // `withheld` clause renders).
-        tdsAmountPaise: true,
         currency: true,
         organization: { select: { name: true } },
       },
@@ -1549,7 +1545,11 @@ async function markOrgPayoutFailedInternal(
 
     // #1654 — staged inside the claim's transaction so a Novu outage or a freeze cannot lose it.
     // #1474 — FAILED moved no money: the bell names the attempted gross and
-    // carries no withholding.
+    // carries no withholding. Hardcoded 0, NOT the row's batch-time
+    // tdsAmountPaise: the batch persists a computed withholding that is only
+    // actually withheld at COMPLETED (the TDSRecord is written there, and a
+    // stray one is deleted on this path) — forwarding it would render
+    // "withheld as TDS" for money the government never got.
     const notifyStaged = await notifyOrgPayoutFailed(
       payout.organizationId,
       {
@@ -1557,7 +1557,7 @@ async function markOrgPayoutFailedInternal(
         payoutId,
         amountPaise: payout.netPayoutPaise,
         netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
+        tdsAmountPaise: 0,
         currency: payout.currency,
         reason: reason.slice(0, 200),
         kind,
@@ -1575,7 +1575,7 @@ async function markOrgPayoutFailedInternal(
         orgName: payout.organization.name,
         amountPaise: payout.netPayoutPaise,
         netPayoutPaise: payout.netPayoutPaise,
-        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
+        tdsAmountPaise: 0,
         currency: payout.currency,
       },
     };

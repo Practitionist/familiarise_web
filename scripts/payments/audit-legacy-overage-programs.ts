@@ -97,10 +97,12 @@ export async function auditLegacyOveragePrograms(): Promise<LegacyOverageAuditRe
   return { checked: programs.length, refused };
 }
 
-// Run the audit if this script is executed directly.
+// Run the audit if this script is executed directly. Disconnects before
+// exiting (and assigns exitCode instead of calling process.exit) so buffered
+// stdout flushes and the Prisma pool closes cleanly.
 if (import.meta.url === `file://${process.argv[1]}`) {
   auditLegacyOveragePrograms()
-    .then((result) => {
+    .then(async (result) => {
       console.log(
         `Checked ${result.checked} live programme(s): ${result.refused.length} refused configuration(s).`,
       );
@@ -109,11 +111,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           `- ${row.organizationName} / ${row.programName} [${row.fundingSource ?? "unknown"} + ${row.programType} + ${row.overageBehavior}] — ${row.reason}`,
         );
       }
-      process.exit(0);
+      await prisma.$disconnect();
+      process.exitCode = 0;
     })
-    .catch((error) => {
+    .catch(async (error) => {
       console.error("Legacy overage audit failed:", error);
-      process.exit(1);
-    })
-    .finally(() => prisma.$disconnect());
+      await prisma.$disconnect().catch(() => {});
+      process.exitCode = 1;
+    });
 }

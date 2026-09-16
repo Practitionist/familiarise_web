@@ -21,7 +21,7 @@ import {
 
 describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
   it("contains exactly 10 reachable shapes (4 SPONSOR + 4 HYBRID + 2 program-less)", () => {
-    expect(REACHABLE_ORG_FUNDING_PATHS.length).toBe(10);
+    expect(REACHABLE_ORG_FUNDING_PATHS).toHaveLength(10);
   });
 
   it("contains no wildcard rows", () => {

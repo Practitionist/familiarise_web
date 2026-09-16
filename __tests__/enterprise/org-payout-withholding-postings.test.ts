@@ -75,6 +75,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { recordOrgTDSDeduction } from "@/lib/payments/tax/tds-service";
 import {
   markOrgPayoutCompleted,
+  markOrgPayoutFailed,
   markOrgPayoutReversed,
   OrgPayoutWithholdingMismatchError,
 } from "@/lib/payments/payouts/org-payout-service";
@@ -312,5 +313,23 @@ describe("#1474 — payout bells report the received figure, not the gross", () 
     expect(payload.amountPaise).toBe(AMOUNT_PAISE);
     expect(payload.netPayoutPaise).toBe(NET_PAYOUT_PAISE);
     expect(payload.tdsAmountPaise).toBe(TDS_PAISE);
+  });
+
+  it("PROCESSING→FAILED bell names the attempted gross with zero withholding, even when the row retains batch-time TDS", async () => {
+    // The batch persists a computed tdsAmountPaise that is only actually
+    // withheld at COMPLETED. A pre-settlement failure must not render it.
+    mockedPrisma.organizationPayout.findUniqueOrThrow.mockResolvedValue(
+      payoutRow({ tdsAmountPaise: TDS_PAISE }),
+    );
+
+    const result = await markOrgPayoutFailed(PAYOUT_ID, "gateway rejected");
+
+    expect(result).toEqual({ wasNoOp: false, status: "FAILED" });
+    expect(notifyOrgPayoutFailed).toHaveBeenCalledTimes(1);
+    const [, payload] = (notifyOrgPayoutFailed as jest.Mock).mock.calls[0];
+    expect(payload.kind).toBe("FAILED");
+    expect(payload.amountPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.netPayoutPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.tdsAmountPaise).toBe(0);
   });
 });
