@@ -22,6 +22,9 @@ export const { GET, POST } = cleanupRoute({
     reconciledCount: r.reconciledCount,
     succeededCount: r.succeededCount,
     failedCount: r.failedCount,
+    // #1686 — references the gateway will never know, moved to EXPIRED.
+    deadLetteredCount: r.deadLetteredCount,
+    errors: r.errors.length,
   }),
   // 207 when succeeded payments were reconciled and the run itself was clean.
   status: (r) => statusFor(r, r.succeededCount > 0),

@@ -28,6 +28,7 @@ import { Prisma } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
 import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
+import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
@@ -40,6 +41,8 @@ export interface OrphanedConfirmationResult {
   channelsEnsured: number;
   /** #1356 — appointments still without a channel; retried next run. */
   channelsFailed: number;
+  /** #1686 — appointments whose pair may not hold a DM; stamped so they leave the queue. */
+  channelsDeadLettered: number;
   /** #1391 — buyer-level Stream operations the channel pass spent this run. */
   channelBuyerOps: number;
   /** #1391 — selected appointments the buyer-operation budget left for the next run. */
@@ -54,28 +57,46 @@ export interface OrphanedConfirmationResult {
 const CHANNEL_PASS_MAX_APPOINTMENTS = 100;
 const CHANNEL_PASS_MAX_BUYER_OPS = 500;
 
+// #1686 — wall-clock cap from entry: a bad batch of ~1.2 s Stream failures ran
+// the route to the 60 s Lambda kill; 15 s keeps it under the 26 s ceiling above.
+const SWEEP_SOFT_DEADLINE_MS = 15_000;
+
+type ChannelOutcome = "ensured" | "failed" | "dead_lettered";
+
 // #1439 — pulled out of the channel pass's loop body to keep that loop's
 // cognitive complexity readable; the budget accounting and the
 // ensured/failed counters stay with the caller since they govern the loop's
 // own control flow (the deferred-budget break), not this one appointment's
 // outcome.
-async function ensureChannelForOrphan(appointmentId: string): Promise<boolean> {
+async function ensureChannelForOrphan(
+  appointmentId: string,
+): Promise<ChannelOutcome> {
   try {
     const result = await ensureChannelsForAppointment(appointmentId);
     if (result.ensured) {
       console.log(`💬 Ensured chat channel for appointment ${appointmentId}`);
-      return true;
+      return "ensured";
     }
     console.warn(
       `💬 Could not ensure chat channel for appointment ${appointmentId}: ${result.reason}`,
     );
-    return false;
+    return "failed";
   } catch (err) {
+    // #1686 — the #1188 gate refusing the pair is policy, not an outage; stamp
+    // it out of the queue. A later eligible booking mints the same pair DM.
+    if (err instanceof DmNotPermittedError) {
+      await prisma.appointment.updateMany({
+        where: { id: appointmentId, chatChannelEnsuredAt: null },
+        data: { chatChannelEnsuredAt: new Date() },
+      });
+      console.warn(`permanent: dm_not_permitted ${appointmentId}`);
+      return "dead_lettered";
+    }
     console.error(
       `❌ Chat-channel ensure failed for appointment ${appointmentId}:`,
       err,
     );
-    return false;
+    return "failed";
   }
 }
 
@@ -94,6 +115,7 @@ export async function reconcileOrphanedConfirmations(
 async function reconcileOrphanedConfirmationsUnlocked(
   opts: { graceMinutes?: number; limit?: number } = {},
 ): Promise<OrphanedConfirmationResult> {
+  const startedAt = Date.now();
   const graceMinutes = opts.graceMinutes ?? 15;
   const limit = opts.limit ?? 200;
   // #1356 — the channel pass is bounded separately and much lower: each entry
@@ -208,14 +230,24 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
+  let channelsDeadLettered = 0;
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
-    if (await ensureChannelForOrphan(appointment.id)) {
-      channelsEnsured += 1;
-    } else {
-      channelsFailed += 1;
+    // #1686 — checked before each Stream round trip; deferred rows keep their
+    // NULL stamp and the next run resumes oldest-first, like the budget.
+    if (Date.now() - startedAt >= SWEEP_SOFT_DEADLINE_MS) {
+      channelsDeferred = unchanneled.length - index;
+      console.log(
+        `💬 Soft deadline (${SWEEP_SOFT_DEADLINE_MS} ms) reached; ` +
+          `${channelsDeferred} appointment(s) deferred to the next run`,
+      );
+      break;
     }
+    const outcome = await ensureChannelForOrphan(appointment.id);
+    if (outcome === "ensured") channelsEnsured += 1;
+    else if (outcome === "dead_lettered") channelsDeadLettered += 1;
+    else channelsFailed += 1;
 
     // Charged after the attempt, and a failed attempt still costs its calls.
     // Charging afterwards also means the head of the queue always moves: an
@@ -239,6 +271,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
   console.log(
     `🩹 Orphaned confirmations: scanned=${orphans.length} confirmed=${confirmed} stillBlocked=${stillBlocked} ` +
       `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed} ` +
+      `channelsDeadLettered=${channelsDeadLettered} ` +
       `channelBuyerOps=${channelBuyerOps} channelsDeferred=${channelsDeferred}`,
   );
   return {
@@ -248,6 +281,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
     stillBlocked,
     channelsEnsured,
     channelsFailed,
+    channelsDeadLettered,
     channelBuyerOps,
     channelsDeferred,
   };

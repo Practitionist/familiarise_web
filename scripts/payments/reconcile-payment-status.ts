@@ -36,6 +36,8 @@ export interface PaymentReconciliationResult {
   failedCount: number;
   expiredCount: number;
   skippedCount: number;
+  /** #1686 — PENDING rows whose reference the gateway will never know, moved to EXPIRED. */
+  deadLetteredCount: number;
   errors: string[];
   timestamp: string;
 }
@@ -46,16 +48,29 @@ export interface ReconcilePaymentStatusOptions {
   limit?: number;
 }
 
+/** #1686 — a lookup with no status: `unknown_reference` is permanent (dead-lettered),
+ * `unavailable` is a 5xx/network/timeout (retried next tick, reported as an error). */
+interface GatewayMiss {
+  miss: "unknown_reference" | "unavailable";
+  detail: string;
+}
+
+function isMiss<T extends object>(
+  value: T | GatewayMiss,
+): value is GatewayMiss {
+  return "miss" in value;
+}
+
 /**
  * Query Stripe for payment intent status
  */
 async function getStripePaymentStatus(
   paymentIntent: string,
-): Promise<{ status: string; failureMessage?: string } | null> {
+): Promise<{ status: string; failureMessage?: string } | GatewayMiss> {
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeSecretKey) {
     console.warn("Stripe credentials not configured");
-    return null;
+    return { miss: "unavailable", detail: "Stripe credentials not configured" };
   }
 
   try {
@@ -95,21 +110,29 @@ async function getStripePaymentStatus(
     };
   } catch (error) {
     console.error(`Failed to get Stripe payment status: ${error}`);
-    return null;
+    // #1464 shape — matched on the error's own `code`, not the SDK class.
+    const code = (error as { code?: unknown } | null | undefined)?.code;
+    if (code === "resource_missing") {
+      return { miss: "unknown_reference", detail: String(error) };
+    }
+    return { miss: "unavailable", detail: String(error) };
   }
 }
 
 /**
  * Query Razorpay for order/payment status
  */
-async function getRazorpayPaymentStatus(orderId: string): Promise<{
-  status: string;
-  paymentId?: string;
-  /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
-  notes?: Record<string, string>;
-  /** Captured amount in paise, for the parity check. */
-  amountPaise?: number;
-} | null> {
+async function getRazorpayPaymentStatus(orderId: string): Promise<
+  | {
+      status: string;
+      paymentId?: string;
+      /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
+      notes?: Record<string, string>;
+      /** Captured amount in paise, for the parity check. */
+      amountPaise?: number;
+    }
+  | GatewayMiss
+> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
   // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
@@ -119,7 +142,10 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
 
   if (!keyId || !keySecret) {
     console.warn("Razorpay credentials not configured");
-    return null;
+    return {
+      miss: "unavailable",
+      detail: "Razorpay credentials not configured",
+    };
   }
 
   try {
@@ -136,7 +162,21 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
 
     if (!orderResponse.ok) {
       console.error(`Razorpay order API error: ${orderResponse.status}`);
-      return null;
+      // #1686 — an id Razorpay has never seen answers 400 BAD_REQUEST_ERROR,
+      // never 404 (the #1645 H3 refund shape).
+      if (
+        (orderResponse.status === 400 || orderResponse.status === 404) &&
+        (await razorpayErrorCode(orderResponse)) === "BAD_REQUEST_ERROR"
+      ) {
+        return {
+          miss: "unknown_reference",
+          detail: `Razorpay order API error: ${orderResponse.status}`,
+        };
+      }
+      return {
+        miss: "unavailable",
+        detail: `Razorpay order API error: ${orderResponse.status}`,
+      };
     }
 
     const order = await orderResponse.json();
@@ -177,6 +217,17 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
     return { status: order.status };
   } catch (error) {
     console.error(`Failed to get Razorpay payment status: ${error}`);
+    return { miss: "unavailable", detail: String(error) };
+  }
+}
+
+/** The `error.code` off a Razorpay error body, or null when there is none. */
+async function razorpayErrorCode(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.json()) as { error?: { code?: unknown } } | null;
+    const code = body?.error?.code;
+    return typeof code === "string" ? code : null;
+  } catch {
     return null;
   }
 }
@@ -249,6 +300,7 @@ async function reconcilePaymentStatusUnlocked(
   let failedCount = 0;
   let expiredCount = 0;
   let skippedCount = 0;
+  let deadLetteredCount = 0;
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
@@ -303,15 +355,17 @@ async function reconcilePaymentStatusUnlocked(
     }
 
     // Query gateway for actual status
-    let gatewayStatus: {
-      status: string;
-      failureMessage?: string;
-      paymentId?: string;
-      // Razorpay only — carried so a SUCCEEDED reconcile can drive the
-      // confirmation pipeline instead of writing the status (ADR 21).
-      notes?: Record<string, string>;
-      amountPaise?: number;
-    } | null = null;
+    let gatewayStatus:
+      | {
+          status: string;
+          failureMessage?: string;
+          paymentId?: string;
+          // Razorpay only — carried so a SUCCEEDED reconcile can drive the
+          // confirmation pipeline instead of writing the status (ADR 21).
+          notes?: Record<string, string>;
+          amountPaise?: number;
+        }
+      | GatewayMiss;
 
     if (payment.paymentGateway === PaymentGateway.STRIPE) {
       gatewayStatus = await getStripePaymentStatus(payment.paymentIntent);
@@ -331,10 +385,30 @@ async function reconcilePaymentStatusUnlocked(
       continue;
     }
 
-    if (!gatewayStatus) {
-      console.log(`   Could not get status from gateway - skipping`);
-      errors.push(`Payment ${payment.id}: Could not query gateway status`);
-      skippedCount++;
+    if (isMiss(gatewayStatus)) {
+      if (gatewayStatus.miss === "unavailable") {
+        console.log(`   Could not get status from gateway - skipping`);
+        errors.push(`Payment ${payment.id}: Could not query gateway status`);
+        skippedCount++;
+        continue;
+      }
+      // #1686 — a reference the gateway will never know can never capture;
+      // EXPIRED through the CAS cleanup-abandoned-payments uses, not an error.
+      const claimed = await prisma.payment.updateMany({
+        where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+        data: { paymentStatus: PaymentStatus.EXPIRED },
+      });
+      if (claimed.count === 0) {
+        console.log(
+          `   Skipped: payment ${payment.id} already transitioned by another writer`,
+        );
+        skippedCount++;
+        continue;
+      }
+      console.warn(
+        `permanent: gateway_reference_unknown ${payment.paymentGateway} ${payment.paymentIntent} (payment ${payment.id}: ${gatewayStatus.detail})`,
+      );
+      deadLetteredCount++;
       continue;
     }
 
@@ -435,6 +509,7 @@ async function reconcilePaymentStatusUnlocked(
   console.log(`   Failed: ${failedCount}`);
   console.log(`   Expired: ${expiredCount}`);
   console.log(`   Skipped: ${skippedCount}`);
+  console.log(`   Dead-lettered (reference unknown): ${deadLetteredCount}`);
 
   if (succeededCount > 0) {
     console.log(
@@ -451,6 +526,7 @@ async function reconcilePaymentStatusUnlocked(
     failedCount,
     expiredCount,
     skippedCount,
+    deadLetteredCount,
     errors,
     timestamp: new Date().toISOString(),
   };

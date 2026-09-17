@@ -28,6 +28,9 @@
  * have made succeed. The sweep's seven-day window is what bounds the cost of
  * retrying it. #1391
  *
+ * The one exception is the #1188 DM gate refusing the pair: that is policy,
+ * not a fault, so the sweep stamps the row itself and moves on. #1686
+ *
  * The stamp is per APPOINTMENT, and for a `WEBINAR` or `CLASS` — the two types
  * many buyers share — that is not the same grain as the work. Once the sixth
  * buyer's capture stamps the row, a seventh buyer whose `addUserToEventChannel`
