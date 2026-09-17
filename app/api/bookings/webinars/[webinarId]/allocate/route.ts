@@ -187,10 +187,12 @@ export async function PATCH(
     );
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "An error occurred during slot allocation",
+        // Never forward error.message: pool timeouts, connection errors,
+        // and constraint text are operator detail, not user copy. The raw
+        // error is already in Sentry + the server log above. Indeterminate
+        // wording on purpose: a 500 can fire before or after the commit.
+        error: "Couldn't save these times — check whether they appear, then retry.",
+        errorCode: "UNKNOWN_ERROR",
         duration,
       },
       { status: 500 },

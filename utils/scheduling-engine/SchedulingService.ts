@@ -789,6 +789,8 @@ export class SchedulingService {
       eventType,
       eventId,
       idempotencyKey,
+      undefined,
+      tx,
     );
     if (lockedReplay) return lockedReplay;
     await this.assertNoConfirmedSlots(tx, eventType, eventId);
@@ -903,10 +905,17 @@ export class SchedulingService {
      * requested approves stored times by definition.
      */
     expectedSlotStarts?: string[],
+    /**
+     * Pool-1 rule: inside a write transaction this MUST be the caller's tx —
+     * a global-client read while the txn holds the single pooled connection
+     * waits forever and surfaces as "timeout exceeded when trying to
+     * connect" (deploy-preview-only failure; local pools are 10).
+     */
+    db: PrismaLike = prisma,
   ): Promise<AllocationResult | null> {
     if (!idempotencyKey) return null;
 
-    const stamped = await prisma.appointment.findUnique({
+    const stamped = await db.appointment.findUnique({
       where: { allocationIdempotencyKey: idempotencyKey },
       select: {
         consultationId: true,
@@ -932,7 +941,7 @@ export class SchedulingService {
     }
 
     // The key only stamps the FIRST appointment; return the whole batch.
-    const appointments = await prisma.appointment.findMany({
+    const appointments = await db.appointment.findMany({
       where: {
         [`${relationField}Id`]: eventId,
       } as Prisma.AppointmentWhereInput,
@@ -974,7 +983,12 @@ export class SchedulingService {
     return {
       success: true,
       appointments,
-      ...(await this.replayPartialCounts(eventType, eventId, appointments)),
+      ...(await this.replayPartialCounts(
+        eventType,
+        eventId,
+        appointments,
+        db,
+      )),
     };
   }
 
@@ -997,19 +1011,20 @@ export class SchedulingService {
       deletedAt?: Date | null;
       occurrences?: { deletedAt?: Date | null; completionStatus?: string }[];
     }[],
+    db: PrismaLike = prisma,
   ): Promise<Partial<AllocationResult>> {
     if (!isRecurringEventType(eventType)) return {};
 
     const requiredSessions =
       eventType === "subscription"
         ? (
-            await prisma.subscription.findUnique({
+            await db.subscription.findUnique({
               where: { id: eventId },
               select: { subscriptionPlan: { select: { totalSessions: true } } },
             })
           )?.subscriptionPlan?.totalSessions
         : (
-            await prisma.class.findUnique({
+            await db.class.findUnique({
               where: { id: eventId },
               select: { classPlan: { select: { totalSessions: true } } },
             })
