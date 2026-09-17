@@ -5,6 +5,10 @@ import { useToast } from "@/hooks/use-toast";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
+import {
+  ApiResponseError,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
 import { PaymentGateway } from "@prisma/client";
 
@@ -38,12 +42,35 @@ interface CheckoutApiError {
   error?: string;
   errorType?: string;
   message?: string;
+  /** Machine-readable limiter code (RATE_LIMITED on 429s). */
+  code?: string;
+}
+
+function isCheckoutApiError(value: unknown): value is CheckoutApiError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    ("error" in value || "errorType" in value)
+  );
 }
 
 export function createHandleApiError(
   toast: ReturnType<typeof useToast>["toast"],
 ) {
   return (errorData: CheckoutApiError) => {
+    // Rate-limited: the limiter answers 429 with code RATE_LIMITED — back
+    // off with guidance instead of the generic "Something Went Wrong".
+    if (
+      errorData.code === "RATE_LIMITED" ||
+      /too many requests/i.test(errorData.error ?? "")
+    ) {
+      toast({
+        title: "Too many attempts",
+        description: "Please wait a moment, then retry.",
+        variant: "destructive",
+      });
+      return;
+    }
     const errorMessage = errorData.error || "Operation failed";
     const errorType = errorData.errorType || "UNKNOWN_ERROR";
 
@@ -258,13 +285,30 @@ export async function handleUnifiedCheckout(
 ): Promise<void> {
   const response = await makeCheckoutRequest(checkoutData, isMockPayment);
 
-  if (!response.ok) {
-    const errorData = await response.json();
-    handleApiError(errorData);
-    return; // Toast already shown — don't throw to avoid double toast + console overlay
+  // Edge 504s/HTML error pages throw out of response.json(): never let a
+  // SyntaxError reach the buyer as a "payment failed" decline — a timeout is
+  // not a decline, and the charge state is unknown, not failed.
+  let rawData: unknown;
+  try {
+    rawData = await requireJsonResponse(response, "Checkout request failed");
+  } catch (error) {
+    if (error instanceof ApiResponseError) {
+      handleApiError({
+        error: `Timed out reaching the server (HTTP ${error.status}). No charge was made — check your connection and retry.`,
+      });
+      return; // Toast already shown — don't throw to avoid double toast + console overlay
+    }
+    throw error;
   }
 
-  const rawData = await response.json();
+  if (!response.ok) {
+    handleApiError(
+      isCheckoutApiError(rawData)
+        ? rawData
+        : { error: "Checkout request failed" },
+    );
+    return; // Toast already shown — don't throw to avoid double toast + console overlay
+  }
 
   // Validate response using schema
   const validationResult = checkoutResponseSchema.safeParse(rawData);

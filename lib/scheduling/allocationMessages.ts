@@ -216,7 +216,7 @@ export const slotUnavailable = (isBooked: boolean): AllocationToast => ({
   variant: "destructive",
   title: "Slot unavailable",
   description: isBooked
-    ? "This slot is already booked."
+    ? "This slot is already booked. Try another time."
     : "This slot is not available.",
 });
 
@@ -316,7 +316,29 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Request changed — please resubmit",
     variant: "destructive",
   },
+  PROGRAM_CAP_EXHAUSTED: {
+    title: "Programme budget used up",
+    variant: "destructive",
+  },
+  COLLABORATOR_UNAVAILABLE: {
+    title: "Co-host unavailable",
+    variant: "destructive",
+  },
+  ILLEGAL_TRANSITION: {
+    title: "Request changed — please reload",
+    variant: "destructive",
+  },
 };
+
+/** Shared 429 copy: every limiter answers it, every surface renders it. */
+export const rateLimited = (retryAfterSecs?: number): AllocationToast => ({
+  variant: "destructive",
+  title: "Too many attempts",
+  description:
+    typeof retryAfterSecs === "number" && retryAfterSecs > 0
+      ? `Please wait ${retryAfterSecs}s, then retry.`
+      : "Please wait a moment, then retry.",
+});
 
 export const allocationFailedWithCode = (
   reason: string,

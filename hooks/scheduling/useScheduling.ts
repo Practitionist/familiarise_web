@@ -46,6 +46,7 @@ import {
   allocationFailedWithCode,
   allocatedElsewhere,
   requestChangedElsewhere,
+  rateLimited,
   isPreservedAllocationMessage,
   schedulingDayBucket,
   schedulingWeekBucket,
@@ -174,6 +175,14 @@ export interface UseEventSlotAllocationOptions {
   /** Called when the server reports the event was already allocated (409),
    * e.g. from another tab — the host should close the dialog and refetch. */
   onConflict?: () => void;
+
+  /**
+   * Stay-open failures (slot taken elsewhere, co-host busy, transient lock)
+   * leave the dialog open — the host should refetch availability so the next
+   * pick is made against fresh cells, not the stale green ones that just
+   * refused. Optional; without it the dialog still stays open correctly.
+   */
+  onStaleData?: () => void;
 
   /** Validation change callback */
   onValidationChange?: (isValid: boolean, result: ValidationResult) => void;
@@ -423,6 +432,7 @@ export function useEventSlotAllocation(
     onSuccess,
     onError,
     onConflict,
+    onStaleData,
     onValidationChange,
     onSlotsChange,
   } = options;
@@ -580,7 +590,11 @@ export function useEventSlotAllocation(
   /** Common failure path: 409 means another tab/session already allocated —
    * UNLESS the message says a SLOT was taken (#1132): that request is still
    * allocatable with different times, so the server's own message renders
-   * as itself and the dialog stays open (no onConflict tear-down). */
+   * as itself and the dialog stays open (no onConflict tear-down).
+   *
+   * Branched on structured errorCode first: several 409s do NOT mean
+   * "allocated elsewhere" (co-host busy, illegal transition, transient
+   * lock) and must neither close the dialog nor say that they did. */
   const handleAllocationFailure = useCallback(
     (result: AllocationResult, fallback: string) => {
       const errorMessage = result.error || fallback;
@@ -588,7 +602,39 @@ export function useEventSlotAllocation(
       const isStaleReschedule =
         result.httpStatus === 409 &&
         /reschedule state changed in another session/i.test(errorMessage);
-      if (
+      // A stay-open failure means the grid cells just proved stale: ask the
+      // host to refetch so the next pick is made against fresh data.
+      const refreshStale = () => onStaleData?.();
+      if (result.httpStatus === 429) {
+        // Rate limited — back off, don't resubmit into it.
+        toast(rateLimited());
+      } else if (
+        result.httpStatus === 409 &&
+        result.errorCode === "COLLABORATOR_UNAVAILABLE"
+      ) {
+        // A co-host is busy at these times: pick other times, keep the event.
+        toast(allocationFailedWithCode(errorMessage, result.errorCode));
+        refreshStale();
+      } else if (
+        result.httpStatus === 409 &&
+        result.errorCode === "ILLEGAL_TRANSITION"
+      ) {
+        // The underlying request moved (cancelled/expired mid-allocate):
+        // the page's view is stale, like a stale reschedule.
+        toast(requestChangedElsewhere());
+        onConflict?.();
+      } else if (
+        result.httpStatus === 409 &&
+        result.errorCode === "LOCK_CONTENTION" &&
+        !isPreservedAllocationMessage(errorMessage) &&
+        !isStaleReschedule &&
+        !/already allocated in another session/i.test(errorMessage)
+      ) {
+        // Transient lock contention, not an allocation: wait a moment and
+        // retry against fresh cells instead of tearing the dialog down.
+        toast(allocationFailedWithCode(errorMessage, result.errorCode));
+        refreshStale();
+      } else if (
         result.httpStatus === 409 &&
         !isPreservedAllocationMessage(errorMessage) &&
         !isStaleReschedule
@@ -605,9 +651,10 @@ export function useEventSlotAllocation(
         result.httpStatus === 409 &&
         isPreservedAllocationMessage(errorMessage)
       ) {
-        // Slot conflict — the dialog stays open, the server's own message
-        // renders as itself (#1132).
+        // Slot conflict — the dialog stays open and refetches, so the retry
+        // is picked against the grid that now shows the taken slot (#1132).
         toast(allocationFailed(errorMessage));
+        refreshStale();
       } else if (
         result.httpStatus === 422 &&
         result.errorCode === "IDEMPOTENCY_KEY_REUSE"
@@ -626,7 +673,7 @@ export function useEventSlotAllocation(
       }
       onError?.(errorMessage);
     },
-    [toast, onConflict, onError],
+    [toast, onConflict, onStaleData, onError],
   );
 
   // ==========================================

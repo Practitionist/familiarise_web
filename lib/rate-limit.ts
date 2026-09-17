@@ -303,7 +303,10 @@ export async function applyRateLimit(
     const { success, remaining } = await limiter.limit(identifier);
     if (!success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
+        // Machine-readable code alongside the sentence: clients key the
+        // shared "wait a moment, then retry" toast off it instead of
+        // string-matching the message.
+        { error: "Too many requests. Please try again later.", code: "RATE_LIMITED" },
         {
           status: 429,
           headers: { "X-RateLimit-Remaining": String(remaining) },

@@ -148,6 +148,19 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message
   },
+  // Contended checkout locks (literal codes from the route, not ErrorTypes
+  // values until registered above): someone else is mid-checkout, so the fix
+  // is waiting — never a second payment. Your card was not charged.
+  [ErrorTypes.EVENT_CHECKOUT_BUSY]: {
+    title: "Someone Just Beat You To It",
+    description:
+      "Another buyer is checking out right now. Wait a few seconds and retry — your card was not charged.",
+  },
+  [ErrorTypes.CONSULTEE_BOOKING_BUSY]: {
+    title: "Booking Already In Progress",
+    description:
+      "Another booking is already in progress on your account. Finish or wait for it, then retry — your card was not charged.",
+  },
 };
 
 // ============================================================================

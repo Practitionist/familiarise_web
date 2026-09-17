@@ -317,6 +317,15 @@ export function TimePicker({
             disabled={
               isSubmitting || selectionIncomplete || proposedSlots.length === 0
             }
+            title={
+              isSubmitting
+                ? "Submitting — wait for the current attempt to finish."
+                : selectionIncomplete
+                  ? "Select a time for every session, or choose Any time works."
+                  : proposedSlots.length === 0
+                    ? "Pick at least one replacement time first."
+                    : "Submit the selected times."
+            }
           >
             {isSubmitting ? (
               <>

@@ -129,6 +129,21 @@ export interface ValidationResponse {
  */
 export class AllocationService {
   /**
+   * Defensive JSON read shared by the validate endpoints: edge 504s/HTML
+   * error pages throw out of response.json(). Null means "no usable body" —
+   * callers answer with the HTTP status instead of a SyntaxError string.
+   */
+  private static async readValidationBody(
+    response: Response,
+  ): Promise<{ error?: string; data?: SlotConflictResult } | null> {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Shared PATCH for all four allocate endpoints.
    */
   private static async patchAllocation(
@@ -240,7 +255,13 @@ export class AllocationService {
         },
       );
 
-      const data = await response.json();
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+        };
+      }
 
       if (!response.ok) {
         return {
@@ -286,7 +307,13 @@ export class AllocationService {
         },
       );
 
-      const data = await response.json();
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+        };
+      }
 
       if (!response.ok) {
         return {
@@ -399,7 +426,13 @@ export class AllocationService {
         },
       );
 
-      const data = await response.json();
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+        };
+      }
 
       if (!response.ok) {
         return {
@@ -445,7 +478,13 @@ export class AllocationService {
         },
       );
 
-      const data = await response.json();
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+        };
+      }
 
       if (!response.ok) {
         return {

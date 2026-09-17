@@ -48,7 +48,9 @@ import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
   allocationFailed,
+  allocationFailedWithCode,
   planConfigIncomplete,
+  requestChangedElsewhere,
 } from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
@@ -570,6 +572,7 @@ export function RequestSchedulingTab({
     useState<Request | null>(null);
   /** Respond-accept in flight — holds the dialog and disables its exits. #1163 */
   const [respondInFlight, setRespondInFlight] = useState(false);
+  const [allocatingRequest, setAllocatingRequest] = useState(false);
   /** Row awaiting the decline confirmation, and the decline in flight. */
   const [declineTarget, setDeclineTarget] = useState<Request | null>(null);
   const [declining, setDeclining] = useState(false);
@@ -911,6 +914,9 @@ export function RequestSchedulingTab({
       return;
     }
 
+    // Pending state for the confirm button: without it clicks give zero
+    // feedback and double-submits are only saved by the idempotency ref.
+    setAllocatingRequest(true);
     try {
       const eventType =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
@@ -964,6 +970,27 @@ export function RequestSchedulingTab({
       );
 
       if (!result.success && result.httpStatus === 409) {
+        // Only a genuine already-allocated answer removes the row: a stale
+        // tentative count or a co-host clash leaves the request allocatable,
+        // so closing + deleting the row would strand it (M5).
+        if (/reschedule state changed in another session/i.test(result.error ?? "")) {
+          toast(requestChangedElsewhere());
+          fetchData();
+          onUpdate();
+          return;
+        }
+        if (
+          result.errorCode === "COLLABORATOR_UNAVAILABLE" ||
+          result.errorCode === "ILLEGAL_TRANSITION"
+        ) {
+          toast(
+            allocationFailedWithCode(
+              result.error ?? "Failed to allocate slots",
+              result.errorCode,
+            ),
+          );
+          return;
+        }
         handleConflict(selectedRequestForDialog.id);
         return;
       }
@@ -1000,6 +1027,8 @@ export function RequestSchedulingTab({
           error instanceof Error ? error.message : "Failed to allocate slots",
         ),
       );
+    } finally {
+      setAllocatingRequest(false);
     }
   };
 
@@ -1037,7 +1066,7 @@ export function RequestSchedulingTab({
         { tags: { subsystem: "client" } },
       );
       toast({
-        title: "Error",
+        title: "Couldn't decline request",
         description:
           error instanceof Error ? error.message : "Failed to decline request",
         variant: "destructive",
@@ -1350,7 +1379,7 @@ export function RequestSchedulingTab({
                 }
               : undefined
           }
-          confirming={respondInFlight}
+          confirming={respondInFlight || allocatingRequest}
           rescheduleNeedsAllocator={
             // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
             // the stored times un-approvable: they are the times being moved

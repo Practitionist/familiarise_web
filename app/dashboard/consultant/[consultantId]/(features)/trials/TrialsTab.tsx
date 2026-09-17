@@ -23,6 +23,19 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { VisuallyHidden } from "@radix-ui/react-visually-hidden";
 import { useToast } from "@/hooks/use-toast";
+import {
+  ApiResponseError,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
+
+/** Narrows the already-parsed trial response without casting. */
+function hasDataStatus(value: unknown): value is {
+  data?: { status?: string };
+} {
+  return (
+    typeof value === "object" && value !== null && "data" in value
+  );
+}
 import { Input } from "@/components/ui/input";
 import {
   Gift,
@@ -244,8 +257,13 @@ export function TrialsTab() {
       setStats(data);
     } catch (error) {
       console.error("Error fetching trial stats:", error);
+      toast({
+        title: "Couldn't load trial stats",
+        description: "The counts below may be stale. They refresh on reload.",
+        variant: "destructive",
+      });
     }
-  }, [consultantId]);
+  }, [consultantId, toast]);
 
   const fetchPlans = useCallback(async () => {
     try {
@@ -261,8 +279,13 @@ export function TrialsTab() {
       );
     } catch (error) {
       console.error("Error fetching subscription plans:", error);
+      toast({
+        title: "Couldn't load plans",
+        description: "The plan list may be stale. Reload to retry.",
+        variant: "destructive",
+      });
     }
-  }, [consultantId]);
+  }, [consultantId, toast]);
 
   useEffect(() => {
     fetchTrials();
@@ -298,17 +321,25 @@ export function TrialsTab() {
         }),
       });
 
+      // Never bare response.json(): an edge 504/HTML page would throw a
+      // SyntaxError into the toast instead of the server's reason.
+      const result = await requireJsonResponse(
+        response,
+        "Failed to schedule trial",
+      );
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to schedule trial");
+        // Unreachable: requireJsonResponse throws on !ok — kept so a future
+        // helper change cannot silently turn refusals into successes.
+        throw new Error("Failed to schedule trial");
       }
 
       // A paid trial is NOT scheduled by accepting — it moves to
       // AWAITING_PAYMENT and the learner gets a pay-link. Saying "scheduled"
       // would tell the consultant to expect someone who may never pay.
-      const result = await response.json().catch(() => null);
+      // (result is the already-parsed body from requireJsonResponse above —
+      // the stream is consumed and must not be read twice.)
       const awaitingPayment =
-        result?.data?.status === "AWAITING_PAYMENT";
+        hasDataStatus(result) && result.data?.status === "AWAITING_PAYMENT";
 
       toast({
         title: "Success",
@@ -324,9 +355,15 @@ export function TrialsTab() {
     } catch (error) {
       console.error("Error scheduling trial:", error);
       toast({
-        title: "Error",
+        title: "Couldn't schedule trial",
         description:
-          error instanceof Error ? error.message : "Failed to schedule trial",
+          error instanceof ApiResponseError
+            ? error.status === 409
+              ? `${error.message} Pick another time.`
+              : error.message
+            : error instanceof Error
+              ? error.message
+              : "Failed to schedule trial",
         variant: "destructive",
       });
     } finally {
@@ -344,9 +381,9 @@ export function TrialsTab() {
         body: JSON.stringify({ status: "REJECTED" }),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to decline trial");
-      }
+      // Surface the server's reason (transition/CAS detail) instead of a
+      // fixed string; requireJsonResponse keeps 504-HTML out of the toast.
+      await requireJsonResponse(response, "Failed to decline trial");
 
       toast({
         title: "Success",
@@ -358,8 +395,9 @@ export function TrialsTab() {
     } catch (error) {
       console.error("Error declining trial:", error);
       toast({
-        title: "Error",
-        description: "Failed to decline trial request",
+        title: "Couldn't decline trial",
+        description:
+          error instanceof Error ? error.message : "Failed to decline trial",
         variant: "destructive",
       });
     } finally {
@@ -375,9 +413,7 @@ export function TrialsTab() {
         method: "DELETE",
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to cancel trial");
-      }
+      await requireJsonResponse(response, "Failed to cancel trial");
 
       toast({
         title: "Success",
@@ -389,8 +425,9 @@ export function TrialsTab() {
     } catch (error) {
       console.error("Error cancelling trial:", error);
       toast({
-        title: "Error",
-        description: "Failed to cancel trial",
+        title: "Couldn't cancel trial",
+        description:
+          error instanceof Error ? error.message : "Failed to cancel trial",
         variant: "destructive",
       });
     } finally {

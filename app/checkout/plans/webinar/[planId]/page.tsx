@@ -129,6 +129,8 @@ export default function WebinarCheckoutPage({
   >(null);
   const [availableCredits, setAvailableCredits] = useState(0);
   const [isLoadingCredits, setIsLoadingCredits] = useState(true);
+  // Distinct from zero: a failed fetch must not masquerade as "no credits".
+  const [creditsLoadFailed, setCreditsLoadFailed] = useState(false);
 
   const { toast } = useToast();
   const {
@@ -201,6 +203,7 @@ export default function WebinarCheckoutPage({
       } catch (error) {
         reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
+        setCreditsLoadFailed(true);
       } finally {
         setIsLoadingCredits(false);
       }
@@ -813,7 +816,9 @@ export default function WebinarCheckoutPage({
             </div>
           ) : (
             <div className="text-sm text-muted-foreground">
-              No referral credits available
+              {creditsLoadFailed
+                ? "Couldn't load credits — proceed without them or reload to retry."
+                : "No referral credits available"}
             </div>
           )}
         </div>

@@ -176,4 +176,17 @@ describe("gateway fence classification", () => {
     expect(toast.title).not.toBe("Something Went Wrong");
     expect(toast.description).toContain("billing admin");
   });
+
+  // Contended checkout locks answer 409 with literal codes the route forwards
+  // verbatim. Unregistered they fell through to UNKNOWN — a second attempt,
+  // or a busy answer without retryAfter, told the buyer "Something Went
+  // Wrong" with no mention that no money moved.
+  it.each([
+    ["EVENT_CHECKOUT_BUSY", "Someone Just Beat You To It"],
+    ["CONSULTEE_BOOKING_BUSY", "Booking Already In Progress"],
+  ])("gives %s a not-charged toast (%s)", (code, title) => {
+    const toast = getErrorToast(code);
+    expect(toast.title).toBe(title);
+    expect(toast.description).toContain("card was not charged");
+  });
 });
