@@ -21,12 +21,18 @@ export function useReferralCreditsBalance() {
     async function fetchCredits() {
       try {
         const response = await fetch("/api/referrals/credits/available");
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableCredits(
-            data.data.totalAvailable || 0, // already in paise
+        // fetch resolves on HTTP errors too: a non-OK status must reach the
+        // catch below, or credits read 0 with loadFailed false and the buyer
+        // is told they have no credits.
+        if (!response.ok) {
+          throw new Error(
+            `Referral credits request failed (HTTP ${response.status}).`,
           );
         }
+        const data = await response.json();
+        setAvailableCredits(
+          data.data.totalAvailable || 0, // already in paise
+        );
       } catch (error) {
         reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
