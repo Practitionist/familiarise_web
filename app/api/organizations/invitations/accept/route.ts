@@ -27,6 +27,8 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
+import * as Sentry from "@sentry/nextjs";
+import { sendOrgWelcomeEmail } from "@/lib/email";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -167,6 +169,20 @@ export async function POST(req: NextRequest) {
     }).catch((err) =>
       console.error("[notifyOrgInviteAccepted] failed:", err),
     );
+    // P3 email twin to the joiner; skipped when alreadyMember like the bell.
+    sendOrgWelcomeEmail({
+      userId,
+      membershipId: result.membership.id,
+      orgName: result.organization.name,
+      role: result.membership.role,
+      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
+    }).catch((emailErr) => {
+      Sentry.captureException(
+        emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+        { tags: { subsystem: "email", emailType: "ORG_WELCOME" } },
+      );
+      console.error("[org-welcome-email] failed:", emailErr);
+    });
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects

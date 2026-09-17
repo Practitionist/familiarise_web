@@ -28,6 +28,7 @@ import {
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
+import { sendOrgMembershipChangedEmail } from "@/lib/email";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
@@ -133,6 +134,14 @@ export async function PATCH(
     );
   }
   const patch = parsed.data;
+
+  // P3 email twin context: captured inside the tx, fired after commit.
+  let roleEmailContext: {
+    userId: string;
+    kind: "ROLE_CHANGED" | "REMOVED";
+    roleBefore: string;
+    roleAfter?: string;
+  } | null = null;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -360,8 +369,70 @@ export async function PATCH(
         });
       }
 
+      // P3 email twin: role changes notify the affected member; a PATCH
+      // status move to REMOVED notifies non-EXPERT members (EXPERT removals
+      // stay Novu-only via the DELETE path — no duplicate here either).
+      const movedToRemoved =
+        patch.status !== undefined &&
+        patch.status === "REMOVED" &&
+        current.status !== "REMOVED";
+      const roleChanged =
+        patch.role !== undefined && patch.role !== current.role;
+      if (movedToRemoved) {
+        if (current.role !== "EXPERT") {
+          roleEmailContext = {
+            userId: current.userId,
+            kind: "REMOVED",
+            roleBefore: current.role,
+          };
+        }
+      } else if (roleChanged) {
+        roleEmailContext = {
+          userId: current.userId,
+          kind: "ROLE_CHANGED",
+          roleBefore: current.role,
+          roleAfter: patch.role,
+        };
+      }
+
       return updated;
     });
+
+    // P3 email twin, post-commit and fire-and-forget (after audit +
+    // bumpGeneration inside the tx). Never fails the PATCH on email error.
+    if (roleEmailContext !== null) {
+      const ctx = roleEmailContext as {
+        userId: string;
+        kind: "ROLE_CHANGED" | "REMOVED";
+        roleBefore: string;
+        roleAfter?: string;
+      };
+      sendOrgMembershipChangedEmail({
+        userId: ctx.userId,
+        membershipId: memberId,
+        kind: ctx.kind,
+        orgName: access.org.name,
+        roleBefore: ctx.roleBefore,
+        roleAfter: ctx.roleAfter,
+        actorName:
+          access.session.user.name ?? access.session.user.email ?? "An operator",
+        dashboardUrl: "/dashboard",
+      }).catch((emailErr) => {
+        Sentry.captureException(
+          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+          {
+            tags: {
+              subsystem: "email",
+              emailType:
+                ctx.kind === "REMOVED"
+                  ? "ORG_MEMBERSHIP_REMOVED"
+                  : "ORG_MEMBERSHIP_ROLE_CHANGED",
+            },
+          },
+        );
+        console.error("[member-patch] membership email failed:", emailErr);
+      });
+    }
 
     return NextResponse.json({ membership: result });
   } catch (err) {
@@ -400,6 +471,14 @@ export async function DELETE(
   let notifyContext: {
     consultantUserId: string;
     payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
+  } | null = null;
+
+  // P3 email twin for non-EXPERT removals (EXPERT stays Novu-only).
+  let removedEmailContext: {
+    userId: string;
+    roleBefore: string;
+    orgName: string;
+    actorName: string;
   } | null = null;
 
   try {
@@ -656,6 +735,24 @@ export async function DELETE(
             },
           };
         }
+      } else {
+        // P3 email twin for non-EXPERT removals. EXPERT keeps Novu-only.
+        const org = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { name: true },
+        });
+        const actor = await tx.user.findUnique({
+          where: { id: access.session.user.id },
+          select: { name: true, email: true },
+        });
+        if (org) {
+          removedEmailContext = {
+            userId: current.userId,
+            roleBefore: current.role,
+            orgName: org.name,
+            actorName: actor?.name ?? actor?.email ?? "An operator",
+          };
+        }
       }
     });
 
@@ -676,6 +773,36 @@ export async function DELETE(
           notifyErr,
         );
       }
+    }
+
+    // P3 email twin for non-EXPERT removals, post-commit fire-and-forget.
+    if (removedEmailContext !== null) {
+      const ctx = removedEmailContext as {
+        userId: string;
+        roleBefore: string;
+        orgName: string;
+        actorName: string;
+      };
+      sendOrgMembershipChangedEmail({
+        userId: ctx.userId,
+        membershipId: memberId,
+        kind: "REMOVED",
+        orgName: ctx.orgName,
+        roleBefore: ctx.roleBefore,
+        actorName: ctx.actorName,
+        dashboardUrl: "/dashboard",
+      }).catch((emailErr) => {
+        Sentry.captureException(
+          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+          {
+            tags: {
+              subsystem: "email",
+              emailType: "ORG_MEMBERSHIP_REMOVED",
+            },
+          },
+        );
+        console.error("[member-delete] membership email failed:", emailErr);
+      });
     }
 
     return new NextResponse(null, { status: 204 });

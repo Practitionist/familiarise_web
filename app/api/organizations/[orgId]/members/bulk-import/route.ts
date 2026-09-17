@@ -100,7 +100,8 @@ export async function POST(
 
   for (const { email, membershipId } of importedMembers) {
     const invite = {
-      inviterName: access.member.id,
+      inviterName:
+        access.session.user.name ?? access.session.user.email ?? "An operator",
       orgName: access.org.name,
       role: "LEARNER",
       inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,

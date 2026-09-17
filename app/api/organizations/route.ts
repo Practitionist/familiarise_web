@@ -29,6 +29,8 @@ import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import * as Sentry from "@sentry/nextjs";
+import { sendOrgCreatedEmail } from "@/lib/email";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -335,6 +337,20 @@ export async function POST(req: NextRequest) {
         membership,
         orgWorkspaceProfileId: orgWorkspace.id,
       };
+    });
+
+    // P3 email twin: confirmation to the creator, post-commit fire-and-forget.
+    sendOrgCreatedEmail({
+      userId: auth.session.user.id,
+      orgId: result.organization.id,
+      orgName: result.organization.name,
+      dashboardUrl: `/dashboard/organization/${result.organization.id}/home`,
+    }).catch((emailErr) => {
+      Sentry.captureException(
+        emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+        { tags: { subsystem: "email", emailType: "ORG_CREATED" } },
+      );
+      console.error("[org-created-email] failed:", emailErr);
     });
 
     return NextResponse.json(result, { status: 201 });

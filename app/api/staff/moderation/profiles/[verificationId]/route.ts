@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ConsultantVerificationStatus } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
+import { sendVerificationDecidedEmail } from "@/lib/email";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -200,11 +201,42 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // Fire-and-forget: notify consultant of verification status change
     const consultantUserId = verification.consultantProfile?.user?.id;
     if (consultantUserId) {
-      await notifyVerificationStatusChanged(consultantUserId, {
+      const verificationPayload = {
         status: profileStatusMap[status] || status,
         reason: rejectionReason || feedbackDetails || undefined,
         dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
-      });
+      };
+      await notifyVerificationStatusChanged(
+        consultantUserId,
+        verificationPayload,
+      );
+      // P3 email twin: same payload, never fails the review.
+      const emailStatus =
+        verificationPayload.status === "VERIFIED" ||
+        verificationPayload.status === "REJECTED" ||
+        verificationPayload.status === "PENDING_VERIFICATION"
+          ? verificationPayload.status
+          : null;
+      if (emailStatus) {
+        sendVerificationDecidedEmail({
+          userId: consultantUserId,
+          verificationId,
+          status: emailStatus,
+          reason: verificationPayload.reason,
+          dashboardUrl: verificationPayload.dashboardUrl,
+        }).catch((emailErr) => {
+          Sentry.captureException(
+            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+            {
+              tags: {
+                subsystem: "email",
+                emailType: "VERIFICATION_DECIDED",
+              },
+            },
+          );
+          console.error("[verification-decided-email] failed:", emailErr);
+        });
+      }
     }
 
     return NextResponse.json({
