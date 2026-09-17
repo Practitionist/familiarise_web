@@ -45,6 +45,13 @@ export interface AvailabilityGridMarker {
   paymentsUpdatedAt: Date | null;
   /** Booked slot rows reaching this consultant (and the consultee, if given). */
   slotsUpdatedAt: Date | null;
+  /**
+   * Co-host seats held by this consultant. Accepting (or losing) a co-host
+   * seat changes which appointments the grid counts as busy without touching
+   * any appointment row, so membership needs its own arm — otherwise the grid
+   * could 304 across the very change that added busy times to it.
+   */
+  collaboratorsUpdatedAt: Date | null;
   /** Parent request rows — status flips that start or stop occupying. */
   requestsUpdatedAt: Date | null;
   /**
@@ -65,8 +72,10 @@ export interface AvailabilityGridMarker {
  * `reach` is the set of appointments that can paint a cell on this calendar:
  * the allocator stamps every occurrence it writes with the denormalized
  * consultantProfileId (#440) and seats the consultant on the appointment's
- * roster (#1554), and the request arm below rides that set, so a status flip
- * on a booking where the consultant is the CONSULTEE is covered too.
+ * roster (#1554), the request arm below rides that set, so a status flip
+ * on a booking where the consultant is the CONSULTEE is covered too — plus
+ * the webinar/class appointments on plans where the consultant holds an
+ * ACCEPTED co-host seat (AE-2 #784: co-hosts are not participants).
  *
  * `consulteeUserId` is the empty string when absent: an index probe that
  * matches nothing, which keeps this one SQL string rather than two.
@@ -95,6 +104,24 @@ export async function readAvailabilityGridMarker(
       SELECT p."appointmentId"
         FROM "AppointmentParticipant" p
        WHERE p."userId" = ${consulteeKey}
+      UNION
+      -- Co-host commitments: webinar/class appointments on plans where this
+      -- consultant holds an ACCEPTED seat. Co-hosts are not slot participants
+      -- (AE-2 #784), so none of the arms above reach them. Enum compared as
+      -- text: Prisma raw SQL has no enum literal binding for this type.
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Webinar" w ON w.id = a."webinarId"
+        JOIN "Collaborator" cb ON cb."webinarPlanId" = w."webinarPlanId"
+       WHERE cb."consultantProfileId" = ${consultantId}
+         AND cb.status::text = 'ACCEPTED'
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Class" c ON c.id = a."classId"
+        JOIN "Collaborator" cb ON cb."classPlanId" = c."classPlanId"
+       WHERE cb."consultantProfileId" = ${consultantId}
+         AND cb.status::text = 'ACCEPTED'
     )
     SELECT
       (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
@@ -118,6 +145,9 @@ export async function readAvailabilityGridMarker(
       (SELECT max(s."updatedAt")
          FROM "AppointmentOccurrence" s
          JOIN reach r ON r.id = s."appointmentId") AS "slotsUpdatedAt",
+      (SELECT max(cb."updatedAt")
+         FROM "Collaborator" cb
+        WHERE cb."consultantProfileId" = ${consultantId}) AS "collaboratorsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t
             FROM "Consultation" c
@@ -215,6 +245,7 @@ export function availabilityGridEtag(
     iso(marker.availabilityUpdatedAt),
     String(marker.availabilityRowCount ?? 0),
     iso(marker.slotsUpdatedAt),
+    iso(marker.collaboratorsUpdatedAt),
     iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),

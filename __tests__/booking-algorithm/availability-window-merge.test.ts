@@ -283,6 +283,27 @@ describe("checkout coverage rule (#1320)", () => {
     ).toBeNull();
   });
 
+  it("a trailing partial atom is tested by containment, not as a full atom", () => {
+    // 10:00–10:45 against a custom row covering exactly that span: the
+    // 10:30 atom only covers 15 window minutes, so testing it as a full
+    // 30-minute atom (10:30–11:00) wrongly reported it uncovered.
+    const partialStart = new Date(Date.UTC(2026, 8, 7, 10, 0));
+    const partialEnd = new Date(Date.UTC(2026, 8, 7, 10, 45));
+    const atoms = windowAtoms(partialStart, partialEnd);
+    expect(atoms).toHaveLength(2);
+    expect(atoms[1].end.toISOString()).toBe(partialEnd.toISOString());
+    const custom = [{ startsAt: partialStart, endsAt: partialEnd }];
+    expect(findUncoveredAtom(atoms, [], custom)).toBeNull();
+  });
+
+  it("whole atoms keep exact half-open semantics", () => {
+    const atoms = windowAtoms(start, end);
+    expect(atoms).toHaveLength(4);
+    for (const atom of atoms) {
+      expect(atom.end.getTime() - atom.start.getTime()).toBe(30 * 60 * 1000);
+    }
+  });
+
   it("checkout validates against the union, not the named row", () => {
     const src = fs.readFileSync(
       path.join(process.cwd(), "lib/payments/operations/checkout.ts"),

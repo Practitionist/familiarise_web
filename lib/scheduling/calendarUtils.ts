@@ -108,7 +108,8 @@ export function mapWeeklySlots(
   // Get the start and end dates based on view
   let startDate: Date, endDate: Date;
   if (view === "week") {
-    startDate = startOfWeek(currentDate);
+    // Sunday start, pinned — see useCalendarData.visibleDates.
+    startDate = startOfWeek(currentDate, { weekStartsOn: 0 });
     endDate = new Date(startDate);
     endDate.setDate(startDate.getDate() + 6);
   } else {

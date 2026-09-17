@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AllocationService } from "@/lib/scheduling/allocationService";
 import { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 // Slot with tentative status. completionStatus distinguishes a fresh
 // REQUEST_SUBMITTED hold (tentative + SCHEDULED — the requested times ARE the
@@ -68,16 +69,15 @@ export function RequestedSlotsDialog({
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
-  // Calculate reschedule info from slots with status. Only RESCHEDULED rows
-  // count: every fresh request also carries tentative holds, and those times
-  // ARE the request — the server's requested-slots mode approves exactly
-  // them. Gating the banner on tentativeness painted "needs new times" on
-  // every fresh approval (E2E on preview #1682).
+  // Calculate reschedule info from slots with status. Only released rows
+  // count (see isReleasedForReschedule): every fresh request also carries
+  // tentative holds, and those times ARE the request — the server's
+  // requested-slots mode approves exactly them. Gating the banner on
+  // tentativeness painted "needs new times" on every fresh approval
+  // (E2E on preview #1682).
   const totalCount = requestedSlotsWithStatus?.length ?? requestedSlots.length;
   const rescheduledCount =
-    requestedSlotsWithStatus?.filter(
-      (s) => s.completionStatus === "RESCHEDULED",
-    ).length ?? 0;
+    requestedSlotsWithStatus?.filter(isReleasedForReschedule).length ?? 0;
   const hasReschedule = rescheduledCount > 0;
   const isFullReschedule =
     rescheduledCount === totalCount && totalCount > 0;

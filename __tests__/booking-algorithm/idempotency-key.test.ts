@@ -8,6 +8,7 @@ import "./setup";
 
 import {
   computeAttemptFingerprint,
+  fingerprintGuards,
   resolveAttemptKey,
 } from "@/hooks/scheduling/useScheduling";
 // eslint-disable-next-line jest/no-mocks-import -- shared fixture builders, not module mocks (suite-wide pattern)
@@ -105,5 +106,64 @@ describe("resolveAttemptKey", () => {
     expect(computeAttemptFingerprint("auto", "e1", [])).toBe(
       computeAttemptFingerprint("auto", "e1", [], undefined),
     );
+  });
+
+  it("differs when stale-tab guards change (#1012)", () => {
+    // Same mode, same event, same slots — but a changed reschedule
+    // precondition must mint a fresh key, or the server would replay the old
+    // batch and mask the 409 the guard should have raised.
+    const plain = computeAttemptFingerprint("manual", "e1", slots);
+    const guarded = computeAttemptFingerprint(
+      "manual",
+      "e1",
+      slots,
+      undefined,
+      fingerprintGuards({ expectedTentativeSlotCount: 2 }),
+    );
+    expect(guarded).not.toBe(plain);
+    const changedGuard = computeAttemptFingerprint(
+      "manual",
+      "e1",
+      slots,
+      undefined,
+      fingerprintGuards({ expectedTentativeSlotCount: 3 }),
+    );
+    expect(changedGuard).not.toBe(guarded);
+    const initial = computeAttemptFingerprint(
+      "manual",
+      "e1",
+      slots,
+      undefined,
+      fingerprintGuards({ initialAllocation: true }),
+    );
+    expect(initial).not.toBe(plain);
+  });
+
+  it("reuses the key when guards are absent on both attempts", () => {
+    expect(fingerprintGuards({})).toBeUndefined();
+    expect(
+      computeAttemptFingerprint(
+        "requested",
+        "e1",
+        slots,
+        undefined,
+        fingerprintGuards({}),
+      ),
+    ).toBe(computeAttemptFingerprint("requested", "e1", slots));
+  });
+
+  it("differs when the override intent changes", () => {
+    // Skipping the availability-window check changes what the server accepts
+    // for identical slots, so it separates keys like any other intent.
+    const plain = computeAttemptFingerprint("manual", "e1", slots);
+    const overriding = computeAttemptFingerprint(
+      "manual",
+      "e1",
+      slots,
+      undefined,
+      fingerprintGuards({ override: true }),
+    );
+    expect(overriding).not.toBe(plain);
+    expect(fingerprintGuards({ override: false })).toBeUndefined();
   });
 });

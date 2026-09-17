@@ -42,6 +42,12 @@ export interface AllocationRequest {
   /** #1206 — the consultant's explicit "place what fits now". Only ever sent
    * on the second attempt, after the server has said how many sessions fit. */
   allowPartial?: boolean;
+  /**
+   * The consultant explicitly accepting the stored times as-is. Honoured
+   * server-side only for the event's consultant or a privileged caller —
+   * a consultee cannot assert times outside someone else's schedule.
+   */
+  override?: boolean;
 }
 
 /** What the allocate endpoints actually return in `data`: the created (or
@@ -80,6 +86,8 @@ export interface AllocationCallOptions {
   idempotencyKey?: string;
   /** #1206 — allocate the sessions that fit instead of refusing them all. */
   allowPartial?: boolean;
+  /** The consultant explicitly accepting the stored times as-is. */
+  override?: boolean;
 }
 
 export interface ValidationResponse {
@@ -186,6 +194,7 @@ export class AllocationService {
           error: parseFailed
             ? `Could not read the allocation response (HTTP ${response.status}). Please try again.`
             : fallbackError,
+          errorCode: "VALIDATION_ERROR",
           httpStatus: response.status,
         };
       }
@@ -315,12 +324,22 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
     // mock0801-appt-pending) are legal Prisma String @ids but rejected by
-    // eventIdSchema. Surface a clear recreate message instead.
+    // eventIdSchema. The user gets friendly copy; the offending id rides
+    // to Sentry, never to the toast.
     if (!isEventIdFormat(eventId)) {
+      reportSentryError(
+        new Error(`Allocation refused: event id failed format check`),
+        {
+          subsystem: "client",
+          tags: { feature: "scheduling" },
+          extra: { eventType, eventId },
+        },
+      );
       return {
         success: false,
         error:
-          "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+          "This booking can't be scheduled as shown. Please reload and try again.",
+        errorCode: "VALIDATION_ERROR",
       };
     }
 
@@ -335,6 +354,7 @@ export class AllocationService {
       initialAllocation: allocationOptions?.initialAllocation,
       expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
       allowPartial: allocationOptions?.allowPartial,
+      override: allocationOptions?.override,
     };
 
     const paths = {

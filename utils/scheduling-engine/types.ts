@@ -30,6 +30,35 @@ export function isRecurringEventType(eventType: string): boolean {
 }
 
 /**
+ * Whether a slot row is a reschedule release — released by the reschedule
+ * route and still awaiting replacement times.
+ *
+ * Canonical predicate, shared by the dashboard gates and the allocator. Tentativeness
+ * alone is NOT the signal: every fresh request also carries tentative holds
+ * (request-for-approval and unpaid checkout create them that way), and those
+ * times ARE the request. Only `tentative + RESCHEDULED` means "moved away
+ * from, needs a new time". Gating on tentativeness painted "needs new times"
+ * on every fresh approval (E2E on preview #1682).
+ */
+export function isReleasedForReschedule(slot: {
+  isTentative?: boolean | null;
+  completionStatus?: string | null;
+  /**
+   * Tombstoned rows keep their flags: a cancelled-then-tombstoned release
+   * still reads tentative + RESCHEDULED. Such a row is history, not a live
+   * hold awaiting replacement — callers that only carry the two status
+   * fields (dashboard list shapes) pass undefined, which counts as live.
+   */
+  deletedAt?: Date | string | null;
+}): boolean {
+  return (
+    slot.isTentative === true &&
+    slot.completionStatus === "RESCHEDULED" &&
+    (slot.deletedAt === null || slot.deletedAt === undefined)
+  );
+}
+
+/**
  * Request structure for slot allocation
  */
 export interface AllocationRequest {
@@ -144,6 +173,7 @@ export type AllocationErrorCode =
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
   | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "IDEMPOTENCY_KEY_REUSE" // same Idempotency-Key, different payload — 422
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
   | "NO_AVAILABILITY" // consultant has no published availability — 400
