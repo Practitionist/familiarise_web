@@ -13,6 +13,7 @@ import { AllocationService } from "@/lib/scheduling/allocationService";
 import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
 import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
 import type { BookableInterval } from "@/utils/scheduling-engine/types";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 /**
  * CALENDAR DATA SYNCHRONIZATION REFACTOR
@@ -98,6 +99,8 @@ interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
+  /** Present on occurrence rows; absent on older payloads — see the split below. */
+  completionStatus?: string | null;
   user?: Array<{ name?: string }>;
 }
 
@@ -513,12 +516,12 @@ export function useCalendarData(
         // Process ALL appointments, not just the first one, expanding each
         // appointment slot into 30-min display intervals.
         //
-        // Confirmed slots → eventSlots ("This Event", black). Tentative slots
-        // (the OLD slots being replaced during a reschedule) are tracked
-        // SEPARATELY in eventTentativeSlots so the calendar can render them as a
-        // distinct "Rescheduling" state. Previously tentative slots were simply
-        // dropped here, so they fell through to the foreign-booking "Booked"
-        // (gray) style — misleading, since they belong to THIS event.
+        // Confirmed slots → eventSlots ("This Event", black). Only genuine
+        // reschedule releases (tentative + RESCHEDULED) go to
+        // eventTentativeSlots ("Being moved" amber): a fresh request's holds
+        // are tentative too, but those times ARE the request — painting them
+        // "Being moved" sent consultants hunting for a reschedule that never
+        // happened. Same canonical predicate as the list/dialog gates.
         const confirmedSlots: BookableInterval[] = [];
         const tentativeSlots: BookableInterval[] = [];
         for (const appointment of activeData) {
@@ -529,7 +532,9 @@ export function useCalendarData(
             const durationMinutes =
               (end.getTime() - start.getTime()) / (1000 * 60);
             const numIntervals = Math.round(durationMinutes / 30);
-            const target = slot.isTentative ? tentativeSlots : confirmedSlots;
+            const target = isReleasedForReschedule(slot)
+              ? tentativeSlots
+              : confirmedSlots;
 
             for (let i = 0; i < numIntervals; i++) {
               const intervalStart = new Date(

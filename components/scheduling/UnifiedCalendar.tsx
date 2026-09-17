@@ -1037,7 +1037,11 @@ export function UnifiedCalendar({
         isRescheduling: isCurrentEventTentative,
         isBookedForDisplay: status.isBookedForDisplay,
         isPartiallyBooked: status.isPartiallyBooked,
-        isAvailable: status.isAvailable,
+        // Outside the scheduling period the interval is real but never
+        // bookable — paint it muted like a past slot, not green. The
+        // "Outside Period" label below is unchanged; only the promise of
+        // the green fill is removed, since the server always rejects these.
+        isAvailable: status.isAvailable && !isOutsideAllowedRange,
         isInPast: status.isInPast,
       });
       // ONE token, appended once, on top of a base string that carries no

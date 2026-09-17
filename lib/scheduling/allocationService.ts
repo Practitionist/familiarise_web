@@ -324,12 +324,22 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
     // mock0801-appt-pending) are legal Prisma String @ids but rejected by
-    // eventIdSchema. Surface a clear recreate message instead.
+    // eventIdSchema. The user gets friendly copy; the offending id rides
+    // to Sentry, never to the toast.
     if (!isEventIdFormat(eventId)) {
+      reportSentryError(
+        new Error(`Allocation refused: event id failed format check`),
+        {
+          subsystem: "client",
+          tags: { feature: "scheduling" },
+          extra: { eventType, eventId },
+        },
+      );
       return {
         success: false,
         error:
-          "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+          "This booking can't be scheduled as shown. Please reload and try again.",
+        errorCode: "VALIDATION_ERROR",
       };
     }
 

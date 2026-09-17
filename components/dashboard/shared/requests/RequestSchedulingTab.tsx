@@ -499,10 +499,14 @@ function StoredTimes({ request }: { request: Request }) {
             key={`${request.id}-slot-${index}`}
             className={cn(
               "flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums",
-              slot.isTentative ? "text-amber-600" : "text-muted-foreground",
+              // Amber is reserved for released reschedules: a fresh hold is
+              // tentative too, but those times ARE the request.
+              isReleasedForReschedule(slot)
+                ? "text-amber-600"
+                : "text-muted-foreground",
             )}
           >
-            {slot.isTentative ? (
+            {isReleasedForReschedule(slot) ? (
               <AlertTriangle className="h-3 w-3 flex-shrink-0" />
             ) : (
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
