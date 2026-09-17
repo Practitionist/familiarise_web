@@ -448,9 +448,12 @@ export async function transitionTrial(
     select: { status: true, appointmentId: true },
   });
   const res = await tx.trial.updateMany({
+    // Identity stays outside the caller predicate: a conflicting whereAnd.id
+    // would otherwise replace it and transition another row while history
+    // logs this one. AND composes without that hazard.
     where: {
       ...args.where,
-      ...args.whereAnd,
+      ...(args.whereAnd ? { AND: [args.whereAnd] } : {}),
       status: { in: args.fromIn ?? TRIAL_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
@@ -526,9 +529,10 @@ export async function transitionRescheduleRequest(
     select: { status: true, appointmentId: true },
   });
   const res = await tx.rescheduleRequest.updateMany({
+    // Identity stays outside the caller predicate — see transitionTrial.
     where: {
       ...args.where,
-      ...args.whereAnd,
+      ...(args.whereAnd ? { AND: [args.whereAnd] } : {}),
       status: { in: args.fromIn ?? RESCHEDULE_ALLOWED_FROM[args.to] },
     },
     data: {

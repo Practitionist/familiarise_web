@@ -43,8 +43,19 @@ export function isRecurringEventType(eventType: string): boolean {
 export function isReleasedForReschedule(slot: {
   isTentative?: boolean | null;
   completionStatus?: string | null;
+  /**
+   * Tombstoned rows keep their flags: a cancelled-then-tombstoned release
+   * still reads tentative + RESCHEDULED. Such a row is history, not a live
+   * hold awaiting replacement — callers that only carry the two status
+   * fields (dashboard list shapes) pass undefined, which counts as live.
+   */
+  deletedAt?: Date | string | null;
 }): boolean {
-  return slot.isTentative === true && slot.completionStatus === "RESCHEDULED";
+  return (
+    slot.isTentative === true &&
+    slot.completionStatus === "RESCHEDULED" &&
+    (slot.deletedAt === null || slot.deletedAt === undefined)
+  );
 }
 
 /**

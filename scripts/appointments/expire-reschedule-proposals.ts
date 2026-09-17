@@ -95,9 +95,15 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
     //
     // Bounded batches: a pathological backlog must not load every id or hold
     // the hourly cron past the function ceiling — loop until a batch comes
-    // back short.
+    // back short. Capped per invocation too: the GH Actions workflow times
+    // out at 10 minutes, and per-row transactions on a huge backlog could
+    // outrun it — the next hourly tick continues where this one stopped,
+    // since EXPIRED leaves the cohort.
     const BATCH_SIZE = 500;
+    const MAX_BATCHES_PER_RUN = 4;
+    let batchesRun = 0;
     for (;;) {
+      if (batchesRun >= MAX_BATCHES_PER_RUN) break;
       const stale = await prisma.rescheduleRequest.findMany({
         where: {
           status: { in: RESCHEDULE_OPEN_STATUSES },
@@ -112,6 +118,7 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
       for (const row of stale) {
         if (await expireOneProposal(row.id, now)) proposalsExpired += 1;
       }
+      batchesRun += 1;
 
       if (stale.length < BATCH_SIZE) break;
     }

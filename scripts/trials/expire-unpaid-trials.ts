@@ -99,9 +99,13 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     // emits. Idempotent: CANCELLED leaves the cohort.
     //
     // Bounded batches: see expire-reschedule-proposals — same hourly-cron
-    // ceiling reasoning.
+    // ceiling reasoning. Capped per invocation too (4 x 500 rows max); the
+    // next hourly tick continues, since CANCELLED leaves the cohort.
     const BATCH_SIZE = 500;
+    const MAX_BATCHES_PER_RUN = 4;
+    let batchesRun = 0;
     for (;;) {
+      if (batchesRun >= MAX_BATCHES_PER_RUN) break;
       const stale = await prisma.trial.findMany({
         where: {
           status: TrialStatus.AWAITING_PAYMENT,
@@ -119,6 +123,7 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
       for (const row of stale) {
         if (await expireOneTrial(row.id, now)) trialsExpired += 1;
       }
+      batchesRun += 1;
 
       if (stale.length < BATCH_SIZE) break;
     }
