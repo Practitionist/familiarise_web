@@ -1059,9 +1059,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Only allow cancellation of PENDING or SCHEDULED trials
+    // Only allow cancellation of PENDING, pay-link-live (AWAITING_PAYMENT) or
+    // SCHEDULED trials. AWAITING_PAYMENT occupies the slot (occupancyPolicy)
+    // and PATCH already allows AWAITING_PAYMENT → CANCELLED, so excluding it
+    // here pinned the slot until the payment-expiry sweep released it.
     const cancellableStatuses: TrialStatus[] = [
       TrialStatus.PENDING,
+      TrialStatus.AWAITING_PAYMENT,
       TrialStatus.SCHEDULED,
     ];
 

@@ -13,6 +13,7 @@ import { AllocationService } from "@/lib/scheduling/allocationService";
 import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
 import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
 import type { BookableInterval } from "@/utils/scheduling-engine/types";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 /**
  * CALENDAR DATA SYNCHRONIZATION REFACTOR
@@ -98,6 +99,8 @@ interface AppointmentSlotRaw {
   startsAt: string;
   endsAt: string;
   isTentative?: boolean;
+  /** Present on occurrence rows; absent on older payloads — see the split below. */
+  completionStatus?: string | null;
   user?: Array<{ name?: string }>;
 }
 
@@ -320,7 +323,6 @@ export function useCalendarData(
     if (!consultantId) return;
 
     const requestId = ++availabilityRequestIdRef.current;
-    availabilityFetchedAtRef.current = Date.now();
 
     // Published so the poll can WAIT on this request instead of racing it.
     // Resolve-only, so a waiter's `finally` can never see a rejection.
@@ -347,9 +349,13 @@ export function useCalendarData(
       // week instead of the remainder of the period is also a direct win on
       // the endpoint #997 measured in tens of seconds.
       const startDate =
-        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+        view === "week"
+          ? startOfWeek(currentDate, { weekStartsOn: 0 })
+          : startOfMonth(currentDate);
       const endDate =
-        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+        view === "week"
+          ? endOfWeek(currentDate, { weekStartsOn: 0 })
+          : endOfMonth(currentDate);
 
       // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
       // route re-verifies ownership regardless of this flag, and 403s rather
@@ -435,6 +441,11 @@ export function useCalendarData(
         description: errorMessage,
       });
     } finally {
+      // Freshness is stamped when the fetch SETTLES, not when it is issued:
+      // the poll delay is measured from this stamp, so a slow response (or a
+      // failing endpoint) can no longer drive the delay to zero and turn the
+      // 60s poll into a hot retry loop exactly when the server is struggling.
+      availabilityFetchedAtRef.current = Date.now();
       // Clear only if no LATER request has taken the ref over — that one owns
       // it until it settles itself.
       if (availabilityInFlightRef.current === inFlight) {
@@ -505,12 +516,12 @@ export function useCalendarData(
         // Process ALL appointments, not just the first one, expanding each
         // appointment slot into 30-min display intervals.
         //
-        // Confirmed slots → eventSlots ("This Event", black). Tentative slots
-        // (the OLD slots being replaced during a reschedule) are tracked
-        // SEPARATELY in eventTentativeSlots so the calendar can render them as a
-        // distinct "Rescheduling" state. Previously tentative slots were simply
-        // dropped here, so they fell through to the foreign-booking "Booked"
-        // (gray) style — misleading, since they belong to THIS event.
+        // Confirmed slots → eventSlots ("This Event", black). Only genuine
+        // reschedule releases (tentative + RESCHEDULED) go to
+        // eventTentativeSlots ("Being moved" amber): a fresh request's holds
+        // are tentative too, but those times ARE the request — painting them
+        // "Being moved" sent consultants hunting for a reschedule that never
+        // happened. Same canonical predicate as the list/dialog gates.
         const confirmedSlots: BookableInterval[] = [];
         const tentativeSlots: BookableInterval[] = [];
         for (const appointment of activeData) {
@@ -521,7 +532,9 @@ export function useCalendarData(
             const durationMinutes =
               (end.getTime() - start.getTime()) / (1000 * 60);
             const numIntervals = Math.round(durationMinutes / 30);
-            const target = slot.isTentative ? tentativeSlots : confirmedSlots;
+            const target = isReleasedForReschedule(slot)
+              ? tentativeSlots
+              : confirmedSlots;
 
             for (let i = 0; i < numIntervals; i++) {
               const intervalStart = new Date(
@@ -564,7 +577,10 @@ export function useCalendarData(
   const visibleDates = useMemo((): Date[] => {
     const dates: Date[] = [];
     if (view === "week") {
-      const weekStart = startOfWeek(currentDate);
+      // Sunday start, pinned: weekKey/countWeeks bucket quota weeks on
+      // Sundays, so an implicit locale default drifting to Monday would
+      // silently misalign the fetch window with the weekly caps.
+      const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
       for (let i = 0; i < 7; i++) {
         dates.push(addDays(weekStart, i));
       }

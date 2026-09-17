@@ -22,6 +22,8 @@ A brand-new handler instance blocks its event loop for roughly 24 s before any a
 
 **2026-09-15 research pass** (`docs/perf/2026-09-15-cold-start-research.md`, ADR 32): the two regimes are now stated separately — a brand-new instance created alone serves a database-backed page in 1.8–2.7 s, while one created during concurrent instance creation stalls ~24 s after its module graph is evaluated — and every application-side cause has been checked: Prisma already runs the WASM query compiler with the `pg` adapter (no native engine in the bundle), Sentry initialises inside the pre-stall window, the handler evaluates in under two seconds when created alone, and the pooler connects in ~330 ms once an instance is unstuck. Fourteen Sentry issues (44, 45, 2V, 15, 1Z, 43, 3N, 2S, 20, 1P, 9, 32, 22, 1C) are this mechanism and were set to ignore-until-escalating on that date. The isolation probe designed on 2026-08-22 (a zero-import route beside a full-graph route under the burst protocol) is PR #1656; its numbers are in `docs/perf/2026-09-15-cold-start-isolation-results.md` and decide ADR 32.
 
+**2026-09-16, vendor answer:** Netlify support (ticket #1112198) confirmed the stall as platform-side with no fix in flight and no provisioned concurrency on any plan; details in `platform-limits.md` under "What Netlify said". The interim keep-warm (three parallel pings every four minutes, `KEEP_WARM_CONCURRENCY`) and the fifteen-minute cadence for six sweeps shipped in PR #1685; the hosting decision is ADR 32.
+
 ## 4. The request ceiling
 
 Issues: #907 and #908 (closed by #939), #1454 (open).

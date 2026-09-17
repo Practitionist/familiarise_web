@@ -22,7 +22,10 @@ type TargetRequest = (
   name: string,
 ) => { url: string; timeoutMs: number };
 
-function loadTicker(): { targetRequest: TargetRequest } {
+function loadTicker(): {
+  targetRequest: TargetRequest;
+  dueTargets: (now: Date) => string[];
+} {
   const file = path.join(
     __dirname,
     "..",
@@ -37,7 +40,7 @@ function loadTicker(): { targetRequest: TargetRequest } {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = { exports: {} as { targetRequest: TargetRequest } };
+  const mod = { exports: {} as ReturnType<typeof loadTicker> };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -62,5 +65,43 @@ describe("cron-tick targetRequest", () => {
       url: "https://site.test/api/cleanup/abandoned-payments?limit=10",
       timeoutMs: 6_000,
     });
+  });
+});
+
+// #1686 — six sweeps run on the 15-minute slots only; the customer-visible
+// five stay on every tick (ADR 27 consequences, 2026-09-17).
+describe("cron-tick dueTargets cadence", () => {
+  const { dueTargets } = loadTicker();
+  const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
+
+  it("fires the fifteen-minute sweeps only on a 15-minute slot", () => {
+    const off = dueTargets(at(5));
+    const on = dueTargets(at(15));
+    for (const name of [
+      "reconcile-ledgers",
+      "sync-payment-earnings",
+      "release-earnings",
+      "cascade-refund-earnings",
+      "reconcile-refunds",
+      "abandoned-payments",
+      "retry-failed-emails",
+    ]) {
+      expect(off).not.toContain(name);
+      expect(on).toContain(name);
+    }
+  });
+
+  it("keeps the customer-visible sweeps on every tick", () => {
+    const off = dueTargets(at(5));
+    for (const name of [
+      "reconcile-payment-status",
+      "reconcile-orphaned-confirmations",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
+      "drain-notification-outbox",
+      "sweep-stuck-webhook-events",
+    ]) {
+      expect(off).toContain(name);
+    }
   });
 });

@@ -36,7 +36,10 @@ import {
 } from "./types";
 import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
-import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import {
+  buildCohostCommitmentFilter,
+  buildOccupiedAppointmentFilter,
+} from "./occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
@@ -136,8 +139,16 @@ export class ScheduleValidationService {
   async checkSlotAvailability(
     slots: Date[],
     consultantUserId: string,
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
-    return await this.validateNoConflicts(slots, consultantUserId);
+    return await this.validateNoConflicts(
+      slots,
+      consultantUserId,
+      undefined,
+      undefined,
+      undefined,
+      consultantProfileId,
+    );
   }
 
   /**
@@ -154,6 +165,7 @@ export class ScheduleValidationService {
     excludeAppointmentIds?: string[],
     consulteeUserId?: string,
     excludeOccurrenceIds?: string[],
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
     return await this.validateNoConflicts(
       slots,
@@ -161,6 +173,7 @@ export class ScheduleValidationService {
       excludeAppointmentIds,
       consulteeUserId,
       excludeOccurrenceIds,
+      consultantProfileId,
     );
   }
 
@@ -206,6 +219,15 @@ export class ScheduleValidationService {
        * wrapper's other calls must still count while the released ones do not.
        */
       excludeOccurrenceIds?: string[];
+      /**
+       * Consultant's profile id for the co-host arm of the conflict check.
+       * An ACCEPTED webinar/class seat commits real time but is not a slot
+       * participation, so without this the roster clause below never sees it
+       * and the grid (which counts it via buildConsultantOccupancyWhere)
+       * disagrees with validation. Optional so callers without a profile in
+       * scope keep the old participant-only behavior.
+       */
+      consultantProfileId?: string;
     },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
@@ -223,6 +245,7 @@ export class ScheduleValidationService {
       excludeAppointmentIds,
       options?.consulteeUserId,
       options?.excludeOccurrenceIds,
+      options?.consultantProfileId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
 
@@ -345,6 +368,9 @@ export class ScheduleValidationService {
     // sharing either party is a real conflict.
     consulteeUserId?: string,
     excludeOccurrenceIds?: string[],
+    // Co-host arm (AE-2 #784) — see the validate() options field of the same
+    // name. Absent keeps the old participant-only behavior.
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
     const occurrenceExclusion =
       excludeOccurrenceIds && excludeOccurrenceIds.length > 0
@@ -393,11 +419,26 @@ export class ScheduleValidationService {
               ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
               : []),
             // #1554 — the roster is AppointmentParticipant; the occurrence
-            // window is a separate predicate on the same appointment.
+            // window is a separate predicate on the same appointment. The
+            // co-host arm rides an OR beside the roster: an ACCEPTED
+            // webinar/class seat is a commitment without a participation row
+            // (AE-2 #784), and the grid counts it via
+            // buildConsultantOccupancyWhere — validation must too, or green
+            // cells fail only at commit time.
             {
-              participants: {
-                some: { userId: { in: participantIds }, ...liveParticipant() },
-              },
+              OR: [
+                {
+                  participants: {
+                    some: {
+                      userId: { in: participantIds },
+                      ...liveParticipant(),
+                    },
+                  },
+                },
+                ...(consultantProfileId
+                  ? [{ OR: buildCohostCommitmentFilter(consultantProfileId) }]
+                  : []),
+              ],
             },
             {
               occurrences: {

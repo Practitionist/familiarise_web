@@ -16,6 +16,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { setParticipantStatus } from "@/lib/booking/participants";
+import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { PaymentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
@@ -52,13 +53,19 @@ export async function softCancelTrialAppointment(
   const now = new Date();
 
   await prisma.$transaction(async (tx) => {
-    await tx.appointmentOccurrence.updateMany({
-      where: { appointmentId, deletedAt: null },
-      data: {
-        completionStatus: OccurrenceCompletionStatus.CANCELLED,
-        deletedAt: now,
+    // Guarded like every other slot release: only live rows move, so a
+    // concurrent capture/accept racing the cancel CASes instead of being
+    // overwritten — and the move is audited. allowZero because the trial may
+    // legitimately have no live rows left (already released, never placed).
+    await transitionOccurrenceCompletion(
+      tx,
+      {
+        where: { appointmentId, deletedAt: null },
+        to: OccurrenceCompletionStatus.CANCELLED,
+        data: { deletedAt: now },
+        allowZero: true,
       },
-    });
+    );
     await tx.appointment.updateMany({
       where: { id: appointmentId, deletedAt: null },
       data: { deletedAt: now },

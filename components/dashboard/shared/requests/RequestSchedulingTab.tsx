@@ -43,6 +43,8 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
+import { AllocationService } from "@/lib/scheduling/allocationService";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
   allocationFailed,
@@ -50,15 +52,19 @@ import {
 } from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
+  fingerprintGuards,
   resolveAttemptKey,
   type AllocationAttemptKey,
 } from "@/hooks/scheduling/useScheduling";
 import { cn } from "@/utils/tailwind";
 
-// Slot with tentative status for reschedule visibility
+// Slot with tentative status for reschedule visibility. completionStatus
+// separates a fresh hold (tentative + SCHEDULED) from a reschedule release
+// (tentative + RESCHEDULED) — only the latter is "needing a new time".
 interface RequestedSlot {
   startsAt: string;
   isTentative: boolean;
+  completionStatus?: string | null;
 }
 
 interface Request {
@@ -422,14 +428,18 @@ function formatRelativeTime(at: Date): string {
 }
 
 function RescheduleBadge({ request }: { request: Request }) {
-  const tentativeSlots = request.tentativeSlotCount ?? 0;
+  // Only actual reschedule releases badge. A fresh REQUEST_SUBMITTED hold is
+  // tentative too, but those times ARE the request — badging them "Full
+  // reschedule" sent consultants hunting for a reschedule that never happened
+  // (E2E on preview #1682).
+  const rescheduledSlots = request.rescheduledSlotCount ?? 0;
   const totalSlots = request.totalSlotCount;
-  if (tentativeSlots === 0 || totalSlots === undefined) return null;
+  if (rescheduledSlots === 0 || totalSlots === undefined) return null;
 
-  const tentative = sessionsFromSlots(request, tentativeSlots);
+  const moved = sessionsFromSlots(request, rescheduledSlots);
   const total = sessionsFromSlots(request, totalSlots);
 
-  if (tentativeSlots === totalSlots) {
+  if (rescheduledSlots === totalSlots) {
     return (
       <Badge
         variant="secondary"
@@ -447,7 +457,7 @@ function RescheduleBadge({ request }: { request: Request }) {
       className="gap-1 border-amber-500/40 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700 dark:bg-amber-950/40 dark:text-amber-400"
     >
       <AlertTriangle className="h-3 w-3" />
-      {tentative} of {total} need{tentative === 1 ? "s" : ""} a new time
+      {moved} of {total} need{moved === 1 ? "s" : ""} a new time
     </Badge>
   );
 }
@@ -468,6 +478,7 @@ function StoredTimes({ request }: { request: Request }) {
       : request.requestedTimes?.map((startsAt) => ({
           startsAt,
           isTentative: false,
+          completionStatus: null,
         }));
 
   if (slots && slots.length > 0) {
@@ -488,18 +499,22 @@ function StoredTimes({ request }: { request: Request }) {
             key={`${request.id}-slot-${index}`}
             className={cn(
               "flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums",
-              slot.isTentative ? "text-amber-600" : "text-muted-foreground",
+              // Amber is reserved for released reschedules: a fresh hold is
+              // tentative too, but those times ARE the request.
+              isReleasedForReschedule(slot)
+                ? "text-amber-600"
+                : "text-muted-foreground",
             )}
           >
-            {slot.isTentative ? (
+            {isReleasedForReschedule(slot) ? (
               <AlertTriangle className="h-3 w-3 flex-shrink-0" />
             ) : (
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
             )}
             <span>{formatDateTime(slot.startsAt)}</span>
-            {slot.isTentative && (
-              <span className="sr-only">(needs rescheduling)</span>
-            )}
+            {isReleasedForReschedule(slot) && (
+                <span className="sr-only">(needs rescheduling)</span>
+              )}
           </div>
         ))}
         {hidden > 0 && (
@@ -605,9 +620,8 @@ export function RequestSchedulingTab({
           ...consultationsResult.data.map((consultation) => {
             const slots = consultation.appointment?.occurrences || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
-            const rescheduledCount = slots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              slots.filter(isReleasedForReschedule).length;
             const totalCount = slots.length;
 
             return {
@@ -620,6 +634,7 @@ export function RequestSchedulingTab({
               requestedSlots: slots.map((slot) => ({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
+                completionStatus: slot.completionStatus ?? null,
               })),
               status: consultation.status,
               requiredSlots: Math.ceil(
@@ -664,9 +679,8 @@ export function RequestSchedulingTab({
                 (appt) => appt.occurrences || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
-            const rescheduledCount = allSlots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              allSlots.filter(isReleasedForReschedule).length;
             const totalCount = allSlots.length;
 
             return {
@@ -679,6 +693,7 @@ export function RequestSchedulingTab({
               requestedSlots: allSlots.map((slot) => ({
                 startsAt: slot.startsAt,
                 isTentative: slot.isTentative ?? false,
+                completionStatus: slot.completionStatus ?? null,
               })),
               status: subscription.status,
               // When rescheduling (tentative slots exist), only require replacing those slots
@@ -897,25 +912,41 @@ export function RequestSchedulingTab({
     }
 
     try {
-      const endpoint =
+      const eventType =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/bookings/subscriptions/${selectedRequestForDialog.id}/allocate`
-          : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
+          ? "subscription"
+          : "consultation";
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("requested", selectedRequestForDialog.id, []),
+        computeAttemptFingerprint(
+          "requested",
+          selectedRequestForDialog.id,
+          [],
+          undefined,
+          // Same stale-tab guards as the body below: a guard change mints a
+          // fresh key so the server enforces it instead of replaying (#1012).
+          fingerprintGuards({
+            initialAllocation:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
+              undefined,
+            expectedTentativeSlotCount:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
+                ? selectedRequestForDialog.tentativeSlotCount
+                : undefined,
+          }),
+        ),
       );
       attemptKeyRef.current = attempt;
 
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": attempt.key,
-        },
-        body: JSON.stringify({
-          isAuto: false,
+      // Via the shared client so a non-JSON edge error still carries its HTTP
+      // status (fail-closed) and structured codes like IDEMPOTENCY_KEY_REUSE
+      // survive to the caller instead of collapsing into a generic Error.
+      const result = await AllocationService.allocateSlots(
+        eventType,
+        selectedRequestForDialog.id,
+        [],
+        {
           useRequestedSlots: true,
           override,
           // Fresh allocations only — partial reschedules legitimately have
@@ -928,18 +959,17 @@ export function RequestSchedulingTab({
             (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
               ? selectedRequestForDialog.tentativeSlotCount
               : undefined,
-        }),
-      });
+          idempotencyKey: attempt.key,
+        },
+      );
 
-      const data = await response.json();
-
-      if (response.status === 409) {
+      if (!result.success && result.httpStatus === 409) {
         handleConflict(selectedRequestForDialog.id);
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to allocate slots");
+      if (!result.success) {
+        throw new Error(result.error || "Failed to allocate slots");
       }
 
       // Success handling
@@ -1322,14 +1352,15 @@ export function RequestSchedulingTab({
           }
           confirming={respondInFlight}
           rescheduleNeedsAllocator={
-            // A reschedule without an answerable consultee proposal cannot
-            // confirm its stored times (they are the times being moved away
-            // from) — the dialog shows allocator guidance instead of a
-            // confirm button that the server would always refuse. An
-            // ANSWERABLE proposal still confirms here: its times are the
-            // proposed replacements, accepted via respond (#1163).
+            // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
+            // the stored times un-approvable: they are the times being moved
+            // AWAY from, and the server's requested-slots mode refuses them
+            // by design. A fresh REQUEST_SUBMITTED hold is tentative too, but
+            // its times ARE the request — gating on tentativeSlotCount
+            // blocked every fresh "Use Requested Times" approval (E2E #1682).
+            // Mirrors the row's own button gate (rescheduledSlotCount).
             !!selectedRequestForDialog &&
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0 &&
+            (selectedRequestForDialog.rescheduledSlotCount ?? 0) > 0 &&
             !answerableProposal(selectedRequestForDialog)
           }
           onConfirm={handleRequestedAllocation}

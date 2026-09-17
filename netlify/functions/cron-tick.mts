@@ -72,6 +72,14 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  */
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-failed-emails": 15,
+  // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
+  // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
+  "reconcile-ledgers": 15,
+  "sync-payment-earnings": 15,
+  "release-earnings": 15,
+  "cascade-refund-earnings": 15,
+  "reconcile-refunds": 15,
+  "abandoned-payments": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */

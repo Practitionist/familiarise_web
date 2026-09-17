@@ -110,6 +110,8 @@ absence is correct, because no money leaves the gateway. See
 | `RAZORPAYX_KEY_SECRET`     | payout submission        | Falls back to `RAZORPAY_SECRET`, same caveat.                                                                 |
 | `RAZORPAYX_WEBHOOK_SECRET` | `/api/webhooks/razorpay` | The payout-webhook signature fallback branch cannot verify, so payout status never advances from the gateway. |
 
+Not a secret, but read by the same function: `KEEP_WARM_CONCURRENCY` on the Netlify production context sets how many parallel keep-warm requests the four-minute `keep-warm` scheduled function fires at `/api/perf/probe-bare` (PR #1685). Unset means 3; `0` disables it. It exists because Netlify confirmed on 2026-09-16 that a burst of new instances stalls about 28 s and that parallel pings are the only on-platform mitigation.
+
 ### Missing — compliance and other
 
 These gate features that are deliberately flag-off today. They are recorded so

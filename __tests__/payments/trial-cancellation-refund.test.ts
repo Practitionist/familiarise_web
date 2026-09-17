@@ -20,6 +20,7 @@
  */
 
 const mockSlotUpdateMany = jest.fn();
+const mockSlotUpdateManyAndReturn = jest.fn();
 const mockAppointmentUpdateMany = jest.fn();
 const mockAppointmentDelete = jest.fn();
 const mockAppointmentFindUnique = jest.fn();
@@ -34,6 +35,12 @@ jest.mock("../../lib/prisma", () => ({
       fn({
         appointmentOccurrence: {
           updateMany: (...a: unknown[]) => mockSlotUpdateMany(...a),
+          findMany: jest.fn().mockResolvedValue([]),
+          updateManyAndReturn: (...a: unknown[]) =>
+            mockSlotUpdateManyAndReturn(...a),
+        },
+        bookingStatusHistory: {
+          create: jest.fn().mockResolvedValue({}),
         },
         appointmentParticipant: {
           updateMany: jest.fn().mockResolvedValue({ count: 1 }),
@@ -98,6 +105,9 @@ function appointmentStartingInHours(hours: number) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockSlotUpdateMany.mockResolvedValue({ count: 1 });
+  mockSlotUpdateManyAndReturn.mockResolvedValue([
+    { id: "s1", appointmentId: APPOINTMENT_ID },
+  ]);
   mockAppointmentUpdateMany.mockResolvedValue({ count: 1 });
 });
 
@@ -119,13 +129,23 @@ describe("softCancelTrialAppointment", () => {
   it("cancels and tombstones the slots so they stop reading as live", async () => {
     await softCancelTrialAppointment(APPOINTMENT_ID);
 
-    expect(mockSlotUpdateMany).toHaveBeenCalledWith(
+    // Guarded transition (not the old bare updateMany): only live rows move,
+    // so a concurrent capture racing the cancel CASes instead of being
+    // overwritten — and the move is audited.
+    expect(mockSlotUpdateMany).not.toHaveBeenCalled();
+    expect(mockSlotUpdateManyAndReturn).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { appointmentId: APPOINTMENT_ID, deletedAt: null },
-        data: {
+        where: expect.objectContaining({
+          appointmentId: APPOINTMENT_ID,
+          deletedAt: null,
+          completionStatus: {
+            in: expect.arrayContaining(["SCHEDULED", "RESCHEDULED"]),
+          },
+        }),
+        data: expect.objectContaining({
           completionStatus: OccurrenceCompletionStatus.CANCELLED,
           deletedAt: expect.any(Date),
-        },
+        }),
       }),
     );
   });
