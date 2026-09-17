@@ -312,6 +312,10 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Not enough free slots",
     variant: "destructive",
   },
+  IDEMPOTENCY_KEY_REUSE: {
+    title: "Request changed — please resubmit",
+    variant: "destructive",
+  },
 };
 
 export const allocationFailedWithCode = (
@@ -327,12 +331,13 @@ export const allocationFailedWithCode = (
   return allocationFailed(reason);
 };
 
-/** Client-side gate when the event PK is not UUID/CUID (mock/hand-crafted rows). */
+/** Client-side gate when the event PK is not UUID/CUID (mock/hand-crafted rows).
+ * Friendly copy only — the offending id is Sentry-logged at the call site,
+ * never rendered. (Dead today: no callers. Kept for the fail-closed path.) */
 export const invalidEventId = (): AllocationToast => ({
   variant: "destructive",
   title: "Couldn't save timings",
-  description:
-    "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+  description: "This booking can't be scheduled as shown. Please reload.",
 });
 
 /**

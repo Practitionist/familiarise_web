@@ -26,7 +26,12 @@ import {
   ScheduleValidationService,
   isOccupiedByLiveAppointment,
 } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { ScheduleType, DayOfWeek, AppointmentStatus } from "@prisma/client";
+import {
+  ScheduleType,
+  DayOfWeek,
+  AppointmentStatus,
+  type Prisma,
+} from "@prisma/client";
 import {
   makeConsultantData,
   makeWeeklyAvailabilitySlot,
@@ -105,6 +110,26 @@ const customConsultant = makeConsultantData({
 
 // ─── checkSlotAvailability ──────────────────────────────────────────────────
 
+/**
+ * The "reaches this consultant" OR clause of the conflict query: the AND also
+ * carries the occupying-status OR first, so callers must select by content
+ * (the participants arm), not by position.
+ */
+function reachOrOf(call: {
+  where: Prisma.AppointmentWhereInput;
+}): Prisma.AppointmentWhereInput[] | undefined {
+  const andClauses = (call.where.AND ??
+    []) as Prisma.AppointmentWhereInput[];
+  const reach = andClauses
+    .filter((clause) => Array.isArray(clause.OR))
+    .find((clause) =>
+      (clause.OR as Prisma.AppointmentWhereInput[]).some(
+        (arm) => arm.participants !== undefined,
+      ),
+    );
+  return reach?.OR as Prisma.AppointmentWhereInput[] | undefined;
+}
+
 describe("checkSlotAvailability", () => {
   it("should return valid when no conflicts exist", async () => {
     const result = await service.checkSlotAvailability(
@@ -172,15 +197,34 @@ describe("checkSlotAvailability", () => {
   // grid-allocator-parity suite against a real database.
   it("mirrors the parent slot predicate into the conflict query's include", async () => {
     await service.checkSlotAvailability(futureSlots(2), "user-1");
-    const { where, include } = mockPrisma.appointment.findMany.mock.calls[0][0];
-    const parentFilter = where.AND.find((clause: any) => clause.occurrences)
-      .occurrences.some.AND;
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+      include: {
+        occurrences: {
+          where: { AND: Prisma.AppointmentOccurrenceWhereInput[] };
+        };
+      };
+    };
+    const { where, include } = call;
+    const andClauses = (where.AND ?? []) as Prisma.AppointmentWhereInput[];
+    const parentFilter = andClauses.find((clause) => clause.occurrences)
+      ?.occurrences;
+    const slotFilter =
+      parentFilter !== null &&
+      typeof parentFilter === "object" &&
+      "some" in parentFilter
+        ? (
+            parentFilter as {
+              some: { AND: Prisma.AppointmentOccurrenceWhereInput[] };
+            }
+          ).some.AND
+        : undefined;
     const includeFilter = include.occurrences.where.AND;
     // Same three conditions, same order: envelope ×2, tombstone. #1554 — the
     // participant predicate sits on the appointment, not on the rows.
-    expect(includeFilter).toEqual(parentFilter);
+    expect(includeFilter).toEqual(slotFilter);
     expect(includeFilter).toContainEqual({ deletedAt: null });
-    expect(where.AND).toContainEqual({
+    expect(reachOrOf(call)).toContainEqual({
       participants: {
         some: {
           userId: { in: ["user-1"] },
@@ -188,6 +232,53 @@ describe("checkSlotAvailability", () => {
         },
       },
     });
+  });
+
+  it("adds the co-host arm when the consultant profile is known (AE-2)", async () => {
+    await service.checkSlotAvailability(
+      futureSlots(1),
+      "user-1",
+      "consultant-profile-1",
+    );
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+    };
+    expect(reachOrOf(call)).toContainEqual({
+      OR: [
+        {
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: "consultant-profile-1",
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
+        {
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: "consultant-profile-1",
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+  });
+
+  it("omits the co-host arm when no consultant profile is given", async () => {
+    await service.checkSlotAvailability(futureSlots(1), "user-1");
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+    };
+    expect(reachOrOf(call)).toHaveLength(1);
   });
 
   it("should skip expired payment conflicts (consultation)", async () => {

@@ -178,4 +178,65 @@ describe("readAllocationRequest slot payload", () => {
     expect(Object.keys(slotArgs.select).sort()).toEqual(ALLOWED_SLOT_KEYS);
     expect(slotArgs.include).toBeUndefined();
   });
+
+  it("counts a live released row as awaiting replacement", async () => {
+    findUnique.mockResolvedValue({
+      id: "consultation-1",
+      status: "PENDING",
+      requestedBy: { userId: "user-1", user: { name: "Buyer" } },
+      consultationPlan: {
+        title: "Intro call",
+        consultantProfileId: "consultant-1",
+        durationInHours: 1,
+      },
+      appointment: {
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            completionStatus: "RESCHEDULED",
+            deletedAt: null,
+          },
+        ],
+      },
+    });
+
+    const request = await readAllocationRequest(
+      "consultation-1",
+      "consultation",
+    );
+    expect(request?.hasReleasedSlots).toBe(true);
+  });
+
+  it("ignores a tombstoned row that keeps its release flags", async () => {
+    // Tombstoned rows keep isTentative + RESCHEDULED: without the deletedAt
+    // check this history row reads as a live hold awaiting replacement and
+    // disables the initial-allocation guard while confirmed slots exist.
+    findUnique.mockResolvedValue({
+      id: "consultation-1",
+      status: "PENDING",
+      requestedBy: { userId: "user-1", user: { name: "Buyer" } },
+      consultationPlan: {
+        title: "Intro call",
+        consultantProfileId: "consultant-1",
+        durationInHours: 1,
+      },
+      appointment: {
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            completionStatus: "RESCHEDULED",
+            deletedAt: new Date("2026-08-04T00:00:00Z"),
+          },
+        ],
+      },
+    });
+
+    const request = await readAllocationRequest(
+      "consultation-1",
+      "consultation",
+    );
+    expect(request?.hasReleasedSlots).toBe(false);
+  });
 });

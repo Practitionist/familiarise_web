@@ -323,11 +323,23 @@ export interface AllocationAttemptKey {
  * Stable fingerprint of an allocation attempt. A retry of the SAME payload
  * keeps the same Idempotency-Key (the server replays the original batch);
  * any change to mode or slots gets a fresh key.
+ *
+ * `intent` separates attempts whose server-side meaning differs without
+ * changing mode/slots — today `allowPartial` (#1206): a partial-success batch
+ * stamped under a key must never replay as the answer to a later full-intent
+ * retry in the same hook instance, which would report the shortfall as done.
+ *
+ * `guards` separates attempts whose preconditions differ without changing
+ * mode/slots — `initialAllocation` and `expectedTentativeSlotCount` (#1012):
+ * reusing a key across a guard change would replay the old batch and mask the
+ * 409 the guard should have raised. Build it with `fingerprintGuards`.
  */
 export function computeAttemptFingerprint(
   mode: "manual" | "auto" | "requested",
   eventId: string,
   slots: CalendarInterval[],
+  intent?: string,
+  guards?: string,
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
@@ -335,7 +347,32 @@ export function computeAttemptFingerprint(
     // every runtime locale.
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .join(",");
-  return `${mode}|${eventId}|${slotPart}`;
+  return `${mode}|${eventId}|${slotPart}|${intent ?? ""}|${guards ?? ""}`;
+}
+
+/**
+ * Serializes the stale-tab guards into the attempt fingerprint. The shape is
+ * five parts (mode|event|slots|intent|guards) whenever any call site passes
+ * guards — keys are per-hook-instance UUIDs, never persisted, so no
+ * cross-version stability is owed; within one session equal payloads keep
+ * equal fingerprints and any guard change mints a fresh key.
+ */
+export function fingerprintGuards(options: {
+  initialAllocation?: boolean;
+  expectedTentativeSlotCount?: number;
+  /**
+   * The consultant explicitly accepting times outside their own published
+   * availability. Skipping the window check changes what the server accepts
+   * for identical slots, so it separates keys like any other intent.
+   */
+  override?: boolean;
+}): string | undefined {
+  const parts: string[] = [];
+  if (options.initialAllocation === true) parts.push("init:1");
+  if (typeof options.expectedTentativeSlotCount === "number")
+    parts.push(`exp:${options.expectedTentativeSlotCount}`);
+  if (options.override === true) parts.push("ovr:1");
+  return parts.length > 0 ? parts.join("|") : undefined;
 }
 
 let attemptKeyCounter = 0;
@@ -571,6 +608,15 @@ export function useEventSlotAllocation(
         // Slot conflict — the dialog stays open, the server's own message
         // renders as itself (#1132).
         toast(allocationFailed(errorMessage));
+      } else if (
+        result.httpStatus === 422 &&
+        result.errorCode === "IDEMPOTENCY_KEY_REUSE"
+      ) {
+        // Same key, different payload: the key is burned and every retry
+        // with it 422s again. Drop it so the next submit mints a fresh one
+        // via resolveAttemptKey; the dialog stays open for the resubmit.
+        attemptKeyRef.current = null;
+        toast(allocationFailedWithCode(errorMessage, result.errorCode));
       } else {
         // PR 2c resilience — cause-specific toast from the structured code
         // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
@@ -1068,7 +1114,20 @@ export function useEventSlotAllocation(
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("manual", eventId, selectedSlots),
+        computeAttemptFingerprint(
+          "manual",
+          eventId,
+          selectedSlots,
+          undefined,
+          // The hook names the intent allowOverride; the fingerprint and the
+          // wire call it override — mapped explicitly so the key separates
+          // override attempts from plain ones.
+          fingerprintGuards({
+            initialAllocation: options.initialAllocation,
+            expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+            override: options.allowOverride,
+          }),
+        ),
       );
       attemptKeyRef.current = attempt;
 
@@ -1086,6 +1145,9 @@ export function useEventSlotAllocation(
         idempotencyKey: attempt.key,
         initialAllocation: options.initialAllocation || undefined,
         expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+        // The consultant explicitly accepting these times as-is (outside
+        // their published availability). Was a dead option until wired here.
+        override: options.allowOverride || undefined,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1151,9 +1213,17 @@ export function useEventSlotAllocation(
         // Slots are picked server-side, so the fingerprint covers mode +
         // event only: a double-click replays, a later re-run (after a
         // failure changed nothing) also replays, which is safe either way.
+        // The partial intent is part of the fingerprint: a partial batch
+        // must never replay as a full placement (#1206).
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("auto", eventId, []),
+          computeAttemptFingerprint(
+            "auto",
+            eventId,
+            [],
+            allocateOptions?.allowPartial ? "partial" : undefined,
+            fingerprintGuards(options),
+          ),
         );
         attemptKeyRef.current = attempt;
 
@@ -1277,7 +1347,13 @@ export function useEventSlotAllocation(
 
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("requested", eventId, requestedSlots),
+          computeAttemptFingerprint(
+            "requested",
+            eventId,
+            requestedSlots,
+            undefined,
+            fingerprintGuards(options),
+          ),
         );
         attemptKeyRef.current = attempt;
 
