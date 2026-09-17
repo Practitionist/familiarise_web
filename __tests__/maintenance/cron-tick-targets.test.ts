@@ -24,9 +24,7 @@ type TargetRequest = (
 
 function loadTicker(): {
   targetRequest: TargetRequest;
-  keepWarmConcurrency: (raw?: string) => number;
-  keepWarmUrls: (baseUrl: string, n: number) => string[];
-  KEEP_WARM_PATH: string;
+  dueTargets: (now: Date) => string[];
 } {
   const file = path.join(
     __dirname,
@@ -42,9 +40,7 @@ function loadTicker(): {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = {
-    exports: {} as ReturnType<typeof loadTicker>,
-  };
+  const mod = { exports: {} as ReturnType<typeof loadTicker> };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -72,27 +68,40 @@ describe("cron-tick targetRequest", () => {
   });
 });
 
-// Netlify ticket #1112198 — parallel keep-warm pings against the zero-import
-// probe; N defaults to 5, `0` disables, garbage falls back to the default.
-describe("cron-tick keep-warm", () => {
-  const { keepWarmConcurrency, keepWarmUrls, KEEP_WARM_PATH } = loadTicker();
+// #1686 — six sweeps run on the 15-minute slots only; the customer-visible
+// five stay on every tick (ADR 27 consequences, 2026-09-17).
+describe("cron-tick dueTargets cadence", () => {
+  const { dueTargets } = loadTicker();
+  const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
 
-  it("defaults to five, honours 0 as off, and ignores nonsense", () => {
-    expect(keepWarmConcurrency(undefined)).toBe(5);
-    expect(keepWarmConcurrency("0")).toBe(0);
-    expect(keepWarmConcurrency("3")).toBe(3);
-    expect(keepWarmConcurrency("banana")).toBe(5);
-    expect(keepWarmConcurrency("99")).toBe(5);
+  it("fires the fifteen-minute sweeps only on a 15-minute slot", () => {
+    const off = dueTargets(at(5));
+    const on = dueTargets(at(15));
+    for (const name of [
+      "reconcile-ledgers",
+      "sync-payment-earnings",
+      "release-earnings",
+      "cascade-refund-earnings",
+      "reconcile-refunds",
+      "abandoned-payments",
+      "retry-failed-emails",
+    ]) {
+      expect(off).not.toContain(name);
+      expect(on).toContain(name);
+    }
   });
 
-  it("mints one unique-key probe URL per instance to warm", () => {
-    const urls = keepWarmUrls("https://example.test", 3);
-    expect(urls).toHaveLength(3);
-    for (const url of urls) {
-      expect(url.startsWith(`https://example.test${KEEP_WARM_PATH}?k=`)).toBe(
-        true,
-      );
+  it("keeps the customer-visible sweeps on every tick", () => {
+    const off = dueTargets(at(5));
+    for (const name of [
+      "reconcile-payment-status",
+      "reconcile-orphaned-confirmations",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
+      "drain-notification-outbox",
+      "sweep-stuck-webhook-events",
+    ]) {
+      expect(off).toContain(name);
     }
-    expect(new Set(urls).size).toBe(3);
   });
 });
