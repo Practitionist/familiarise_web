@@ -31,6 +31,27 @@ type PageProps = {
 // React.cache so generateMetadata() and the page body share one query per request.
 const loadRequest = cache(readAllocationRequest);
 
+/** The two products this page can place. Anything else is not a type. */
+type AllocationPageEventType = "subscription" | "consultation";
+
+/**
+ * Parses ?type without a ternary train and without assertions: the explicit
+ * return type narrows each case arm to its literal, and anything unlisted
+ * (missing, garbage, wrong case) is null rather than silently consultation.
+ */
+function parseEventTypeParam(
+  type: string | undefined,
+): AllocationPageEventType | null {
+  switch (type) {
+    case "subscription":
+      return "subscription";
+    case "consultation":
+      return "consultation";
+    default:
+      return null;
+  }
+}
+
 /**
  * Names the booking, not the task. A consultant working three requests has
  * three of these tabs open, and "Allocate slots" on all of them tells them
@@ -76,13 +97,8 @@ export default async function AllocateSlotsPage({
   // canonically instead of 404ing a valid request: look under the named
   // table first, then the other one, redirecting to the canonical URL.
   // The grid subject below still comes from the DB read, never from ?type.
-  const requestedType =
-    type === "subscription"
-      ? ("subscription" as const)
-      : type === "consultation"
-        ? ("consultation" as const)
-        : null;
-  const canonicalPath = (eventType: "subscription" | "consultation") =>
+  const requestedType = parseEventTypeParam(type);
+  const canonicalPath = (eventType: AllocationPageEventType) =>
     `/dashboard/consultant/${encodeURIComponent(consultantId)}/requests/${encodeURIComponent(requestId)}/allocate?type=${eventType}`;
 
   let request = requestedType
