@@ -13,7 +13,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest, after } from "next/server";
 import { z } from "zod";
 import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
 import crypto from "node:crypto";
@@ -306,8 +306,11 @@ export async function POST(
   }
 
   // The bell reaches an invitee who already has an account; the email is the
-  // channel that reaches one who does not (#1653). Both are awaited: an
-  // un-awaited promise is dropped when the instance freezes after the response.
+  // channel that reaches one who does not (#1653). Both run in `after()`:
+  // the response must not wait on Novu + Resend budgets, and `after()` holds
+  // the invocation open so the outbox stages commit (a floating promise
+  // would risk the freeze dropping the stage before the relay can backstop
+  // it). Failures stay logged, never surfaced.
   const origin = new URL(req.url).origin;
   const invite = {
     inviterName: access.session.user.name ?? access.session.user.email,
@@ -316,23 +319,27 @@ export async function POST(
     inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
     expiresAt: expiresAt.toISOString(),
   };
-  await notifyOrgInviteSent(email, invite).catch((err) => {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "organizations" } },
-    );
-    console.error("[notifyOrgInviteSent] failed:", err);
-  });
-  await sendOrgInvitationEmail(
-    { email, ...invite },
-    { entityRef: `orgInvite:${invitation.id}` },
-  ).catch((err) => {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "email", emailType: "ORG_INVITATION" } },
-    );
-    console.error("[sendOrgInvitationEmail] failed:", err);
-  });
+  after(() =>
+    notifyOrgInviteSent(email, invite).catch((err) => {
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "organizations" } },
+      );
+      console.error("[notifyOrgInviteSent] failed:", err);
+    }),
+  );
+  after(() =>
+    sendOrgInvitationEmail(
+      { email, ...invite },
+      { entityRef: `orgInvite:${invitation.id}` },
+    ).catch((err) => {
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "email", emailType: "ORG_INVITATION" } },
+      );
+      console.error("[sendOrgInvitationEmail] failed:", err);
+    }),
+  );
 
   return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

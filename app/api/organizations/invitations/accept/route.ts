@@ -12,7 +12,7 @@
  * the second sees count=0 and reports 409.
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest, after } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -157,32 +157,38 @@ export async function POST(req: NextRequest) {
 
   // Side-effect: notify the org's operator roster that someone new
   // joined. Skip when the caller was already a member — the "accept"
-  // button was just idempotent, nothing newsworthy happened.
+  // button was just idempotent, nothing newsworthy happened. Both sends
+  // run in `after()`: non-blocking, and held open past the response so
+  // the outbox stages commit for the relays to backstop.
   if (!result.alreadyMember) {
     const origin = new URL(req.url).origin;
-    notifyOrgInviteAccepted(result.organization.id, {
-      accepteeName: auth.session.user.name ?? auth.session.user.email,
-      accepteeEmail: auth.session.user.email,
-      orgName: result.organization.name,
-      role: result.membership.role,
-      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
-    }).catch((err) =>
-      console.error("[notifyOrgInviteAccepted] failed:", err),
+    after(() =>
+      notifyOrgInviteAccepted(result.organization.id, {
+        accepteeName: auth.session.user.name ?? auth.session.user.email,
+        accepteeEmail: auth.session.user.email,
+        orgName: result.organization.name,
+        role: result.membership.role,
+        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
+      }).catch((err) =>
+        console.error("[notifyOrgInviteAccepted] failed:", err),
+      ),
     );
     // P3 email twin to the joiner; skipped when alreadyMember like the bell.
-    sendOrgWelcomeEmail({
-      userId,
-      membershipId: result.membership.id,
-      orgName: result.organization.name,
-      role: result.membership.role,
-      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
-    }).catch((emailErr) => {
-      Sentry.captureException(
-        emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-        { tags: { subsystem: "email", emailType: "ORG_WELCOME" } },
-      );
-      console.error("[org-welcome-email] failed:", emailErr);
-    });
+    after(() =>
+      sendOrgWelcomeEmail({
+        userId,
+        membershipId: result.membership.id,
+        orgName: result.organization.name,
+        role: result.membership.role,
+        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
+      }).catch((emailErr) => {
+        Sentry.captureException(
+          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+          { tags: { subsystem: "email", emailType: "ORG_WELCOME" } },
+        );
+        console.error("[org-welcome-email] failed:", emailErr);
+      }),
+    );
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects

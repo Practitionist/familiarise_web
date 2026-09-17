@@ -13,7 +13,7 @@
  * Bulk REMOVE and bulk ROLE-CHANGE remain 405 (anti-lockout risk).
  */
 
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest, after } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -92,34 +92,40 @@ export async function POST(
 
   // Auto-send invite emails to successfully imported members (#1230 wave-8).
   // Fire-and-forget per ADR-14 — email failures don't undo the membership.
+  // The whole fan-out runs in ONE `after()`: awaiting Novu + Resend per
+  // entry in the response path would multiply provider budgets by the batch
+  // size (up to 200), while `after()` keeps the response fast and holds the
+  // invocation so every outbox stage commits for the relay to backstop.
   const importedMembers = results.flatMap((r) =>
     r.ok && r.membershipId
       ? [{ email: r.email, membershipId: r.membershipId }]
       : [],
   );
 
-  for (const { email, membershipId } of importedMembers) {
-    const invite = {
-      inviterName:
-        access.session.user.name ?? access.session.user.email ?? "An operator",
-      orgName: access.org.name,
-      role: "LEARNER",
-      inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
-      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-    };
-    try {
-      await notifyOrgInviteSent(email, invite);
-    } catch {
-      // Non-fatal: the membership exists; admin can resend manually.
+  after(async () => {
+    for (const { email, membershipId } of importedMembers) {
+      const invite = {
+        inviterName:
+          access.session.user.name ?? access.session.user.email ?? "An operator",
+        orgName: access.org.name,
+        role: "LEARNER",
+        inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+      try {
+        await notifyOrgInviteSent(email, invite);
+      } catch {
+        // Non-fatal: the membership exists; admin can resend manually.
+      }
+      // #1653 — the bell reaches an invitee who already has an account; the
+      // email reaches one who does not. No invitation row exists here, so the
+      // membership is the anchor.
+      await sendOrgInvitationEmail(
+        { email, ...invite },
+        { entityRef: `membership:${membershipId}` },
+      ).catch((err) => console.error("[bulk-import] invite email failed:", err));
     }
-    // #1653 — the bell reaches an invitee who already has an account; the
-    // email reaches one who does not. No invitation row exists here, so the
-    // membership is the anchor.
-    await sendOrgInvitationEmail(
-      { email, ...invite },
-      { entityRef: `membership:${membershipId}` },
-    ).catch((err) => console.error("[bulk-import] invite email failed:", err));
-  }
+  });
 
   return NextResponse.json(
     {

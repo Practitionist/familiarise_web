@@ -12,7 +12,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse, type NextRequest, after } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -398,8 +398,11 @@ export async function PATCH(
       return updated;
     });
 
-    // P3 email twin, post-commit and fire-and-forget (after audit +
-    // bumpGeneration inside the tx). Never fails the PATCH on email error.
+    // P3 email twin, post-commit in `after()` (context was captured in-tx;
+    // audit + bumpGeneration already committed). `after()` holds the
+    // invocation so the outbox stage commits for the relay to backstop —
+    // a floating promise would risk the freeze dropping the stage.
+    // Never fails the PATCH on email error.
     if (roleEmailContext !== null) {
       const ctx = roleEmailContext as {
         userId: string;
@@ -407,31 +410,33 @@ export async function PATCH(
         roleBefore: string;
         roleAfter?: string;
       };
-      sendOrgMembershipChangedEmail({
-        userId: ctx.userId,
-        membershipId: memberId,
-        kind: ctx.kind,
-        orgName: access.org.name,
-        roleBefore: ctx.roleBefore,
-        roleAfter: ctx.roleAfter,
-        actorName:
-          access.session.user.name ?? access.session.user.email ?? "An operator",
-        dashboardUrl: "/dashboard",
-      }).catch((emailErr) => {
-        Sentry.captureException(
-          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-          {
-            tags: {
-              subsystem: "email",
-              emailType:
-                ctx.kind === "REMOVED"
-                  ? "ORG_MEMBERSHIP_REMOVED"
-                  : "ORG_MEMBERSHIP_ROLE_CHANGED",
+      after(() =>
+        sendOrgMembershipChangedEmail({
+          userId: ctx.userId,
+          membershipId: memberId,
+          kind: ctx.kind,
+          orgName: access.org.name,
+          roleBefore: ctx.roleBefore,
+          roleAfter: ctx.roleAfter,
+          actorName:
+            access.session.user.name ?? access.session.user.email ?? "An operator",
+          dashboardUrl: "/dashboard",
+        }).catch((emailErr) => {
+          Sentry.captureException(
+            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+            {
+              tags: {
+                subsystem: "email",
+                emailType:
+                  ctx.kind === "REMOVED"
+                    ? "ORG_MEMBERSHIP_REMOVED"
+                    : "ORG_MEMBERSHIP_ROLE_CHANGED",
+              },
             },
-          },
-        );
-        console.error("[member-patch] membership email failed:", emailErr);
-      });
+          );
+          console.error("[member-patch] membership email failed:", emailErr);
+        }),
+      );
     }
 
     return NextResponse.json({ membership: result });
@@ -775,7 +780,8 @@ export async function DELETE(
       }
     }
 
-    // P3 email twin for non-EXPERT removals, post-commit fire-and-forget.
+    // P3 email twin for non-EXPERT removals, post-commit in `after()`
+    // (same freeze rationale as the PATCH twin above).
     if (removedEmailContext !== null) {
       const ctx = removedEmailContext as {
         userId: string;
@@ -783,26 +789,28 @@ export async function DELETE(
         orgName: string;
         actorName: string;
       };
-      sendOrgMembershipChangedEmail({
-        userId: ctx.userId,
-        membershipId: memberId,
-        kind: "REMOVED",
-        orgName: ctx.orgName,
-        roleBefore: ctx.roleBefore,
-        actorName: ctx.actorName,
-        dashboardUrl: "/dashboard",
-      }).catch((emailErr) => {
-        Sentry.captureException(
-          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-          {
-            tags: {
-              subsystem: "email",
-              emailType: "ORG_MEMBERSHIP_REMOVED",
+      after(() =>
+        sendOrgMembershipChangedEmail({
+          userId: ctx.userId,
+          membershipId: memberId,
+          kind: "REMOVED",
+          orgName: ctx.orgName,
+          roleBefore: ctx.roleBefore,
+          actorName: ctx.actorName,
+          dashboardUrl: "/dashboard",
+        }).catch((emailErr) => {
+          Sentry.captureException(
+            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+            {
+              tags: {
+                subsystem: "email",
+                emailType: "ORG_MEMBERSHIP_REMOVED",
+              },
             },
-          },
-        );
-        console.error("[member-delete] membership email failed:", emailErr);
-      });
+          );
+          console.error("[member-delete] membership email failed:", emailErr);
+        }),
+      );
     }
 
     return new NextResponse(null, { status: 204 });

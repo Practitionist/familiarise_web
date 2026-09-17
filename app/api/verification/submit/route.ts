@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
@@ -175,30 +175,34 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Notify admin/staff about new verification request
-    try {
-      const admins = await prisma.user.findMany({
-        where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
-        select: { id: true },
-      });
-      const adminIds = admins.map((a) => a.id);
-      if (adminIds.length > 0) {
-        const user = await prisma.user.findUnique({
-          where: { id: session.user.id },
-          select: { name: true, email: true },
+    // Notify admin/staff about the new verification request in `after()`:
+    // the response must not wait on the Novu budget, and `after()` holds
+    // the invocation so the outbox stage commits for the relay to backstop.
+    after(async () => {
+      try {
+        const admins = await prisma.user.findMany({
+          where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
+          select: { id: true },
         });
-        await notifyNewConsultantApplication(adminIds, {
-          applicantName: user?.name ?? "Unknown",
-          applicantEmail: user?.email ?? "",
-          dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
-        });
+        const adminIds = admins.map((a) => a.id);
+        if (adminIds.length > 0) {
+          const user = await prisma.user.findUnique({
+            where: { id: session.user.id },
+            select: { name: true, email: true },
+          });
+          await notifyNewConsultantApplication(adminIds, {
+            applicantName: user?.name ?? "Unknown",
+            applicantEmail: user?.email ?? "",
+            dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
+          });
+        }
+      } catch (error) {
+        console.error(
+          "[verification/submit] Failed to send notification:",
+          error,
+        );
       }
-    } catch (error) {
-      console.error(
-        "[verification/submit] Failed to send notification:",
-        error,
-      );
-    }
+    });
 
     return NextResponse.json({
       success: true,

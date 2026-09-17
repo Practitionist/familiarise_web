@@ -2,7 +2,7 @@
  * Staff Moderation Profile Verification Detail API
  */
 
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { ConsultantVerificationStatus } from "@prisma/client";
 import { notifyVerificationStatusChanged } from "@/lib/novu";
@@ -198,7 +198,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // consultant on the public surfaces, anything else takes them off.
     purgeExpertSurfaces(verification.consultantProfileId);
 
-    // Fire-and-forget: notify consultant of verification status change
+    // Notify the consultant of the decision in `after()`: the review
+    // response must not wait on the Novu budget (previously an awaited bell
+    // here could 500 an already-committed review), and `after()` holds the
+    // invocation so both outbox stages commit for the relays to backstop.
     const consultantUserId = verification.consultantProfile?.user?.id;
     if (consultantUserId) {
       const verificationPayload = {
@@ -206,10 +209,12 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         reason: rejectionReason || feedbackDetails || undefined,
         dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
       };
-      await notifyVerificationStatusChanged(
-        consultantUserId,
-        verificationPayload,
-      );
+      after(async () => {
+        await notifyVerificationStatusChanged(
+          consultantUserId,
+          verificationPayload,
+        );
+      });
       // P3 email twin: same payload, never fails the review.
       const emailStatus =
         verificationPayload.status === "VERIFIED" ||
@@ -218,24 +223,26 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           ? verificationPayload.status
           : null;
       if (emailStatus) {
-        sendVerificationDecidedEmail({
-          userId: consultantUserId,
-          verificationId,
-          status: emailStatus,
-          reason: verificationPayload.reason,
-          dashboardUrl: verificationPayload.dashboardUrl,
-        }).catch((emailErr) => {
-          Sentry.captureException(
-            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-            {
-              tags: {
-                subsystem: "email",
-                emailType: "VERIFICATION_DECIDED",
+        after(() =>
+          sendVerificationDecidedEmail({
+            userId: consultantUserId,
+            verificationId,
+            status: emailStatus,
+            reason: verificationPayload.reason,
+            dashboardUrl: verificationPayload.dashboardUrl,
+          }).catch((emailErr) => {
+            Sentry.captureException(
+              emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
+              {
+                tags: {
+                  subsystem: "email",
+                  emailType: "VERIFICATION_DECIDED",
+                },
               },
-            },
-          );
-          console.error("[verification-decided-email] failed:", emailErr);
-        });
+            );
+            console.error("[verification-decided-email] failed:", emailErr);
+          }),
+        );
       }
     }
 

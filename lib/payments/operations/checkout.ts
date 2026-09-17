@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import { after } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   findUncoveredAtom,
@@ -4088,20 +4089,27 @@ export async function handleCheckout(
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");
-          // P3 referral bells, post-commit fire-and-forget.
-          notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-            console.error("[referral-qualification-bell] failed:", bellErr),
+          // P3 referral bells in `after()`: handleCheckout runs inside the
+          // checkout route's request scope, so this holds the invocation
+          // past the response for the outbox stages to commit (a floating
+          // promise risks the freeze dropping the stage). Non-blocking.
+          after(() =>
+            notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+              console.error("[referral-qualification-bell] failed:", bellErr),
+            ),
           );
           // P3 credits-applied bell: applyCreditsToPayment ran inside the
           // committed tx above, so this post-commit read is the correct
           // boundary (belling inside service.ts would fire in-tx).
           if (result.creditsApplied > 0) {
-            notifyCreditsAppliedBestEffort({
-              userId,
-              creditsUsedPaise: result.creditsApplied,
-              appointmentType: validatedData.appointmentType,
-            }).catch((bellErr) =>
-              console.error("[credits-applied-bell] failed:", bellErr),
+            after(() =>
+              notifyCreditsAppliedBestEffort({
+                userId,
+                creditsUsedPaise: result.creditsApplied,
+                appointmentType: validatedData.appointmentType,
+              }).catch((bellErr) =>
+                console.error("[credits-applied-bell] failed:", bellErr),
+              ),
             );
           }
         } catch (referralError) {
