@@ -653,7 +653,10 @@ export function UnifiedCalendar({
   // consultant's timezone. Limit BUCKETING is UTC (ScheduleCalculationService) —
   // do not "unify" these; display and bucketing are different concerns.
   const weekDates = useMemo(() => {
-    const startDate = startOfWeek(currentDate);
+    // Sunday start, pinned like the fetch window (useCalendarData): display
+    // and quota bucketing are different concerns, but the week START must
+    // still be the same Sunday or week headers drift from fetched weeks.
+    const startDate = startOfWeek(currentDate, { weekStartsOn: 0 });
     return [...Array(7)].map((_, i) => addDays(startDate, i));
   }, [currentDate]);
 
@@ -1358,7 +1361,7 @@ export function UnifiedCalendar({
           </Button>
           <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
             {view === "week"
-              ? `${format(startOfWeek(currentDate), "MMM d")} - ${format(endOfWeek(currentDate), "MMM d, yyyy")}`
+              ? `${format(startOfWeek(currentDate, { weekStartsOn: 0 }), "MMM d")} - ${format(endOfWeek(currentDate, { weekStartsOn: 0 }), "MMM d, yyyy")}`
               : format(currentDate, "MMMM yyyy")}
           </div>
           <Button

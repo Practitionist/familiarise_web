@@ -312,6 +312,10 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Not enough free slots",
     variant: "destructive",
   },
+  IDEMPOTENCY_KEY_REUSE: {
+    title: "Request changed — please resubmit",
+    variant: "destructive",
+  },
 };
 
 export const allocationFailedWithCode = (

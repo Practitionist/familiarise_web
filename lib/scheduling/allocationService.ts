@@ -42,6 +42,12 @@ export interface AllocationRequest {
   /** #1206 — the consultant's explicit "place what fits now". Only ever sent
    * on the second attempt, after the server has said how many sessions fit. */
   allowPartial?: boolean;
+  /**
+   * The consultant explicitly accepting the stored times as-is. Honoured
+   * server-side only for the event's consultant or a privileged caller —
+   * a consultee cannot assert times outside someone else's schedule.
+   */
+  override?: boolean;
 }
 
 /** What the allocate endpoints actually return in `data`: the created (or
@@ -80,6 +86,8 @@ export interface AllocationCallOptions {
   idempotencyKey?: string;
   /** #1206 — allocate the sessions that fit instead of refusing them all. */
   allowPartial?: boolean;
+  /** The consultant explicitly accepting the stored times as-is. */
+  override?: boolean;
 }
 
 export interface ValidationResponse {
@@ -186,6 +194,7 @@ export class AllocationService {
           error: parseFailed
             ? `Could not read the allocation response (HTTP ${response.status}). Please try again.`
             : fallbackError,
+          errorCode: "VALIDATION_ERROR",
           httpStatus: response.status,
         };
       }
@@ -335,6 +344,7 @@ export class AllocationService {
       initialAllocation: allocationOptions?.initialAllocation,
       expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
       allowPartial: allocationOptions?.allowPartial,
+      override: allocationOptions?.override,
     };
 
     const paths = {

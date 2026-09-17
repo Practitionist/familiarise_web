@@ -159,15 +159,13 @@ export function buildConsultantOccupancyWhere(
   ];
 
   if (consultantProfileId) {
-    reachesConsultant.push({
-      OR: buildOccupiedAppointmentFilter(consultantProfileId),
-    });
-    // Co-host commitments (webinar/class plans with an ACCEPTED seat).
-    // Occupying-state scoping rides the outer AND's
-    // buildOccupiedAppointmentFilter(), same as the ownership arm.
-    reachesConsultant.push({
-      OR: buildCohostCommitmentFilter(consultantProfileId),
-    });
+    reachesConsultant.push(
+      { OR: buildOccupiedAppointmentFilter(consultantProfileId) },
+      // Co-host commitments (webinar/class plans with an ACCEPTED seat).
+      // Occupying-state scoping rides the outer AND's
+      // buildOccupiedAppointmentFilter(), same as the ownership arm.
+      { OR: buildCohostCommitmentFilter(consultantProfileId) },
+    );
   }
 
   return {

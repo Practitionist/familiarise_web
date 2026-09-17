@@ -24,8 +24,8 @@
 import { TrialStatus } from "@prisma/client";
 
 import { withCronLock } from "@/lib/cron/with-cron-lock";
-import { transitionTrial } from "../../lib/booking/transitions";
-import { IllegalTransitionError } from "../../lib/enterprise/transitions";
+import { transitionTrial } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma from "../../lib/prisma";
 
 export interface ExpireUnpaidTrialsResult {
@@ -55,44 +55,57 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
   console.log("🧹 Starting unpaid trial expiry...");
 
   try {
-    // One guarded transition per lapsed trial rather than a bulk updateMany:
-    // the helper bakes AWAITING_PAYMENT into the UPDATE's WHERE clause (a
-    // capture that landed between the read and the write matches zero rows
-    // instead of cancelling a paid trial) and appends the BookingStatusHistory
-    // row every other writer emits. Idempotent: CANCELLED leaves the cohort.
-    const stale = await prisma.trial.findMany({
-      where: {
-        status: TrialStatus.AWAITING_PAYMENT,
-        // A null paymentDueAt means the pay-link was never minted — the gateway
-        // call failed after acceptance. Sweep those too: holding a slot for a
-        // trial nobody can pay for is the worst case of all.
-        OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
-      },
-      select: { id: true },
-    });
+    // One guarded transition per lapsed trial rather than a bulk updateMany.
+    // fromIn repeats the cohort read's status inside the CAS where: a capture
+    // that moves AWAITING_PAYMENT → SCHEDULED between the read and the write
+    // matches zero rows instead of cancelling a paid trial (doctrine rule 5).
+    // Each move also appends the BookingStatusHistory row every other writer
+    // emits. Idempotent: CANCELLED leaves the cohort.
+    //
+    // Bounded batches: see expire-reschedule-proposals — same hourly-cron
+    // ceiling reasoning.
+    const BATCH_SIZE = 500;
+    for (;;) {
+      const stale = await prisma.trial.findMany({
+        where: {
+          status: TrialStatus.AWAITING_PAYMENT,
+          // A null paymentDueAt means the pay-link was never minted — the gateway
+          // call failed after acceptance. Sweep those too: holding a slot for a
+          // trial nobody can pay for is the worst case of all.
+          OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
+        },
+        orderBy: { id: "asc" },
+        take: BATCH_SIZE,
+        select: { id: true },
+      });
+      if (stale.length === 0) break;
 
-    for (const row of stale) {
-      try {
-        await prisma.$transaction((tx) =>
-          transitionTrial(tx, {
-            where: { id: row.id },
-            to: TrialStatus.CANCELLED,
-            data: {
-              // The link is dead once cancelled; leaving it would let a stale
-              // dashboard row send someone to a checkout for a released slot.
-              pendingPaymentUrl: null,
-              paymentDueAt: null,
-            },
-            reason: "Trial pay-link lapsed without payment",
-          }),
-        );
-        trialsExpired += 1;
-      } catch (error) {
-        // Scheduled or paid between the read and the write — the payment
-        // wins, and there is nothing left to expire.
-        if (error instanceof IllegalTransitionError) continue;
-        throw error;
+      for (const row of stale) {
+        try {
+          await prisma.$transaction((tx) =>
+            transitionTrial(tx, {
+              where: { id: row.id },
+              to: TrialStatus.CANCELLED,
+              fromIn: [TrialStatus.AWAITING_PAYMENT],
+              data: {
+                // The link is dead once cancelled; leaving it would let a stale
+                // dashboard row send someone to a checkout for a released slot.
+                pendingPaymentUrl: null,
+                paymentDueAt: null,
+              },
+              reason: "Trial pay-link lapsed without payment",
+            }),
+          );
+          trialsExpired += 1;
+        } catch (error) {
+          // Scheduled or paid between the read and the write — the payment
+          // wins, and there is nothing left to expire.
+          if (error instanceof IllegalTransitionError) continue;
+          throw error;
+        }
       }
+
+      if (stale.length < BATCH_SIZE) break;
     }
 
     console.log(`   Trials expired: ${trialsExpired}`);

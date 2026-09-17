@@ -43,6 +43,7 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
+import { AllocationService } from "@/lib/scheduling/allocationService";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
@@ -907,10 +908,10 @@ export function RequestSchedulingTab({
     }
 
     try {
-      const endpoint =
+      const eventType =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/bookings/subscriptions/${selectedRequestForDialog.id}/allocate`
-          : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
+          ? "subscription"
+          : "consultation";
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
@@ -934,14 +935,14 @@ export function RequestSchedulingTab({
       );
       attemptKeyRef.current = attempt;
 
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": attempt.key,
-        },
-        body: JSON.stringify({
-          isAuto: false,
+      // Via the shared client so a non-JSON edge error still carries its HTTP
+      // status (fail-closed) and structured codes like IDEMPOTENCY_KEY_REUSE
+      // survive to the caller instead of collapsing into a generic Error.
+      const result = await AllocationService.allocateSlots(
+        eventType,
+        selectedRequestForDialog.id,
+        [],
+        {
           useRequestedSlots: true,
           override,
           // Fresh allocations only — partial reschedules legitimately have
@@ -954,18 +955,17 @@ export function RequestSchedulingTab({
             (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
               ? selectedRequestForDialog.tentativeSlotCount
               : undefined,
-        }),
-      });
+          idempotencyKey: attempt.key,
+        },
+      );
 
-      const data = await response.json();
-
-      if (response.status === 409) {
+      if (!result.success && result.httpStatus === 409) {
         handleConflict(selectedRequestForDialog.id);
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to allocate slots");
+      if (!result.success) {
+        throw new Error(result.error || "Failed to allocate slots");
       }
 
       // Success handling

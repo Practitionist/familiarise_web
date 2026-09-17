@@ -123,6 +123,8 @@ function makeMockTx() {
       // #1499 — createAppointments reads the originating appointment to
       // inherit the policy version the booking was sold under. Null here:
       // these fixtures predate the FK, so the created rows carry no policy.
+      // #837 — doubles as the idempotent-replay pre-check read (null = no
+      // replay); replay tests override per test.
       findFirst: jest.fn().mockResolvedValue(null),
       // #1569 — the earnings-hold recompute after a reschedule reads the
       // wrapper's payments; none here, so nothing to re-anchor.
@@ -778,8 +780,11 @@ describe("Requested slot allocation", () => {
       {
         id: "apt-1",
         occurrences: [
-          { id: "s1", completionStatus: "RESCHEDULED" },
-          { id: "s2", completionStatus: "RESCHEDULED" },
+          // isTentative rides along: the reschedule route writes both, and
+          // the release predicate requires both (fresh-request holds are
+          // tentative with SCHEDULED).
+          { id: "s1", isTentative: true, completionStatus: "RESCHEDULED" },
+          { id: "s2", isTentative: true, completionStatus: "RESCHEDULED" },
         ],
       },
     ]);
@@ -3226,5 +3231,71 @@ describe("#1206 partial allocation", () => {
 
     expect(result.success).toBe(true);
     expect(result.partial).toBeUndefined();
+  });
+});
+
+// ─── Manual idempotent replay vs key reuse (B2) ─────────────────────────────
+
+describe("manual idempotent replay", () => {
+  const HALF_HOUR_MS = 30 * 60 * 1000;
+  // Fake timers hold the suite at 2025-01-01, so these are firmly past/future.
+  const pastStart = new Date("2024-12-02T10:00:00.000Z");
+  const futureStart = new Date("2025-06-02T10:00:00.000Z");
+
+  function stampBatch() {
+    mockTx.appointment.findUnique.mockResolvedValue({
+      consultationId: "consult-1",
+      subscriptionId: null,
+      webinarId: null,
+      classId: null,
+    });
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "apt-1",
+        deletedAt: null,
+        occurrences: [
+          {
+            startsAt: pastStart,
+            endsAt: new Date(pastStart.getTime() + HALF_HOUR_MS),
+            deletedAt: null,
+          },
+          {
+            startsAt: futureStart,
+            endsAt: new Date(futureStart.getTime() + HALF_HOUR_MS),
+            deletedAt: null,
+          },
+        ],
+      },
+    ]);
+  }
+
+  it("replays a double-submit when past rows are preserved", async () => {
+    stampBatch();
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: [futureStart.toISOString()],
+      idempotencyKey: "key-1",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("422s a same-key submit with genuinely different slots", async () => {
+    stampBatch();
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-06-03T10:00:00.000Z"],
+      idempotencyKey: "key-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(422);
+    expect(result.errorCode).toBe("IDEMPOTENCY_KEY_REUSE");
   });
 });

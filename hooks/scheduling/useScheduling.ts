@@ -351,19 +351,27 @@ export function computeAttemptFingerprint(
 }
 
 /**
- * Serializes the stale-tab guards into the attempt fingerprint. Absent guards
- * serialize to `undefined` (not an empty string) so guard-less attempts keep
- * whatever key shape they had — the fingerprint only changes when a guard is
- * actually present.
+ * Serializes the stale-tab guards into the attempt fingerprint. The shape is
+ * five parts (mode|event|slots|intent|guards) whenever any call site passes
+ * guards — keys are per-hook-instance UUIDs, never persisted, so no
+ * cross-version stability is owed; within one session equal payloads keep
+ * equal fingerprints and any guard change mints a fresh key.
  */
 export function fingerprintGuards(options: {
   initialAllocation?: boolean;
   expectedTentativeSlotCount?: number;
+  /**
+   * The consultant explicitly accepting times outside their own published
+   * availability. Skipping the window check changes what the server accepts
+   * for identical slots, so it separates keys like any other intent.
+   */
+  override?: boolean;
 }): string | undefined {
   const parts: string[] = [];
   if (options.initialAllocation === true) parts.push("init:1");
   if (typeof options.expectedTentativeSlotCount === "number")
     parts.push(`exp:${options.expectedTentativeSlotCount}`);
+  if (options.override === true) parts.push("ovr:1");
   return parts.length > 0 ? parts.join("|") : undefined;
 }
 
@@ -600,6 +608,15 @@ export function useEventSlotAllocation(
         // Slot conflict — the dialog stays open, the server's own message
         // renders as itself (#1132).
         toast(allocationFailed(errorMessage));
+      } else if (
+        result.httpStatus === 422 &&
+        result.errorCode === "IDEMPOTENCY_KEY_REUSE"
+      ) {
+        // Same key, different payload: the key is burned and every retry
+        // with it 422s again. Drop it so the next submit mints a fresh one
+        // via resolveAttemptKey; the dialog stays open for the resubmit.
+        attemptKeyRef.current = null;
+        toast(allocationFailedWithCode(errorMessage, result.errorCode));
       } else {
         // PR 2c resilience — cause-specific toast from the structured code
         // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
@@ -1102,7 +1119,14 @@ export function useEventSlotAllocation(
           eventId,
           selectedSlots,
           undefined,
-          fingerprintGuards(options),
+          // The hook names the intent allowOverride; the fingerprint and the
+          // wire call it override — mapped explicitly so the key separates
+          // override attempts from plain ones.
+          fingerprintGuards({
+            initialAllocation: options.initialAllocation,
+            expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+            override: options.allowOverride,
+          }),
         ),
       );
       attemptKeyRef.current = attempt;
@@ -1121,6 +1145,9 @@ export function useEventSlotAllocation(
         idempotencyKey: attempt.key,
         initialAllocation: options.initialAllocation || undefined,
         expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+        // The consultant explicitly accepting these times as-is (outside
+        // their published availability). Was a dead option until wired here.
+        override: options.allowOverride || undefined,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(

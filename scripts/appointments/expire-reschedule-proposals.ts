@@ -26,8 +26,8 @@ import prisma from "../../lib/prisma";
 import {
   RESCHEDULE_OPEN_STATUSES,
   transitionRescheduleRequest,
-} from "../../lib/booking/transitions";
-import { IllegalTransitionError } from "../../lib/enterprise/transitions";
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface RescheduleProposalExpiryResult {
@@ -64,30 +64,42 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
     // open set, so a re-run after a partial failure picks up precisely what is
     // left. Clearing openForAppointmentId releases the nullable-unique
     // reservation so the pair can try again.
-    const stale = await prisma.rescheduleRequest.findMany({
-      where: {
-        status: { in: RESCHEDULE_OPEN_STATUSES },
-        expiresAt: { lt: now },
-      },
-      select: { id: true },
-    });
+    //
+    // Bounded batches: a pathological backlog must not load every id or hold
+    // the hourly cron past the function ceiling — loop until a batch comes
+    // back short.
+    const BATCH_SIZE = 500;
+    for (;;) {
+      const stale = await prisma.rescheduleRequest.findMany({
+        where: {
+          status: { in: RESCHEDULE_OPEN_STATUSES },
+          expiresAt: { lt: now },
+        },
+        orderBy: { id: "asc" },
+        take: BATCH_SIZE,
+        select: { id: true },
+      });
+      if (stale.length === 0) break;
 
-    for (const row of stale) {
-      try {
-        await prisma.$transaction((tx) =>
-          transitionRescheduleRequest(tx, {
-            where: { id: row.id },
-            to: "EXPIRED",
-            reason: "Proposal lapsed without an answer",
-          }),
-        );
-        proposalsExpired += 1;
-      } catch (error) {
-        // Answered between the read and the write — the answer wins, and
-        // there is nothing left to expire.
-        if (error instanceof IllegalTransitionError) continue;
-        throw error;
+      for (const row of stale) {
+        try {
+          await prisma.$transaction((tx) =>
+            transitionRescheduleRequest(tx, {
+              where: { id: row.id },
+              to: "EXPIRED",
+              reason: "Proposal lapsed without an answer",
+            }),
+          );
+          proposalsExpired += 1;
+        } catch (error) {
+          // Answered between the read and the write — the answer wins, and
+          // there is nothing left to expire.
+          if (error instanceof IllegalTransitionError) continue;
+          throw error;
+        }
       }
+
+      if (stale.length < BATCH_SIZE) break;
     }
 
     if (proposalsExpired > 0) {

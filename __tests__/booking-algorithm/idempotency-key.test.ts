@@ -151,4 +151,19 @@ describe("resolveAttemptKey", () => {
       ),
     ).toBe(computeAttemptFingerprint("requested", "e1", slots));
   });
+
+  it("differs when the override intent changes", () => {
+    // Skipping the availability-window check changes what the server accepts
+    // for identical slots, so it separates keys like any other intent.
+    const plain = computeAttemptFingerprint("manual", "e1", slots);
+    const overriding = computeAttemptFingerprint(
+      "manual",
+      "e1",
+      slots,
+      undefined,
+      fingerprintGuards({ override: true }),
+    );
+    expect(overriding).not.toBe(plain);
+    expect(fingerprintGuards({ override: false })).toBeUndefined();
+  });
 });
