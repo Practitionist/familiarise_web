@@ -3,6 +3,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { VerificationSubmitSchema } from "@/schemas/verifications";
 import {
   applyRateLimit,
   verificationSubmitLimiter,
@@ -33,8 +34,14 @@ export async function POST(request: NextRequest) {
     );
     if (rateLimited) return rateLimited;
 
-    const body = await request.json();
-    const { linkedinUrl, notes, documentIds } = body;
+    const parsed = VerificationSubmitSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: "Invalid request body" },
+        { status: 400 },
+      );
+    }
+    const { linkedinUrl, notes, documentIds } = parsed.data;
 
     // Get the consultant profile
     const consultantProfile = await prisma.consultantProfile.findUnique({

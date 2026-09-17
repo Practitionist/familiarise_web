@@ -15,3 +15,18 @@ export const ReviewVerificationSchema = z.object({
     )
     .optional(),
 });
+
+/**
+ * POST /api/verification/submit body. Unvalidated JSON used to reach the
+ * destructure: a null body throws on destructure and an exotic documentIds
+ * (e.g. a string, which `new Set` would split into chars) falls through to
+ * a 403/500 later. The route safeParses at the boundary and returns a
+ * generic 400 on failure.
+ */
+export const VerificationSubmitSchema = z
+  .object({
+    linkedinUrl: z.string().max(2048).optional(),
+    notes: z.string().max(2000).optional(),
+    documentIds: z.array(z.string().min(1)).max(10).optional(),
+  })
+  .strict();

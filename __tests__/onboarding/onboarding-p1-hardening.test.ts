@@ -22,6 +22,7 @@ import {
   resolveOnboardingEmailUpdate,
 } from "../../utils/onboarding-shared";
 import { isWriteBlockedInDegraded } from "../../lib/maintenance-edge";
+import { VerificationSubmitSchema } from "../../schemas/verifications";
 
 describe("resolveOnboardingEmailUpdate", () => {
   it("allows the body email matching the verified session email", () => {
@@ -138,5 +139,32 @@ describe("DEGRADED write-block for the onboarding wizard route", () => {
 
   it("does not touch unrelated wizard-adjacent POSTs", () => {
     expect(isWriteBlockedInDegraded("/form/other", "POST")).toBe(false);
+  });
+});
+
+describe("VerificationSubmitSchema (review-comment fix)", () => {
+  it("accepts the documented submit shape", () => {
+    expect(
+      VerificationSubmitSchema.safeParse({
+        linkedinUrl: "https://linkedin.com/in/ada",
+        notes: "hello",
+        documentIds: ["doc-1"],
+      }).success,
+    ).toBe(true);
+    expect(VerificationSubmitSchema.safeParse({}).success).toBe(true);
+  });
+
+  it("rejects null, exotic documentIds, and unknown keys", () => {
+    expect(VerificationSubmitSchema.safeParse(null).success).toBe(false);
+    expect(VerificationSubmitSchema.safeParse("nope").success).toBe(false);
+    expect(
+      VerificationSubmitSchema.safeParse({ documentIds: "doc-1" }).success,
+    ).toBe(false);
+    expect(
+      VerificationSubmitSchema.safeParse({ documentIds: [42] }).success,
+    ).toBe(false);
+    expect(VerificationSubmitSchema.safeParse({ nope: 1 }).success).toBe(
+      false,
+    );
   });
 });

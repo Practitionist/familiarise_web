@@ -36,6 +36,14 @@ export async function saveOnboardingDraftAction(
   const session = await getSession(true);
   if (!session?.user?.id) return unauthorized();
 
+  // The wizard autosaves on every step transition (+ pagehide flush), so a
+  // stuck client could otherwise upsert 64KB rows in a tight loop. 30/min
+  // never touches a human; a loop trips it immediately.
+  const limited = await applyRateLimit(onboardingDraftLimiter, session.user.id);
+  if (limited) {
+    return { success: false, error: "Too many requests. Please try again later." };
+  }
+
   // Server-action arguments arrive as untyped JSON regardless of the static
   // signature. prepareDraftForPersist validates, sanitizes non-JSON values,
   // and byte-gates the result in one step — the persisted object is exactly
@@ -73,16 +81,8 @@ export async function loadOnboardingDraftAction(): Promise<LoadDraftActionResult
   // run — the user finished onboarding with nothing persisted and no signal.
   // Resolve a failure into the ordinary "no draft" answer instead.
   try {
-  const session = await getSession(true);
-  if (!session?.user?.id) return unauthorized();
-
-  // The wizard autosaves on every step transition (+ pagehide flush), so a
-  // stuck client could otherwise upsert 64KB rows in a tight loop. 30/min
-  // never touches a human; a loop trips it immediately.
-  const limited = await applyRateLimit(onboardingDraftLimiter, session.user.id);
-  if (limited) {
-    return { success: false, error: "Too many requests. Please try again later." };
-  }
+    const session = await getSession(true);
+    if (!session?.user?.id) return unauthorized();
 
     const draft = await prisma.onboardingDraft.findUnique({
       where: { userId: session.user.id },
