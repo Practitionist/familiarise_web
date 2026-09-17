@@ -87,3 +87,61 @@ describe("allocateSlots with non-JSON error bodies", () => {
     expect(result.requiredSessions).toBe(4);
   });
 });
+
+describe("allocateSlots with malformed 2xx bodies (fail-closed)", () => {
+  it("returns success:false with httpStatus when a 2xx body is not JSON", async () => {
+    mockFetch({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError("Unexpected end of JSON input");
+      },
+    });
+
+    const result = await AllocationService.allocateSlots(
+      "consultation",
+      EVENT_ID,
+      [],
+      { isAuto: true },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(200);
+  });
+
+  it("returns success:false with httpStatus when a 2xx body has no data array", async () => {
+    mockFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+
+    const result = await AllocationService.allocateSlots(
+      "consultation",
+      EVENT_ID,
+      [],
+      { isAuto: true },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(200);
+  });
+
+  it("still reports success when a 2xx body carries a data array", async () => {
+    mockFetch({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ id: "apt-1" }] }),
+    });
+
+    const result = await AllocationService.allocateSlots(
+      "consultation",
+      EVENT_ID,
+      [],
+      { isAuto: true },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.data).toEqual([{ id: "apt-1" }]);
+  });
+});

@@ -146,7 +146,10 @@ export class AllocationService {
       // The error body is not always JSON — edge 504s/HTML under spikes throw
       // out of response.json(). Parse defensively but ALWAYS propagate the
       // HTTP status, so callers can still take the 409/allocated-elsewhere
-      // branch instead of reporting a status-less network error.
+      // branch instead of reporting a status-less network error. A 2xx with
+      // an unreadable or malformed body must NOT report success: the allocate
+      // routes always return `{ data: [...] }`, so a body without it is a
+      // failure, not an empty booking.
       let data: {
         error?: string;
         errorCode?: string;
@@ -157,9 +160,11 @@ export class AllocationService {
         unplacedSessions?: number;
         placeableSessions?: number;
       } = {};
+      let parseFailed = false;
       try {
         data = await response.json();
       } catch {
+        parseFailed = true;
         data = {};
       }
 
@@ -172,6 +177,16 @@ export class AllocationService {
           // #1206 — a shortage the consultant can still act on.
           placeableSessions: data.placeableSessions,
           requiredSessions: data.requiredSessions,
+        };
+      }
+
+      if (parseFailed || !Array.isArray(data.data)) {
+        return {
+          success: false,
+          error: parseFailed
+            ? `Could not read the allocation response (HTTP ${response.status}). Please try again.`
+            : fallbackError,
+          httpStatus: response.status,
         };
       }
 
