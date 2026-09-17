@@ -346,9 +346,13 @@ export function useCalendarData(
       // week instead of the remainder of the period is also a direct win on
       // the endpoint #997 measured in tens of seconds.
       const startDate =
-        view === "week" ? startOfWeek(currentDate) : startOfMonth(currentDate);
+        view === "week"
+          ? startOfWeek(currentDate, { weekStartsOn: 0 })
+          : startOfMonth(currentDate);
       const endDate =
-        view === "week" ? endOfWeek(currentDate) : endOfMonth(currentDate);
+        view === "week"
+          ? endOfWeek(currentDate, { weekStartsOn: 0 })
+          : endOfMonth(currentDate);
 
       // #997 Phase 2 — the server-computed tooltip/orphan-slot detail. The
       // route re-verifies ownership regardless of this flag, and 403s rather
@@ -568,7 +572,10 @@ export function useCalendarData(
   const visibleDates = useMemo((): Date[] => {
     const dates: Date[] = [];
     if (view === "week") {
-      const weekStart = startOfWeek(currentDate);
+      // Sunday start, pinned: weekKey/countWeeks bucket quota weeks on
+      // Sundays, so an implicit locale default drifting to Monday would
+      // silently misalign the fetch window with the weekly caps.
+      const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
       for (let i = 0; i < 7; i++) {
         dates.push(addDays(weekStart, i));
       }

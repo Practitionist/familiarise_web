@@ -328,12 +328,18 @@ export interface AllocationAttemptKey {
  * changing mode/slots — today `allowPartial` (#1206): a partial-success batch
  * stamped under a key must never replay as the answer to a later full-intent
  * retry in the same hook instance, which would report the shortfall as done.
+ *
+ * `guards` separates attempts whose preconditions differ without changing
+ * mode/slots — `initialAllocation` and `expectedTentativeSlotCount` (#1012):
+ * reusing a key across a guard change would replay the old batch and mask the
+ * 409 the guard should have raised. Build it with `fingerprintGuards`.
  */
 export function computeAttemptFingerprint(
   mode: "manual" | "auto" | "requested",
   eventId: string,
   slots: CalendarInterval[],
   intent?: string,
+  guards?: string,
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
@@ -341,7 +347,24 @@ export function computeAttemptFingerprint(
     // every runtime locale.
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .join(",");
-  return `${mode}|${eventId}|${slotPart}|${intent ?? ""}`;
+  return `${mode}|${eventId}|${slotPart}|${intent ?? ""}|${guards ?? ""}`;
+}
+
+/**
+ * Serializes the stale-tab guards into the attempt fingerprint. Absent guards
+ * serialize to `undefined` (not an empty string) so guard-less attempts keep
+ * whatever key shape they had — the fingerprint only changes when a guard is
+ * actually present.
+ */
+export function fingerprintGuards(options: {
+  initialAllocation?: boolean;
+  expectedTentativeSlotCount?: number;
+}): string | undefined {
+  const parts: string[] = [];
+  if (options.initialAllocation === true) parts.push("init:1");
+  if (typeof options.expectedTentativeSlotCount === "number")
+    parts.push(`exp:${options.expectedTentativeSlotCount}`);
+  return parts.length > 0 ? parts.join("|") : undefined;
 }
 
 let attemptKeyCounter = 0;
@@ -1074,7 +1097,13 @@ export function useEventSlotAllocation(
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("manual", eventId, selectedSlots),
+        computeAttemptFingerprint(
+          "manual",
+          eventId,
+          selectedSlots,
+          undefined,
+          fingerprintGuards(options),
+        ),
       );
       attemptKeyRef.current = attempt;
 
@@ -1166,6 +1195,7 @@ export function useEventSlotAllocation(
             eventId,
             [],
             allocateOptions?.allowPartial ? "partial" : undefined,
+            fingerprintGuards(options),
           ),
         );
         attemptKeyRef.current = attempt;
@@ -1290,7 +1320,13 @@ export function useEventSlotAllocation(
 
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("requested", eventId, requestedSlots),
+          computeAttemptFingerprint(
+            "requested",
+            eventId,
+            requestedSlots,
+            undefined,
+            fingerprintGuards(options),
+          ),
         );
         attemptKeyRef.current = attempt;
 

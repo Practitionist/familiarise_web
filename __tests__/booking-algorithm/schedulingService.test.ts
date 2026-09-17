@@ -1673,7 +1673,12 @@ describe("fetchEventData - config extraction", () => {
       // #676 AE-1 — consulteeUserId threaded for the conflict scan, now inside
       // the options object that brought validate() back under the param limit.
       // #1554 — a reschedule also names the occurrence rows being replaced.
-      { consulteeUserId: "consultee-1", excludeOccurrenceIds: [] },
+      // Co-host arm: the consultant's own ACCEPTED seats occupy too (AE-2).
+      {
+        consulteeUserId: "consultee-1",
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 
@@ -1696,8 +1701,13 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array), // appointmentIdsToExclude
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
-      // event has no single consultee.
-      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
+      // event has no single consultee. The co-host arm still applies: the
+      // owner consultant's own ACCEPTED seats occupy.
+      {
+        consulteeUserId: undefined,
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 
@@ -1750,8 +1760,12 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array), // appointmentIdsToExclude
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
-      // event has no single consultee.
-      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
+      // event has no single consultee. The co-host arm still applies.
+      {
+        consulteeUserId: undefined,
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 });

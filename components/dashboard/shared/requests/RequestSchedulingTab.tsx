@@ -43,6 +43,7 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
   allocationFailed,
@@ -50,6 +51,7 @@ import {
 } from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
+  fingerprintGuards,
   resolveAttemptKey,
   type AllocationAttemptKey,
 } from "@/hooks/scheduling/useScheduling";
@@ -505,8 +507,7 @@ function StoredTimes({ request }: { request: Request }) {
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
             )}
             <span>{formatDateTime(slot.startsAt)}</span>
-            {slot.isTentative &&
-              slot.completionStatus === "RESCHEDULED" && (
+            {isReleasedForReschedule(slot) && (
                 <span className="sr-only">(needs rescheduling)</span>
               )}
           </div>
@@ -614,9 +615,8 @@ export function RequestSchedulingTab({
           ...consultationsResult.data.map((consultation) => {
             const slots = consultation.appointment?.occurrences || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
-            const rescheduledCount = slots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              slots.filter(isReleasedForReschedule).length;
             const totalCount = slots.length;
 
             return {
@@ -674,9 +674,8 @@ export function RequestSchedulingTab({
                 (appt) => appt.occurrences || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
-            const rescheduledCount = allSlots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              allSlots.filter(isReleasedForReschedule).length;
             const totalCount = allSlots.length;
 
             return {
@@ -915,7 +914,23 @@ export function RequestSchedulingTab({
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("requested", selectedRequestForDialog.id, []),
+        computeAttemptFingerprint(
+          "requested",
+          selectedRequestForDialog.id,
+          [],
+          undefined,
+          // Same stale-tab guards as the body below: a guard change mints a
+          // fresh key so the server enforces it instead of replaying (#1012).
+          fingerprintGuards({
+            initialAllocation:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
+              undefined,
+            expectedTentativeSlotCount:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
+                ? selectedRequestForDialog.tentativeSlotCount
+                : undefined,
+          }),
+        ),
       );
       attemptKeyRef.current = attempt;
 

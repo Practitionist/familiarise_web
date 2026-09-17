@@ -23,7 +23,11 @@
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
-import { RESCHEDULE_OPEN_STATUSES } from "../../lib/booking/transitions";
+import {
+  RESCHEDULE_OPEN_STATUSES,
+  transitionRescheduleRequest,
+} from "../../lib/booking/transitions";
+import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface RescheduleProposalExpiryResult {
@@ -52,23 +56,39 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
 
     // The status+expiresAt index covers this predicate exactly.
     //
-    // Idempotent by construction: the WHERE clause only matches open proposals,
-    // and the update moves them out of that set, so a re-run after a partial
-    // failure picks up precisely what is left. Clearing openForAppointmentId
-    // releases the nullable-unique reservation so the pair can try again.
-    const expired = await prisma.rescheduleRequest.updateMany({
+    // One guarded transition per lapsed proposal rather than a bulk updateMany:
+    // the helper bakes the open-from set into the UPDATE's WHERE clause (a
+    // proposal answered between the read and the write matches zero rows
+    // instead of being overwritten) and appends the BookingStatusHistory row
+    // every other writer emits. Idempotent by construction: EXPIRED leaves the
+    // open set, so a re-run after a partial failure picks up precisely what is
+    // left. Clearing openForAppointmentId releases the nullable-unique
+    // reservation so the pair can try again.
+    const stale = await prisma.rescheduleRequest.findMany({
       where: {
         status: { in: RESCHEDULE_OPEN_STATUSES },
         expiresAt: { lt: now },
       },
-      data: {
-        status: "EXPIRED",
-        openForAppointmentId: null,
-        resolvedAt: now,
-      },
+      select: { id: true },
     });
 
-    proposalsExpired = expired.count;
+    for (const row of stale) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionRescheduleRequest(tx, {
+            where: { id: row.id },
+            to: "EXPIRED",
+            reason: "Proposal lapsed without an answer",
+          }),
+        );
+        proposalsExpired += 1;
+      } catch (error) {
+        // Answered between the read and the write — the answer wins, and
+        // there is nothing left to expire.
+        if (error instanceof IllegalTransitionError) continue;
+        throw error;
+      }
+    }
 
     if (proposalsExpired > 0) {
       console.log(`   Expired ${proposalsExpired} proposal(s)`);
