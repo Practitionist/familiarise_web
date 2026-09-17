@@ -71,8 +71,13 @@ export function SafeUnifiedCalendar({
             reschedule-propose (select mode with event context). Prefer the
             explicit prop; fall back to mode === "allocate". */}
         {legendPosition === "top" && legend}
-        <UnifiedCalendar {...props} className="min-h-0 flex-1" />
-        {legendPosition === "bottom" && legend}
+        <UnifiedCalendar
+          {...props}
+          className="min-h-0 flex-1"
+          aboveActionsSlot={
+            legendPosition === "bottom" ? legend : undefined
+          }
+        />
       </div>
     </CalendarErrorBoundary>
   );

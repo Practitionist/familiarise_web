@@ -383,6 +383,12 @@ export interface UnifiedCalendarProps {
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
+  /**
+   * Rendered between the grid and the footer (stats + actions). Lets a host
+   * place the status legend right under the cells it explains instead of
+   * below the buttons.
+   */
+  aboveActionsSlot?: React.ReactNode;
   preSelectedSlots?: CalendarInterval[];
   requestedSlots?: CalendarInterval[];
   className?: string;
@@ -424,6 +430,7 @@ export function UnifiedCalendar({
   expectedTentativeSlotCount,
   onClose,
   showAllocationButtons = false,
+  aboveActionsSlot,
   preSelectedSlots = [],
   requestedSlots = [],
   className = "",
@@ -1494,6 +1501,7 @@ export function UnifiedCalendar({
       )}
 
       {/* Footer */}
+      {aboveActionsSlot}
       <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
