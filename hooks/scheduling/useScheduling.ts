@@ -323,11 +323,17 @@ export interface AllocationAttemptKey {
  * Stable fingerprint of an allocation attempt. A retry of the SAME payload
  * keeps the same Idempotency-Key (the server replays the original batch);
  * any change to mode or slots gets a fresh key.
+ *
+ * `intent` separates attempts whose server-side meaning differs without
+ * changing mode/slots — today `allowPartial` (#1206): a partial-success batch
+ * stamped under a key must never replay as the answer to a later full-intent
+ * retry in the same hook instance, which would report the shortfall as done.
  */
 export function computeAttemptFingerprint(
   mode: "manual" | "auto" | "requested",
   eventId: string,
   slots: CalendarInterval[],
+  intent?: string,
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
@@ -335,7 +341,7 @@ export function computeAttemptFingerprint(
     // every runtime locale.
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .join(",");
-  return `${mode}|${eventId}|${slotPart}`;
+  return `${mode}|${eventId}|${slotPart}|${intent ?? ""}`;
 }
 
 let attemptKeyCounter = 0;
@@ -1151,9 +1157,16 @@ export function useEventSlotAllocation(
         // Slots are picked server-side, so the fingerprint covers mode +
         // event only: a double-click replays, a later re-run (after a
         // failure changed nothing) also replays, which is safe either way.
+        // The partial intent is part of the fingerprint: a partial batch
+        // must never replay as a full placement (#1206).
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("auto", eventId, []),
+          computeAttemptFingerprint(
+            "auto",
+            eventId,
+            [],
+            allocateOptions?.allowPartial ? "partial" : undefined,
+          ),
         );
         attemptKeyRef.current = attempt;
 

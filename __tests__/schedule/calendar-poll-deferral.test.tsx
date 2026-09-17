@@ -126,7 +126,7 @@ describe("availability polling — a poll never races the fetch in flight", () =
     expect(latest?.loading).toBe(false);
   });
 
-  it("re-arms the deferred poll behind the fetch it waited for", async () => {
+  it("re-arms behind the fresh answer instead of re-polling it", async () => {
     let settleNavigationFetch: (value: SlotResponse) => void = () => {};
     fetchAvailabilitySlots.mockReturnValueOnce(
       new Promise<SlotResponse>((resolve) => {
@@ -144,10 +144,19 @@ describe("availability polling — a poll never races the fetch in flight", () =
       settleNavigationFetch(EMPTY_RESPONSE);
     });
 
-    // Deferred, not dropped: a full interval has elapsed since the request was
-    // issued, so the wait ends in a poll rather than another idle interval.
+    // Deferred, not dropped — but the waited-for answer IS the fresh data, so
+    // re-polling it now would refetch the identical window 1ms after it
+    // arrived. Freshness stamps on settle (hot-loop fix), so the poll re-arms
+    // a full interval behind the answer instead of firing into it.
     await act(async () => {
       jest.advanceTimersByTime(1);
+    });
+
+    expect(fetchAvailabilitySlots).toHaveBeenCalledTimes(1);
+
+    // ...and the cadence resumes from the fresh answer.
+    await act(async () => {
+      jest.advanceTimersByTime(AVAILABILITY_POLL_INTERVAL_MS);
     });
 
     expect(fetchAvailabilitySlots).toHaveBeenCalledTimes(2);

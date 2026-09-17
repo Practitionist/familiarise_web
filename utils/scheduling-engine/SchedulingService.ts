@@ -2269,6 +2269,18 @@ export class SchedulingService {
         consulteeLock = await lockConsulteeBooking(consulteeLockUserId);
       }
 
+      // #837 TOCTOU — same re-check the auto/manual paths do: the pre-lock
+      // replay check can miss a concurrent first submit that stamped its key
+      // while we waited on the locks. Re-check now that we hold them so the
+      // loser replays the winner's batch instead of paying for a full write
+      // transaction that only rediscovers the replay in-txn.
+      const lockedReplay = await this.findIdempotentAllocation(
+        eventType,
+        eventId,
+        idempotencyKey,
+      );
+      if (lockedReplay) return lockedReplay;
+
       return await prisma.$transaction(
         async (tx) => {
           // Multi-tab guard: another tab already confirmed slots for this
