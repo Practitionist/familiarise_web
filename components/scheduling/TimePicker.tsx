@@ -60,12 +60,16 @@ function submitButtonTitle(state: {
   isSubmitting: boolean;
   selectionIncomplete: boolean;
   proposedCount: number;
+  allowReleaseWithoutTime: boolean;
 }): string {
   if (state.isSubmitting) {
     return "Submitting — wait for the current attempt to finish.";
   }
   if (state.selectionIncomplete) {
-    return "Select a time for every session, or choose Any time works.";
+    // Name "Any time works" only where the policy actually offers it.
+    return state.allowReleaseWithoutTime
+      ? "Select a time for every session, or choose Any time works."
+      : "Select a time for every session.";
   }
   if (state.proposedCount === 0) {
     return "Pick at least one replacement time first.";
@@ -352,6 +356,7 @@ export function TimePicker({
               isSubmitting,
               selectionIncomplete,
               proposedCount: proposedSlots.length,
+              allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
             })}
           >
             {isSubmitting ? (

@@ -999,7 +999,12 @@ export function RequestSchedulingTab({
 
       const conflict = classifyRequestedConflict(result);
       if (conflict === "stale") {
+        // The row changed elsewhere: close (the open dialog still shows the
+        // stale tentative count and would rebuild the same burned
+        // precondition on retry) and refetch; the row itself stays.
         toast(requestChangedElsewhere());
+        setRequestedSlotsDialogOpen(false);
+        setSelectedRequestForDialog(null);
         fetchData();
         onUpdate();
         return;
