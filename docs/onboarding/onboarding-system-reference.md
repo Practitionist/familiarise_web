@@ -53,18 +53,18 @@ inside the same transaction that creates the `Organization`,
 immediately navigate to `/dashboard/org-workspace/:id/home`. See
 `docs/enterprise/12-dashboard-pages.md` for the operator home route.
 
-### Placeholder ConsultantProfile on EXPERT invite accept
+### EXPERT invite accept stays strict (no placeholder)
 
 When a user accepts an EXPERT invitation without a pre-existing
 `ConsultantProfile`, `app/api/organizations/invitations/accept/route.ts`
-upserts a placeholder with:
+rejects with `NOT_A_CONSULTANT` (400) instead of provisioning anything —
+an expert identity carries domain/rates/verification/payout prerequisites
+that no invite click can substitute for (who-is-acting rule, #819). The
+invite page humanizes the code (`humanizeOrgError`) and tells the user to
+finish consultant onboarding first; the emailed link still accepts
+afterwards. SSO JIT keeps its own lazy path; admin direct-add stays
+strict for both EXPERT and LEARNER.
 
-- `domain` → upserted `Domain "General"`
-- `scheduleType = WEEKLY`
-- `verificationStatus = PENDING_VERIFICATION`
-
-The user fills in their real domain, schedule, and verification
-materials afterwards through the consultant profile editor.
 Marketplace visibility in `/explore/experts` still gates on platform
 verification, not on membership existence.
 

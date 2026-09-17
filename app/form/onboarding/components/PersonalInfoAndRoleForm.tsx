@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/collapsible";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
+import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
@@ -72,9 +73,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
   // #840 — invitees skip the role-picker entirely when they have a pending
   // org invitation; picking a B2C tile would create unwanted profiles.
-  // CR #1245 r2 — tri-state: undefined = checking, null = none found,
-  // object = invite exists. The role picker MUST NOT render while checking
-  // or on failure, or a pending invitee could submit a B2C role.
+  // CR #1245 r2 — tri-state: inviteCheckDone=false = checking, =true with
+  // pendingInvite=null = none found, otherwise an invite exists. The role
+  // picker MUST NOT render while checking or on failure: an earlier version
+  // nested these branches inside `if (pendingInvite)`, so while the fetch
+  // was in flight (pendingInvite === null) the full form flashed and a fast
+  // submitter could file a B2C role before the invite panel ever appeared.
   const [inviteCheckDone, setInviteCheckDone] = useState(false);
   const [inviteCheckError, setInviteCheckError] = useState(false);
   const [pendingInvite, setPendingInvite] = useState<{
@@ -82,13 +86,27 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     role: string;
     organizationId: string;
   } | null>(null);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  // Audited escape hatch: the panel used to be non-dismissible, so a stray
+  // invite row (expired-sweep regression, wrong address) locked the user out
+  // of onboarding with no recourse. Bypassing records a breadcrumb with the
+  // invite role (never the address) so the funnel stays honest; the emailed
+  // link still accepts afterwards.
+  const [continuedWithoutInvite, setContinuedWithoutInvite] = useState(false);
   const loadPendingInvites = useCallback(() => {
     setInviteCheckDone(false);
     setInviteCheckError(false);
     fetch("/api/user/pending-invites")
       .then((r) => (r.ok ? r.json() : Promise.reject("fetch failed")))
       .then((d) => {
-        if (d?.invites?.length > 0) setPendingInvite(d.invites[0]);
+        const invites = Array.isArray(d?.invites) ? d.invites : [];
+        if (invites.length > 0) {
+          setPendingInvite(invites[0]);
+          setPendingInviteCount(invites.length);
+        } else {
+          setPendingInvite(null);
+          setPendingInviteCount(0);
+        }
         setInviteCheckDone(true);
       })
       .catch(() => {
@@ -169,10 +187,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     }
   };
 
-  // #840 — invitees with a pending org invitation see this instead of the
-  // role tiles, so they can't accidentally create a B2C profile.
-  if (pendingInvite) {
-    if (!inviteCheckDone) {
+  // #840 — invitees with a pending org invitation see the invite panel
+  // instead of the role tiles, so they can't accidentally create a B2C
+  // profile. Flat tri-state (checking → error → invite → form): the picker
+  // below renders ONLY when the check settled with no invite, or when the
+  // user explicitly continued without it.
+  if (!inviteCheckDone) {
     return (
       <div className="mx-auto max-w-md py-8 text-center">
         <p className="text-sm text-zinc-500">Checking for pending invitations…</p>
@@ -187,19 +207,40 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       </div>
     );
   }
-
-  return (
+  if (pendingInvite && !continuedWithoutInvite) {
+    return (
       <div className="mx-auto max-w-md space-y-4 py-8 text-center">
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-6">
           <p className="text-lg font-semibold text-blue-900">
             You&apos;ve been invited to join{" "}
             <span className="underline">{pendingInvite.organizationName}</span>
           </p>
+          {pendingInviteCount > 1 ? (
+            <p className="mt-1 text-sm text-blue-800">
+              You have {pendingInviteCount} pending invitations — check your
+              email for all of them.
+            </p>
+          ) : null}
           <p className="mt-2 text-sm text-zinc-600">
             Check your email for the invitation link to accept and join
             the organisation. Your profile will be set up as part of that flow.
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            trackOnboardingEvent("invite_bypassed", {
+              inviteRole: pendingInvite.role,
+            });
+            setContinuedWithoutInvite(true);
+          }}
+        >
+          Continue without this invite
+        </Button>
+        <p className="text-xs text-zinc-500">
+          You can still accept the invitation from your email afterwards.
+        </p>
       </div>
     );
   }

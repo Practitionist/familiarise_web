@@ -251,10 +251,15 @@ export async function POST(req: NextRequest) {
           select: { id: true },
         });
         if (!existingConsultant) {
-          throw Object.assign(
-            new Error("NOT_A_CONSULTANT"),
-            { httpStatus: 400 },
-          );
+          // Deliberately strict (not a lazy placeholder): an expert identity
+          // carries domain/rates/verification/payout prerequisites no invite
+          // click can substitute for. Emits the NOT_A_CONSULTANT code (not
+          // free-form copy) so lib/labels/org-errors.ts humanizes it; the
+          // invite page tells the user to finish consultant onboarding and
+          // accept again from the emailed link.
+          throw Object.assign(new Error("NOT_A_CONSULTANT"), {
+            httpStatus: 400,
+          });
         }
       }
 

@@ -13,6 +13,10 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
   CONSULTANT: "consultantProfileId",
   CONSULTEE: "consulteeProfileId",
   STAFF: "staffProfileId",
+  // ORG_WORKSPACE is required since the handoff creates + links the profile
+  // (setOnboardingRoleAction), closing the half-onboarded window where the
+  // role was committed but no profile existed. ADMIN remains flag-only.
+  ORG_WORKSPACE: "orgWorkspaceProfileId",
 };
 
 /**
