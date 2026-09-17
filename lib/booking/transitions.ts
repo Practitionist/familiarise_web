@@ -434,6 +434,13 @@ export async function transitionTrial(
     to: TrialStatus;
     data?: Omit<Prisma.TrialUncheckedUpdateManyInput, "status">;
     fromIn?: TrialStatus[];
+    /**
+     * Extra predicates merged into the CAS UPDATE's where only (the pre-read
+     * stays id-keyed). Lets sweep callers repeat their cohort's stale-time
+     * predicate inside the atomic write, so a deadline extended between the
+     * cohort read and the write no longer matches.
+     */
+    whereAnd?: Prisma.TrialWhereInput;
   },
 ): Promise<void> {
   const before = await tx.trial.findUnique({
@@ -443,6 +450,7 @@ export async function transitionTrial(
   const res = await tx.trial.updateMany({
     where: {
       ...args.where,
+      ...args.whereAnd,
       status: { in: args.fromIn ?? TRIAL_ALLOWED_FROM[args.to] },
     },
     data: { status: args.to, ...args.data },
@@ -499,6 +507,12 @@ export async function transitionRescheduleRequest(
     data?: Omit<Prisma.RescheduleRequestUncheckedUpdateManyInput, "status">;
     /** Narrow or widen the from-set for flow-specific edges. */
     fromIn?: RescheduleRequestStatus[];
+    /**
+     * Extra predicates merged into the CAS UPDATE's where only (the pre-read
+     * stays id-keyed). Lets sweep callers repeat their cohort's stale-time
+     * predicate inside the atomic write — see transitionTrial.whereAnd.
+     */
+    whereAnd?: Prisma.RescheduleRequestWhereInput;
   },
 ): Promise<void> {
   // Reaching a terminal state also releases openForAppointmentId, so the
@@ -514,6 +528,7 @@ export async function transitionRescheduleRequest(
   const res = await tx.rescheduleRequest.updateMany({
     where: {
       ...args.where,
+      ...args.whereAnd,
       status: { in: args.fromIn ?? RESCHEDULE_ALLOWED_FROM[args.to] },
     },
     data: {

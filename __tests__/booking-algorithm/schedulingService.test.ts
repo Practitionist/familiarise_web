@@ -3259,9 +3259,11 @@ describe("manual idempotent replay", () => {
             endsAt: new Date(pastStart.getTime() + HALF_HOUR_MS),
             deletedAt: null,
           },
+          // One occurrence per CALL with its real end (not one row per
+          // 30-minute atom): a 1-hour session is a single 10:00-11:00 row.
           {
             startsAt: futureStart,
-            endsAt: new Date(futureStart.getTime() + HALF_HOUR_MS),
+            endsAt: new Date(futureStart.getTime() + 2 * HALF_HOUR_MS),
             deletedAt: null,
           },
         ],
@@ -3276,7 +3278,10 @@ describe("manual idempotent replay", () => {
       eventType: "consultation",
       eventId: "consult-1",
       mode: "manual",
-      slots: [futureStart.toISOString()],
+      slots: [
+        futureStart.toISOString(),
+        new Date(futureStart.getTime() + HALF_HOUR_MS).toISOString(),
+      ],
       idempotencyKey: "key-1",
     });
 

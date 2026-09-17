@@ -47,6 +47,42 @@ export async function expireUnpaidTrials(): Promise<ExpireUnpaidTrialsResult> {
   );
 }
 
+/**
+ * Expire one lapsed trial through the guarded transition. Returns true when
+ * it moved. Throws on anything but a lost race so the caller aborts the
+ * batch loudly instead of skipping rows silently.
+ */
+async function expireOneTrial(id: string, now: Date): Promise<boolean> {
+  try {
+    await prisma.$transaction((tx) =>
+      transitionTrial(tx, {
+        where: { id },
+        to: TrialStatus.CANCELLED,
+        fromIn: [TrialStatus.AWAITING_PAYMENT],
+        // Repeat the cohort's stale-time predicate inside the CAS: a
+        // pay-link re-minted between the read and the write moves the
+        // deadline out from under the sweep and must not be cancelled.
+        whereAnd: {
+          OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
+        },
+        data: {
+          // The link is dead once cancelled; leaving it would let a stale
+          // dashboard row send someone to a checkout for a released slot.
+          pendingPaymentUrl: null,
+          paymentDueAt: null,
+        },
+        reason: "Trial pay-link lapsed without payment",
+      }),
+    );
+    return true;
+  } catch (error) {
+    // Scheduled or paid between the read and the write — the payment
+    // wins, and there is nothing left to expire.
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
+  }
+}
+
 async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
   const errors: string[] = [];
   let trialsExpired = 0;
@@ -81,28 +117,7 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        try {
-          await prisma.$transaction((tx) =>
-            transitionTrial(tx, {
-              where: { id: row.id },
-              to: TrialStatus.CANCELLED,
-              fromIn: [TrialStatus.AWAITING_PAYMENT],
-              data: {
-                // The link is dead once cancelled; leaving it would let a stale
-                // dashboard row send someone to a checkout for a released slot.
-                pendingPaymentUrl: null,
-                paymentDueAt: null,
-              },
-              reason: "Trial pay-link lapsed without payment",
-            }),
-          );
-          trialsExpired += 1;
-        } catch (error) {
-          // Scheduled or paid between the read and the write — the payment
-          // wins, and there is nothing left to expire.
-          if (error instanceof IllegalTransitionError) continue;
-          throw error;
-        }
+        if (await expireOneTrial(row.id, now)) trialsExpired += 1;
       }
 
       if (stale.length < BATCH_SIZE) break;

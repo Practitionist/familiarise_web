@@ -944,11 +944,18 @@ export class SchedulingService {
       // recurring manual submit carries future slots while deliberately
       // preserved past rows stay stamped, so testing the whole cohort would
       // 422 a legitimate double-submit instead of replaying it.
+      //
+      // Expanded to interval starts before comparing: one occurrence covers
+      // one whole call with its real end ("the 30-minute intervals stay the
+      // unit of arithmetic, not the persisted shape"), while the attempt
+      // carries every 30-minute atom — an exact retry of a multi-slot
+      // session would otherwise mismatch on row count alone.
       const now = new Date();
       const stampedStarts = appointments
         .flatMap((a) => a.occurrences ?? [])
         .filter((o) => !o.deletedAt && o.endsAt > now)
-        .map((o) => new Date(o.startsAt).getTime())
+        .flatMap((o) => intervalStartsOf(o))
+        .map((start) => start.getTime())
         .sort((a, b) => a - b);
       const attemptedStarts = expectedSlotStarts
         .map((s) => new Date(s).getTime())

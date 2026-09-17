@@ -45,6 +45,34 @@ export async function expireRescheduleProposals(): Promise<RescheduleProposalExp
   );
 }
 
+/**
+ * Expire one lapsed proposal through the guarded transition. Returns true
+ * when it moved. Throws on anything but a lost race so the caller aborts the
+ * batch loudly instead of skipping rows silently.
+ */
+async function expireOneProposal(id: string, now: Date): Promise<boolean> {
+  try {
+    await prisma.$transaction((tx) =>
+      transitionRescheduleRequest(tx, {
+        where: { id },
+        to: "EXPIRED",
+        // Repeat the cohort's stale-time predicate inside the CAS:
+        // expiry is creation-only (no writer extends it), but the
+        // predicate costs nothing and keeps the sweep honest if one
+        // ever appears.
+        whereAnd: { expiresAt: { lt: now } },
+        reason: "Proposal lapsed without an answer",
+      }),
+    );
+    return true;
+  } catch (error) {
+    // Answered between the read and the write — the answer wins, and
+    // there is nothing left to expire.
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
+  }
+}
+
 async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalExpiryResult> {
   const errors: string[] = [];
   let proposalsExpired = 0;
@@ -82,21 +110,7 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        try {
-          await prisma.$transaction((tx) =>
-            transitionRescheduleRequest(tx, {
-              where: { id: row.id },
-              to: "EXPIRED",
-              reason: "Proposal lapsed without an answer",
-            }),
-          );
-          proposalsExpired += 1;
-        } catch (error) {
-          // Answered between the read and the write — the answer wins, and
-          // there is nothing left to expire.
-          if (error instanceof IllegalTransitionError) continue;
-          throw error;
-        }
+        if (await expireOneProposal(row.id, now)) proposalsExpired += 1;
       }
 
       if (stale.length < BATCH_SIZE) break;
