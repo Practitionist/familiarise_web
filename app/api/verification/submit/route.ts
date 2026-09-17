@@ -3,6 +3,10 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  applyRateLimit,
+  verificationSubmitLimiter,
+} from "@/lib/rate-limit";
 import { notifyNewConsultantApplication } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 /**
@@ -11,7 +15,8 @@ import { getAppUrl } from "@/lib/url";
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Force-fresh (see documents route): revocation must bite immediately.
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -19,6 +24,14 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Each submit mutates the review queue + notifies admins: 10/hr fits the
+    // human submit → fix → resubmit cadence and stops queue flooding.
+    const rateLimited = await applyRateLimit(
+      verificationSubmitLimiter,
+      `verification-submit:${session.user.id}`,
+    );
+    if (rateLimited) return rateLimited;
 
     const body = await request.json();
     const { linkedinUrl, notes, documentIds } = body;
