@@ -1,11 +1,12 @@
 import { cache } from "react";
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
+import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { AllocateClient } from "./AllocateClient";
 
@@ -66,12 +67,35 @@ export default async function AllocateSlotsPage({
   // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultant", consultantId);
 
-  // The route cannot say which product this is, and every grid fetch is keyed
-  // by it. The caller already knows, so it travels in the link.
-  const eventType = type === "subscription" ? "subscription" : "consultation";
+  // Malformed ids fail fast without a DB hit.
+  if (!isEventIdFormat(requestId)) notFound();
 
-  const request = await loadRequest(requestId, eventType);
-  if (!request) notFound();
+  // The route cannot say which product this is, and every grid fetch is keyed
+  // by it. The caller already knows, so it travels in the link — but links
+  // get stripped and hand-edited, so a missing or wrong ?type resolves
+  // canonically instead of 404ing a valid request: look under the named
+  // table first, then the other one, redirecting to the canonical URL.
+  // The grid subject below still comes from the DB read, never from ?type.
+  const requestedType =
+    type === "subscription"
+      ? ("subscription" as const)
+      : type === "consultation"
+        ? ("consultation" as const)
+        : null;
+  const canonicalPath = (eventType: "subscription" | "consultation") =>
+    `/dashboard/consultant/${encodeURIComponent(consultantId)}/requests/${encodeURIComponent(requestId)}/allocate?type=${eventType}`;
+
+  let request = requestedType
+    ? await loadRequest(requestId, requestedType)
+    : null;
+  if (!request) {
+    const fallbackType =
+      requestedType === "subscription" ? "consultation" : "subscription";
+    const fallback = await loadRequest(requestId, fallbackType);
+    if (!fallback) notFound();
+    redirect(canonicalPath(fallbackType));
+  }
+
   // Binds the request to the URL's consultant; the guard above binds that
   // consultant to the session.
   if (request.consultantProfileId !== consultantId) notFound();
@@ -84,9 +108,30 @@ export default async function AllocateSlotsPage({
   // allocated from this same page, and a subscription is deliberately NOT
   // flipped back to PENDING when one of its sessions is released (#448), so it
   // arrives here still APPROVED.
-  if (!ALLOCATION_APPROVABLE_FROM.includes(request.status)) notFound();
-
-  const backHref = `/dashboard/consultant/${consultantId}/requests`;
+  //
+  // Friendly dead-link for the owner (reached only past the ownership gate
+  // above, so no existence oracle for strangers): a stale notification link
+  // explains itself instead of 404ing.
+  const backHref = `/dashboard/consultant/${encodeURIComponent(consultantId)}/requests`;
+  if (!ALLOCATION_APPROVABLE_FROM.includes(request.status)) {
+    return (
+      <DashboardViewportFill className="gap-4">
+        <div className="shrink-0 rounded-lg border border-border bg-card p-6">
+          <h1 className="text-lg font-semibold">
+            This request is no longer available for allocation
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {request.status === "SCHEDULED" || request.status === "COMPLETED"
+              ? "Its sessions already have times."
+              : "It was cancelled, declined, or expired."}{" "}
+            <a className="underline" href={backHref}>
+              Back to requests
+            </a>
+          </p>
+        </div>
+      </DashboardViewportFill>
+    );
+  }
 
   return (
     <DashboardViewportFill className="gap-4">
