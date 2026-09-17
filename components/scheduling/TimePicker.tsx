@@ -63,6 +63,13 @@ export interface TimePickerProps {
   /** Back out. Also wired to the allocate grid's own Cancel button. */
   onCancel?: () => void;
   className?: string;
+  /**
+   * Where the status legend renders. "top" (default) keeps it above the grid
+   * (#1064: a key below the fold explains nothing); "bottom" puts it between
+   * the grid and the action footer, which stays on screen — used by the
+   * allocate page to reclaim top space for the heatmap itself.
+   */
+  legendPosition?: "top" | "bottom";
 }
 
 export function TimePicker({
@@ -71,6 +78,7 @@ export function TimePicker({
   isSubmitting = false,
   onCancel,
   className,
+  legendPosition = "top",
 }: Readonly<TimePickerProps>) {
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
@@ -190,11 +198,16 @@ export function TimePicker({
               : `Pick ${sessionsBeingMoved} times. `}
           </span>
         )}
-        {policy.pickerHint}
+        {/* The allocate page carries no separate heading (the breadcrumb
+            names the booking), so the hint also says who the task is for. */}
+        {policy.kind === "ALLOCATE" && subject.consulteeName
+          ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
+          : policy.pickerHint}
       </p>
 
       <SafeUnifiedCalendar
         className="min-h-0 flex-1"
+        legendPosition={legendPosition}
         consultantId={subject.consultantProfileId}
         eventType={subject.eventType}
         eventId={subject.eventId}

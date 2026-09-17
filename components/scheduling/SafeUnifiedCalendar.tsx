@@ -34,8 +34,29 @@ const UnifiedCalendar = dynamic(
  */
 export function SafeUnifiedCalendar({
   className,
+  legendPosition = "top",
   ...props
-}: UnifiedCalendarProps) {
+}: UnifiedCalendarProps & {
+  /**
+   * Where the legend renders. Above the grid by default: a key you can only
+   * reach by scrolling past the thing it explains is backwards, and on a
+   * laptop it sat below the fold entirely (#1064). "bottom" renders it
+   * between the grid and the action footer instead — still on screen, since
+   * the footer is always visible — for surfaces that need the top space for
+   * the heatmap itself (allocate page).
+   */
+  legendPosition?: "top" | "bottom";
+}) {
+  const legend = (
+    <SlotStatusLegend
+      keys={
+        (props.showConsultantLegend ?? props.mode === "allocate")
+          ? CONSULTANT_LEGEND_KEYS
+          : BUYER_LEGEND_KEYS
+      }
+      className="shrink-0"
+    />
+  );
   return (
     <CalendarErrorBoundary>
       {/* The caller's layout classes go on the WRAPPER, not the calendar: this
@@ -49,15 +70,9 @@ export function SafeUnifiedCalendar({
             booking" / "Being moved"; consultants do on allocate AND on
             reschedule-propose (select mode with event context). Prefer the
             explicit prop; fall back to mode === "allocate". */}
-        <SlotStatusLegend
-          keys={
-            (props.showConsultantLegend ?? props.mode === "allocate")
-              ? CONSULTANT_LEGEND_KEYS
-              : BUYER_LEGEND_KEYS
-          }
-          className="shrink-0"
-        />
+        {legendPosition === "top" && legend}
         <UnifiedCalendar {...props} className="min-h-0 flex-1" />
+        {legendPosition === "bottom" && legend}
       </div>
     </CalendarErrorBoundary>
   );

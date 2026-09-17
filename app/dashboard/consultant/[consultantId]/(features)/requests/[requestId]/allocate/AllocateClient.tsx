@@ -56,6 +56,9 @@ export function AllocateClient({
       policy={policy}
       subject={subject}
       onCancel={goBack}
+      // The legend lives between the grid and the action footer here: the
+      // footer is always on screen, and the top space goes to the heatmap.
+      legendPosition="bottom"
     />
   );
 }

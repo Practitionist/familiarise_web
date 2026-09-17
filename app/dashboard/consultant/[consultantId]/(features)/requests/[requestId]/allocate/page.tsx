@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportFill";
-import { PanelHeader } from "@/components/dashboard/PageScaffold";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
@@ -91,20 +90,6 @@ export default async function AllocateSlotsPage({
 
   return (
     <DashboardViewportFill className="gap-4">
-      {/* The BOOKING now lives in the breadcrumb itself (AllocateClient sets
-          it via useSetBreadcrumbLabel) — the back link is the breadcrumb's
-          own parent crumb. This line keeps the one thing the breadcrumb
-          can't say: who the task is for (#1064). */}
-      <div className="shrink-0">
-        <PanelHeader
-          description={
-            request.consulteeName
-              ? `Allocate slots for ${request.consulteeName}`
-              : "Allocate slots"
-          }
-        />
-      </div>
-
       <AllocateClient
         backHref={backHref}
         title={request.title}
@@ -113,6 +98,9 @@ export default async function AllocateSlotsPage({
           eventType: request.eventType,
           eventId: request.id,
           counterpartUserId: request.consulteeUserId,
+          // Who the task is for — rendered into the picker's hint line now
+          // that the page carries no separate heading for it.
+          consulteeName: request.consulteeName,
           durationInHours: request.durationInHours,
           sessionDurationInHours: request.sessionDurationInHours,
           sessionsPerWeek: request.sessionsPerWeek,
