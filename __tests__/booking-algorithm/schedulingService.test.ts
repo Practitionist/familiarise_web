@@ -347,7 +347,13 @@ describe("allocate() - Mode routing", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("DB connection failed");
+    // 5xx answers never carry raw error text (pool timeouts and Prisma
+    // internals are operator detail): fixed indeterminate copy instead.
+    expect(result.error).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+    expect(result.errorCode).toBe("UNKNOWN_ERROR");
+    expect(result.httpStatus).toBe(500);
   });
 
   it("should handle non-Error throws gracefully", async () => {
@@ -363,7 +369,24 @@ describe("allocate() - Mode routing", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("Allocation failed");
+    expect(result.error).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+  });
+
+  it("should keep the raw message on 4xx modelled outcomes", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "nonexistent",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toBe("consultation not found or has no consultant");
   });
 });
 
@@ -2063,6 +2086,63 @@ describe("createAppointments - grouping and validation", () => {
         data: expect.objectContaining({ cancellationPolicyId: "policy-abc" }),
       }),
     );
+  });
+
+  // Explicit nulls fail Prisma validation on clients whose generated input
+  // predates the field (Unknown argument … Did you mean …?), while omission
+  // reads as the platform ladder. So the absence of the key — not a null
+  // value — is what these tests pin when there is nothing to inherit.
+  it("omits cancellationPolicyId when no originating wrapper exists", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect("cancellationPolicyId" in data).toBe(false);
+  });
+
+  it("omits cancellationPolicyId when the wrapper cites none (legacy/shared row)", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue({
+      cancellationPolicyId: null,
+    });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect("cancellationPolicyId" in data).toBe(false);
+  });
+
+  it("never writes an explicit-null relation FK on appointment create", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue(null);
+
+    await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    const data: Record<string, unknown> =
+      mockTx.appointment.create.mock.calls[0][0].data;
+    const explicitNullFks = Object.entries(data).filter(
+      ([key, value]) => key.endsWith("Id") && value === null,
+    );
+    expect(explicitNullFks).toEqual([]);
   });
 
   it("should only connect consultant when no consultee (webinar)", async () => {

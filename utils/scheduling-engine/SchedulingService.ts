@@ -199,7 +199,16 @@ export class SchedulingService {
       });
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Allocation failed",
+        // 5xx answers never carry raw error text: pool timeouts, Prisma
+        // validation dumps, and constraint internals are operator detail
+        // (already in Sentry above), not user copy. Indeterminate wording —
+        // a 500 can fire on either side of the commit.
+        error:
+          httpStatus >= 500
+            ? "Couldn't save these times — check whether they appear, then retry."
+            : error instanceof Error
+              ? error.message
+              : "Allocation failed",
         errorCode,
         httpStatus,
         // #1206 — a shortage refusal carries the count the client needs to
@@ -3790,7 +3799,14 @@ export class SchedulingService {
               ...idempotencyData,
               ...(organizationId ? { organizationId } : {}),
               // B1/#1499 — inherit the terms the booking was sold under.
-              cancellationPolicyId: inheritedPolicyId,
+              // Omit when there is nothing to inherit (no originating row,
+              // or a legacy/shared row with NULL): an explicit null fails
+              // Prisma validation on clients whose generated input predates
+              // the field, while omission reads as the platform ladder —
+              // exactly what the schema comment contracts NULL to mean.
+              ...(inheritedPolicyId
+                ? { cancellationPolicyId: inheritedPolicyId }
+                : {}),
               occurrences: { create: occurrencesToCreate },
             },
             include: { occurrences: true },
