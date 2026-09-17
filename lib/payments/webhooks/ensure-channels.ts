@@ -12,21 +12,25 @@
  *
  * The fix is state-as-outbox rather than an outbox table: the appointment row
  * already is the durable record of the work, so it carries the completion stamp
- * too. `Appointment.chatChannelEnsuredAt` is written only once the channel calls
- * have actually returned, which makes "confirmed, paid, and still NULL" an exact
- * query for the work that was lost. The reconcile sweep runs that query and
- * calls straight back into this function. See ADR 27.
+ * too. `Appointment.chatChannelEnsuredAt` is written here only once the channel
+ * calls have actually returned, which makes "confirmed, paid, and still NULL"
+ * an exact query for the work that was lost. The reconcile sweep runs that
+ * query and calls straight back into this function; since #1708 the sweep also
+ * writes the same stamp for an ensure it has decided is terminal (see below),
+ * so a stamped row means "ensured or decided", not "ensured". See ADR 27.
  *
  * Everything here is idempotent — `createDirectMessageChannel` and
  * `addUserToEventChannel` both upsert — so the live path and the sweep can race
  * each other without consequence.
  *
- * A row that fails is deliberately left in the queue rather than marked
- * terminal, because every reason it can fail for is repairable — a missing
- * consultant, an appointment relation that is still NULL, a Stream outage — and
- * writing a terminal marker would abandon a row that a later data repair would
- * have made succeed. The sweep's seven-day window is what bounds the cost of
- * retrying it. #1391
+ * A row that fails is left in the queue rather than marked terminal when the
+ * reason is repairable — a missing consultant, an appointment relation that is
+ * still NULL, a Stream outage — because a terminal marker would abandon a row
+ * that a later data repair would have made succeed. The sweep's seven-day
+ * window bounds the cost of retrying it. #1391. Two reasons are not repairable
+ * by a retry and the sweep stamps them out of the queue itself: a
+ * `DmNotPermittedError` (the pair shares no booking) and
+ * `no_channel_branch_for_appointment`. #1708
  *
  * The stamp is per APPOINTMENT, and for a `WEBINAR` or `CLASS` — the two types
  * many buyers share — that is not the same grain as the work. Once the sixth

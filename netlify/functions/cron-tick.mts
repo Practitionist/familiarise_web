@@ -63,6 +63,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
   // rows stays inside the target timeout even when Novu is slow.
   "drain-notification-outbox": 20,
+  // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
+  "reconcile-orphaned-confirmations": 10,
 };
 
 /**
@@ -105,6 +107,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
   "retry-failed-emails": 20_000,
   "drain-notification-outbox": 20_000,
+  // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
+  "reconcile-orphaned-confirmations": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
