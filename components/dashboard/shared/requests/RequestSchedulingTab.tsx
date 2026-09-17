@@ -109,7 +109,51 @@ interface Request {
 
 // interface SlotInterval { ... } // Removed - Now imported
 
+/**
+ * Classifies a failed requested-times approval so the handler stays flat.
+ * Only a genuine already-allocated answer removes the row: a stale
+ * tentative count or a co-host clash leaves the request allocatable, so
+ * closing + deleting the row would strand it (M5).
+ */
+function classifyRequestedConflict(result: {
+  success: boolean;
+  httpStatus?: number;
+  error?: string;
+  errorCode?: string;
+}): "genuine-conflict" | "stale" | "stay-open" | null {
+  if (result.success || result.httpStatus !== 409) return null;
+  if (/reschedule state changed in another session/i.test(result.error ?? "")) {
+    return "stale";
+  }
+  if (
+    result.errorCode === "COLLABORATOR_UNAVAILABLE" ||
+    result.errorCode === "ILLEGAL_TRANSITION"
+  ) {
+    return "stay-open";
+  }
+  return "genuine-conflict";
+}
+
 type RequestType = "all" | "consultation" | "subscription";
+
+/**
+ * The stale-tab guard pair for a requested-times approval, shared verbatim
+ * by the idempotency fingerprint and the request body: if the two disagree,
+ * a guard change mints a key the server never enforces against (or
+ * vice versa). Fresh allocations only — partial reschedules legitimately
+ * have confirmed slots and must not trip the already-allocated guard (#837);
+ * the tentative count is the #1012 stale-tab precondition.
+ */
+function requestedAllocationGuards(request: Pick<Request, "tentativeSlotCount">): {
+  initialAllocation: true | undefined;
+  expectedTentativeSlotCount: number | undefined;
+} {
+  const tentative = request.tentativeSlotCount ?? 0;
+  return {
+    initialAllocation: tentative === 0 || undefined,
+    expectedTentativeSlotCount: tentative > 0 ? tentative : undefined,
+  };
+}
 
 interface RequestSchedulingTabProps {
   type: RequestType;
@@ -923,6 +967,9 @@ export function RequestSchedulingTab({
           ? "subscription"
           : "consultation";
 
+      // Same stale-tab guards as the body below: a guard change mints a
+      // fresh key so the server enforces it instead of replaying (#1012).
+      const guards = requestedAllocationGuards(selectedRequestForDialog);
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
         computeAttemptFingerprint(
@@ -930,17 +977,7 @@ export function RequestSchedulingTab({
           selectedRequestForDialog.id,
           [],
           undefined,
-          // Same stale-tab guards as the body below: a guard change mints a
-          // fresh key so the server enforces it instead of replaying (#1012).
-          fingerprintGuards({
-            initialAllocation:
-              (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
-              undefined,
-            expectedTentativeSlotCount:
-              (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
-                ? selectedRequestForDialog.tentativeSlotCount
-                : undefined,
-          }),
+          fingerprintGuards(guards),
         ),
       );
       attemptKeyRef.current = attempt;
@@ -955,42 +992,28 @@ export function RequestSchedulingTab({
         {
           useRequestedSlots: true,
           override,
-          // Fresh allocations only — partial reschedules legitimately have
-          // confirmed slots and must not trip the already-allocated guard.
-          initialAllocation:
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
-            undefined,
-          // #1012 — stale-tab reschedule precondition.
-          expectedTentativeSlotCount:
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
-              ? selectedRequestForDialog.tentativeSlotCount
-              : undefined,
+          ...guards,
           idempotencyKey: attempt.key,
         },
       );
 
-      if (!result.success && result.httpStatus === 409) {
-        // Only a genuine already-allocated answer removes the row: a stale
-        // tentative count or a co-host clash leaves the request allocatable,
-        // so closing + deleting the row would strand it (M5).
-        if (/reschedule state changed in another session/i.test(result.error ?? "")) {
-          toast(requestChangedElsewhere());
-          fetchData();
-          onUpdate();
-          return;
-        }
-        if (
-          result.errorCode === "COLLABORATOR_UNAVAILABLE" ||
-          result.errorCode === "ILLEGAL_TRANSITION"
-        ) {
-          toast(
-            allocationFailedWithCode(
-              result.error ?? "Failed to allocate slots",
-              result.errorCode,
-            ),
-          );
-          return;
-        }
+      const conflict = classifyRequestedConflict(result);
+      if (conflict === "stale") {
+        toast(requestChangedElsewhere());
+        fetchData();
+        onUpdate();
+        return;
+      }
+      if (conflict === "stay-open") {
+        toast(
+          allocationFailedWithCode(
+            result.error ?? "Failed to allocate slots",
+            result.errorCode,
+          ),
+        );
+        return;
+      }
+      if (conflict === "genuine-conflict") {
         handleConflict(selectedRequestForDialog.id);
         return;
       }

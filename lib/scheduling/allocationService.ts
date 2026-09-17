@@ -237,23 +237,24 @@ export class AllocationService {
   }
 
   /**
-   * Validates slots for consultations
+   * One POST shared by the four validate endpoints: only the path, the log
+   * label, and the fallback sentence differ. (The four public wrappers used
+   * to carry full copies of this body — 4×41 duplicated lines.)
    */
-  static async validateConsultationSlots(
-    consultationId: string,
+  private static async postForValidation(
+    endpoint: string,
     slots: string[],
+    logLabel: string,
+    fallbackError: string,
   ): Promise<ValidationResponse> {
     try {
-      const response = await fetch(
-        `/api/bookings/consultations/${consultationId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify({ slots }),
+      });
 
       const data = await this.readValidationBody(response);
       if (!data) {
@@ -266,7 +267,7 @@ export class AllocationService {
       if (!response.ok) {
         return {
           success: false,
-          error: data.error || "Failed to validate consultation slots",
+          error: data.error || fallbackError,
         };
       }
 
@@ -275,7 +276,7 @@ export class AllocationService {
         data: data.data,
       };
     } catch (error) {
-      console.error("Error validating consultation slots:", error);
+      console.error(`Error validating ${logLabel} slots:`, error);
       reportSentryError(error, {
         subsystem: "scheduling",
         op: "scheduling",
@@ -289,55 +290,33 @@ export class AllocationService {
   }
 
   /**
+   * Validates slots for consultations
+   */
+  static async validateConsultationSlots(
+    consultationId: string,
+    slots: string[],
+  ): Promise<ValidationResponse> {
+    return this.postForValidation(
+      `/api/bookings/consultations/${consultationId}/validate`,
+      slots,
+      "consultation",
+      "Failed to validate consultation slots",
+    );
+  }
+
+  /**
    * Validates slots for subscriptions
    */
   static async validateSubscriptionSlots(
     subscriptionId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/subscriptions/${subscriptionId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await this.readValidationBody(response);
-      if (!data) {
-        return {
-          success: false,
-          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
-        };
-      }
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate subscription slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating subscription slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/subscriptions/${subscriptionId}/validate`,
+      slots,
+      "subscription",
+      "Failed to validate subscription slots",
+    );
   }
 
   /**
@@ -414,49 +393,12 @@ export class AllocationService {
     classId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/classes/${classId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await this.readValidationBody(response);
-      if (!data) {
-        return {
-          success: false,
-          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
-        };
-      }
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate class slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating class slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/classes/${classId}/validate`,
+      slots,
+      "class",
+      "Failed to validate class slots",
+    );
   }
 
   /**
@@ -466,49 +408,12 @@ export class AllocationService {
     webinarId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/webinars/${webinarId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await this.readValidationBody(response);
-      if (!data) {
-        return {
-          success: false,
-          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
-        };
-      }
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate webinar slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating webinar slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/webinars/${webinarId}/validate`,
+      slots,
+      "webinar",
+      "Failed to validate webinar slots",
+    );
   }
 
   /**

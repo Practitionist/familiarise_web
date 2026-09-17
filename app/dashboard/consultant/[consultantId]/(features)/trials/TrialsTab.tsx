@@ -149,6 +149,20 @@ const statusTextColors: Record<string, string> = {
   REJECTED: "text-red-700",
 };
 
+/** Names the recourse for a failed trial schedule without nested ternaries. */
+function scheduleFailureCopy(error: unknown): string {
+  if (error instanceof ApiResponseError) {
+    if (error.status === 409) {
+      return `${error.message} Pick another time.`;
+    }
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return "Failed to schedule trial";
+}
+
 export function TrialsTab() {
   const params = useParams();
   const consultantId = params.consultantId as string;
@@ -356,14 +370,36 @@ export function TrialsTab() {
       console.error("Error scheduling trial:", error);
       toast({
         title: "Couldn't schedule trial",
+        description: scheduleFailureCopy(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const mutateTrial = async (
+    trialId: string,
+    init: RequestInit,
+    successMessage: string,
+    failureTitle: string,
+    failureFallback: string,
+  ) => {
+    setIsProcessing(true);
+    try {
+      const response = await fetch(`/api/trials/${trialId}`, init);
+      // Surface the server's reason (transition/CAS detail) instead of a
+      // fixed string; requireJsonResponse keeps 504-HTML out of the toast.
+      await requireJsonResponse(response, failureFallback);
+      toast({ title: "Success", description: successMessage });
+      fetchTrials();
+      fetchStats();
+    } catch (error) {
+      console.error(`${failureTitle}:`, error);
+      toast({
+        title: failureTitle,
         description:
-          error instanceof ApiResponseError
-            ? error.status === 409
-              ? `${error.message} Pick another time.`
-              : error.message
-            : error instanceof Error
-              ? error.message
-              : "Failed to schedule trial",
+          error instanceof Error ? error.message : failureFallback,
         variant: "destructive",
       });
     } finally {
@@ -372,67 +408,27 @@ export function TrialsTab() {
   };
 
   const handleReject = async (trialId: string) => {
-    try {
-      setIsProcessing(true);
-      // Use PATCH to set status to REJECTED (consultant declining)
-      const response = await fetch(`/api/trials/${trialId}`, {
+    await mutateTrial(
+      trialId,
+      {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "REJECTED" }),
-      });
-
-      // Surface the server's reason (transition/CAS detail) instead of a
-      // fixed string; requireJsonResponse keeps 504-HTML out of the toast.
-      await requireJsonResponse(response, "Failed to decline trial");
-
-      toast({
-        title: "Success",
-        description: "Trial request declined",
-      });
-
-      fetchTrials();
-      fetchStats();
-    } catch (error) {
-      console.error("Error declining trial:", error);
-      toast({
-        title: "Couldn't decline trial",
-        description:
-          error instanceof Error ? error.message : "Failed to decline trial",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
+      },
+      "Trial request declined",
+      "Couldn't decline trial",
+      "Failed to decline trial",
+    );
   };
 
   const handleCancel = async (trialId: string) => {
-    try {
-      setIsProcessing(true);
-      // Use DELETE for cancellation of scheduled trials
-      const response = await fetch(`/api/trials/${trialId}`, {
-        method: "DELETE",
-      });
-
-      await requireJsonResponse(response, "Failed to cancel trial");
-
-      toast({
-        title: "Success",
-        description: "Trial session cancelled",
-      });
-
-      fetchTrials();
-      fetchStats();
-    } catch (error) {
-      console.error("Error cancelling trial:", error);
-      toast({
-        title: "Couldn't cancel trial",
-        description:
-          error instanceof Error ? error.message : "Failed to cancel trial",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
+    await mutateTrial(
+      trialId,
+      { method: "DELETE" },
+      "Trial session cancelled",
+      "Couldn't cancel trial",
+      "Failed to cancel trial",
+    );
   };
 
   const formatDate = (dateString: string) => {

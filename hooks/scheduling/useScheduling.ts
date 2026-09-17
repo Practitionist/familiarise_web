@@ -587,89 +587,101 @@ export function useEventSlotAllocation(
   // ALLOCATION FAILURE HANDLING
   // ==========================================
 
-  /** Common failure path: 409 means another tab/session already allocated —
-   * UNLESS the message says a SLOT was taken (#1132): that request is still
-   * allocatable with different times, so the server's own message renders
-   * as itself and the dialog stays open (no onConflict tear-down).
-   *
-   * Branched on structured errorCode first: several 409s do NOT mean
-   * "allocated elsewhere" (co-host busy, illegal transition, transient
-   * lock) and must neither close the dialog nor say that they did. */
+  /**
+   * Classifies a failed allocation into the one action the UI takes. Pure
+   * (no toasts, no callbacks) so the branching lives outside the hook
+   * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
+   * illegal transition, transient lock) and must neither close the dialog
+   * nor say that they did.
+   */
+  type AllocationFailureAction =
+    | "rate-limited"
+    | "allocated-elsewhere"
+    | "request-changed"
+    | "stay-open-refresh"
+    | "stay-open-raw-refresh"
+    | "key-reset"
+    | "generic";
+
+  function classifyAllocationFailure(
+    result: AllocationResult,
+    errorMessage: string,
+  ): AllocationFailureAction {
+    if (result.httpStatus === 429) return "rate-limited";
+    if (
+      result.httpStatus === 422 &&
+      result.errorCode === "IDEMPOTENCY_KEY_REUSE"
+    ) {
+      return "key-reset";
+    }
+    if (result.httpStatus !== 409) return "generic";
+    if (result.errorCode === "COLLABORATOR_UNAVAILABLE") {
+      return "stay-open-refresh";
+    }
+    if (
+      result.errorCode === "ILLEGAL_TRANSITION" ||
+      /reschedule state changed in another session/i.test(errorMessage)
+    ) {
+      return "request-changed";
+    }
+    if (isPreservedAllocationMessage(errorMessage)) {
+      return "stay-open-raw-refresh";
+    }
+    if (
+      result.errorCode === "LOCK_CONTENTION" &&
+      !/already allocated in another session/i.test(errorMessage)
+    ) {
+      return "stay-open-refresh";
+    }
+    return "allocated-elsewhere";
+  }
+
   const handleAllocationFailure = useCallback(
     (result: AllocationResult, fallback: string) => {
       const errorMessage = result.error || fallback;
       setAllocationError(errorMessage);
-      const isStaleReschedule =
-        result.httpStatus === 409 &&
-        /reschedule state changed in another session/i.test(errorMessage);
-      // A stay-open failure means the grid cells just proved stale: ask the
-      // host to refetch so the next pick is made against fresh data.
-      const refreshStale = () => onStaleData?.();
-      if (result.httpStatus === 429) {
-        // Rate limited — back off, don't resubmit into it.
-        toast(rateLimited());
-      } else if (
-        result.httpStatus === 409 &&
-        result.errorCode === "COLLABORATOR_UNAVAILABLE"
-      ) {
-        // A co-host is busy at these times: pick other times, keep the event.
-        toast(allocationFailedWithCode(errorMessage, result.errorCode));
-        refreshStale();
-      } else if (
-        result.httpStatus === 409 &&
-        result.errorCode === "ILLEGAL_TRANSITION"
-      ) {
-        // The underlying request moved (cancelled/expired mid-allocate):
-        // the page's view is stale, like a stale reschedule.
-        toast(requestChangedElsewhere());
-        onConflict?.();
-      } else if (
-        result.httpStatus === 409 &&
-        result.errorCode === "LOCK_CONTENTION" &&
-        !isPreservedAllocationMessage(errorMessage) &&
-        !isStaleReschedule &&
-        !/already allocated in another session/i.test(errorMessage)
-      ) {
-        // Transient lock contention, not an allocation: wait a moment and
-        // retry against fresh cells instead of tearing the dialog down.
-        toast(allocationFailedWithCode(errorMessage, result.errorCode));
-        refreshStale();
-      } else if (
-        result.httpStatus === 409 &&
-        !isPreservedAllocationMessage(errorMessage) &&
-        !isStaleReschedule
-      ) {
-        toast(allocatedElsewhere());
-        onConflict?.();
-      } else if (isStaleReschedule) {
-        // #1012 — the tentative count changed in another tab (a reschedule
-        // finished/started there). The dialog must close + refresh because
-        // the page's view of the booking is stale.
-        toast(requestChangedElsewhere());
-        onConflict?.();
-      } else if (
-        result.httpStatus === 409 &&
-        isPreservedAllocationMessage(errorMessage)
-      ) {
-        // Slot conflict — the dialog stays open and refetches, so the retry
-        // is picked against the grid that now shows the taken slot (#1132).
-        toast(allocationFailed(errorMessage));
-        refreshStale();
-      } else if (
-        result.httpStatus === 422 &&
-        result.errorCode === "IDEMPOTENCY_KEY_REUSE"
-      ) {
-        // Same key, different payload: the key is burned and every retry
-        // with it 422s again. Drop it so the next submit mints a fresh one
-        // via resolveAttemptKey; the dialog stays open for the resubmit.
-        attemptKeyRef.current = null;
-        toast(allocationFailedWithCode(errorMessage, result.errorCode));
-      } else {
-        // PR 2c resilience — cause-specific toast from the structured code
-        // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
-        // "The scheduling period has ended", SLOT_SHORTAGE → "Not enough
-        // free slots"). Falls back to the generic copy for unknown codes.
-        toast(allocationFailedWithCode(errorMessage, result.errorCode));
+      // A stay-open failure means the grid cells just proved stale: the host
+      // refetches so the next pick is made against fresh data.
+      switch (classifyAllocationFailure(result, errorMessage)) {
+        case "rate-limited":
+          // Rate limited — back off, don't resubmit into it.
+          toast(rateLimited());
+          break;
+        case "allocated-elsewhere":
+          toast(allocatedElsewhere());
+          onConflict?.();
+          break;
+        case "request-changed":
+          // The underlying request moved (cancelled/expired/stale tab):
+          // the page's view is stale, like a stale reschedule.
+          toast(requestChangedElsewhere());
+          onConflict?.();
+          break;
+        case "stay-open-refresh":
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          onStaleData?.();
+          break;
+        case "stay-open-raw-refresh":
+          // Slot conflict — the dialog stays open and refetches, so the
+          // retry is picked against the grid that now shows the taken
+          // slot (#1132).
+          toast(allocationFailed(errorMessage));
+          onStaleData?.();
+          break;
+        case "key-reset":
+          // Same key, different payload: the key is burned and every retry
+          // with it 422s again. Drop it so the next submit mints a fresh one
+          // via resolveAttemptKey; the dialog stays open for the resubmit.
+          attemptKeyRef.current = null;
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          break;
+        case "generic":
+          // PR 2c resilience — cause-specific toast from the structured code
+          // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
+          // "The scheduling period has ended", SLOT_SHORTAGE → "Not enough
+          // free slots"). Falls back to the generic copy for unknown codes.
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          break;
       }
       onError?.(errorMessage);
     },

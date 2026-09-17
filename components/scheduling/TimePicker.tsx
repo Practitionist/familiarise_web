@@ -55,6 +55,24 @@ const DAYS_OPTIONS = [
   { value: "WEEKENDS", label: "Weekends" },
 ] as const;
 
+/** Un-nests the submit button's title so every disabled state names its fix. */
+function submitButtonTitle(state: {
+  isSubmitting: boolean;
+  selectionIncomplete: boolean;
+  proposedCount: number;
+}): string {
+  if (state.isSubmitting) {
+    return "Submitting — wait for the current attempt to finish.";
+  }
+  if (state.selectionIncomplete) {
+    return "Select a time for every session, or choose Any time works.";
+  }
+  if (state.proposedCount === 0) {
+    return "Pick at least one replacement time first.";
+  }
+  return "Submit the selected times.";
+}
+
 export interface TimePickerProps {
   policy: TimePickerPolicy;
   subject: TimePickerSubject;
@@ -330,15 +348,11 @@ export function TimePicker({
             disabled={
               isSubmitting || selectionIncomplete || proposedSlots.length === 0
             }
-            title={
-              isSubmitting
-                ? "Submitting — wait for the current attempt to finish."
-                : selectionIncomplete
-                  ? "Select a time for every session, or choose Any time works."
-                  : proposedSlots.length === 0
-                    ? "Pick at least one replacement time first."
-                    : "Submit the selected times."
-            }
+            title={submitButtonTitle({
+              isSubmitting,
+              selectionIncomplete,
+              proposedCount: proposedSlots.length,
+            })}
           >
             {isSubmitting ? (
               <>
