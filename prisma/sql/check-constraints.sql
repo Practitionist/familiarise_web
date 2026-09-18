@@ -78,6 +78,12 @@ ALTER TABLE "Class" ADD CONSTRAINT "class_max_participants_min" CHECK ("maxParti
 -- NULL (many same-window rows per event are legitimate there) and legacy
 -- pre-#440 rows are NULL. tstzrange is '[)' so back-to-back occurrences don't
 -- conflict.
+-- #1694 — tombstones are exempt. A cancel or a hold-release keeps the row
+-- (CANCELLED + deletedAt, isTentative untouched) and every reader treats it as
+-- free, so without the exemption re-booking a cancelled time 409s at commit.
+-- On a LIVE database do not replay this chunk by hand: run
+-- `scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies and swaps
+-- under a lock timeout.
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 -- SPLIT
 ALTER TABLE "AppointmentOccurrence" DROP CONSTRAINT IF EXISTS "occurrence_no_confirmed_overlap";
@@ -87,7 +93,7 @@ ALTER TABLE "AppointmentOccurrence" ADD CONSTRAINT "occurrence_no_confirmed_over
     "consultantProfileId" WITH =,
     tstzrange("startsAt", "endsAt") WITH &&
   )
-  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative");
+  WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL);
 
 -- SPLIT
 -- #747 / #685 — DB-enforced "at most one pending invite per (org, email)".
