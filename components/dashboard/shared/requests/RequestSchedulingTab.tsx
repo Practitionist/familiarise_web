@@ -791,17 +791,12 @@ export function RequestSchedulingTab({
             const sessionDuration =
               subscription.subscriptionPlan?.sessionDurationInHours || 1;
             const slotsPerSession = Math.ceil(sessionDuration / 0.5);
-            // At most one child appointment carries a live proposal; keep the
-            // pair so the respond endpoint knows which appointment. #1163
-            const proposalAppointment = subscription.appointments?.find(
-              (appt) => proposalOf(appt),
-            );
-
-            // Flatten all slots from all appointments
-            const allSlots =
-              subscription.appointments?.flatMap(
-                (appt) => appt.occurrences || [],
-              ) || [];
+            // One wrapper per subscription (#1554); the server selects the
+            // singular `appointment` and the old plural walk saw nothing (#1704).
+            const proposalAppointment = proposalOf(subscription.appointment)
+              ? subscription.appointment
+              : undefined;
+            const allSlots = subscription.appointment?.occurrences ?? [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
             const rescheduledCount = allSlots.filter(
               isReleasedForReschedule,

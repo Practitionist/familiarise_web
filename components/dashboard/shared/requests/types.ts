@@ -80,7 +80,8 @@ export interface SubscriptionApiResponse {
   subscriptionPlan?: SubscriptionPlanInfo;
   requestedBy: RequestedBy;
   requestedAt: string;
-  appointments?: AppointmentInfo[];
+  /** The one wrapper (#1554); the list select is singular. */
+  appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
