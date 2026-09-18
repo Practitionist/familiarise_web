@@ -1007,6 +1007,8 @@ uploadedAt       DateTime  @default(now())
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
 
+14. **EXPERT invites stay strict, and that is a known dead end until the add-identity flow lands.** Accepting an EXPERT invitation requires an existing `ConsultantProfile` (`NOT_A_CONSULTANT` otherwise). A brand-new user simply finishes consultant onboarding first, but a user who already completed onboarding as a learner or an org operator cannot re-enter the wizard (`requireNotOnboarded` redirects them), so for them the emailed link does not work yet. The planned fix is an "add expert identity" mode of the wizard that creates the consultant profile without touching the other profile links; until it ships, support has to handle these invitees by hand.
+
 ### Alternatives considered (#onboarding-ux, 2026-08)
 
 Recorded so nobody re-litigates these without new evidence. Benchmarks from
