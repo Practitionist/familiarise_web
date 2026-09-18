@@ -144,14 +144,32 @@ describe("availability grid conditional GET", () => {
     expect(second.headers.get("ETag")).not.toBe(etag);
   });
 
-  it("reads the session cookie-cached on the polled detail path (#1697 item 4)", async () => {
+  it("reads the session fresh for the privileged detail shape and cookie-cached for busy/free (#1697 item 4)", async () => {
     const { getSession } = jest.requireMock("../../lib/auth-server");
     await GET(
       new NextRequest(`${URL_BASE}?${QUERY}&includeAppointmentDetails=true`),
       { params },
     );
-    expect(getSession).toHaveBeenCalledTimes(1);
-    expect(getSession).not.toHaveBeenCalledWith(true);
+    expect(getSession).toHaveBeenLastCalledWith(true);
+    await GET(new NextRequest(`${URL_BASE}?${QUERY}&consulteeUserId=u-1`), {
+      params,
+    });
+    expect(getSession).toHaveBeenLastCalledWith();
+  });
+
+  it("refuses a window wider than 31 days with WINDOW_TOO_WIDE (supersedes #1577)", async () => {
+    const res = await GET(
+      new NextRequest(
+        `${URL_BASE}?startDateInUtc=2026-09-01T00:00:00.000Z&endDateInUtc=2026-10-31T00:00:00.000Z&timezone=UTC`,
+      ),
+      { params },
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "WINDOW_TOO_WIDE",
+      maxWindowDays: 31,
+    });
+    expect(mockedMarker).not.toHaveBeenCalled();
   });
 
   it("answers 200 when only the clock fold moved — a hold lapsed with no write", async () => {

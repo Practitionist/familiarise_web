@@ -49,6 +49,16 @@ type SlotTimingWithOverlap = TIntervalTiming & {
 // No SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old.
 const GRID_CACHE_CONTROL = "private, max-age=30";
 
+/**
+ * The grid is O(window width) CPU, so a caller asking for a whole scheduling
+ * period (1/6/12 months) ran past the ~26 s edge ceiling and got a text/plain
+ * timeout. Every client asks for the visible day, week or month; anything
+ * wider is refused so it paginates instead of timing out (supersedes #1577).
+ */
+const MAX_AVAILABILITY_WINDOW_DAYS = 31;
+const MAX_AVAILABILITY_WINDOW_MS =
+  MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
 // An org OWNER/MAINTAINER acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
 // is authorized the same as the owning consultant. isPrivileged only covers
@@ -111,14 +121,12 @@ export async function GET(
     // every week-slide — so resolve it ONCE rather than awaiting getSession in
     // each gate. Still skipped entirely on the public path, where neither
     // parameter is present and the route stays anonymous.
-    // Cookie-cached, not force-fresh (#1697 item 4): this is polled once a
-    // minute per open calendar, the ownership gate below re-reads the profile
-    // when the payload disagrees, and a revoked session reads busy/free cells
-    // for at most the cache's five minutes — the write routes stay fresh.
-    const session =
-      includeAppointmentDetailsRequested || requestedConsulteeUserId
-        ? await getSession()
-        : null;
+    // #1697 item 4 — the busy/free shape reads the session cookie-cached (one
+    // poll a minute per calendar); the privileged detail shape reads fresh so
+    // a demotion or a revoked membership takes effect on the next poll.
+    let session: Awaited<ReturnType<typeof getSession>> = null;
+    if (includeAppointmentDetailsRequested) session = await getSession(true);
+    else if (requestedConsulteeUserId) session = await getSession();
     // Ownership is a fact about the database, not about the session.
     //
     // The session field is a snapshot from when the session was minted, so a
@@ -228,6 +236,22 @@ export async function GET(
     } catch (_error) {
       return NextResponse.json(
         { error: "Dates must be in UTC ISO format" },
+        { status: 400 },
+      );
+    }
+    if (endDate <= startDate) {
+      return NextResponse.json(
+        { error: "endDateInUtc must be after startDateInUtc" },
+        { status: 400 },
+      );
+    }
+    if (endDate.getTime() - startDate.getTime() > MAX_AVAILABILITY_WINDOW_MS) {
+      return NextResponse.json(
+        {
+          error: `That date range is too wide. Ask for up to ${MAX_AVAILABILITY_WINDOW_DAYS} days at a time — the visible week or month.`,
+          code: "WINDOW_TOO_WIDE",
+          maxWindowDays: MAX_AVAILABILITY_WINDOW_DAYS,
+        },
         { status: 400 },
       );
     }

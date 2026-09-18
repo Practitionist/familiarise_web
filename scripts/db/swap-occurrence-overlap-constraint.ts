@@ -111,6 +111,12 @@ async function swap(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  // One Supabase project serves dev AND prod, so the operator must see the
+  // target before any statement runs.
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl)
+    throw new Error("DATABASE_URL is not set — refusing to run");
+  console.log(`target database host: ${new URL(databaseUrl).host}`);
   const mode = process.argv.find((a) => a.startsWith("--")) ?? "--verify";
   switch (mode) {
     case "--verify":
