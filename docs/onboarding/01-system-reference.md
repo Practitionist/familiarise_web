@@ -202,17 +202,28 @@ Draft layer (resumable wizard, #onboarding-ux):
 Handlers:
   handleNext(stepData)  → merge data, advance step
   handleBack()          → decrement step
-  handleSubmit(data)    → validate, transform, submit to server action
+  handleGoToStep(n)     → jump back to a completed step (stepper button,
+                          review-step pencil)
+  handleSubmit(data)    → validate, transform, submit to server action;
+                          a refusal is routed to the step that owns the
+                          first failing field (see "Refusals" below)
   startOver()           → quiesce saves, clear draft row, restart at step 0;
                           autosave stays armed afterwards
 
 Layout:
   Header with step counter + sign-out
-  Resume banner when a saved draft was restored (with Start over)
-  Progress stepper (circles + connector lines)
+  Resume banner when a saved draft was restored (Start over; "Resume at
+  step N" when the user had already started typing before the draft loaded)
+  Progress stepper — a <nav><ol> of buttons: completed steps are clickable
+  and keyboard-operable (aria-current="step" on the active one); upcoming
+  steps are inert because moving forward requires the current step to pass
   Form card (renders current step)
   Help text footer
 ```
+
+**Typing while the draft loads.** The wizard renders step 0 immediately and hydrates the saved draft afterwards, which on a cold instance can take seconds. Two rules keep what the user typed in that window: step 0 resets with `keepDirtyValues`, so a field the user has touched is never overwritten by the stored draft or the add-mode seed, and the shell records the first pointer or key event before hydration resolved (`interactedRef`) — when the draft then points at a later step, the banner offers "Resume at step N" instead of jumping there and abandoning the half-typed step.
+
+**Refusals reach the field that caused them.** Every step renders its inline errors through `components/ui/field-error.tsx` (`role="alert"`, `data-field-error`), and a refused submit calls `lib/forms/scroll-to-first-error.ts`, which scrolls the first `aria-invalid` control or error marker into view and focuses it — react-hook-form only does this for inputs it registered itself, so Controller-driven pickers and the agreement/verification steps were refusing off-screen. The final submit validates the whole payload; `app/form/onboarding/field-map.ts` maps each top-level field to the step that owns it (`personal`, `professional`, `availability`, `agreement`, `roleDetails`) and to its on-screen label, so the toast reads "Weekly hours (row 3): …" and the wizard opens that step. A server refusal is typed the same way: the availability contract's `AvailabilityContractError`, the server schema's issues (`refusalFromIssues` maps `consultantProfile.create.availabilityWindowsWeekly` and friends back to the wizard's field names) and the tag/specialty ownership checks are wrapped in `OnboardingRefusedError` (`utils/onboarding-shared.ts`) carrying `code`, `field` and `index`, `refusalResult` puts them on the action result, and the shell opens the owning step with the server's sentence; any untyped exception reaches the customer only as the generic fallback. Verification is the exception by design: the profile is already committed when the verification core refuses, so `maybeSubmitConsultantVerification` turns that into `verificationWarning` / `verificationDeferred` on a successful result, and the consultant finishes from Settings → Verification. The LinkedIn rule is one expression, `LINKEDIN_PROFILE_URL_RE` in `schemas/user.ts`, used by the verification step, the settings form and the hint copy.
 
 ### 3.2 Step 0: `PersonalInfoAndRoleForm`
 
