@@ -13,6 +13,7 @@ import path from "node:path";
 import {
   SLOT_CELL_BASE_CLASS,
   SLOT_STATUS_TOKENS,
+  BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
   resolveSlotStatusKey,
   slotCellClassName,
@@ -108,9 +109,9 @@ describe("slot palette — the base cell string cannot fight the token", () => {
    * and must keep working.
    */
   it("still fades a cell that asks to be faded", () => {
-    expect(classesOf(slotCellClassName("unavailable", { faded: true }))).toContain(
-      "opacity-60",
-    );
+    expect(
+      classesOf(slotCellClassName("unavailable", { faded: true })),
+    ).toContain("opacity-60");
     expect(classesOf(slotCellClassName("unavailable"))).not.toContain(
       "opacity-60",
     );
@@ -136,26 +137,21 @@ describe("slot palette — Tailwind can see where the tokens live", () => {
   });
 });
 
-describe("slot palette — unavailable stays visible", () => {
+describe("slot palette — unavailable is flat and off the legend", () => {
   /**
-   * bg-slate-100 on a white card is what made a sparse week read as an empty
-   * grid instead of a full one with little availability. Whatever this token
-   * becomes, it may not go back to near-white.
+   * #1064 darkened this token so a sparse week did not read as empty. The
+   * dead-hour fold (#1703 F1) now names those hours in a strip, so the cells
+   * left inside the published band are deliberately paint-free — and a state
+   * with nothing to swatch must not sit in the legend.
    */
-  it("is not a near-white fill", () => {
-    expect([
-      "bg-white",
-      "bg-transparent",
-      "bg-slate-50",
-      "bg-slate-100",
-    ]).not.toContain(SLOT_STATUS_TOKENS.unavailable.fill);
+  it("carries no fill and no border", () => {
+    expect(SLOT_STATUS_TOKENS.unavailable.fill).toBe("bg-transparent");
+    expect(SLOT_STATUS_TOKENS.unavailable.border).toBe("border-transparent");
   });
 
-  it("is lighter than a booked slot but darker than nothing", () => {
-    expect(SLOT_STATUS_TOKENS.unavailable.fill).not.toBe(
-      SLOT_STATUS_TOKENS.fullyBooked.fill,
-    );
-    expect(SLOT_STATUS_TOKENS.unavailable.border).toBeTruthy();
+  it("has no legend row", () => {
+    expect(CONSULTANT_LEGEND_KEYS).not.toContain("unavailable");
+    expect(BUYER_LEGEND_KEYS).not.toContain("unavailable");
   });
 });
 

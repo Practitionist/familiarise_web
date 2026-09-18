@@ -72,6 +72,7 @@ import {
   SLOT_STATUS_TOKENS,
   resolveSlotStatusKey,
   slotCellClassName,
+  type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import {
   focusGridPosition,
@@ -80,6 +81,13 @@ import {
   gridTimeZone,
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
+import {
+  bandKey,
+  foldDeadHourBands,
+  nearestVisibleRow,
+  type RowSegment,
+} from "@/lib/scheduling/dead-hour-bands";
+import { formatClockTime, formatDateTimeLabel } from "@/lib/time/display";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -93,6 +101,41 @@ function formatDurationLabel(minutes: number): string {
   if (minutes % 60 !== 0) return `${minutes} min`;
   const hours = minutes / 60;
   return `${hours} hour${hours === 1 ? "" : "s"}`;
+}
+
+/** The product's name for the tooltip, without a ternary chain. */
+function eventTypeLabel(eventType: UnifiedCalendarProps["eventType"]): string {
+  switch (eventType) {
+    case "consultation":
+      return "Consultation";
+    case "subscription":
+      return "Subscription";
+    case "webinar":
+      return "Webinar";
+    case "class":
+      return "Class";
+  }
+}
+
+/**
+ * A published interval that resolves to `unavailable` still says why: it is
+ * either gone (past) or outside the scheduling period. An unpublished one
+ * carries no word at all.
+ */
+function unavailableLabel(
+  isPublished: boolean,
+  isOutsidePeriod: boolean,
+): string {
+  if (!isPublished) return "";
+  return isOutsidePeriod ? "Outside Period" : "Past";
+}
+
+/** "Unavailable · 00:00–09:00", the strip a folded band collapses to. */
+function bandLabel(segment: RowSegment): string {
+  const at = (row: number) =>
+    formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
+  // Row 48 is midnight at the end of the day, which row 0's clock also reads.
+  return `Unavailable · ${at(segment.from)}–${at(segment.to % 48)}`;
 }
 
 // The time gutter must be a FIXED first column, not 1/8 of the row. As an
@@ -697,31 +740,6 @@ export function UnifiedCalendar({
   // onSlotsSelectedRef) is what a deps-driven "focus" would become.
   const focusAppliedRef = useRef(false);
 
-  useEffect(() => {
-    if (!focus || focusAppliedRef.current || !weekGridEl) return;
-    // The element's mere existence is the real guard: it renders only past
-    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
-    // held true from mount until the availability fetch settles — so by the
-    // time there is a grid, `availableSlots` is final. (`loading` alone would
-    // NOT do: it starts false, before anything is fetched.)
-    if (weekGridEl.children.length === 0) return;
-    // The user got here first. Leave them where they are, permanently.
-    if (weekGridEl.scrollTop > 0) {
-      focusAppliedRef.current = true;
-      return;
-    }
-
-    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
-    const row = weekGridEl.children[focusScrollRow(targetRow)];
-    if (!(row instanceof HTMLElement)) return;
-
-    focusAppliedRef.current = true;
-    // Measured, not rowIndex × height: the row heights are a Tailwind detail
-    // this component should not be re-deriving.
-    weekGridEl.scrollTop +=
-      row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
-  }, [focus, weekGridEl, availableSlots]);
-
   /**
    * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
    * Strategy: forward → backward → mixed → fallback to single slot.
@@ -1014,35 +1032,176 @@ export function UnifiedCalendar({
     ],
   );
 
+  /** What one cell is, before any of it becomes markup. */
+  interface CellState {
+    status: ReturnType<typeof getSlotStatusForInterval>;
+    statusKey: SlotStatusKey;
+    /** The word the cell would carry; empty for an unpublished interval. */
+    label: string;
+    isCurrentEventSlot: boolean;
+    isCurrentEventTentative: boolean;
+    isOutsideAllowedRange: boolean;
+    /** Published, booked or this event's — the row it sits on is not dead. */
+    isLive: boolean;
+  }
+
+  /**
+   * One resolver for the cell's state, shared by the cell renderer, the
+   * dead-hour fold and the "first cell of a run" check — three readers of the
+   * same flags that must never disagree about what a cell is (#1703 F1).
+   */
+  const describeCell = useCallback(
+    (interval: { hour: number; minute: number }, date: Date): CellState => {
+      const status = getSlotStatusForInterval(interval, date);
+      const startSeconds = Math.round(
+        new Date(status.intervalStartUTCString).getTime() / 1000,
+      );
+      const isCurrentEventSlot = eventSlotsSet.has(startSeconds);
+      const isCurrentEventTentative = eventTentativeSlotsSet.has(startSeconds);
+
+      const intervalStart = new Date(status.intervalStartUTCString);
+      const intervalEnd = new Date(status.intervalEndUTCString);
+      const isOutsideAllowedRange = Boolean(
+        (allowedStart && intervalEnd <= allowedStart) ||
+        (allowedEnd && intervalStart >= allowedEnd),
+      );
+
+      const statusKey = resolveSlotStatusKey({
+        isSelected: isSlotSelected({
+          startTime: intervalStart,
+          endTime: intervalEnd,
+          isAvailable: status.isAvailable,
+          isBooked: status.isBooked,
+        }),
+        isThisEventSlot: isCurrentEventSlot,
+        isRescheduling: isCurrentEventTentative,
+        isBookedForDisplay: status.isBookedForDisplay,
+        isPartiallyBooked: status.isPartiallyBooked,
+        // Outside the scheduling period the interval is real but never
+        // bookable — muted like a past slot, not green (#1064).
+        isAvailable: status.isAvailable && !isOutsideAllowedRange,
+        isInPast: status.isInPast,
+      });
+
+      let label = SLOT_STATUS_TOKENS[statusKey].label;
+      if (statusKey === "thisEvent" && status.isInPast) label = "Past session";
+      if (statusKey === "unavailable") {
+        label = unavailableLabel(status.isAvailable, isOutsideAllowedRange);
+      }
+
+      return {
+        status,
+        statusKey,
+        label,
+        isCurrentEventSlot,
+        isCurrentEventTentative,
+        isOutsideAllowedRange,
+        isLive:
+          status.isAvailable ||
+          status.isBooked ||
+          isCurrentEventSlot ||
+          isCurrentEventTentative,
+      };
+    },
+    [
+      getSlotStatusForInterval,
+      isSlotSelected,
+      eventSlotsSet,
+      eventTentativeSlotsSet,
+      allowedStart,
+      allowedEnd,
+    ],
+  );
+
+  // Dead-hour fold (#1703 F1): a row is live when any column in the visible
+  // week has something in it. Computed from the fetched grid so a custom
+  // week folds to its own shape, not the profile's.
+  const folded = useMemo(() => {
+    const live = INTERVALS.map((interval) =>
+      weekDates.some((date) => describeCell(interval, date).isLive),
+    );
+    return foldDeadHourBands(live);
+  }, [weekDates, describeCell]);
+
+  // Which bands the consultant has opened; remembered for the tab's session
+  // and keyed by consultant so one grid's choice does not leak into another.
+  const bandStorageKey = `fw:calendar:open-bands:${consultantId}`;
+  const [openBands, setOpenBands] = useState<ReadonlySet<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.sessionStorage.getItem(bandStorageKey);
+      return new Set(raw ? raw.split(",").filter(Boolean) : []);
+    } catch {
+      return new Set();
+    }
+  });
+  const toggleBand = useCallback(
+    (key: string) => {
+      setOpenBands((previous) => {
+        const next = new Set(previous);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        try {
+          window.sessionStorage.setItem(bandStorageKey, [...next].join(","));
+        } catch {
+          // Storage is a convenience; a blocked sessionStorage must not break the grid.
+        }
+        return next;
+      });
+    },
+    [bandStorageKey],
+  );
+
+  /** The rows the grid actually renders this week, ascending. */
+  const visibleRows = useMemo(() => {
+    const rows: number[] = [];
+    for (const segment of folded.segments) {
+      if (segment.kind === "band" && !openBands.has(bandKey(segment))) continue;
+      for (let row = segment.from; row < segment.to; row += 1) rows.push(row);
+    }
+    return rows;
+  }, [folded, openBands]);
+
+  // Once per open; see focusAppliedRef above (#1073).
+  useEffect(() => {
+    if (!focus || focusAppliedRef.current || !weekGridEl) return;
+    // The element's mere existence is the real guard: it renders only past
+    // the `loading`/`error`/`consultantDetails` gates below, and `loading` is
+    // held true from mount until the availability fetch settles — so by the
+    // time there is a grid, `availableSlots` is final. (`loading` alone would
+    // NOT do: it starts false, before anything is fetched.)
+    if (weekGridEl.children.length === 0) return;
+    // The user got here first. Leave them where they are, permanently.
+    if (weekGridEl.scrollTop > 0) {
+      focusAppliedRef.current = true;
+      return;
+    }
+
+    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
+    // Rows inside a folded band are not in the DOM, so aim at the nearest
+    // rendered row rather than a child index (#1703 F1).
+    const scrollRow = nearestVisibleRow(focusScrollRow(targetRow), visibleRows);
+    if (scrollRow === null) return;
+    const row = weekGridEl.querySelector(`[data-row="${scrollRow}"]`);
+    if (!(row instanceof HTMLElement)) return;
+
+    focusAppliedRef.current = true;
+    // Measured, not rowIndex × height: the row heights are a Tailwind detail
+    // this component should not be re-deriving.
+    weekGridEl.scrollTop +=
+      row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
+  }, [focus, weekGridEl, availableSlots, visibleRows]);
+
   // Render time cell
   const renderTimeCell = useCallback(
     (interval: { hour: number; minute: number }, date: Date) => {
-      const status = getSlotStatusForInterval(interval, date);
-
-      const slot: CalendarInterval = {
-        startTime: new Date(status.intervalStartUTCString),
-        endTime: new Date(status.intervalEndUTCString),
-        isAvailable: status.isAvailable,
-        isBooked: status.isBooked,
-      };
-
-      const isCurrentlySelected = isSlotSelected(slot);
-
-      // Check if this slot belongs to the current event — O(1) via Set lookup
-      const isCurrentEventSlot = eventSlotsSet.has(
-        Math.round(slot.startTime.getTime() / 1000),
-      );
-      // This event's own slot being rescheduled (tentative) — distinct state.
-      const isCurrentEventTentative = eventTentativeSlotsSet.has(
-        Math.round(slot.startTime.getTime() / 1000),
-      );
-
-      // Check if slot is outside allowed period for subscriptions/classes
+      const cell = describeCell(interval, date);
+      const { status, statusKey, isCurrentEventSlot } = cell;
       const intervalStart = new Date(status.intervalStartUTCString);
-      const intervalEnd = new Date(status.intervalEndUTCString);
-      const isOutsideAllowedRange =
-        (allowedStart && intervalEnd <= allowedStart) ||
-        (allowedEnd && intervalStart >= allowedEnd);
+      const token = SLOT_STATUS_TOKENS[statusKey];
+      // Full state on every cell, so the visible word can leave the cell
+      // without the screen reader or the hover losing it (#1703 F1).
+      const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart)}`;
 
       // Fast-exit: a cell with nothing published, nothing booked and already
       // past is never interactive, so it renders as a plain block instead of a
@@ -1052,83 +1211,69 @@ export function UnifiedCalendar({
       // here" looks like (#1064).
       if (!status.isAvailable && !status.isBooked && status.isInPast) {
         return (
-          <div className={slotCellClassName("unavailable", { faded: true })} />
+          <div
+            className={slotCellClassName("unavailable", { faded: true })}
+            title={accessibleLabel}
+            aria-label={accessibleLabel}
+            role="img"
+          />
         );
       }
 
-      const statusKey = resolveSlotStatusKey({
-        isSelected: isCurrentlySelected,
-        isThisEventSlot: isCurrentEventSlot,
-        isRescheduling: isCurrentEventTentative,
-        isBookedForDisplay: status.isBookedForDisplay,
-        isPartiallyBooked: status.isPartiallyBooked,
-        // Outside the scheduling period the interval is real but never
-        // bookable — paint it muted like a past slot, not green. The
-        // "Outside Period" label below is unchanged; only the promise of
-        // the green fill is removed, since the server always rejects these.
-        isAvailable: status.isAvailable && !isOutsideAllowedRange,
-        isInPast: status.isInPast,
-      });
+      // The word stays on the first cell of a contiguous run only: the row
+      // above, same column, saying the same thing means this cell is a
+      // continuation and the text is noise (#1703 F1).
+      const rowIndex = interval.hour * 2 + (interval.minute >= 30 ? 1 : 0);
+      const above = rowIndex > 0 ? INTERVALS[rowIndex - 1] : null;
+      const continuesRun =
+        above !== null && describeCell(above, date).label === cell.label;
+      const buttonText = continuesRun ? "" : cell.label;
+
       // ONE token, appended once, on top of a base string that carries no
       // border-COLOUR. Every branch below adds cursor/opacity only — a second
       // border-color utility on this element is structurally impossible now,
       // which is what the reverted attempt got wrong (#1064).
       let cellClassName = slotCellClassName(statusKey);
-
-      let buttonText = "";
       const showTooltip =
         ((status.isBookedForDisplay || status.isPartiallyBooked) &&
           status.overlappingAppointments.length > 0) ||
         isCurrentEventSlot;
 
-      if (isCurrentlySelected) {
-        cellClassName += " cursor-pointer";
-        buttonText = SLOT_STATUS_TOKENS.selected.label;
-      } else if (isCurrentEventSlot) {
-        cellClassName += " cursor-pointer";
-        cellClassName += status.isInPast ? " opacity-60" : "";
-        buttonText = status.isInPast
-          ? "Past session"
-          : SLOT_STATUS_TOKENS.thisEvent.label;
-      } else if (isCurrentEventTentative) {
-        // THIS event's slot being rescheduled — distinct from the "Booked"
-        // state used for foreign appointments below.
-        cellClassName += " cursor-pointer";
-        cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = SLOT_STATUS_TOKENS.rescheduling.label;
-      } else if (status.isBookedForDisplay) {
-        // View mode is read-only: a pointer cursor promises an action the
-        // early-returning click handler never takes.
-        cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
-        cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = SLOT_STATUS_TOKENS.fullyBooked.label;
-      } else if (status.isPartiallyBooked) {
-        cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
-        cellClassName += status.isInPast ? " opacity-50" : "";
-        buttonText = SLOT_STATUS_TOKENS.partiallyBooked.label;
-      } else if (status.isAvailable) {
-        if (status.isInPast) {
-          // A past slot is NOT available, whatever the consultant published.
-          // It used to render green and say "Available", differing from a real
-          // opening only by opacity — so a picker opened on the current week
-          // offered times that had already happened. Still clickable, because
-          // the toast explains why; it just no longer claims to be bookable.
+      switch (statusKey) {
+        case "selected":
           cellClassName += " cursor-pointer";
-          buttonText = isOutsideAllowedRange ? "Outside Period" : "Past";
-        } else {
+          break;
+        case "thisEvent":
           cellClassName += " cursor-pointer";
-          if (eventType === "consultation") {
-            cellClassName += " hover:shadow-md";
+          cellClassName += status.isInPast ? " opacity-60" : "";
+          break;
+        case "rescheduling":
+          cellClassName += " cursor-pointer";
+          cellClassName += status.isInPast ? " opacity-50" : "";
+          break;
+        case "fullyBooked":
+        case "partiallyBooked":
+          // View mode is read-only: a pointer cursor promises an action the
+          // early-returning click handler never takes.
+          cellClassName +=
+            mode === "view" ? " cursor-default" : " cursor-pointer";
+          cellClassName += status.isInPast ? " opacity-50" : "";
+          break;
+        case "available":
+          cellClassName += " cursor-pointer";
+          if (eventType === "consultation") cellClassName += " hover:shadow-md";
+          break;
+        case "unavailable":
+          // A published-but-dead interval (past, or outside the period) is
+          // still clickable because the toast explains why; an unpublished
+          // one is not.
+          if (status.isAvailable) {
+            cellClassName += " cursor-pointer";
+          } else {
+            cellClassName += " cursor-not-allowed";
+            cellClassName += status.isInPast ? " opacity-70" : "";
           }
-          buttonText = isOutsideAllowedRange
-            ? "Outside Period"
-            : SLOT_STATUS_TOKENS.available.label;
-        }
-      } else {
-        // Genuinely unpublished interval — never carried button text, before
-        // or after this change; only the colour source moved.
-        cellClassName += " cursor-not-allowed";
-        cellClassName += status.isInPast ? " opacity-70" : "";
+          break;
       }
 
       // Only disable in view mode or if no availability at all (gray slots)
@@ -1141,6 +1286,10 @@ export function UnifiedCalendar({
           className={cellClassName}
           onClick={() => handleSlotClick(interval, date)}
           disabled={isButtonDisabled}
+          title={accessibleLabel}
+          aria-label={accessibleLabel}
+          data-slot-start={status.intervalStartUTCString}
+          data-slot-state={statusKey}
         >
           {buttonText}
         </button>
@@ -1162,13 +1311,7 @@ export function UnifiedCalendar({
                     <div>
                       <p className="font-semibold">This Event&apos;s Slot</p>
                       <p className="text-muted-foreground">
-                        {eventType === "consultation"
-                          ? "Consultation"
-                          : eventType === "subscription"
-                            ? "Subscription"
-                            : eventType === "webinar"
-                              ? "Webinar"
-                              : "Class"}
+                        {eventTypeLabel(eventType)}
                       </p>
                       <p className="text-muted-foreground text-[10px] mt-1">
                         {status.isInPast
@@ -1206,17 +1349,7 @@ export function UnifiedCalendar({
 
       return buttonElement;
     },
-    [
-      getSlotStatusForInterval,
-      isSlotSelected,
-      handleSlotClick,
-      mode,
-      allowedStart,
-      allowedEnd,
-      eventType,
-      eventSlotsSet,
-      eventTentativeSlotsSet,
-    ],
+    [describeCell, handleSlotClick, mode, eventType],
   );
 
   // Render month view
@@ -1467,33 +1600,76 @@ export function UnifiedCalendar({
             ref={setWeekGridEl}
             className="flex-1 overflow-y-auto scrollbar-thin min-h-0"
           >
-            {INTERVALS.map((interval) => (
-              <div
-                key={`interval-row-${interval.hour}-${interval.minute}`}
-                className={`${GRID_COLS} gap-0.5 md:gap-1`}
+            {folded.allDead && (
+              <p
+                role="status"
+                className="mb-1 rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground"
               >
-                <div className="min-w-0">
-                  <div className="h-8 text-right pr-1 md:pr-2 pt-0.5 text-[10px] md:text-sm flex items-start justify-end whitespace-nowrap tabular-nums">
-                    {new Date(
-                      1970,
-                      0,
-                      1,
-                      interval.hour,
-                      interval.minute,
-                    ).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      hour12: false,
-                    })}
-                  </div>
-                </div>
-                {weekDates.map((date) => (
-                  <div key={date.toISOString()} className="col-span-1">
-                    {renderTimeCell(interval, date)}
-                  </div>
-                ))}
-              </div>
-            ))}
+                Nothing is published this week. Every hour is shown so you can
+                see where the days are.
+              </p>
+            )}
+            {folded.segments.map((segment) => {
+              const key = bandKey(segment);
+              const isOpenBand = segment.kind === "band" && openBands.has(key);
+              if (segment.kind === "band" && !isOpenBand) {
+                return (
+                  <button
+                    key={`band-${key}`}
+                    type="button"
+                    onClick={() => toggleBand(key)}
+                    aria-expanded={false}
+                    className="my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted"
+                  >
+                    {bandLabel(segment)}
+                    <span aria-hidden>· show</span>
+                  </button>
+                );
+              }
+              const rows: React.ReactNode[] = [];
+              if (isOpenBand) {
+                rows.push(
+                  <button
+                    key={`band-${key}`}
+                    type="button"
+                    onClick={() => toggleBand(key)}
+                    aria-expanded
+                    className="my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted"
+                  >
+                    {bandLabel(segment)}
+                    <span aria-hidden>· hide</span>
+                  </button>,
+                );
+              }
+              for (
+                let rowIndex = segment.from;
+                rowIndex < segment.to;
+                rowIndex += 1
+              ) {
+                const interval = INTERVALS[rowIndex];
+                rows.push(
+                  <div
+                    key={`interval-row-${interval.hour}-${interval.minute}`}
+                    data-row={rowIndex}
+                    className={`${GRID_COLS} gap-0.5 md:gap-1`}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex h-7 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs">
+                        {formatClockTime(
+                          new Date(1970, 0, 1, interval.hour, interval.minute),
+                        )}
+                      </div>
+                    </div>
+                    {weekDates.map((date) => (
+                      <div key={date.toISOString()} className="col-span-1">
+                        {renderTimeCell(interval, date)}
+                      </div>
+                    ))}
+                  </div>,
+                );
+              }
+              return rows;
+            })}
           </div>
         </div>
       ) : (

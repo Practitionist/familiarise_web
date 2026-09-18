@@ -119,12 +119,11 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
   unavailable: {
     label: "Unavailable",
     hint: "Outside the consultant's published availability.",
-    // Was slate-100. On a white card that is nearly indistinguishable from the
-    // background, so a sparse week — mostly unavailable cells — read as an
-    // EMPTY grid rather than a full one with little availability, which is why
-    // the first migration was reverted (#1064, 49973623 / 6b78274e).
-    fill: "bg-slate-200",
-    border: "border-slate-300",
+    // Flat on purpose (#1703 F1). #1064 darkened this so a sparse week did not
+    // read as empty; the dead-hour fold now names those hours in a strip, so
+    // the cells inside the published band can go quiet.
+    fill: "bg-transparent",
+    border: "border-transparent",
     text: "text-slate-500",
   },
 };
@@ -172,7 +171,7 @@ export const SLOT_STATUS_TOKENS: Record<SlotStatusKey, SlotStatusToken> = (
  * `opacity-*`, which is deliberate and unaffected.
  */
 export const SLOT_CELL_BASE_CLASS =
-  "h-8 w-full relative transition-colors duration-75 ease-in-out border rounded-sm text-[10px] leading-tight px-1 py-0.5 disabled:pointer-events-none";
+  "h-7 w-full relative transition-colors duration-75 ease-in-out border rounded-sm text-[10px] leading-tight px-1 py-0 disabled:pointer-events-none";
 
 /**
  * The full class string for one grid cell.
@@ -230,12 +229,14 @@ export function resolveSlotStatusKey(flags: SlotVisualFlags): SlotStatusKey {
   return "unavailable";
 }
 
-/** The states worth explaining on a read-only grid. */
+/**
+ * The states worth explaining on a read-only grid. `unavailable` has no row:
+ * a flat cell has nothing to swatch, and the folded band strip names it.
+ */
 export const BUYER_LEGEND_KEYS: SlotStatusKey[] = [
   "available",
   "partiallyBooked",
   "fullyBooked",
-  "unavailable",
 ];
 
 /** Everything the consultant's allocate calendar can show. */
@@ -246,5 +247,4 @@ export const CONSULTANT_LEGEND_KEYS: SlotStatusKey[] = [
   "fullyBooked",
   "thisEvent",
   "rescheduling",
-  "unavailable",
 ];
