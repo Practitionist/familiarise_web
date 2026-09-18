@@ -86,6 +86,8 @@ export default function SubscriptionCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance();
   const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -108,8 +110,6 @@ export default function SubscriptionCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  // (availableCredits/isLoadingCredits/creditsLoadFailed come from the
-  // shared useReferralCreditsBalance hook — see below.)
 
   const { toast } = useToast();
   const {
@@ -196,11 +196,6 @@ export default function SubscriptionCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Shared hook + block (app/checkout/components/referral-credits): one
-  // copy of the fetch, the load-failed flag, and the render branch.
-  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance();
 
   // Create utility functions using the toast instance
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);

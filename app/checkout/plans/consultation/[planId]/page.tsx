@@ -104,6 +104,8 @@ export default function ConsultationCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
   const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(
     null,
@@ -139,8 +141,6 @@ export default function ConsultationCheckoutPage({
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
   const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
-  // (availableCredits/isLoadingCredits/creditsLoadFailed come from the
-  // shared useReferralCreditsBalance hook — see below.)
 
   const { toast } = useToast();
   const {
@@ -199,11 +199,6 @@ export default function ConsultationCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Shared hook + block (app/checkout/components/referral-credits): one
-  // copy of the fetch, the load-failed flag, and the render branch.
-  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance();
 
   // Fetch slot details
   useEffect(() => {
