@@ -4,6 +4,7 @@ import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import type { ConsultantAppointmentsWindow } from "@/lib/appointments/window";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
@@ -148,6 +149,9 @@ export async function GET(request: NextRequest) {
   try {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
+    // #1703 B12 — ?window=all is the "Load older" read; anything else is recent.
+    const window: ConsultantAppointmentsWindow =
+      searchParams.get("window") === "all" ? "all" : "recent";
 
     const appointments = await getConsultantAppointments({
       type: type as AppointmentsType | undefined,
@@ -174,6 +178,7 @@ export async function GET(request: NextRequest) {
       // through to the empty filter and got every org's appointments plus
       // their personal ones — the opposite of picking one org.
       scope: scopeResolution.scope,
+      window,
     });
 
     // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes
