@@ -393,6 +393,45 @@ export function sendNewBookingRequestEmail(
   );
 }
 
+// ── Unscheduled-subscription nudge (#1703) ─────────────────────────────────
+
+export interface UnscheduledSubscriptionNudgeEmailArgs {
+  subscriptionId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  planTitle: string;
+  nudgeDays: number;
+  timingsUrl: string;
+}
+
+/** The email twin of `notifyUnscheduledSubscriptionNudge`; one per stage. */
+export function sendUnscheduledSubscriptionNudgeEmail(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+  budgetMs: number,
+): Promise<SendToRecipientsResult> {
+  return guarded(
+    {
+      emailType: "SUBSCRIPTION_UNSCHEDULED_NUDGE",
+      category: "appointments",
+      entityRef: `subscription:${args.subscriptionId}:day${args.nudgeDays}`,
+      subject: () =>
+        `${args.consulteeName}'s subscription is waiting for session times`,
+      render: (r) =>
+        React.createElement(NewBookingRequestEmail, {
+          consultantName: greet(r),
+          consulteeName: args.consulteeName,
+          planTitle: args.planTitle,
+          appointmentType: "subscription",
+          reviewUrl: absolute(args.timingsUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+          nudgeDays: args.nudgeDays,
+        }),
+    },
+    [args.consultantUserId],
+    budgetMs,
+  );
+}
+
 // ── Trial scheduled ─────────────────────────────────────────────────────────
 
 export interface TrialScheduledEmailArgs {

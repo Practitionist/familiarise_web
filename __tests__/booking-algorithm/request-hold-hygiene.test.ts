@@ -53,6 +53,23 @@ jest.mock("../../lib/booking/expiry-notices", () => ({
     mockNotifyExpired(...(a as [])),
 }));
 
+// #1703 — the nudge pass imports the Novu service and outbox directly; both
+// pull @novu/api, whose Request global the jsdom environment lacks.
+jest.mock("../../lib/novu/service", () => ({
+  notifyUnscheduledSubscriptionNudge: jest.fn().mockResolvedValue({
+    success: true,
+  }),
+}));
+jest.mock("../../lib/novu/outbox", () => ({
+  deriveTransactionId: (...parts: unknown[]) => parts.join("|"),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { JOB: 1 },
+  sendUnscheduledSubscriptionNudgeEmail: jest.fn().mockResolvedValue({
+    success: true,
+  }),
+}));
+
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
   // Pass-through so tests drive the unlocked core directly.
