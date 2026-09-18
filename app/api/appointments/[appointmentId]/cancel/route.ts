@@ -32,7 +32,10 @@ import {
   refundBookingPayment,
   type FundingRail,
 } from "@/lib/payments/operations/booking-refund";
-import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import {
+  isModelledRefundRefusal,
+  RefundGatewayError,
+} from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
@@ -77,6 +80,11 @@ function reportRefundFailure(err: unknown, subsystem: string): void {
     op: "cancel.refund",
     expected: modelled,
     ...(modelled ? { level: "warning" as const } : {}),
+    // The gateway's own answer, so "no capture on this order" (a mock or seed
+    // intent, FAMILIARISE_WEB-3K) is told apart from a transport fault.
+    ...(err instanceof RefundGatewayError && err.gatewayCode
+      ? { tags: { gatewayCode: err.gatewayCode } }
+      : {}),
   });
 }
 
