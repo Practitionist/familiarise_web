@@ -44,6 +44,11 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { REQUEST_LIST_DEFAULT_LIMIT } from "@/lib/booking/list-query";
+import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
+import {
+  REQUESTS_COUNT_POLL_INTERVAL_MS,
+  requestsFreshnessBadge,
+} from "@/lib/scheduling/requestsFreshness";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
 import { AllocationService } from "@/lib/scheduling/allocationService";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
@@ -686,6 +691,11 @@ export function RequestSchedulingTab({
   });
   /** When the rows on screen were last successfully read. */
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  /** "N new — Refresh" from the count poll; null while the list is current. */
+  const [freshnessBadge, setFreshnessBadge] = useState<string | null>(null);
+  /** Totals the rows on screen were read at, and when a count last landed. */
+  const knownTotalsRef = useRef<Record<PagedKind, number> | null>(null);
+  const lastCountAtRef = useRef<number>(Number.NaN);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
@@ -891,6 +901,12 @@ export function RequestSchedulingTab({
         consultation: consultationsResult.meta ?? null,
         subscription: subscriptionsResult.meta ?? null,
       });
+      knownTotalsRef.current = {
+        consultation: consultationsResult.meta?.total ?? 0,
+        subscription: subscriptionsResult.meta?.total ?? 0,
+      };
+      lastCountAtRef.current = Date.now();
+      setFreshnessBadge(null);
       succeeded = true;
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
@@ -930,25 +946,60 @@ export function RequestSchedulingTab({
     }
   }, [listMeta, pages]);
 
-  // Fetches once. Nothing refetches on its own — not a timer, not focus.
-  //
-  // This went 5-minute interval -> focus -> neither, and the last step is the
-  // one that mattered: focus fires on every alt-tab, which is far MORE often
-  // than the timer it replaced for anyone actually working. It also reached
-  // the calendar, because this tab used to host it — a repaint mid-selection,
-  // caused by data nobody asked for.
-  //
-  // Staleness is safe to leave. This grid is a hint; allocation re-validates
-  // server-side under a Redis lock against ScheduleValidationService and the
-  // btree_gist exclusion constraint, so a stale view cannot double-book — at
-  // worst a submit is rejected with a clear message. Refreshing bought no
-  // correctness and cost a selection.
-  //
-  // The Refresh button and the "Updated" label carry it instead: the user
-  // decides when, and staleness is stated rather than implied.
+  // The rows fetch once per page/scope change and otherwise only on Refresh
+  // or after this tab's own write. Staleness is safe to leave: allocation
+  // re-validates server-side under the lock, so a stale row cannot
+  // double-book — at worst a submit is refused with a clear message.
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // #1706 decision B — what DOES run on its own is a count poll: limit=1
+  // reads of the same two lists, every 45 s while visible, plus a refetch on
+  // focus/visibility return behind the shared 5 s staleness floor. It never
+  // touches the rows; it only raises the "N new — Refresh" badge.
+  const pollCounts = useCallback(async () => {
+    const [consultations, subscriptions] = await Promise.all([
+      fetchDataFromApi<ConsultationApiResponse[]>(
+        `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}&page=1&limit=1`,
+      ),
+      fetchDataFromApi<SubscriptionApiResponse[]>(
+        `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}&page=1&limit=1`,
+      ),
+    ]);
+    lastCountAtRef.current = Date.now();
+    const known = knownTotalsRef.current;
+    if (!known || !consultations.meta || !subscriptions.meta) return;
+    const counts = (kind: PagedKind) => type === "all" || type === kind;
+    const knownTotal =
+      (counts("consultation") ? known.consultation : 0) +
+      (counts("subscription") ? known.subscription : 0);
+    const polledTotal =
+      (counts("consultation") ? consultations.meta.total : 0) +
+      (counts("subscription") ? subscriptions.meta.total : 0);
+    setFreshnessBadge(requestsFreshnessBadge(knownTotal, polledTotal));
+  }, [consultantId, orgScope, type]);
+
+  useEffect(() => {
+    const poller = createAvailabilityPoller({
+      isEnabled: () => Boolean(consultantId),
+      visibilityState: () => document.visibilityState,
+      msSinceLastFetch: () => Date.now() - lastCountAtRef.current,
+      inFlight: () => null,
+      fetch: pollCounts,
+      intervalMs: REQUESTS_COUNT_POLL_INTERVAL_MS,
+    });
+    poller.arm();
+    const onFocus = () => poller.onReturn();
+    const onVisibilityChange = () => poller.onVisibilityChange();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      poller.dispose();
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [consultantId, pollCounts]);
 
   // Idempotency key for the requested-times flow; a retry of the same request
   // reuses the key so the server replays instead of double-booking (#837).
@@ -1416,10 +1467,23 @@ export function RequestSchedulingTab({
   return (
     <Card className="border-0 shadow-none rounded-none">
       <CardContent className="p-0 sm:p-6">
-        {/* Staleness is stated rather than implied. The list refreshes when the
-            tab regains focus; between those moments it is a snapshot, and
-            saying so is more honest than a spinner that suggests it is live. */}
+        {/* Staleness is stated rather than implied: the rows are a snapshot
+            until Refresh, and the count poll says when that snapshot is
+            behind (#1706). */}
         <div className="mb-3 flex items-center justify-end gap-3">
+          <span role="status" aria-live="polite">
+            {freshnessBadge && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => fetchData()}
+                disabled={loading}
+                className="gap-1.5 bg-amber-100 text-amber-900 hover:bg-amber-200 dark:bg-amber-900/40 dark:text-amber-200"
+              >
+                {freshnessBadge} &mdash; Refresh
+              </Button>
+            )}
+          </span>
           {lastUpdated && (
             <span
               className="text-xs text-muted-foreground"
