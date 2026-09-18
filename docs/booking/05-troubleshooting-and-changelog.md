@@ -85,6 +85,10 @@ flowchart TD
 
 ---
 
+## Changelog: 2026-09-18 — availability contract (onboarding train, PR-4)
+
+The three copies of "validate and replace availability" — the onboarding sync, the per-row routes and the settings PUT — now share `lib/scheduling/availability-contract.ts`, so the 30-minute-to-12-hour window bound, the time-order and overlap rules, the refusal of an already-ended custom window and the refusal of an empty set apply on every path; before this only onboarding enforced the length bound and the server accepted a consultant with a schedule type and no rows. The settings PUT runs the schedule-type switch guard inside its Serializable transaction and flips `scheduleType` with a CAS, and that guard now counts trials in SCHEDULED/AWAITING_PAYMENT and open reschedule requests. Shrinking hours within a type is allowed; every availability write answers with `uncoveredUpcoming` so the settings page can say how many upcoming sessions now fall outside the published hours. `profileCompletionPercentage` is computed from the profile (#698 OB-1) rather than left to the seed. Full detail in [docs/onboarding/03-availability-contract.md](../onboarding/03-availability-contract.md).
+
 ## Changelog: 2026-09-13 — hotfix, the detail hub's money
 
 ### PR — a group event's money is a status per seat, and an attendee receives only their own rows

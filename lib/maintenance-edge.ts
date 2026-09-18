@@ -199,6 +199,12 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/plans/*/materials",
   "/api/stream/meetings", // Block new video call creation
   "/api/form/onboarding/*", // Block new user registration/onboarding
+  // Onboarding wizard server actions (draft autosave, terminal submit,
+  // ORG_WORKSPACE role handoff) POST to this page route, not to /api/* —
+  // without this entry they wrote straight through DEGRADED while the
+  // equivalent PATCH route above was blocked. GET reads still pass with
+  // banner headers; the global MaintenanceBanner explains the pause.
+  "/form/onboarding",
   "/api/verification/documents", // Block verification document uploads
   "/api/verification/submit", // Block verification submission
   "/api/verification/resubmit", // Block verification resubmission

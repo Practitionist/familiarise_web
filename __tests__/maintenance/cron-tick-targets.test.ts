@@ -25,6 +25,7 @@ type TargetRequest = (
 function loadTicker(): {
   targetRequest: TargetRequest;
   dueTargets: (now: Date) => string[];
+  statusFor: (failed: { name: string; status: number }[]) => number;
 } {
   const file = path.join(
     __dirname,
@@ -66,6 +67,15 @@ describe("cron-tick targetRequest", () => {
       timeoutMs: 6_000,
     });
   });
+
+  // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
+  // 20 s budget, where fifty under 6 s was aborted on every tick.
+  it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "reconcile-orphaned-confirmations")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-orphaned-confirmations?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
 });
 
 // #1686 — six sweeps run on the 15-minute slots only; the customer-visible
@@ -103,5 +113,22 @@ describe("cron-tick dueTargets cadence", () => {
     ]) {
       expect(off).toContain(name);
     }
+  });
+});
+
+// #1686 — Netlify re-invokes a scheduled function that answers 5xx, up to
+// three attempts within ~10 s, each re-firing every due target. The failed
+// list in the logged body is the operator's signal; the status must stay 200.
+describe("cron-tick statusFor", () => {
+  const { statusFor } = loadTicker();
+
+  it("answers 200 even when a target failed", () => {
+    expect(statusFor([])).toBe(200);
+    expect(
+      statusFor([
+        { name: "reconcile-payment-status", status: 500 },
+        { name: "reconcile-orphaned-confirmations", status: 0 },
+      ]),
+    ).toBe(200);
   });
 });

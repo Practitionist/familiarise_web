@@ -7,7 +7,11 @@ import {
   isExpectedRefusal,
   userMessageFrom,
 } from "@/lib/errors/client-refusal";
-import { requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  ApiResponseError,
+  actionFailureMessage,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
 import { useQueryClient } from "@tanstack/react-query";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { SlotPreference } from "@/components/scheduling/time-picker-policy";
@@ -216,9 +220,11 @@ export function useConsultantEventActions({
         `/api/appointments/${appointmentId}/cancel`,
         { method: "POST", headers: { "Content-Type": "application/json" } },
       );
-      const data = await response.json();
-      if (!response.ok) {
-        if (response.status === 409) {
+      // Typed read: an edge 504 page must not surface as a JSON SyntaxError.
+      try {
+        await requireJsonResponse(response, "Failed to cancel appointment");
+      } catch (error) {
+        if (error instanceof ApiResponseError && error.status === 409) {
           toast({
             title: "Booking already updated",
             description:
@@ -227,7 +233,7 @@ export function useConsultantEventActions({
           invalidateBookingData();
           return;
         }
-        throw new Error(data.error || "Failed to cancel appointment");
+        throw error;
       }
 
       const refundNote =
@@ -247,10 +253,10 @@ export function useConsultantEventActions({
       );
       toast({
         title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to cancel appointment",
+        description: actionFailureMessage(
+          error,
+          "Failed to cancel appointment",
+        ),
         variant: "destructive",
       });
     } finally {

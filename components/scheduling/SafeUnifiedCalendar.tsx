@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useState } from "react";
 import type { UnifiedCalendarProps } from "./UnifiedCalendar";
 import CalendarErrorBoundary from "./CalendarErrorBoundary";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
@@ -8,6 +9,8 @@ import { SlotStatusLegend } from "./SlotStatusLegend";
 import {
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
+  legendKeysFor,
+  type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
 
@@ -34,8 +37,34 @@ const UnifiedCalendar = dynamic(
  */
 export function SafeUnifiedCalendar({
   className,
+  legendPosition = "top",
   ...props
-}: UnifiedCalendarProps) {
+}: UnifiedCalendarProps & {
+  /**
+   * Where the legend renders. Above the grid by default: a key you can only
+   * reach by scrolling past the thing it explains is backwards, and on a
+   * laptop it sat below the fold entirely (#1064). "bottom" renders it
+   * between the grid and the action footer instead — still on screen, since
+   * the footer is always visible — for surfaces that need the top space for
+   * the heatmap itself (allocate page).
+   */
+  legendPosition?: "top" | "bottom";
+}) {
+  // The states the grid painted this render; null until the first report so
+  // the legend shows the full set rather than nothing while loading.
+  const [painted, setPainted] = useState<ReadonlySet<SlotStatusKey> | null>(
+    null,
+  );
+  const order =
+    (props.showConsultantLegend ?? props.mode === "allocate")
+      ? CONSULTANT_LEGEND_KEYS
+      : BUYER_LEGEND_KEYS;
+  const legend = (
+    <SlotStatusLegend
+      keys={legendKeysFor(order, painted)}
+      className="shrink-0"
+    />
+  );
   return (
     <CalendarErrorBoundary>
       {/* The caller's layout classes go on the WRAPPER, not the calendar: this
@@ -49,15 +78,13 @@ export function SafeUnifiedCalendar({
             booking" / "Being moved"; consultants do on allocate AND on
             reschedule-propose (select mode with event context). Prefer the
             explicit prop; fall back to mode === "allocate". */}
-        <SlotStatusLegend
-          keys={
-            (props.showConsultantLegend ?? props.mode === "allocate")
-              ? CONSULTANT_LEGEND_KEYS
-              : BUYER_LEGEND_KEYS
-          }
-          className="shrink-0"
+        {legendPosition === "top" && legend}
+        <UnifiedCalendar
+          {...props}
+          onPaintedKeysChange={setPainted}
+          className="min-h-0 flex-1"
+          aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
         />
-        <UnifiedCalendar {...props} className="min-h-0 flex-1" />
       </div>
     </CalendarErrorBoundary>
   );

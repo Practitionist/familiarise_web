@@ -28,6 +28,7 @@ import { formatDistanceToNow } from "date-fns";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
+import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 
 interface PendingPayment {
   id: string;
@@ -159,9 +160,13 @@ export function PendingPaymentsWidget({
           );
         } else if (!response.ok) {
           const data = await response.json().catch(() => null);
-          setCancelNotice(
-            data?.error ?? "Could not cancel the booking. Try again.",
-          );
+          // A 5xx with no sentence is a timeout or crash: the cancel may
+          // still have landed, so send them to look first (#1696).
+          const fallback =
+            response.status >= 500
+              ? OUTCOME_UNKNOWN_MESSAGE
+              : "Could not cancel the booking. Try again.";
+          setCancelNotice(data?.error ?? fallback);
         }
         await Promise.all([
           queryClient.invalidateQueries({

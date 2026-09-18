@@ -23,6 +23,12 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import {
+  refuseMalformedEventId,
+  refusePlanNotOwned,
+} from "@/lib/booking/request-route-guards";
+import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { sendPaymentLinkEmail } from "@/lib/email";
@@ -57,14 +63,16 @@ type SubscriptionWithDetails = Prisma.Result<
         include: {
           consultantProfile: {
             include: {
-              user: true;
+              user: {
+                select: { id: true; name: true; email: true; image: true };
+              };
             };
           };
         };
       };
       requestedBy: {
         include: {
-          user: true;
+          user: { select: { id: true; name: true; email: true; image: true } };
         };
       };
       appointment: {
@@ -88,6 +96,8 @@ export async function GET(
 
   try {
     const { subscriptionId } = await params;
+    const malformedId = refuseMalformedEventId(subscriptionId);
+    if (malformedId) return malformedId;
     const subscriptionData = await prisma.subscription.findUniqueOrThrow({
       where: { id: subscriptionId },
       include: {
@@ -175,6 +185,8 @@ export async function PUT(
 
   try {
     const { subscriptionId } = await params;
+    const malformedId = refuseMalformedEventId(subscriptionId);
+    if (malformedId) return malformedId;
     const body = await request.json();
     const result = UpdateSubscriptionSchema.safeParse(body);
     if (!result.success) {
@@ -194,6 +206,8 @@ export async function PUT(
             consultantProfile: true,
           },
         },
+        // bookingOrgId's fallback when the plan carries no org.
+        appointment: { select: { organizationId: true } },
       },
     });
 
@@ -217,6 +231,23 @@ export async function PUT(
         "You can only modify subscriptions you are a participant in",
       );
     }
+
+    // #1704 — a planId is only accepted from the same consultant as the
+    // request; connecting any plan let a request migrate to another seller.
+    const planRefusal = await refusePlanNotOwned(
+      validatedData.planId,
+      {
+        consultantProfileId:
+          existingSubscription.subscriptionPlan?.consultantProfileId,
+        organizationId: bookingOrgId(existingSubscription),
+      },
+      () =>
+        prisma.subscriptionPlan.findUnique({
+          where: { id: validatedData.planId },
+          select: { consultantProfileId: true, organizationId: true },
+        }),
+    );
+    if (planRefusal) return planRefusal;
 
     const subscriptionData = await prisma.subscription.update({
       where: { id: subscriptionId },
@@ -318,6 +349,10 @@ export async function PATCH(
   if (authResult.error) return authResult.error;
   const { session } = authResult;
 
+  // #831 — the list PATCH had a limiter; the heavier detail PATCH did not.
+  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+  if (rl) return rl;
+
   try {
     const body = await request.json();
     const patchResult = PatchSubscriptionStatusSchema.safeParse(body);
@@ -329,6 +364,8 @@ export async function PATCH(
     }
     const { status } = patchResult.data;
     const { subscriptionId } = await params;
+    const malformedId = refuseMalformedEventId(subscriptionId);
+    if (malformedId) return malformedId;
 
     // First fetch the subscription to validate it exists and get all necessary data
     const existingSubscription = await prisma.subscription.findUnique({
@@ -338,14 +375,14 @@ export async function PATCH(
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: PARTY_USER_SELECT,
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: PARTY_USER_SELECT,
           },
         },
       },
@@ -442,14 +479,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -501,14 +538,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -575,14 +612,14 @@ export async function PATCH(
                         include: {
                           consultantProfile: {
                             include: {
-                              user: true,
+                              user: PARTY_USER_SELECT,
                             },
                           },
                         },
                       },
                       requestedBy: {
                         include: {
-                          user: true,
+                          user: PARTY_USER_SELECT,
                         },
                       },
                       appointment: {

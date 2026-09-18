@@ -3,22 +3,27 @@ import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
 } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
+import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
-import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
-import {
-  validateWeeklySlotTimeOrder,
-  slotsOverlap,
-} from "@/utils/scheduling-engine/slotTimeUtils";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
-import { notifyNewConsultantApplication } from "@/lib/novu";
+import type { StagedTrigger } from "@/lib/novu";
+import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
+import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
+import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
+import { trackOnboardingEvent } from "./onboarding-telemetry";
+import {
+  assertCustomWindows,
+  assertWeeklyWindows,
+} from "@/lib/scheduling/availability-contract";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
+  canAddConsultantIdentity,
   buildUserUpdateData,
   buildConsultantScalarData,
   buildConsulteeScalarData,
@@ -162,69 +167,36 @@ async function syncAvailabilitySlots(
       where: { consultantProfileId },
     });
 
-    const weeklySlotsToCreate = profileData.availabilityWindowsWeekly?.create;
-    if (weeklySlotsToCreate && weeklySlotsToCreate.length > 0) {
-      // Reject invalid slots instead of silently filtering them
-      for (let i = 0; i < weeklySlotsToCreate.length; i++) {
-        const slot = weeklySlotsToCreate[i];
-        const startHH = Math.floor(slot.startTimeUtc / 60)
-          .toString()
-          .padStart(2, "0");
-        const startMM = (slot.startTimeUtc % 60).toString().padStart(2, "0");
-        const endHH = Math.floor(slot.endTimeUtc / 60)
-          .toString()
-          .padStart(2, "0");
-        const endMM = (slot.endTimeUtc % 60).toString().padStart(2, "0");
-        if (!isValidTimeRange(`${startHH}:${startMM}`, `${endHH}:${endMM}`)) {
-          throw new Error(`Weekly slot ${i + 1} has an invalid time range`);
-        }
-      }
-
-      for (const slot of weeklySlotsToCreate) {
-        const timeError = validateWeeklySlotTimeOrder(
-          slot.startDay,
-          slot.endDay,
-          slot.startTimeUtc,
-          slot.endTimeUtc,
-        );
-        if (timeError) throw new Error(timeError);
-      }
-
-      for (let i = 0; i < weeklySlotsToCreate.length; i++) {
-        for (let j = i + 1; j < weeklySlotsToCreate.length; j++) {
-          if (slotsOverlap(weeklySlotsToCreate[i], weeklySlotsToCreate[j])) {
-            throw new Error(
-              "Weekly availability slots contain overlapping time ranges",
-            );
-          }
-        }
-      }
-
-      // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
-      // storage matches the window the customer is shown and can book.
-      //
-      // #1326 — the offset is stamped BEFORE the merge: mergeAdjacentWeeklyRows
-      // refuses to fold rows whose offsets differ, and every row here carried
-      // an absent offset until after the fold, so that guard was comparing
-      // undefined with undefined and could never fire.
-      // #872 — the five DST columns are derived from the MERGED row, which is
-      // the one actually stored. No reader consults them until the reader flip.
-      const rowsWithOffset = weeklySlotsToCreate.map((slot) => ({
-        ...slot,
+    // The contract refuses an empty set: a CONSULTANT with scheduleType WEEKLY
+    // and no windows is unbookable and no guard would ever notice (the wizard
+    // enforced "at least one" client-side only).
+    const weeklySlotsToCreate =
+      profileData.availabilityWindowsWeekly?.create ?? [];
+    assertWeeklyWindows(weeklySlotsToCreate);
+    // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
+    // storage matches the window the customer is shown and can book.
+    //
+    // #1326 — the offset is stamped BEFORE the merge: mergeAdjacentWeeklyRows
+    // refuses to fold rows whose offsets differ, and every row here carried
+    // an absent offset until after the fold, so that guard was comparing
+    // undefined with undefined and could never fire.
+    // #872 — the five DST columns are derived from the MERGED row, which is
+    // the one actually stored. No reader consults them until the reader flip.
+    const rowsWithOffset = weeklySlotsToCreate.map((slot) => ({
+      ...slot,
+      utcOffsetMinutes,
+    }));
+    await tx.availabilityWindowWeekly.createMany({
+      data: mergeAdjacentWeeklyRows(rowsWithOffset).map((slot) => ({
+        startDay: slot.startDay,
+        startTimeUtc: slot.startTimeUtc,
+        endDay: slot.endDay,
+        endTimeUtc: slot.endTimeUtc,
+        consultantProfileId,
         utcOffsetMinutes,
-      }));
-      await tx.availabilityWindowWeekly.createMany({
-        data: mergeAdjacentWeeklyRows(rowsWithOffset).map((slot) => ({
-          startDay: slot.startDay,
-          startTimeUtc: slot.startTimeUtc,
-          endDay: slot.endDay,
-          endTimeUtc: slot.endTimeUtc,
-          consultantProfileId,
-          utcOffsetMinutes,
-          ...weeklyRowLocalColumns(slot, rowTimezone, utcOffsetMinutes),
-        })),
-      });
-    }
+        ...weeklyRowLocalColumns(slot, rowTimezone, utcOffsetMinutes),
+      })),
+    });
   } else if (scheduleType === ScheduleType.CUSTOM) {
     await tx.availabilityWindowWeekly.deleteMany({
       where: { consultantProfileId },
@@ -233,53 +205,20 @@ async function syncAvailabilitySlots(
       where: { consultantProfileId },
     });
 
-    const customSlotsToCreate = profileData.availabilityWindowsCustom?.create;
-    if (customSlotsToCreate && customSlotsToCreate.length > 0) {
-      // Validate using UTC timestamps directly (no server-locale dependency)
-      for (let i = 0; i < customSlotsToCreate.length; i++) {
-        const slot = customSlotsToCreate[i];
-        const startMs = new Date(slot.startsAt).getTime();
-        const endMs = new Date(slot.endsAt).getTime();
-        if (startMs >= endMs) {
-          throw new Error(
-            `Custom slot ${i + 1}: start time must be before end time`,
-          );
-        }
-        const durationMin = (endMs - startMs) / 60_000;
-        if (durationMin < 30 || durationMin > 720) {
-          throw new Error(
-            `Custom slot ${i + 1}: duration must be between 30 minutes and 12 hours`,
-          );
-        }
-      }
-
-      for (let i = 0; i < customSlotsToCreate.length; i++) {
-        for (let j = i + 1; j < customSlotsToCreate.length; j++) {
-          const a = customSlotsToCreate[i];
-          const b = customSlotsToCreate[j];
-          if (
-            new Date(a.startsAt).getTime() < new Date(b.endsAt).getTime() &&
-            new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
-          ) {
-            throw new Error(
-              "Custom availability slots contain overlapping time ranges",
-            );
-          }
-        }
-      }
-
-      // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
-      // adjacent entries still has each entry checked on its own.
-      await tx.availabilityWindowCustom.createMany({
-        data: mergeAdjacentCustomRows(
-          customSlotsToCreate.map((slot) => ({
-            startsAt: new Date(slot.startsAt),
-            endsAt: new Date(slot.endsAt),
-            consultantProfileId,
-          })),
-        ),
-      });
-    }
+    const customSlotsToCreate =
+      profileData.availabilityWindowsCustom?.create ?? [];
+    assertCustomWindows(customSlotsToCreate);
+    // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
+    // adjacent entries still has each entry checked on its own.
+    await tx.availabilityWindowCustom.createMany({
+      data: mergeAdjacentCustomRows(
+        customSlotsToCreate.map((slot) => ({
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
+          consultantProfileId,
+        })),
+      ),
+    });
   }
 }
 
@@ -323,6 +262,125 @@ async function upsertAdminProfile(
     update: scalarData,
   });
   return { adminProfileId: profile.id };
+}
+
+/**
+ * Add a consultant identity to an onboarded CONSULTEE / ORG_WORKSPACE account.
+ * Same validation, profile upsert, availability contract, professional
+ * background and verification path as first-time onboarding — but the user
+ * row is touched only to link the profile (and to flip a CONSULTEE to
+ * CONSULTANT; an ORG_WORKSPACE keeps its role and reaches the consultant
+ * dashboard through the switcher). Other profile links are never nulled.
+ */
+export async function addConsultantIdentity(
+  userId: string,
+  body: unknown,
+): Promise<OnboardingResult> {
+  const { validateOnboardingData } = await import("./onboarding");
+  try {
+    const validationResult = validateOnboardingData(body);
+    if (!validationResult.success) {
+      return { success: false, error: validationResult.error };
+    }
+    const validatedBody = validationResult.data;
+    if (validatedBody.role !== UserRole.CONSULTANT) {
+      return {
+        success: false,
+        error:
+          "Only a consultant identity can be added to an existing account.",
+      };
+    }
+
+    const current = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        onboardingCompleted: true,
+        consultantProfileId: true,
+        timezone: true,
+      },
+    });
+    if (!current) throw new Error("User not found");
+    if (!canAddConsultantIdentity(current)) {
+      return {
+        success: false,
+        error:
+          "Your account cannot add an expert profile: finish onboarding first, or you already have one.",
+      };
+    }
+
+    const updatedUser = await prisma.$transaction(
+      async (tx) => {
+        const profileFkData = await upsertProfileByRole(
+          userId,
+          validatedBody,
+          tx,
+        );
+        await persistProfessionalBackground(
+          userId,
+          profileFkData.consultantProfileId,
+          body as Record<string, unknown>,
+          tx,
+        );
+        if (profileFkData.consultantProfileId) {
+          await recomputeProfileCompletion(
+            tx,
+            profileFkData.consultantProfileId,
+          );
+        }
+        // CAS on the empty link: two tabs adding at once cannot both win.
+        const linked = await tx.user.updateMany({
+          where: { id: userId, consultantProfileId: null },
+          data: {
+            consultantProfileId: profileFkData.consultantProfileId,
+            ...(current.role === UserRole.CONSULTEE
+              ? { role: UserRole.CONSULTANT }
+              : {}),
+            ...(current.timezone ? {} : { timezone: validatedBody.timezone }),
+            ...(validatedBody.linkedinUrl
+              ? { linkedinUrl: validatedBody.linkedinUrl }
+              : {}),
+          },
+        });
+        if (linked.count === 0) {
+          throw new Error(
+            "An expert profile was just added to this account elsewhere. Reload to continue.",
+          );
+        }
+        return tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          include: onboardingUserInclude,
+        });
+      },
+      { maxWait: 15000, timeout: 45000 },
+    );
+
+    trackOnboardingEvent("identity_added", {
+      previousRole: String(current.role),
+    });
+
+    const verification = await maybeSubmitConsultantVerification(
+      userId,
+      updatedUser,
+      body,
+      UserRole.CONSULTANT,
+    );
+    return {
+      success: true,
+      user: updatedUser,
+      verificationWarning: verification?.warning,
+      verificationDeferred: verification?.deferred,
+    };
+  } catch (error: unknown) {
+    console.error("Error in addConsultantIdentity:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "An unknown error occurred while adding the expert profile.",
+    };
+  }
 }
 
 async function upsertProfileByRole(
@@ -470,17 +528,22 @@ export async function persistProfessionalBackground(
 // VERIFICATION HANDLING
 // ============================================================================
 
+/**
+ * Onboarding-completion adapter over the one submission writer
+ * (`lib/verification/submit-request.ts`). Uploads made from the wizard are
+ * rows already (unlinked, owned by this user), so the core links them by id
+ * with the ownership predicate — the arbitrary-id linking #1224 described is
+ * gone. An id-less entry from an older draft is not persistable: the wizard
+ * defers verification and the consultant re-uploads from Settings.
+ */
 async function submitVerificationRequest(
   userId: string,
   consultantProfileId: string,
   body: VerificationBody,
-  userName: string,
-  userEmail: string,
-) {
+): Promise<{ staged: StagedTrigger[] }> {
   const { verificationLinkedinUrl, verificationNotes, verificationDocuments } =
     body;
 
-  // Enforce verification requirements server-side
   if (!verificationLinkedinUrl?.trim()) {
     throw new Error("LinkedIn URL is required for consultant verification");
   }
@@ -488,100 +551,29 @@ async function submitVerificationRequest(
     throw new Error("At least one verification document is required");
   }
 
-  if (verificationLinkedinUrl) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { linkedinUrl: verificationLinkedinUrl },
-    });
-  }
-
-  // Auto-supersede any existing PENDING/NEEDS_INFO requests
-  await prisma.consultantProfileVerification.updateMany({
-    where: {
-      consultantProfileId,
-      status: { in: ["PENDING", "NEEDS_INFO"] },
-    },
-    data: { status: "SUPERSEDED" },
-  });
-
-  const verification = await prisma.consultantProfileVerification.create({
-    data: {
-      consultantProfileId,
-      notes: verificationNotes || null,
-      status: "PENDING",
-    },
-  });
-
-  if (verificationDocuments && verificationDocuments.length > 0) {
-    // Same predicate that gated the deferral decision in
-    // maybeSubmitConsultantVerification — a doc that would not persist here
-    // must never have started a review (review round 1).
-    const persistableDocs = verificationDocuments.filter(
+  // Every upload has a row since rows-at-upload, so only ids are linked; an
+  // id-less entry from an older draft is not persistable and defers instead.
+  const documentIds = (
+    verificationDocuments.filter(
       isPersistableVerificationDoc,
-    ) as VerificationDocumentInput[];
+    ) as VerificationDocumentInput[]
+  ).map((doc) => doc.id as string);
 
-    const existingDocuments = persistableDocs.filter(
-      (doc) => doc.id && !doc.isOnboardingUpload,
-    );
-    if (existingDocuments.length > 0) {
-      await prisma.profileVerificationDocument.updateMany({
-        where: {
-          id: {
-            in: existingDocuments.map((d) => d.id).filter(Boolean) as string[],
-          },
-        },
-        data: { verificationId: verification.id },
-      });
-    }
-
-    const onboardingDocuments = persistableDocs.filter(
-      (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
-    );
-    if (onboardingDocuments.length > 0) {
-      await prisma.profileVerificationDocument.createMany({
-        data: onboardingDocuments.map((doc) => ({
-          verificationId: verification.id,
-          fileName: doc.fileName ?? "",
-          originalName: doc.originalName ?? "",
-          fileSize: doc.fileSize ?? 0,
-          mimeType: doc.mimeType ?? "",
-          fileUrl: doc.fileUrl ?? "",
-          storagePath: doc.storagePath ?? "",
-          description: doc.description || null,
-        })),
-      });
-    }
-  }
-
-  await prisma.consultantProfile.update({
-    where: { id: consultantProfileId },
-    data: { verificationStatus: "UNDER_REVIEW", isVerified: false },
+  const outcome = await submitVerificationRequestCore({
+    userId,
+    consultantProfileId,
+    notes: verificationNotes || null,
+    linkedinUrl: verificationLinkedinUrl,
+    documentIds,
+    carryOver: false,
+    adminDashboardUrl: "/dashboard/admin/verification",
   });
-
-  // Fire-and-forget: notify admins
-  void (async () => {
-    try {
-      const admins = await prisma.user.findMany({
-        where: { role: UserRole.ADMIN },
-        select: { id: true },
-      });
-      if (admins.length > 0) {
-        await notifyNewConsultantApplication(
-          admins.map((a) => a.id),
-          {
-            applicantName: userName || "Unknown",
-            applicantEmail: userEmail || "Unknown",
-            dashboardUrl: "/dashboard/admin/users",
-          },
-        );
-      }
-    } catch (notifyError) {
-      console.error(
-        "[Novu] Failed to notify admins of new consultant application:",
-        notifyError,
-      );
-    }
-  })();
+  if (!outcome.ok) {
+    throw new Error(`${outcome.code}: ${outcome.message}`);
+  }
+  // The admin bells were staged inside the submission transaction; the
+  // caller attempts them after the response.
+  return { staged: outcome.staged };
 }
 
 // ============================================================================
@@ -654,6 +646,12 @@ async function runOnboardingTransaction(
         body as Record<string, unknown>,
         tx,
       );
+
+      // #698 OB-1 — the score is computed, not seeded; every input above is
+      // now in place for a consultant.
+      if (profileFkData.consultantProfileId) {
+        await recomputeProfileCompletion(tx, profileFkData.consultantProfileId);
+      }
 
       const user = await tx.user.update({
         // #724, #840: CAS guard — only apply the role/profile transition
@@ -732,19 +730,31 @@ async function maybeSubmitConsultantVerification(
   }
 
   try {
-    await submitVerificationRequest(
+    const { staged } = await submitVerificationRequest(
       userId,
       updatedUser.consultantProfileId,
       verificationBody,
-      updatedUser.name || "",
-      updatedUser.email || "",
     );
+    attemptBellsAfterResponse(staged);
     return undefined;
   } catch (verificationError) {
+    // #698 OB-3 — never silent: the profile is committed and stays
+    // PENDING_VERIFICATION, so the consultant can finish from Settings; the
+    // failure itself is paged so ops sees the rate, not just the user.
+    Sentry.captureException(
+      verificationError instanceof Error
+        ? verificationError
+        : new Error(String(verificationError)),
+      {
+        tags: { subsystem: "onboarding", op: "verification-submit" },
+        extra: { userId, consultantProfileId: updatedUser.consultantProfileId },
+      },
+    );
     console.error("Failed to create verification request:", verificationError);
     return {
+      deferred: true,
       warning:
-        "Your profile was saved but verification submission failed. Please contact support.",
+        "Your profile was saved, but the verification request could not be filed. You can submit it from Settings → Verification.",
     };
   }
 }
@@ -777,6 +787,32 @@ export async function processOnboardingData(
     }
 
     await assertUserExists(userId);
+
+    // Server-side counterpart to the step-0 invite gate (client-only, and
+    // now with a "continue without" escape): finishing B2C onboarding while
+    // an org invite is still pending is ALLOWED — invites are enforced at
+    // accept-time by email match — but record it so the funnel can see how
+    // often the escape (or a mid-wizard invite arrival) fires. Deliberately
+    // non-blocking: a hard block here would reintroduce the stray-invite
+    // lockout the escape hatch exists to prevent.
+    try {
+      const pendingInvite = await prisma.invitation.findFirst({
+        where: {
+          email: validatedBody.email.toLowerCase(),
+          status: "pending",
+          expiresAt: { gt: new Date() },
+        },
+        select: { role: true },
+      });
+      if (pendingInvite) {
+        trackOnboardingEvent("pending_invite_at_submit", {
+          inviteRole: String(pendingInvite.role),
+          submittedRole: validatedBody.role,
+        });
+      }
+    } catch {
+      // Visibility only — never fail a submit over telemetry.
+    }
 
     // ORG_WORKSPACE onboarding no longer flows through this transaction. The
     // role + personal info are committed by `setOnboardingRoleAction` at

@@ -287,7 +287,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
 
         <div className="space-y-2">
           <Label>
-            Primary Domain <span className="text-destructive">*</span>
+            Field of expertise <span className="text-destructive">*</span>
           </Label>
           <Controller
             name="domain"
@@ -301,7 +301,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a domain" />
+                  <SelectValue placeholder="Select your field" />
                 </SelectTrigger>
                 <SelectContent>
                   {domains.map((domain) => (
@@ -321,7 +321,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
         {selectedDomain?.id && (
           <>
             <div className="space-y-2">
-              <Label>Sub-domains</Label>
+              <Label>
+                Specialties{" "}
+                <span className="text-muted-foreground">(optional)</span>
+              </Label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-40 overflow-y-auto p-3 rounded-lg bg-muted/50 border">
                 <Controller
                   name="subDomains"
@@ -378,7 +381,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
               control={control}
               render={({ field: tagsField }) => (
                 <div className="space-y-2">
-                  <Label>Tags / Skills</Label>
+                  <Label>
+                    Skills{" "}
+                    <span className="text-muted-foreground">(optional)</span>
+                  </Label>
 
                   {/* Selected tags as removable pills */}
                   {tagsField.value && tagsField.value.length > 0 && (
@@ -494,47 +500,9 @@ const ConsultantProfileForm: React.FC<Props> = ({
         )}
       </div>
 
-      {/* Schedule Type */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-          Schedule Preference
-        </h3>
-
-        <Controller
-          name="scheduleType"
-          control={control}
-          render={({ field }) => (
-            <div className="flex gap-4 flex-wrap">
-              <Button
-                type="button"
-                onClick={() => field.onChange("WEEKLY")}
-                variant={field.value === "WEEKLY" ? "default" : "outline"}
-                className="flex-1"
-              >
-                Weekly Schedule
-              </Button>
-              <Button
-                type="button"
-                onClick={() => field.onChange("CUSTOM")}
-                variant={field.value === "CUSTOM" ? "default" : "outline"}
-                className="flex-1"
-              >
-                Custom Schedule
-              </Button>
-            </div>
-          )}
-        />
-        <p className="text-sm text-muted-foreground">
-          {watch("scheduleType") === "WEEKLY"
-            ? "Set recurring weekly availability (e.g., Mondays 9am-5pm)"
-            : "Set specific dates and times for availability"}
-        </p>
-        {errors.scheduleType && (
-          <p className="text-sm text-destructive">
-            {errors.scheduleType.message}
-          </p>
-        )}
-      </div>
+      {/* Schedule type is chosen once, on the Availability step (#494 §2.2);
+          the form keeps a WEEKLY default only so the scalar schema validates —
+          the later step's value is what reaches the server. */}
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">

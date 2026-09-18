@@ -56,8 +56,20 @@ export class WeeklyOffsetConflictError extends Error {
   }
 }
 
+/**
+ * Legacy IANA aliases some browsers still report from
+ * `Intl.DateTimeFormat().resolvedOptions().timeZone`. Folded to the canonical
+ * name so the "written outside Asia/Kolkata" signal below fires for a
+ * genuinely different zone, not for the same zone under its old spelling
+ * (FAMILIARISE_WEB-2R: six false alarms from `Asia/Calcutta`).
+ */
+const ZONE_ALIASES: Record<string, string> = {
+  "Asia/Calcutta": "Asia/Kolkata",
+};
+
 function normaliseZone(profileTimezone: string | null | undefined): string {
-  return profileTimezone?.trim() ?? "";
+  const zone = profileTimezone?.trim() ?? "";
+  return ZONE_ALIASES[zone] ?? zone;
 }
 
 /** The zone's offset, or null when the zone is unset or unresolvable. */

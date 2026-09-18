@@ -5,6 +5,8 @@
  * consistency and reduce duplication.
  */
 
+import type { StagedTrigger } from "@/lib/novu/outbox";
+
 /**
  * Allocation modes supported by the system
  */
@@ -141,6 +143,23 @@ export interface ValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
+  /**
+   * The conflicts behind the `[CONFLICT]` strings, structured so the validate
+   * routes can name the booking and its other party without parsing prose
+   * (the grid PR links them). Present only when the conflict check ran.
+   */
+  conflicts?: ConflictDetail[];
+}
+
+export interface ConflictDetail {
+  /** Seconds-precision UTC ISO of the proposed slot, as the routes report it. */
+  slot: string;
+  appointmentId: string;
+  type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Booking";
+  /** The consultee on the conflicting booking, when it has one. */
+  otherParty: { userId: string; name: string | null } | null;
+  /** A group event's plan title — what a webinar or class is "with". */
+  title: string | null;
 }
 
 /**
@@ -156,6 +175,8 @@ export interface SlotConflictResult {
       type: string;
       with: string;
       time: string;
+      /** The conflicting booking, for the event's own consultant only. */
+      appointmentId?: string;
     };
   }>;
   outsideAvailability: Array<{
@@ -172,7 +193,10 @@ export type AllocationErrorCode =
   | "VALIDATION_ERROR" // bad input from caller — 400
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
-  | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "LOCK_CONTENTION" // Redis lock busy / replay in flight — 409
+  | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
+  | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
+  | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409
   | "IDEMPOTENCY_KEY_REUSE" // same Idempotency-Key, different payload — 422
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402
@@ -187,6 +211,12 @@ export type AllocationErrorCode =
  */
 export interface AllocationResult {
   success: boolean;
+  /**
+   * #1697 item 5 — outbox rows staged inside the write transaction.
+   * `SchedulingService.allocate` strips this and attempts them post-commit;
+   * it never reaches a route response.
+   */
+  stagedNotices?: StagedTrigger[];
   appointments?: any[]; // Appointment records created
   error?: string;
   errorCode?: AllocationErrorCode;

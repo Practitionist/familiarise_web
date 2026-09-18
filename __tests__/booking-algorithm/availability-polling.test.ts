@@ -18,11 +18,15 @@ import {
 
 describe("shouldPoll", () => {
   it("polls a visible tab that the hook has enabled", () => {
-    expect(shouldPoll({ enabled: true, visibilityState: "visible" })).toBe(true);
+    expect(shouldPoll({ enabled: true, visibilityState: "visible" })).toBe(
+      true,
+    );
   });
 
   it("never polls a hidden tab", () => {
-    expect(shouldPoll({ enabled: true, visibilityState: "hidden" })).toBe(false);
+    expect(shouldPoll({ enabled: true, visibilityState: "hidden" })).toBe(
+      false,
+    );
   });
 
   it("never polls when the fetch gate itself is off", () => {
@@ -195,5 +199,47 @@ describe("createAvailabilityPoller", () => {
     h.poller.dispose();
     jest.advanceTimersByTime(AVAILABILITY_POLL_INTERVAL_MS * 2);
     expect(h.fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("rate-limit backoff and jitter (#1697)", () => {
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it("waits out a 429's Retry-After and adds the injected jitter to ordinary ticks", async () => {
+    const fetch = jest
+      .fn<Promise<{ rateLimitedForMs?: number } | void>, []>()
+      .mockResolvedValueOnce({ rateLimitedForMs: 5 * 60_000 })
+      .mockResolvedValue(undefined);
+    let msSinceLastFetch = 0;
+    const poller = createAvailabilityPoller({
+      isEnabled: () => true,
+      visibilityState: () => "visible",
+      msSinceLastFetch: () => msSinceLastFetch,
+      inFlight: () => null,
+      fetch,
+      jitterMs: () => 12_000,
+    });
+
+    // Jitter rides the first arm: the tick lands 12 s after the interval.
+    poller.arm();
+    await jest.advanceTimersByTimeAsync(AVAILABILITY_POLL_INTERVAL_MS);
+    expect(fetch).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(12_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    // That fetch was limited for five minutes: neither the cadence nor a
+    // stale return may fire inside the window; the tick lands once it ends.
+    msSinceLastFetch = AVAILABILITY_POLL_INTERVAL_MS * 3;
+    poller.onReturn();
+    await jest.advanceTimersByTimeAsync(4 * 60_000);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(60_000 + 1);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    poller.dispose();
   });
 });

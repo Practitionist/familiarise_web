@@ -101,7 +101,9 @@ import {
 export interface TriggerOptions {
   // #691 — "membership" too, so the org roster reads through the same tx
   // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
-  tx?: Pick<Tx, "notificationOutbox" | "membership">;
+  // #1697 item 5 — "user" too: the recipient-timezone read must ride the
+  // caller's transaction for the same single-connection reason.
+  tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
 }
 
@@ -271,7 +273,7 @@ export async function triggerForMultipleZoned(
 ): Promise<TriggerResult[]> {
   if (userIds.length === 0) return [];
 
-  const zones = await resolveRecipientTimezones(userIds);
+  const zones = await resolveRecipientTimezones(userIds, opts?.tx);
   const results: TriggerResult[] = [];
   for (const [timezone, recipients] of groupRecipientsByTimezone(
     userIds,
@@ -429,11 +431,14 @@ function bookingRequestWire(
 export async function notifyAppointmentBooked(
   userIds: string[],
   payload: AppointmentPayloadInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
     userIds,
     (timezone) => appointmentWire(payload, timezone),
+    undefined,
+    opts,
   );
 }
 
@@ -445,11 +450,14 @@ export async function notifyAppointmentBooked(
 export async function notifyAppointmentPartiallyScheduled(
   userIds: string[],
   payload: AppointmentPartiallyScheduledInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.APPOINTMENT_PARTIALLY_SCHEDULED,
     userIds,
     (timezone) => partiallyScheduledWire(payload, timezone),
+    undefined,
+    opts,
   );
 }
 
@@ -772,11 +780,14 @@ export async function notifyNewBookingRequest(
 export async function notifyVerificationStatusChanged(
   consultantUserId: string,
   payload: VerificationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED,
     consultantUserId,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -865,11 +876,14 @@ export async function notifyGeneralAnnouncement(payload: AnnouncementPayload) {
 export async function notifyNewConsultantApplication(
   adminUserIds: string[],
   payload: ConsultantApplicationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
     adminUserIds,
     payload,
+    undefined,
+    opts,
   );
 }
 

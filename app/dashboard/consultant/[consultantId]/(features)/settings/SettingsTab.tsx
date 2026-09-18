@@ -490,7 +490,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
       // The route answers its validation refusals as 400s with a sentence
       // ("Cannot switch schedule type while…"); dropping the body turned every
       // one of them into a captured fault and a blank toast (FAMILIARISE_WEB-2T).
-      await requireJsonResponse(response, "Failed to update settings");
+      const saved = (await requireJsonResponse(
+        response,
+        "Failed to update settings",
+      )) as {
+        uncoveredUpcoming?: { count: number; appointmentIds: string[] };
+      };
 
       // Refetch the consultant data to show what was actually saved
       const updatedResponse = await fetch(
@@ -510,9 +515,16 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         setScheduleType(updatedConsultant.scheduleType);
       }
 
+      // Shrink notice: a booking is a contract and keeps its time; the new
+      // hours are an offer for future bookings. Say how many sit outside them
+      // rather than refuse the save (docs/onboarding/03-availability-contract.md).
+      const uncovered = saved.uncoveredUpcoming?.count ?? 0;
       toast({
         title: "Settings updated",
-        description: "Your profile settings have been successfully updated.",
+        description:
+          uncovered > 0
+            ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
+            : "Your profile settings have been successfully updated.",
       });
     } catch (error) {
       // formatSlotsForApi now throws rather than degrading, so a slot-formatting

@@ -19,6 +19,16 @@ import {
   getCurrentOrNextOccurrence,
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
+import { deriveBucket } from "@/lib/appointments/bucket";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
+import {
+  isPendingPaymentStatus,
+  isPendingStatus,
+} from "@/lib/appointments/status";
+import {
+  toOccurrenceVM,
+  type NeedsActionReason,
+} from "@/lib/appointments/view-model";
 
 /**
  * Unified event type for display in the dashboard
@@ -39,11 +49,18 @@ export interface ProcessedEvent {
   title: string;
   consultantName: string;
   consultantImage?: string | null;
-  startsAt: Date;
-  endsAt: Date;
+  /** Null while the request has no occurrence yet (awaiting approval,
+   * payment or allocation); the card then reads `needsActionReason`. */
+  startsAt: Date | null;
+  endsAt: Date | null;
   status: string;
   slots: ProcessedEventSlot[];
   appointmentId?: string;
+  /** Same derivation the Appointments page uses (lib/appointments/bucket), so
+   * a slot-less request shows the same state on both surfaces. #1703 */
+  needsActionReason: NeedsActionReason | null;
+  /** Live pay-link while APPROVED_PENDING_PAYMENT; the "Pay now" target. */
+  pendingPaymentUrl?: string | null;
   // Data needed for joining meetings
   joinableAppointment?: MeetingAppointment;
   joinableSlot?: MeetingSlot;
@@ -166,10 +183,10 @@ function toSlotContexts(
     appointmentId: string | null;
     completionStatus?: string | null;
     meeting?: {
-    id: string;
-    endedAt: Date | string | null;
-    endedReason: string | null;
-  } | null;
+      id: string;
+      endedAt: Date | string | null;
+      endedReason: string | null;
+    } | null;
   }>,
   appointmentId: string,
 ): SlotWithContext[] {
@@ -193,20 +210,50 @@ function toSlotContexts(
 }
 
 /**
+ * Why a request with no live session still belongs on Home. Reads the same
+ * bucketing the Appointments page uses, so "awaiting approval", "pay now" and
+ * "awaiting scheduling" (an approved row with no occurrence yet) agree across
+ * the two surfaces. Null once a session exists or the row is terminal.
+ */
+function awaitingReason(
+  status: string | null | undefined,
+  slots: SlotWithContext[],
+): NeedsActionReason | null {
+  const { bucket, needsActionReason } = deriveBucket({
+    status,
+    occurrences: slots.map((slot) =>
+      toOccurrenceVM({
+        ...slot.rawSlot,
+        isTentative: Boolean(slot.rawSlot.isTentative),
+        appointmentId: slot.appointmentId,
+      }),
+    ),
+    isUnscheduled: slots.length === 0 && !isPendingOrPayment(status),
+  });
+  if (bucket !== "needsAction") return null;
+  return needsActionReason;
+}
+
+function isPendingOrPayment(status: string | null | undefined): boolean {
+  return isPendingStatus(status) || isPendingPaymentStatus(status);
+}
+
+/**
  * Process a consultation into a ProcessedEvent
  */
 function processConsultation(
   consultation: TConsultationWithPlan,
 ): ProcessedEvent | null {
-  const slots = consultation.appointment?.occurrences;
-  if (!slots || slots.length === 0) return null;
-
+  const slots = consultation.appointment?.occurrences ?? [];
   const appointmentId = consultation.appointment?.id ?? "";
   const slotContexts = toSlotContexts(slots, appointmentId);
   // #1061 — the card's time range and its Join target are the whole session,
   // not the first 30-minute row of it.
   const session = findNextSlot(slotContexts);
-  if (!session) return null;
+  // A fresh request has no occurrence yet; it used to vanish from Home while
+  // the Appointments page showed it awaiting approval (#1703).
+  const needsActionReason = awaitingReason(consultation.status, slotContexts);
+  if (!session && !needsActionReason) return null;
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
@@ -231,7 +278,7 @@ function processConsultation(
     },
   };
 
-  const joinableSlot: MeetingSlot = session.rawSlot;
+  const joinableSlot: MeetingSlot | undefined = session?.rawSlot;
 
   return {
     id: consultation.id,
@@ -241,14 +288,16 @@ function processConsultation(
       consultation.consultationPlan?.consultantProfile?.user?.name ?? "Expert",
     consultantImage:
       consultation.consultationPlan?.consultantProfile?.user?.image,
-    startsAt: session.startsAt,
-    endsAt: session.endsAt,
+    startsAt: session?.startsAt ?? null,
+    endsAt: session?.endsAt ?? null,
     status: consultation.status ?? "PENDING",
     slots: slotContexts.map(toEventSlot),
     appointmentId,
-    joinableAppointment,
+    needsActionReason,
+    pendingPaymentUrl: consultation.pendingPaymentUrl ?? null,
+    joinableAppointment: session ? joinableAppointment : undefined,
     joinableSlot,
-    joinableOccurrence: session.run,
+    joinableOccurrence: session?.run ?? null,
     organizationId: consultation.appointment?.organizationId ?? null,
   };
 }
@@ -265,14 +314,15 @@ function processSubscription(
     ? toSlotContexts(nextAppointment.occurrences ?? [], nextAppointment.id)
     : [];
 
-  if (allSlots.length === 0) return null;
-
   const nextSlot = findNextSlot(allSlots);
-  if (!nextSlot) return null;
+  // A paid subscription awaiting allocation has a wrapper and no occurrences;
+  // it used to vanish from Home (#1703).
+  const needsActionReason = awaitingReason(subscription.status, allSlots);
+  if (!nextSlot && !needsActionReason) return null;
 
   // Build meeting appointment
   const joinableAppointment: MeetingAppointment = {
-    id: nextSlot.appointmentId,
+    id: nextAppointment?.id ?? "",
     appointmentType: "SUBSCRIPTION",
     occurrences:
       nextAppointment?.occurrences?.map((s) => ({
@@ -302,14 +352,16 @@ function processSubscription(
       subscription.subscriptionPlan?.consultantProfile?.user?.name ?? "Expert",
     consultantImage:
       subscription.subscriptionPlan?.consultantProfile?.user?.image,
-    startsAt: nextSlot.startsAt,
-    endsAt: nextSlot.endsAt,
+    startsAt: nextSlot?.startsAt ?? null,
+    endsAt: nextSlot?.endsAt ?? null,
     status: subscription.status ?? "PENDING",
     slots: allSlots.map(toEventSlot),
-    appointmentId: nextSlot.appointmentId,
-    joinableAppointment,
-    joinableSlot: nextSlot.rawSlot,
-    joinableOccurrence: nextSlot.run,
+    appointmentId: nextAppointment?.id,
+    needsActionReason,
+    pendingPaymentUrl: subscription.pendingPaymentUrl ?? null,
+    joinableAppointment: nextSlot ? joinableAppointment : undefined,
+    joinableSlot: nextSlot?.rawSlot,
+    joinableOccurrence: nextSlot?.run ?? null,
     organizationId: nextAppointment?.organizationId ?? null,
   };
 }
@@ -323,10 +375,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 
   // Get slots from the appointment
   allSlots.push(
-    ...toSlotContexts(
-      webinar.appointment?.occurrences ?? [],
-      appointmentId,
-    ),
+    ...toSlotContexts(webinar.appointment?.occurrences ?? [], appointmentId),
   );
 
   if (allSlots.length === 0) return null;
@@ -355,9 +404,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
 
   // Registered = the consultee is connected to at least one session slot.
   const bookingStatus: BookingStatus =
-    (webinar.appointment?.occurrences?.length ?? 0) > 0
-      ? "CONFIRMED"
-      : null;
+    (webinar.appointment?.occurrences?.length ?? 0) > 0 ? "CONFIRMED" : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -380,6 +427,7 @@ function processWebinar(webinar: TConsulteeWebinar): ProcessedEvent | null {
     status: webinar.status ?? "APPROVED",
     slots: allSlots.map(toEventSlot),
     appointmentId,
+    needsActionReason: null,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
     joinableOccurrence: nextSlot.run,
@@ -424,9 +472,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
   };
 
   const bookingStatus: BookingStatus =
-    (classEvent.appointment?.occurrences?.length ?? 0) > 0
-      ? "CONFIRMED"
-      : null;
+    (classEvent.appointment?.occurrences?.length ?? 0) > 0 ? "CONFIRMED" : null;
 
   // Extract collaborators
   const collaborators: ProcessedCollaborator[] = (
@@ -449,6 +495,7 @@ function processClass(classEvent: TConsulteeClass): ProcessedEvent | null {
     status: classEvent.status ?? "APPROVED",
     slots: allSlots.map(toEventSlot),
     appointmentId: nextSlot.appointmentId,
+    needsActionReason: null,
     joinableAppointment,
     joinableSlot: nextSlot.rawSlot,
     joinableOccurrence: nextSlot.run,
@@ -534,32 +581,43 @@ export function processAllEvents(
  */
 export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
   const now = new Date();
+  // Awaiting rows have no time yet; they sort first because they are the
+  // ones blocked on someone.
+  const anchor = (e: ProcessedEvent) => e.startsAt?.getTime() ?? -Infinity;
   return events
-    .filter((e) => e.startsAt > now || e.slots.some((s) => s.startsAt > now))
-    .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+    .filter(
+      (e) =>
+        e.needsActionReason !== null ||
+        (e.startsAt !== null && e.startsAt > now) ||
+        e.slots.some((s) => s.startsAt > now),
+    )
+    .sort((a, b) => anchor(a) - anchor(b));
 }
 
 /**
- * Filter events for a specific month
+ * Filter events for a calendar month. `month` is the picker's local calendar
+ * value; each slot is placed in the viewer's zone, the one the cards print
+ * (#1703 B7), so a near-midnight slot lands in the month it displays under.
  */
 export function getMonthlyEvents(
   events: ProcessedEvent[],
   month: Date,
+  zone: string,
 ): ProcessedEvent[] {
   const inactive = ["cancelled", "rejected", "completed", "expired"];
+  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
 
   return events
     .filter((e) =>
       e.slots.some(
-        (s) =>
-          s.startsAt.getMonth() === month.getMonth() &&
-          s.startsAt.getFullYear() === month.getFullYear(),
+        (s) => formatInViewerZone(s.startsAt, zone, "yyyy-MM") === monthKey,
       ),
     )
     .sort((a, b) => {
       const aInactive = inactive.includes(a.status.toLowerCase());
       const bInactive = inactive.includes(b.status.toLowerCase());
       if (aInactive !== bInactive) return aInactive ? 1 : -1;
-      return a.startsAt.getTime() - b.startsAt.getTime();
+      // Monthly rows always have a slot in the month, so the anchor exists.
+      return (a.startsAt?.getTime() ?? 0) - (b.startsAt?.getTime() ?? 0);
     });
 }

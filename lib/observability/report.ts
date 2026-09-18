@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import type { SeverityLevel } from "@sentry/nextjs";
+import { isPoolExhaustion } from "@/lib/db/pg-errors";
 
 export interface ReportOpts {
   subsystem: string;
@@ -73,8 +74,15 @@ function normaliseError(error: unknown): Error {
 /** Report a caught fault or modelled outcome. Normalises non-Error throws. */
 export function reportSentryError(error: unknown, opts: ReportOpts): void {
   const normalised = normaliseError(error);
+  const context = buildSentryCaptureContext(opts);
+  // #1696 — one tag every pool-timeout carries, whatever route hit it, so an
+  // alert rule can fire on pool exhaustion instead of on N unrelated titles.
+  const tags = isPoolExhaustion(error)
+    ? { ...context.tags, pool_exhaustion: "true" }
+    : context.tags;
   Sentry.captureException(normalised, {
-    ...buildSentryCaptureContext(opts),
+    ...context,
+    tags,
     extra: { ...(opts.extra ?? {}), thrown: error },
   });
 }

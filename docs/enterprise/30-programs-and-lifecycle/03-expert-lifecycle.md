@@ -41,13 +41,13 @@ Today there are two entry points to EXPERT membership:
 
 1. **Invitation** — an OWNER/MAINTAINER sends an EXPERT invite; on
    acceptance (`app/api/organizations/invitations/accept/route.ts`) the
-   server creates a `Membership` row with `status = ACTIVE`, and
-   auto-provisions a `ConsultantProfile` (placeholder `Domain "General"`,
-   `scheduleType = WEEKLY`, `verificationStatus = PENDING_VERIFICATION`)
-   if the user doesn't already have one. The org EXPERT completes
-   their real domain + schedule selection from the consultant profile
-   editor, and platform verification still gates their visibility in
-   `/explore/experts`.
+   server requires a pre-existing `ConsultantProfile` and rejects with
+   `NOT_A_CONSULTANT` (400, humanized on the invite page) otherwise —
+   an expert identity carries domain/rates/verification/payout
+   prerequisites that no invite click can substitute for (who-is-acting
+   rule, #819). The invitee finishes consultant onboarding first; the
+   emailed link still accepts afterwards. Platform verification still
+   gates their visibility in `/explore/experts`.
 2. **Direct admin add** — a MAINTAINER posts to
    `POST /api/organizations/[orgId]/members` with `role = EXPERT`. This
    path requires the target user to already have a `ConsultantProfile`.
@@ -71,7 +71,7 @@ plus the settlement fork that decides whose books an earning lands on:
 stateDiagram-v2
   [*] --> Invited: OWNER/MAINTAINER sends EXPERT invite
   [*] --> AdminAdded: MAINTAINER POST members role=EXPERT (profile must pre-exist)
-  Invited --> Active: accept → Membership ACTIVE\n+ auto-provision ConsultantProfile\n(Domain "General", WEEKLY, PENDING_VERIFICATION)
+  Invited --> Active: accept → Membership ACTIVE\n(profile must pre-exist: NOT_A_CONSULTANT otherwise)
   AdminAdded --> Active: Membership ACTIVE (existing profile)
 
   state Active {
@@ -186,8 +186,10 @@ at the API (`409 ROLE_TRANSITION_BLOCKED`, see
    existing row (sets `status = REMOVED`, retains the row for audit).
 2. `POST /api/organizations/[orgId]/invitations` with the new role.
 3. The user accepts the invite. A fresh Membership lands with the
-   right profile FKs — `ConsulteeProfile` for LEARNER or a
-   placeholder `ConsultantProfile` for EXPERT. Audit rows show the
+   right profile FKs — `ConsulteeProfile` for LEARNER (lazy-created on
+   accept) or the user's existing `ConsultantProfile` for EXPERT
+   (`NOT_A_CONSULTANT` if they have none yet — they onboard as a
+   consultant first). Audit rows show the
    removal and the new member cleanly, rather than a single
    `ROLE_CHANGE` hiding the profile-swap.
 

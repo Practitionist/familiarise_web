@@ -52,10 +52,23 @@ export class AllocationNotFoundError extends AllocationError {
   readonly errorCode = "NOT_FOUND" as const;
 }
 
+/** The 409 family: clients branch on these, never on message text. */
+export type AllocationConflictCode = Extract<
+  AllocationErrorCode,
+  | "LOCK_CONTENTION"
+  | "ALREADY_ALLOCATED"
+  | "RESCHEDULE_STATE_CHANGED"
+  | "SLOT_TAKEN"
+>;
+
 /** 409 — lock contention, duplicate booking race, already allocated */
 export class AllocationConflictError extends AllocationError {
   readonly httpStatus = 409 as const;
-  readonly errorCode = "LOCK_CONTENTION" as const;
+  readonly errorCode: AllocationConflictCode;
+  constructor(message: string, code: AllocationConflictCode = "LOCK_CONTENTION") {
+    super(message);
+    this.errorCode = code;
+  }
 }
 
 /**

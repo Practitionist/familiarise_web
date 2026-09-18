@@ -131,6 +131,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 | **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
 | Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
 | Look up booking table columns and indexes | [21-schema-reference.md](./21-schema-reference.md)                       |
+| Learn why a Prisma create must not mix `connect` with scalar ids | [engineering-log-2026-09-18-prisma-create-input-shape.md](./engineering-log-2026-09-18-prisma-create-input-shape.md) |
 | Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
 | Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
 

@@ -9,6 +9,7 @@ import { toPlain } from "@/lib/data/serialize";
 import { ServerUserIdProvider } from "@/components/dashboard/ServerUserId";
 import { StreamInitialTokensProvider } from "@/components/stream/StreamInitialTokens";
 import { mintInitialStreamTokens } from "@/lib/stream/initial-tokens";
+import { selectFallbackOrgMembership } from "@/lib/labels/org-labels";
 
 /**
  * Seeds the query that both personal dashboard layouts gate their render on.
@@ -71,8 +72,11 @@ export default async function DashboardLayout({
     <ServerUserIdProvider
       userId={session.user.id}
       role={session.user.role}
+      // Same deterministic fallback as the dashboard router (highest-ranked
+      // membership, slug tie-break) — not array position.
       firstOrgId={
-        session.user.organizationMemberships?.[0]?.organizationId ?? null
+        selectFallbackOrgMembership(session.user.organizationMemberships)
+          ?.organizationId ?? null
       }
     >
       <StreamInitialTokensProvider tokens={streamTokens}>

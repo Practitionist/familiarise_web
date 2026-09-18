@@ -64,3 +64,26 @@ describe("reportSentryError normalises a thrown value before capture", () => {
     expect(captured).toBe(original);
   });
 });
+
+describe("pool exhaustion is tagged centrally (#1696)", () => {
+  it("stamps pool_exhaustion on P2024 and on the interactive-transaction timeout text", () => {
+    reportSentryError(
+      Object.assign(new Error("Timed out fetching a new connection"), {
+        code: "P2024",
+      }),
+      { subsystem: "bookings" },
+    );
+    reportSentryError(
+      new Error("Unable to start a transaction in the given time."),
+      { subsystem: "bookings" },
+    );
+    reportSentryError(new Error("slot taken"), { subsystem: "bookings" });
+
+    const tagsOf = (i: number) =>
+      (captureException.mock.calls[i]?.[1] as { tags: Record<string, string> })
+        .tags;
+    expect(tagsOf(0).pool_exhaustion).toBe("true");
+    expect(tagsOf(1).pool_exhaustion).toBe("true");
+    expect(tagsOf(2).pool_exhaustion).toBeUndefined();
+  });
+});

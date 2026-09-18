@@ -40,6 +40,7 @@ import {
 } from "@/lib/appointments/occurrences";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   normalizeLegacySlotKeys,
@@ -75,6 +76,8 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
+import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -176,6 +179,14 @@ type PaymentSuccessTxResult =
       paymentId: string;
       gatewayAmountPaise: number;
       expectedAmount: number;
+    }
+  | {
+      // #1695 — the hold this capture paid for is already gone (the abandoned
+      // sweep, a supersede, a `payment.failed`, or the unpaid-trial sweep won);
+      // the money is real and the booking is not, so Phase 2 refunds it.
+      outcome: "captured_after_release";
+      paymentId: string;
+      releasedBy: string;
     }
   | {
       outcome: "confirmed";
@@ -358,6 +369,41 @@ export async function handlePaymentSuccess(
               extra: { paymentIntentId },
             });
             return null; // Signal: already processed, skip Phase 2
+          }
+
+          // #1695 — EXPIRED means the abandoned sweep (or a supersede) already
+          // released the hold; FAILED means a `payment.failed` did. Either way
+          // the gateway holds real money that funds nothing, and nothing used
+          // to move it back (#1439 reported it and stopped). Claim the row as
+          // SUCCEEDED — gateway truth — so Phase 2 can refund through the
+          // front door; the CAS keeps a concurrent writer honest (ADR 21).
+          if (
+            payment.paymentStatus === PaymentStatus.EXPIRED ||
+            payment.paymentStatus === PaymentStatus.FAILED
+          ) {
+            const claimed = await tx.payment.updateMany({
+              where: { id: payment.id, paymentStatus: payment.paymentStatus },
+              data: {
+                paymentStatus: PaymentStatus.SUCCEEDED,
+                ...capturedGatewayId,
+                description: `Auto-refund pending: capture landed on a ${payment.paymentStatus} payment whose hold was already released. Booking NOT confirmed.`,
+              },
+            });
+            if (claimed.count === 0) {
+              await reportTerminalCaptureRace({
+                db: tx,
+                paymentId: payment.id,
+                orderId: paymentIntentId,
+                observedStatus: payment.paymentStatus,
+                reason: "capture arrived after the payment reached a terminal state",
+              });
+              return null;
+            }
+            return {
+              outcome: "captured_after_release",
+              paymentId: payment.id,
+              releasedBy: `payment ${payment.paymentStatus}`,
+            };
           }
 
           // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
@@ -595,17 +641,15 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             throw new Error("Failed to create or find appointment");
           }
 
-          // Confirm appointment: set isTentative = false and update status to APPROVED
-          const confirmResult = await confirmExistingAppointment(
-            tx,
-            appointment.id,
-            payment.userId,
-          );
-
           // TRIAL: the session is AWAITING_PAYMENT with its slot already held, so
           // capture is what schedules it. Scoped to AWAITING_PAYMENT via
           // updateMany so a re-delivered webhook is a no-op rather than
           // resurrecting a trial the learner cancelled or the expiry job closed.
+          // #1695 — runs BEFORE the slot confirmation: a trial the unpaid-trial
+          // sweep already cancelled must not get confirmed occurrences and
+          // kept money. A miss on a non-SCHEDULED trial is a released hold —
+          // Phase 2 refunds it in full (the learner never cancelled; the
+          // platform closed the trial before the money arrived).
           if (metadata.trialId) {
             const scheduled = await tx.trial.updateMany({
               where: {
@@ -630,7 +674,34 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 timestamp: new Date().toISOString(),
               }),
             );
+
+            if (scheduled.count === 0) {
+              const trial = await tx.trial.findUnique({
+                where: { id: metadata.trialId },
+                select: { status: true },
+              });
+              if (trial?.status !== TrialStatus.SCHEDULED) {
+                await tx.payment.update({
+                  where: { id: payment.id },
+                  data: {
+                    description: `Auto-refund pending: capture landed on a ${trial?.status ?? "missing"} trial. Booking NOT confirmed.`,
+                  },
+                });
+                return {
+                  outcome: "captured_after_release",
+                  paymentId: payment.id,
+                  releasedBy: `trial ${trial?.status ?? "missing"}`,
+                };
+              }
+            }
           }
+
+          // Confirm appointment: set isTentative = false and update status to APPROVED
+          const confirmResult = await confirmExistingAppointment(
+            tx,
+            appointment.id,
+            payment.userId,
+          );
 
           console.log(
             `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
@@ -811,6 +882,40 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     return;
   }
 
+  // #1695 — the hold was released before the money landed. Nothing to
+  // release here (the releaser did that); refund through the front door so
+  // the rail is chosen by intent, and leave the manual marker only if that
+  // throws. Idempotent: a replay hits the SUCCEEDED early-return first, and
+  // the refundable-balance guard blocks a double refund.
+  if (txResult.outcome === "captured_after_release") {
+    try {
+      await refundBookingPayment({
+        paymentId: txResult.paymentId,
+        reason: `capture after hold release (${txResult.releasedBy})`,
+        initiatedByUserId: null,
+      });
+      await prisma.payment.update({
+        where: { id: txResult.paymentId },
+        data: {
+          description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
+        },
+      });
+    } catch (refundError) {
+      reportSentryError(refundError, {
+        subsystem: "payments",
+        contexts: { payment: { paymentId: txResult.paymentId } },
+      });
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Capture after hold release (${txResult.releasedBy}) could not be auto-refunded — refund by hand`,
+        err: new Error("CAPTURE_AFTER_RELEASE_REFUND_FAILED"),
+        context: { paymentId: txResult.paymentId },
+      }).catch(() => {});
+    }
+    return;
+  }
+
   // #855 — the capture landed after the booking was cancelled. The payment is
   // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
   // the rest of Phase 2 — no success email, earnings, invoice, or notifications
@@ -945,6 +1050,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // FIX #437: Process for the buyer (consultee) — their first paid booking qualifies their referral
   try {
     await processQualifyingAction(userId, "first_paid_booking");
+    // P3 referral bells, post-commit. scheduleAfter, not after(): this
+    // handler also runs from scripts/payments/reconcile-orphaned-confirmations
+    // where no request scope exists and a bare after() throws.
+    scheduleAfter(() =>
+      notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+        console.error("[referral-qualification-bell] failed:", bellErr),
+      ),
+    );
   } catch (referralError) {
     reportSentryError(referralError, {
       subsystem: "payments",

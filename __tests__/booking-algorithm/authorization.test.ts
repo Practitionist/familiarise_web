@@ -287,6 +287,8 @@ function makeMockTx(appointmentData: any = null) {
     appointment: {
       findUnique: jest.fn().mockResolvedValue(appointmentData),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1695 — the refund context is read on the tx client, under the lock.
+      findFirst: jest.fn().mockResolvedValue(null),
       delete: jest.fn(),
     },
     consultation: {

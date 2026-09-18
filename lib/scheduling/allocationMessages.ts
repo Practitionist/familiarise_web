@@ -9,6 +9,7 @@
  */
 
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
+import { REQUEST_INDETERMINATE_ERROR } from "./allocationService";
 
 export interface AllocationToast {
   title: string;
@@ -216,7 +217,7 @@ export const slotUnavailable = (isBooked: boolean): AllocationToast => ({
   variant: "destructive",
   title: "Slot unavailable",
   description: isBooked
-    ? "This slot is already booked."
+    ? "This slot is already booked. Try another time."
     : "This slot is not available.",
 });
 
@@ -251,16 +252,25 @@ export const keepGoing = (
 
 // --- allocation outcomes ---
 
+// #1705 — one title for every "it worked" outcome. Manual, auto and
+// requested-times approvals used to answer with three different headlines
+// for the same fact; the description carries what differs.
 export const timingsSaved = (): AllocationToast => ({
   variant: "default",
-  title: "Timings saved",
-  description: "Sessions have been scheduled successfully.",
+  title: "Sessions scheduled",
+  description: "The times you picked are confirmed.",
 });
 
 export const autoScheduled = (): AllocationToast => ({
   variant: "default",
-  title: "Sessions auto-scheduled",
-  description: "All sessions have been automatically scheduled.",
+  title: "Sessions scheduled",
+  description: "All sessions were placed automatically.",
+});
+
+export const timesConfirmed = (): AllocationToast => ({
+  variant: "default",
+  title: "Sessions scheduled",
+  description: "The requested times are confirmed.",
 });
 
 /**
@@ -316,7 +326,35 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Request changed — please resubmit",
     variant: "destructive",
   },
+  PROGRAM_CAP_EXHAUSTED: {
+    title: "Programme budget used up",
+    variant: "destructive",
+  },
+  COLLABORATOR_UNAVAILABLE: {
+    title: "Co-host unavailable",
+    variant: "destructive",
+  },
+  // ILLEGAL_TRANSITION and RESCHEDULE_STATE_CHANGED are deliberately absent:
+  // both 409s route to requestChangedElsewhere() (qa-1702, #1705).
+  SLOT_TAKEN: {
+    title: "That time was just taken — pick another",
+    variant: "destructive",
+  },
+  LOCK_CONTENTION: {
+    title: "Another change is in progress — retry in a moment",
+    variant: "destructive",
+  },
 };
+
+/** Shared 429 copy: every limiter answers it, every surface renders it. */
+export const rateLimited = (retryAfterSecs?: number): AllocationToast => ({
+  variant: "destructive",
+  title: "Too many attempts",
+  description:
+    typeof retryAfterSecs === "number" && retryAfterSecs > 0
+      ? `Please wait ${retryAfterSecs}s, then retry.`
+      : "Please wait a moment, then retry.",
+});
 
 export const allocationFailedWithCode = (
   reason: string,
@@ -352,11 +390,6 @@ export const invalidEventId = (): AllocationToast => ({
 export const preservedMessages: readonly RegExp[] = [
   /slot already booked/i,
   /slot taken during allocation/i,
-  // Audit gap #11 — a #1012 stale-tab reschedule precondition was being
-  // mislabeled "Already allocated" because it wasn't in this list. It means
-  // the tentative count changed (another tab finished/started the
-  // reschedule), NOT that the event was allocated elsewhere.
-  /reschedule state changed in another session/i,
 ];
 
 export const isPreservedAllocationMessage = (message: string): boolean =>
@@ -387,3 +420,57 @@ export const planConfigIncomplete = (): AllocationToast => ({
   description:
     "This request's plan is missing its session count and scheduling period, so slots can't be allocated. Contact support.",
 });
+
+// --- #1705 requested-times validation copy ---
+
+export const SIGN_IN_PATH = "/auth/signin";
+
+/** Sign-in with the current page as callbackUrl, so the consultant lands
+ * back on the request they were confirming. */
+export function signInHref(currentPath: string): string {
+  return `${SIGN_IN_PATH}?callbackUrl=${encodeURIComponent(currentPath)}`;
+}
+
+export type ValidationFailureKind =
+  | "session-ended"
+  | "forbidden"
+  | "indeterminate"
+  | "retry-later"
+  | "refused";
+
+/**
+ * What a failed validate call means for the dialog. A 401 is now reserved
+ * for a session that really ended; a failed session lookup answers 503
+ * `SESSION_LOOKUP_FAILED` (#1716), which — like every 503, a refusal with a
+ * sentence and nothing done — reads as "try again in a moment" rather than
+ * as an unknown outcome.
+ */
+export function classifyValidationFailure(
+  httpStatus: number | undefined,
+): ValidationFailureKind {
+  if (httpStatus === 401) return "session-ended";
+  if (httpStatus === 403) return "forbidden";
+  if (httpStatus === 503) return "retry-later";
+  if (httpStatus === undefined || httpStatus >= 500) return "indeterminate";
+  return "refused";
+}
+
+const RETRY_LATER_FALLBACK = "The server is busy — try again in a moment.";
+
+export function validationFailureCopy(
+  kind: ValidationFailureKind,
+  serverMessage: string,
+): string {
+  switch (kind) {
+    case "session-ended":
+      return "Your session has ended — sign in again.";
+    case "forbidden":
+      return "You can't schedule this booking.";
+    case "indeterminate":
+      return REQUEST_INDETERMINATE_ERROR;
+    case "retry-later":
+      return serverMessage || RETRY_LATER_FALLBACK;
+    default:
+      return serverMessage;
+  }
+}

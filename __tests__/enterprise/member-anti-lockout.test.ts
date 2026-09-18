@@ -117,7 +117,13 @@ function wireTxShim() {
       // lib/api/organizations/membership-transitions.ts). The shim has to
       // forward `tx.user.update` to the module-level mock so the helper
       // can complete the transaction without crashing.
-      user: mockedPrisma.user,
+      user: {
+        ...mockedPrisma.user,
+        // #1700 — the membership-changed email is staged inside this
+        // transaction and resolves its recipients through `tx`. No
+        // recipients keeps the pin on the anti-lockout rule alone.
+        findMany: jest.fn().mockResolvedValue([]),
+      },
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (fn as any)(tx);

@@ -35,7 +35,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   // user added as Expert, which silently promoted strangers to
   // consultants. The dashboard now refuses with this message.
   NOT_A_CONSULTANT:
-    "This user is not a consultant on Familiarise yet. They need to sign up as an Expert first before they can be added to an organization as one.",
+    "This account has no expert profile yet. Set one up first — it takes a few minutes — then accept the invitation again.",
   // Symmetric to NOT_A_CONSULTANT — the org dashboard refuses to
   // lazy-create a ConsulteeProfile for a stranger being added as
   // Learner. The target must already have a consumer-side identity on
