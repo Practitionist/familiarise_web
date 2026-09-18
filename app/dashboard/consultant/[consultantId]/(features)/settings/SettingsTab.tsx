@@ -37,6 +37,7 @@ import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
 import { VerificationSection } from "./sections/VerificationSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
+import { BookingRequestsSection } from "./sections/BookingRequestsSection";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
@@ -45,6 +46,7 @@ interface SettingsTabProps {
 const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "availability", label: "Availability" },
+  { key: "booking", label: "Booking requests" },
   { key: "verification", label: "Verification" },
   { key: "notifications", label: "Notifications" },
 ] as const;
@@ -626,6 +628,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               onAddSlot={handleAddSlot}
               onUpdateSlot={handleUpdateSlot}
               onDeleteSlot={handleDeleteSlot}
+            />
+          )}
+
+          {activeTab === "booking" && (
+            <BookingRequestsSection
+              formData={formData}
+              setFormData={setFormData}
             />
           )}
 

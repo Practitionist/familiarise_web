@@ -9,6 +9,7 @@ import {
   consultantPublicApiSchema,
 } from "@/lib/data/consultant-public";
 import {
+  BookingMode,
   DayOfWeek,
   type OrgPlanVisibility,
   Prisma,
@@ -110,7 +111,13 @@ const updateConsultantSchema = z
       .optional(),
     // User-level field (stored on User model, not ConsultantProfile)
     linkedinUrl: z.string().url().nullable().optional().or(z.literal("")),
+    // #1703 D1/D4 — optional so older callers keep working; null clears the cap.
+    bookingMode: z.nativeEnum(BookingMode).optional(),
+    acceptingRequests: z.boolean().optional(),
+    maxOpenRequests: z.number().int().min(1).max(50).nullable().optional(),
   })
+  // #1703 — an unknown key is a 400, so a misspelt setting cannot be dropped silently.
+  .strict()
   .refine(
     (data) => {
       if (data.scheduleType === "WEEKLY") {
@@ -342,6 +349,9 @@ export async function PUT(
       offeringFormats,
       // User-level field
       linkedinUrl,
+      bookingMode,
+      acceptingRequests,
+      maxOpenRequests,
     } = data;
 
     // ------------------------------------------------------------------
@@ -493,6 +503,10 @@ export async function PUT(
                 toolsAndTechnologies: toolsAndTechnologies ?? [],
                 mentoringStyle: mentoringStyle ?? null,
                 offeringFormats: offeringFormats ?? [],
+                // #1703 — absent means "leave as is"; a null cap means off.
+                ...(bookingMode !== undefined && { bookingMode }),
+                ...(acceptingRequests !== undefined && { acceptingRequests }),
+                ...(maxOpenRequests !== undefined && { maxOpenRequests }),
               },
             });
 
