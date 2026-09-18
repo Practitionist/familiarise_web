@@ -97,6 +97,14 @@ export interface ValidationResponse {
 }
 
 /**
+ * A fetch that threw never got an HTTP answer, so the outcome is unknown:
+ * the request may have landed. Browser error text ("Failed to fetch",
+ * "Load failed") names nothing the consultant can act on and is Sentry's.
+ */
+export const REQUEST_INDETERMINATE_ERROR =
+  "Couldn't reach the server — check your connection, then look for the times before retrying.";
+
+/**
  * AllocationService - Pure API Client for Event Slot Management
  *
  * Handles all HTTP communication for slot allocation, validation,
@@ -228,11 +236,7 @@ export class AllocationService {
         subsystem: "client",
         tags: { feature: "scheduling" },
       });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
     }
   }
 
@@ -271,21 +275,19 @@ export class AllocationService {
         };
       }
 
-      return {
-        success: true,
-        data: data.data,
-      };
+      // A 2xx with no payload proves nothing about the slots: fail closed.
+      if (!data.data) {
+        return { success: false, error: fallbackError };
+      }
+
+      return { success: true, data: data.data };
     } catch (error) {
       console.error(`Error validating ${logLabel} slots:`, error);
       reportSentryError(error, {
         subsystem: "scheduling",
         op: "scheduling",
       });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
     }
   }
 
