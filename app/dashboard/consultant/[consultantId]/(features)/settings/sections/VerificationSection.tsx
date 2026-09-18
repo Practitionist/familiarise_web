@@ -34,7 +34,8 @@ import {
 
 interface VerificationDocument {
   id?: string;
-  status: string;
+  /** The uploader's states; "uploaded" is the only one that carries an id worth sending. */
+  status: "uploading" | "uploaded" | "error" | string;
 }
 
 interface VerificationSubmitData {
@@ -137,11 +138,14 @@ export function VerificationSection({
   const handleVerificationSubmit = async (data: VerificationSubmitData) => {
     setIsResubmitting(true);
     try {
+      // "uploaded" is the uploader's settled state (uploading | uploaded |
+      // error); the filter used to test "completed", which never occurs, so a
+      // re-filed request carried no documents (wizard UI audit, 2026-09-18).
       const documentIds =
         data.verificationDocuments
           ?.filter(
             (doc): doc is Required<VerificationDocument> =>
-              doc.status === "completed" && !!doc.id,
+              doc.status === "uploaded" && !!doc.id,
           )
           .map((doc) => doc.id) || [];
 
