@@ -10,6 +10,7 @@ import {
   type LoadDraftActionResult,
   type OnboardingDraftSnapshot,
 } from "@/utils/onboarding-draft";
+import { applyRateLimit, onboardingDraftLimiter } from "@/lib/rate-limit";
 
 /**
  * Resumable-onboarding drafts.
@@ -34,6 +35,14 @@ export async function saveOnboardingDraftAction(
 ): Promise<DraftActionResult> {
   const session = await getSession(true);
   if (!session?.user?.id) return unauthorized();
+
+  // The wizard autosaves on every step transition (+ pagehide flush), so a
+  // stuck client could otherwise upsert 64KB rows in a tight loop. 30/min
+  // never touches a human; a loop trips it immediately.
+  const limited = await applyRateLimit(onboardingDraftLimiter, session.user.id);
+  if (limited) {
+    return { success: false, error: "Too many requests. Please try again later." };
+  }
 
   // Server-action arguments arrive as untyped JSON regardless of the static
   // signature. prepareDraftForPersist validates, sanitizes non-JSON values,

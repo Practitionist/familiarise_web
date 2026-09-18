@@ -3,6 +3,9 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import { VerificationSubmitSchema } from "@/schemas/verifications";
+import { canSubmitVerification } from "@/utils/onboarding-shared";
+import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
 import { notifyNewConsultantApplication } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 /**
@@ -11,7 +14,8 @@ import { getAppUrl } from "@/lib/url";
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Force-fresh (see documents route): revocation must bite immediately.
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -20,13 +24,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const body = await request.json();
-    const { linkedinUrl, notes, documentIds } = body;
+    // Each submit mutates the review queue + notifies admins: 10/hr fits the
+    // human submit → fix → resubmit cadence and stops queue flooding.
+    const rateLimited = await applyRateLimit(
+      verificationSubmitLimiter,
+      `verification-submit:${session.user.id}`,
+    );
+    if (rateLimited) return rateLimited;
 
-    // Get the consultant profile
+    // A malformed or empty body is the caller's fault: answer the same
+    // generic 400 as a shape failure instead of letting the parser throw
+    // into the 500 path (review comment on #1698).
+    const raw: unknown = await request.json().catch(() => undefined);
+    const parsed = VerificationSubmitSchema.safeParse(raw);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { success: false, error: "Invalid request body" },
+        { status: 400 },
+      );
+    }
+    const { linkedinUrl, notes, documentIds } = parsed.data;
+
+    // Get the consultant profile, with the live role: a profile row can
+    // outlive a role change, so existence alone must not authorize a
+    // review-queue write (mirrors resubmit; review comment on #1698).
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId: session.user.id },
       include: {
+        user: { select: { role: true } },
         verificationRequests: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -38,6 +63,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
         { status: 404 },
+      );
+    }
+
+    if (
+      !canSubmitVerification({
+        role: consultantProfile.user.role,
+        hasConsultantProfile: true,
+      })
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Only consultants can submit verification" },
+        { status: 403 },
       );
     }
 
@@ -168,16 +205,14 @@ export async function POST(request: NextRequest) {
       data: verification,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Verification submit error:", error);
+    // Generic on purpose: the message is Sentry's, not the client's.
     return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to submit verification",
-      },
+      { success: false, error: "Failed to submit verification" },
       { status: 500 },
     );
   }

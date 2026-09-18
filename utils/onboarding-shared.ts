@@ -34,7 +34,9 @@ export function buildUserUpdateData(data: OnboardingData) {
     linkedinUrl: data.linkedinUrl || null,
     bio: data.bio ?? null,
     ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt } : {}),
-    ...(data.privacyAcceptedAt ? { privacyAcceptedAt: data.privacyAcceptedAt } : {}),
+    ...(data.privacyAcceptedAt
+      ? { privacyAcceptedAt: data.privacyAcceptedAt }
+      : {}),
   };
 }
 
@@ -119,8 +121,8 @@ export function isPersistableVerificationDoc(doc: unknown): boolean {
   const d = doc as Record<string, unknown>;
   return Boolean(
     (d.id && !d.isOnboardingUpload) ||
-      d.isOnboardingUpload ||
-      (!d.id && d.fileUrl),
+    d.isOnboardingUpload ||
+    (!d.id && d.fileUrl),
   );
 }
 
@@ -140,6 +142,72 @@ export function shouldSubmitVerification(body: VerificationSignals): {
       body.verificationDocuments.some(isPersistableVerificationDoc),
     hasLinkedin: Boolean(body.verificationLinkedinUrl?.trim()),
   };
+}
+
+/**
+ * Email-ownership guard for the onboarding write boundary.
+ *
+ * `OnboardingBaseSchema` accepts any email and `buildUserUpdateData` writes it
+ * straight to `User`, so without this check a caller could squat an
+ * unregistered address (or someone else's) onto their row with no
+ * re-verification — the only backstop was the `email @unique` constraint
+ * surfacing as a 500-ish error. The session email is already verified at
+ * signup (BetterAuth `requireEmailVerification`), so for self-service writes
+ * the body email must equal it; privileged operators (ADMIN/STAFF writing
+ * another user's row) bypass by design.
+ *
+ * Pure so both the server action and the PATCH route share one decision, and
+ * so tests can pin it without a session.
+ */
+export function resolveOnboardingEmailUpdate(args: {
+  bodyEmail: unknown;
+  sessionEmail: string | null | undefined;
+  isPrivileged: boolean;
+}): { ok: true } | { ok: false; error: string } {
+  if (args.isPrivileged) return { ok: true };
+  // Absent/non-string emails are not our call — Zod requires `email` downstream
+  // and rejects the body there with a field-level error.
+  if (typeof args.bodyEmail !== "string") return { ok: true };
+  const body = args.bodyEmail.trim().toLowerCase();
+  const session = (args.sessionEmail ?? "").trim().toLowerCase();
+  if (!body || body === session) return { ok: true };
+  return { ok: false, error: "Email cannot be changed during onboarding" };
+}
+
+/**
+ * Who may upload via `POST /api/verification/documents?onboarding=true`.
+ *
+ * Transient onboarding uploads create NO database row, so the per-verification
+ * count cap cannot see them — previously any authenticated user (any role, no
+ * draft, no profile) could store unbounded 10MB objects. The consultant
+ * wizard is the only legitimate caller, and by the agreement step it has both
+ * picked CONSULTANT (persisted to the draft on step transition) and triggered
+ * autosave — so gate on exactly that. Post-onboarding re-uploads use normal
+ * mode with a profile and are unaffected.
+ *
+ * Pure so the route and tests share one decision.
+ */
+export function canUploadVerificationDoc(args: {
+  isOnboardingMode: boolean;
+  hasConsultantProfile: boolean;
+  draftRole: string | null | undefined;
+}): boolean {
+  if (!args.isOnboardingMode) return args.hasConsultantProfile;
+  if (args.hasConsultantProfile) return true;
+  return args.draftRole === "CONSULTANT";
+}
+
+/**
+ * Who may write to the verification review queue (`/api/verification/submit`
+ * + `/resubmit`). A `ConsultantProfile` row can outlive a role change, so the
+ * live `User.role` must be CONSULTANT as well — otherwise an account that lost
+ * the role could keep filing applications and paging admins.
+ */
+export function canSubmitVerification(args: {
+  role: string | null | undefined;
+  hasConsultantProfile: boolean;
+}): boolean {
+  return args.hasConsultantProfile && args.role === "CONSULTANT";
 }
 
 // ============================================================================
@@ -166,12 +234,11 @@ export function validateProfessionalBackground(body: Record<string, unknown>) {
     : null;
 
   return {
-    workExperiences:
-      workExperiences?.success ? workExperiences.data : null,
-    educationHistory:
-      educationHistory?.success ? educationHistory.data : null,
-    certificationsList:
-      certificationsList?.success ? certificationsList.data : null,
+    workExperiences: workExperiences?.success ? workExperiences.data : null,
+    educationHistory: educationHistory?.success ? educationHistory.data : null,
+    certificationsList: certificationsList?.success
+      ? certificationsList.data
+      : null,
     achievements: achievements?.success ? achievements.data : null,
   };
 }

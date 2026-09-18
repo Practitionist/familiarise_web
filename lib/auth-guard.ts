@@ -96,17 +96,24 @@ async function onboardingRedirectTarget(
  * Redirects to sign-in if no session, to onboarding if not completed or
  * profile is missing. Uses disableCookieCache to avoid stale values.
  *
- * Do NOT switch this to the cookie cache. This guard has no `banned` check of
- * its own — it catches bans, DPDP erasure and revoked sessions only because the
- * forced read finds no session row. A 5-minute cookie cache would keep those
- * users inside /dashboard/admin, /checkout and /settings. The cache would also
- * buy almost nothing: customSession re-runs its Prisma enrichment on every
- * getSession call regardless, so the cache skips one query out of ~4. The
- * per-render dedupe that actually helps is getSession's React.cache.
+ * Do NOT switch this to the cookie cache. The forced read is what catches
+ * revoked sessions and DPDP erasure (no session row to find). A 5-minute
+ * cookie cache would keep those users inside /dashboard/admin, /checkout
+ * and /settings. The cache would also buy almost nothing: customSession
+ * re-runs its Prisma enrichment on every getSession call regardless, so the
+ * cache skips one query out of ~4. The per-render dedupe that actually helps
+ * is getSession's React.cache.
  */
 export async function requireOnboarded() {
   const session = await getSession(true);
   if (!session?.user?.id) {
+    redirectWithCookieCleanup();
+  }
+  // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
+  // session minted inside the ban race window still resolves a `banned: true`
+  // payload before row deletion lands, and this guard must not admit it to
+  // the dashboard on payload alone.
+  if (session.user.banned === true) {
     redirectWithCookieCleanup();
   }
   if (!session.user.onboardingCompleted) {

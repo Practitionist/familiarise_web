@@ -2,9 +2,11 @@
 
 import { z } from "zod";
 import { processOnboardingData } from "@/utils/onboarding-server";
+import { resolveOnboardingEmailUpdate } from "@/utils/onboarding-shared";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
+import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
 
 // Roles a user is allowed to self-select via this action. Privileged
 // roles (ADMIN, STAFF) MUST never be reachable from a client-driven
@@ -65,6 +67,29 @@ export async function updateOnboardingInformationAction(
     session.user.role === "ADMIN" || session.user.role === "STAFF";
   if (!isPrivileged && session.user.id !== userId) {
     return { success: false, error: "Forbidden" };
+  }
+
+  // The session email is verified at signup; the onboarding body must not
+  // move the row onto a different address without re-verification.
+  const bodyEmail =
+    typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>).email
+      : undefined;
+  const emailCheck = resolveOnboardingEmailUpdate({
+    bodyEmail,
+    sessionEmail: session.user.email,
+    isPrivileged,
+  });
+  if (!emailCheck.ok) {
+    return { success: false, error: emailCheck.error };
+  }
+
+  // One submit runs a multi-table CAS transaction + slot fan-out, so cap
+  // retry/double-click storms per user. Fail-open on Redis outage matches
+  // applyRateLimit's deliberate #1125 semantics.
+  const limited = await applyRateLimit(onboardingSubmitLimiter, session.user.id);
+  if (limited) {
+    return { success: false, error: "Too many requests. Please try again later." };
   }
 
   // Use the central processing function

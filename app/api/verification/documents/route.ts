@@ -7,6 +7,11 @@ import {
 } from "@/lib/supabase";
 
 import { getSession } from "@/lib/auth-server";
+import { canUploadVerificationDoc } from "@/utils/onboarding-shared";
+import {
+  applyRateLimit,
+  documentUploadLimiter,
+} from "@/lib/rate-limit";
 import * as Sentry from "@sentry/nextjs";
 const ALLOWED_TYPES = [
   "image/png",
@@ -29,7 +34,10 @@ const MAX_DOCS_PER_VERIFICATION = 10;
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Force-fresh: a revoked/erased/banned user must lose upload within the
+    // call, not up to 5 minutes later on the cookie cache. All other
+    // onboarding writes already use getSession(true).
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -37,6 +45,15 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+
+    // Reuse the appointment-upload bucket (scoped key per the module docs):
+    // every upload touches Supabase Storage, so an unthrottled loop balloons
+    // storage cost even when no DB row is created (onboarding mode).
+    const rateLimited = await applyRateLimit(
+      documentUploadLimiter,
+      `verification-docs:${session.user.id}`,
+    );
+    if (rateLimited) return rateLimited;
 
     const formData = await request.formData();
     const file = formData.get("file") as File;
@@ -89,6 +106,34 @@ export async function POST(request: NextRequest) {
         { success: false, error: "Consultant profile not found" },
         { status: 404 },
       );
+    }
+
+    // Transient onboarding uploads create NO database row, so the
+    // per-verification count cap below cannot see them. Gate the mode on
+    // actual consultant-wizard intent (draft role picked at step 0 and
+    // autosaved on step transition) — otherwise any authenticated user of
+    // any role could store unbounded 10MB objects with no record.
+    if (isOnboarding && !consultantProfile) {
+      const draft = await prisma.onboardingDraft.findUnique({
+        where: { userId: session.user.id },
+        select: { role: true },
+      });
+      if (
+        !canUploadVerificationDoc({
+          isOnboardingMode: true,
+          hasConsultantProfile: false,
+          draftRole: draft?.role ?? null,
+        })
+      ) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              "Verification uploads during onboarding require the consultant path. Pick the consultant role and save your progress, then try again.",
+          },
+          { status: 403 },
+        );
+      }
     }
 
     let verification = null;
@@ -240,7 +285,8 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await getSession();
+    // Same force-fresh rationale as POST above.
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
