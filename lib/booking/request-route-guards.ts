@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import type { AppointmentStatus } from "@prisma/client";
 
 import {
+  EVENT_ID_INVALID_MESSAGE,
+  isEventIdFormat,
+} from "@/schemas/slotAllocation/validationSchemas";
+import {
   APPROVAL_STATUSES_DETAIL_ONLY,
   USE_DETAIL_APPROVAL_MESSAGE,
   parseRequestListQuery,
@@ -30,6 +34,18 @@ export function parseRequestListQueryOrRespond(
     };
   }
   return { query: parsed.query, response: null };
+}
+
+/**
+ * 400 VALIDATION_ERROR for a path id that is not a UUID/CUID, so no read
+ * (including the authz lookup) ever runs on an arbitrary string.
+ */
+export function refuseMalformedEventId(id: string): NextResponse | null {
+  if (isEventIdFormat(id)) return null;
+  return NextResponse.json(
+    { error: EVENT_ID_INVALID_MESSAGE, code: "VALIDATION_ERROR" },
+    { status: 400 },
+  );
 }
 
 /** 409 USE_DETAIL_APPROVAL for a status only the `[id]` PATCH may write. */
