@@ -99,6 +99,17 @@ interface ValidationFailure {
   message: string;
 }
 
+/** The primary's word: "Override and Allocate" is locked copy for the out-of-hours case. */
+function primaryLabel(state: {
+  confirming: boolean;
+  outsideHours: number;
+}): string {
+  if (state.confirming) return "Allocating…";
+  return state.outsideHours > 0
+    ? "Override and Allocate"
+    : "Allocate requested times";
+}
+
 /** "Thu 24 Sep, 2:00 pm IST" in the viewer's zone. */
 function slotLabel(slot: string, viewer: ViewerZone): string {
   const at = new Date(parseSlotInstant(slot));
@@ -466,7 +477,7 @@ export function RequestedSlotsDialog({
         {confirming && (
           <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
         )}
-        {confirming ? "Allocating…" : "Allocate requested times"}
+        {primaryLabel({ confirming, outsideHours })}
       </Button>
     );
   };
