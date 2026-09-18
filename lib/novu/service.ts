@@ -777,6 +777,24 @@ export async function notifyNewBookingRequest(
   );
 }
 
+/**
+ * #1703 — a paid subscription still without session times, nudged at day 3,
+ * 7 and 14. Rides the new-booking-request event with `nudgeDay`; the
+ * dedupe key makes each stage exactly-once through the outbox.
+ */
+export async function notifyUnscheduledSubscriptionNudge(
+  consultantUserId: string,
+  payload: BookingRequestInput & { nudgeDay: number },
+  dedupeKey: string,
+) {
+  return triggerWorkflowZoned(
+    NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+    consultantUserId,
+    (timezone) => bookingRequestWire(payload, timezone),
+    dedupeKey,
+  );
+}
+
 export async function notifyVerificationStatusChanged(
   consultantUserId: string,
   payload: VerificationPayload,

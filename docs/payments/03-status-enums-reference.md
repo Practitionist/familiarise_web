@@ -43,21 +43,21 @@ enum AppointmentStatus {
 
 #### Status Definitions
 
-| Status                     | Description                               | Can Transition To                                     | Triggered By                         |
-| -------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------------------ |
-| `PENDING`                  | Initial state when user submits request   | APPROVED, APPROVED_PENDING_PAYMENT, REJECTED, EXPIRED | User submission                      |
-| `APPROVED`                 | Consultant approved and payment confirmed | SCHEDULED, CANCELLED                                  | Consultant approval + payment exists |
-| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment  | APPROVED, PENDING, CANCELLED                          | Consultant approval without payment  |
-| `SCHEDULED`                | Appointment created and confirmed         | COMPLETED, CANCELLED                                  | Appointment creation                 |
-| `COMPLETED`                | Session completed                         | -                                                     | Session end time reached             |
-| `REJECTED`                 | Consultant declined the request           | -                                                     | Consultant rejection                 |
-| `CANCELLED`                | Either party cancelled the request        | -                                                     | User or consultant cancellation      |
-| `EXPIRED`                  | Request expired without action            | -                                                     | Reserved for future use              |
+| Status                     | Description                               | Can Transition To                                     | Triggered By                                     |
+| -------------------------- | ----------------------------------------- | ----------------------------------------------------- | ------------------------------------------------ |
+| `PENDING`                  | Initial state when user submits request   | APPROVED, APPROVED_PENDING_PAYMENT, REJECTED, EXPIRED | User submission                                  |
+| `APPROVED`                 | Consultant approved and payment confirmed | SCHEDULED, CANCELLED                                  | Consultant approval + payment exists             |
+| `APPROVED_PENDING_PAYMENT` | Consultant approved but awaiting payment  | APPROVED, PENDING, CANCELLED, EXPIRED                 | Consultant approval without payment              |
+| `SCHEDULED`                | Appointment created and confirmed         | COMPLETED, CANCELLED                                  | Appointment creation                             |
+| `COMPLETED`                | Session completed                         | -                                                     | Session end time reached                         |
+| `REJECTED`                 | Consultant declined the request           | -                                                     | Consultant rejection                             |
+| `CANCELLED`                | Either party cancelled the request        | -                                                     | User or consultant cancellation                  |
+| `EXPIRED`                  | Request expired without action            | -                                                     | 48 h unanswered, or 24 h pay-link lapsed (#1703) |
 
 #### Important Notes
 
 - **APPROVED_PENDING_PAYMENT** is a security feature added to prevent payment bypass
-- Payments must be completed within 48 hours or request reverts to PENDING
+- The pay-link stays open for 24 hours from approval (#1703 D2); a reminder goes out with 12 hours left, and the cleanup sweep moves an unpaid request to EXPIRED. The sweep never resets a request to PENDING; the only `APPROVED_PENDING_PAYMENT → PENDING` edge in `lib/booking/transitions.ts` is the pay-link regeneration reset, which a person drives
 - Only APPROVED requests can transition to SCHEDULED status
 - SCHEDULED status is final for successful bookings
 
@@ -415,9 +415,9 @@ Appointment Created
 AppointmentStatus: APPROVED_PENDING_PAYMENT
 Payment: PENDING
     ↓
-Wait 48 hours
-    ↓ (cron job: /api/cleanup/approval-payments)
-Payment: FAILED
+Wait 24 hours (a reminder email at the 12-hour mark)
+    ↓ (cron job: /api/cleanup/abandoned-payments)
+Payment: EXPIRED, request: EXPIRED
 AppointmentStatus: PENDING or EXPIRED
 ```
 
@@ -490,7 +490,7 @@ If Escalated:
 2. **Set payment expiration** when creating APPROVED_PENDING_PAYMENT requests
 
    ```typescript
-   expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000); // 48 hours
+   expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS); // 24 hours (#1703 D2)
    ```
 
 3. **Never skip APPROVED status** - always transition through the proper flow:

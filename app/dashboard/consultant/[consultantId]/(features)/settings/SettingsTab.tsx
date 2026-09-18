@@ -1,6 +1,7 @@
 "use client";
 
 import { ScheduleType } from "@prisma/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "components/ui/button";
 import { Card, CardContent } from "components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "components/ui/tabs";
@@ -37,6 +38,7 @@ import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
 import { VerificationSection } from "./sections/VerificationSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
+import { BookingRequestsSection } from "./sections/BookingRequestsSection";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
@@ -45,6 +47,7 @@ interface SettingsTabProps {
 const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "availability", label: "Availability" },
+  { key: "booking", label: "Booking requests" },
   { key: "verification", label: "Verification" },
   { key: "notifications", label: "Notifications" },
 ] as const;
@@ -71,6 +74,7 @@ const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -515,6 +519,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         setScheduleType(updatedConsultant.scheduleType);
       }
 
+      // #1703 D4 — the Requests page reads the same query for its paused
+      // banner; remount refetching is off, so the save must invalidate it.
+      await queryClient.invalidateQueries({
+        queryKey: ["consultant-settings", consultant.id],
+      });
+
       // Shrink notice: a booking is a contract and keeps its time; the new
       // hours are an offer for future bookings. Say how many sit outside them
       // rather than refuse the save (docs/onboarding/03-availability-contract.md).
@@ -626,6 +636,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               onAddSlot={handleAddSlot}
               onUpdateSlot={handleUpdateSlot}
               onDeleteSlot={handleDeleteSlot}
+            />
+          )}
+
+          {activeTab === "booking" && (
+            <BookingRequestsSection
+              formData={formData}
+              setFormData={setFormData}
             />
           )}
 

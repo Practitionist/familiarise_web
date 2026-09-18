@@ -488,6 +488,11 @@ export type BookingRequestPayload = NotificationScope & {
   /** ISO 8601 copy of `requestedDateTime`. */
   requestedDateTimeIso?: string;
   dashboardUrl: string;
+  /**
+   * #1703 — set on the unscheduled-subscription nudge (3, 7 or 14): the same
+   * event, a different sentence, so no new workflow is spent on it.
+   */
+  nudgeDay?: number;
 };
 
 export type BookingRequestInput = Omit<

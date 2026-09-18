@@ -1,196 +1,208 @@
 # Schema reference: the booking tables
 
-This page lists every column and index of the tables the #1554 vocabulary reset touches directly — `AppointmentOccurrence`, `AvailabilityWindowWeekly`, `AvailabilityWindowCustom`, `AppointmentParticipant`, `Meeting`, `MeetingAttendance`, `RecordingConsent`, `Trial` and `RescheduleProposedTime` — with the reasoning that is too long for a schema comment, in the same shape as [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md). It also covers `AppointmentFeedback`'s two-level rating rule, which spans `AppointmentOccurrence` and its own sidecar unique.
+This page lists every column and index of the tables the #1554 vocabulary reset touches directly — `AppointmentOccurrence`, `AvailabilityWindowWeekly`, `AvailabilityWindowCustom`, `AppointmentParticipant`, `Meeting`, `MeetingAttendance`, `RecordingConsent`, `Trial` and `RescheduleProposedTime` — with the reasoning that is too long for a schema comment, in the same shape as [`docs/reviews/06-schema-reference.md`](../reviews/06-schema-reference.md). It also covers the three `ConsultantProfile` booking-mode columns added by #1703 and `AppointmentFeedback`'s two-level rating rule, which spans `AppointmentOccurrence` and its own sidecar unique.
 
 ## `AppointmentOccurrence`
 
 One row per held call. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `ordinal` | The call's 1-based position in its purchase. A replacement row written after a reschedule inherits its predecessor's `ordinal`, which is why the live-row uniqueness on this column is a partial index rather than a plain `@@unique` — see the index table below. |
-| `startsAt`, `endsAt` (`Timestamptz`) | The call's time range. The sidecar CHECK `occurrence_time_order` requires `endsAt > startsAt`. |
-| `isTentative` (default `false`) | Marks a hold made before payment or reschedule confirmation completes. The DB-level overlap guard (see the index table) exempts tentative rows on purpose, because two tentative holds for the same consultant may legitimately coexist until one wins. |
-| `completionStatus` (`OccurrenceCompletionStatus`, default `SCHEDULED`) | The call's own lifecycle state, distinct from the parent `Appointment`'s purchase-level status. |
-| `completedAt?` | When the call was marked complete. |
-| `appointmentId` (`Cascade`) | The purchase this call belongs to. |
-| `consultantProfileId?` | Denormalized from the appointment for the DB-level overlap guard (#440). Nullable for attendee (webinar/class) rows, which the partial-index guard excludes; many same-window rows per event are legitimate there. |
-| `meeting` | The `Meeting` row for this call, if one has been created. |
-| `attendances` | The `MeetingAttendance` rows stamped against this occurrence — #1554 keys attendance to the call itself, so the "were you there" gate reads it without a join through `Meeting`. |
-| `deletedAt?` | Soft-delete tombstone (#676), mirroring `Appointment.deletedAt`. |
+| Column                                                                 | Why it exists                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ordinal`                                                              | The call's 1-based position in its purchase. A replacement row written after a reschedule inherits its predecessor's `ordinal`, which is why the live-row uniqueness on this column is a partial index rather than a plain `@@unique` — see the index table below. |
+| `startsAt`, `endsAt` (`Timestamptz`)                                   | The call's time range. The sidecar CHECK `occurrence_time_order` requires `endsAt > startsAt`.                                                                                                                                                                     |
+| `isTentative` (default `false`)                                        | Marks a hold made before payment or reschedule confirmation completes. The DB-level overlap guard (see the index table) exempts tentative rows on purpose, because two tentative holds for the same consultant may legitimately coexist until one wins.            |
+| `completionStatus` (`OccurrenceCompletionStatus`, default `SCHEDULED`) | The call's own lifecycle state, distinct from the parent `Appointment`'s purchase-level status.                                                                                                                                                                    |
+| `completedAt?`                                                         | When the call was marked complete.                                                                                                                                                                                                                                 |
+| `appointmentId` (`Cascade`)                                            | The purchase this call belongs to.                                                                                                                                                                                                                                 |
+| `consultantProfileId?`                                                 | Denormalized from the appointment for the DB-level overlap guard (#440). Nullable for attendee (webinar/class) rows, which the partial-index guard excludes; many same-window rows per event are legitimate there.                                                 |
+| `meeting`                                                              | The `Meeting` row for this call, if one has been created.                                                                                                                                                                                                          |
+| `attendances`                                                          | The `MeetingAttendance` rows stamped against this occurrence — #1554 keys attendance to the call itself, so the "were you there" gate reads it without a join through `Meeting`.                                                                                   |
+| `deletedAt?`                                                           | Soft-delete tombstone (#676), mirroring `Appointment.deletedAt`.                                                                                                                                                                                                   |
 
 The table below lists the occurrence row's indexes and sidecar constraints.
 
-| Index or constraint | Why it exists |
-| --- | --- |
-| `appointment_occurrence_live_ordinal_key` (sidecar unique, `prisma/sql/check-constraints.sql`) | `("appointmentId", "ordinal") WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL`. Live rows only, because a replacement written after a reschedule inherits the predecessor's `ordinal` and the superseded row keeps its number for history. |
+| Index or constraint                                                                                  | Why it exists                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appointment_occurrence_live_ordinal_key` (sidecar unique, `prisma/sql/check-constraints.sql`)       | `("appointmentId", "ordinal") WHERE "completionStatus" NOT IN ('RESCHEDULED', 'CANCELLED') AND "deletedAt" IS NULL`. Live rows only, because a replacement written after a reschedule inherits the predecessor's `ordinal` and the superseded row keeps its number for history.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `occurrence_no_confirmed_overlap` (sidecar `EXCLUDE` constraint, `prisma/sql/check-constraints.sql`) | `EXCLUDE USING gist ("consultantProfileId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE ("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL)`. The DB-level last line against double-booking a consultant; the application guards (the consultant allocation lock, and the confirm-time conflict recheck inside the payment webhook's Serializable transaction, #827) are the first line. `tstzrange` is `'[)'`, so back-to-back occurrences do not conflict, and a violation surfaces to the application as Postgres error `23P01`. The `deletedAt` arm (#1694) exempts tombstones: a cancel or a hold release keeps the row as CANCELLED with `deletedAt` set and leaves `isTentative` untouched, so without the arm the time a cancelled booking used to hold could never be booked again. On a live database the predicate is changed through `scripts/db/swap-occurrence-overlap-constraint.ts`, never by replaying the sidecar chunk. |
-| `@@index([appointmentId])` | The parent-purchase lookup. |
-| `@@index([consultantProfileId, startsAt, endsAt])` | Serves the overlap recheck and the exclusion constraint's own scan. |
-| `@@index([isTentative, appointmentId])`, `@@index([isTentative, startsAt, endsAt])` | The tentative-hold sweep (expiry cron) and its time-range variant. |
-| `@@index([startsAt, endsAt])` | Time-range scans that are not consultant-scoped. |
-| `@@index([createdAt])` | Chronological listing. |
-| `@@index([completionStatus, endsAt])` | The no-show and completion detectors, which scan by state and past `endsAt`. |
-| `@@index([deletedAt])` | The soft-delete filter. |
+| `@@index([appointmentId])`                                                                           | The parent-purchase lookup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `@@index([consultantProfileId, startsAt, endsAt])`                                                   | Serves the overlap recheck and the exclusion constraint's own scan.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `@@index([isTentative, appointmentId])`, `@@index([isTentative, startsAt, endsAt])`                  | The tentative-hold sweep (expiry cron) and its time-range variant.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `@@index([startsAt, endsAt])`                                                                        | Time-range scans that are not consultant-scoped.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `@@index([createdAt])`                                                                               | Chronological listing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `@@index([completionStatus, endsAt])`                                                                | The no-show and completion detectors, which scan by state and past `endsAt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `@@index([deletedAt])`                                                                               | The soft-delete filter.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ## `AvailabilityWindowWeekly`
 
 A published slice of a consultant's recurring weekly availability. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `startDay`, `endDay` (`DayOfWeek`) and `startTimeUtc`, `endTimeUtc` (`SmallInt`, minutes since midnight UTC, 0–1439) | The frozen-offset source of truth for weekly availability today, supporting overnight/cross-midnight windows. |
-| `utcOffsetMinutes` (default 0) | The UTC offset at window creation (e.g. 330 for IST, -300 for EST). IST-only at launch, so this frozen offset is what the live scheduling math reads. |
-| `timezone?`, `localStartMinutes?`, `localEndMinutes?`, `localStartDay?`, `localEndDay?` | The DST-correct representation (RFC 5545 / Calendly-style: local wall-clock plus IANA zone, materialized to UTC per occurrence), finalized in schema by #872 but read by nothing yet. Written by every weekly save path since 2026-09-05 (`lib/scheduling/weeklyUtcOffset.ts`) so that going DST-aware later needs no backfill, but the reader flip is still pending the post-MVP algorithm and UI. |
-| `consultantProfileId` (`Cascade`) | The consultant this window belongs to. |
-| `deletedAt?` | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`. |
+| Column                                                                                                               | Why it exists                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `startDay`, `endDay` (`DayOfWeek`) and `startTimeUtc`, `endTimeUtc` (`SmallInt`, minutes since midnight UTC, 0–1439) | The frozen-offset source of truth for weekly availability today, supporting overnight/cross-midnight windows.                                                                                                                                                                                                                                                                                       |
+| `utcOffsetMinutes` (default 0)                                                                                       | The UTC offset at window creation (e.g. 330 for IST, -300 for EST). IST-only at launch, so this frozen offset is what the live scheduling math reads.                                                                                                                                                                                                                                               |
+| `timezone?`, `localStartMinutes?`, `localEndMinutes?`, `localStartDay?`, `localEndDay?`                              | The DST-correct representation (RFC 5545 / Calendly-style: local wall-clock plus IANA zone, materialized to UTC per occurrence), finalized in schema by #872 but read by nothing yet. Written by every weekly save path since 2026-09-05 (`lib/scheduling/weeklyUtcOffset.ts`) so that going DST-aware later needs no backfill, but the reader flip is still pending the post-MVP algorithm and UI. |
+| `consultantProfileId` (`Cascade`)                                                                                    | The consultant this window belongs to.                                                                                                                                                                                                                                                                                                                                                              |
+| `deletedAt?`                                                                                                         | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`.                                                                                                                                                                                                                                                                                                                          |
 
 The table below lists the window row's indexes.
 
-| Index | Why it exists |
-| --- | --- |
+| Index                            | Why it exists                         |
+| -------------------------------- | ------------------------------------- |
 | `@@index([consultantProfileId])` | The per-consultant availability read. |
 
 ## `AvailabilityWindowCustom`
 
 A one-off availability window outside the weekly pattern. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `startsAt`, `endsAt` (`Timestamptz`) | The window's absolute time range. |
-| `consultantProfileId` (`Cascade`) | The consultant this window belongs to. |
-| `deletedAt?` | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`. |
+| Column                               | Why it exists                                                              |
+| ------------------------------------ | -------------------------------------------------------------------------- |
+| `startsAt`, `endsAt` (`Timestamptz`) | The window's absolute time range.                                          |
+| `consultantProfileId` (`Cascade`)    | The consultant this window belongs to.                                     |
+| `deletedAt?`                         | Soft-delete tombstone (#1319 A-series), mirroring `Appointment.deletedAt`. |
 
 The table below lists the window row's indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@index([consultantProfileId])` | The per-consultant lookup. |
+| Index                                              | Why it exists                           |
+| -------------------------------------------------- | --------------------------------------- |
+| `@@index([consultantProfileId])`                   | The per-consultant lookup.              |
 | `@@index([consultantProfileId, startsAt, endsAt])` | Range scans by consultant (CA-1, #676). |
 
 ## `AppointmentParticipant`
 
 One row per seat on an appointment — introduced by the #1319 wave-5 reset with no backfill, so every writer has populated it from day one. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `appointmentId` (`Cascade`) | The purchase this seat belongs to. |
-| `userId` (`Cascade`) | The person holding the seat. |
-| `role` (`ParticipantRole`) | The seat's role on the call. |
-| `status` (`ParticipantStatus`, default `HELD`) | The seat's own lifecycle, independent of the parent appointment's status. |
-| `paymentId?` (`SetNull`) | Which money row funded this seat. `SetNull`, not `Cascade`: a soft-deleted `Payment` must not take the participation record with it (#781 §B). |
-| `organizationId?` (`SetNull`) | The sponsoring organization, if the seat was org-funded. |
+| Column                                         | Why it exists                                                                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `appointmentId` (`Cascade`)                    | The purchase this seat belongs to.                                                                                                             |
+| `userId` (`Cascade`)                           | The person holding the seat.                                                                                                                   |
+| `role` (`ParticipantRole`)                     | The seat's role on the call.                                                                                                                   |
+| `status` (`ParticipantStatus`, default `HELD`) | The seat's own lifecycle, independent of the parent appointment's status.                                                                      |
+| `paymentId?` (`SetNull`)                       | Which money row funded this seat. `SetNull`, not `Cascade`: a soft-deleted `Payment` must not take the participation record with it (#781 §B). |
+| `organizationId?` (`SetNull`)                  | The sponsoring organization, if the seat was org-funded.                                                                                       |
 
 The table below lists the row's unique and indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@unique([appointmentId, userId])` | One seat per person per appointment. |
+| Index                                                           | Why it exists                                                                            |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `@@unique([appointmentId, userId])`                             | One seat per person per appointment.                                                     |
 | `@@index([appointmentId, status])`, `@@index([userId, status])` | The two directions seats are listed from: an appointment's roster, and a person's seats. |
-| `@@index([paymentId])` | Prisma does not index FKs; without this the `SetNull` on a `Payment` delete would scan. |
+| `@@index([paymentId])`                                          | Prisma does not index FKs; without this the `SetNull` on a `Payment` delete would scan.  |
 
 ## `Meeting`
 
 One row per Stream call. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `streamCallId` (unique) | The Stream-side call identifier, formatted `occurrence-<appointmentOccurrenceId>` by the call-creation path so a call id names the occurrence it belongs to. |
-| `platform` (`Platform`, default `STREAM`) | The video provider. |
-| `passcode?`, `hostKeys` | Join credentials. |
-| `isRecording`, `recordingStartedAt?`, `recordingStartedBy?` | Recording state; `recordingStartedBy` is the userId who started it. |
-| `endedAt?`, `endedReason?` | When and why the session lifecycle ended (`"call_ended"`, `"session_timeout"`, `"error"`). |
-| `appointmentOccurrenceId` (unique, `Cascade`) | The one call this meeting is for. #1554 renamed this relation from the slot-era name; it is `@unique` because a call has exactly one `Meeting`. |
-| `organizationId?` (`SetNull`) | Denormalized from `occurrence.appointment.organizationId` so org-scoped Stream-call audit queries index directly on `(organizationId, createdAt)` instead of joining `Meeting` → `AppointmentOccurrence` → `Appointment`. Nullable because platform calls (personal bookings) have no org context; written once at `Meeting.create` and never updated after. |
+| Column                                                      | Why it exists                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `streamCallId` (unique)                                     | The Stream-side call identifier, formatted `occurrence-<appointmentOccurrenceId>` by the call-creation path so a call id names the occurrence it belongs to.                                                                                                                                                                                                 |
+| `platform` (`Platform`, default `STREAM`)                   | The video provider.                                                                                                                                                                                                                                                                                                                                          |
+| `passcode?`, `hostKeys`                                     | Join credentials.                                                                                                                                                                                                                                                                                                                                            |
+| `isRecording`, `recordingStartedAt?`, `recordingStartedBy?` | Recording state; `recordingStartedBy` is the userId who started it.                                                                                                                                                                                                                                                                                          |
+| `endedAt?`, `endedReason?`                                  | When and why the session lifecycle ended (`"call_ended"`, `"session_timeout"`, `"error"`).                                                                                                                                                                                                                                                                   |
+| `appointmentOccurrenceId` (unique, `Cascade`)               | The one call this meeting is for. #1554 renamed this relation from the slot-era name; it is `@unique` because a call has exactly one `Meeting`.                                                                                                                                                                                                              |
+| `organizationId?` (`SetNull`)                               | Denormalized from `occurrence.appointment.organizationId` so org-scoped Stream-call audit queries index directly on `(organizationId, createdAt)` instead of joining `Meeting` → `AppointmentOccurrence` → `Appointment`. Nullable because platform calls (personal bookings) have no org context; written once at `Meeting.create` and never updated after. |
 
 The table below lists the row's indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@index([isRecording])` | The active-recording sweep. |
+| Index                                  | Why it exists                                   |
+| -------------------------------------- | ----------------------------------------------- |
+| `@@index([isRecording])`               | The active-recording sweep.                     |
 | `@@index([organizationId, createdAt])` | The org-scoped call audit read described above. |
 
 ## `MeetingAttendance`
 
 Per-participant join/leave audit for a call (STR-4, #689). The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `meetingId` (`Cascade`) | The call this attendance row is about. |
-| `appointmentOccurrenceId` (`Cascade`) | #1554 — the occurrence this attendance belongs to, stamped by the participant webhook so the rating gate can read "you were at THIS call" without a join through `Meeting`. |
-| `userId` | The attendee. |
-| `firstJoinedAt`, `lastLeftAt?`, `joinCount` (default 1) | The join/leave record and rejoin count. |
+| Column                                                  | Why it exists                                                                                                                                                               |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `meetingId` (`Cascade`)                                 | The call this attendance row is about.                                                                                                                                      |
+| `appointmentOccurrenceId` (`Cascade`)                   | #1554 — the occurrence this attendance belongs to, stamped by the participant webhook so the rating gate can read "you were at THIS call" without a join through `Meeting`. |
+| `userId`                                                | The attendee.                                                                                                                                                               |
+| `firstJoinedAt`, `lastLeftAt?`, `joinCount` (default 1) | The join/leave record and rejoin count.                                                                                                                                     |
 
 The table below lists the row's unique and indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@unique([meetingId, userId])` | One attendance row per person per call. |
-| `@@index([meetingId])`, `@@index([userId])` | The two lookup directions. |
+| Index                                        | Why it exists                                                   |
+| -------------------------------------------- | --------------------------------------------------------------- |
+| `@@unique([meetingId, userId])`              | One attendance row per person per call.                         |
+| `@@index([meetingId])`, `@@index([userId])`  | The two lookup directions.                                      |
 | `@@index([appointmentOccurrenceId, userId])` | The rating gate's "did this user attend this occurrence" check. |
 
 ## `RecordingConsent`
 
 One standing consent decision per person per meeting (#1134 P1-7). The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `meetingId` (`Cascade`) | The call the consent is about. |
-| `userId` | Stream user id, equal to `User.id`, matching `MeetingAttendance.userId` and `Meeting.recordingStartedBy`. |
-| `decision` (`RecordingConsentDecision`), `decidedAt` | The standing decision and when it was made; changing your mind updates the same row. |
-| `noticeVersion` (default 1) | Which notice text was shown, bumped when the wording changes materially. |
+| Column                                               | Why it exists                                                                                             |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `meetingId` (`Cascade`)                              | The call the consent is about.                                                                            |
+| `userId`                                             | Stream user id, equal to `User.id`, matching `MeetingAttendance.userId` and `Meeting.recordingStartedBy`. |
+| `decision` (`RecordingConsentDecision`), `decidedAt` | The standing decision and when it was made; changing your mind updates the same row.                      |
+| `noticeVersion` (default 1)                          | Which notice text was shown, bumped when the wording changes materially.                                  |
 
 The table below lists the row's unique and indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@unique([meetingId, userId])` | One standing decision per person per meeting. |
-| `@@index([userId])` | The per-user consent history. |
+| Index                            | Why it exists                                                     |
+| -------------------------------- | ----------------------------------------------------------------- |
+| `@@unique([meetingId, userId])`  | One standing decision per person per meeting.                     |
+| `@@index([userId])`              | The per-user consent history.                                     |
 | `@@index([meetingId, decision])` | Serves the recording gate: "has anyone on this meeting declined?" |
 
 ## `Trial`
 
 One trial engagement per consultant per consultee. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `status` (`TrialStatus`, default `PENDING`) | The trial's own lifecycle. |
-| `notes?` | The consultee's questions or goals. |
-| `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId` | The pair and the plan the trial is against. |
-| `appointmentId?` (unique) | The held call, once the consultant has picked a time. |
-| `pendingPaymentUrl?` | The paid-trial pay-link, mirroring `Consultation`/`Subscription`. Frozen at the schema level pending wiring `createApprovalPaymentIntent` to accept `TRIAL`. |
-| `paymentId?` (unique, `SetNull`) | The ledger truth once a paid trial settles; `pendingPaymentUrl` is only the checkout hand-off. |
-| `convertedToSubscriptionId?` (unique) | The subscription this trial converted into, if any. |
-| `organizationId?` (`SetNull`) | Optional org attribution when the trial booker is a LEARNER of an active org. The org pays nothing — a paid trial charges the consultee — so this is pure attribution, not sponsorship; full utilization-pool integration is deferred to Programs v2. |
-| `requestedAt`, `completedAt?` | The request and completion timestamps. |
-| `paymentDueAt?` | The deadline for a paid trial's pay-link: 24 hours from consultant acceptance, or the session start if that comes first. The expiry job cancels `AWAITING_PAYMENT` trials past this and frees the slot. |
-| `deletedAt?` | Soft-delete tombstone (#1319 A-series). |
+| Column                                                            | Why it exists                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status` (`TrialStatus`, default `PENDING`)                       | The trial's own lifecycle.                                                                                                                                                                                                                            |
+| `notes?`                                                          | The consultee's questions or goals.                                                                                                                                                                                                                   |
+| `consulteeProfileId`, `consultantProfileId`, `subscriptionPlanId` | The pair and the plan the trial is against.                                                                                                                                                                                                           |
+| `appointmentId?` (unique)                                         | The held call, once the consultant has picked a time.                                                                                                                                                                                                 |
+| `pendingPaymentUrl?`                                              | The paid-trial pay-link, mirroring `Consultation`/`Subscription`. Frozen at the schema level pending wiring `createApprovalPaymentIntent` to accept `TRIAL`.                                                                                          |
+| `paymentId?` (unique, `SetNull`)                                  | The ledger truth once a paid trial settles; `pendingPaymentUrl` is only the checkout hand-off.                                                                                                                                                        |
+| `convertedToSubscriptionId?` (unique)                             | The subscription this trial converted into, if any.                                                                                                                                                                                                   |
+| `organizationId?` (`SetNull`)                                     | Optional org attribution when the trial booker is a LEARNER of an active org. The org pays nothing — a paid trial charges the consultee — so this is pure attribution, not sponsorship; full utilization-pool integration is deferred to Programs v2. |
+| `requestedAt`, `completedAt?`                                     | The request and completion timestamps.                                                                                                                                                                                                                |
+| `paymentDueAt?`                                                   | The deadline for a paid trial's pay-link: 24 hours from consultant acceptance, or the session start if that comes first. The expiry job cancels `AWAITING_PAYMENT` trials past this and frees the slot.                                               |
+| `deletedAt?`                                                      | Soft-delete tombstone (#1319 A-series).                                                                                                                                                                                                               |
 
 The table below lists the row's unique and indexes.
 
-| Index | Why it exists |
-| --- | --- |
-| `@@unique([consulteeProfileId, consultantProfileId])` | One live trial per pair; re-requesting after a terminal outcome requires clearing the old row (see `TRIAL_REQUEST_BLOCKING_STATUSES` in `lib/trials/eligibility.ts`). |
-| `@@index([consultantProfileId])`, `@@index([subscriptionPlanId])`, `@@index([organizationId])` | The three relation lookups. |
-| `@@index([status, paymentDueAt])` | The expiry job's scan for overdue unpaid trials. |
+| Index                                                                                          | Why it exists                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@@unique([consulteeProfileId, consultantProfileId])`                                          | One live trial per pair; re-requesting after a terminal outcome requires clearing the old row (see `TRIAL_REQUEST_BLOCKING_STATUSES` in `lib/trials/eligibility.ts`). |
+| `@@index([consultantProfileId])`, `@@index([subscriptionPlanId])`, `@@index([organizationId])` | The three relation lookups.                                                                                                                                           |
+| `@@index([status, paymentDueAt])`                                                              | The expiry job's scan for overdue unpaid trials.                                                                                                                      |
 
 ## `RescheduleProposedTime`
 
 One row per time a reschedule request offers. The table below lists its columns.
 
-| Column | Why it exists |
-| --- | --- |
-| `rescheduleRequestId` (`Cascade`) | The request this proposed time belongs to. |
-| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range. |
-| `round` (default 1) | Which offer round this is; round-2 rows are the counter-offer. |
-| `proposedById` (`Cascade`) | The user who proposed this time. |
-| `deletedAt?` | Soft-delete tombstone (#1319 A-series). |
+| Column                               | Why it exists                                                  |
+| ------------------------------------ | -------------------------------------------------------------- |
+| `rescheduleRequestId` (`Cascade`)    | The request this proposed time belongs to.                     |
+| `startsAt`, `endsAt` (`Timestamptz`) | The proposed range.                                            |
+| `round` (default 1)                  | Which offer round this is; round-2 rows are the counter-offer. |
+| `proposedById` (`Cascade`)           | The user who proposed this time.                               |
+| `deletedAt?`                         | Soft-delete tombstone (#1319 A-series).                        |
 
 The table below lists the row's index.
 
-| Index | Why it exists |
-| --- | --- |
+| Index                                   | Why it exists                                      |
+| --------------------------------------- | -------------------------------------------------- |
 | `@@index([rescheduleRequestId, round])` | Reads a request's proposed times grouped by round. |
+
+## `ConsultantProfile` booking-mode columns (#1703)
+
+Three columns on `ConsultantProfile` decide how a consultee reaches a consultant's calendar and how many requests the consultant is willing to hold open at once. They were added in one PR with the code that reads them, per the schema-freeze rule, and existing rows take the defaults, so no backfill was written. The table below lists the columns.
+
+| Column                                           | Why it exists                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bookingMode` (`BookingMode`, default `INSTANT`) | Decision D1 of the 2026-09-18 requests train. `INSTANT` keeps the behaviour the platform had before the column existed: a free slot goes straight to checkout, and only a contended slot (one the grid marks `isAllocated`) becomes a request for approval. `REQUEST` routes every slot through `POST /api/scheduling/request-for-approval`, so the consultant reviews before any money moves. The column lives on the profile rather than on a plan because the choice is about how the consultant works, not about one product, and because the expert page reads a single profile payload to decide the CTA. Subscriptions ignore the mode: they are always paid first and scheduled later.                                                                                                                                                       |
+| `acceptingRequests` (`Boolean`, default `true`)  | Decision D4. The pause toggle, the analogue of Airbnb's snooze. While `false`, the request route refuses with `409 CONSULTANT_PAUSED` before it takes any lock, the Requests tab shows a banner, and the expert page tells the consultee to pick another expert or try later. It is a switch on the consultant, not a change to any request already open, so pausing never touches a `PENDING` row.                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `maxOpenRequests` (`Int?`, null = no cap)        | Decision D4. An optional per-consultant ceiling on open `PENDING` requests (consultations and subscriptions together, live rows only). Null means the cap is off, which is the default: research found no marketplace that documents a numeric queue cap, so this is an opt-in tool for a flooded consultant rather than a platform behaviour. The count runs inside the request route's slot lock, which is keyed by consultant and 30-minute interval rather than by consultant alone, so a burst on one slot cannot overshoot the cap by more than that lock already allows (requests for different slots are not serialised against each other, a bound the decision accepted), and the refusal is `409 CONSULTANT_AT_CAPACITY`. The per-consultee cap of three open requests and the ten-per-hour limiter are unchanged and sit in front of it. |
+
+The `BookingMode` enum is declared immediately after `ConsultantProfile`, the one model that uses it, following the repository's enum-after-model convention. No index was added: the request route reads the three columns by primary key, and no list filters on them yet.
 
 ## The `AppointmentFeedback` two-level rating rule
 

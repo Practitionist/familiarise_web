@@ -36,6 +36,20 @@ import {
   SLOT_TRANSITION_TX_OPTIONS,
   transitionSlotsInChunks,
 } from "@/lib/booking/slot-release";
+import {
+  notifyConsulteeRequestExpired,
+  UNANSWERED_REQUEST_REASON,
+} from "@/lib/booking/expiry-notices";
+import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
+import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
+import { deriveTransactionId } from "@/lib/novu/outbox";
+import {
+  EMAIL_BUDGET_MS,
+  SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+  sendUnscheduledSubscriptionNudgeEmail,
+  unscheduledNudgeEntityRef,
+} from "@/lib/email";
+import { getAppUrl } from "@/lib/url";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -75,6 +89,8 @@ export interface ExpireStaleRequestsResult {
   success: boolean;
   consultationsExpired: number;
   subscriptionsExpired: number;
+  /** #1703 — consultant nudges sent for paid, still-unscheduled subscriptions. */
+  subscriptionNudgesSent: number;
   paymentPendingExpired: number;
   /** Tentative slots freed by the consultation expiry (B1). */
   consultationSlotsReleased: number;
@@ -170,7 +186,29 @@ async function expirePendingConsultations(): Promise<{
           },
         },
       },
-      select: { id: true, appointment: { select: { id: true } } },
+      select: {
+        id: true,
+        appointment: {
+          select: {
+            id: true,
+            organizationId: true,
+            occurrences: {
+              where: { deletedAt: null },
+              orderBy: { startsAt: "asc" as const },
+              take: 1,
+              select: { startsAt: true },
+            },
+          },
+        },
+        // #1703 D2 — what the consultee's expiry notice names.
+        requestedBy: { select: { user: { select: { id: true, name: true } } } },
+        consultationPlan: {
+          select: {
+            title: true,
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+      },
       orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
     });
@@ -220,6 +258,22 @@ async function expirePendingConsultations(): Promise<{
         }, SLOT_TRANSITION_TX_OPTIONS);
         expiredIds.push(stale.id);
         slotsReleased += releasedForOne;
+        // #1703 D2 — after the commit: the consultee learns nobody answered.
+        if (stale.appointment && stale.requestedBy?.user) {
+          await notifyConsulteeRequestExpired({
+            appointmentId: stale.appointment.id,
+            organizationId: stale.appointment.organizationId,
+            consulteeUserId: stale.requestedBy.user.id,
+            consulteeName: stale.requestedBy.user.name ?? "Consultee",
+            consultantName:
+              stale.consultationPlan?.consultantProfile?.user?.name ??
+              "Consultant",
+            planTitle: stale.consultationPlan?.title ?? "Consultation",
+            appointmentType: "CONSULTATION",
+            startsAt: stale.appointment.occurrences?.[0]?.startsAt ?? null,
+            reason: UNANSWERED_REQUEST_REASON,
+          });
+        }
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
         skipped++;
@@ -547,6 +601,197 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
   }
 }
 
+/**
+ * #1703 — the nudge stages, in days since the subscription became APPROVED
+ * (its `updatedAt`, the same clock the 30-day refund above reads). A row
+ * gets the latest stage it has reached and nothing earlier, so a sweep that
+ * missed day 3 sends day 7 once, not both.
+ */
+export const SUBSCRIPTION_NUDGE_DAYS = [3, 7, 14] as const;
+export type SubscriptionNudgeDay = (typeof SUBSCRIPTION_NUDGE_DAYS)[number];
+
+export function nudgeStageFor(ageMs: number): SubscriptionNudgeDay | null {
+  const days = ageMs / (24 * 60 * 60 * 1000);
+  let stage: SubscriptionNudgeDay | null = null;
+  for (const day of SUBSCRIPTION_NUDGE_DAYS) {
+    if (days >= day) stage = day;
+  }
+  return stage;
+}
+
+/** The outbox key for one subscription's stage; the guard and the trigger share it. */
+export function subscriptionNudgeDedupeKey(
+  subscriptionId: string,
+  stage: SubscriptionNudgeDay,
+): string {
+  return `subscription-unscheduled:${subscriptionId}:day${stage}`;
+}
+
+/**
+ * Nudge the consultant of a paid subscription that still has no session
+ * times. State-as-outbox (ADR 27): the NotificationOutbox row the bell
+ * stages is the claim, keyed on the stage, so a re-run finds it and skips;
+ * the email follows the bell and rides its own outbox. Nothing here writes
+ * the subscription, so `updatedAt` stays the stable "since payment" clock.
+ */
+async function nudgeUnscheduledSubscriptions(): Promise<{
+  nudged: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const firstStageCutoff = new Date(
+    Date.now() - SUBSCRIPTION_NUDGE_DAYS[0] * 24 * 60 * 60 * 1000,
+  );
+  const NO_LIVE_SESSION = {
+    NOT: {
+      appointment: {
+        occurrences: { some: { isTentative: false, deletedAt: null } },
+      },
+    },
+  };
+
+  try {
+    const waiting = await prisma.subscription.findMany({
+      where: {
+        status: AppointmentStatus.APPROVED,
+        deletedAt: null,
+        updatedAt: { lt: firstStageCutoff },
+        ...NO_LIVE_SESSION,
+      },
+      select: {
+        id: true,
+        updatedAt: true,
+        requestedBy: { select: { user: { select: { name: true } } } },
+        subscriptionPlan: {
+          select: {
+            title: true,
+            consultantProfile: {
+              select: { id: true, user: { select: { id: true } } },
+            },
+          },
+        },
+        appointment: { select: { id: true, organizationId: true } },
+      },
+      orderBy: { updatedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
+    });
+
+    const candidates = waiting.flatMap((sub) => {
+      const stage = nudgeStageFor(Date.now() - sub.updatedAt.getTime());
+      if (!stage || !sub.appointment) return [];
+      const consultantUserId = sub.subscriptionPlan.consultantProfile.user.id;
+      const dedupeKey = subscriptionNudgeDedupeKey(sub.id, stage);
+      return [
+        {
+          sub,
+          stage,
+          consultantUserId,
+          dedupeKey,
+          transactionId: deriveTransactionId(
+            NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+            [consultantUserId],
+            {},
+            dedupeKey,
+          ),
+        },
+      ];
+    });
+    if (candidates.length === 0) return { nudged: 0, errors };
+
+    // Two outboxes, two guards: the bell's NotificationOutbox row and the
+    // email's FailedEmail row, so one arm's lapse never silences the other.
+    const [bellStaged, emailStaged] = await Promise.all([
+      prisma.notificationOutbox
+        .findMany({
+          where: {
+            transactionId: { in: candidates.map((c) => c.transactionId) },
+          },
+          select: { transactionId: true },
+        })
+        .then((rows) => new Set(rows.map((row) => row.transactionId))),
+      prisma.failedEmail
+        .findMany({
+          where: {
+            emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+            entityRef: {
+              in: candidates.map((c) =>
+                unscheduledNudgeEntityRef(c.sub.id, c.stage),
+              ),
+            },
+          },
+          select: { entityRef: true },
+        })
+        .then((rows) => new Set(rows.map((row) => row.entityRef))),
+    ]);
+
+    let nudged = 0;
+    for (const {
+      sub,
+      stage,
+      consultantUserId,
+      dedupeKey,
+      transactionId,
+    } of candidates) {
+      const bellDone = bellStaged.has(transactionId);
+      const emailDone = emailStaged.has(
+        unscheduledNudgeEntityRef(sub.id, stage),
+      );
+      if (bellDone && emailDone) continue;
+      const appointment = sub.appointment;
+      if (!appointment) continue;
+      try {
+        const consulteeName = sub.requestedBy.user.name ?? "A consultee";
+        const planTitle = sub.subscriptionPlan.title;
+        const timingsUrl = `${getAppUrl()}/dashboard/consultant/${sub.subscriptionPlan.consultantProfile.id}/appointments/${appointment.id}/timings`;
+        if (!bellDone) {
+          await notifyUnscheduledSubscriptionNudge(
+            consultantUserId,
+            {
+              ...notificationScope(appointment.organizationId),
+              consulteeName,
+              planTitle,
+              appointmentType: "SUBSCRIPTION",
+              dashboardUrl: timingsUrl,
+              nudgeDay: stage,
+            },
+            dedupeKey,
+          );
+        }
+        if (!emailDone) {
+          const mailed = await sendUnscheduledSubscriptionNudgeEmail(
+            {
+              subscriptionId: sub.id,
+              consultantUserId,
+              consulteeName,
+              planTitle,
+              nudgeDays: stage,
+              timingsUrl,
+            },
+            EMAIL_BUDGET_MS.JOB,
+          );
+          // Neither sent nor staged: no row guards it, so say so and let
+          // the next run retry the email arm alone.
+          if (mailed.failed > 0 && mailed.sent === 0) {
+            throw new Error("nudge email neither sent nor staged");
+          }
+        }
+        nudged += 1;
+      } catch (error) {
+        const msg = `Nudge failed for subscription ${sub.id} (day ${stage}): ${error}`;
+        console.error(`❌ ${msg}`);
+        errors.push(msg);
+      }
+    }
+    console.log(`✅ Sent ${nudged} unscheduled-subscription nudges`);
+    return { nudged, errors };
+  } catch (error) {
+    const msg = `Failed to nudge unscheduled subscriptions: ${error}`;
+    console.error(`❌ ${msg}`);
+    errors.push(msg);
+    return { nudged: 0, errors };
+  }
+}
+
 function warnIfCapped(kind: "consultation" | "subscription", read: number) {
   if (read < MAX_REQUESTS_PER_RUN) return;
   console.warn(
@@ -728,6 +973,10 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
   allErrors.push(...approvedUnallocated.errors);
 
+  // #1703 — nudge the consultant before that 30-day refund ever fires.
+  const nudges = await nudgeUnscheduledSubscriptions();
+  allErrors.push(...nudges.errors);
+
   // Release stale tentative-RESCHEDULED slots on APPROVED subscriptions
   // (PR 2e, #1192 — audit B-P2-02). A partial reschedule flips released
   // slots to tentative+RESCHEDULED but leaves the parent APPROVED; if the
@@ -760,6 +1009,7 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   console.log(
     `   APPROVED-unallocated expired: ${approvedUnallocated.expired}`,
   );
+  console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
   console.log(
     `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures}`,
   );
@@ -779,6 +1029,7 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
     // summary never matched what the run actually expired.
     subscriptionsExpired:
       subscriptionResult.expired + approvedUnallocated.expired,
+    subscriptionNudgesSent: nudges.nudged,
     paymentPendingExpired: totalPaymentPending,
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:

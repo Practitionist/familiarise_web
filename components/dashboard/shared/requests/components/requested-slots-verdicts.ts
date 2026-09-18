@@ -13,7 +13,8 @@ export interface ValidationVerdictSource extends SlotConflictResult {
 export type SlotVerdict =
   | { kind: "checking" }
   | { kind: "free" }
-  | { kind: "conflict"; existing: string }
+  /** `appointmentId` is set only when the viewer is the event's consultant (#1721). */
+  | { kind: "conflict"; existing: string; appointmentId?: string }
   | { kind: "outsideAvailability" }
   | { kind: "outsidePeriod" };
 
@@ -38,12 +39,22 @@ export function verdictFor(
   if (!result) return { kind: "checking" };
   const conflict = result.conflicts.find((c) => sameInstant(c.slot, slot));
   if (conflict) {
-    // The privacy-preserving label: the server names a type, never a person
-    // (ADR 20). "with another user" reads better than the raw field.
-    return {
-      kind: "conflict",
-      existing: `${conflict.existingAppointment.type} with another user`,
-    };
+    const {
+      type,
+      with: withWhom,
+      appointmentId,
+    } = conflict.existingAppointment;
+    // #1703 C8 — the event's own consultant is a party to the conflicting
+    // booking, so the server names it (#1721) and the dialog links it. Anyone
+    // else keeps the privacy-preserving label (ADR 20).
+    if (appointmentId) {
+      return {
+        kind: "conflict",
+        existing: `your ${type} with ${withWhom}`,
+        appointmentId,
+      };
+    }
+    return { kind: "conflict", existing: `${type} with another user` };
   }
   if ((result.outsidePeriod ?? []).some((o) => sameInstant(o.slot, slot))) {
     return { kind: "outsidePeriod" };

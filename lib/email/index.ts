@@ -253,6 +253,9 @@ export async function sendAccountLinkedEmail(
   );
 }
 
+/** #1703 D2 — the reminder's `FailedEmail.emailType`; the sweep's once-guard reads it. */
+export const PAYMENT_LINK_REMINDER_EMAIL_TYPE = "PAYMENT_LINK_REMINDER";
+
 /** Payment link once a consultant approves a request. */
 export async function sendPaymentLinkEmail(
   {
@@ -265,6 +268,7 @@ export async function sendPaymentLinkEmail(
     paymentUrl,
     expiresAt,
     paymentId,
+    reminder = false,
   }: {
     email: string;
     name: string;
@@ -275,11 +279,13 @@ export async function sendPaymentLinkEmail(
     paymentUrl: string;
     expiresAt: Date;
     paymentId?: string;
+    /** #1703 D2 — the half-window reminder, a distinct email type for the once-guard. */
+    reminder?: boolean;
   },
   opts: SendOptions = {},
 ) {
   return send(
-    "PAYMENT_LINK",
+    reminder ? PAYMENT_LINK_REMINDER_EMAIL_TYPE : "PAYMENT_LINK",
     PaymentLinkEmail({
       name,
       consultantName,
@@ -288,11 +294,14 @@ export async function sendPaymentLinkEmail(
       currency,
       paymentUrl,
       expiresAt: expiresAt.toISOString(),
+      reminder,
     }),
     {
       from: SENDERS.payments,
       to: email,
-      subject: `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`,
+      subject: reminder
+        ? `Reminder: payment due - ${capitalize(appointmentType)} with ${consultantName}`
+        : `Payment Required - ${capitalize(appointmentType)} with ${consultantName}`,
     },
     {
       entityRef: paymentRef(paymentId),
