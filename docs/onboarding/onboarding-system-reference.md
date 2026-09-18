@@ -53,18 +53,18 @@ inside the same transaction that creates the `Organization`,
 immediately navigate to `/dashboard/org-workspace/:id/home`. See
 `docs/enterprise/12-dashboard-pages.md` for the operator home route.
 
-### Placeholder ConsultantProfile on EXPERT invite accept
+### EXPERT invite accept stays strict (no placeholder)
 
 When a user accepts an EXPERT invitation without a pre-existing
 `ConsultantProfile`, `app/api/organizations/invitations/accept/route.ts`
-upserts a placeholder with:
+rejects with `NOT_A_CONSULTANT` (400) instead of provisioning anything —
+an expert identity carries domain/rates/verification/payout prerequisites
+that no invite click can substitute for (who-is-acting rule, #819). The
+invite page humanizes the code (`humanizeOrgError`) and tells the user to
+finish consultant onboarding first; the emailed link still accepts
+afterwards. SSO JIT keeps its own lazy path; admin direct-add stays
+strict for both EXPERT and LEARNER.
 
-- `domain` → upserted `Domain "General"`
-- `scheduleType = WEEKLY`
-- `verificationStatus = PENDING_VERIFICATION`
-
-The user fills in their real domain, schedule, and verification
-materials afterwards through the consultant profile editor.
 Marketplace visibility in `/explore/experts` still gates on platform
 verification, not on membership existence.
 
@@ -1006,6 +1006,8 @@ uploadedAt       DateTime  @default(now())
 12. **Consultant verification is deferrable.** A submission without LinkedIn + ≥1 persistable document still completes onboarding: the profile is saved with the model default `PENDING_VERIFICATION` and the response carries `verificationDeferred: true`. Marketplace visibility continues to gate on verification, so a deferred consultant is simply unlisted until they finish from Settings → Verification (`/api/verification/submit`, `VerificationSection.tsx`). Policy lives in `shouldSubmitVerification()` (onboarding-shared.ts); "persistable" means the entry would actually create/link a row (`isPersistableVerificationDoc()`), so junk like `[{}]` defers instead of flipping the profile to `UNDER_REVIEW` with zero documents.
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
+
+14. **EXPERT invites stay strict, and that is a known dead end until the add-identity flow lands.** Accepting an EXPERT invitation requires an existing `ConsultantProfile` (`NOT_A_CONSULTANT` otherwise). A brand-new user simply finishes consultant onboarding first, but a user who already completed onboarding as a learner or an org operator cannot re-enter the wizard (`requireNotOnboarded` redirects them), so for them the emailed link does not work yet. The planned fix is an "add expert identity" mode of the wizard that creates the consultant profile without touching the other profile links; until it ships, support has to handle these invitees by hand.
 
 ### Alternatives considered (#onboarding-ux, 2026-08)
 

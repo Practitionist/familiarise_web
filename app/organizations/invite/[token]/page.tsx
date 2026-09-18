@@ -17,6 +17,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth-client";
 import { MEMBER_ROLE_LABEL, MemberRoleSchema } from "@/lib/labels/org-labels";
+import { humanizeOrgError } from "@/lib/labels/org-errors";
 
 interface AcceptResponse {
   organization: { id: string; name: string };
@@ -129,7 +130,10 @@ export default function InviteAcceptPage({
         setStatus("success");
       })
       .catch((err: Error) => {
-        setError(err.message);
+        // Accept errors are machine codes (NOT_A_CONSULTANT, CONSENT_REQUIRED,
+        // ...) — humanize before display so invitees see the sentence, not
+        // the code. Unknown strings pass through verbatim.
+        setError(humanizeOrgError(err.message));
         setStatus("error");
       });
   }, [isPending, session, token, preview, status]);

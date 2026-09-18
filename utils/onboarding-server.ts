@@ -17,6 +17,7 @@ import {
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { notifyNewConsultantApplication } from "@/lib/novu";
+import { trackOnboardingEvent } from "./onboarding-telemetry";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
   buildUserUpdateData,
@@ -777,6 +778,32 @@ export async function processOnboardingData(
     }
 
     await assertUserExists(userId);
+
+    // Server-side counterpart to the step-0 invite gate (client-only, and
+    // now with a "continue without" escape): finishing B2C onboarding while
+    // an org invite is still pending is ALLOWED — invites are enforced at
+    // accept-time by email match — but record it so the funnel can see how
+    // often the escape (or a mid-wizard invite arrival) fires. Deliberately
+    // non-blocking: a hard block here would reintroduce the stray-invite
+    // lockout the escape hatch exists to prevent.
+    try {
+      const pendingInvite = await prisma.invitation.findFirst({
+        where: {
+          email: validatedBody.email.toLowerCase(),
+          status: "pending",
+          expiresAt: { gt: new Date() },
+        },
+        select: { role: true },
+      });
+      if (pendingInvite) {
+        trackOnboardingEvent("pending_invite_at_submit", {
+          inviteRole: String(pendingInvite.role),
+          submittedRole: validatedBody.role,
+        });
+      }
+    } catch {
+      // Visibility only — never fail a submit over telemetry.
+    }
 
     // ORG_WORKSPACE onboarding no longer flows through this transaction. The
     // role + personal info are committed by `setOnboardingRoleAction` at
