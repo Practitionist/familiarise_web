@@ -5,6 +5,7 @@ import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
+import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -34,7 +35,9 @@ export async function GET(request: NextRequest) {
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
-  // Non-privileged users must scope to their own data
+  // Non-privileged users must scope to their own data. The session's profile
+  // ids are the cheap first answer; canReadEventSlots re-reads them fresh and
+  // admits an event's own two parties (FAMILIARISE_WEB-2V, #1703 B10).
   if (!isPrivileged(session.user.role)) {
     const hasOwnFilter =
       (consultantProfileId &&
@@ -42,7 +45,14 @@ export async function GET(request: NextRequest) {
       (consulteeProfileId &&
         consulteeProfileId === session.user.consulteeProfileId) ||
       (userId && userId === session.user.id);
-    if (!hasOwnFilter) {
+    const allowed =
+      hasOwnFilter ||
+      (await canReadEventSlots({
+        userId: session.user.id,
+        filter: { consultantProfileId, consulteeProfileId },
+        eventIds: { webinarId, classId, consultationId, subscriptionId },
+      }));
+    if (!allowed) {
       return NextResponse.json(
         { error: "Forbidden: must filter by your own profile" },
         { status: 403 },
