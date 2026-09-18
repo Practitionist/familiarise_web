@@ -1,6 +1,6 @@
 import { reportSentryError } from "@/lib/observability/report";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
-import { ApiResponseError } from "@/lib/fetch-helpers";
+import { ApiResponseError, retryAfterMsFromHeaders } from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
@@ -588,7 +588,12 @@ export class AllocationService {
         // refusal (a 403 the route answered on purpose) from a fault.
         throw new ApiResponseError(
           errorData.error || "Failed to fetch availability slots",
-          { status: response.status, code: errorData.code, detail: errorData },
+          {
+            status: response.status,
+            code: errorData.code,
+            detail: errorData,
+            retryAfterMs: retryAfterMsFromHeaders(response.headers),
+          },
         );
       }
       const result = await response.json();

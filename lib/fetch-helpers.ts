@@ -57,17 +57,41 @@ export class ApiResponseError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly detail?: unknown;
+  /** Parsed `Retry-After` on a 429/503, so pollers can back off by it (#1697). */
+  readonly retryAfterMs?: number;
 
   constructor(
     message: string,
-    init: { status: number; code?: string; detail?: unknown },
+    init: {
+      status: number;
+      code?: string;
+      detail?: unknown;
+      retryAfterMs?: number;
+    },
   ) {
     super(message);
     this.name = "ApiResponseError";
     this.status = init.status;
     this.code = init.code;
     this.detail = init.detail;
+    this.retryAfterMs = init.retryAfterMs;
   }
+}
+
+/**
+ * `Retry-After` as milliseconds, or undefined when absent or unparseable.
+ * Accepts the delta-seconds form the limiter sends and the HTTP-date form.
+ */
+export function retryAfterMsFromHeaders(
+  headers: Headers,
+  nowMs = Date.now(),
+): number | undefined {
+  const raw = headers.get("retry-after");
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
 }
 
 /** Does this response actually claim to be JSON? */
@@ -114,7 +138,12 @@ export async function requireJsonResponse(
     // failed", so it goes in the message the user reads.
     throw new ApiResponseError(
       envelope.error ?? `${fallbackError} (HTTP ${res.status})`,
-      { status: res.status, code: envelope.code, detail: envelope.detail },
+      {
+        status: res.status,
+        code: envelope.code,
+        detail: envelope.detail,
+        retryAfterMs: retryAfterMsFromHeaders(res.headers),
+      },
     );
   }
 

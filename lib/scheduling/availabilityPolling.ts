@@ -17,6 +17,35 @@ export const AVAILABILITY_POLL_INTERVAL_MS = 60_000;
  */
 export const RETURN_REFETCH_MIN_STALENESS_MS = 5_000;
 
+/**
+ * #1697 item 1 — poll jitter. One booking flips the ETag of every viewer of
+ * that calendar, and viewers that opened the page together tick together, so
+ * the re-demand lands as one burst on a pool-of-one instance. A random offset
+ * of ±10–15 s per tick decorrelates the cadence without changing the mean.
+ */
+export const POLL_JITTER_MIN_MS = 10_000;
+export const POLL_JITTER_MAX_MS = 15_000;
+
+/** A signed offset whose magnitude lies in [POLL_JITTER_MIN_MS, POLL_JITTER_MAX_MS]. */
+export function availabilityPollJitterMs(): number {
+  const magnitude =
+    POLL_JITTER_MIN_MS +
+    Math.random() * (POLL_JITTER_MAX_MS - POLL_JITTER_MIN_MS);
+  return Math.random() < 0.5 ? -magnitude : magnitude;
+}
+
+/** Default hold-off when a 429 arrives without a usable Retry-After (#1697). */
+export const RATE_LIMIT_FALLBACK_BACKOFF_MS = 60_000;
+
+/**
+ * What a background fetch tells the poller about a 429. Anything else the
+ * fetch resolves with (or `void`) means "arm the next tick as usual".
+ */
+export interface PollFetchOutcome {
+  /** Set when the server answered 429; the next tick waits at least this long. */
+  rateLimitedForMs?: number;
+}
+
 export interface PollContext {
   /** autoLoad && consultantId — the same gate the fetch effects use. */
   enabled: boolean;
@@ -66,10 +95,19 @@ export interface AvailabilityPollerDeps {
   msSinceLastFetch: () => number;
   /** A navigation/allocation fetch already running, or null. */
   inFlight: () => Promise<unknown> | null;
-  /** Runs one background availability fetch. */
-  fetch: () => Promise<unknown>;
+  /**
+   * Runs one background availability fetch. Resolving `{ rateLimitedForMs }`
+   * makes the poller honour the server's Retry-After (#1697); rejecting or
+   * resolving anything else re-arms at the ordinary cadence.
+   */
+  fetch: () => Promise<PollFetchOutcome | void>;
   /** Poll cadence; the Requests tab's count poll runs shorter (#1706). */
   intervalMs?: number;
+  /**
+   * Per-tick offset added to the delay; omit for an exact cadence (tests).
+   * Production callers pass `availabilityPollJitterMs`.
+   */
+  jitterMs?: () => number;
 }
 
 export interface AvailabilityPoller {
@@ -99,6 +137,9 @@ export function createAvailabilityPoller(
 ): AvailabilityPoller {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
+  // Epoch ms before which no tick may fire — set from a 429's Retry-After so
+  // a limited client never retries at its own cadence (#1697 item 2).
+  let holdOffUntil = 0;
 
   const clearPending = () => {
     if (timer !== null) {
@@ -117,10 +158,17 @@ export function createAvailabilityPoller(
   const arm = () => {
     if (!mayPoll()) return;
     clearPending();
-    timer = setTimeout(
-      tick,
-      nextPollDelay(deps.msSinceLastFetch(), deps.intervalMs),
-    );
+    const base = nextPollDelay(deps.msSinceLastFetch(), deps.intervalMs);
+    const jittered = Math.max(0, base + (deps.jitterMs?.() ?? 0));
+    timer = setTimeout(tick, Math.max(jittered, holdOffUntil - Date.now()));
+  };
+
+  const armAfter = (outcome: PollFetchOutcome | void) => {
+    const limitedFor = outcome?.rateLimitedForMs;
+    if (typeof limitedFor === "number" && limitedFor > 0) {
+      holdOffUntil = Date.now() + limitedFor;
+    }
+    arm();
   };
 
   const tick = () => {
@@ -138,7 +186,7 @@ export function createAvailabilityPoller(
     }
     // Serialized: the next tick is armed only once this fetch settles, so a
     // slow response never stacks polls behind it.
-    void deps.fetch().then(arm, arm);
+    void deps.fetch().then(armAfter, arm);
   };
 
   const onReturn = () => {
@@ -147,7 +195,9 @@ export function createAvailabilityPoller(
     // and leaving it pending is what let a second tick fire behind the first.
     clearPending();
     if (!mayPoll()) return;
-    if (shouldRefetchOnReturn(deps.msSinceLastFetch())) tick();
+    // A return inside a Retry-After window re-arms behind it, never refetches.
+    if (holdOffUntil > Date.now()) arm();
+    else if (shouldRefetchOnReturn(deps.msSinceLastFetch())) tick();
     else arm();
   };
 

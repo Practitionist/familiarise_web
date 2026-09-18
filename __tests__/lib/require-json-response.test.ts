@@ -53,6 +53,18 @@ describe("requireJsonResponse", () => {
     expect((error as ApiResponseError).status).toBe(200);
   });
 
+  it("carries a 429's Retry-After as milliseconds so pollers can back off (#1697)", async () => {
+    const res = new Response(JSON.stringify({ code: "RATE_LIMITED" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "17" },
+    });
+    await expect(requireJsonResponse(res)).rejects.toMatchObject({
+      status: 429,
+      code: "RATE_LIMITED",
+      retryAfterMs: 17_000,
+    });
+  });
+
   it("keeps the 409 the cancel dialog branches on, and the server's own message", async () => {
     await expect(
       requireJsonResponse(

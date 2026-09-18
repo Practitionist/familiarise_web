@@ -16,6 +16,7 @@ import {
   eligibilityLimiter,
   waitlistLimiter,
   availabilityLimiter,
+  availabilityGridLimiter,
   orgInviteAcceptLimiter,
   ssoDomainCheckLimiter,
   orgWalletTopUpLimiter,
@@ -326,6 +327,14 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
+    // #1697 item 2 — a different prefix, so the rule above never matched the
+    // polling grid; it was the hottest unthrottled read in the app.
+    label: "public: availability grid (with allocation)",
+    match: (p) => p.startsWith("/api/scheduling/availability-with-allocation/"),
+    limiter: availabilityGridLimiter,
+    skipLocalhost: false,
+  },
+  {
     // Invite-accept floods. orgId isn't in the URL (it's inside the invite token
     // body), so this is IP-keyed; org-level observability is the per-accept audit
     // log. Covers credential-stuffing against stolen invite tokens.
@@ -380,7 +389,7 @@ async function applyEdgeRateLimits(
     if (rule.skipLocalhost && isLocalhost) continue;
     if (!rule.match(pathname, req.method)) continue;
     const id = rule.key ? rule.key(pathname, clientIp) : clientIp;
-    if (id == null) continue;
+    if (id === null) continue;
     const limited = await applyRateLimit(rule.limiter, id);
     if (limited) return limited;
   }

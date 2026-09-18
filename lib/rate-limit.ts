@@ -14,6 +14,7 @@
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
  * - availabilityLimiter:    30/min per IP    — GET /api/scheduling/availability/[consultantId]
+ * - availabilityGridLimiter: 120/min per IP  — GET /api/scheduling/availability-with-allocation/[consultantId]
  * - currencyLimiter:        30/min per IP    — GET /api/currency (protects the FX provider quota)
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
  * - streamRecordingSyncLimiter: 3/5min per user — POST /api/stream/recordings/sync (Stream fan-out)
@@ -160,6 +161,20 @@ export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
 
 /** 30 per minute — GET /api/scheduling/availability/[consultantId] (IP-based, public booking flow) */
 export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
+
+/**
+ * 120 per minute per IP — GET /api/scheduling/availability-with-allocation/[consultantId]
+ * (#1697 item 2). The hottest read in the app and, until now, the one the
+ * middleware path match missed. Sized for a shared-NAT office of grids each
+ * polling once a minute plus week-slides and post-allocation refetches; a
+ * scripted loop trips it within seconds. 429s carry Retry-After and the
+ * client poller backs off by it.
+ */
+export const availabilityGridLimiter = makeLimiter(
+  120,
+  "1 m",
+  "rl:availability-grid",
+);
 
 /**
  * 30 per minute per IP — GET /api/currency (#1396).
@@ -334,6 +349,18 @@ export const orgDataExportLimiter = makeLimiter(
  *                     Prefix with a route slug when reusing the same limiter across
  *                     multiple endpoints (e.g. `tickets:${userId}`).
  */
+/**
+ * Seconds until the sliding window admits the caller again, floored at one so
+ * a client never reads "retry now" off a 429 (#1697).
+ */
+export function retryAfterSeconds(
+  resetAtMs: number,
+  nowMs = Date.now(),
+): number {
+  if (!Number.isFinite(resetAtMs)) return 1;
+  return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
+}
+
 // Module scope, so the window is per function instance and resets with it.
 const REDIS_FAILURE_REPORT_INTERVAL_MS = 60_000;
 let lastRedisFailureReportAt = 0;
@@ -343,7 +370,7 @@ export async function applyRateLimit(
   identifier: string,
 ): Promise<NextResponse | null> {
   try {
-    const { success, remaining } = await limiter.limit(identifier);
+    const { success, remaining, reset } = await limiter.limit(identifier);
     if (!success) {
       return NextResponse.json(
         // Machine-readable code alongside the sentence: clients key the
@@ -352,7 +379,12 @@ export async function applyRateLimit(
         { error: "Too many requests. Please try again later.", code: "RATE_LIMITED" },
         {
           status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
+          headers: {
+            "X-RateLimit-Remaining": String(remaining),
+            // #1697 — background pollers back off by this rather than retrying
+            // on their own cadence; the window's reset is the honest figure.
+            "Retry-After": String(retryAfterSeconds(reset)),
+          },
         },
       );
     }
