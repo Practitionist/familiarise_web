@@ -141,6 +141,21 @@ export interface ValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
+  /**
+   * The conflicts behind the `[CONFLICT]` strings, structured so the validate
+   * routes can name the booking and its other party without parsing prose
+   * (the grid PR links them). Present only when the conflict check ran.
+   */
+  conflicts?: ConflictDetail[];
+}
+
+export interface ConflictDetail {
+  /** Seconds-precision UTC ISO of the proposed slot, as the routes report it. */
+  slot: string;
+  appointmentId: string;
+  type: "Consultation" | "Subscription" | "Booking";
+  /** The consultee on the conflicting booking, when it has one. */
+  otherParty: { userId: string; name: string | null } | null;
 }
 
 /**
@@ -156,6 +171,8 @@ export interface SlotConflictResult {
       type: string;
       with: string;
       time: string;
+      /** The conflicting booking, for the event's own consultant only. */
+      appointmentId?: string;
     };
   }>;
   outsideAvailability: Array<{
