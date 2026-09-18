@@ -1634,7 +1634,7 @@ export function ModerationPage() {
                     </p>
                   </div>
                   <div>
-                    <Label className="text-sm font-medium">Domain</Label>
+                    <Label className="text-sm font-medium">Field</Label>
                     <p className="text-sm text-muted-foreground">
                       {selectedProfile.consultant.domain}
                     </p>
