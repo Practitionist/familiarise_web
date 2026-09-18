@@ -299,24 +299,16 @@ export const CONSULTANT_LEGEND_KEYS: SlotStatusKey[] = [
 ];
 
 /**
- * The consultant legend trimmed to what THIS surface can paint (#1703 F4):
- * `thisEvent`/`rescheduling` only exist once the booking has sessions, and
- * `outsidePeriod` only when there is a scheduling period. A fresh allocation
- * reads six rows; a subscription reschedule is the one case that reads eight.
+ * The legend trimmed to the states the grid actually painted this render,
+ * in `order`'s sequence (#1703 QA-2). Deriving it from the cells rather than
+ * from the subject means a "This booking" cell on screen always has its row,
+ * and a state nobody can see never does. `null` — nothing painted yet —
+ * keeps the full set so the legend does not flash empty on first load.
  */
-export function consultantLegendKeys(surface: {
-  hasEventSlots: boolean;
-  hasPeriod: boolean;
-}): SlotStatusKey[] {
-  return CONSULTANT_LEGEND_KEYS.filter((key) => {
-    switch (key) {
-      case "thisEvent":
-      case "rescheduling":
-        return surface.hasEventSlots;
-      case "outsidePeriod":
-        return surface.hasPeriod;
-      default:
-        return true;
-    }
-  });
+export function legendKeysFor(
+  order: readonly SlotStatusKey[],
+  painted: ReadonlySet<SlotStatusKey> | null,
+): SlotStatusKey[] {
+  if (painted === null) return [...order];
+  return order.filter((key) => painted.has(key));
 }

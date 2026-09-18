@@ -15,7 +15,7 @@ import {
   SLOT_STATUS_TOKENS,
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
-  consultantLegendKeys,
+  legendKeysFor,
   resolveSlotStatusKey,
   slotCellClassName,
   type SlotStatusKey,
@@ -186,18 +186,26 @@ describe("slot palette — the two amber states are told apart without a hue", (
     expect(SLOT_STATUS_TOKENS.outsidePeriod.fill).toMatch(
       /repeating-linear-gradient\(45deg/,
     );
-    expect(
-      consultantLegendKeys({ hasEventSlots: false, hasPeriod: false }),
-    ).toEqual([
+  });
+
+  /**
+   * The legend follows the cells, not the subject (#1703 QA-2): a fresh
+   * single-session allocation with a "This booking" cell on screen must list
+   * it, and a state nobody can see must not appear.
+   */
+  it("lists exactly the painted states, in legend order", () => {
+    const painted = new Set<SlotStatusKey>([
+      "thisEvent",
       "available",
-      "selected",
-      "partiallyBooked",
-      "fullyBooked",
-      "past",
+      "unavailable",
     ]);
-    expect(
-      consultantLegendKeys({ hasEventSlots: true, hasPeriod: true }).length,
-    ).toBe(8);
+    expect(legendKeysFor(CONSULTANT_LEGEND_KEYS, painted)).toEqual([
+      "available",
+      "thisEvent",
+    ]);
+    expect(legendKeysFor(CONSULTANT_LEGEND_KEYS, null)).toEqual(
+      CONSULTANT_LEGEND_KEYS,
+    );
   });
 });
 

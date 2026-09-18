@@ -463,6 +463,8 @@ export interface UnifiedCalendarProps {
    * only when the profile has none (#1703 QA-1).
    */
   viewerZone?: string | null;
+  /** The states painted in the visible week, for a legend that shows only them (#1703 QA-2). */
+  onPaintedKeysChange?: (keys: ReadonlySet<SlotStatusKey>) => void;
 }
 
 export function UnifiedCalendar({
@@ -492,6 +494,7 @@ export function UnifiedCalendar({
   schedulingTimezone,
   focus,
   viewerZone,
+  onPaintedKeysChange,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
   // ONE zone for cells, labels, focus and the footer (#1703 QA-1). Read once:
@@ -1131,12 +1134,29 @@ export function UnifiedCalendar({
   // Dead-hour fold (#1703 F1): a row is live when any column in the visible
   // week has something in it. Computed from the fetched grid so a custom
   // week folds to its own shape, not the profile's.
-  const folded = useMemo(() => {
+  // One pass over the week gives both the dead-hour fold and the set of
+  // states painted, which the legend is trimmed to (#1703 QA-2).
+  const { folded, paintedKeys } = useMemo(() => {
+    const painted = new Set<SlotStatusKey>();
     const live = INTERVALS.map((interval) =>
-      weekDates.some((date) => describeCell(interval, date).isLive),
+      weekDates.reduce((anyLive, date) => {
+        const cell = describeCell(interval, date);
+        painted.add(cell.statusKey);
+        return anyLive || cell.isLive;
+      }, false),
     );
-    return foldDeadHourBands(live);
+    return { folded: foldDeadHourBands(live), paintedKeys: painted };
   }, [weekDates, describeCell]);
+
+  // Reported through a ref for the same reason as onSlotsSelected: a host
+  // passing an inline arrow must not restart this effect every render.
+  const onPaintedKeysChangeRef = useRef(onPaintedKeysChange);
+  useEffect(() => {
+    onPaintedKeysChangeRef.current = onPaintedKeysChange;
+  });
+  useEffect(() => {
+    onPaintedKeysChangeRef.current?.(paintedKeys);
+  }, [paintedKeys]);
 
   // Which bands the consultant has opened; remembered for the tab's session
   // and keyed by consultant so one grid's choice does not leak into another.
