@@ -44,8 +44,17 @@ export async function handleReviewPatch(
   }
   const parsed = ReviewVerificationSchema.safeParse(body);
   if (!parsed.success) {
+    // The schema's per-document refine fires before the core can; the
+    // response still carries the core's code so the modal can act on it.
+    const issueRequired = parsed.error.issues.some(
+      (issue) => issue.path.at(-1) === "issue",
+    );
     return NextResponse.json(
-      { error: "Validation failed", details: parsed.error.issues },
+      {
+        error: "Validation failed",
+        ...(issueRequired && { code: "ISSUE_REQUIRED" }),
+        details: parsed.error.issues,
+      },
       { status: 400 },
     );
   }
