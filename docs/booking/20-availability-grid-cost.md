@@ -46,6 +46,48 @@ the allocator agree on what is free for both parties — adds a second
 `appointment.findMany` and about five more statements on top of the totals
 above.
 
+## Bounding the poll itself (#1703, 2026-09-18/19)
+
+Two guards were added around the endpoint rather than inside its query plan,
+because the failure they close is a caller asking for too much, not the query
+being slow. `MAX_AVAILABILITY_WINDOW_DAYS = 31` in the route refuses a window
+wider than a month: the grid's cost is proportional to window width, so a
+caller asking for a whole scheduling period (six or twelve months) ran past
+the roughly 26-second edge-function ceiling and got a bare timeout instead of
+a JSON error. Every real client asks for a day, a week or a month, so the
+refusal only ever catches a caller that should have paginated. Separately,
+`availabilityGridLimiter` in `middleware.ts` caps the route at 120 requests a
+minute per IP, and every `429` it returns carries the server's own
+`Retry-After`, which the client's availability poller reads before it decides
+how long to back off — jittered by ±10-15 seconds per tick so a fleet of
+tabs recovering from a shared 429 does not re-synchronise into the next one.
+
+## The marker's window scope carries a version string (`av3`)
+
+The window-scoped tuple described in the section above (#1697 item 1) is
+this train's own change, landed in #1721: the marker moved from a
+consultant-wide scope to the requested-window scope, because the
+consultant-wide scope turned one booking into a simultaneous full-grid
+re-demand from every open calendar for that consultant, all serialised on a
+pool of one. `MARKER_VERSION = "av3"` (`lib/scheduling/availabilityGridMarker.ts`)
+is folded into the ETag alongside the tuple, so a client holding a stale
+pre-window-scoping tag can never collide with the new shape's tag.
+
+## A conditional GET that computes the right tag and still never 304s (#1723)
+
+The marker was verified correct on this train — week A's ETag stays stable
+across an unrelated week-B booking, and week B's own tag changes — but the
+conditional-GET path built on it does not close the loop. A request carrying
+the exact `If-None-Match` value the previous response returned still gets a
+full `200` with the full body, reproduced with curl and with node's `fetch`,
+with and without a session cookie, on both a deploy preview and production.
+Every poller and every focus-refetch is therefore paying the full read this
+page measures, on every tick, rather than the one-statement marker read the
+conditional GET exists to substitute. The fix is filed as #1723 rather than
+guessed at here; the suspects are ordered in that issue, starting with
+whether Netlify's request adapter for a `cache-control: private` route even
+forwards `if-none-match` into `NextRequest.headers`.
+
 ## The plan of the occupancy query
 
 Prisma compiles the occupancy filter into a single `SELECT` over `Appointment`
