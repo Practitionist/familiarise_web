@@ -88,10 +88,14 @@ function postWithOrigin(
       target,
       {
         method: "POST",
-        headers: { "Content-Type": "application/json", Origin: BASE_URL },
+        headers: { "Content-Type": "application/json", Origin: target.origin },
       },
       (res) => {
         let body = "";
+        res.once("error", reject);
+        res.once("aborted", () =>
+          reject(new Error(`login response aborted (${target.host})`)),
+        );
         res.on("data", (chunk: Buffer) => {
           body += chunk.toString();
         });
