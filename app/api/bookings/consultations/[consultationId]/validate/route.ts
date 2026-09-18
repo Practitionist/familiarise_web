@@ -17,6 +17,7 @@ import {
   validationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
+import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
@@ -51,6 +52,10 @@ export async function POST(
     if (authResult.error) return authResult.error;
 
     const { consultationId } = await params;
+
+    // Id shape before the authz read: no lookup on an arbitrary string.
+    const malformed = refuseMalformedEventId(consultationId);
+    if (malformed) return malformed;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
@@ -122,7 +127,9 @@ export async function POST(
       const consulteeUserId = (
         await prisma.consultation.findUnique({
           where: { id: consultationId },
-          select: { requestedBy: { select: { user: { select: { id: true } } } } },
+          select: {
+            requestedBy: { select: { user: { select: { id: true } } } },
+          },
         })
       )?.requestedBy?.user?.id;
 
@@ -234,7 +241,10 @@ export async function POST(
   } catch (error) {
     // Catch-all for unexpected errors (database errors, network issues, etc.)
     console.error("Validation error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     return NextResponse.json(
       {
         error:

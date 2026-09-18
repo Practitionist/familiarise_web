@@ -68,6 +68,8 @@ export interface AvailabilityPollerDeps {
   inFlight: () => Promise<unknown> | null;
   /** Runs one background availability fetch. */
   fetch: () => Promise<unknown>;
+  /** Poll cadence; the Requests tab's count poll runs shorter (#1706). */
+  intervalMs?: number;
 }
 
 export interface AvailabilityPoller {
@@ -115,7 +117,10 @@ export function createAvailabilityPoller(
   const arm = () => {
     if (!mayPoll()) return;
     clearPending();
-    timer = setTimeout(tick, nextPollDelay(deps.msSinceLastFetch()));
+    timer = setTimeout(
+      tick,
+      nextPollDelay(deps.msSinceLastFetch(), deps.intervalMs),
+    );
   };
 
   const tick = () => {

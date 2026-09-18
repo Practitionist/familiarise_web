@@ -76,13 +76,20 @@ export const consultantFetchers = {
       "Dashboard fetch failed",
     ),
 
-  appointments: (consultantId: string, orgScope?: string | null) =>
-    fetchWithErrorHandling<TAppointment[]>(
-      orgScope && orgScope !== "personal"
-        ? `/api/scheduling/appointments?consultantProfileId=${consultantId}&orgScope=${encodeURIComponent(orgScope)}`
-        : `/api/scheduling/appointments?consultantProfileId=${consultantId}`,
+  appointments: (
+    consultantId: string,
+    orgScope?: string | null,
+    window: "recent" | "all" = "recent",
+  ) => {
+    const params = new URLSearchParams({ consultantProfileId: consultantId });
+    if (orgScope && orgScope !== "personal") params.set("orgScope", orgScope);
+    // #1703 B12 — the default read is the last 12 months + future.
+    if (window === "all") params.set("window", "all");
+    return fetchWithErrorHandling<TAppointment[]>(
+      `/api/scheduling/appointments?${params}`,
       "Appointments fetch failed",
-    ),
+    );
+  },
 
   details: (consultantId: string) =>
     fetchWithErrorHandling<TConsultantProfile>(
@@ -203,10 +210,25 @@ export function createConsultantQueries(
       retry: 2,
     },
 
-    // Appointments with all statuses
+    // Appointments with all statuses, last 12 months + future (#1703 B12).
     appointments: {
       queryKey: ["consultant-appointments", consultantId, scopeKey] as const,
       queryFn: () => consultantFetchers.appointments(consultantId, orgScope),
+      staleTime: STALE_TIMES.SHORT,
+      gcTime: GC_TIME,
+      retry: 2,
+    },
+
+    // The unbounded read behind "Load older"; its own cache entry.
+    appointmentsAll: {
+      queryKey: [
+        "consultant-appointments",
+        consultantId,
+        scopeKey,
+        "all",
+      ] as const,
+      queryFn: () =>
+        consultantFetchers.appointments(consultantId, orgScope, "all"),
       staleTime: STALE_TIMES.SHORT,
       gcTime: GC_TIME,
       retry: 2,

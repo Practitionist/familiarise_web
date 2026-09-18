@@ -12,16 +12,20 @@ through `transitionConsultationRequest` / `transitionSubscriptionRequest`
 (doctrine rule 1); a miss rolls back / matches zero rows instead of
 corrupting state.
 
+The table below is `REQUEST_ALLOWED_FROM` as of 2026-09-18 (#1703), row by target state and column by the state the row must currently be in.
+
 | To ↓ From → | PENDING | APPROVED | APPROVED_PENDING_PAYMENT | SCHEDULED | COMPLETED | REJECTED | CANCELLED | EXPIRED |
 |---|---|---|---|---|---|---|---|---|
-| **PENDING** | — | ✓ (reschedule restore, policy-gated) | ✓ | | | | | |
-| **APPROVED** | ✓ | ✓ (allocation self-edge, `ALLOCATION_APPROVABLE_FROM`) | ✓ | | | | | |
+| **PENDING** | | | ✓ | | | | | |
+| **APPROVED** | ✓ | ✓ self-edge only via `fromIn` (`ALLOCATION_APPROVABLE_FROM`) | ✓ | | | | | |
 | **APPROVED_PENDING_PAYMENT** | ✓ | ✓ | | | | | | |
 | **SCHEDULED** | | ✓ | ✓ | | | | | |
-| **COMPLETED** | | | | ✓ | | | | |
+| **COMPLETED** | | ✓ | | ✓ | | | | |
 | **REJECTED** | ✓ | | ✓ | | | | | |
 | **CANCELLED** | ✓ | ✓ | ✓ | ✓ | | | | |
-| **EXPIRED** | ✓ (48h sweep) | ✓ (PR 2c: APPROVED-unallocated cohort) | ✓ (7d payment window) | | | | | |
+| **EXPIRED** | ✓ (48 h consultation / 30 d subscription sweep) | ✓ (PR 2c: APPROVED-unallocated cohort) | ✓ (7 d payment window) | | | | | |
+
+Two rows deserve a note. `PENDING` is reachable only from `APPROVED_PENDING_PAYMENT` in the map; the reschedule route's consultation restore to `PENDING` passes its own `fromIn` and is listed in the raw-writer inventory below. `SCHEDULED` is declared for consultations and subscriptions and its edges are legal, but no writer ever transitions either request type to it: allocation re-stamps `APPROVED`, completion goes `APPROVED → COMPLETED`, and the only `SCHEDULED` writes in the codebase are on `AppointmentOccurrence.completionStatus`, `Webinar`/`Class` and `Trial`. Treat it as an unreachable state on these two entities until a writer appears.
 
 Special sets:
 

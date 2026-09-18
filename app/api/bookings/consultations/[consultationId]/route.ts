@@ -23,6 +23,12 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import {
+  refuseMalformedEventId,
+  refusePlanNotOwned,
+} from "@/lib/booking/request-route-guards";
+import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
@@ -50,14 +56,16 @@ type ConsultationWithDetails = Prisma.Result<
         include: {
           consultantProfile: {
             include: {
-              user: true;
+              user: {
+                select: { id: true; name: true; email: true; image: true };
+              };
             };
           };
         };
       };
       requestedBy: {
         include: {
-          user: true;
+          user: { select: { id: true; name: true; email: true; image: true } };
         };
       };
       appointment: {
@@ -81,6 +89,8 @@ export async function GET(
     const { session } = authResult;
 
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
     const consultationData = await prisma.consultation.findUniqueOrThrow({
       where: { id: consultationId },
       include: {
@@ -172,6 +182,8 @@ export async function PUT(
     const { session } = authResult;
 
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
 
     // Fetch the consultation to check ownership
     const existingConsultation = await prisma.consultation.findUnique({
@@ -182,6 +194,8 @@ export async function PUT(
             consultantProfile: true,
           },
         },
+        // bookingOrgId's fallback when the plan carries no org.
+        appointment: { select: { organizationId: true } },
       },
     });
 
@@ -235,6 +249,23 @@ export async function PUT(
       );
     }
     const validatedBody = parseResult.data;
+
+    // #1704 — a planId is only accepted from the same consultant as the
+    // request; connecting any plan let a request migrate to another seller.
+    const planRefusal = await refusePlanNotOwned(
+      validatedBody.planId,
+      {
+        consultantProfileId:
+          existingConsultation.consultationPlan?.consultantProfileId,
+        organizationId: bookingOrgId(existingConsultation),
+      },
+      () =>
+        prisma.consultationPlan.findUnique({
+          where: { id: validatedBody.planId },
+          select: { consultantProfileId: true, organizationId: true },
+        }),
+    );
+    if (planRefusal) return planRefusal;
 
     const consultationData = await prisma.consultation.update({
       where: { id: consultationId },
@@ -347,8 +378,14 @@ export async function PATCH(
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
+    // #831 — the list PATCH had a limiter; the heavier detail PATCH did not.
+    const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (rl) return rl;
+
     const body = await request.json();
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
 
     const consultationPatchSchema = z.object({
       status: z.nativeEnum(AppointmentStatus),
@@ -372,14 +409,14 @@ export async function PATCH(
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: PARTY_USER_SELECT,
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: PARTY_USER_SELECT,
           },
         },
       },
@@ -472,14 +509,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -531,14 +568,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -601,14 +638,14 @@ export async function PATCH(
                         include: {
                           consultantProfile: {
                             include: {
-                              user: true,
+                              user: PARTY_USER_SELECT,
                             },
                           },
                         },
                       },
                       requestedBy: {
                         include: {
-                          user: true,
+                          user: PARTY_USER_SELECT,
                         },
                       },
                       appointment: {
