@@ -199,7 +199,16 @@ export class SchedulingService {
       });
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Allocation failed",
+        // 5xx answers never carry raw error text: pool timeouts, Prisma
+        // validation dumps, and constraint internals are operator detail
+        // (already in Sentry above), not user copy. Indeterminate wording —
+        // a 500 can fire on either side of the commit.
+        error:
+          httpStatus >= 500
+            ? "Couldn't save these times — check whether they appear, then retry."
+            : error instanceof Error
+              ? error.message
+              : "Allocation failed",
         errorCode,
         httpStatus,
         // #1206 — a shortage refusal carries the count the client needs to
@@ -789,6 +798,8 @@ export class SchedulingService {
       eventType,
       eventId,
       idempotencyKey,
+      undefined,
+      tx,
     );
     if (lockedReplay) return lockedReplay;
     await this.assertNoConfirmedSlots(tx, eventType, eventId);
@@ -815,6 +826,7 @@ export class SchedulingService {
       throw new AllocationConflictError(
         `This ${eventType} was already allocated in another session ` +
           `(${confirmed} confirmed slot(s) exist).`,
+        "ALREADY_ALLOCATED",
       );
     }
   }
@@ -835,6 +847,7 @@ export class SchedulingService {
         `Reschedule state changed in another session ` +
           `(expected ${expected} tentative slot(s), found ${actual}). ` +
           `Reload and try again.`,
+        "RESCHEDULE_STATE_CHANGED",
       );
     }
   }
@@ -903,10 +916,17 @@ export class SchedulingService {
      * requested approves stored times by definition.
      */
     expectedSlotStarts?: string[],
+    /**
+     * Pool-1 rule: inside a write transaction this MUST be the caller's tx —
+     * a global-client read while the txn holds the single pooled connection
+     * waits forever and surfaces as "timeout exceeded when trying to
+     * connect" (deploy-preview-only failure; local pools are 10).
+     */
+    db: PrismaLike = prisma,
   ): Promise<AllocationResult | null> {
     if (!idempotencyKey) return null;
 
-    const stamped = await prisma.appointment.findUnique({
+    const stamped = await db.appointment.findUnique({
       where: { allocationIdempotencyKey: idempotencyKey },
       select: {
         consultationId: true,
@@ -932,7 +952,7 @@ export class SchedulingService {
     }
 
     // The key only stamps the FIRST appointment; return the whole batch.
-    const appointments = await prisma.appointment.findMany({
+    const appointments = await db.appointment.findMany({
       where: {
         [`${relationField}Id`]: eventId,
       } as Prisma.AppointmentWhereInput,
@@ -974,7 +994,12 @@ export class SchedulingService {
     return {
       success: true,
       appointments,
-      ...(await this.replayPartialCounts(eventType, eventId, appointments)),
+      ...(await this.replayPartialCounts(
+        eventType,
+        eventId,
+        appointments,
+        db,
+      )),
     };
   }
 
@@ -997,19 +1022,20 @@ export class SchedulingService {
       deletedAt?: Date | null;
       occurrences?: { deletedAt?: Date | null; completionStatus?: string }[];
     }[],
+    db: PrismaLike = prisma,
   ): Promise<Partial<AllocationResult>> {
     if (!isRecurringEventType(eventType)) return {};
 
     const requiredSessions =
       eventType === "subscription"
         ? (
-            await prisma.subscription.findUnique({
+            await db.subscription.findUnique({
               where: { id: eventId },
               select: { subscriptionPlan: { select: { totalSessions: true } } },
             })
           )?.subscriptionPlan?.totalSessions
         : (
-            await prisma.class.findUnique({
+            await db.class.findUnique({
               where: { id: eventId },
               select: { classPlan: { select: { totalSessions: true } } },
             })
@@ -1460,6 +1486,7 @@ export class SchedulingService {
           ) {
             throw new AllocationConflictError(
               `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+              "ALREADY_ALLOCATED",
             );
           }
           // For in-progress: only block if future slots alone meet the future requirement
@@ -1470,6 +1497,7 @@ export class SchedulingService {
           ) {
             throw new AllocationConflictError(
               `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
+              "ALREADY_ALLOCATED",
             );
           }
         }
@@ -1648,6 +1676,7 @@ export class SchedulingService {
           if (!recheck.isValid) {
             throw new AllocationConflictError(
               `Slot taken during allocation: ${recheck.errors.join("; ")}`,
+              "SLOT_TAKEN",
             );
           }
 
@@ -2153,6 +2182,7 @@ export class SchedulingService {
           if (!recheck.isValid) {
             throw new AllocationConflictError(
               `Slot taken during allocation: ${recheck.errors.join("; ")}`,
+              "SLOT_TAKEN",
             );
           }
 
@@ -3769,12 +3799,17 @@ export class SchedulingService {
             include: { occurrences: true },
           })
         : await tx.appointment.create({
+            // Unchecked (scalar-FK) shape throughout, as checkout writes it.
+            // A relation-style `connect` next to any scalar FK makes Prisma
+            // validate against the checked input, which has no *Id fields —
+            // "Unknown argument cancellationPolicyId" (FAMILIARISE_WEB-4F).
             data: {
               appointmentType: this.getAppointmentType(eventType),
-              [relationField]: { connect: { id: eventId } },
+              [`${relationField}Id`]: eventId,
               ...idempotencyData,
-              ...(organizationId ? { organizationId } : {}),
-              // B1/#1499 — inherit the terms the booking was sold under.
+              organizationId: organizationId ?? null,
+              // B1/#1499 — inherit the terms the booking was sold under;
+              // NULL is the platform ladder.
               cancellationPolicyId: inheritedPolicyId,
               occurrences: { create: occurrencesToCreate },
             },
@@ -3814,6 +3849,7 @@ export class SchedulingService {
         // "someone else got there first" race, not a fault.
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
+          "SLOT_TAKEN",
         );
       }
       throw error;

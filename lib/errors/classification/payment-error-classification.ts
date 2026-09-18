@@ -62,6 +62,12 @@ export const ErrorTypes = {
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
   PAYMENT_PROCESSING: "PAYMENT_PROCESSING_ERROR",
   DATABASE: "DATABASE_ERROR",
+  // Contended checkout locks answer 409 with these literal codes (the route
+  // forwards error.code, not an ErrorTypes value). Registered so the second
+  // attempt — or a busy answer without retryAfter — gets a "still busy,
+  // card not charged" toast instead of UNKNOWN.
+  EVENT_CHECKOUT_BUSY: "EVENT_CHECKOUT_BUSY",
+  CONSULTEE_BOOKING_BUSY: "CONSULTEE_BOOKING_BUSY",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",

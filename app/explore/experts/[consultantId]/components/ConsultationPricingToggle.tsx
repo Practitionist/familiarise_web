@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
@@ -252,11 +253,13 @@ export default function ConsultationPricingToggle({
         body: JSON.stringify(requestBody),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to submit request for approval");
-      }
+      // Never bare response.json(): an edge 504/HTML page would throw a
+      // SyntaxError into the toast instead of the server's reason.
+      // requireJsonResponse throws on !ok, so reaching here means success.
+      await requireJsonResponse(
+        response,
+        "Failed to submit request for approval",
+      );
 
       toast({
         title: "Request Submitted",
@@ -269,7 +272,7 @@ export default function ConsultationPricingToggle({
     } catch (error) {
       console.error("Error requesting approval:", error);
       toast({
-        title: "Error",
+        title: "Couldn't submit approval request",
         description:
           error instanceof Error
             ? error.message

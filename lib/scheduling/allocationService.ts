@@ -97,6 +97,14 @@ export interface ValidationResponse {
 }
 
 /**
+ * A fetch that threw never got an HTTP answer, so the outcome is unknown:
+ * the request may have landed. Browser error text ("Failed to fetch",
+ * "Load failed") names nothing the consultant can act on and is Sentry's.
+ */
+export const REQUEST_INDETERMINATE_ERROR =
+  "Couldn't reach the server — check your connection, then look for the times before retrying.";
+
+/**
  * AllocationService - Pure API Client for Event Slot Management
  *
  * Handles all HTTP communication for slot allocation, validation,
@@ -128,6 +136,21 @@ export interface ValidationResponse {
  * ```
  */
 export class AllocationService {
+  /**
+   * Defensive JSON read shared by the validate endpoints: edge 504s/HTML
+   * error pages throw out of response.json(). Null means "no usable body" —
+   * callers answer with the HTTP status instead of a SyntaxError string.
+   */
+  private static async readValidationBody(
+    response: Response,
+  ): Promise<{ error?: string; data?: SlotConflictResult } | null> {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Shared PATCH for all four allocate endpoints.
    */
@@ -213,11 +236,58 @@ export class AllocationService {
         subsystem: "client",
         tags: { feature: "scheduling" },
       });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
+    }
+  }
+
+  /**
+   * One POST shared by the four validate endpoints: only the path, the log
+   * label, and the fallback sentence differ. (The four public wrappers used
+   * to carry full copies of this body — 4×41 duplicated lines.)
+   */
+  private static async postForValidation(
+    endpoint: string,
+    slots: string[],
+    logLabel: string,
+    fallbackError: string,
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ slots }),
+      });
+
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || fallbackError,
+        };
+      }
+
+      // A 2xx with no payload proves nothing about the slots: fail closed.
+      if (!data.data) {
+        return { success: false, error: fallbackError };
+      }
+
+      return { success: true, data: data.data };
+    } catch (error) {
+      console.error(`Error validating ${logLabel} slots:`, error);
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "scheduling",
+      });
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
     }
   }
 
@@ -228,43 +298,12 @@ export class AllocationService {
     consultationId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/consultations/${consultationId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate consultation slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating consultation slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/consultations/${consultationId}/validate`,
+      slots,
+      "consultation",
+      "Failed to validate consultation slots",
+    );
   }
 
   /**
@@ -274,43 +313,12 @@ export class AllocationService {
     subscriptionId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/subscriptions/${subscriptionId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate subscription slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating subscription slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/subscriptions/${subscriptionId}/validate`,
+      slots,
+      "subscription",
+      "Failed to validate subscription slots",
+    );
   }
 
   /**
@@ -387,43 +395,12 @@ export class AllocationService {
     classId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/classes/${classId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate class slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating class slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/classes/${classId}/validate`,
+      slots,
+      "class",
+      "Failed to validate class slots",
+    );
   }
 
   /**
@@ -433,43 +410,12 @@ export class AllocationService {
     webinarId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/webinars/${webinarId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate webinar slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating webinar slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/webinars/${webinarId}/validate`,
+      slots,
+      "webinar",
+      "Failed to validate webinar slots",
+    );
   }
 
   /**
