@@ -27,7 +27,9 @@ import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   MAX_ACTIVE_REQUESTS_PER_USER,
+  capacityRefusal,
   countActiveConsultationRequests,
+  pausedRefusal,
 } from "@/lib/booking/request-caps";
 
 import { getSession } from "@/lib/auth-server";
@@ -147,6 +149,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1703 D4 — the pause is a profile switch, so it is answered before any
+    // lock is taken; the cap needs a count and runs inside the slot lock.
+    const paused = pausedRefusal(consultationPlan.consultantProfile);
+    if (paused) {
+      return NextResponse.json(
+        { error: paused.message, code: paused.code },
+        { status: 409 },
+      );
+    }
+
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
@@ -204,6 +216,19 @@ export async function POST(req: NextRequest) {
             timestamp: new Date().toISOString(),
           }),
         );
+
+        // #1703 D4 — counted under the consultant-keyed lock so a burst on
+        // one slot cannot overshoot the cap by more than the lock allows.
+        const atCapacity = await capacityRefusal(
+          prisma,
+          consultationPlan.consultantProfile,
+        );
+        if (atCapacity) {
+          return NextResponse.json(
+            { error: atCapacity.message, code: atCapacity.code },
+            { status: 409 },
+          );
+        }
 
         // The 30-minute interval starts the window covers — the validator's
         // unit of arithmetic (#1554: the persisted shape is one row below).
