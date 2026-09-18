@@ -8,6 +8,11 @@ on:
     - cron: "20 3 * * *"
   workflow_dispatch: # allow manual trigger from the Actions tab
 
+# The job never writes to the repository, and it runs holding the database,
+# storage, Redis and email credentials.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
@@ -43,6 +48,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          # Otherwise the token is left in .git/config for every later step and
+          # every dependency they run. Nothing here needs to talk back to git.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5

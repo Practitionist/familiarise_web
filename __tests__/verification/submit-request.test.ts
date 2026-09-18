@@ -111,6 +111,27 @@ describe("submitVerificationRequest", () => {
     expect(outcome).toMatchObject({ ok: false, code: "DOCUMENTS_NOT_OWNED" });
   });
 
+  it("carries over the unflagged documents, including the ones nobody reviewed", async () => {
+    primeHappyPath();
+    const outcome = await submitVerificationRequest({
+      ...base,
+      documentIds: [],
+      carryOver: true,
+    });
+    expect(outcome).toMatchObject({ ok: true });
+    // `isValid: { not: false }` would compile to `<> false` and drop NULL rows.
+    expect(tx.profileVerificationDocument.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          verificationId: "open1",
+          issue: null,
+          OR: [{ isValid: true }, { isValid: null }],
+        },
+        data: expect.objectContaining({ verificationId: "new1" }),
+      }),
+    );
+  });
+
   it("refuses a request that would carry no document", async () => {
     primeHappyPath();
     tx.profileVerificationDocument.count.mockResolvedValue(0);

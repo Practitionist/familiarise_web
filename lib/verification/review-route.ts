@@ -33,10 +33,15 @@ const DECISION_MESSAGE: Record<ReviewDecision, string> = {
 };
 
 export async function handleReviewPatch(
-  body: unknown,
+  req: Request,
   verificationId: string,
   reviewerId: string,
 ): Promise<NextResponse> {
+  // A malformed body is the caller's mistake, not a 500.
+  const body: unknown = await req.json().catch(() => undefined);
+  if (body === undefined) {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
   const parsed = ReviewVerificationSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json(

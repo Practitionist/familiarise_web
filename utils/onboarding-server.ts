@@ -15,7 +15,6 @@ import {
 import type { StagedTrigger } from "@/lib/novu";
 import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
-import { documentDownloadPath } from "@/lib/verification/documents";
 import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
@@ -432,44 +431,13 @@ async function submitVerificationRequest(
     throw new Error("At least one verification document is required");
   }
 
-  const persistableDocs = verificationDocuments.filter(
-    isPersistableVerificationDoc,
-  ) as VerificationDocumentInput[];
-  const documentIds = persistableDocs
-    .filter((doc) => doc.id && !doc.isOnboardingUpload)
-    .map((doc) => doc.id as string);
-
-  // Legacy transient uploads (drafts saved before rows-at-upload).
-  const transient = persistableDocs.filter(
-    (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
-  );
-  if (transient.length > 0) {
-    const created = await prisma.$transaction(
-      transient.map((doc) =>
-        prisma.profileVerificationDocument.create({
-          data: {
-            uploadedByUserId: userId,
-            verificationId: null,
-            fileName: doc.fileName ?? "",
-            originalName: doc.originalName ?? "",
-            fileSize: doc.fileSize ?? 0,
-            mimeType: doc.mimeType ?? "",
-            fileUrl: "",
-            storagePath: doc.storagePath ?? "",
-            description: doc.description || null,
-          },
-          select: { id: true },
-        }),
-      ),
-    );
-    for (const row of created) {
-      await prisma.profileVerificationDocument.update({
-        where: { id: row.id },
-        data: { fileUrl: documentDownloadPath(row.id) },
-      });
-      documentIds.push(row.id);
-    }
-  }
+  // Every upload has a row since rows-at-upload, so only ids are linked; an
+  // id-less entry from an older draft is not persistable and defers instead.
+  const documentIds = (
+    verificationDocuments.filter(
+      isPersistableVerificationDoc,
+    ) as VerificationDocumentInput[]
+  ).map((doc) => doc.id as string);
 
   const outcome = await submitVerificationRequestCore({
     userId,

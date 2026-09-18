@@ -91,8 +91,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     const session = auth.session;
 
     const { verificationId } = await params;
-    const body = await req.json();
-    return await handleReviewPatch(body, verificationId, session.user.id);
+    return await handleReviewPatch(req, verificationId, session.user.id);
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

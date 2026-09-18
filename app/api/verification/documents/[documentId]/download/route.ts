@@ -3,6 +3,17 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { supabaseAdmin } from "@/lib/supabase";
 import { getSession } from "@/lib/auth-server";
+import {
+  normalizeDeclaredMime,
+  type SniffedMime,
+} from "@/lib/storage/sniff-mime";
+
+const INLINE_TYPES: ReadonlySet<string> = new Set<SniffedMime>([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+]);
 
 /**
  * GET /api/verification/documents/[documentId]/download
@@ -72,12 +83,15 @@ export async function GET(
 
     const body = Buffer.from(await data.arrayBuffer());
     const safeName = document.originalName.replace(/[^\w.-]+/g, "_");
+    // Only a byte-verified type renders inline; a legacy row's declared type
+    // was never sniffed, so anything else downloads as an opaque attachment.
+    const inline = INLINE_TYPES.has(normalizeDeclaredMime(document.mimeType));
     return new NextResponse(body, {
       status: 200,
       headers: {
-        "Content-Type": document.mimeType || "application/octet-stream",
+        "Content-Type": inline ? document.mimeType : "application/octet-stream",
         "Content-Length": String(body.length),
-        "Content-Disposition": `inline; filename="${safeName}"`,
+        "Content-Disposition": `${inline ? "inline" : "attachment"}; filename="${safeName}"`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },

@@ -201,10 +201,12 @@ export async function submitVerificationRequest(
           // 4. Carry over the unflagged documents of the previous request.
           if (input.carryOver && carrySource) {
             await tx.profileVerificationDocument.updateMany({
+              // `not: false` compiles to `<> false`, which drops NULL rows —
+              // an unreviewed document must carry over too.
               where: {
                 verificationId: carrySource.id,
                 issue: null,
-                isValid: { not: false },
+                OR: [{ isValid: true }, { isValid: null }],
               },
               data: {
                 verificationId: created.id,

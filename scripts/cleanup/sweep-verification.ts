@@ -58,16 +58,19 @@ async function sweepUnlinkedUploads(
   let deleted = 0;
   for (const row of rows) {
     try {
-      // Object first: a row without an object is harmless, an object without
-      // a row is the orphan this sweep exists to remove.
       if (!supabaseAdmin) throw new Error("SUPABASE_SERVICE_ROLE_KEY not set");
+      // Row first, guarded on "still unlinked": a submission that links the
+      // row between the read and this write keeps both row and object. An
+      // object left behind by a failed remove is harmless and re-swept never,
+      // so it is logged rather than retried.
+      const claimed = await prisma.profileVerificationDocument.deleteMany({
+        where: { id: row.id, verificationId: null },
+      });
+      if (claimed.count === 0) continue;
       const { error } = await supabaseAdmin.storage
         .from("documents")
         .remove([row.storagePath]);
       if (error) throw error;
-      await prisma.profileVerificationDocument.deleteMany({
-        where: { id: row.id, verificationId: null },
-      });
       deleted += 1;
     } catch (error) {
       errors.push(`unlinked ${row.id}: ${String(error)}`);
@@ -97,20 +100,33 @@ async function remindUnanswered(now: Date, errors: string[]): Promise<number> {
   let sent = 0;
   for (const row of rows) {
     try {
-      // Stamp first (CAS on the null) so a concurrent run cannot send twice.
-      const stamped = await prisma.consultantProfileVerification.updateMany({
-        where: { id: row.id, reminderSentAt: null },
-        data: { reminderSentAt: now },
+      // The stamp (CAS on the null, still NEEDS_INFO, still in the window)
+      // and the outbox row commit together: a stamp without a row would
+      // silence the reminder for good.
+      const staged = await prisma.$transaction(async (tx) => {
+        const stamped = await tx.consultantProfileVerification.updateMany({
+          where: {
+            id: row.id,
+            status: "NEEDS_INFO",
+            reminderSentAt: null,
+            reviewedAt: { lt: daysAgo(NEEDS_INFO_REMINDER_DAYS, now) },
+          },
+          data: { reminderSentAt: now },
+        });
+        if (stamped.count === 0) return null;
+        return stageVerificationDecidedEmail(
+          {
+            userId: row.consultantProfile.userId,
+            verificationId: row.id,
+            status: "NEEDS_INFO_REMINDER",
+            reason: row.rejectionReason || row.feedbackDetails || undefined,
+            dashboardUrl: `/dashboard/consultant/${row.consultantProfile.id}/settings`,
+            daysLeft: NEEDS_INFO_CLOSE_DAYS - NEEDS_INFO_REMINDER_DAYS,
+          },
+          tx,
+        );
       });
-      if (stamped.count === 0) continue;
-      const staged = await stageVerificationDecidedEmail({
-        userId: row.consultantProfile.userId,
-        verificationId: row.id,
-        status: "NEEDS_INFO_REMINDER",
-        reason: row.rejectionReason || row.feedbackDetails || undefined,
-        dashboardUrl: `/dashboard/consultant/${row.consultantProfile.id}/settings`,
-        daysLeft: NEEDS_INFO_CLOSE_DAYS - NEEDS_INFO_REMINDER_DAYS,
-      });
+      if (!staged) continue;
       await attemptOnboardingEmail(staged);
       sent += 1;
     } catch (error) {

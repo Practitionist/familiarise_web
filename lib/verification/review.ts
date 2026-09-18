@@ -162,9 +162,18 @@ async function stageDecisionNotices(
 }> {
   if (!args.consultantUserId) return { bell: null, email: null };
   const dashboardUrl = `/dashboard/consultant/${args.consultantProfileId}/settings`;
+  // The bell template branches on the decision, so NEEDS_INFO is named
+  // rather than mapped to the profile's PENDING_VERIFICATION.
   const bell = await notifyVerificationStatusChanged(
     args.consultantUserId,
-    { status: args.profileStatus, reason: args.reason, dashboardUrl },
+    {
+      status:
+        args.profileStatus === "PENDING_VERIFICATION"
+          ? "NEEDS_INFO"
+          : args.profileStatus,
+      reason: args.reason,
+      dashboardUrl,
+    },
     { tx },
   );
   const email =

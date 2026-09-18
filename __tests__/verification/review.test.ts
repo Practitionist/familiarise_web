@@ -149,6 +149,54 @@ describe("reviewVerification", () => {
     expect(rejected).toMatchObject({ ok: true, profileStatus: "REJECTED" });
   });
 
+  it("NEEDS_INFO names itself on the bell while the profile goes back to PENDING_VERIFICATION", async () => {
+    primeOpenRequest();
+    const outcome = await reviewVerification({ ...base, status: "NEEDS_INFO" });
+    expect(outcome).toMatchObject({
+      ok: true,
+      profileStatus: "PENDING_VERIFICATION",
+    });
+    expect(mockNotify).toHaveBeenCalledWith(
+      "u1",
+      expect.objectContaining({ status: "NEEDS_INFO" }),
+      { tx },
+    );
+    expect(mockStageEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "PENDING_VERIFICATION" }),
+      tx,
+    );
+  });
+
+  it("refuses an unknown request before any write", async () => {
+    tx.consultantProfileVerification.findUnique.mockResolvedValue(null);
+    const outcome = await reviewVerification({ ...base, status: "APPROVED" });
+    expect(outcome).toMatchObject({ ok: false, code: "NOT_FOUND" });
+    expect(tx.consultantProfileVerification.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rolls back when a fed-back document is not on this request", async () => {
+    primeOpenRequest();
+    tx.profileVerificationDocument.updateMany.mockResolvedValue({ count: 0 });
+    const outcome = await reviewVerification({
+      ...base,
+      status: "NEEDS_INFO",
+      documentFeedback: [
+        { documentId: "other", isValid: false, issue: "UNCLEAR_SCAN" },
+      ],
+    });
+    expect(outcome).toMatchObject({
+      ok: false,
+      code: "DOCUMENT_NOT_ON_REQUEST",
+    });
+    // Scoped to the request, so a document id from another request cannot be relabelled.
+    expect(tx.profileVerificationDocument.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "other", verificationId: "v1" },
+      }),
+    );
+    expect(tx.consultantProfile.update).not.toHaveBeenCalled();
+  });
+
   it("only NEEDS_INFO from PENDING; a NEEDS_INFO row cannot be asked again", async () => {
     primeOpenRequest();
     await reviewVerification({ ...base, status: "NEEDS_INFO" });
