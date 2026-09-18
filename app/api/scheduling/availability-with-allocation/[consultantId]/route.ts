@@ -228,6 +228,18 @@ export async function GET(
       );
     }
 
+    // A client-controlled zone string reaches `new Intl.DateTimeFormat` in the
+    // slot localizer, which throws RangeError on a bad IANA name — a 400, not
+    // a 500. Validated here so every downstream use is safe.
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    } catch (_error) {
+      return NextResponse.json(
+        { error: "Invalid timezone: must be a valid IANA timezone name" },
+        { status: 400 },
+      );
+    }
+
     // #1319 PR 9 — conditional GET, computed BEFORE the heavy reads.
     //
     // Every open calendar re-asks this endpoint once a minute (ADR 16: polling,

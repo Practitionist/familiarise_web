@@ -23,7 +23,11 @@
 
 import * as Sentry from "@sentry/nextjs";
 import prisma from "../../lib/prisma";
-import { RESCHEDULE_OPEN_STATUSES } from "../../lib/booking/transitions";
+import {
+  RESCHEDULE_OPEN_STATUSES,
+  transitionRescheduleRequest,
+} from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface RescheduleProposalExpiryResult {
@@ -41,6 +45,34 @@ export async function expireRescheduleProposals(): Promise<RescheduleProposalExp
   );
 }
 
+/**
+ * Expire one lapsed proposal through the guarded transition. Returns true
+ * when it moved. Throws on anything but a lost race so the caller aborts the
+ * batch loudly instead of skipping rows silently.
+ */
+async function expireOneProposal(id: string, now: Date): Promise<boolean> {
+  try {
+    await prisma.$transaction((tx) =>
+      transitionRescheduleRequest(tx, {
+        where: { id },
+        to: "EXPIRED",
+        // Repeat the cohort's stale-time predicate inside the CAS:
+        // expiry is creation-only (no writer extends it), but the
+        // predicate costs nothing and keeps the sweep honest if one
+        // ever appears.
+        whereAnd: { expiresAt: { lt: now } },
+        reason: "Proposal lapsed without an answer",
+      }),
+    );
+    return true;
+  } catch (error) {
+    // Answered between the read and the write — the answer wins, and
+    // there is nothing left to expire.
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
+  }
+}
+
 async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalExpiryResult> {
   const errors: string[] = [];
   let proposalsExpired = 0;
@@ -52,23 +84,44 @@ async function expireRescheduleProposalsUnlocked(): Promise<RescheduleProposalEx
 
     // The status+expiresAt index covers this predicate exactly.
     //
-    // Idempotent by construction: the WHERE clause only matches open proposals,
-    // and the update moves them out of that set, so a re-run after a partial
-    // failure picks up precisely what is left. Clearing openForAppointmentId
-    // releases the nullable-unique reservation so the pair can try again.
-    const expired = await prisma.rescheduleRequest.updateMany({
-      where: {
-        status: { in: RESCHEDULE_OPEN_STATUSES },
-        expiresAt: { lt: now },
-      },
-      data: {
-        status: "EXPIRED",
-        openForAppointmentId: null,
-        resolvedAt: now,
-      },
-    });
+    // One guarded transition per lapsed proposal rather than a bulk updateMany:
+    // the helper bakes the open-from set into the UPDATE's WHERE clause (a
+    // proposal answered between the read and the write matches zero rows
+    // instead of being overwritten) and appends the BookingStatusHistory row
+    // every other writer emits. Idempotent by construction: EXPIRED leaves the
+    // open set, so a re-run after a partial failure picks up precisely what is
+    // left. Clearing openForAppointmentId releases the nullable-unique
+    // reservation so the pair can try again.
+    //
+    // Bounded batches: a pathological backlog must not load every id or hold
+    // the hourly cron past the function ceiling — loop until a batch comes
+    // back short. Capped per invocation too: the GH Actions workflow times
+    // out at 10 minutes, and per-row transactions on a huge backlog could
+    // outrun it — the next hourly tick continues where this one stopped,
+    // since EXPIRED leaves the cohort.
+    const BATCH_SIZE = 500;
+    const MAX_BATCHES_PER_RUN = 4;
+    let batchesRun = 0;
+    for (;;) {
+      if (batchesRun >= MAX_BATCHES_PER_RUN) break;
+      const stale = await prisma.rescheduleRequest.findMany({
+        where: {
+          status: { in: RESCHEDULE_OPEN_STATUSES },
+          expiresAt: { lt: now },
+        },
+        orderBy: { id: "asc" },
+        take: BATCH_SIZE,
+        select: { id: true },
+      });
+      if (stale.length === 0) break;
 
-    proposalsExpired = expired.count;
+      for (const row of stale) {
+        if (await expireOneProposal(row.id, now)) proposalsExpired += 1;
+      }
+      batchesRun += 1;
+
+      if (stale.length < BATCH_SIZE) break;
+    }
 
     if (proposalsExpired > 0) {
       console.log(`   Expired ${proposalsExpired} proposal(s)`);

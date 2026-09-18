@@ -43,6 +43,8 @@ import {
   SubscriptionApiResponse,
 } from "./types";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
+import { AllocationService } from "@/lib/scheduling/allocationService";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
   allocationFailed,
@@ -50,6 +52,7 @@ import {
 } from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
+  fingerprintGuards,
   resolveAttemptKey,
   type AllocationAttemptKey,
 } from "@/hooks/scheduling/useScheduling";
@@ -496,17 +499,20 @@ function StoredTimes({ request }: { request: Request }) {
             key={`${request.id}-slot-${index}`}
             className={cn(
               "flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums",
-              slot.isTentative ? "text-amber-600" : "text-muted-foreground",
+              // Amber is reserved for released reschedules: a fresh hold is
+              // tentative too, but those times ARE the request.
+              isReleasedForReschedule(slot)
+                ? "text-amber-600"
+                : "text-muted-foreground",
             )}
           >
-            {slot.isTentative ? (
+            {isReleasedForReschedule(slot) ? (
               <AlertTriangle className="h-3 w-3 flex-shrink-0" />
             ) : (
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
             )}
             <span>{formatDateTime(slot.startsAt)}</span>
-            {slot.isTentative &&
-              slot.completionStatus === "RESCHEDULED" && (
+            {isReleasedForReschedule(slot) && (
                 <span className="sr-only">(needs rescheduling)</span>
               )}
           </div>
@@ -614,9 +620,8 @@ export function RequestSchedulingTab({
           ...consultationsResult.data.map((consultation) => {
             const slots = consultation.appointment?.occurrences || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
-            const rescheduledCount = slots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              slots.filter(isReleasedForReschedule).length;
             const totalCount = slots.length;
 
             return {
@@ -674,9 +679,8 @@ export function RequestSchedulingTab({
                 (appt) => appt.occurrences || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
-            const rescheduledCount = allSlots.filter(
-              (s) => s.completionStatus === "RESCHEDULED",
-            ).length;
+            const rescheduledCount =
+              allSlots.filter(isReleasedForReschedule).length;
             const totalCount = allSlots.length;
 
             return {
@@ -908,25 +912,41 @@ export function RequestSchedulingTab({
     }
 
     try {
-      const endpoint =
+      const eventType =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
-          ? `/api/bookings/subscriptions/${selectedRequestForDialog.id}/allocate`
-          : `/api/bookings/consultations/${selectedRequestForDialog.id}/allocate`;
+          ? "subscription"
+          : "consultation";
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("requested", selectedRequestForDialog.id, []),
+        computeAttemptFingerprint(
+          "requested",
+          selectedRequestForDialog.id,
+          [],
+          undefined,
+          // Same stale-tab guards as the body below: a guard change mints a
+          // fresh key so the server enforces it instead of replaying (#1012).
+          fingerprintGuards({
+            initialAllocation:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
+              undefined,
+            expectedTentativeSlotCount:
+              (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
+                ? selectedRequestForDialog.tentativeSlotCount
+                : undefined,
+          }),
+        ),
       );
       attemptKeyRef.current = attempt;
 
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          "Idempotency-Key": attempt.key,
-        },
-        body: JSON.stringify({
-          isAuto: false,
+      // Via the shared client so a non-JSON edge error still carries its HTTP
+      // status (fail-closed) and structured codes like IDEMPOTENCY_KEY_REUSE
+      // survive to the caller instead of collapsing into a generic Error.
+      const result = await AllocationService.allocateSlots(
+        eventType,
+        selectedRequestForDialog.id,
+        [],
+        {
           useRequestedSlots: true,
           override,
           // Fresh allocations only — partial reschedules legitimately have
@@ -939,18 +959,17 @@ export function RequestSchedulingTab({
             (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
               ? selectedRequestForDialog.tentativeSlotCount
               : undefined,
-        }),
-      });
+          idempotencyKey: attempt.key,
+        },
+      );
 
-      const data = await response.json();
-
-      if (response.status === 409) {
+      if (!result.success && result.httpStatus === 409) {
         handleConflict(selectedRequestForDialog.id);
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to allocate slots");
+      if (!result.success) {
+        throw new Error(result.error || "Failed to allocate slots");
       }
 
       // Success handling

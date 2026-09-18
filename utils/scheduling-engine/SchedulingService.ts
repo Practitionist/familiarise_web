@@ -24,7 +24,6 @@ import {
   Prisma,
   AppointmentStatus,
   ScheduleType,
-  OccurrenceCompletionStatus,
   AppointmentOccurrence,
 } from "@prisma/client";
 import { addMonths } from "date-fns";
@@ -36,6 +35,7 @@ import {
   ConsultantAllocationData,
   EventConfig,
   isRecurringEventType,
+  isReleasedForReschedule,
 } from "./types";
 import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import {
@@ -94,6 +94,7 @@ import {
   AllocationValidationError,
   AllocationNotFoundError,
   AllocationConflictError,
+  AllocationIdempotencyMismatchError,
   SlotShortageError,
 } from "./errors";
 import {
@@ -251,6 +252,9 @@ export class SchedulingService {
           request.wideLock,
           request.expectedTentativeSlotCount,
           request.excludeRescheduleRequestId,
+          // The consultant explicitly accepting these times as-is. Gated to
+          // the event consultant by the route (canOverride) before dispatch.
+          request.override,
         );
 
       case "requested":
@@ -555,6 +559,7 @@ export class SchedulingService {
       error instanceof AllocationValidationError ||
       error instanceof AllocationNotFoundError ||
       error instanceof AllocationConflictError ||
+      error instanceof AllocationIdempotencyMismatchError ||
       error instanceof IllegalTransitionError ||
       error instanceof ProgramAssignmentLimitError ||
       isUniqueViolation(error) ||
@@ -612,6 +617,9 @@ export class SchedulingService {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
     }
     if (error instanceof AllocationConflictError) {
+      return { errorCode: error.errorCode, httpStatus: error.httpStatus };
+    }
+    if (error instanceof AllocationIdempotencyMismatchError) {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
     }
     // #836 — consultee cancelled (or request expired) while the consultant
@@ -885,6 +893,16 @@ export class SchedulingService {
     eventType: EventType,
     eventId: string,
     idempotencyKey?: string,
+    /**
+     * Manual-mode slot starts (ISO strings) the caller is attempting. When the
+     * key already stamped a batch whose live occurrence starts differ, the key
+     * was reused with a different payload — a client bug, not a retry — so
+     * reject with 422 instead of replaying another request's batch (Stripe's
+     * request-hash rule). Omitted for auto/requested: auto slots are
+     * server-picked (the client fingerprint already separates intents) and
+     * requested approves stored times by definition.
+     */
+    expectedSlotStarts?: string[],
   ): Promise<AllocationResult | null> {
     if (!idempotencyKey) return null;
 
@@ -904,9 +922,11 @@ export class SchedulingService {
       `${relationField}Id`
     ];
     // Key is globally unique; a mismatch means the client reused it across
-    // bookings — refuse rather than hand back another event's appointments.
+    // bookings — a different payload under one key, which is a 422
+    // (IDEMPOTENCY_KEY_REUSE), not lock contention: nothing is contended,
+    // the key is simply burned for another event.
     if (stampedEventId !== eventId) {
-      throw new AllocationConflictError(
+      throw new AllocationIdempotencyMismatchError(
         "This idempotency key was already used for a different allocation.",
       );
     }
@@ -918,6 +938,39 @@ export class SchedulingService {
       } as Prisma.AppointmentWhereInput,
       include: { occurrences: true },
     });
+
+    if (expectedSlotStarts) {
+      // Compared against the batch's live FUTURE rows only: an in-progress
+      // recurring manual submit carries future slots while deliberately
+      // preserved past rows stay stamped, so testing the whole cohort would
+      // 422 a legitimate double-submit instead of replaying it.
+      //
+      // Expanded to interval starts before comparing: one occurrence covers
+      // one whole call with its real end ("the 30-minute intervals stay the
+      // unit of arithmetic, not the persisted shape"), while the attempt
+      // carries every 30-minute atom — an exact retry of a multi-slot
+      // session would otherwise mismatch on row count alone.
+      const now = new Date();
+      const stampedStarts = appointments
+        .flatMap((a) => a.occurrences ?? [])
+        .filter((o) => !o.deletedAt && o.endsAt > now)
+        .flatMap((o) => intervalStartsOf(o))
+        .map((start) => start.getTime())
+        .sort((a, b) => a - b);
+      const attemptedStarts = expectedSlotStarts
+        .map((s) => new Date(s).getTime())
+        .sort((a, b) => a - b);
+      const samePayload =
+        stampedStarts.length === attemptedStarts.length &&
+        stampedStarts.every((t, i) => t === attemptedStarts[i]);
+      if (!samePayload) {
+        throw new AllocationIdempotencyMismatchError(
+          "This idempotency key was already used with different slots. " +
+            "Reload and submit as a new allocation.",
+        );
+      }
+    }
+
     return {
       success: true,
       appointments,
@@ -1021,11 +1074,7 @@ export class SchedulingService {
   ): string[] {
     return appointments.flatMap((appointment) =>
       appointment.occurrences
-        .filter(
-          (slot) =>
-            slot.isTentative &&
-            slot.completionStatus === OccurrenceCompletionStatus.RESCHEDULED,
-        )
+        .filter(isReleasedForReschedule)
         .map((slot) => slot.id),
     );
   }
@@ -1540,7 +1589,12 @@ export class SchedulingService {
         config,
         appointmentIdsToExclude,
         // #676 AE-1 — also check the consultee's calendar
-        { consulteeUserId, excludeOccurrenceIds: occurrenceIdsToExclude },
+        {
+          consulteeUserId,
+          excludeOccurrenceIds: occurrenceIdsToExclude,
+          // Co-host arm: the consultant's own ACCEPTED seats occupy too.
+          consultantProfileId,
+        },
       );
 
       if (!validation.isValid) {
@@ -1589,6 +1643,7 @@ export class SchedulingService {
             appointmentIdsToExclude,
             consulteeUserId,
             occurrenceIdsToExclude,
+            consultantProfileId,
           );
           if (!recheck.isValid) {
             throw new AllocationConflictError(
@@ -1776,12 +1831,21 @@ export class SchedulingService {
      * reschedule confirmation paths reach the allocator in manual mode.
      */
     excludeRescheduleRequestId?: string,
+    /**
+     * The consultant explicitly accepting the selected times as-is: skips
+     * ONLY the availability-window check. Conflicts, caps, scheduling period
+     * and future-time all still apply.
+     */
+    override?: boolean,
   ): Promise<AllocationResult> {
     // #837 — return the prior batch on a double-submit before doing any work.
+    // A same-key submit with different slots is a client bug, not a retry:
+    // reject with 422 rather than replaying another payload's batch.
     const replay = await this.findIdempotentAllocation(
       eventType,
       eventId,
       idempotencyKey,
+      slotStrings,
     );
     if (replay) return replay;
 
@@ -1846,11 +1910,13 @@ export class SchedulingService {
       // #837 TOCTOU — the pre-lock replay check can miss a concurrent first
       // submit that stamped its key while we waited on the lock. Re-check now
       // that we hold the locks so the loser replays the winner's batch instead
-      // of racing into the unique-constraint 409.
+      // of racing into the unique-constraint 409. Same-key/different-slots
+      // still rejects with 422 here.
       const lockedReplay = await this.findIdempotentAllocation(
         eventType,
         eventId,
         idempotencyKey,
+        slotStrings,
       );
       if (lockedReplay) return lockedReplay;
 
@@ -2054,7 +2120,14 @@ export class SchedulingService {
         config,
         appointmentIdsToExclude,
         // #676 AE-1 — also check the consultee's calendar
-        { consulteeUserId, excludeOccurrenceIds: occurrenceIdsToExclude },
+        {
+          consulteeUserId,
+          excludeOccurrenceIds: occurrenceIdsToExclude,
+          // Co-host arm: the consultant's own ACCEPTED seats occupy too.
+          consultantProfileId,
+          // The consultant explicitly accepting these times as-is.
+          overrideAvailabilityWindow: override,
+        },
       );
 
       if (!validation.isValid) {
@@ -2075,6 +2148,7 @@ export class SchedulingService {
             appointmentIdsToExclude,
             consulteeUserId,
             occurrenceIdsToExclude,
+            consultantProfileId,
           );
           if (!recheck.isValid) {
             throw new AllocationConflictError(
@@ -2356,11 +2430,7 @@ export class SchedulingService {
           // exactly the times the consultee asked to move. Refuse; the consultant
           // must allocate (auto or manual) instead.
           const rescheduledSlots = existingAppointments.flatMap((appointment) =>
-            appointment.occurrences.filter(
-              (slot) =>
-                slot.completionStatus ===
-                OccurrenceCompletionStatus.RESCHEDULED,
-            ),
+            appointment.occurrences.filter(isReleasedForReschedule),
           );
 
           if (rescheduledSlots.length > 0) {
@@ -2413,7 +2483,12 @@ export class SchedulingService {
             consultant,
             config,
             existingAppointmentIds,
-            { consulteeUserId, overrideAvailabilityWindow },
+            {
+              consulteeUserId,
+              overrideAvailabilityWindow,
+              // Co-host arm: the consultant's own ACCEPTED seats occupy too.
+              consultantProfileId,
+            },
           );
 
           if (!validation.isValid) {

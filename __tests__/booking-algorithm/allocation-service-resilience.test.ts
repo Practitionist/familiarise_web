@@ -145,3 +145,24 @@ describe("allocateSlots with malformed 2xx bodies (fail-closed)", () => {
     expect(result.data).toEqual([{ id: "apt-1" }]);
   });
 });
+
+describe("allocateSlots with a non-UUID event id (fail-closed guard)", () => {
+  it("refuses with friendly copy that never leaks the id or internals", async () => {
+    const fetchSpy = jest.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await AllocationService.allocateSlots(
+      "consultation",
+      "mock-ui-consult-01",
+      [],
+      { isAuto: true },
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.errorCode).toBe("VALIDATION_ERROR");
+    expect(result.error).not.toContain("mock-ui-consult-01");
+    expect(result.error).not.toMatch(/UUID|CUID|reseed/i);
+    // Fail-closed before any network: no request is ever issued.
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});

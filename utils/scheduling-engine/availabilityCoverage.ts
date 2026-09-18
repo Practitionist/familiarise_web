@@ -23,6 +23,13 @@ export interface WindowAtom {
   day: number;
   minutes: number;
   start: Date;
+  /**
+   * Half-open end of the atom, clamped to the window end. Whole atoms span
+   * the full 30 minutes; a trailing partial atom (non-multiple window) is
+   * tested by containment of what the window actually covers — testing it as
+   * a full atom rejected windows a row fully contains.
+   */
+  end: Date;
 }
 
 const ATOM_MS = 30 * 60 * 1000;
@@ -30,12 +37,14 @@ const ATOM_MS = 30 * 60 * 1000;
 /** The 30-minute atoms of [start, end), keyed by UTC weekday + minute. */
 export function windowAtoms(start: Date, end: Date): WindowAtom[] {
   const atoms: WindowAtom[] = [];
-  for (let t = start.getTime(); t < end.getTime(); t += ATOM_MS) {
+  const endMs = end.getTime();
+  for (let t = start.getTime(); t < endMs; t += ATOM_MS) {
     const d = new Date(t);
     atoms.push({
       day: d.getUTCDay(),
       minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
       start: d,
+      end: new Date(Math.min(t + ATOM_MS, endMs)),
     });
   }
   return atoms;
@@ -48,11 +57,13 @@ export function findUncoveredAtom(
   customRows: CustomCoverageRow[],
 ): WindowAtom | null {
   for (const atom of atoms) {
+    const atomMinutes =
+      (atom.end.getTime() - atom.start.getTime()) / (60 * 1000);
     const inWeekly = weeklyRows.some((row) =>
       isMinuteWithinWeeklySlot(
         atom.day,
         atom.minutes,
-        30,
+        atomMinutes,
         row.startDay,
         row.startTimeUtc,
         row.endTimeUtc,
@@ -60,9 +71,8 @@ export function findUncoveredAtom(
       ),
     );
     if (inWeekly) continue;
-    const atomEnd = new Date(atom.start.getTime() + ATOM_MS);
     const inCustom = customRows.some(
-      (row) => atom.start >= row.startsAt && atomEnd <= row.endsAt,
+      (row) => atom.start >= row.startsAt && atom.end <= row.endsAt,
     );
     if (!inCustom) return atom;
   }

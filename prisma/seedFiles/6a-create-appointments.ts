@@ -748,7 +748,9 @@ async function createAppointmentBatch(
       await prisma.$transaction(
         async (tx) => {
           await tx.appointment.create({
-            data: appointmentData,
+            // #1708 — seeded parties share no real booking link, so the chat
+            // sweep can never ensure a channel; stamp it as decided.
+            data: { ...appointmentData, chatChannelEnsuredAt: new Date() },
           });
         },
         {

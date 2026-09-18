@@ -16,6 +16,9 @@
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
  * Functions runtime already provides.
+ *
+ * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
+ * from a scheduled function costs three invocations and reports nothing.
  */
 
 export const config = { schedule: "*/5 * * * *" };
@@ -63,6 +66,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
   // rows stays inside the target timeout even when Novu is slow.
   "drain-notification-outbox": 20,
+  // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
+  "reconcile-orphaned-confirmations": 10,
 };
 
 /**
@@ -72,6 +77,14 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  */
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "retry-failed-emails": 15,
+  // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
+  // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
+  "reconcile-ledgers": 15,
+  "sync-payment-earnings": 15,
+  "release-earnings": 15,
+  "cascade-refund-earnings": 15,
+  "reconcile-refunds": 15,
+  "abandoned-payments": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -97,6 +110,8 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
   "retry-failed-emails": 20_000,
   "drain-notification-outbox": 20_000,
+  // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
+  "reconcile-orphaned-confirmations": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
@@ -123,6 +138,23 @@ interface TickBody {
   lockHeld: string[];
   failed: { name: string; status: number }[];
   durationMs: number;
+}
+
+/**
+ * #1686 — the HTTP status a tick answers, exported so a test can pin it.
+ *
+ * Always 200, on purpose. The #1390 review had a tick with a failed target
+ * answer 500 so that it would not "self-report healthy"; what that bought was
+ * observed in the production function logs on 2026-09-17: Netlify re-invokes a
+ * scheduled function that answers 5xx, up to three attempts 4–11 s apart, each
+ * one re-firing every due target. With `reconcile-payment-status` failing on
+ * every tick, the ticker ran at 3× for weeks. A 5xx buys three invocations and
+ * nothing else — the target's own route has already logged its failure, the
+ * GitHub Actions twin is the backstop, and a warm-tick failure is read from the
+ * `failed` list in the JSON line this function logs, not from the status.
+ */
+export function statusFor(_failed: TickBody["failed"]): number {
+  return 200;
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -165,7 +197,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
-    return jsonResponse({ error }, 500);
+    // #1686 — a 5xx would only be re-invoked three times against the same
+    // missing secret; the log line is the signal.
+    return jsonResponse({ error }, 200);
   }
 
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
@@ -205,9 +239,6 @@ export default async function cronTick(_req: Request): Promise<Response> {
   };
   console.log(JSON.stringify(body));
 
-  // #1390 review — a 200 here reads as a healthy invocation to Netlify's
-  // function metrics/retries even when a target failed; failed sweeps still
-  // get picked up by the Actions backstop, but the tick itself should not
-  // self-report healthy.
-  return jsonResponse(body, failed.length > 0 ? 500 : 200);
+  // #1686 — 200 even with a non-empty `failed`; see statusFor.
+  return jsonResponse(body, statusFor(failed));
 }

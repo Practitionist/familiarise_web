@@ -18,6 +18,7 @@
 
 import "./setup";
 import {
+  buildCohostCommitmentFilter,
   buildConsultantOccupancyWhere,
   buildOccupiedAppointmentFilter,
   OCCUPIED_REQUEST_STATUSES,
@@ -29,7 +30,7 @@ const USER = "consultant-user-1";
 
 type WhereShape = ReturnType<typeof buildConsultantOccupancyWhere>;
 
-/** The two arms of the "reaches this consultant" clause. */
+/** The three arms of the "reaches this consultant" clause. */
 function reachArms(where: WhereShape) {
   const and = (where.AND ?? []) as Record<string, unknown>[];
   const reach = and[1] as { OR?: Record<string, unknown>[] };
@@ -40,7 +41,7 @@ describe("buildConsultantOccupancyWhere", () => {
   it("matches on slot participation as well as plan ownership", () => {
     const arms = reachArms(buildConsultantOccupancyWhere(PROFILE, USER));
 
-    expect(arms).toHaveLength(2);
+    expect(arms).toHaveLength(3);
 
     // Participation (#1554): the consultant holds a live seat, whatever plan
     // the appointment belongs to, and it has a live row. deletedAt: null — a
@@ -61,6 +62,35 @@ describe("buildConsultantOccupancyWhere", () => {
     expect(arms[1]).toEqual({
       OR: buildOccupiedAppointmentFilter(PROFILE),
     });
+
+    // Co-hosting: an ACCEPTED seat on a webinar/class plan commits real time
+    // but is neither participation nor ownership (AE-2 #784).
+    expect(arms[2]).toEqual({
+      OR: buildCohostCommitmentFilter(PROFILE),
+    });
+  });
+
+  it("scopes co-host commitments to ACCEPTED seats on this profile's plans", () => {
+    expect(buildCohostCommitmentFilter(PROFILE)).toEqual([
+      {
+        webinar: {
+          webinarPlan: {
+            collaborators: {
+              some: { consultantProfileId: PROFILE, status: "ACCEPTED" },
+            },
+          },
+        },
+      },
+      {
+        class: {
+          classPlan: {
+            collaborators: {
+              some: { consultantProfileId: PROFILE, status: "ACCEPTED" },
+            },
+          },
+        },
+      },
+    ]);
   });
 
   it("still constrains to active parent statuses", () => {

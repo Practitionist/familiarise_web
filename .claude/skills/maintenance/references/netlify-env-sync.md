@@ -70,6 +70,8 @@ done; done
 
 Set a missing context with `netlify env:set KEY VALUE --context production --secret` (the `--secret` flag requires an explicit non-development context), then redeploy: functions read their environment at deploy time, so the change is inert until the next build of that context. Scheduled functions run only on the published production deploy, so production is the context that matters for the ticker.
 
+One name, one value per context — never two names for one secret. Novu's Development and Production tenants have keys that only work on their own tenant, and the 2026-09-14 cutover first tried the natural-looking shape of carrying both keys everywhere under two names; the owner chose a per-tenant name resolved from the deploy context instead (`NOVU_PRODUCTION_KEY` where `NEXT_PUBLIC_SENTRY_ENVIRONMENT=production`, `NOVU_DEVELOPMENT_KEY` elsewhere, `lib/novu/secret-key.ts`), and the production key is set with `--context production` only, so a preview cannot reach real users' inboxes even by mistake. `KEEP_WARM_CONCURRENCY` (PR #1685) is the one optional, non-secret variable the four-minute `keep-warm` scheduled function reads; unset means 3, `0` disables it, and any change needs a redeploy to take effect.
+
 ## Step 5 — Verify
 
 Re-run `npx netlify-cli env:list --context production --plain` and confirm every approved change landed. Report: actions taken, warnings still open (test keys, empty OAuth), anything that couldn't be fixed and why. Remind the user that env changes only take effect on the **next deploy** — offer to trigger one (`npx netlify-cli deploy --build --prod`) but don't do it unasked.

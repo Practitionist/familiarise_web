@@ -1,0 +1,17 @@
+---
+title: Engineering log — 2026-09-18 — the ticker answers 200 (a 5xx scheduled function is re-invoked three times)
+band: perf
+audience: sde3
+status: live
+last-reviewed: 2026-09-18
+---
+
+# Engineering log — 2026-09-18 — the ticker answers 200 (a 5xx scheduled function is re-invoked three times)
+
+Reading the production function logs on 2026-09-17, on both the pre-release deploy (`6aa9858c`) and the post-release deploy (`6aac6c00`), surfaced three defects that predate the release and compound each other. None was a regression; all three had been running for as long as the ticker had been authenticating on production.
+
+The first is that the ticker was being re-invoked. `netlify/functions/cron-tick.mts` answered 500 whenever its `failed` list was non-empty, on the #1390 review's reasoning that a tick should not self-report healthy. Every tick with a non-empty `failed` was invoked three times, 4 to 11 seconds apart (22:50:18, 22:50:25 and 22:50:35 UTC; 22:55:13, 22:55:21 and 22:55:29 UTC; and every five-minute slot from 20:10 to 21:25 on the previous deploy), and each attempt re-fired every due target, while the `keep-warm` scheduled function, which answers 200, fired exactly once per slot. Netlify's documentation says scheduled functions "don't return a response body" and says nothing about retries, so this is recorded as an observed fact in `.claude/skills/deployment/netlify/platform-limits.md`. Because the second defect had made one target fail on every tick, the ticker had been running at three times its declared cadence: the arithmetic in #1686 and in the 2026-09-17 keep-warm log assumed one invocation per tick and was about three times too low for the ticker (roughly 3 × 13 × 288 ≈ 337,000 invocations a month, not 106,000). The fix is that `cronTick` always answers 200; `ok`, `lockHeld` and `failed` stay in the JSON line it logs, which is where the outcome has always been read, and the GitHub Actions twin is the backstop for a sweep that keeps failing. A 5xx bought three invocations and reported nothing the log line did not.
+
+The second and third were the two sweeps behind that non-empty `failed` list, and they were fixed the same night in PR #1709 (issue #1708) — the `#1645` class again, a permanent per-row state retried and reported as a run failure every tick. `reconcile-payment-status` now reports a gateway reference the gateway will never know (Stripe `resource_missing`, Razorpay 400/404 on the order) as `unresolvable` with a 207 and one Sentry warning per run, writing no `Payment` state; `reconcile-orphaned-confirmations` stamps a pair the #1188 DM gate refuses so it leaves the queue, and its channel pass takes ten appointments under a 20 s budget instead of two dozen under 6 s. The numbers that made the third one expensive are worth keeping: each refused pair cost about 1.2 s of Stream latency, the route ran 30 to 60 s per tick (one invocation logged `Duration: 60334 ms`, the Lambda kill), the ticker aborted it at 6 s, and Netlify billed the whole run — roughly 70 to 145 GB-hours a month of the 1,000 included, for zero work.
+
+After PR #1685's cadence change, #1709 and this one, the zero-user baseline is roughly 71,000 sweep invocations, 8,600 ticker invocations and 43,000 keep-warm invocations a month, about 123,000 against the 125,000 included, and the channel-pass duration waste is gone. The pin is `__tests__/maintenance/cron-tick-targets.test.ts` (a non-empty `failed` still answers 200); #1709 carries the pins for the two sweeps.
