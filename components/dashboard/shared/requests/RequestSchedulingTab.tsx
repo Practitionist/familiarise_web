@@ -48,7 +48,9 @@ import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
   allocationFailed,
+  allocationFailedWithCode,
   planConfigIncomplete,
+  requestChangedElsewhere,
 } from "@/lib/scheduling/allocationMessages";
 import {
   computeAttemptFingerprint,
@@ -107,7 +109,51 @@ interface Request {
 
 // interface SlotInterval { ... } // Removed - Now imported
 
+/**
+ * Classifies a failed requested-times approval so the handler stays flat.
+ * Only a genuine already-allocated answer removes the row: a stale
+ * tentative count or a co-host clash leaves the request allocatable, so
+ * closing + deleting the row would strand it (M5).
+ */
+function classifyRequestedConflict(result: {
+  success: boolean;
+  httpStatus?: number;
+  error?: string;
+  errorCode?: string;
+}): "genuine-conflict" | "stale" | "stay-open" | null {
+  if (result.success || result.httpStatus !== 409) return null;
+  switch (result.errorCode) {
+    case "ALREADY_ALLOCATED":
+      return "genuine-conflict";
+    case "RESCHEDULE_STATE_CHANGED":
+      return "stale";
+    default:
+      // Co-host clash, illegal transition, slot taken, lock busy, or a code
+      // this switch does not know: the request is still allocatable.
+      return "stay-open";
+  }
+}
+
 type RequestType = "all" | "consultation" | "subscription";
+
+/**
+ * The stale-tab guard pair for a requested-times approval, shared verbatim
+ * by the idempotency fingerprint and the request body: if the two disagree,
+ * a guard change mints a key the server never enforces against (or
+ * vice versa). Fresh allocations only — partial reschedules legitimately
+ * have confirmed slots and must not trip the already-allocated guard (#837);
+ * the tentative count is the #1012 stale-tab precondition.
+ */
+function requestedAllocationGuards(request: Pick<Request, "tentativeSlotCount">): {
+  initialAllocation: true | undefined;
+  expectedTentativeSlotCount: number | undefined;
+} {
+  const tentative = request.tentativeSlotCount ?? 0;
+  return {
+    initialAllocation: tentative === 0 || undefined,
+    expectedTentativeSlotCount: tentative > 0 ? tentative : undefined,
+  };
+}
 
 interface RequestSchedulingTabProps {
   type: RequestType;
@@ -570,6 +616,7 @@ export function RequestSchedulingTab({
     useState<Request | null>(null);
   /** Respond-accept in flight — holds the dialog and disables its exits. #1163 */
   const [respondInFlight, setRespondInFlight] = useState(false);
+  const [allocatingRequest, setAllocatingRequest] = useState(false);
   /** Row awaiting the decline confirmation, and the decline in flight. */
   const [declineTarget, setDeclineTarget] = useState<Request | null>(null);
   const [declining, setDeclining] = useState(false);
@@ -911,12 +958,18 @@ export function RequestSchedulingTab({
       return;
     }
 
+    // Pending state for the confirm button: without it clicks give zero
+    // feedback and double-submits are only saved by the idempotency ref.
+    setAllocatingRequest(true);
     try {
       const eventType =
         selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
           ? "subscription"
           : "consultation";
 
+      // Same stale-tab guards as the body below: a guard change mints a
+      // fresh key so the server enforces it instead of replaying (#1012).
+      const guards = requestedAllocationGuards(selectedRequestForDialog);
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
         computeAttemptFingerprint(
@@ -924,17 +977,7 @@ export function RequestSchedulingTab({
           selectedRequestForDialog.id,
           [],
           undefined,
-          // Same stale-tab guards as the body below: a guard change mints a
-          // fresh key so the server enforces it instead of replaying (#1012).
-          fingerprintGuards({
-            initialAllocation:
-              (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
-              undefined,
-            expectedTentativeSlotCount:
-              (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
-                ? selectedRequestForDialog.tentativeSlotCount
-                : undefined,
-          }),
+          fingerprintGuards(guards),
         ),
       );
       attemptKeyRef.current = attempt;
@@ -949,21 +992,33 @@ export function RequestSchedulingTab({
         {
           useRequestedSlots: true,
           override,
-          // Fresh allocations only — partial reschedules legitimately have
-          // confirmed slots and must not trip the already-allocated guard.
-          initialAllocation:
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) === 0 ||
-            undefined,
-          // #1012 — stale-tab reschedule precondition.
-          expectedTentativeSlotCount:
-            (selectedRequestForDialog.tentativeSlotCount ?? 0) > 0
-              ? selectedRequestForDialog.tentativeSlotCount
-              : undefined,
+          ...guards,
           idempotencyKey: attempt.key,
         },
       );
 
-      if (!result.success && result.httpStatus === 409) {
+      const conflict = classifyRequestedConflict(result);
+      if (conflict === "stale") {
+        // The row changed elsewhere: close (the open dialog still shows the
+        // stale tentative count and would rebuild the same burned
+        // precondition on retry) and refetch; the row itself stays.
+        toast(requestChangedElsewhere());
+        setRequestedSlotsDialogOpen(false);
+        setSelectedRequestForDialog(null);
+        fetchData();
+        onUpdate();
+        return;
+      }
+      if (conflict === "stay-open") {
+        toast(
+          allocationFailedWithCode(
+            result.error ?? "Failed to allocate slots",
+            result.errorCode,
+          ),
+        );
+        return;
+      }
+      if (conflict === "genuine-conflict") {
         handleConflict(selectedRequestForDialog.id);
         return;
       }
@@ -1000,6 +1055,8 @@ export function RequestSchedulingTab({
           error instanceof Error ? error.message : "Failed to allocate slots",
         ),
       );
+    } finally {
+      setAllocatingRequest(false);
     }
   };
 
@@ -1037,7 +1094,7 @@ export function RequestSchedulingTab({
         { tags: { subsystem: "client" } },
       );
       toast({
-        title: "Error",
+        title: "Couldn't decline request",
         description:
           error instanceof Error ? error.message : "Failed to decline request",
         variant: "destructive",
@@ -1350,7 +1407,7 @@ export function RequestSchedulingTab({
                 }
               : undefined
           }
-          confirming={respondInFlight}
+          confirming={respondInFlight || allocatingRequest}
           rescheduleNeedsAllocator={
             // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
             // the stored times un-approvable: they are the times being moved

@@ -330,6 +330,14 @@ describe("#1206 top-up allocation", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/delete/i);
+    // The mock transaction has no delete members, so the delete path throws
+    // here instead of quietly passing. 5xx answers never carry raw error
+    // text (a TypeError reading "...deleteMany is not a function" is
+    // operator detail), so the contract is the fixed copy + UNKNOWN_ERROR.
+    expect(result.error).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+    expect(result.errorCode).toBe("UNKNOWN_ERROR");
+    expect(result.httpStatus).toBe(500);
   });
 });

@@ -7,7 +7,6 @@ import {
   type TimePickerSubject,
 } from "@/components/scheduling/time-picker-policy";
 import { toast } from "@/components/ui/use-toast";
-import { allocatedElsewhere } from "@/lib/scheduling/allocationMessages";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 
 /**
@@ -42,10 +41,11 @@ export function AllocateClient({
       });
       goBack();
     },
-    // 409: another session allocated this request first. The list IS the
-    // answer — the row will simply be gone.
+    // 409: another session allocated this request first. The hook already
+    // toasted allocatedElsewhere() — this only navigates (a second toast
+    // here double-announced it). The list IS the answer — the row will
+    // simply be gone.
     onConflict: () => {
-      toast(allocatedElsewhere());
       goBack();
     },
   });
@@ -56,6 +56,9 @@ export function AllocateClient({
       policy={policy}
       subject={subject}
       onCancel={goBack}
+      // The legend lives between the grid and the action footer here: the
+      // footer is always on screen, and the top space goes to the heatmap.
+      legendPosition="bottom"
     />
   );
 }

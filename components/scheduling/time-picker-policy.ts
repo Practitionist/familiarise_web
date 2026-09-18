@@ -145,6 +145,11 @@ export interface TimePickerSubject {
   slots?: OccurrenceLike[];
   /** A session is already released and awaiting a new time. */
   hasReleasedSlots?: boolean;
+  /**
+   * Who the task is for (allocate page only) — rendered into the hint line
+   * so the page needs no separate heading for it.
+   */
+  consulteeName?: string;
 }
 
 /** Lead time the reschedule API enforces server-side; mirrored for the UI. */

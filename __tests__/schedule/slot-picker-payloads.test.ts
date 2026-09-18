@@ -239,4 +239,20 @@ describe("readAllocationRequest slot payload", () => {
     );
     expect(request?.hasReleasedSlots).toBe(false);
   });
+
+  it("misses cleanly when the id lives under the other product (canonical redirect relies on this)", async () => {
+    // A consultation id queried as a subscription: the page tries the named
+    // table first, then the other one, redirecting to ?type=<correct> — so
+    // the miss must be a null, never a throw or a wrong-typed row.
+    const subscriptionFindUnique = prisma.subscription
+      .findUnique as jest.Mock;
+    subscriptionFindUnique.mockResolvedValue(null);
+
+    await expect(
+      readAllocationRequest("consultation-1", "subscription"),
+    ).resolves.toBeNull();
+    expect(subscriptionFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "consultation-1" } }),
+    );
+  });
 });

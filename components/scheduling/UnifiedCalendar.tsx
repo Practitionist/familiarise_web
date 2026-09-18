@@ -383,6 +383,12 @@ export interface UnifiedCalendarProps {
   expectedTentativeSlotCount?: number;
   onClose?: () => void;
   showAllocationButtons?: boolean;
+  /**
+   * Rendered between the grid and the footer (stats + actions). Lets a host
+   * place the status legend right under the cells it explains instead of
+   * below the buttons.
+   */
+  aboveActionsSlot?: React.ReactNode;
   preSelectedSlots?: CalendarInterval[];
   requestedSlots?: CalendarInterval[];
   className?: string;
@@ -424,6 +430,7 @@ export function UnifiedCalendar({
   expectedTentativeSlotCount,
   onClose,
   showAllocationButtons = false,
+  aboveActionsSlot,
   preSelectedSlots = [],
   requestedSlots = [],
   className = "",
@@ -515,6 +522,23 @@ export function UnifiedCalendar({
     return eventSlots.filter((s) => s.endTime <= now).length;
   }, [eventSlots]);
 
+  // Stay-open failures (slot taken, co-host busy, transient lock) leave the
+  // dialog open against stale cells: refetch both grids so the retry is
+  // picked fresh. Best-effort — a refetch failure must never mask the toast
+  // that explains the original failure. Doubles as the default onConflict
+  // refresh when the policy leaves it undefined (a 409 is proof of
+  // staleness, not a hint).
+  const refreshGridData = useCallback(() => {
+    void Promise.all([refetchAvailability(), refetchEventSlots()]).catch(
+      (error) => {
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
+      },
+    );
+  }, [refetchAvailability, refetchEventSlots]);
+
   // Slot allocation hook
   const {
     selectedSlots,
@@ -561,7 +585,8 @@ export function UnifiedCalendar({
     expectedTentativeSlotCount,
     schedulingTimezone,
     onSuccess: handleAllocationSuccess,
-    onConflict: onAllocationConflict,
+    onConflict: onAllocationConflict ?? refreshGridData,
+    onStaleData: refreshGridData,
   });
 
   // Radix keeps AlertDialogContent mounted for its exit animation, and both
@@ -1072,11 +1097,13 @@ export function UnifiedCalendar({
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = SLOT_STATUS_TOKENS.rescheduling.label;
       } else if (status.isBookedForDisplay) {
-        cellClassName += " cursor-pointer";
+        // View mode is read-only: a pointer cursor promises an action the
+        // early-returning click handler never takes.
+        cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = SLOT_STATUS_TOKENS.fullyBooked.label;
       } else if (status.isPartiallyBooked) {
-        cellClassName += " cursor-pointer";
+        cellClassName += mode === "view" ? " cursor-default" : " cursor-pointer";
         cellClassName += status.isInPast ? " opacity-50" : "";
         buttonText = SLOT_STATUS_TOKENS.partiallyBooked.label;
       } else if (status.isAvailable) {
@@ -1474,6 +1501,7 @@ export function UnifiedCalendar({
       )}
 
       {/* Footer */}
+      {aboveActionsSlot}
       <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
@@ -1595,6 +1623,11 @@ export function UnifiedCalendar({
             size="sm"
             onClick={() => autoAllocate(availableSlots)}
             disabled={isAllocating}
+            title={
+              isAllocating
+                ? "Saving times — wait for the current attempt to finish."
+                : "Automatically place every session on free times."
+            }
           >
             <Zap className="h-4 w-4 mr-2" />
             Auto Allocate
