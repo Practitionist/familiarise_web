@@ -5,6 +5,8 @@
  * consistency and reduce duplication.
  */
 
+import type { StagedTrigger } from "@/lib/novu/outbox";
+
 /**
  * Allocation modes supported by the system
  */
@@ -207,6 +209,12 @@ export type AllocationErrorCode =
  */
 export interface AllocationResult {
   success: boolean;
+  /**
+   * #1697 item 5 — outbox rows staged inside the write transaction.
+   * `SchedulingService.allocate` strips this and attempts them post-commit;
+   * it never reaches a route response.
+   */
+  stagedNotices?: StagedTrigger[];
   appointments?: any[]; // Appointment records created
   error?: string;
   errorCode?: AllocationErrorCode;

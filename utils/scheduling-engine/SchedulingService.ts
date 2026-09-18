@@ -109,8 +109,11 @@ import {
 import {
   notifyAppointmentBooked,
   notifyAppointmentPartiallyScheduled,
+  attemptTrigger,
+  type StagedTrigger,
 } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { notificationHref } from "@/lib/novu/resolve-href";
 
 type AppointmentWithSlots = Appointment & {
@@ -155,26 +158,22 @@ export class SchedulingService {
    */
   static async allocate(request: AllocationRequest): Promise<AllocationResult> {
     try {
-      const result = await this.dispatch(request);
+      const { stagedNotices, ...result } = await this.dispatch(request);
       // PR 2c — the allocation-time notification (audit G1 / B9's promised
       // completion): APPOINTMENT_BOOKED was deliberately skipped at payment
       // when no slots existed; THIS is where the times finally exist, so both
       // parties hear about them from every caller path (routes, auto-confirm,
-      // accept-proposal). Fire-and-forget: a Novu outage must never fail an
-      // allocation.
-      // #1206 — the suppressor. A top-up that placed nothing is a successful
-      // no-op, and the sweep runs hourly against every incomplete event, so
-      // notifying here would page the consultee once an hour until their
-      // consultant happens to publish more availability.
-      if (result.success && result.noChange !== true) {
-        void this.notifyAllocationPlaced(request.eventType, request.eventId, {
-          // #1206 — tell the consultee HOW MANY sessions are scheduled and
-          // that the rest follow, rather than a bare "you're booked".
-          partial: result.partial === true,
-          placedSessions: result.placedSessions,
-          requiredSessions: result.requiredSessions,
-          unplacedSessions: result.unplacedSessions,
-        }).catch(() => {});
+      // accept-proposal).
+      // #1697 item 5 — the outbox rows were STAGED inside the write
+      // transaction (ADR 27), so a rollback takes them and an instance freeze
+      // after the response cannot lose them: the relay delivers what this
+      // attempt does not. Only the attempt is post-commit and best-effort.
+      // #1206 — a top-up that placed nothing stages nothing (see the
+      // suppressor at the staging site), so nothing is attempted here.
+      if (stagedNotices && stagedNotices.length > 0) {
+        scheduleAfter(async () => {
+          for (const staged of stagedNotices) await attemptTrigger(staged);
+        });
       }
       return result;
     } catch (error) {
@@ -291,7 +290,8 @@ export class SchedulingService {
    * times exist. Completes the B9 story: payment skipped this notification
    * for slot-less bookings on purpose.
    */
-  private static async notifyAllocationPlaced(
+  private static async stageAllocationNotices(
+    tx: Tx,
     eventType: EventType,
     eventId: string,
     /**
@@ -304,7 +304,8 @@ export class SchedulingService {
       requiredSessions?: number;
       unplacedSessions?: number;
     },
-  ): Promise<void> {
+  ): Promise<StagedTrigger[]> {
+    const prisma = tx;
     let context: {
       userIds: string[];
       // #1206 — the partial notice goes to these only; the consultant was
@@ -347,7 +348,7 @@ export class SchedulingService {
           },
         },
       });
-      if (!row?.appointment) return;
+      if (!row?.appointment) return [];
       context = {
         userIds: [
           row.consultationPlan.consultantProfile.user.id,
@@ -391,7 +392,7 @@ export class SchedulingService {
           },
         },
       });
-      if (!row?.appointment) return;
+      if (!row?.appointment) return [];
       context = {
         userIds: [
           row.subscriptionPlan.consultantProfile.user.id,
@@ -436,10 +437,10 @@ export class SchedulingService {
           },
         },
       });
-      if (!row?.appointment) return;
+      if (!row?.appointment) return [];
       const plan = row.webinarPlan;
       const hostUser = plan.consultantProfile?.user;
-      if (!hostUser) return;
+      if (!hostUser) return [];
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
       for (const slot of row.appointment.occurrences) {
@@ -492,11 +493,11 @@ export class SchedulingService {
           },
         },
       });
-      if (!row?.appointment) return;
+      if (!row?.appointment) return [];
       const appts = [row.appointment];
       const plan = row.classPlan;
       const hostUser = plan.consultantProfile?.user;
-      if (!hostUser) return;
+      if (!hostUser) return [];
       const host = hostUser;
       const userMap = new Map<string, string>();
       let firstStart: Date | null = null;
@@ -524,7 +525,7 @@ export class SchedulingService {
       };
     }
 
-    if (!context || context.userIds.length === 0) return;
+    if (!context || context.userIds.length === 0) return [];
 
     const payload = {
       ...notificationScope(context.organizationId),
@@ -537,19 +538,28 @@ export class SchedulingService {
       dashboardUrl: notificationHref(context.organizationId, "appointments"),
     };
 
-    await notifyAppointmentBooked(context.userIds, payload);
+    const results = await notifyAppointmentBooked(context.userIds, payload, {
+      tx,
+    });
 
     // #1206 — a second, separate notice rather than a flag on the booking one:
     // the times that WERE placed are a real booking and read as one, and the
     // thing the consultee has to be told is what happened to the rest.
     if (partial?.partial && context.consulteeUserIds.length > 0) {
-      await notifyAppointmentPartiallyScheduled(context.consulteeUserIds, {
-        ...payload,
-        placedSessions: partial.placedSessions ?? 0,
-        requiredSessions: partial.requiredSessions ?? 0,
-        unplacedSessions: partial.unplacedSessions ?? 0,
-      });
+      results.push(
+        ...(await notifyAppointmentPartiallyScheduled(
+          context.consulteeUserIds,
+          {
+            ...payload,
+            placedSessions: partial.placedSessions ?? 0,
+            requiredSessions: partial.requiredSessions ?? 0,
+            unplacedSessions: partial.unplacedSessions ?? 0,
+          },
+          { tx },
+        )),
+      );
     }
+    return results.flatMap((r) => (r.staged ? [r.staged] : []));
   }
 
   /**
@@ -1861,11 +1871,27 @@ export class SchedulingService {
             excludeRescheduleRequestId,
           );
 
+          // #1697 item 5 — staged in THIS transaction; attempted after commit.
+          const stagedNotices = await SchedulingService.stageAllocationNotices(
+            tx,
+            eventType,
+            eventId,
+            partialPlacement
+              ? {
+                  partial: true,
+                  placedSessions,
+                  requiredSessions: requestedSessions,
+                  unplacedSessions: requestedSessions - placedSessions,
+                }
+              : undefined,
+          );
+
           return {
             success: true,
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
+            stagedNotices,
             // #1206 — the counts the toast, the consultee notice and the
             // hourly retry sweep all read.
             ...(partialPlacement
@@ -2357,6 +2383,11 @@ export class SchedulingService {
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
+            stagedNotices: await SchedulingService.stageAllocationNotices(
+              tx,
+              eventType,
+              eventId,
+            ),
           };
         },
         {
@@ -2709,6 +2740,11 @@ export class SchedulingService {
             success: true,
             appointments: existingAppointments,
             warnings: validation.warnings,
+            stagedNotices: await SchedulingService.stageAllocationNotices(
+              tx,
+              eventType,
+              eventId,
+            ),
           };
         },
         {
