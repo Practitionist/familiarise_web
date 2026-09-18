@@ -1,6 +1,15 @@
 import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
+
+/** The page envelope both list routes return beside `data` (#1704). */
+export interface ListMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 interface UserInfo {
   id: string;
   name: string;

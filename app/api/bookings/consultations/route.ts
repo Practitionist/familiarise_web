@@ -7,6 +7,10 @@ import {
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import {
+  parseRequestListQuery,
+  requestListOrderBy,
+} from "@/lib/booking/list-query";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -27,11 +31,17 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
     const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const status = searchParams.get("status") as AppointmentStatus | null;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    // #1704 — validated, clamped paging; a bad value is a 400, not a 500.
+    const listQuery = parseRequestListQuery(searchParams);
+    if (!listQuery.ok) {
+      return NextResponse.json(
+        { error: listQuery.error, code: listQuery.code },
+        { status: 400 },
+      );
+    }
+    const { page, limit, status, sortOrder } = listQuery.query;
 
-    const whereClause: Record<string, unknown> = {};
+    const whereClause: Prisma.ConsultationWhereInput = {};
 
     // Authorization: filter by ownership for non-privileged users.
     // #org-appts — profile ids are carried independently of the singular
@@ -170,9 +180,7 @@ export async function GET(request: NextRequest) {
           requestedBy: PROFILE_WITH_USER_SELECT,
           appointment: APPOINTMENT_LIST_SELECT,
         },
-        orderBy: {
-          requestedAt: "desc",
-        },
+        orderBy: requestListOrderBy(sortOrder),
         skip: (page - 1) * limit,
         take: limit,
       }),

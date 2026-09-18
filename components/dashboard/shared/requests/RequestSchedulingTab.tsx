@@ -38,10 +38,12 @@ import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import {
   ConsultationApiResponse,
+  ListMeta,
   RequestedBy,
   RescheduleProposalInfo,
   SubscriptionApiResponse,
 } from "./types";
+import { REQUEST_LIST_DEFAULT_LIMIT } from "@/lib/booking/list-query";
 import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
 import { AllocationService } from "@/lib/scheduling/allocationService";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
@@ -135,6 +137,8 @@ function classifyRequestedConflict(result: {
 }
 
 type RequestType = "all" | "consultation" | "subscription";
+type PagedKind = Exclude<RequestType, "all">;
+const PAGED_KINDS: readonly PagedKind[] = ["consultation", "subscription"];
 
 /**
  * The stale-tab guard pair for a requested-times approval, shared verbatim
@@ -144,7 +148,9 @@ type RequestType = "all" | "consultation" | "subscription";
  * have confirmed slots and must not trip the already-allocated guard (#837);
  * the tentative count is the #1012 stale-tab precondition.
  */
-function requestedAllocationGuards(request: Pick<Request, "tentativeSlotCount">): {
+function requestedAllocationGuards(
+  request: Pick<Request, "tentativeSlotCount">,
+): {
   initialAllocation: true | undefined;
   expectedTentativeSlotCount: number | undefined;
 } {
@@ -223,10 +229,11 @@ function answerableProposal(request: Request): RescheduleProposalInfo | null {
   return proposal;
 }
 
-// Helper function to fetch and process data
+// Helper function to fetch and process data. `meta` is the server's page
+// envelope; the tab used to discard it and so could never page (#1704).
 async function fetchDataFromApi<T>(
   url: string,
-): Promise<{ ok: boolean; data: T | null; error?: string }> {
+): Promise<{ ok: boolean; data: T | null; meta?: ListMeta; error?: string }> {
   try {
     const response = await fetch(url);
     if (!response.ok) {
@@ -242,7 +249,12 @@ async function fetchDataFromApi<T>(
     const data = await response.json();
     // Ensure data exists and has the expected structure
     if (data && data.data !== undefined) {
-      return { ok: true, data: data.data as T, error: undefined };
+      return {
+        ok: true,
+        data: data.data as T,
+        meta: data.meta,
+        error: undefined,
+      };
     } else {
       console.error(`Unexpected response structure from ${url}:`, data);
       return {
@@ -473,6 +485,61 @@ function formatRelativeTime(at: Date): string {
   return at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * "Showing 1–10 of 12 consultations" with Prev/Next. One per list, because
+ * the two lists page independently on the server and a single combined
+ * pager would have to lie about one of them (#1704).
+ */
+function ListPager({
+  label,
+  meta,
+  page,
+  disabled,
+  onPage,
+}: Readonly<{
+  label: string;
+  meta: ListMeta;
+  page: number;
+  disabled: boolean;
+  onPage: (page: number) => void;
+}>) {
+  if (meta.total === 0) return null;
+  const start = (page - 1) * meta.limit + 1;
+  const end = Math.min(meta.total, page * meta.limit);
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+      <span aria-live="polite">
+        Showing {start}&ndash;{end} of {meta.total} {label}
+      </span>
+      {meta.totalPages > 1 && (
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled || page <= 1}
+            onClick={() => onPage(page - 1)}
+            aria-label={`Previous page of ${label}`}
+          >
+            Prev
+          </Button>
+          <span className="tabular-nums">
+            {page} / {meta.totalPages}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={disabled || page >= meta.totalPages}
+            onClick={() => onPage(page + 1)}
+            aria-label={`Next page of ${label}`}
+          >
+            Next
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RescheduleBadge({ request }: { request: Request }) {
   // Only actual reschedule releases badge. A fresh REQUEST_SUBMITTED hold is
   // tentative too, but those times ARE the request — badging them "Full
@@ -559,8 +626,8 @@ function StoredTimes({ request }: { request: Request }) {
             )}
             <span>{formatDateTime(slot.startsAt)}</span>
             {isReleasedForReschedule(slot) && (
-                <span className="sr-only">(needs rescheduling)</span>
-              )}
+              <span className="sr-only">(needs rescheduling)</span>
+            )}
           </div>
         ))}
         {hidden > 0 && (
@@ -608,6 +675,15 @@ export function RequestSchedulingTab({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [requests, setRequests] = useState<Request[]>([]);
+  /** One page cursor and one envelope per list; the two lists page apart. */
+  const [pages, setPages] = useState<Record<PagedKind, number>>({
+    consultation: 1,
+    subscription: 1,
+  });
+  const [listMeta, setListMeta] = useState<Record<PagedKind, ListMeta | null>>({
+    consultation: null,
+    subscription: null,
+  });
   /** When the rows on screen were last successfully read. */
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
@@ -631,13 +707,13 @@ export function RequestSchedulingTab({
     let succeeded = false;
 
     try {
-      // Fetch data in parallel (only PENDING requests).
+      // Fetch data in parallel (only PENDING requests), one page each.
       const [consultationsResult, subscriptionsResult] = await Promise.all([
         fetchDataFromApi<ConsultationApiResponse[]>(
-          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}`,
+          `/api/bookings/consultations?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}&page=${pages.consultation}&limit=${REQUEST_LIST_DEFAULT_LIMIT}`,
         ),
         fetchDataFromApi<SubscriptionApiResponse[]>(
-          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}`,
+          `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}&page=${pages.subscription}&limit=${REQUEST_LIST_DEFAULT_LIMIT}`,
         ),
       ]);
 
@@ -667,8 +743,9 @@ export function RequestSchedulingTab({
           ...consultationsResult.data.map((consultation) => {
             const slots = consultation.appointment?.occurrences || [];
             const tentativeCount = slots.filter((s) => s.isTentative).length;
-            const rescheduledCount =
-              slots.filter(isReleasedForReschedule).length;
+            const rescheduledCount = slots.filter(
+              isReleasedForReschedule,
+            ).length;
             const totalCount = slots.length;
 
             return {
@@ -726,8 +803,9 @@ export function RequestSchedulingTab({
                 (appt) => appt.occurrences || [],
               ) || [];
             const tentativeCount = allSlots.filter((s) => s.isTentative).length;
-            const rescheduledCount =
-              allSlots.filter(isReleasedForReschedule).length;
+            const rescheduledCount = allSlots.filter(
+              isReleasedForReschedule,
+            ).length;
             const totalCount = allSlots.length;
 
             return {
@@ -814,6 +892,10 @@ export function RequestSchedulingTab({
 
       // --- Update State ---
       setRequests(processedRequests);
+      setListMeta({
+        consultation: consultationsResult.meta ?? null,
+        subscription: subscriptionsResult.meta ?? null,
+      });
       succeeded = true;
     } catch (err) {
       // This catch block now primarily handles errors during data *processing*
@@ -834,12 +916,24 @@ export function RequestSchedulingTab({
     }
     // orgScope belongs here: fetchData builds both URLs from it, so without it
     // a scope change without a remount keeps refetching the previous org's rows.
+    // `pages` too: a page change is a new read.
     //
     // `error` must NOT: it is written by this callback and read by the effect
     // that calls it, so a failing endpoint looped — fail, set error, new
     // identity, refire, clear error, new identity, refire — hammering the API
     // and never letting the error view settle.
-  }, [consultantId, type, orgScope]);
+  }, [consultantId, type, orgScope, pages]);
+
+  // A page past the end (the last row on it was allocated) snaps back to the
+  // last real page rather than showing an empty table with a Prev button.
+  useEffect(() => {
+    for (const kind of PAGED_KINDS) {
+      const meta = listMeta[kind];
+      if (meta && meta.totalPages > 0 && pages[kind] > meta.totalPages) {
+        setPages((prev) => ({ ...prev, [kind]: meta.totalPages }));
+      }
+    }
+  }, [listMeta, pages]);
 
   // Fetches once. Nothing refetches on its own — not a timer, not focus.
   //
@@ -908,8 +1002,7 @@ export function RequestSchedulingTab({
         // either way this snapshot is stale; resync instead of retrying.
         toast({
           title: "Could not confirm",
-          description:
-            data.error || "This proposal can no longer be accepted.",
+          description: data.error || "This proposal can no longer be accepted.",
           variant: "destructive",
         });
         setRequestedSlotsDialogOpen(false);
@@ -1378,6 +1471,29 @@ export function RequestSchedulingTab({
             getRowId={(r) => r.id}
             breakpoint="lg"
           />
+        )}
+
+        {(listMeta.consultation || listMeta.subscription) && (
+          <div className="mt-4 space-y-2 px-4 sm:px-0">
+            {PAGED_KINDS.map((kind) => {
+              const meta = listMeta[kind];
+              if (!meta || (type !== "all" && type !== kind)) return null;
+              return (
+                <ListPager
+                  key={kind}
+                  label={
+                    kind === "consultation" ? "consultations" : "subscriptions"
+                  }
+                  meta={meta}
+                  page={pages[kind]}
+                  disabled={loading}
+                  onPage={(next) =>
+                    setPages((prev) => ({ ...prev, [kind]: next }))
+                  }
+                />
+              );
+            })}
+          </div>
         )}
 
         <RequestedSlotsDialog
