@@ -207,6 +207,25 @@ export function canSubmitVerification(args: {
   return args.hasConsultantProfile && args.role === "CONSULTANT";
 }
 
+/**
+ * Who may add a consultant identity to an already-onboarded account (PR-6 of
+ * the onboarding train). EXPERT invites are strict — accepting needs a real
+ * `ConsultantProfile` — but `requireNotOnboarded` keeps a finished user out of
+ * the wizard, so a learner or an org operator invited as an expert had no way
+ * forward. Pure so the layout guard, the action and the tests share it.
+ */
+export function canAddConsultantIdentity(user: {
+  role: string | null | undefined;
+  onboardingCompleted: boolean | null | undefined;
+  consultantProfileId: string | null | undefined;
+}): boolean {
+  return (
+    user.onboardingCompleted === true &&
+    !user.consultantProfileId &&
+    (user.role === "CONSULTEE" || user.role === "ORG_WORKSPACE")
+  );
+}
+
 // ============================================================================
 // PROFESSIONAL BACKGROUND VALIDATION
 // ============================================================================

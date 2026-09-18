@@ -8,7 +8,7 @@ last-reviewed: 2026-06-05
 
 # Roles and permissions
 
-Every membership row carries a typed `MemberRole`. The enum is unified —
+Every membership row carries a typed `MemberRole`. How the membership role combines with the platform identity (`User.role`) and the organisation's capabilities — which pairs the invite and accept routes allow, refuse, or route through the wizard's add mode — is the matrix in [docs/onboarding/02-identity-and-org-permutations.md](../../onboarding/02-identity-and-org-permutations.md). The enum is unified —
 there is exactly one role namespace, with values chosen to avoid any
 collision with the platform-level `UserRole` enum.
 

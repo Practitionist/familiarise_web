@@ -1,7 +1,10 @@
 "use server";
 
 import { z } from "zod";
-import { processOnboardingData } from "@/utils/onboarding-server";
+import {
+  addConsultantIdentity,
+  processOnboardingData,
+} from "@/utils/onboarding-server";
 import { resolveOnboardingEmailUpdate } from "@/utils/onboarding-shared";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
@@ -108,6 +111,111 @@ export async function updateOnboardingInformationAction(
   return processOnboardingData(userId, body);
 }
 // #endregion
+
+/**
+ * Add a consultant identity to an already-onboarded CONSULTEE / ORG_WORKSPACE
+ * account (PR-6 of the onboarding train — the EXPERT-invite dead end). Self
+ * only: no privileged bypass, the wizard's add mode is the only caller. Same
+ * email-ownership and submit rate limit as first-time onboarding.
+ */
+export async function addConsultantIdentityAction(
+  userId: string,
+  body: unknown,
+): Promise<{
+  success: boolean;
+  user?: Record<string, unknown>;
+  error?: string;
+  verificationWarning?: string;
+  verificationDeferred?: boolean;
+}> {
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    return { success: false, error: "Unauthorized" };
+  }
+  if (session.user.id !== userId) {
+    return { success: false, error: "Forbidden" };
+  }
+  const bodyEmail =
+    typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>).email
+      : undefined;
+  const emailCheck = resolveOnboardingEmailUpdate({
+    bodyEmail,
+    sessionEmail: session.user.email,
+    isPrivileged: false,
+  });
+  if (!emailCheck.ok) {
+    return { success: false, error: emailCheck.error };
+  }
+  const limited = await applyRateLimit(
+    onboardingSubmitLimiter,
+    session.user.id,
+  );
+  if (limited) {
+    return {
+      success: false,
+      error: "Too many requests. Please try again later.",
+    };
+  }
+  return addConsultantIdentity(userId, body);
+}
+
+/**
+ * The identity fields the add-mode wizard pre-fills step 0 with (PR-6). Self
+ * only. Dates are returned as ISO strings for the wizard's Zod reviver.
+ */
+export async function loadIdentitySeedAction(): Promise<
+  | {
+      success: true;
+      seed: {
+        name: string;
+        email: string;
+        phone?: string;
+        timezone?: string;
+        dateOfBirth?: string;
+        gender?: string | null;
+        city?: string;
+        country?: string;
+        bio?: string;
+        linkedinUrl?: string;
+      };
+    }
+  | { success: false; error: string }
+> {
+  const session = await getSession(true);
+  if (!session?.user?.id) return { success: false, error: "Unauthorized" };
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+    select: {
+      name: true,
+      email: true,
+      phone: true,
+      timezone: true,
+      dateOfBirth: true,
+      gender: true,
+      city: true,
+      country: true,
+      bio: true,
+      linkedinUrl: true,
+    },
+  });
+  if (!user) return { success: false, error: "User not found" };
+  return {
+    success: true,
+    seed: {
+      name: user.name,
+      email: user.email,
+      phone: user.phone ?? undefined,
+      timezone: user.timezone ?? undefined,
+      dateOfBirth: user.dateOfBirth?.toISOString().slice(0, 10),
+      gender: user.gender,
+      city: user.city ?? undefined,
+      country: user.country ?? undefined,
+      bio: user.bio ?? undefined,
+      linkedinUrl: user.linkedinUrl ?? undefined,
+    },
+  };
+}
 
 /**
  * Persist the user's selected UserRole mid-onboarding. Used by the

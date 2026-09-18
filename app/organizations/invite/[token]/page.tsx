@@ -69,6 +69,8 @@ export default function InviteAcceptPage({
     "idle" | "accepting" | "success" | "error"
   >("idle");
   const [error, setError] = useState<string | null>(null);
+  // The raw code, for the one refusal that has a next step of its own.
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [result, setResult] = useState<AcceptResponse | null>(null);
 
   // Fetch invitation preview on mount — no auth required.
@@ -79,13 +81,24 @@ export default function InviteAcceptPage({
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) {
-          setPreview({ phase: "invalid", message: body.error ?? "This invitation is no longer valid." });
+          setPreview({
+            phase: "invalid",
+            message: body.error ?? "This invitation is no longer valid.",
+          });
         } else {
-          setPreview({ phase: "valid", orgName: body.orgName, orgLogo: body.orgLogo, role: body.role });
+          setPreview({
+            phase: "valid",
+            orgName: body.orgName,
+            orgLogo: body.orgLogo,
+            role: body.role,
+          });
         }
       })
       .catch(() => {
-        setPreview({ phase: "invalid", message: "Could not load invitation details." });
+        setPreview({
+          phase: "invalid",
+          message: "Could not load invitation details.",
+        });
       });
   }, [token]);
 
@@ -133,6 +146,7 @@ export default function InviteAcceptPage({
         // Accept errors are machine codes (NOT_A_CONSULTANT, CONSENT_REQUIRED,
         // ...) — humanize before display so invitees see the sentence, not
         // the code. Unknown strings pass through verbatim.
+        setErrorCode(err.message);
         setError(humanizeOrgError(err.message));
         setStatus("error");
       });
@@ -142,9 +156,7 @@ export default function InviteAcceptPage({
   useEffect(() => {
     if (status === "success" && result) {
       const t = setTimeout(() => {
-        router.push(
-          `/dashboard/organization/${result.organization.id}/home`,
-        );
+        router.push(`/dashboard/organization/${result.organization.id}/home`);
       }, 1200);
       return () => clearTimeout(t);
     }
@@ -167,7 +179,13 @@ export default function InviteAcceptPage({
         <CardHeader className="text-center">
           <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-100 flex items-center justify-center overflow-hidden">
             {orgLogo ? (
-              <Image src={orgLogo} alt={orgName ?? "Organization"} width={48} height={48} className="object-cover" />
+              <Image
+                src={orgLogo}
+                alt={orgName ?? "Organization"}
+                width={48}
+                height={48}
+                className="object-cover"
+              />
             ) : (
               <Building2 className="w-6 h-6 text-zinc-600" />
             )}
@@ -213,7 +231,9 @@ export default function InviteAcceptPage({
                 <div className="text-center space-y-2 py-2">
                   <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto" />
                   <p className="text-base font-medium text-zinc-900">
-                    {result.alreadyMember ? "You're already a member!" : "You're in!"}
+                    {result.alreadyMember
+                      ? "You're already a member!"
+                      : "You're in!"}
                   </p>
                   <p className="text-sm text-zinc-500">
                     {result.alreadyMember
@@ -227,6 +247,15 @@ export default function InviteAcceptPage({
                   <p className="text-sm text-zinc-700">
                     {error ?? "We could not accept this invitation."}
                   </p>
+                  {errorCode === "NOT_A_CONSULTANT" ? (
+                    // The wizard's add mode creates the expert profile on this
+                    // account and returns here to finish accepting (PR-6).
+                    <Link
+                      href={`/form/onboarding?add=CONSULTANT&callbackUrl=${encodeURIComponent(`/organizations/invite/${token}`)}`}
+                    >
+                      <Button size="sm">Set up your expert profile</Button>
+                    </Link>
+                  ) : null}
                   <Link href="/dashboard">
                     <Button variant="outline" size="sm">
                       Go to dashboard
