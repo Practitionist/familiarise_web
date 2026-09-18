@@ -27,9 +27,7 @@ import {
   Trophy,
   ChevronLeft,
   ChevronRight,
-  Info,
 } from "lucide-react";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import type { OnboardingFormData } from "@/utils/onboarding";
 import type { PersonalInfoAndRole } from "@/schemas/user";
 
@@ -51,33 +49,29 @@ export default function ConsultantProfessionalStep({
     useState<Partial<OnboardingFormData> | null>(null);
 
   // Professional background state
-  const [workExperiences, setWorkExperiences] = useState<WorkExperience[]>(
-    () =>
-      (initialData?.workExperiences || []).map((exp, i) => ({
-        ...exp,
-        id: exp.id || `work_init_${i}`,
-      })),
+  const [workExperiences, setWorkExperiences] = useState<WorkExperience[]>(() =>
+    (initialData?.workExperiences || []).map((exp, i) => ({
+      ...exp,
+      id: exp.id || `work_init_${i}`,
+    })),
   );
-  const [education, setEducation] = useState<Education[]>(
-    () =>
-      (initialData?.educationHistory || []).map((edu, i) => ({
-        ...edu,
-        id: edu.id || `edu_init_${i}`,
-      })),
+  const [education, setEducation] = useState<Education[]>(() =>
+    (initialData?.educationHistory || []).map((edu, i) => ({
+      ...edu,
+      id: edu.id || `edu_init_${i}`,
+    })),
   );
-  const [certifications, setCertifications] = useState<Certification[]>(
-    () =>
-      (initialData?.certificationsList || []).map((cert, i) => ({
-        ...cert,
-        id: cert.id || `cert_init_${i}`,
-      })),
+  const [certifications, setCertifications] = useState<Certification[]>(() =>
+    (initialData?.certificationsList || []).map((cert, i) => ({
+      ...cert,
+      id: cert.id || `cert_init_${i}`,
+    })),
   );
-  const [achievements, setAchievements] = useState<Achievement[]>(
-    () =>
-      (initialData?.achievements || []).map((ach, i) => ({
-        ...ach,
-        id: ach.id || `ach_init_${i}`,
-      })),
+  const [achievements, setAchievements] = useState<Achievement[]>(() =>
+    (initialData?.achievements || []).map((ach, i) => ({
+      ...ach,
+      id: ach.id || `ach_init_${i}`,
+    })),
   );
 
   // If expertise data was already filled (coming back), pre-populate
@@ -136,9 +130,10 @@ export default function ConsultantProfessionalStep({
     <div className="space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="expertise">Expertise & Domain</TabsTrigger>
+          <TabsTrigger value="expertise">Expertise</TabsTrigger>
           <TabsTrigger value="experience" disabled={!expertiseData}>
-            Experience & Credentials
+            Experience &amp; credentials{" "}
+            <span className="ml-1 text-muted-foreground">(optional)</span>
           </TabsTrigger>
         </TabsList>
 
@@ -153,22 +148,23 @@ export default function ConsultantProfessionalStep({
 
         <TabsContent value="experience" className="mt-4">
           <div className="space-y-6">
-            <Alert className="border-border bg-muted mb-4">
-              <Info className="h-4 w-4 text-muted-foreground" />
-              <AlertDescription className="text-muted-foreground">
-                Adding your professional background builds trust with potential
-                clients. Profiles with work experience and certifications
-                receive significantly more bookings. You can always add these
-                from your dashboard settings later.
-              </AlertDescription>
-            </Alert>
+            {/* Optional is said at the point of use (the tab label and each
+                section) and once here; no asterisks, no warning banner. */}
+            <p className="text-sm text-muted-foreground">
+              Everything on this tab is optional — you can add or edit it later
+              from your dashboard. Profiles with work experience and credentials
+              do receive more bookings, so add what you have.
+            </p>
 
             {/* Work Experience */}
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Briefcase className="w-5 h-5 text-primary" />
-                  Work Experience
+                  Work Experience{" "}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -184,7 +180,10 @@ export default function ConsultantProfessionalStep({
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <GraduationCap className="w-5 h-5 text-primary" />
-                  Education
+                  Education{" "}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -200,7 +199,10 @@ export default function ConsultantProfessionalStep({
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Award className="w-5 h-5 text-primary" />
-                  Certifications
+                  Certifications{" "}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -216,7 +218,10 @@ export default function ConsultantProfessionalStep({
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <Trophy className="w-5 h-5 text-primary" />
-                  Achievements & Portfolio
+                  Achievements & Portfolio{" "}
+                  <span className="text-sm font-normal text-muted-foreground">
+                    (optional)
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -237,10 +242,17 @@ export default function ConsultantProfessionalStep({
                 <ChevronLeft className="w-4 h-4 mr-2" />
                 Back to Expertise
               </Button>
-              <Button type="button" onClick={handleFinalNext}>
-                Continue
-                <ChevronRight className="w-4 h-4 ml-2" />
-              </Button>
+              <div className="flex gap-2">
+                {/* The explicit exit for an optional tab: same handler, the
+                    lists are simply whatever the user added (often nothing). */}
+                <Button type="button" variant="ghost" onClick={handleFinalNext}>
+                  Skip for now
+                </Button>
+                <Button type="button" onClick={handleFinalNext}>
+                  Continue
+                  <ChevronRight className="w-4 h-4 ml-2" />
+                </Button>
+              </div>
             </div>
           </div>
         </TabsContent>

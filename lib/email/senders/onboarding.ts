@@ -170,6 +170,8 @@ export interface VerificationDecidedEmailArgs {
   status: VerificationDecidedStatus;
   reason?: string;
   dashboardUrl: string;
+  /** Reminder only: days before the unanswered request closes. */
+  daysLeft?: number;
 }
 
 function verificationDecidedSpec(args: VerificationDecidedEmailArgs): Spec {
@@ -188,6 +190,7 @@ function verificationDecidedSpec(args: VerificationDecidedEmailArgs): Spec {
         reason: args.reason,
         dashboardUrl,
         supportEmail: support,
+        daysLeft: args.daysLeft,
       }),
   };
 }

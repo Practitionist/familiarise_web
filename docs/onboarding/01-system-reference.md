@@ -141,9 +141,9 @@ The onboarding system is a **multi-step wizard** that collects role-specific dat
 | Step | Component | What It Collects |
 |------|-----------|-----------------|
 | 0 | `PersonalInfoAndRoleForm` | Name, email, phone, role=CONSULTANT, gender, city, country, bio, linkedinUrl |
-| 1 | `ConsultantProfessionalStep` | **Tab 1:** Domain, subDomains, tags, description, headline, experience, scheduleType. **Tab 2:** Work experiences, education, certifications, achievements |
-| 2 | `ConsultantPreferredScheduleForm` | Weekly slots (day + UTC minutes) or custom slots (datetime range). Timezone-aware display |
-| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
+| 1 | `ConsultantProfessionalStep` | **Tab "Expertise":** field of expertise (`domain`), specialties (`subDomains`), skills (`tags`), description, headline, experience. **Tab "Experience & credentials (optional)":** work experiences, education, certifications, achievements — marked optional at the point of use, with a "Skip for now" exit |
+| 2 | `ConsultantPreferredScheduleForm` | The one place the schedule type is chosen (a Weekly / Custom toggle), then weekly windows (day + UTC minutes) or custom windows (datetime range); only the active grid renders. Timezone-aware display |
+| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (pre-filled from step 0; optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
 | 4 | `ConsultantReviewForm` | Read-only review of all data → Submit |
 
 ### Consultee (2 steps)
@@ -233,21 +233,18 @@ Layout:
 
 Two-tab layout:
 
-**Tab 1 — Expertise & Domain** (via `ConsultantProfileForm`):
+**Tab "Expertise"** (via `ConsultantProfileForm`). On screen the three taxonomy levels are called *field of expertise*, *specialties* and *skills*; the model names (`Domain`, `SubDomain`, `Tag`) stay until the reset window:
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
 | `description` | textarea | Yes | min 1 char |
 | `headline` | text | No | max 120 chars |
 | `experience` | number | No | 0–100 years, step 0.5 |
-| `domain` | select | Yes | Fetched from `/api/user/consultants/meta` |
-| `subDomains` | multi-checkbox | No | Filtered by selected domain |
-| `tags` | multi-checkbox | No | Filtered by selected domain |
-| `scheduleType` | radio | Yes | WEEKLY or CUSTOM |
+| `domain` ("Field of expertise") | select | Yes | Fetched from `/api/user/consultants/meta` |
+| `subDomains` ("Specialties") | multi-checkbox | No | Filtered by the selected field |
+| `tags` ("Skills") | multi-checkbox | No | Filtered by the selected field |
 
-**Tab 2 — Experience & Credentials** (4 card sections):
-
-Each section uses a list + modal pattern (Add/Edit/Delete):
+**Tab "Experience & credentials (optional)"** (4 card sections). Every section is optional and says so in its own title; one inline line repeats that it can be added later from the dashboard, and the footer offers "Skip for now" beside "Continue" (NN/g: mark optional at the point of use, never with a warning banner, and keep the asterisk for required fields only). Each section uses a list + modal pattern (Add/Edit/Delete):
 
 - **WorkExperienceSection**: company, companyDomain, title, location, startDate, endDate, isCurrent, description
 - **EducationSection**: institution, degree, fieldOfStudy, startYear, endYear, grade, activities, description
@@ -256,11 +253,13 @@ Each section uses a list + modal pattern (Add/Edit/Delete):
 
 ### 3.4 Step 2 Consultant: `ConsultantPreferredScheduleForm`
 
+The Weekly / Custom toggle at the top of this step is the only place the schedule type is chosen (it used to be asked on the Professional step as well, with the later answer silently winning), and only the active type's grid renders — the earlier layout showed both side by side with the inactive one dimmed (#494 §2.2).
+
 **WEEKLY mode:**
 - Day-by-day grid (7 days)
 - Time inputs per day (start/end, 15-minute steps)
 - Timezone display and conversion
-- Overlap validation between slots
+- Overlap validation between windows
 
 **CUSTOM mode:**
 - Calendar month view (click to select dates)
@@ -668,19 +667,7 @@ Then in persistence:
 
 ### Verification Flow
 
-Runs **after** the main transaction commits. If verification fails, the user profile is still saved.
-
-```
-1. Update User.linkedinUrl (if provided)
-2. Create ConsultantProfileVerification (status: "PENDING")
-3. Handle documents:
-   - Existing docs (have id, not onboarding upload): update verificationId
-   - New docs (isOnboardingUpload or no id): create ProfileVerificationDocument
-4. Update ConsultantProfile:
-   - verificationStatus → "UNDER_REVIEW"
-   - isVerified → false
-5. Fire-and-forget: notify all ADMIN users via Novu
-```
+Runs **after** the main transaction commits, through the one submission writer in `lib/verification/submit-request.ts` (the same one `POST /api/verification/submit` and `/resubmit` call). Uploads made from the wizard are already rows owned by the user (`uploadedByUserId`, `verificationId` null), so the writer links them by id under an ownership predicate, supersedes any open request, CASes the profile to `UNDER_REVIEW`, and refuses a request with no document. The admin bells are staged before the response and attempted in `after()`. If filing fails, the profile stays `PENDING_VERIFICATION`, the failure is captured in Sentry, and the response carries `verificationDeferred: true` plus a warning — the consultant finishes from Settings (#698 OB-3). The full lifecycle, the review side and the sweep are in [04-verification-lifecycle.md](04-verification-lifecycle.md).
 
 ---
 
@@ -888,14 +875,18 @@ fileName         String
 originalName     String
 fileSize         Int
 mimeType         String
-fileUrl          String
+fileUrl          String                  // the download route, never a signed URL
 storagePath      String
 description      String?
 isValid          Boolean?                // null=not reviewed, true/false
 staffFeedback    String?
-verificationId   String    (FK)
+issue            VerificationDocumentIssue?   // reason code when invalid
+verificationId   String?   (FK, null until a submission links the row)
+linkedAt         DateTime?
+uploadedByUserId String?   (FK → User; the owner, #1224)
 uploadedAt       DateTime  @default(now())
 ```
+Rationale for every column above is in [05-schema-reference.md](05-schema-reference.md).
 
 ---
 
@@ -914,6 +905,7 @@ uploadedAt       DateTime  @default(now())
 | `AchievementType` | `AWARD`, `PUBLICATION`, `PROJECT`, `TALK`, `OPEN_SOURCE`, `OTHER` |
 | `ConsultantVerificationStatus` | `PENDING_VERIFICATION`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED` |
 | `ProfileVerificationStatus` | `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_INFO`, `SUPERSEDED` |
+| `VerificationDocumentIssue` | `UNCLEAR_SCAN`, `EXPIRED`, `NAME_MISMATCH`, `MISSING_PAGE`, `WRONG_TYPE`, `OTHER` |
 
 ---
 
@@ -996,7 +988,7 @@ The rules below are the availability contract (`lib/scheduling/availability-cont
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
 
-14. **EXPERT invites stay strict, and that is a known dead end until the add-identity flow lands.** Accepting an EXPERT invitation requires an existing `ConsultantProfile` (`NOT_A_CONSULTANT` otherwise). A brand-new user simply finishes consultant onboarding first, but a user who already completed onboarding as a learner or an org operator cannot re-enter the wizard (`requireNotOnboarded` redirects them), so for them the emailed link does not work yet. The planned fix is an "add expert identity" mode of the wizard that creates the consultant profile without touching the other profile links; until it ships, support has to handle these invitees by hand.
+14. **EXPERT invites stay strict, and the wizard's add mode is the way through.** Accepting an EXPERT invitation requires an existing `ConsultantProfile` (`NOT_A_CONSULTANT` otherwise). A brand-new user finishes consultant onboarding first. An onboarded learner or org operator opens `/form/onboarding?add=CONSULTANT` (the invite page links there): `requireNotOnboarded` admits the session when `canAddConsultantIdentity` holds, the wizard runs the consultant steps with step 0 pre-filled and the role fixed, and `addConsultantIdentity` links the new profile without nulling any other link — a `CONSULTEE` becomes a `CONSULTANT`, an `ORG_WORKSPACE` keeps its role. The full matrix is in [02-identity-and-org-permutations.md](02-identity-and-org-permutations.md).
 15. **Availability has one contract, and shrinking it is reported, not refused.** Every availability write (onboarding, settings PUT, per-row routes) validates through `lib/scheduling/availability-contract.ts`; the WEEKLY↔CUSTOM switch stays a hard block while anything is booked (now including trials and open reschedule requests, checked again inside the transaction with a CAS on `scheduleType`); narrowing hours within a type succeeds and the response carries `uncoveredUpcoming` for the settings toast. `profileCompletionPercentage` is computed (`lib/profiles/profile-completion.ts`, #698 OB-1) rather than seeded. Details in [03-availability-contract.md](03-availability-contract.md).
 
 ### Alternatives considered (#onboarding-ux, 2026-08)

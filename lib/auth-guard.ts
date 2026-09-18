@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth-session-lookup";
 import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
+import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
 import {
   hasBackofficePermission,
   type BackofficeSurface,
@@ -202,7 +203,17 @@ export async function requireNotOnboarded() {
     redirectWithCookieCleanup();
   }
   if (isFullyOnboarded(session.user)) {
-    redirect("/dashboard");
+    // Add mode (PR-6): an onboarded learner or org operator may re-enter the
+    // wizard to add a consultant identity. Layouts cannot read search params,
+    // but the middleware forwards path + query as `x-pathname`.
+    const current = (await headers()).get("x-pathname") ?? "";
+    const query = current.includes("?")
+      ? current.slice(current.indexOf("?"))
+      : "";
+    const wantsAdd =
+      new URLSearchParams(query).get("add") === "CONSULTANT" &&
+      canAddConsultantIdentity(session.user);
+    if (!wantsAdd) redirect("/dashboard");
   }
   return session;
 }

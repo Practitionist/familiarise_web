@@ -11,7 +11,9 @@ import {
 export type VerificationDecidedStatus =
   | "VERIFIED"
   | "REJECTED"
-  | "PENDING_VERIFICATION";
+  | "PENDING_VERIFICATION"
+  /** Day-7 reminder from the sweep: the NEEDS_INFO above is still unanswered. */
+  | "NEEDS_INFO_REMINDER";
 
 export interface VerificationDecidedEmailProps {
   recipientName?: string;
@@ -19,6 +21,8 @@ export interface VerificationDecidedEmailProps {
   reason?: string;
   dashboardUrl: string;
   supportEmail: string;
+  /** Days left before an unanswered request closes (reminder only). */
+  daysLeft?: number;
 }
 
 export function verificationDecidedSubject(
@@ -29,6 +33,8 @@ export function verificationDecidedSubject(
       return "Your Familiarise expert profile is verified";
     case "REJECTED":
       return "Your Familiarise expert profile was not approved";
+    case "NEEDS_INFO_REMINDER":
+      return "Reminder: your expert profile is waiting on you";
     case "PENDING_VERIFICATION":
     default:
       return "We need more information for your expert profile";
@@ -43,6 +49,7 @@ export default function VerificationDecidedEmail({
   reason,
   dashboardUrl,
   supportEmail,
+  daysLeft,
 }: VerificationDecidedEmailProps) {
   const subject = verificationDecidedSubject(status);
   return (
@@ -58,6 +65,15 @@ export default function VerificationDecidedEmail({
         <Text style={paragraph}>
           Your expert profile verification was not approved. Read the feedback
           below, update your profile, and resubmit when ready.
+        </Text>
+      ) : status === "NEEDS_INFO_REMINDER" ? (
+        <Text style={paragraph}>
+          A reviewer asked for more information on your expert profile and has
+          not heard back. Reply from your profile settings
+          {typeof daysLeft === "number"
+            ? ` within ${daysLeft} ${daysLeft === 1 ? "day" : "days"}`
+            : " soon"}
+          , or the request will close and you will need to submit again.
         </Text>
       ) : (
         <Text style={paragraph}>

@@ -119,11 +119,8 @@ export interface VerificationSignals {
 export function isPersistableVerificationDoc(doc: unknown): boolean {
   if (typeof doc !== "object" || doc === null) return false;
   const d = doc as Record<string, unknown>;
-  return Boolean(
-    (d.id && !d.isOnboardingUpload) ||
-    d.isOnboardingUpload ||
-    (!d.id && d.fileUrl),
-  );
+  // A row exists for every upload; only a server-issued id can be linked.
+  return Boolean(d.id && !d.isOnboardingUpload);
 }
 
 /**
@@ -208,6 +205,25 @@ export function canSubmitVerification(args: {
   hasConsultantProfile: boolean;
 }): boolean {
   return args.hasConsultantProfile && args.role === "CONSULTANT";
+}
+
+/**
+ * Who may add a consultant identity to an already-onboarded account (PR-6 of
+ * the onboarding train). EXPERT invites are strict — accepting needs a real
+ * `ConsultantProfile` — but `requireNotOnboarded` keeps a finished user out of
+ * the wizard, so a learner or an org operator invited as an expert had no way
+ * forward. Pure so the layout guard, the action and the tests share it.
+ */
+export function canAddConsultantIdentity(user: {
+  role: string | null | undefined;
+  onboardingCompleted: boolean | null | undefined;
+  consultantProfileId: string | null | undefined;
+}): boolean {
+  return (
+    user.onboardingCompleted === true &&
+    !user.consultantProfileId &&
+    (user.role === "CONSULTEE" || user.role === "ORG_WORKSPACE")
+  );
 }
 
 // ============================================================================

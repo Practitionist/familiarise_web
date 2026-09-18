@@ -1,10 +1,12 @@
 "use client";
 
 import {
+  addConsultantIdentityAction,
   updateOnboardingInformationAction,
   setOnboardingRoleAction,
   resetOnboardingRoleAction,
   completeOrgWorkspaceOnboardingAction,
+  loadIdentitySeedAction,
 } from "@/actions/forms/onboarding.action";
 import {
   clearOnboardingDraftAction,
@@ -31,9 +33,15 @@ import {
   clearPendingReferral,
 } from "@/lib/pending-referral";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import type { z } from "zod";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 // Step 0 stays eager — every user sees Personal Info first.
@@ -110,6 +118,8 @@ const CreateOrganizationWizard = dynamic(
 interface OnboardingStepContext {
   formData: Partial<OnboardingFormData>;
   userId?: string;
+  /** Add mode: an onboarded account adding a consultant identity (PR-6). */
+  addIdentity?: boolean;
   onNext: (data: Partial<OnboardingFormData>) => Promise<void>;
   onBack: () => void;
   onSubmit: (data: Partial<OnboardingFormData>) => Promise<void>;
@@ -142,7 +152,11 @@ type OnboardingRole = z.infer<typeof OnboardingFormDataSchema>["role"];
 const personalInfoStep: OnboardingStep = {
   label: "Personal Info",
   render: (ctx) => (
-    <PersonalInfoAndRoleForm onNext={ctx.onNext} initialData={ctx.formData} />
+    <PersonalInfoAndRoleForm
+      onNext={ctx.onNext}
+      initialData={ctx.formData}
+      lockedRole={ctx.addIdentity ? "CONSULTANT" : undefined}
+    />
   ),
 };
 
@@ -366,6 +380,13 @@ function describeDraftField(field: string | null): string {
 
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
+  // Add mode (PR-6): `?add=CONSULTANT` on an onboarded learner / org operator
+  // runs the consultant registry with step 0 pre-filled and the role fixed;
+  // the layout guard admits only eligible sessions.
+  const addIdentity = useSearchParams().get("add") === "CONSULTANT";
+  // Read by the mount-once hydrate effect, which deliberately has no deps.
+  const addIdentityRef = useRef(addIdentity);
+  addIdentityRef.current = addIdentity;
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const [draftRestored, setDraftRestored] = useState(false);
@@ -430,6 +451,23 @@ const MultiStepForm: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     async function hydrate() {
+      if (addIdentityRef.current) {
+        // Pre-fill step 0 from the account; a draft (below) may still layer
+        // over it when the user left mid-way.
+        try {
+          const seeded = await loadIdentitySeedAction();
+          if (!cancelled && seeded.success) {
+            const seed = {
+              ...seeded.seed,
+              role: "CONSULTANT",
+            } as Partial<OnboardingFormData>;
+            formDataRef.current = { ...seed, ...formDataRef.current };
+            setFormData((prev) => ({ ...seed, ...prev }));
+          }
+        } catch {
+          // The form still renders; the user retypes what did not load.
+        }
+      }
       let result: Awaited<ReturnType<typeof loadOnboardingDraftAction>>;
       try {
         result = await loadOnboardingDraftAction();
@@ -744,7 +782,9 @@ const MultiStepForm: React.FC = () => {
         description: "Please wait while we set up your account...",
       });
 
-      const result = await updateOnboardingInformationAction(id, requestBody);
+      const result = addIdentity
+        ? await addConsultantIdentityAction(id, requestBody)
+        : await updateOnboardingInformationAction(id, requestBody);
 
       if (!result.success || !result.user) {
         const errorMessage =
@@ -773,13 +813,12 @@ const MultiStepForm: React.FC = () => {
       // has happened server-side, and a lingering row would resurrect stale
       // state for any future re-onboarding surface. Drain first so no already
       // dispatched save can recreate the row after deletion (review round 1).
+      // Awaited (not fire-and-forget): the redirect below used to race this
+      // chain and the row survived with a stale step (preview QA, 2026-09-18).
       draftCompletedRef.current = true;
       if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
-      void draftSaveQueueRef.current
-        ?.drain()
-        .catch(() => {})
-        .then(() => clearOnboardingDraftAction())
-        .catch(() => {});
+      await draftSaveQueueRef.current?.drain().catch(() => {});
+      await clearOnboardingDraftAction().catch(() => {});
 
       if (result.verificationWarning) {
         toast({
@@ -886,7 +925,9 @@ const MultiStepForm: React.FC = () => {
   // `role` is only trustworthy once step 0 has been submitted; before that (and
   // for anything the registry does not cover) the consultee flow is the
   // default, as it was when the labels lived in their own map.
-  const currentRole: OnboardingRole = resolveRegistryRole(formData.role);
+  const currentRole: OnboardingRole = addIdentity
+    ? "CONSULTANT"
+    : resolveRegistryRole(formData.role);
   const steps = ONBOARDING_STEPS[currentRole];
   const totalSteps = steps.length;
   const activeStep = steps[step];
@@ -894,6 +935,7 @@ const MultiStepForm: React.FC = () => {
   const stepContext: OnboardingStepContext = {
     formData,
     userId: session?.user?.id,
+    addIdentity,
     onNext: handleNext,
     onBack: handleBack,
     onSubmit: handleSubmit,
@@ -1081,4 +1123,12 @@ const MultiStepForm: React.FC = () => {
   );
 };
 
-export default MultiStepForm;
+// useSearchParams needs a Suspense boundary above it for the build's static
+// analysis, even though the layout's auth guard makes this route dynamic.
+export default function OnboardingPage() {
+  return (
+    <Suspense fallback={null}>
+      <MultiStepForm />
+    </Suspense>
+  );
+}
