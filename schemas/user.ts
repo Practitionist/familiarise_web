@@ -56,6 +56,20 @@ export const DayOfWeekEnum = z.enum([
 
 // #region URL Validation Helpers
 
+/**
+ * A public LinkedIn profile: `linkedin.com/in/<handle>`, optional `www.` and
+ * trailing slash. The wizard, the verification step and the settings tab all
+ * test the same expression, so the verification message is the same everywhere.
+ */
+export const LINKEDIN_PROFILE_URL_RE =
+  /^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
+export const LINKEDIN_PROFILE_URL_HINT =
+  "Enter your public profile link, like https://linkedin.com/in/yourname";
+
+export function isLinkedinProfileUrl(url: string): boolean {
+  return LINKEDIN_PROFILE_URL_RE.test(url.trim());
+}
+
 export const linkedinUrlSchema = z
   .string()
   .url("Please enter a valid URL")

@@ -18,6 +18,8 @@ interface LearningOutcomesFieldProps<T extends FieldValues = FieldValues> {
   description?: string;
   maxItems?: number;
   className?: string;
+  /** Required to publish — appends `*` to the label. */
+  required?: boolean;
 }
 
 export function LearningOutcomesField<T extends FieldValues = FieldValues>({
@@ -28,6 +30,7 @@ export function LearningOutcomesField<T extends FieldValues = FieldValues>({
   description = "What participants will be able to do after completion",
   maxItems = 10,
   className,
+  required,
 }: Readonly<LearningOutcomesFieldProps<T>>) {
   return (
     <StringListField
@@ -39,6 +42,7 @@ export function LearningOutcomesField<T extends FieldValues = FieldValues>({
       itemNoun="outcomes"
       maxItems={maxItems}
       className={className}
+      required={required}
     />
   );
 }

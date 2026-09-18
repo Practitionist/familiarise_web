@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  ApiResponseError,
+  actionFailureMessage,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/hooks/use-toast";
 import { useParams } from "next/navigation";
@@ -34,6 +39,9 @@ interface UseEventActionsOptions {
  * ANSWER rather than a fault, and everything with a status reports at warning.
  */
 function reportActionFailure(error: unknown, op: string): void {
+  // A refusal (the reschedule window, a 409 on cancel) is the server's answer;
+  // the toast shows it and Sentry never hears of it (FAMILIARISE_WEB-2Z).
+  if (isExpectedRefusal(error)) return;
   const status = error instanceof ApiResponseError ? error.status : undefined;
   reportSentryError(error, {
     subsystem: "client",
@@ -264,7 +272,7 @@ export function useEventActions({
       reportActionFailure(error, "appointment.reschedule");
       console.error("Error requesting reschedule:", error);
       toast({
-        title: "Error",
+        title: "Couldn't request reschedule",
         description:
           error instanceof Error
             ? error.message
@@ -331,11 +339,11 @@ export function useEventActions({
       reportActionFailure(error, "appointment.cancel");
       console.error("Error cancelling appointment:", error);
       toast({
-        title: "Error",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to cancel appointment",
+        title: "Couldn't cancel appointment",
+        description: actionFailureMessage(
+          error,
+          "Failed to cancel appointment",
+        ),
         variant: "destructive",
       });
     } finally {

@@ -61,7 +61,7 @@ const SYSTEM_JOBS: SystemJob[] = [
   {
     id: "cleanup-approval-payments",
     name: "Cleanup Approval Payments",
-    description: "Expire 48h+ pending approval payments",
+    description: "Expire lapsed approval pay-links",
     schedule: "Hourly",
     category: "Payments",
   },
@@ -288,7 +288,9 @@ function JobCard({ job, isRunning, onRun }: JobCardProps) {
               </span>
             </div>
           </div>
-          <p className="text-sm text-muted-foreground mb-3">{job.description}</p>
+          <p className="text-sm text-muted-foreground mb-3">
+            {job.description}
+          </p>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground/70">
             <Clock className="h-3.5 w-3.5" />
             <span>{job.schedule}</span>

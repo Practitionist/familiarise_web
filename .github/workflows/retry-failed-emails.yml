@@ -5,6 +5,9 @@ name: Retry Failed Emails
 # the 1m/5m/30m/2h/8h backoff, and dead-letters once exhausted (operator-replayable
 # via the admin route). Every 15 minutes is enough granularity for the backoff
 # slots without churning a low-volume failure table.
+# #1648 / #1654 — the Netlify ticker now drives the same worker through
+# /api/cleanup/retry-failed-emails every 15 minutes with a bounded bite; this
+# run is the unbounded backstop (ADR 27).
 
 on:
   schedule:

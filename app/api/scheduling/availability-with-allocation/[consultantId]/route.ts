@@ -24,6 +24,8 @@ import {
   type AppointmentForOverlapMeta,
 } from "@/lib/booking/overlap-meta";
 import { isPrivileged } from "@/lib/auth-helpers";
+import { apiError } from "@/lib/errors/api-error";
+import { Refusal } from "@/lib/errors/refusal";
 import {
   availabilityGridEtag,
   ifNoneMatchSatisfied,
@@ -46,6 +48,16 @@ type SlotTimingWithOverlap = TIntervalTiming & {
 // refetch, asks for `cache: "no-store"` (AllocationService, #1164).
 // No SWR: the 60s poll and return-tick must repaint fresh, not one-interval-old.
 const GRID_CACHE_CONTROL = "private, max-age=30";
+
+/**
+ * The grid is O(window width) CPU, so a caller asking for a whole scheduling
+ * period (1/6/12 months) ran past the ~26 s edge ceiling and got a text/plain
+ * timeout. Every client asks for the visible day, week or month; anything
+ * wider is refused so it paginates instead of timing out (supersedes #1577).
+ */
+const MAX_AVAILABILITY_WINDOW_DAYS = 31;
+const MAX_AVAILABILITY_WINDOW_MS =
+  MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 
 // An org OWNER/MAINTAINER acting for a member consultant (RequestSchedulingTab
 // mounts mode="allocate" for org admins allocating on a consultant's behalf)
@@ -109,10 +121,12 @@ export async function GET(
     // every week-slide — so resolve it ONCE rather than awaiting getSession in
     // each gate. Still skipped entirely on the public path, where neither
     // parameter is present and the route stays anonymous.
-    const session =
-      includeAppointmentDetailsRequested || requestedConsulteeUserId
-        ? await getSession(true)
-        : null;
+    // #1697 item 4 — the busy/free shape reads the session cookie-cached (one
+    // poll a minute per calendar); the privileged detail shape reads fresh so
+    // a demotion or a revoked membership takes effect on the next poll.
+    let session: Awaited<ReturnType<typeof getSession>> = null;
+    if (includeAppointmentDetailsRequested) session = await getSession(true);
+    else if (requestedConsulteeUserId) session = await getSession();
     // Ownership is a fact about the database, not about the session.
     //
     // The session field is a snapshot from when the session was minted, so a
@@ -159,13 +173,18 @@ export async function GET(
       const maySeeCalendar = maySeeDetails || (await isOrgAdmin());
 
       if (!maySeeCalendar) {
-        return NextResponse.json(
-          {
-            error:
+        return apiError({
+          tag: "[Availability.GET]",
+          error: new Refusal({
+            code: "NOT_OWNER",
+            httpStatus: 403,
+            userMessage:
+              "Only this consultant can see their appointment details.",
+            devMessage:
               "Forbidden: appointment details require consultant ownership",
-          },
-          { status: 403 },
-        );
+            context: { consultantId, userId: session?.user?.id },
+          }),
+        });
       }
       includeAppointmentDetails = maySeeDetails;
     }
@@ -220,6 +239,34 @@ export async function GET(
         { status: 400 },
       );
     }
+    if (endDate <= startDate) {
+      return NextResponse.json(
+        { error: "endDateInUtc must be after startDateInUtc" },
+        { status: 400 },
+      );
+    }
+    if (endDate.getTime() - startDate.getTime() > MAX_AVAILABILITY_WINDOW_MS) {
+      return NextResponse.json(
+        {
+          error: `That date range is too wide. Ask for up to ${MAX_AVAILABILITY_WINDOW_DAYS} days at a time — the visible week or month.`,
+          code: "WINDOW_TOO_WIDE",
+          maxWindowDays: MAX_AVAILABILITY_WINDOW_DAYS,
+        },
+        { status: 400 },
+      );
+    }
+
+    // A client-controlled zone string reaches `new Intl.DateTimeFormat` in the
+    // slot localizer, which throws RangeError on a bad IANA name — a 400, not
+    // a 500. Validated here so every downstream use is safe.
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezone });
+    } catch (_error) {
+      return NextResponse.json(
+        { error: "Invalid timezone: must be a valid IANA timezone name" },
+        { status: 400 },
+      );
+    }
 
     // #1319 PR 9 — conditional GET, computed BEFORE the heavy reads.
     //
@@ -233,10 +280,12 @@ export async function GET(
     // lost access is refused up there, so a 304 can never serve stale
     // permission. The resolved (not requested) detail flag and the consultee id
     // are hashed into the tag, so the two payload shapes cannot collide.
+    // Window-scoped (#1697): a booking in another week leaves this tag alone.
     const marker = await readAvailabilityGridMarker(
       prisma,
       consultantId,
       consulteeUserId,
+      { startsAt: startDate, endsAt: endDate },
     );
     // No marker = no such consultant; fall through so the 404 below still answers.
     const etag = marker

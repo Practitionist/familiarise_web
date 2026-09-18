@@ -17,10 +17,13 @@ import {
 } from "@/lib/booking/participants";
 import { collaboratorUserIdsForEvent } from "@/lib/collaborators/recipients";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendAppointmentCancelledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import { reportSentryError } from "@/lib/observability/report";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import {
   CANCELLABLE_FROM,
@@ -432,10 +435,10 @@ function refundableEngagementPayments(engagement: NormalizedEngagement) {
   );
 }
 
-function notifyExclusiveCancellation(
+async function notifyExclusiveCancellation(
   kind: "consultation" | "subscription",
   engagement: NormalizedEngagement,
-): void {
+): Promise<void> {
   const userIds = [
     engagement.consultantUser?.id,
     engagement.consulteeUser?.id,
@@ -443,7 +446,7 @@ function notifyExclusiveCancellation(
   if (userIds.length === 0) return;
 
   const engagementOrgId = engagement.appointments[0]?.organizationId ?? null;
-  void notifyAppointmentCancelled(userIds, {
+  await notifyAppointmentCancelled(userIds, {
     ...notificationScope(engagementOrgId),
     appointmentType:
       engagement.appointments[0]?.appointmentType ?? kind.toUpperCase(),
@@ -458,6 +461,20 @@ function notifyExclusiveCancellation(
     reason: "MODERATION",
     cancelledBy: "system",
   });
+  // #1653 — the email twin; the sender never throws.
+  const engagementAppointmentId = engagement.appointments[0]?.id;
+  if (engagementAppointmentId) {
+    await sendAppointmentCancelledEmail(
+      {
+        appointmentId: engagementAppointmentId,
+        userIds,
+        cancelledBy: "Familiarise",
+        reason: "Account moderation",
+        dashboardUrl: notificationHref(engagementOrgId, "appointments"),
+      },
+      EMAIL_BUDGET_MS.JOB,
+    );
+  }
 }
 
 async function cancelExclusiveEngagement(
@@ -481,7 +498,7 @@ async function cancelExclusiveEngagement(
     await issueFullRefund(p.id, ctx.initiatedByUserId, ctx.summary);
   }
 
-  notifyExclusiveCancellation(kind, engagement);
+  await notifyExclusiveCancellation(kind, engagement);
 }
 
 async function cancelGroupEvent(
@@ -549,7 +566,7 @@ async function cancelGroupEvent(
       userId: true,
       // Every attendee of one event shares its org-ness, so the first row
       // decides the scope for the whole batch.
-      appointment: { select: { organizationId: true } },
+      appointment: { select: { id: true, organizationId: true } },
     },
   });
   // #1580 C-P1-5 — the event's accepted collaborators lose it too.
@@ -563,16 +580,14 @@ async function cancelGroupEvent(
   if (attendeeIds.length > 0) {
     // With collaborators but no paid seat there is no attendee row to read
     // the org from; the event's appointment carries it either way (#1593).
-    const eventOrgId =
-      attendees[0]?.appointment?.organizationId ??
-      (
-        await prisma.appointment.findFirst({
-          where: isWebinar ? { webinarId: eventId } : { classId: eventId },
-          select: { organizationId: true },
-        })
-      )?.organizationId ??
-      null;
-    void notifyAppointmentCancelled(attendeeIds, {
+    const eventAppointment =
+      attendees[0]?.appointment ??
+      (await prisma.appointment.findFirst({
+        where: isWebinar ? { webinarId: eventId } : { classId: eventId },
+        select: { id: true, organizationId: true },
+      }));
+    const eventOrgId = eventAppointment?.organizationId ?? null;
+    await notifyAppointmentCancelled(attendeeIds, {
       ...notificationScope(eventOrgId),
       appointmentType: isWebinar ? "WEBINAR" : "CLASS",
       consultantName: "Consultant",
@@ -584,6 +599,20 @@ async function cancelGroupEvent(
       reason: "MODERATION",
       cancelledBy: "system",
     });
+    // #1653 — the email twin, keyed by the event's appointment so a
+    // re-run does not send twice; the sender never throws.
+    if (eventAppointment) {
+      await sendAppointmentCancelledEmail(
+        {
+          appointmentId: eventAppointment.id,
+          userIds: attendeeIds,
+          cancelledBy: "Familiarise",
+          reason: "Account moderation",
+          dashboardUrl: notificationHref(eventOrgId, "appointments"),
+        },
+        EMAIL_BUDGET_MS.JOB,
+      );
+    }
   }
 }
 
@@ -653,9 +682,14 @@ async function issueFullRefund(
       id: paymentId,
       error: errMsg(error),
     });
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "moderation" } },
-    );
+    // A modelled refusal (already made whole, nothing refundable) is recorded
+    // on the summary for staff and reported `expected` (FAMILIARISE_WEB-3D).
+    const modelled = isModelledRefundRefusal(error);
+    reportSentryError(error, {
+      subsystem: "moderation",
+      op: "cancel-user-engagements.refund",
+      expected: modelled,
+      ...(modelled ? { level: "warning" as const } : {}),
+    });
   }
 }

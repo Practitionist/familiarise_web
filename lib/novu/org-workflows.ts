@@ -9,15 +9,16 @@
  *
  * Pattern mirrors `lib/novu/service.ts` `notifyX` helpers:
  *   - Non-throwing (errors are logged; caller doesn't need try/catch).
- *   - No-op when Novu is not configured (NOVU_API_KEY absent).
- *   - Safe to call from inside a Prisma transaction — these only trigger
- *     external notification dispatch, they don't issue DB writes
- *     themselves.
+ *   - #691 — every trigger rides the outbox (`lib/novu/outbox.ts`): staged
+ *     as a `NotificationOutbox` row, attempted inline, drained if that
+ *     attempt did not settle it. Not configured → staged only.
+ *   - With `{ tx }` the row and the roster read both go through the
+ *     caller's transaction and nothing is sent; the helper returns the
+ *     staged rows for `attemptTrigger` after the commit.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import type { MemberRole } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type PrismaLike } from "@/lib/prisma";
 import {
   NOVU_WORKFLOWS,
   type OrgDataExportReadyInput,
@@ -51,90 +52,85 @@ import {
   type OrgWalletTopupConfirmedInput,
   type OrgWalletTopupConfirmedPayload,
 } from "./workflows";
-import { getNovuClient, isNovuConfigured } from "./client";
-import { toWire } from "./templates";
+import type { NovuPayload, StagedTrigger, TriggerResult } from "./outbox";
+import {
+  triggerForMultiple,
+  triggerForMultipleZoned,
+  triggerWorkflow,
+  type TriggerOptions,
+} from "./service";
 import type { NovuWorkflowId } from "./templates/types";
 import {
   DEFAULT_NOTIFICATION_TIMEZONE,
   formatNotificationDateTime,
   formatNotificationMoney,
-  groupRecipientsByTimezone,
-  resolveRecipientTimezones,
 } from "./humanize";
 
 // ============================================================================
-// Internal trigger helpers (non-throwing, schema-typed)
+// Internal trigger helpers — thin wrappers over the service cores (#691)
 // ============================================================================
 
-type NovuRecord = Record<string, string | number | boolean | null | undefined>;
-
-async function triggerOne<T extends NovuRecord>(
-  workflowId: NovuWorkflowId,
-  subscriberId: string,
-  payload: T,
-): Promise<void> {
-  if (!isNovuConfigured()) return;
-  try {
-    const novu = getNovuClient();
-    const wire = toWire(workflowId, payload);
-    await novu.trigger({
-      workflowId: wire.workflowId,
-      to: subscriberId,
-      payload: wire.payload,
-    });
-  } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "novu" } },
-    );
-    console.error(`[Novu/org] Failed to trigger ${workflowId}:`, err);
+/**
+ * #1654 — the rows a tx caller attempts after its commit. `triggerForMultiple`
+ * repeats one result per recipient of a batch, so the rows are deduped by id;
+ * an inline send leaves nothing behind and the list is empty.
+ */
+function collectStaged(results: TriggerResult[]): StagedTrigger[] {
+  const byId = new Map<string, StagedTrigger>();
+  for (const r of results) {
+    if (r.success && r.staged) byId.set(r.staged.id, r.staged);
   }
+  return Array.from(byId.values());
 }
 
-async function triggerMany<T extends NovuRecord>(
+async function triggerOne(
+  workflowId: NovuWorkflowId,
+  subscriberId: string,
+  payload: NovuPayload,
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  return collectStaged([
+    await triggerWorkflow(workflowId, subscriberId, payload, undefined, opts),
+  ]);
+}
+
+async function triggerMany(
   workflowId: NovuWorkflowId,
   subscriberIds: string[],
-  payload: T,
-): Promise<void> {
-  if (subscriberIds.length === 0) return;
-  if (!isNovuConfigured()) return;
-  try {
-    const novu = getNovuClient();
-    const wire = toWire(workflowId, payload);
-    await novu.trigger({
-      workflowId: wire.workflowId,
-      to: subscriberIds,
-      payload: wire.payload,
-    });
-  } catch (err) {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "novu" } },
-    );
-    console.error(`[Novu/org] Failed to trigger ${workflowId} batch:`, err);
-  }
+  payload: NovuPayload,
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  return collectStaged(
+    await triggerForMultiple(
+      workflowId,
+      subscriberIds,
+      payload,
+      undefined,
+      opts,
+    ),
+  );
 }
 
 /**
  * #536 — a roster spans people, and people span timezones, so a payload with a
- * rendered date can only be built once the recipient's zone is known. This
- * sends one payload per distinct zone in the roster; see the sibling helper in
- * `lib/novu/service.ts` for the reasoning in full.
+ * rendered date can only be built once the recipient's zone is known. One
+ * payload per distinct zone; see `triggerForMultipleZoned` for the reasoning.
  */
-async function triggerManyZoned<T extends NovuRecord>(
+async function triggerManyZoned(
   workflowId: NovuWorkflowId,
   subscriberIds: string[],
-  build: (timezone: string) => T,
-): Promise<void> {
-  if (subscriberIds.length === 0) return;
-  if (!isNovuConfigured()) return;
-  const zones = await resolveRecipientTimezones(subscriberIds);
-  for (const [timezone, recipients] of groupRecipientsByTimezone(
-    subscriberIds,
-    zones,
-  )) {
-    await triggerMany(workflowId, recipients, build(timezone));
-  }
+  build: (timezone: string) => NovuPayload,
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  return collectStaged(
+    await triggerForMultipleZoned(
+      workflowId,
+      subscriberIds,
+      build,
+      undefined,
+      opts,
+    ),
+  );
 }
 
 /** Settlement is INR-only, so an org payload without a currency is INR. */
@@ -149,12 +145,15 @@ const ORG_DEFAULT_CURRENCY = "INR";
  * of the requested `roles`. Excludes REMOVED / SUSPENDED memberships so
  * we don't page ex-employees.
  */
-async function rosterForOrg(
+export async function rosterForOrg(
   orgId: string,
   roles: MemberRole[],
+  // #691 — a tx caller's roster must read through its tx: PG_POOL_MAX=1
+  // deadlocks a global-client read while that transaction is open.
+  db: Pick<PrismaLike, "membership"> = prisma,
 ): Promise<string[]> {
   if (roles.length === 0) return [];
-  const members = await prisma.membership.findMany({
+  const members = await db.membership.findMany({
     where: {
       organizationId: orgId,
       status: "ACTIVE",
@@ -166,13 +165,17 @@ async function rosterForOrg(
 }
 
 /** OWNER + MAINTAINER — the "operator roster" who can act on the org. */
-const OPERATOR_ROLES: MemberRole[] = ["OWNER", "MAINTAINER"];
+export const OPERATOR_ROLES: MemberRole[] = ["OWNER", "MAINTAINER"];
 
 /** OWNER + MAINTAINER + MANAGER — the "visibility roster" who can see bills + payouts. */
-const VISIBILITY_ROLES: MemberRole[] = ["OWNER", "MAINTAINER", "MANAGER"];
+export const VISIBILITY_ROLES: MemberRole[] = [
+  "OWNER",
+  "MAINTAINER",
+  "MANAGER",
+];
 
 /** OWNER only — security-critical events get a narrower blast radius. */
-const OWNER_ONLY: MemberRole[] = ["OWNER"];
+export const OWNER_ONLY: MemberRole[] = ["OWNER"];
 
 // ============================================================================
 // Per-event helpers
@@ -186,7 +189,8 @@ const OWNER_ONLY: MemberRole[] = ["OWNER"];
 export async function notifyOrgInviteSent(
   inviteeEmail: string,
   payload: OrgInviteSentInput,
-): Promise<void> {
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
   // The invitee has no account yet, so there is no recorded zone to render in;
   // the platform default is used and the rendered string names it (#536).
   const wire: OrgInviteSentPayload = {
@@ -198,7 +202,7 @@ export async function notifyOrgInviteSent(
       ) ?? payload.expiresAt,
     expiresAtIso: payload.expiresAt,
   };
-  return triggerOne(NOVU_WORKFLOWS.ORG_INVITE_SENT, inviteeEmail, wire);
+  return triggerOne(NOVU_WORKFLOWS.ORG_INVITE_SENT, inviteeEmail, wire, opts);
 }
 
 /**
@@ -209,9 +213,19 @@ export async function notifyOrgInviteSent(
 export async function notifyOrgInviteAccepted(
   orgId: string,
   payload: OrgInviteAcceptedPayload,
-): Promise<void> {
-  const recipients = await rosterForOrg(orgId, OPERATOR_ROLES);
-  return triggerMany(NOVU_WORKFLOWS.ORG_INVITE_ACCEPTED, recipients, payload);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const recipients = await rosterForOrg(
+    orgId,
+    OPERATOR_ROLES,
+    opts?.tx ?? prisma,
+  );
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_INVITE_ACCEPTED,
+    recipients,
+    payload,
+    opts,
+  );
 }
 
 /**
@@ -221,8 +235,9 @@ export async function notifyOrgInviteAccepted(
 export async function notifyOrgInvoiceIssued(
   orgId: string,
   payload: OrgInvoiceIssuedInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   return triggerManyZoned(
     NOVU_WORKFLOWS.ORG_INVOICE_ISSUED,
     owners,
@@ -234,6 +249,7 @@ export async function notifyOrgInvoiceIssued(
         payload.dueDate,
       dueDateIso: payload.dueDate,
     }),
+    opts,
   );
 }
 
@@ -244,8 +260,9 @@ export async function notifyOrgInvoiceIssued(
 export async function notifyOrgInvoicePaid(
   orgId: string,
   payload: OrgInvoicePaidInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   return triggerManyZoned(
     NOVU_WORKFLOWS.ORG_INVOICE_PAID,
     owners,
@@ -256,6 +273,7 @@ export async function notifyOrgInvoicePaid(
         formatNotificationDateTime(payload.paidAt, timezone) ?? payload.paidAt,
       paidAtIso: payload.paidAt,
     }),
+    opts,
   );
 }
 
@@ -268,13 +286,23 @@ export async function notifyOrgInvoicePaid(
 export async function notifyOrgInvoiceOverdue(
   orgId: string,
   payload: OrgInvoiceOverdueInput,
-): Promise<void> {
-  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const recipients = await rosterForOrg(
+    orgId,
+    VISIBILITY_ROLES,
+    opts?.tx ?? prisma,
+  );
   const wire: OrgInvoiceOverduePayload = {
     ...payload,
     total: formatNotificationMoney(payload.totalPaise, payload.currency),
   };
-  return triggerMany(NOVU_WORKFLOWS.ORG_INVOICE_OVERDUE, recipients, wire);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_INVOICE_OVERDUE,
+    recipients,
+    wire,
+    opts,
+  );
 }
 
 /**
@@ -286,7 +314,8 @@ export async function notifyOrgInvoiceOverdue(
 export async function notifyMemberOverageTimedOut(
   memberUserId: string,
   payload: OrgMemberOverageTimedOutInput,
-): Promise<void> {
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
   const wire: OrgMemberOverageTimedOutPayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
@@ -295,6 +324,7 @@ export async function notifyMemberOverageTimedOut(
     NOVU_WORKFLOWS.ORG_MEMBER_OVERAGE_TIMED_OUT,
     [memberUserId],
     wire,
+    opts,
   );
 }
 
@@ -307,8 +337,9 @@ export async function notifyMemberOverageTimedOut(
 export async function notifyOrgLicenseRenewalUpcoming(
   orgId: string,
   payload: OrgLicenseRenewalUpcomingInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   return triggerManyZoned(
     NOVU_WORKFLOWS.ORG_LICENSE_RENEWAL_UPCOMING,
     owners,
@@ -325,6 +356,7 @@ export async function notifyOrgLicenseRenewalUpcoming(
         payload.currency,
       ),
     }),
+    opts,
   );
 }
 
@@ -338,8 +370,9 @@ export async function notifyOrgLicenseRenewalUpcoming(
 export async function notifyOrgDataExportReady(
   orgId: string,
   payload: OrgDataExportReadyInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   return triggerManyZoned(
     NOVU_WORKFLOWS.ORG_DATA_EXPORT_READY,
     owners,
@@ -350,6 +383,7 @@ export async function notifyOrgDataExportReady(
         payload.expiresAt,
       expiresAtIso: payload.expiresAt,
     }),
+    opts,
   );
 }
 
@@ -362,8 +396,9 @@ export async function notifyOrgDataExportReady(
 export async function notifyOrgWalletTopupConfirmed(
   orgId: string,
   payload: OrgWalletTopupConfirmedInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   const wire: OrgWalletTopupConfirmedPayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
@@ -372,7 +407,12 @@ export async function notifyOrgWalletTopupConfirmed(
       payload.currency,
     ),
   };
-  return triggerMany(NOVU_WORKFLOWS.ORG_WALLET_TOPUP_CONFIRMED, owners, wire);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_WALLET_TOPUP_CONFIRMED,
+    owners,
+    wire,
+    opts,
+  );
 }
 
 /**
@@ -384,14 +424,19 @@ export async function notifyOrgWalletTopupConfirmed(
 export async function notifyOrgWalletLow(
   orgId: string,
   payload: OrgWalletLowInput,
-): Promise<void> {
-  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const recipients = await rosterForOrg(
+    orgId,
+    VISIBILITY_ROLES,
+    opts?.tx ?? prisma,
+  );
   const wire: OrgWalletLowPayload = {
     ...payload,
     balance: formatNotificationMoney(payload.balancePaise, payload.currency),
     minimum: formatNotificationMoney(payload.minimumPaise, payload.currency),
   };
-  return triggerMany(NOVU_WORKFLOWS.ORG_WALLET_LOW, recipients, wire);
+  return triggerMany(NOVU_WORKFLOWS.ORG_WALLET_LOW, recipients, wire, opts);
 }
 
 /**
@@ -402,13 +447,23 @@ export async function notifyOrgWalletLow(
 export async function notifyOrgPayoutCompleted(
   orgId: string,
   payload: OrgPayoutCompletedInput,
-): Promise<void> {
-  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const recipients = await rosterForOrg(
+    orgId,
+    VISIBILITY_ROLES,
+    opts?.tx ?? prisma,
+  );
   const wire: OrgPayoutCompletedPayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
   };
-  return triggerMany(NOVU_WORKFLOWS.ORG_PAYOUT_COMPLETED, recipients, wire);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_PAYOUT_COMPLETED,
+    recipients,
+    wire,
+    opts,
+  );
 }
 
 /**
@@ -421,8 +476,13 @@ export async function notifyOrgPayoutCompleted(
 export async function notifyOrgPayoutFailed(
   orgId: string,
   payload: OrgPayoutFailedInput,
-): Promise<void> {
-  const recipients = await rosterForOrg(orgId, VISIBILITY_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const recipients = await rosterForOrg(
+    orgId,
+    VISIBILITY_ROLES,
+    opts?.tx ?? prisma,
+  );
   const workflowId =
     payload.kind === "REVERSED"
       ? NOVU_WORKFLOWS.ORG_PAYOUT_REVERSED
@@ -431,7 +491,7 @@ export async function notifyOrgPayoutFailed(
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, payload.currency),
   };
-  return triggerMany(workflowId, recipients, wire);
+  return triggerMany(workflowId, recipients, wire, opts);
 }
 
 /**
@@ -444,10 +504,20 @@ export async function notifyOrgProgramExhausted(
   orgId: string,
   assigneeUserId: string,
   payload: OrgProgramExhaustedPayload,
-): Promise<void> {
-  const operators = await rosterForOrg(orgId, OPERATOR_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const operators = await rosterForOrg(
+    orgId,
+    OPERATOR_ROLES,
+    opts?.tx ?? prisma,
+  );
   const recipients = Array.from(new Set([assigneeUserId, ...operators]));
-  return triggerMany(NOVU_WORKFLOWS.ORG_PROGRAM_EXHAUSTED, recipients, payload);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_PROGRAM_EXHAUSTED,
+    recipients,
+    payload,
+    opts,
+  );
 }
 
 /**
@@ -461,10 +531,20 @@ export async function notifyOrgProgramCapNear(
   orgId: string,
   assigneeUserId: string,
   payload: OrgProgramCapNearPayload,
-): Promise<void> {
-  const operators = await rosterForOrg(orgId, OPERATOR_ROLES);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const operators = await rosterForOrg(
+    orgId,
+    OPERATOR_ROLES,
+    opts?.tx ?? prisma,
+  );
   const recipients = Array.from(new Set([assigneeUserId, ...operators]));
-  return triggerMany(NOVU_WORKFLOWS.ORG_PROGRAM_CAP_NEAR, recipients, payload);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_PROGRAM_CAP_NEAR,
+    recipients,
+    payload,
+    opts,
+  );
 }
 
 /**
@@ -475,7 +555,8 @@ export async function notifyOrgProgramCapNear(
 export async function notifyOrgProgramOverageDue(
   memberUserId: string,
   payload: OrgProgramOverageDueInput,
-): Promise<void> {
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
   const wire: OrgProgramOverageDuePayload = {
     ...payload,
     amount: formatNotificationMoney(payload.amountPaise, ORG_DEFAULT_CURRENCY),
@@ -484,6 +565,7 @@ export async function notifyOrgProgramOverageDue(
     NOVU_WORKFLOWS.ORG_PROGRAM_OVERAGE_DUE,
     [memberUserId],
     wire,
+    opts,
   );
 }
 
@@ -495,9 +577,15 @@ export async function notifyOrgProgramOverageDue(
 export async function notifyOrgSsoProviderDeleted(
   orgId: string,
   payload: OrgSsoProviderDeletedPayload,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
-  return triggerMany(NOVU_WORKFLOWS.ORG_SSO_PROVIDER_DELETED, owners, payload);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
+  return triggerMany(
+    NOVU_WORKFLOWS.ORG_SSO_PROVIDER_DELETED,
+    owners,
+    payload,
+    opts,
+  );
 }
 
 /**
@@ -508,8 +596,9 @@ export async function notifyOrgSsoProviderDeleted(
 export async function notifyOrgSsoCertExpiring(
   orgId: string,
   payload: OrgSsoCertExpiringInput,
-): Promise<void> {
-  const owners = await rosterForOrg(orgId, OWNER_ONLY);
+  opts?: TriggerOptions,
+): Promise<StagedTrigger[]> {
+  const owners = await rosterForOrg(orgId, OWNER_ONLY, opts?.tx ?? prisma);
   return triggerManyZoned(
     NOVU_WORKFLOWS.ORG_SSO_CERT_EXPIRING,
     owners,
@@ -520,5 +609,6 @@ export async function notifyOrgSsoCertExpiring(
         payload.notAfter,
       notAfterIso: payload.notAfter,
     }),
+    opts,
   );
 }

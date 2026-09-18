@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
+import {
+  ReferralCreditsBlock,
+  useReferralCreditsBalance,
+} from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import {
@@ -30,6 +33,7 @@ import {
   useBillingState,
 } from "@/app/checkout/components/BillingStateSelect";
 import { useSession } from "@/lib/auth-client";
+import { Refusal } from "@/lib/errors/refusal";
 import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
@@ -102,6 +106,8 @@ export default function ConsultationCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance();
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
   const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(
     null,
@@ -137,8 +143,6 @@ export default function ConsultationCheckoutPage({
     );
   }, [selectedOrganizationId, session?.user?.organizationMemberships]);
   const isLicenseCovered = selectedOrgFundingSource === "LICENSE";
-  const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
   const {
@@ -203,27 +207,6 @@ export default function ConsultationCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Fetch available referral credits
-  useEffect(() => {
-    async function fetchCredits() {
-      try {
-        const response = await fetch("/api/referrals/credits/available");
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableCredits(
-            data.data.totalAvailable || 0, // already in paise
-          );
-        }
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching referral credits:", error);
-      } finally {
-        setIsLoadingCredits(false);
-      }
-    }
-    fetchCredits();
-  }, []);
 
   // Fetch slot details
   useEffect(() => {
@@ -325,9 +308,12 @@ export default function ConsultationCheckoutPage({
 
         // Use pre-validated search params (validated once via useMemo)
         if (!validatedSearchParams) {
-          throw new Error(
-            "Pick a time on the expert's profile — under the plan you want — before checking out.",
-          );
+          throw new Refusal({
+            code: "TIME_NOT_PICKED",
+            httpStatus: 422,
+            userMessage:
+              "Pick a time on the expert's profile — under the plan you want — before checking out.",
+          });
         }
 
         // Create checkout data from validated params
@@ -436,9 +422,12 @@ export default function ConsultationCheckoutPage({
       try {
         // Use pre-validated search params
         if (!validatedSearchParams) {
-          throw new Error(
-            "Pick a time on the expert's profile — under the plan you want — before checking out.",
-          );
+          throw new Refusal({
+            code: "TIME_NOT_PICKED",
+            httpStatus: 422,
+            userMessage:
+              "Pick a time on the expert's profile — under the plan you want — before checking out.",
+          });
         }
 
         // Staleness check: verify the selected slot hasn't passed or is too soon
@@ -773,33 +762,14 @@ export default function ConsultationCheckoutPage({
           )}
         </div>
         <Separator className="bg-border" />
-        <div className="grid gap-4">
-          <div className="font-semibold">Referral Credits</div>
-          {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">
-              Loading credits...
-            </div>
-          ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
-              <div className="min-w-0">
-                <div className="font-medium text-foreground">
-                  {formatPrice(availableCredits)} available
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Apply to this purchase
-                </div>
-              </div>
-              <Switch
-                checked={useReferralCredits}
-                onCheckedChange={setUseReferralCredits}
-              />
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No referral credits available
-            </div>
-          )}
-        </div>
+        <ReferralCreditsBlock
+          availableCredits={availableCredits}
+          isLoadingCredits={isLoadingCredits}
+          creditsLoadFailed={creditsLoadFailed}
+          useReferralCredits={useReferralCredits}
+          onCheckedChange={setUseReferralCredits}
+          formatPrice={formatPrice}
+        />
       </div>
       <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
         <Card className="border-border shadow-sm">

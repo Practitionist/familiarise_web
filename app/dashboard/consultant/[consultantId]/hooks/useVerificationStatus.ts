@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import type {
   ConsultantVerificationStatus,
   ProfileVerificationStatus,
+  VerificationDocumentIssue,
 } from "@prisma/client";
 
 export interface VerificationDocumentFeedback {
@@ -12,6 +13,8 @@ export interface VerificationDocumentFeedback {
   originalName?: string;
   isValid: boolean | null;
   staffFeedback?: string | null;
+  /** Reason code staff attached when they marked the document invalid. */
+  issue?: VerificationDocumentIssue | null;
 }
 
 export interface VerificationStatusData {
@@ -56,12 +59,14 @@ async function fetchVerificationStatus(): Promise<VerificationStatusData | null>
               originalName?: string;
               isValid: boolean | null;
               staffFeedback?: string | null;
+              issue?: VerificationDocumentIssue | null;
             }) => ({
               documentId: d.id,
               fileName: d.fileName,
               originalName: d.originalName,
               isValid: d.isValid,
               staffFeedback: d.staffFeedback,
+              issue: d.issue ?? null,
             }),
           ),
         }

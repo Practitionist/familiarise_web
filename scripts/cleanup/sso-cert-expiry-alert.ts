@@ -38,6 +38,7 @@ import { X509Certificate } from "node:crypto";
 import prisma from "../../lib/prisma";
 import { AUDIT_ACTIONS } from "../../lib/enterprise/audit-actions";
 import { notifyOrgSsoCertExpiring } from "../../lib/novu/org-workflows";
+import { EMAIL_BUDGET_MS, sendOrgSsoCertExpiringEmail } from "../../lib/email";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 type Severity = "WARN" | "CRITICAL" | "EXPIRED";
@@ -182,14 +183,38 @@ async function runSsoCertExpiryAlertUnlocked(): Promise<SsoCertExpiryAlertResult
         select: { name: true },
       });
       if (org) {
+        const dashboardUrl = `/dashboard/organization/${provider.organizationId}/settings/sso`;
         await notifyOrgSsoCertExpiring(provider.organizationId, {
           orgName: org.name,
           providerId: provider.providerId,
           daysRemaining,
           severity,
           notAfter: notAfter.toISOString(),
-          dashboardUrl: `/dashboard/organization/${provider.organizationId}/settings/sso`,
+          dashboardUrl,
         });
+        // #1653 — the email twin, a required notice to the same OWNER roster
+        // the bell resolves; the sender never throws.
+        const owners = await prisma.membership.findMany({
+          where: {
+            organizationId: provider.organizationId,
+            status: "ACTIVE",
+            role: "OWNER",
+          },
+          select: { userId: true },
+        });
+        await sendOrgSsoCertExpiringEmail(
+          {
+            orgId: provider.organizationId,
+            recipientUserIds: owners.map((m) => m.userId),
+            orgName: org.name,
+            providerName: provider.providerId,
+            severity,
+            daysRemaining,
+            notAfter,
+            updateUrl: dashboardUrl,
+          },
+          EMAIL_BUDGET_MS.JOB,
+        );
       }
       alerted += 1;
       console.log(

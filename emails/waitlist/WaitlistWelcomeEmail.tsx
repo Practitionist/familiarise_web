@@ -1,13 +1,16 @@
-import { Container } from "@react-email/container";
-import { Head } from "@react-email/head";
-import { Html } from "@react-email/html";
-import { Img } from "@react-email/img";
-import { Link } from "@react-email/link";
-import { Preview } from "@react-email/preview";
-import { Section } from "@react-email/section";
-import { Text } from "@react-email/text";
+import {
+  Container,
+  Head,
+  Html,
+  Link,
+  Preview,
+  Section,
+  Text,
+} from "react-email";
 import * as React from "react";
 import { getAppUrl } from "@/lib/url";
+import { EmailFooter } from "@/emails/components/EmailFooter";
+import { EmailLogo } from "@/emails/components/EmailLogo";
 
 interface WaitlistWelcomeEmailProps {
   name?: string | null;
@@ -16,7 +19,7 @@ interface WaitlistWelcomeEmailProps {
 
 export const WaitlistWelcomeEmail = ({
   name,
-  unsubscribeLink = "https://familiarise.com/api/waitlist/unsubscribe",
+  unsubscribeLink = `${getAppUrl()}/api/waitlist/unsubscribe`,
 }: WaitlistWelcomeEmailProps) => {
   return (
     <Html>
@@ -24,15 +27,7 @@ export const WaitlistWelcomeEmail = ({
       <Preview>You are on the Familiarise waitlist</Preview>
       <Section style={main}>
         <Container style={container}>
-          <Section>
-            <Img
-              src={`${getAppUrl()}/avif/static/assets/logos/images/logos/Familiarise-logos_transparent.avif`}
-              width="130"
-              height="50"
-              alt="Familiarise"
-              style={logo}
-            />
-          </Section>
+          <EmailLogo />
           <Section style={content}>
             <Text style={heading}>You are on the list</Text>
             <Text style={paragraph}>Hi{name ? ` ${name}` : ""},</Text>
@@ -51,20 +46,7 @@ export const WaitlistWelcomeEmail = ({
               </Link>
             </Text>
           </Section>
-          <Section style={footer}>
-            <Text style={footerText}>
-              © {new Date().getFullYear()} Familiarise, All Rights Reserved
-            </Text>
-            <Text style={footerLinks}>
-              <Link href={unsubscribeLink} style={link}>
-                Unsubscribe
-              </Link>{" "}
-              •{" "}
-              <Link href={`${getAppUrl()}/privacy`} style={link}>
-                Privacy Policy
-              </Link>
-            </Text>
-          </Section>
+          <EmailFooter unsubscribeLink={unsubscribeLink} />
         </Container>
       </Section>
     </Html>
@@ -82,11 +64,6 @@ const container = {
   margin: "0 auto",
   padding: "20px 0",
   maxWidth: "600px",
-};
-
-const logo = {
-  margin: "0 auto",
-  display: "block",
 };
 
 const content = {
@@ -113,29 +90,5 @@ const paragraph = {
 const inlineLink = {
   color: "#000",
   fontSize: "16px",
-  textDecoration: "underline",
-};
-
-const footer = {
-  textAlign: "center" as const,
-  margin: "20px 0",
-};
-
-const footerText = {
-  fontSize: "12px",
-  color: "#666",
-  margin: "10px 0",
-  lineHeight: "1.5",
-};
-
-const footerLinks = {
-  fontSize: "12px",
-  color: "#666",
-  margin: "10px 0",
-  lineHeight: "1.5",
-};
-
-const link = {
-  color: "#666",
   textDecoration: "underline",
 };

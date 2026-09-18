@@ -56,6 +56,7 @@ import {
 // previews a refund (cancel preview, cancel, reject all 500'd on prod). The
 // barrel is imported at the single gateway call below instead.
 import type { createRefund as createGatewayRefund } from "@/lib/payments";
+import { RefundError } from "@/lib/payments/core/types";
 import { walletCredit } from "@/lib/api/organizations/wallet";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
@@ -142,10 +143,29 @@ export class RefundGatewayError extends Error {
     message: string,
     public code: string,
     public refundRowId: string,
+    /**
+     * The gateway's own code when it answered with one (FAMILIARISE_WEB-3K:
+     * `NO_PAYMENT_FOUND` — the order never captured, so no retry will move
+     * money); undefined for a transport fault.
+     */
+    public gatewayCode?: string,
   ) {
     super(message);
     this.name = "RefundGatewayError";
   }
+}
+
+/**
+ * True for the three modelled refund outcomes. A caller that records one for
+ * follow-up reports it `expected` at `warning` — a refusal that still needs a
+ * human, not a fault (FAMILIARISE_WEB-3K).
+ */
+export function isModelledRefundRefusal(err: unknown): boolean {
+  return (
+    err instanceof RefundValidationError ||
+    err instanceof RefundGatewayError ||
+    err instanceof RefundError
+  );
 }
 
 // ============================================================================
@@ -430,6 +450,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",
       reserved.id,
+      err instanceof RefundError ? err.code : undefined,
     );
   }
 

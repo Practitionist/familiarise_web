@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
+import {
+  ReferralCreditsBlock,
+  useReferralCreditsBalance,
+} from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import {
@@ -102,6 +105,8 @@ export default function ClassCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance();
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,8 +127,6 @@ export default function ClassCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
   const {
@@ -195,27 +198,6 @@ export default function ClassCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Fetch available referral credits
-  useEffect(() => {
-    async function fetchCredits() {
-      try {
-        const response = await fetch("/api/referrals/credits/available");
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableCredits(
-            data.data.totalAvailable || 0, // already in paise
-          );
-        }
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching referral credits:", error);
-      } finally {
-        setIsLoadingCredits(false);
-      }
-    }
-    fetchCredits();
-  }, []);
 
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
   const handleCheckoutSuccess = useMemo(
@@ -685,33 +667,14 @@ export default function ClassCheckoutPage({
           </div>
         </div>
         <Separator className="bg-border" />
-        <div className="grid gap-4">
-          <div className="font-semibold">Referral Credits</div>
-          {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">
-              Loading credits...
-            </div>
-          ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
-              <div className="min-w-0">
-                <div className="font-medium text-foreground">
-                  {formatPrice(availableCredits)} available
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Apply to this purchase
-                </div>
-              </div>
-              <Switch
-                checked={useReferralCredits}
-                onCheckedChange={setUseReferralCredits}
-              />
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No referral credits available
-            </div>
-          )}
-        </div>
+        <ReferralCreditsBlock
+          availableCredits={availableCredits}
+          isLoadingCredits={isLoadingCredits}
+          creditsLoadFailed={creditsLoadFailed}
+          useReferralCredits={useReferralCredits}
+          onCheckedChange={setUseReferralCredits}
+          formatPrice={formatPrice}
+        />
       </div>
       <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
         <Card className="border-border shadow-sm">

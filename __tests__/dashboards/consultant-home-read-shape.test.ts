@@ -33,6 +33,8 @@ jest.mock("../../lib/prisma", () => ({
     consultantReview: { aggregate: jest.fn() },
     trial: { groupBy: jest.fn() },
     membership: { findMany: jest.fn() },
+    // #1703 D4 — the response-rate read on the requests card.
+    bookingStatusHistory: { findMany: jest.fn() },
   },
 }));
 
@@ -54,6 +56,7 @@ describe("consultant Home read shape (#1101)", () => {
     (prisma.activityLog.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.trial.groupBy as jest.Mock).mockResolvedValue([]);
     (prisma.membership.findMany as jest.Mock).mockResolvedValue([]);
+    (prisma.bookingStatusHistory.findMany as jest.Mock).mockResolvedValue([]);
     (prisma.consultantEarnings.aggregate as jest.Mock).mockResolvedValue({
       _sum: { consultantSharePaise: null, refundedShareAmount: null },
     });
@@ -66,8 +69,15 @@ describe("consultant Home read shape (#1101)", () => {
   it("ranks Home appointments by slot time anchored at today, not by createdAt", async () => {
     await getConsultantDashboard("cp-1").catch(() => undefined);
 
-    expect(slotFindMany).toHaveBeenCalledTimes(1);
+    // Two occurrence reads: the ranking read first, then the #1703 B13
+    // org-sessions strip (personal pin inverted, metadata only).
+    expect(slotFindMany).toHaveBeenCalledTimes(2);
     const args = slotFindMany.mock.calls[0][0];
+    const orgArgs = slotFindMany.mock.calls[1][0];
+    expect(orgArgs.where.appointment.organizationId).toEqual({ not: null });
+    expect(orgArgs.select.appointment.select.organization).toEqual({
+      select: { name: true },
+    });
 
     // Ordering must key off the slot clock. `createdAt` truncated on the wrong
     // key: a consultant who booked next month a fortnight ago and then took a
@@ -151,6 +161,46 @@ describe("consultant Home read shape (#1101)", () => {
     expect(needsYou.total).toBe(14);
   });
 
+  it("the pending preview reads the badge's own predicate, and awaiting-payment rows ride a separate row (#1703)", async () => {
+    const consultationFindMany = prisma.consultation.findMany as jest.Mock;
+    consultationFindMany.mockImplementation(
+      ({ where }: { where: { status: string } }) =>
+        Promise.resolve(
+          where.status === "APPROVED_PENDING_PAYMENT"
+            ? [
+                {
+                  id: "c-unpaid",
+                  requestedAt: new Date("2026-09-18T10:00:00Z"),
+                  requestedBy: { user: { name: "Olivia" } },
+                },
+              ]
+            : [],
+        ),
+    );
+    consultationCount.mockImplementation(
+      ({ where }: { where: { status: string } }) =>
+        Promise.resolve(where.status === "APPROVED_PENDING_PAYMENT" ? 4 : 1),
+    );
+
+    const result = await getConsultantDashboard("cp-1");
+
+    // Preview and badge: one predicate, one window (no 90-day floor).
+    const previewWhere = consultationFindMany.mock.calls.find(
+      (c) => c[0].where.status === "PENDING",
+    )![0].where;
+    expect(previewWhere).toEqual(
+      pendingConsultationWhere("cp-1", { kind: "personal" }),
+    );
+    expect(previewWhere.requestedAt).toBeUndefined();
+
+    expect(result.awaitingPayment.count).toBe(4);
+    expect(result.awaitingPayment.items).toEqual([
+      expect.objectContaining({ id: "c-unpaid", type: "Consultation" }),
+    ]);
+    // The pipeline row never leaks into the pending badge.
+    expect(result.pendingRequestsCount).toBe(1);
+  });
+
   it("issues no display read at all when there is nothing upcoming (#1121)", async () => {
     // slotFindMany resolves [] from beforeEach, so homeAppointmentIds is empty —
     // a new consultant, an entirely past book, or one whose upcoming work was
@@ -170,7 +220,11 @@ describe("consultant Home read shape (#1101)", () => {
   it("still issues the display read when there IS something upcoming (#1121)", async () => {
     // Non-vacuity anchor for the assertion above: prove the guard is keyed on
     // emptiness and has not simply deleted the read.
-    slotFindMany.mockResolvedValue([{ appointmentId: "appt-1" }]);
+    // Only the ranking read (select: { appointmentId }) answers; the B13 org
+    // read keys off a wider select and stays empty.
+    slotFindMany.mockImplementation((args: { select: { id?: boolean } }) =>
+      Promise.resolve(args.select.id ? [] : [{ appointmentId: "appt-1" }]),
+    );
 
     await getConsultantDashboard("cp-1");
 

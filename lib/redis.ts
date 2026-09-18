@@ -473,6 +473,44 @@ export async function releaseLock(key: string, token: string): Promise<void> {
 }
 
 /**
+ * #1696 — re-arm a held lock's TTL, only while we still own it (the token
+ * rides the compare). False means the grant is gone: expired, or released
+ * by someone else. Never throws; a Redis fault reads as "not renewed".
+ */
+export async function renewLock(
+  key: string,
+  token: string,
+  ttl: number,
+): Promise<boolean> {
+  try {
+    return await withCircuitBreaker(
+      async () => {
+        const script = `
+          if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("pexpire", KEYS[1], ARGV[2])
+          else
+            return 0
+          end
+        `;
+        const result = await redis.eval(script, [key], [token, String(ttl)]);
+        return result === 1;
+      },
+      () => false,
+    );
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "lock_renew_error",
+        key,
+        error: error instanceof Error ? error.message : String(error),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    return false;
+  }
+}
+
+/**
  * Check if mock Redis is being used
  */
 export function isMockRedis(): boolean {

@@ -87,11 +87,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
-    description: "The consultant, when a request needs their approval.",
+    description:
+      "The consultant, when a request needs their approval; with `nudgeDay`, a paid subscription still waiting for session times (#1703).",
     category: "appointments",
     inApp: {
-      subject: "New booking request",
-      body: "{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.",
+      subject:
+        "{% if payload.nudgeDay %}Waiting for session times{% else %}New booking request{% endif %}",
+      body: "{% if payload.nudgeDay %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeDay}} days since payment.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -371,11 +373,12 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.VERIFICATION_STATUS_CHANGED,
     name: "Verification status",
-    description: "The consultant. `status` is the raw profile enum.",
+    description:
+      "The consultant. `status` is VERIFIED, REJECTED or NEEDS_INFO (a request for more information).",
     category: null,
     inApp: {
       subject: "Verification update",
-      body: "{% case payload.status %}{% when 'VERIFIED' %}Your profile is verified and now visible to clients.{% when 'REJECTED' %}Your profile verification was not approved.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}",
+      body: "{% case payload.status %}{% when 'VERIFIED' %}Your profile is verified and now visible to clients.{% when 'REJECTED' %}Your profile verification was not approved.{% when 'NEEDS_INFO' %}The reviewer needs more information before your profile can be verified.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}",
       redirect: "dashboardUrl",
     },
   },

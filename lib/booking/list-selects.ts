@@ -15,6 +15,13 @@ export const PUBLIC_USER_SELECT = {
   select: { id: true, name: true, image: true },
 } as const;
 
+/** The two parties of one booking on the detail routes: public identity plus
+ * the email the pay-link mail and the approval notices need. Nothing else —
+ * phone/address/DOB rode along on `user: true` (#946, #1717 security pass). */
+export const PARTY_USER_SELECT = {
+  select: { id: true, name: true, email: true, image: true },
+} as const;
+
 /** A profile row reduced to its id and public user identity. Used for both
  * the requesting consultee and the plan's consultant profile. */
 export const PROFILE_WITH_USER_SELECT = {
@@ -59,7 +66,9 @@ export const APPOINTMENT_LIST_SELECT = {
       // Typed rather than inferred: the file's `as const` would otherwise make
       // this a readonly tuple, which Prisma's Exact<> rejects.
       where: {
-        status: { in: ["PENDING_REVIEW", "COUNTERED"] as RescheduleRequestStatus[] },
+        status: {
+          in: ["PENDING_REVIEW", "COUNTERED"] as RescheduleRequestStatus[],
+        },
       },
       select: {
         id: true,

@@ -14,9 +14,13 @@
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
  * - availabilityLimiter:    30/min per IP    — GET /api/scheduling/availability/[consultantId]
+ * - availabilityGridLimiter: 120/min per IP  — GET /api/scheduling/availability-with-allocation/[consultantId]
  * - currencyLimiter:        30/min per IP    — GET /api/currency (protects the FX provider quota)
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
  * - streamRecordingSyncLimiter: 3/5min per user — POST /api/stream/recordings/sync (Stream fan-out)
+ * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
+ * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
+ * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -159,6 +163,20 @@ export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
 export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 
 /**
+ * 120 per minute per IP — GET /api/scheduling/availability-with-allocation/[consultantId]
+ * (#1697 item 2). The hottest read in the app and, until now, the one the
+ * middleware path match missed. Sized for a shared-NAT office of grids each
+ * polling once a minute plus week-slides and post-allocation refetches; a
+ * scripted loop trips it within seconds. 429s carry Retry-After and the
+ * client poller backs off by it.
+ */
+export const availabilityGridLimiter = makeLimiter(
+  120,
+  "1 m",
+  "rl:availability-grid",
+);
+
+/**
  * 30 per minute per IP — GET /api/currency (#1396).
  *
  * The route was public and completely unbounded, and every miss on the
@@ -199,6 +217,46 @@ export const documentReviewLimiter = makeLimiter(
   30,
   "1 m",
   "rl:document-review",
+);
+
+/**
+ * 10 per minute per user — onboarding terminal submit
+ * (`updateOnboardingInformationAction` + `PATCH /api/form/onboarding/[id]`).
+ * One submit runs a multi-table CAS transaction plus slot fan-out and a
+ * post-commit verification side effect, so a double-click loop or a retry
+ * storm is real DB + notify load. Ten covers impatient double-submits and
+ * maintenance-window retries; a loop trips it immediately. Keyed by user id
+ * (server actions have no request IP helper — reuse `applyRateLimit`, which
+ * only needs the limiter + identifier).
+ */
+export const onboardingSubmitLimiter = makeLimiter(
+  10,
+  "1 m",
+  "rl:onboarding-submit",
+);
+
+/**
+ * 30 per minute per user — `saveOnboardingDraftAction` (draft autosave).
+ * The wizard debounces saves at 800ms + flushes on pagehide, so legitimate
+ * traffic is a handful of 64KB upserts per step. Thirty caps a stuck
+ * autosave loop without ever touching a human.
+ */
+export const onboardingDraftLimiter = makeLimiter(
+  30,
+  "1 m",
+  "rl:onboarding-draft",
+);
+
+/**
+ * 10 per hour per user — `POST /api/verification/submit` + `/resubmit`.
+ * Each call mints or mutates a review-queue row and notifies admins; an
+ * hour bucket fits the human cadence (submit → fix docs → resubmit) while
+ * stopping queue-flooding scripts. Status reads are intentionally unthrottled.
+ */
+export const verificationSubmitLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:verification-submit",
 );
 
 // ============================================================================
@@ -291,6 +349,18 @@ export const orgDataExportLimiter = makeLimiter(
  *                     Prefix with a route slug when reusing the same limiter across
  *                     multiple endpoints (e.g. `tickets:${userId}`).
  */
+/**
+ * Seconds until the sliding window admits the caller again, floored at one so
+ * a client never reads "retry now" off a 429 (#1697).
+ */
+export function retryAfterSeconds(
+  resetAtMs: number,
+  nowMs = Date.now(),
+): number {
+  if (!Number.isFinite(resetAtMs)) return 1;
+  return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
+}
+
 // Module scope, so the window is per function instance and resets with it.
 const REDIS_FAILURE_REPORT_INTERVAL_MS = 60_000;
 let lastRedisFailureReportAt = 0;
@@ -300,13 +370,21 @@ export async function applyRateLimit(
   identifier: string,
 ): Promise<NextResponse | null> {
   try {
-    const { success, remaining } = await limiter.limit(identifier);
+    const { success, remaining, reset } = await limiter.limit(identifier);
     if (!success) {
       return NextResponse.json(
-        { error: "Too many requests. Please try again later." },
+        // Machine-readable code alongside the sentence: clients key the
+        // shared "wait a moment, then retry" toast off it instead of
+        // string-matching the message.
+        { error: "Too many requests. Please try again later.", code: "RATE_LIMITED" },
         {
           status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
+          headers: {
+            "X-RateLimit-Remaining": String(remaining),
+            // #1697 — background pollers back off by this rather than retrying
+            // on their own cadence; the window's reset is the honest figure.
+            "Retry-After": String(retryAfterSeconds(reset)),
+          },
         },
       );
     }

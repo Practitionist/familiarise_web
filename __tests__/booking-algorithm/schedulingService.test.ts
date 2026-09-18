@@ -123,6 +123,8 @@ function makeMockTx() {
       // #1499 — createAppointments reads the originating appointment to
       // inherit the policy version the booking was sold under. Null here:
       // these fixtures predate the FK, so the created rows carry no policy.
+      // #837 — doubles as the idempotent-replay pre-check read (null = no
+      // replay); replay tests override per test.
       findFirst: jest.fn().mockResolvedValue(null),
       // #1569 — the earnings-hold recompute after a reschedule reads the
       // wrapper's payments; none here, so nothing to re-anchor.
@@ -345,7 +347,13 @@ describe("allocate() - Mode routing", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("DB connection failed");
+    // 5xx answers never carry raw error text (pool timeouts and Prisma
+    // internals are operator detail): fixed indeterminate copy instead.
+    expect(result.error).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+    expect(result.errorCode).toBe("UNKNOWN_ERROR");
+    expect(result.httpStatus).toBe(500);
   });
 
   it("should handle non-Error throws gracefully", async () => {
@@ -361,7 +369,24 @@ describe("allocate() - Mode routing", () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toBe("Allocation failed");
+    expect(result.error).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+  });
+
+  it("should keep the raw message on 4xx modelled outcomes", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "nonexistent",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(400);
+    expect(result.error).toBe("consultation not found or has no consultant");
   });
 });
 
@@ -520,9 +545,8 @@ describe("Manual allocation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.consultation).toEqual({
-      connect: { id: "consult-1" },
-    });
+    expect(createCall.data.consultationId).toBe("consult-1");
+    expect("consultation" in createCall.data).toBe(false);
   });
 
   it("should update consultation status to APPROVED", async () => {
@@ -598,9 +622,7 @@ describe("Manual allocation", () => {
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
     expect(createCall.data.appointmentType).toBe(AppointmentsType.SUBSCRIPTION);
-    expect(createCall.data.subscription).toEqual({
-      connect: { id: "sub-1" },
-    });
+    expect(createCall.data.subscriptionId).toBe("sub-1");
   });
 
   it("creates ONE wrapper with one occurrence per call for a multi-call subscription", async () => {
@@ -778,8 +800,11 @@ describe("Requested slot allocation", () => {
       {
         id: "apt-1",
         occurrences: [
-          { id: "s1", completionStatus: "RESCHEDULED" },
-          { id: "s2", completionStatus: "RESCHEDULED" },
+          // isTentative rides along: the reschedule route writes both, and
+          // the release predicate requires both (fresh-request holds are
+          // tentative with SCHEDULED).
+          { id: "s1", isTentative: true, completionStatus: "RESCHEDULED" },
+          { id: "s2", isTentative: true, completionStatus: "RESCHEDULED" },
         ],
       },
     ]);
@@ -1673,7 +1698,12 @@ describe("fetchEventData - config extraction", () => {
       // #676 AE-1 — consulteeUserId threaded for the conflict scan, now inside
       // the options object that brought validate() back under the param limit.
       // #1554 — a reschedule also names the occurrence rows being replaced.
-      { consulteeUserId: "consultee-1", excludeOccurrenceIds: [] },
+      // Co-host arm: the consultant's own ACCEPTED seats occupy too (AE-2).
+      {
+        consulteeUserId: "consultee-1",
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 
@@ -1696,8 +1726,13 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array), // appointmentIdsToExclude
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
-      // event has no single consultee.
-      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
+      // event has no single consultee. The co-host arm still applies: the
+      // owner consultant's own ACCEPTED seats occupy.
+      {
+        consulteeUserId: undefined,
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 
@@ -1750,8 +1785,12 @@ describe("fetchEventData - config extraction", () => {
       expect.any(Array), // appointmentIdsToExclude
       // consulteeUserId moved into the options object when validate() came back
       // under the parameter limit. Still undefined here: #676 AE-1 — a group
-      // event has no single consultee.
-      { consulteeUserId: undefined, excludeOccurrenceIds: [] },
+      // event has no single consultee. The co-host arm still applies.
+      {
+        consulteeUserId: undefined,
+        excludeOccurrenceIds: [],
+        consultantProfileId: "consultant-profile-1",
+      },
     );
   });
 });
@@ -2044,6 +2083,91 @@ describe("createAppointments - grouping and validation", () => {
         data: expect.objectContaining({ cancellationPolicyId: "policy-abc" }),
       }),
     );
+  });
+
+  // The create uses the UNCHECKED (scalar-FK) input throughout. Mixing a
+  // relation-style `connect` with any scalar FK makes Prisma validate against
+  // the checked input, which has no *Id fields at all — the shape, not the
+  // null, was what threw "Unknown argument cancellationPolicyId" on a live
+  // preview (FAMILIARISE_WEB-4F). NULL is the platform ladder and is legal.
+  it("writes cancellationPolicyId: null when no originating wrapper exists", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect(data.cancellationPolicyId).toBeNull();
+  });
+
+  it("writes cancellationPolicyId: null when the wrapper cites none (legacy/shared row)", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue({
+      cancellationPolicyId: null,
+    });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect(data.cancellationPolicyId).toBeNull();
+  });
+
+  it("never mixes a relation-style connect with scalar FKs on appointment create", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.appointment.findFirst.mockResolvedValue({
+      cancellationPolicyId: "policy-abc",
+    });
+
+    await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    const data: Record<string, unknown> =
+      mockTx.appointment.create.mock.calls[0][0].data;
+    const relationKeys = Object.entries(data).filter(
+      ([, value]) =>
+        typeof value === "object" && value !== null && "connect" in value,
+    );
+    expect(relationKeys).toEqual([]);
+    expect(data.consultationId).toBe("consult-1");
+    expect(data.cancellationPolicyId).toBe("policy-abc");
+  });
+
+  it("writes organizationId as a scalar on an org-funded allocation", async () => {
+    // #768 — the org tag rides on the originating appointment for a consultation.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        appointment: { organizationId: "org-1", occurrences: [] },
+      }),
+    );
+    mockTx.appointment.findFirst.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect(data.organizationId).toBe("org-1");
+    expect("organization" in data).toBe(false);
   });
 
   it("should only connect consultant when no consultee (webinar)", async () => {
@@ -2786,7 +2910,7 @@ describe("Edge cases", () => {
     expect(result.success).toBe(true);
     const createCall = mockTx.appointment.create.mock.calls[0][0];
     expect(createCall.data.appointmentType).toBe(AppointmentsType.CLASS);
-    expect(createCall.data.class).toEqual({ connect: { id: "class-1" } });
+    expect(createCall.data.classId).toBe("class-1");
   });
 
   it("should handle custom schedule consultant", async () => {
@@ -3212,5 +3336,76 @@ describe("#1206 partial allocation", () => {
 
     expect(result.success).toBe(true);
     expect(result.partial).toBeUndefined();
+  });
+});
+
+// ─── Manual idempotent replay vs key reuse (B2) ─────────────────────────────
+
+describe("manual idempotent replay", () => {
+  const HALF_HOUR_MS = 30 * 60 * 1000;
+  // Fake timers hold the suite at 2025-01-01, so these are firmly past/future.
+  const pastStart = new Date("2024-12-02T10:00:00.000Z");
+  const futureStart = new Date("2025-06-02T10:00:00.000Z");
+
+  function stampBatch() {
+    mockTx.appointment.findUnique.mockResolvedValue({
+      consultationId: "consult-1",
+      subscriptionId: null,
+      webinarId: null,
+      classId: null,
+    });
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "apt-1",
+        deletedAt: null,
+        occurrences: [
+          {
+            startsAt: pastStart,
+            endsAt: new Date(pastStart.getTime() + HALF_HOUR_MS),
+            deletedAt: null,
+          },
+          // One occurrence per CALL with its real end (not one row per
+          // 30-minute atom): a 1-hour session is a single 10:00-11:00 row.
+          {
+            startsAt: futureStart,
+            endsAt: new Date(futureStart.getTime() + 2 * HALF_HOUR_MS),
+            deletedAt: null,
+          },
+        ],
+      },
+    ]);
+  }
+
+  it("replays a double-submit when past rows are preserved", async () => {
+    stampBatch();
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: [
+        futureStart.toISOString(),
+        new Date(futureStart.getTime() + HALF_HOUR_MS).toISOString(),
+      ],
+      idempotencyKey: "key-1",
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("422s a same-key submit with genuinely different slots", async () => {
+    stampBatch();
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-06-03T10:00:00.000Z"],
+      idempotencyKey: "key-1",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(422);
+    expect(result.errorCode).toBe("IDEMPOTENCY_KEY_REUSE");
   });
 });

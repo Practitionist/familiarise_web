@@ -111,6 +111,7 @@ export const auth = betterAuth({
         email: user.email,
         name: user.name || "User",
         token,
+        userId: user.id,
       });
     },
     resetPasswordTokenExpiresIn: 1800, // 30 minutes
@@ -132,6 +133,7 @@ export const auth = betterAuth({
         email: user.email,
         name: user.name || "User",
         verificationUrl: url,
+        userId: user.id,
       });
     },
   },
@@ -250,14 +252,18 @@ export const auth = betterAuth({
             // org-operators (UserRole.ORG_WORKSPACE) and consultants from
             // carrying a dangling consumer profile they never use.
 
-            // Create CookiePreference
-            await prisma.cookiePreference.create({
-              data: { userId: user.id },
+            // Upserts, not creates (#1697 item 4): a re-run of this hook
+            // (an SSO auto-provision retry, a replayed signup) used to die
+            // on the userId unique and skip every step below it.
+            await prisma.cookiePreference.upsert({
+              where: { userId: user.id },
+              create: { userId: user.id },
+              update: {},
             });
-
-            // Create NotificationPreference
-            await prisma.notificationPreference.create({
-              data: { userId: user.id },
+            await prisma.notificationPreference.upsert({
+              where: { userId: user.id },
+              create: { userId: user.id },
+              update: {},
             });
 
             // DPDP Act 2023: stamp a ConsentArtifact for the essential
@@ -302,17 +308,21 @@ export const auth = betterAuth({
               );
             }
 
-            // Send welcome email (fire and forget)
-            sendWelcomeEmail({
-              email: user.email,
-              name: user.name || "User",
-            }).catch((err) => {
+            // #1298 — awaited: an un-awaited send is dropped when the instance
+            // freezes after the response (same class as #1616).
+            try {
+              await sendWelcomeEmail({
+                email: user.email,
+                name: user.name || "User",
+                userId: user.id,
+              });
+            } catch (err) {
               console.error("[AUTH_HOOK] Welcome email error:", err);
               Sentry.captureException(
                 err instanceof Error ? err : new Error(String(err)),
                 { tags: { subsystem: "auth" }, level: "warning" },
               );
-            });
+            }
 
             // Sync Novu subscriber (fire and forget with error logging)
             const nameParts = (user.name || "User").split(" ");
@@ -395,17 +405,22 @@ export const auth = betterAuth({
                 select: { email: true, name: true },
               });
               if (user?.email) {
-                sendAccountLinkedEmail({
-                  email: user.email,
-                  name: user.name || "User",
-                  provider: account.providerId,
-                }).catch((err) => {
+                // #1298 — awaited: an un-awaited send is dropped when the
+                // instance freezes after the response (same class as #1616).
+                try {
+                  await sendAccountLinkedEmail({
+                    email: user.email,
+                    name: user.name || "User",
+                    provider: account.providerId,
+                    userId: account.userId,
+                  });
+                } catch (err) {
                   console.error("[AUTH_HOOK] Account linked email error:", err);
                   Sentry.captureException(
                     err instanceof Error ? err : new Error(String(err)),
                     { tags: { subsystem: "auth" }, level: "warning" },
                   );
-                });
+                }
               }
             } catch (error) {
               console.error("[AUTH_HOOK] account.create.after error:", error);
@@ -567,7 +582,8 @@ export const auth = betterAuth({
           });
           continue;
         }
-        const defaultRole = bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
+        const defaultRole =
+          bm.organization.ssoSettings?.defaultRoleForAutoJoin ?? "LEARNER";
         try {
           // Wrap the role-effect resolution + Membership create in a
           // transaction so the lazy-created profile (LEARNER →

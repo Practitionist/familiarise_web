@@ -238,15 +238,15 @@ For every major dependency, this document covers: current version, what it's use
 
 ### Resend
 
-| Field               | Value                                              |
-| ------------------- | -------------------------------------------------- |
-| **Current Version** | ^6.8.0                                             |
-| **Used For**        | Email sending (transactional emails)               |
-| **Key Files**       | `lib/email.ts`, email templates in `@react-email/` |
-| **Minor Update**    | Safe                                               |
-| **Major Update**    | Needs Testing -- send API changes                  |
-| **How to Test**     | 1. Send a test email 2. Verify delivery            |
-| **Estimated Time**  | Minor: 15 min. Major: 1 hour.                      |
+| Field               | Value                                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| **Current Version** | ^6.28.0 (`resend`), 6.9.5 (`react-email`)                                                                                           |
+| **Used For**        | Email sending (transactional emails)                                                                                                |
+| **Key Files**       | `lib/email/deliver.ts`, `lib/email/index.ts`, email templates in `emails/`, rendered via `react-email`                              |
+| **Minor Update**    | Safe                                                                                                                                |
+| **Major Update**    | Needs Testing -- send API or `react-email` render API changes                                                                       |
+| **How to Test**     | 1. Send a test email 2. Verify delivery 3. Verify a missing key still dead-letters into `FailedEmail` instead of throwing unhandled |
+| **Estimated Time**  | Minor: 15 min. Major: 1 hour.                                                                                                       |
 
 ---
 

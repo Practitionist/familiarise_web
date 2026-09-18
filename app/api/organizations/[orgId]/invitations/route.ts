@@ -28,6 +28,14 @@ import {
   UNVERIFIED_ORG_SEAT_CAP,
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import {
+  attemptStagedEmail,
+  EMAIL_BUDGET_MS,
+  stageOrgInvitationEmail,
+  type StagedSend,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -61,9 +69,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const rawStatus = url.searchParams.get("status");
-  const status = rawStatus
-    ? StatusFilterSchema.safeParse(rawStatus)
-    : null;
+  const status = rawStatus ? StatusFilterSchema.safeParse(rawStatus) : null;
 
   const invitations = await prisma.invitation.findMany({
     where: {
@@ -201,77 +207,99 @@ export async function POST(
   // surfaced P2002.
   let wasExisting = false;
   let invitation;
+  // Staged inside the transaction below: the notice rows commit with the
+  // invitation or roll back with it (review round 2 on #1700).
+  let stagedBells: StagedTrigger[] = [];
+  let stagedEmail: StagedSend | null = null;
+  const origin = new URL(req.url).origin;
   try {
     // #1132 follow-up — the tx below assumed a retry budget that never
     // existed; a P2034 abort surfaced as a raw 500 to the invite sender.
     // Transient serialization failures now retry via the house helper.
     invitation = await withSerializableRetry(() =>
       prisma.$transaction(
-      async (tx) => {
-        const existing = await tx.invitation.findFirst({
-          where: {
-            organizationId: orgId,
-            email,
-            status: "pending",
-          },
-        });
-        wasExisting = !!existing;
+        async (tx) => {
+          const existing = await tx.invitation.findFirst({
+            where: {
+              organizationId: orgId,
+              email,
+              status: "pending",
+            },
+          });
+          wasExisting = !!existing;
 
-        // PR-1d / #675: an unverified org may onboard a small founding
-        // team but is hard-capped until at least one OrgDomainClaim is
-        // verified. Skip the gate for re-invites (the seat is already
-        // counted in the active+pending sum from the original send).
-        if (!existing) {
-          const verified = await hasVerifiedDomain(tx, orgId);
-          if (!verified) {
-            const [activeMembers, pendingInvites] = await Promise.all([
-              tx.membership.count({
-                where: { organizationId: orgId, status: "ACTIVE" },
-              }),
-              tx.invitation.count({
-                where: { organizationId: orgId, status: "pending" },
-              }),
-            ]);
-            if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
-              throw new DomainVerificationRequiredError("BULK_SEATS");
+          // PR-1d / #675: an unverified org may onboard a small founding
+          // team but is hard-capped until at least one OrgDomainClaim is
+          // verified. Skip the gate for re-invites (the seat is already
+          // counted in the active+pending sum from the original send).
+          if (!existing) {
+            const verified = await hasVerifiedDomain(tx, orgId);
+            if (!verified) {
+              const [activeMembers, pendingInvites] = await Promise.all([
+                tx.membership.count({
+                  where: { organizationId: orgId, status: "ACTIVE" },
+                }),
+                tx.invitation.count({
+                  where: { organizationId: orgId, status: "pending" },
+                }),
+              ]);
+              if (activeMembers + pendingInvites >= UNVERIFIED_ORG_SEAT_CAP) {
+                throw new DomainVerificationRequiredError("BULK_SEATS");
+              }
             }
           }
-        }
 
-        const token = existing?.id ?? crypto.randomUUID();
-        const record = existing
-          ? await tx.invitation.update({
-              where: { id: existing.id },
-              data: { role, expiresAt },
-            })
-          : await tx.invitation.create({
-              data: {
-                id: token,
-                organizationId: orgId,
-                email,
-                role,
-                status: "pending",
-                expiresAt,
-                inviterId: access.session.user.id,
-              },
-            });
+          const token = existing?.id ?? crypto.randomUUID();
+          const record = existing
+            ? await tx.invitation.update({
+                where: { id: existing.id },
+                data: { role, expiresAt },
+              })
+            : await tx.invitation.create({
+                data: {
+                  id: token,
+                  organizationId: orgId,
+                  email,
+                  role,
+                  status: "pending",
+                  expiresAt,
+                  inviterId: access.session.user.id,
+                },
+              });
 
-        await tx.orgAuditLog.create({
-          data: {
-            organizationId: orgId,
-            actorMembershipId: access.member.id,
-            category: "MEMBER",
-            action: existing
-              ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
-              : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
-            description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
-            details: { email, role, expiresAt: expiresAt.toISOString() },
-          },
-        });
+          await tx.orgAuditLog.create({
+            data: {
+              organizationId: orgId,
+              actorMembershipId: access.member.id,
+              category: "MEMBER",
+              action: existing
+                ? AUDIT_ACTIONS.MEMBER.INVITE_RESENT
+                : AUDIT_ACTIONS.MEMBER.INVITE_SENT,
+              description: `${existing ? "Re-sent" : "Sent"} invite to ${email} as ${role}`,
+              details: { email, role, expiresAt: expiresAt.toISOString() },
+            },
+          });
 
-        return record;
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          // The bell reaches an invitee who already has an account; the
+          // email is the channel that reaches one who does not (#1653). Both
+          // outbox rows are written HERE, so they exist iff the invitation
+          // does; the vendor attempts run in after() below.
+          const invite = {
+            inviterName: access.session.user.name ?? access.session.user.email,
+            orgName: access.org.name,
+            role,
+            inviteUrl: `${origin}/organizations/invite/${record.id}`,
+            expiresAt: expiresAt.toISOString(),
+          };
+          stagedBells = await notifyOrgInviteSent(email, invite, { tx });
+          stagedEmail = await stageOrgInvitationEmail(
+            { email, ...invite },
+            { tx, entityRef: `orgInvite:${record.id}` },
+          );
+
+          return record;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       ),
     );
   } catch (err) {
@@ -299,25 +327,17 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 
-  // Side-effect: trigger Novu email delivery to the invitee. Non-blocking
-  // — on failure we still return the invitation response. The existing
-  // email-send flow (lib/email.ts / Resend) continues to run; Novu is
-  // additive so in-app bell delivery works once the invitee has a user
-  // account.
-  const origin = new URL(req.url).origin;
-  notifyOrgInviteSent(email, {
-    inviterName: access.session.user.name ?? access.session.user.email,
-    orgName: access.org.name,
-    role,
-    inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
-    expiresAt: expiresAt.toISOString(),
-  }).catch((err) => {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
-    console.error("[notifyOrgInviteSent] failed:", err);
+  // Vendor attempts after the response; the rows above are the durable part.
+  scheduleAfter(async () => {
+    for (const row of stagedBells) await attemptTrigger(row);
+    await attemptStagedEmail(stagedEmail, EMAIL_BUDGET_MS.AUTH);
   });
 
   return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });

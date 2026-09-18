@@ -1,0 +1,141 @@
+/**
+ * Render every absolute instant in the VIEWER'S zone, on the server and in
+ * the browser alike. date-fns's `format()` reads the runtime's local zone, so
+ * Netlify (UTC) and a browser in Asia/Kolkata produced two wall clocks for one
+ * instant and React threw hydration error #418 on the Appointments pages.
+ *
+ * Pure on purpose: nothing here reads `new Date()` or the runtime zone, so a
+ * rendered string is a function of (instant, zone, pattern) and nothing else.
+ */
+
+import { formatInTimeZone } from "date-fns-tz";
+
+export const UTC_ZONE = "UTC";
+
+export interface ViewerZone {
+  /** IANA zone every time on the page is rendered in. */
+  zone: string;
+  /** True when `zone` is the viewer's own saved timezone, so no label is shown. */
+  own: boolean;
+}
+
+/** True when the runtime knows this IANA name; a bad saved value must not crash a page. */
+export function isValidTimeZone(
+  zone: string | null | undefined,
+): zone is string {
+  if (!zone) return false;
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export interface ResolveViewerZoneOpts {
+  /** `User.timezone` off the session — the viewer's own zone when set. */
+  userTimezone?: string | null;
+  /** The appointment's scheduling zone, when the caller has one. */
+  fallbackZone?: string | null;
+}
+
+/** The viewer's saved zone, else the caller's fallback, else UTC. */
+export function resolveViewerZone({
+  userTimezone,
+  fallbackZone,
+}: ResolveViewerZoneOpts = {}): string {
+  if (isValidTimeZone(userTimezone)) return userTimezone;
+  if (isValidTimeZone(fallbackZone)) return fallbackZone;
+  return UTC_ZONE;
+}
+
+/** `resolveViewerZone` plus whether the result is the viewer's own zone. */
+export function describeViewerZone(
+  opts: ResolveViewerZoneOpts = {},
+): ViewerZone {
+  const zone = resolveViewerZone(opts);
+  return { zone, own: isValidTimeZone(opts.userTimezone) };
+}
+
+/** Format an instant in `zone` with a date-fns pattern, independent of the runtime zone. */
+export function formatInViewerZone(
+  date: Date | string | number,
+  zone: string,
+  pattern: string,
+): string {
+  return formatInTimeZone(date, zone, pattern);
+}
+
+/**
+ * Legacy IANA spellings browsers and old profiles still report, folded to
+ * the canonical name so one zone is never shown under two names (#1703 F3).
+ */
+const ZONE_ALIASES: Record<string, string> = {
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Dacca": "Asia/Dhaka",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Asia/Saigon": "Asia/Ho_Chi_Minh",
+  "Europe/Kiev": "Europe/Kyiv",
+  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+  "US/Eastern": "America/New_York",
+  "US/Central": "America/Chicago",
+  "US/Mountain": "America/Denver",
+  "US/Pacific": "America/Los_Angeles",
+  "Etc/UTC": "UTC",
+  "Etc/GMT": "UTC",
+  GMT: "UTC",
+};
+
+/** The canonical IANA name for a zone string, trimmed; unknown names pass through. */
+export function canonicalZone(zone: string): string {
+  const trimmed = zone.trim();
+  return ZONE_ALIASES[trimmed] ?? trimmed;
+}
+
+/** Short zone name for a label ("IST", "UTC", "GMT+8"); DST-aware, hence the date. */
+/**
+ * ICU prints "GMT+5:30" for India on Linux and "IST" on macOS, so the label a
+ * user actually reads is pinned here and Intl only names the rest (#1653).
+ */
+export const ZONE_ABBREVIATION: Record<string, string> = {
+  "Asia/Kolkata": "IST",
+  // Kept for readers that index this map directly (lib/novu/humanize.ts).
+  "Asia/Calcutta": "IST",
+};
+
+export function zoneLabel(date: Date | string | number, zone: string): string {
+  const canonical = canonicalZone(zone);
+  return (
+    ZONE_ABBREVIATION[canonical] ?? formatInTimeZone(date, canonical, "zzz")
+  );
+}
+
+/**
+ * "IST (UTC+05:30)" — the abbreviation plus the offset in force at `date`,
+ * for the grid footer and anywhere a zone is named to a person (#1703 F3).
+ * Callers put `canonicalZone(zone)` in a `title` so the IANA name is one
+ * hover away without cluttering the line.
+ */
+export function zoneDisplayLabel(
+  date: Date | string | number,
+  zone: string,
+): string {
+  const canonical = canonicalZone(zone);
+  const offset = formatInTimeZone(date, canonical, "xxx");
+  return `${zoneLabel(date, canonical)} (UTC${offset === "+00:00" ? "" : offset})`;
+}
+
+/**
+ * Format for the page's viewer: no suffix in their own zone, a short zone
+ * label otherwise, so a time shown in a fallback zone is never mistaken for
+ * theirs.
+ */
+export function formatForViewer(
+  date: Date | string | number,
+  viewer: ViewerZone,
+  pattern: string,
+): string {
+  const text = formatInViewerZone(date, viewer.zone, pattern);
+  return viewer.own ? text : `${text} ${zoneLabel(date, viewer.zone)}`;
+}

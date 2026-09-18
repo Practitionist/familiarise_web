@@ -11,6 +11,11 @@ import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
 import { CancellationReason } from "@prisma/client";
 import { notifyAppointmentCancelled } from "@/lib/novu";
+import {
+  EMAIL_BUDGET_MS,
+  refundOnItsWay,
+  sendAppointmentCancelledEmail,
+} from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { planTitleOrSessionLabel } from "@/lib/novu/humanize";
@@ -27,6 +32,11 @@ import {
   refundBookingPayment,
   type FundingRail,
 } from "@/lib/payments/operations/booking-refund";
+import {
+  isModelledRefundRefusal,
+  RefundGatewayError,
+} from "@/lib/payments/operations/refund";
+import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import {
@@ -56,6 +66,27 @@ type CancelAuditMeta = {
   reason: string | null;
   organizationId: string | null;
 };
+
+/**
+ * A refund that did not land after the cancel committed. A modelled refusal
+ * (no payment on the order, nothing refundable) is reported `expected` at
+ * `warning` — it still needs a human via `recordSystemError`, but it is not a
+ * fault (FAMILIARISE_WEB-3K). Anything else stays an error.
+ */
+function reportRefundFailure(err: unknown, subsystem: string): void {
+  const modelled = isModelledRefundRefusal(err);
+  reportSentryError(err, {
+    subsystem,
+    op: "cancel.refund",
+    expected: modelled,
+    ...(modelled ? { level: "warning" as const } : {}),
+    // The gateway's own answer, so "no capture on this order" (a mock or seed
+    // intent, FAMILIARISE_WEB-3K) is told apart from a transport fault.
+    ...(err instanceof RefundGatewayError && err.gatewayCode
+      ? { tags: { gatewayCode: err.gatewayCode } }
+      : {}),
+  });
+}
 
 /**
  * Which rows this cancel sweeps. #1554 — a booking is ONE Appointment, so a
@@ -314,24 +345,21 @@ export async function POST(
     const isExclusiveType =
       !!appointment.consultation || !!appointment.subscription;
 
-    // #1006 — resolve the refund facts BEFORE the transaction, alongside the
-    // rest of the pre-transaction fetch.
+    // #1006 — the refund facts are resolved BEFORE the cancel writes and, as
+    // of #1695, INSIDE the appointment lock and transaction (see below).
     //
-    // This read MUST precede the cancel: the transaction below stamps every
+    // The read must precede the cancel: the transaction stamps every
     // SCHEDULED/RESCHEDULED slot CANCELLED, and "which session is still owed"
     // is derived from exactly those two statuses. Resolved afterwards, the
     // booking always looks like it has no live session left, every
     // consultee-initiated cancellation falls to the 0% tier, and the refund is
-    // silently skipped. It reads no transaction state, so hoisting it costs
-    // nothing; the alternative — teaching the resolver to treat slots
-    // cancelled by this very run as live — would couple it to one call site.
-    const bookingCtx = isExclusiveType
-      ? await resolveBookingRefundContext({
-          appointmentId,
-          consultationId: appointment.consultationId,
-          subscriptionId: appointment.subscriptionId,
-        })
-      : null;
+    // silently skipped. Resolved before the lock, a reschedule or a capture
+    // landing in the gap quoted the wrong tier against the wrong payment.
+    const bookingRef = {
+      appointmentId,
+      consultationId: appointment.consultationId,
+      subscriptionId: appointment.subscriptionId,
+    };
 
     // Prepare cancellation data. `status` is NOT here: the transition helpers
     // own that column, and their `data` type excludes it so a caller cannot
@@ -367,6 +395,14 @@ export async function POST(
     const result = await withAppointmentLock(appointmentId, () =>
       prisma.$transaction(
         async (tx) => {
+          // #1695 — the quote's inputs (the next live session, the SUCCEEDED
+          // payment and its refundable balance, the frozen policy) are read
+          // under the lock, before the CAS terminalises the slots, on the
+          // transaction's own client (#1435).
+          const bookingCtx = isExclusiveType
+            ? await resolveBookingRefundContext(bookingRef, undefined, tx)
+            : null;
+
           // Update appointment status based on type — through the CAS helpers,
           // which bake the same allowed-from set into the WHERE and append the
           // BookingStatusHistory row this route used to skip entirely.
@@ -464,6 +500,7 @@ export async function POST(
             cancelledAt: cancellationData.cancelledAt,
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
+            bookingCtx,
           };
         },
         {
@@ -472,6 +509,7 @@ export async function POST(
         },
       ),
     );
+    const bookingCtx = result.bookingCtx;
 
     // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
     // its own Serializable tx; the CAS above guarantees this block runs at most
@@ -567,10 +605,7 @@ export async function POST(
               rail: restored.rail,
             };
           } catch (freeErr) {
-            Sentry.captureException(
-              freeErr instanceof Error ? freeErr : new Error(String(freeErr)),
-              { tags: { subsystem: "bookings" } },
-            );
+            reportRefundFailure(freeErr, "bookings");
             // #1513 review — the monetary branch below lands a failed refund on
             // the durable ops surface, and this branch owes the same: a credit
             // the buyer is owed but did not get back is money, and Sentry is an
@@ -615,12 +650,7 @@ export async function POST(
             // not silently swallowed. Sentry alone is not a queue — this is
             // money owed on a booking that is already cancelled, so it lands on
             // the same durable ops surface as the proration escalation.
-            Sentry.captureException(
-              refundErr instanceof Error
-                ? refundErr
-                : new Error(String(refundErr)),
-              { tags: { subsystem: "appointments" } },
-            );
+            reportRefundFailure(refundErr, "appointments");
             console.error(
               `[cancel] refund failed for payment ${paidPayment.id}:`,
               refundErr,
@@ -735,7 +765,7 @@ export async function POST(
       ),
     );
     if (userIds.length > 0) {
-      void notifyAppointmentCancelled(userIds, {
+      await notifyAppointmentCancelled(userIds, {
         ...notificationScope(appointment.organizationId),
         appointmentId,
         appointmentType: notificationMeta.appointmentType,
@@ -765,6 +795,44 @@ export async function POST(
               ? "consultee"
               : "system",
       });
+
+      // #1653 — the email twin of the bell: same recipients, same href. The
+      // refund line reaches only the people whose money moved; the sender
+      // never throws, so it cannot fail a cancellation that already committed.
+      const refundText =
+        refund?.status === "REFUNDED"
+          ? refund.rail === "CREDITS"
+            ? "Your credits have been restored."
+            : refund.rail === "INTERNAL"
+              ? "The amount has been returned to the sponsoring organisation's balance."
+              : // The amount is in paise, so the currency is INR by construction.
+                refundOnItsWay(refund.amountRefundedPaise, "INR")
+          : eventRefund && eventRefund.refundsIssued > 0
+            ? "Your payment for this event is being refunded in full."
+            : undefined;
+      await sendAppointmentCancelledEmail(
+        {
+          appointmentId,
+          userIds,
+          startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
+          cancelledBy:
+            notificationMeta.cancelledBy === notificationMeta.consultantUserId
+              ? notificationMeta.consultantName || "The consultant"
+              : notificationMeta.cancelledBy === consulteeUserId
+                ? notificationMeta.consulteeName || "The consultee"
+                : "Familiarise",
+          reason: validatedData.reason || undefined,
+          refundText,
+          refundUserIds: refund
+            ? [consulteeUserId].filter((id): id is string => !!id)
+            : attendeeUserIds,
+          dashboardUrl: notificationHref(
+            appointment.organizationId,
+            "appointments",
+          ),
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
 
     // Log cancellation activity for consultant dashboard (awaited — DB write

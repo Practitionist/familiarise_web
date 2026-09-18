@@ -36,6 +36,8 @@ import { failureToast } from "@/components/ui/failure-toast";
 import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import type { NeedsActionReason } from "@/lib/appointments/view-model";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import {
   type ProcessedEvent,
   processAllEvents,
@@ -79,6 +81,8 @@ interface HomeTabProps {
   eventsData: TConsulteeEventsResponse;
   isRefreshing?: boolean;
   consulteeId: string;
+  /** From the RSC page, so server and client format one wall clock. #1703 */
+  viewerZone: ViewerZone;
 }
 
 const staggerChildren = {
@@ -94,8 +98,29 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
+/**
+ * The card's corner badge. The Appointments row calls a slot-less booking
+ * "Not scheduled" and the "Pay now" step "Payment required"; the same words
+ * here so a request reads identically on both surfaces (#1703).
+ */
+function awaitingLabel(reason: NeedsActionReason | null): string {
+  switch (reason) {
+    case "PAY_NOW":
+      return "Payment required";
+    case "PENDING_APPROVAL":
+      return "Pending";
+    default:
+      return "Not scheduled";
+  }
+}
+
 // Get time away text
-function getTimeAway(date: Date): { text: string; urgent: boolean } {
+function getTimeAway(
+  date: Date | null,
+  reason: NeedsActionReason | null,
+): { text: string; urgent: boolean } {
+  if (!date)
+    return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
   const now = new Date();
   const hoursAway = differenceInHours(date, now);
   const daysAway = differenceInDays(date, now);
@@ -118,16 +143,18 @@ function getTimeAway(date: Date): { text: string; urgent: boolean } {
 // off-token surface on the page); fixed 340x180 geometry for scroll rhythm.
 function UpcomingSessionCard({
   event,
+  viewerZone,
   onClick,
   onJoin,
   isJoining,
 }: {
   event: ProcessedEvent;
+  viewerZone: ViewerZone;
   onClick?: () => void;
   onJoin?: () => void;
   isJoining?: boolean;
 }) {
-  const timeAway = getTimeAway(event.startsAt);
+  const timeAway = getTimeAway(event.startsAt, event.needsActionReason);
   const { data: session } = useSession();
   const sponsoringOrgName = resolveSponsoringOrgName(
     event.organizationId,
@@ -242,11 +269,21 @@ function UpcomingSessionCard({
       {/* Row 2: Date and time - Fixed height with top margin */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-3 h-5 shrink-0 overflow-hidden">
         <Calendar className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">
-          {format(event.startsAt, "EEE, d MMM yyyy")}
-        </span>
-        <span className="text-muted-foreground/50 shrink-0">•</span>
-        <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
+        {event.startsAt ? (
+          <>
+            <span className="truncate">
+              {formatForViewer(event.startsAt, viewerZone, "EEE, d MMM yyyy")}
+            </span>
+            <span className="text-muted-foreground/50 shrink-0">•</span>
+            <span className="shrink-0">
+              {formatForViewer(event.startsAt, viewerZone, "h:mm a")}
+            </span>
+          </>
+        ) : (
+          // Same words as the Appointments row's time slot for a slot-less
+          // booking; the state itself sits in the corner badge.
+          <span className="truncate">Not scheduled</span>
+        )}
       </div>
 
       {/* Row 2.5: Sponsor pill — only when org-funded. Placed on its own
@@ -287,6 +324,25 @@ function UpcomingSessionCard({
             <StatusBadge {...processedEventBadge(event)} withDot size="sm" />
           )}
         </div>
+        {/* The Appointments row's primary action for PAY_NOW, verbatim. */}
+        {event.needsActionReason === "PAY_NOW" &&
+          event.pendingPaymentUrl &&
+          /^https?:\/\//.test(event.pendingPaymentUrl) && (
+            <Button
+              asChild
+              size="sm"
+              className="h-7 px-3 text-xs font-semibold rounded-md shrink-0 bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+            >
+              <a
+                href={event.pendingPaymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Pay now
+              </a>
+            </Button>
+          )}
         {canShowJoin && (
           <Button
             size="sm"
@@ -312,13 +368,53 @@ function UpcomingSessionCard({
   );
 }
 
+/** The badge row of a monthly item, shared by its desktop and mobile layouts. */
+function MonthlyEventBadges({
+  event,
+  typeLabel,
+  sponsoringOrgName,
+}: {
+  event: ProcessedEvent;
+  typeLabel: string;
+  sponsoringOrgName: string | null;
+}) {
+  const registered =
+    (event.type === "webinar" || event.type === "class") && event.bookingStatus;
+  return (
+    <>
+      {sponsoringOrgName && (
+        <Badge
+          className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+          title={`Sponsored by ${sponsoringOrgName}`}
+        >
+          <Building2 className="h-3 w-3 shrink-0" />
+          <span className="truncate">Sponsored · {sponsoringOrgName}</span>
+        </Badge>
+      )}
+      <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
+        {typeLabel}
+      </Badge>
+      {/* A seat on a group event shows as Registered instead of the status. */}
+      {registered ? (
+        <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
+          Registered
+        </Badge>
+      ) : (
+        <StatusBadge {...processedEventBadge(event)} size="sm" />
+      )}
+    </>
+  );
+}
+
 // Monthly event item - Elegant minimal design
 function MonthlyEventItem({
   event,
+  viewerZone,
   isExpanded,
   onToggle,
 }: {
   event: ProcessedEvent;
+  viewerZone: ViewerZone;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -395,32 +491,11 @@ function MonthlyEventItem({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {sponsoringOrgName && (
-                <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
-                  title={`Sponsored by ${sponsoringOrgName}`}
-                >
-                  <Building2 className="h-3 w-3 shrink-0" />
-                  <span className="truncate">
-                    Sponsored · {sponsoringOrgName}
-                  </span>
-                </Badge>
-              )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
-                {typeLabel}
-              </Badge>
-              {/* Show booking status badge for webinars and classes */}
-              {(event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus && (
-                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-                    Registered
-                  </Badge>
-                )}
-              {/* Only show event status if not showing booking status */}
-              {!(
-                (event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus
-              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
+              <MonthlyEventBadges
+                event={event}
+                typeLabel={typeLabel}
+                sponsoringOrgName={sponsoringOrgName}
+              />
               <ChevronRight
                 className={cn(
                   "h-4 w-4 text-muted-foreground/70 transition-transform duration-200",
@@ -452,32 +527,11 @@ function MonthlyEventItem({
               />
             </div>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {sponsoringOrgName && (
-                <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
-                  title={`Sponsored by ${sponsoringOrgName}`}
-                >
-                  <Building2 className="h-3 w-3 shrink-0" />
-                  <span className="truncate">
-                    Sponsored · {sponsoringOrgName}
-                  </span>
-                </Badge>
-              )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
-                {typeLabel}
-              </Badge>
-              {/* Show booking status badge for webinars and classes (mobile) */}
-              {(event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus && (
-                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-                    Registered
-                  </Badge>
-                )}
-              {/* Only show event status if not showing booking status (mobile) */}
-              {!(
-                (event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus
-              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
+              <MonthlyEventBadges
+                event={event}
+                typeLabel={typeLabel}
+                sponsoringOrgName={sponsoringOrgName}
+              />
             </div>
           </div>
         </div>
@@ -510,11 +564,15 @@ function MonthlyEventItem({
                       )}
                     />
                     <span className="w-24 font-medium text-foreground">
-                      {format(session.startTime, "EEE d MMM")}
+                      {formatForViewer(
+                        session.startTime,
+                        viewerZone,
+                        "EEE d MMM",
+                      )}
                     </span>
                     <span className="text-muted-foreground">
-                      {format(session.startTime, "h:mm a")} -{" "}
-                      {format(session.endTime, "h:mm a")}
+                      {formatForViewer(session.startTime, viewerZone, "h:mm a")}{" "}
+                      - {formatForViewer(session.endTime, viewerZone, "h:mm a")}
                     </span>
                     <span
                       className={cn(
@@ -645,6 +703,7 @@ export default function HomeTab({
   eventsData,
   isRefreshing = false,
   consulteeId,
+  viewerZone,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -765,13 +824,19 @@ export default function HomeTab({
         ),
         // startsAt/endsAt already describe the whole run here (#1061), so the
         // end goes over too — it is what tells "in progress" from "over".
-        upcomingSessions: upcomingEvents.map((e) => ({
-          id: e.id,
-          appointmentId: e.appointmentId ?? null,
-          startsAt: e.startsAt,
-          endsAt: e.endsAt,
-          title: e.title,
-        })),
+        upcomingSessions: upcomingEvents.flatMap((e) =>
+          e.startsAt && e.endsAt
+            ? [
+                {
+                  id: e.id,
+                  appointmentId: e.appointmentId ?? null,
+                  startsAt: e.startsAt,
+                  endsAt: e.endsAt,
+                  title: e.title,
+                },
+              ]
+            : [],
+        ),
         basePath: `/dashboard/consultee/${consulteeId}`,
       }),
     [pendingPayments, upcomingEvents, consulteeId],
@@ -779,8 +844,8 @@ export default function HomeTab({
 
   // Get events for current month
   const monthlyEvents = useMemo(
-    () => getMonthlyEvents(processedEvents, currentMonth),
-    [processedEvents, currentMonth],
+    () => getMonthlyEvents(processedEvents, currentMonth, viewerZone.zone),
+    [processedEvents, currentMonth, viewerZone.zone],
   );
 
   // Scroll handlers
@@ -873,6 +938,7 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
+                    viewerZone={viewerZone}
                     onJoin={() => handleJoinMeeting(event)}
                     isJoining={joiningEventId === event.id}
                   />
@@ -953,6 +1019,7 @@ export default function HomeTab({
                   <MonthlyEventItem
                     key={event.id}
                     event={event}
+                    viewerZone={viewerZone}
                     isExpanded={expandedEvents.has(event.id)}
                     onToggle={() => toggleExpanded(event.id)}
                   />

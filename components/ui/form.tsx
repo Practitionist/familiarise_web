@@ -91,7 +91,11 @@ const FormItem = React.forwardRef<
         over-scroll (live-measured 1282px vs 662px viewport). Pinning it here
         contains it inside its own field, app-wide, whatever Radix ships.
       */}
-      <div ref={ref} className={cn("relative space-y-2", className)} {...props} />
+      <div
+        ref={ref}
+        className={cn("relative space-y-2", className)}
+        {...props}
+      />
     </FormItemContext.Provider>
   );
 });
@@ -113,6 +117,22 @@ const FormLabel = React.forwardRef<
   );
 });
 FormLabel.displayName = "FormLabel";
+
+/**
+ * Required-field marker for form labels: `<Label>Title <RequiredMark /></Label>`.
+ * Plain span (not inside the label-slot machinery) so composite fields that
+ * own their labels (PriceField, StringListField) can share the exact mark.
+ */
+function RequiredMark() {
+  return (
+    <>
+      <span aria-hidden="true" className="ml-0.5 text-destructive">
+        *
+      </span>
+      <span className="sr-only"> (required)</span>
+    </>
+  );
+}
 
 const FormControl = React.forwardRef<
   React.ElementRef<typeof Slot>,
@@ -187,4 +207,5 @@ export {
   FormDescription,
   FormMessage,
   FormField,
+  RequiredMark,
 };

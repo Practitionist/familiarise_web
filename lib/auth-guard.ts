@@ -3,6 +3,13 @@ import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import {
+  lookupSession,
+  SessionLookupFailedError,
+} from "@/lib/auth-session-lookup";
+import prisma from "@/lib/prisma";
+import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
+import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
+import {
   hasBackofficePermission,
   type BackofficeSurface,
 } from "@/lib/auth/backoffice-permissions";
@@ -13,6 +20,10 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
   CONSULTANT: "consultantProfileId",
   CONSULTEE: "consulteeProfileId",
   STAFF: "staffProfileId",
+  // ORG_WORKSPACE is required since the handoff creates + links the profile
+  // (setOnboardingRoleAction), closing the half-onboarded window where the
+  // role was committed but no profile existed. ADMIN remains flag-only.
+  ORG_WORKSPACE: "orgWorkspaceProfileId",
 };
 
 /**
@@ -23,6 +34,20 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
  */
 function redirectWithCookieCleanup(): never {
   redirect("/api/auth/clear-stale-session");
+}
+
+/**
+ * #1716 — a lookup that did not complete must not clear the cookie: the
+ * stale-session cleanup signs the user out, and a cold-instance stall on a
+ * valid cookie was doing exactly that. A failed read throws to the nearest
+ * error boundary, whose retry re-runs the guard; only "no session" redirects.
+ */
+async function resolveGuardSession() {
+  const lookup = await lookupSession(true);
+  if (lookup.kind === "failed")
+    throw new SessionLookupFailedError(lookup.cause);
+  if (lookup.kind === "none") redirectWithCookieCleanup();
+  return lookup.session;
 }
 
 /**
@@ -54,10 +79,7 @@ function isFullyOnboarded(user: SessionUser): boolean {
  * the intended trade.
  */
 export async function requireAuth() {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    redirectWithCookieCleanup();
-  }
+  const session = await resolveGuardSession();
   // Mirrors requireApiAuth's #693 check. `banned` is rebuilt by customSession on
   // every call, so it stays accurate even in the window where ban-time session
   // deletion has not landed yet — worth checking explicitly rather than relying
@@ -96,23 +118,40 @@ async function onboardingRedirectTarget(
  * Redirects to sign-in if no session, to onboarding if not completed or
  * profile is missing. Uses disableCookieCache to avoid stale values.
  *
- * Do NOT switch this to the cookie cache. This guard has no `banned` check of
- * its own — it catches bans, DPDP erasure and revoked sessions only because the
- * forced read finds no session row. A 5-minute cookie cache would keep those
- * users inside /dashboard/admin, /checkout and /settings. The cache would also
- * buy almost nothing: customSession re-runs its Prisma enrichment on every
- * getSession call regardless, so the cache skips one query out of ~4. The
- * per-render dedupe that actually helps is getSession's React.cache.
+ * Do NOT switch this to the cookie cache. The forced read is what catches
+ * revoked sessions and DPDP erasure (no session row to find). A 5-minute
+ * cookie cache would keep those users inside /dashboard/admin, /checkout
+ * and /settings. The cache would also buy almost nothing: customSession
+ * re-runs its Prisma enrichment on every getSession call regardless, so the
+ * cache skips one query out of ~4. The per-render dedupe that actually helps
+ * is getSession's React.cache.
  */
 export async function requireOnboarded() {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
+  const session = await resolveGuardSession();
+  // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
+  // session minted inside the ban race window still resolves a `banned: true`
+  // payload before row deletion lands, and this guard must not admit it to
+  // the dashboard on payload alone.
+  if (session.user.banned === true) {
     redirectWithCookieCleanup();
   }
   if (!session.user.onboardingCompleted) {
     redirect(await onboardingRedirectTarget());
   }
   if (!hasRequiredProfile(session.user)) {
+    // A completed ORG_WORKSPACE row written before the handoff created the
+    // profile has no link to require; the wizard's handoff refuses an
+    // onboarded user, so heal here instead of bouncing (review on #1699).
+    if (
+      session.user.role === "ORG_WORKSPACE" &&
+      !session.user.orgWorkspaceProfileId
+    ) {
+      const id = await ensureOrgWorkspaceProfile(prisma, session.user.id);
+      return {
+        ...session,
+        user: { ...session.user, orgWorkspaceProfileId: id },
+      };
+    }
     redirect(await onboardingRedirectTarget({ error: "missing_profile" }));
   }
   return session;
@@ -164,7 +203,17 @@ export async function requireNotOnboarded() {
     redirectWithCookieCleanup();
   }
   if (isFullyOnboarded(session.user)) {
-    redirect("/dashboard");
+    // Add mode (PR-6): an onboarded learner or org operator may re-enter the
+    // wizard to add a consultant identity. Layouts cannot read search params,
+    // but the middleware forwards path + query as `x-pathname`.
+    const current = (await headers()).get("x-pathname") ?? "";
+    const query = current.includes("?")
+      ? current.slice(current.indexOf("?"))
+      : "";
+    const wantsAdd =
+      new URLSearchParams(query).get("add") === "CONSULTANT" &&
+      canAddConsultantIdentity(session.user);
+    if (!wantsAdd) redirect("/dashboard");
   }
   return session;
 }

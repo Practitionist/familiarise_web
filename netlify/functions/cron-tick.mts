@@ -5,8 +5,9 @@
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
- * sweeps and, since #1633, the ledger reconcile backstop) instead of waiting
- * on Actions. It never writes money state itself: every
+ * sweeps, since #1633 the ledger reconcile backstop and, since #1654, the
+ * Novu outbox relay every tick and the email outbox relay on every third
+ * tick) instead of waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -15,6 +16,9 @@
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
  * Functions runtime already provides.
+ *
+ * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
+ * from a scheduled function costs three invocations and reports nothing.
  */
 
 export const config = { schedule: "*/5 * * * *" };
@@ -34,6 +38,10 @@ const TARGETS = [
   // #1633 — the backstop for the ledger reconcile driver: one chunk per tick
   // of whatever full-scope run is in flight, IDLE otherwise.
   "reconcile-ledgers",
+  // #1648 / #1654 — the email outbox relay; every 15 minutes, see TARGET_EVERY_MINUTES.
+  "retry-failed-emails",
+  // #1654 — the Novu outbox relay, every tick.
+  "drain-notification-outbox",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -52,7 +60,41 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
   "abandoned-payments": 10,
   // null — send no `limit`; a chunk is bounded by the route's own soft deadline.
   "reconcile-ledgers": null,
+  // #1654 — paced at 8 sends/s plus a provider round trip each, twenty rows
+  // fits its timeout; the Actions run drains the rest unbounded.
+  "retry-failed-emails": 20,
+  // #1654 — one Novu round trip per row under a 5 s client timeout; twenty
+  // rows stays inside the target timeout even when Novu is slow.
+  "drain-notification-outbox": 20,
+  // #1708 — one Stream round trip per unchanneled row; ten fits the 20 s budget.
+  "reconcile-orphaned-confirmations": 10,
 };
+
+/**
+ * #1654 — targets that run on a multiple of the five-minute tick. A missing
+ * entry means every tick. The check is on the wall-clock minute, so a late
+ * tick (Netlify fires within the minute) still counts as its slot.
+ */
+const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
+  "retry-failed-emails": 15,
+  // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
+  // tick on twelve targets was a cold burst billed as duration (ticket #1112198).
+  "reconcile-ledgers": 15,
+  "sync-payment-earnings": 15,
+  "release-earnings": 15,
+  "cascade-refund-earnings": 15,
+  "reconcile-refunds": 15,
+  "abandoned-payments": 15,
+};
+
+/** The targets due on this tick; exported so a test can pin the cadence. */
+export function dueTargets(now: Date): Target[] {
+  const minute = now.getUTCMinutes();
+  return TARGETS.filter((name) => {
+    const every = TARGET_EVERY_MINUTES[name];
+    return every === undefined || minute % every < 5;
+  });
+}
 
 /** Extra query a target needs beyond `limit`. */
 const TARGET_QUERIES: Partial<Record<Target, string>> = {
@@ -65,6 +107,11 @@ const PER_TARGET_TIMEOUT_MS = 6_000;
 /** A reconcile chunk takes ~13 s deployed; 20 s still sits under the 30 s scheduled cap. */
 const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "reconcile-ledgers": 20_000,
+  // #1654 — twenty paced sends; the cron lock makes an overlap a 409, not a double send.
+  "retry-failed-emails": 20_000,
+  "drain-notification-outbox": 20_000,
+  // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
+  "reconcile-orphaned-confirmations": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
@@ -91,6 +138,23 @@ interface TickBody {
   lockHeld: string[];
   failed: { name: string; status: number }[];
   durationMs: number;
+}
+
+/**
+ * #1686 — the HTTP status a tick answers, exported so a test can pin it.
+ *
+ * Always 200, on purpose. The #1390 review had a tick with a failed target
+ * answer 500 so that it would not "self-report healthy"; what that bought was
+ * observed in the production function logs on 2026-09-17: Netlify re-invokes a
+ * scheduled function that answers 5xx, up to three attempts 4–11 s apart, each
+ * one re-firing every due target. With `reconcile-payment-status` failing on
+ * every tick, the ticker ran at 3× for weeks. A 5xx buys three invocations and
+ * nothing else — the target's own route has already logged its failure, the
+ * GitHub Actions twin is the backstop, and a warm-tick failure is read from the
+ * `failed` list in the JSON line this function logs, not from the status.
+ */
+export function statusFor(_failed: TickBody["failed"]): number {
+  return 200;
 }
 
 function jsonResponse(body: unknown, status: number): Response {
@@ -133,7 +197,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
-    return jsonResponse({ error }, 500);
+    // #1686 — a 5xx would only be re-invoked three times against the same
+    // missing secret; the log line is the signal.
+    return jsonResponse({ error }, 200);
   }
 
   // Netlify sets URL to the site's primary deploy URL; CRON_TICK_BASE_URL is
@@ -144,9 +210,10 @@ export default async function cronTick(_req: Request): Promise<Response> {
   let baseUrl = process.env.CRON_TICK_BASE_URL || process.env.URL || "";
   while (baseUrl.endsWith("/")) baseUrl = baseUrl.slice(0, -1);
   const started = Date.now();
+  const targets = dueTargets(new Date(started));
 
   const settled = await Promise.allSettled(
-    TARGETS.map((name) => hitTarget(baseUrl, secret, name)),
+    targets.map((name) => hitTarget(baseUrl, secret, name)),
   );
 
   const ok: string[] = [];
@@ -154,7 +221,7 @@ export default async function cronTick(_req: Request): Promise<Response> {
   const failed: { name: string; status: number }[] = [];
 
   settled.forEach((result, i) => {
-    const name = TARGETS[i];
+    const name = targets[i];
     // hitTarget never rejects, but a defensive fallback keeps a Promise API
     // surprise from throwing out of the handler instead of being counted.
     const status = result.status === "fulfilled" ? result.value.status : 0;
@@ -172,9 +239,6 @@ export default async function cronTick(_req: Request): Promise<Response> {
   };
   console.log(JSON.stringify(body));
 
-  // #1390 review — a 200 here reads as a healthy invocation to Netlify's
-  // function metrics/retries even when a target failed; failed sweeps still
-  // get picked up by the Actions backstop, but the tick itself should not
-  // self-report healthy.
-  return jsonResponse(body, failed.length > 0 ? 500 : 200);
+  // #1686 — 200 even with a non-empty `failed`; see statusFor.
+  return jsonResponse(body, statusFor(failed));
 }

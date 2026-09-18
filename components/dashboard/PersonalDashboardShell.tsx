@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type LucideIcon } from "lucide-react";
+import { useCssVarHeight } from "@/components/dashboard/useCssVarHeight";
 import {
   CollapsibleSidebar,
   CollapsibleSidebarSkeleton,
@@ -84,6 +85,7 @@ export function PersonalDashboardShell({
   children,
 }: PersonalDashboardShellProps) {
   const router = useRouter();
+  const bannerRef = useCssVarHeight("--dashboard-banner-height");
 
   const goToNavPath = (path: string) => {
     const href = path ? `${basePath}/${path}` : basePath;
@@ -118,7 +120,9 @@ export function PersonalDashboardShell({
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <DashboardContextBar {...contextBar} />
 
-        {banner}
+        {/* The banner's height feeds --dashboard-banner-height, which
+            .h-dashboard-fill subtracts so full-height pages stay inside <main>. */}
+        {banner && <div ref={bannerRef}>{banner}</div>}
 
         {/* `relative` makes <main> the containing block for every absolutely
             positioned descendant (Radix bubble inputs), so none can escape the

@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 
 /**
  * The one pending request the allocate page is placing.
@@ -112,7 +113,7 @@ export async function readAllocationRequest(
       allowedStart: subscription.schedulingPeriodStartsAt,
       allowedEnd: subscription.schedulingPeriodEndsAt,
       hasReleasedSlots:
-        subscription.appointment?.occurrences.some((slot) => slot.isTentative) ??
+        subscription.appointment?.occurrences.some(isReleasedForReschedule) ??
         false,
       slots: subscription.appointment?.occurrences ?? [],
     });
@@ -148,7 +149,7 @@ export async function readAllocationRequest(
     durationInHours: plan.durationInHours,
     hasReleasedSlots: (
       consultation.appointment?.occurrences ?? []
-    ).some((slot) => slot.isTentative),
+    ).some(isReleasedForReschedule),
     slots: consultation.appointment?.occurrences ?? [],
   });
 }

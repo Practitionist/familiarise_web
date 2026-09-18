@@ -82,7 +82,7 @@ const initializeRazorpayClient = () => {
   });
 };
 
-// Lazy singleton (lib/email.ts getResendClient convention). Instantiating at
+// Lazy singleton (lib/email/deliver.ts getResendClient convention). Instantiating at
 // module scope put the SDK constructor on every cold boot of any route whose
 // import graph reaches this file. MEASURED 2026-08-23 (#1221): this does NOT
 // shrink the #1124 concurrent-instance event-loop stall — that reproduced
@@ -510,12 +510,34 @@ export async function getRazorpayRefund(
     };
   } catch (error) {
     console.error("Razorpay refund retrieval failed:", error);
-    reportSentryError(error, {
-      subsystem: "payments",
-      tags: { provider: "razorpay" },
-    });
-    throw handleRazorpayRefundError(error);
+    const refundError = handleRazorpayRefundError(error);
+    // FAMILIARISE_WEB-3V — an id the gateway has no record of is a modelled
+    // outcome the reconciler reports once as a warning, not a fault per poll.
+    if (!isRazorpayUnknownRefundIdError(refundError)) {
+      reportSentryError(error, {
+        subsystem: "payments",
+        tags: { provider: "razorpay" },
+      });
+    }
+    throw refundError;
   }
+}
+
+/**
+ * True when Razorpay answered a refund lookup with HTTP 400
+ * `BAD_REQUEST_ERROR` / `input_validation_failed` — the shape it returns for
+ * an id it has never seen AND for a test-mode id read with live keys (it
+ * never answers 404). Neither can become known on a later poll.
+ */
+export function isRazorpayUnknownRefundIdError(
+  error: unknown,
+): error is RefundError {
+  return (
+    error instanceof RefundError &&
+    error.gateway === "RAZORPAY" &&
+    error.code === "BAD_REQUEST_ERROR" &&
+    error.reason === "input_validation_failed"
+  );
 }
 
 /**
@@ -703,7 +725,13 @@ function handleRazorpayRefundError(error: unknown): RefundError {
     const code = razorpayError.code || "UNKNOWN_ERROR";
     const description = razorpayError.description || "Failed to process refund";
 
-    return new RefundError(description, code, "RAZORPAY", error);
+    return new RefundError(
+      description,
+      code,
+      "RAZORPAY",
+      error,
+      razorpayError.reason,
+    );
   }
 
   return new RefundError(

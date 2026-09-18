@@ -1,4 +1,8 @@
-# Netlify Pro support ticket — FINAL, ready to paste (prepared 2026-09-13)
+# Netlify Pro support ticket — SENT 2026-09-15 as #1112198, ANSWERED 2026-09-16
+
+> Status: sent by the owner on 2026-09-15 (with the four additional facts below), misrouted by triage as a timeout-extension request and corrected the same day, and answered on 2026-09-16 by a Netlify engineer who confirmed the stall as platform-side, stated that no plan offers provisioned concurrency, named the ~37–38 s edge receive-timeout, and recommended parallel keep-warm pings. The answer is recorded in `.claude/skills/deployment/netlify/platform-limits.md` ("What Netlify said"); the keep-warm shipped as PR #1685; the decision is ADR 32. The text below is kept as the record of what was asked.
+
+# Original draft (prepared 2026-09-13)
 
 Paste everything from the Subject line to the end of the Impact section into the Netlify support form as the account owner; the ticket needs the owner's session. Record the ticket number on #1124 once filed.
 
@@ -59,3 +63,11 @@ No improvement (possibly worse). We reverted.
 ## Impact
 
 User-visible: landing-page/explore clicks stall 20–30s then render (the "site is down" perception), worst right after deploys and during traffic bursts from a cold pool. We ship ISR-first architecture and deploy-warming workflows, but the tail persists whenever concurrency forces new instances.
+
+## Additions from the 2026-09-15 research pass (fold into the ticket before sending)
+
+Three facts pre-empt the three most likely first responses. First, the pattern is not a preview artifact: it reproduced on the published production deployment on 2026-09-13 with only three concurrent requests. Second, more memory is not the answer and has been measured: at 2048 MB the same twelve-request burst landed 11 of 12 at 35.9–37.6 s plus one platform 500, against 11 of 12 at 27.8–31.0 s at 1024 MB, so the setting was reverted. Third, there is no native Prisma engine to blame: the deployed client is the WASM query compiler with the `pg` driver adapter (`query_compiler_fast_bg.wasm`, no `.node` binary). The framing should be a report of an apparently undocumented pattern backed by isolation evidence — the sequential-versus-concurrent contrast (1.8–2.7 s alone, 27–39 s under concurrent creation, from the same deploy) is what proves these are real new-instance events — rather than a request to fix a known issue. The isolation probe's numbers (`docs/perf/2026-09-15-cold-start-isolation-results.md`) go in as the fourth fact once they exist.
+
+## Fourth fact — the isolation probe (2026-09-15)
+
+A Route Handler that imports nothing from the application (`/api/perf/probe-bare` on deploy preview 1656, commit `a90b46394`) stalls exactly as the application's routes do: brand-new instances reached the handler at 2.5 s of uptime with the route module 35–48 ms old and then observed a 26.1–26.5 s gap in a 50 ms timer loop before it fired; the full-import twin reached its handler at 4.9 s and observed 22.4–23.3 s, so uptime plus gap was 27–29 s on every new instance across four bursts. Requests routed to already-warm instances during the same bursts (one alive for 410 s) were held 30–34 s before the handler was invoked at all, and sustained bursts ended in `500 the edge function timed out` at 37.9 s. Tables and request ids are in `2026-09-15-cold-start-isolation-results.md`.

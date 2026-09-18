@@ -44,13 +44,13 @@ The reason the system is organized this way is to solve a fundamental distribute
 
 ### Event Types at a Glance
 
-| Type             | Model             | Who Attends                 | Sessions   | Appointment Structure                                   | Payment Required |
-| ---------------- | ----------------- | --------------------------- | ---------- | ------------------------------------------------------- | ---------------- |
-| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence               | Yes              |
-| **Subscription** | 1:1, recurring    | 1 consultee + 1 consultant  | M sessions | 1 placeholder Appointment, occurrences added by allocation | Yes              |
-| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment with 1 AppointmentOccurrence         | Yes              |
+| Type             | Model             | Who Attends                 | Sessions   | Appointment Structure                                                            | Payment Required |
+| ---------------- | ----------------- | --------------------------- | ---------- | -------------------------------------------------------------------------------- | ---------------- |
+| **Consultation** | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence                                       | Yes              |
+| **Subscription** | 1:1, recurring    | 1 consultee + 1 consultant  | M sessions | 1 placeholder Appointment, occurrences added by allocation                       | Yes              |
+| **Webinar**      | 1:many, one-time  | N consultees + 1 consultant | 1          | 1 shared Appointment with 1 AppointmentOccurrence                                | Yes              |
 | **Class**        | 1:many, recurring | N consultees + 1 consultant | M sessions | 1 shared Appointment wrapper with M AppointmentOccurrence rows (one per session) | Yes              |
-| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence               | No (free)        |
+| **Trial**        | 1:1, one-time     | 1 consultee + 1 consultant  | 1          | 1 Appointment with 1 AppointmentOccurrence                                       | No (free)        |
 
 A common mistake is thinking that "Appointment" means "a single meeting." In this system, an Appointment is a database record that acts as a container for held calls. Each AppointmentOccurrence is one row per held call -- there are no 30-minute atom rows to stitch together. Webinars and classes share a single Appointment wrapper across every enrollee; the occurrence rows are the sessions, not per-user copies. Who is seated on an Appointment is answered by AppointmentParticipant alone: it is the only participant list, and it lives on the Appointment, not on the occurrence. This matters because it determines how the webhook handler knows which participant's payment to confirm.
 
@@ -81,16 +81,16 @@ flowchart LR
 
 ### What Happens at Each Stage
 
-| Stage                    | What Happens                                                                                                                                                                                              | Database Changes                                                                                                               | Key Source File                                      |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                        | None                                                                                                                           | Frontend routes                                      |
+| Stage                    | What Happens                                                                                                                                                                                              | Database Changes                                                                                                                   | Key Source File                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| **Browse**               | Consultee views consultant profiles and available plans. No database writes occur.                                                                                                                        | None                                                                                                                               | Frontend routes                                      |
 | **Select/Request**       | Consultee clicks "Book" or "Enroll." The checkout handler creates the event-specific record (Consultation, Subscription, etc.) and a tentative Appointment.                                               | Creates: event record (PENDING status), Appointment, tentative AppointmentOccurrence(s)                                            | `lib/payments/operations/checkout.ts`                |
-| **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (no payment).             | Updates: event record status                                                                                                   | Requests tab API routes                              |
-| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                       | Creates: Payment record (PENDING)                                                                                              | `lib/payments/operations/checkout.ts`                |
-| **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                | None (gateway-side only)                                                                                                       | Payment gateway client-side SDK                      |
+| **Approval** (if needed) | Consultant reviews and approves. For consultations: sets APPROVED_PENDING_PAYMENT. For subscriptions: approves and allocates slots. For trials: approves and schedules directly (no payment).             | Updates: event record status                                                                                                       | Requests tab API routes                              |
+| **Checkout**             | System validates slot availability, acquires a distributed lock to prevent double-booking, creates a payment intent with the gateway, and returns a client secret for the frontend.                       | Creates: Payment record (PENDING)                                                                                                  | `lib/payments/operations/checkout.ts`                |
+| **Payment**              | Consultee completes payment in the gateway's UI (Razorpay modal or Stripe form). This happens entirely on the client side.                                                                                | None (gateway-side only)                                                                                                           | Payment gateway client-side SDK                      |
 | **Webhook Confirms**     | Gateway sends a webhook. The handler runs in two phases: Phase 1 (transaction) marks payment SUCCEEDED and confirms slots; Phase 2 (post-transaction) creates earnings, invoice, and sends notifications. | Updates: Payment status to SUCCEEDED, AppointmentOccurrence.isTentative to false, event record status. Creates: Earnings, Invoice. | `lib/payments/webhooks/handlers.ts`                  |
-| **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                               | None (managed by video/meeting integration)                                                                                    | External integrations                                |
-| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                      | Updates: event record status to COMPLETED                                                                                      | `scripts/appointments/auto-complete-appointments.ts` |
+| **Session**              | Consultant and consultee meet for the scheduled session(s).                                                                                                                                               | None (managed by video/meeting integration)                                                                                        | External integrations                                |
+| **Auto-Complete**        | Cron job runs hourly. Marks sessions as COMPLETED one hour after their end time. For trials, also creates an ActivityLog entry and sets completedAt.                                                      | Updates: event record status to COMPLETED                                                                                          | `scripts/appointments/auto-complete-appointments.ts` |
 
 ---
 
@@ -232,7 +232,7 @@ sequenceDiagram
         WH->>DB: confirmExistingAppointment (L924)
         Note over WH,DB: For CONSULTATION: updateMany AppointmentOccurrence SET isTentative=false WHERE appointmentId
         WH->>DB: confirmApprovalStatus (L855)
-        Note over WH,DB: Consultation: APPROVED_PENDING_PAYMENT -> APPROVED, or any non-APPROVED -> APPROVED
+        Note over WH,DB: Consultation: PENDING or APPROVED_PENDING_PAYMENT -> APPROVED; any other status matches zero rows and is surfaced for refund
     end
 
     rect rgb(230, 230, 255)
@@ -255,11 +255,11 @@ sequenceDiagram
 
 #### Database Records Created at Checkout
 
-| Record              | Key Fields                                                                                                            | Notes                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `Consultation`      | `status=PENDING` (or `APPROVED` for mock), `bookingSource=DIRECT_CHECKOUT`, `requestedById=consulteeProfileId` | The source record for the event                                |
-| `Appointment`       | `appointmentType=CONSULTATION`, `consultationId`                                                                      | Container for time slots                                       |
-| `AppointmentOccurrence` | `startsAt`, `endsAt`, `isTentative=true` (or `false` for mock)                                                        | The actual time reservation. Tentative until payment confirmed |
+| Record                  | Key Fields                                                                                                     | Notes                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `Consultation`          | `status=PENDING` (or `APPROVED` for mock), `bookingSource=DIRECT_CHECKOUT`, `requestedById=consulteeProfileId` | The source record for the event                                |
+| `Appointment`           | `appointmentType=CONSULTATION`, `consultationId`                                                               | Container for time slots                                       |
+| `AppointmentOccurrence` | `startsAt`, `endsAt`, `isTentative=true` (or `false` for mock)                                                 | The actual time reservation. Tentative until payment confirmed |
 
 #### Status Transitions
 
@@ -267,11 +267,10 @@ sequenceDiagram
 PENDING --> APPROVED_PENDING_PAYMENT  (consultant approves, sends payment link)
 PENDING --> APPROVED                  (direct checkout + webhook confirms)
 APPROVED_PENDING_PAYMENT --> APPROVED (webhook confirms payment)
-any non-APPROVED --> APPROVED         (webhook catch-all for consultation)
 APPROVED --> COMPLETED                (auto-complete cron, 1hr after session ends)
 ```
 
-The reason `confirmApprovalStatus` has a catch-all for consultations (any non-APPROVED to APPROVED) is to handle edge cases where the status might be in an unexpected state when the webhook arrives. This is intentionally more permissive for consultations than for subscriptions.
+The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `APPROVED_PENDING_PAYMENT`; the allowed-from set rides inside the `updateMany` WHERE clause (#825 CAS doctrine), so a capture that lands after a cancellation matches zero rows and is surfaced for refund instead of resurrecting the booking. There is no catch-all.
 
 #### Source References
 
@@ -357,11 +356,11 @@ sequenceDiagram
 
 #### Database Records Created at Checkout
 
-| Record                              | Key Fields                                                                                                     | Notes                                                                                          |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `Subscription`                      | `status=PENDING`, `bookingSource=DIRECT_CHECKOUT`, `schedulingPeriodStartsAt`, `schedulingPeriodEndsAt` | Always PENDING regardless of skipPayment flag. Stays PENDING until consultant allocates.       |
-| `Appointment` (placeholder)         | `appointmentType=SUBSCRIPTION`, `subscriptionId`, NO `appointmentOccurrences`                                      | A placeholder so the webhook can use the NEW flow. Consultant creates real appointments later. |
-| `Trial` (updated, if exists) | `status=CONVERTED`, `convertedToSubscriptionId=subscription.id`                                                | Only if a completed trial exists for the same consultee+consultant pair.                       |
+| Record                       | Key Fields                                                                                              | Notes                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `Subscription`               | `status=PENDING`, `bookingSource=DIRECT_CHECKOUT`, `schedulingPeriodStartsAt`, `schedulingPeriodEndsAt` | Always PENDING regardless of skipPayment flag. Stays PENDING until consultant allocates.       |
+| `Appointment` (placeholder)  | `appointmentType=SUBSCRIPTION`, `subscriptionId`, NO `appointmentOccurrences`                           | A placeholder so the webhook can use the NEW flow. Consultant creates real appointments later. |
+| `Trial` (updated, if exists) | `status=CONVERTED`, `convertedToSubscriptionId=subscription.id`                                         | Only if a completed trial exists for the same consultee+consultant pair.                       |
 
 #### Subscription-Specific Status Behavior
 
@@ -477,8 +476,8 @@ sequenceDiagram
 
 The following table describes the single row checkout adds for each enrollee.
 
-| Record                   | Key Fields                                                          | Notes                                                                 |
-| ------------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Record                   | Key Fields                                                          | Notes                                                                  |
+| ------------------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `AppointmentParticipant` | `appointmentId` (shared), `userId`, `role=CONSULTEE`, `status=HELD` | One per enrollee. The occurrence itself is never duplicated or copied. |
 
 The webinar itself, its Appointment, and its single AppointmentOccurrence already exist, created by the consultant during scheduling. The checkout handler only adds a new AppointmentParticipant row for the enrolling user; it never creates another occurrence.
@@ -841,7 +840,11 @@ flowchart TD
 
 ### When Does Each Path Apply?
 
-- **Consultations**: Support both paths. Some consultants enable direct checkout; others require approval.
+The switch is `ConsultantProfile.bookingMode` (#1703, ADR 34), which the consultant sets under Settings → Booking requests. It has two values, and the explore page's booking dialog (`app/explore/experts/[consultantId]/components/ConsultationPricingToggle.tsx`) reads it from the profile payload it already loads.
+
+- **Consultations under `INSTANT` (the default)**: the dialog sends a consultee to direct checkout when the chosen slot is clean, and to `POST /api/scheduling/request-for-approval` when the slot is contended, which the availability grid reports as `isAllocated` (the 30-minute atom already overlaps another booking's occurrence, tentative or confirmed). A contended slot cannot be sold outright because the consultant has to decide who gets it, so the request holds tentative occurrences and waits in the Requests tab; the 48-hour expiry above is what releases that hold if nobody decides, and the consultee is told when it does.
+- **Consultations under `REQUEST`**: every slot goes through `request-for-approval`, clean or contended, and the button says "Request this time — the expert confirms before you pay". Approval mints a pay-link that stays open for 24 hours (`APPROVAL_PAYMENT_EXPIRATION_HOURS`), with one reminder email when 12 hours are left; an unpaid link moves the request to `EXPIRED` and tells the consultee.
+- **The consultant's gate**: the same route refuses with `409 CONSULTANT_PAUSED` while `acceptingRequests` is false, and with `409 CONSULTANT_AT_CAPACITY` when `maxOpenRequests` is set and the consultant already holds that many open `PENDING` requests (consultations and subscriptions together). Both refusals name the consultee's recourse: pick another expert, or try later.
 - **Subscriptions**: Support both paths. Direct checkout is more common; the subscription stays PENDING in either case until slots are allocated.
 - **Webinars and Classes**: Always direct checkout. The consultant creates the event; consultees enroll directly.
 - **Trials**: Neither. Trials do not involve payment, so there is no checkout. The consultant approves directly.
@@ -865,7 +868,7 @@ stateDiagram-v2
     PENDING --> APPROVED: Direct checkout - webhook confirms (consultation only)
     PENDING --> APPROVED_PENDING_PAYMENT: Approval flow - consultant approves, sends payment link
     PENDING --> REJECTED: Consultant rejects the request
-    PENDING --> EXPIRED: Cron runs after 30 days with no action
+    PENDING --> EXPIRED: Cron runs after 48 hours (consultation) or 30 days (subscription) with no action
     PENDING --> CANCELLED: Consultee cancels their request
 
     APPROVED_PENDING_PAYMENT --> APPROVED: Webhook confirms payment (both consultation and subscription)
@@ -1108,11 +1111,11 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Subscription Notifications
 
-| Lifecycle Event        | Novu Workflow ID         | Recipients             | Trigger Point             | Source                  |
-| ---------------------- | ------------------------ | ---------------------- | ------------------------- | ----------------------- |
+| Lifecycle Event        | Novu Workflow ID         | Recipients             | Trigger Point             | Source              |
+| ---------------------- | ------------------------ | ---------------------- | ------------------------- | ------------------- |
 | Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SchedulingService` |
-| Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes     |
-| Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts         |
+| Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes |
+| Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts     |
 
 ### Financial Notifications
 
@@ -1126,9 +1129,9 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Other Notifications
 
-| Lifecycle Event         | Novu Workflow ID          | Recipients             | Trigger Point              | Source           |
-| ----------------------- | ------------------------- | ---------------------- | -------------------------- | ---------------- |
-| Recording available     | `recording-available`     | Consultee + Consultant | Recording upload           | Recording routes |
+| Lifecycle Event     | Novu Workflow ID      | Recipients             | Trigger Point    | Source           |
+| ------------------- | --------------------- | ---------------------- | ---------------- | ---------------- |
+| Recording available | `recording-available` | Consultee + Consultant | Recording upload | Recording routes |
 
 **Important**: All Novu notifications in the webhook handler are sent as fire-and-forget (`void notifyPaymentSuccess(...)`) with try-catch wrappers. Notification failures are logged but never roll back the payment transaction. The reason for this design is that a failed push notification should never cause a successful payment to appear as failed.
 
@@ -1142,25 +1145,25 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 
 ### Scheduled Jobs
 
-| Action                                     | Schedule      | What It Does                                                                                          | Criteria                                                   | Source                                                        |
-| ------------------------------------------ | ------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
-| **Auto-complete appointments**             | Hourly        | Marks events as COMPLETED when all sessions have ended                                                | All AppointmentOccurrence.endsAt < (now - 1 hour)              | `scripts/appointments/auto-complete-appointments.ts`          |
-| **Cleanup tentative slots**                | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                           | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts`             |
-| **Expire stale requests**                  | Daily         | Sets PENDING requests to EXPIRED after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                               | `scripts/appointments/expire-stale-requests.ts`               |
-| **Cleanup stale pending consultations**    | Hourly        | Cancels APPROVED/APPROVED_PENDING_PAYMENT consultations with no payment activity after 7 days         | No payment record or payment stuck in PENDING              | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
-| **Sync payment earnings**                  | Periodic      | Safety net: finds payments with SUCCEEDED status but no earnings record, creates missing earnings     | Payment.status=SUCCEEDED AND no Earnings linked            | `scripts/payments/sync-payment-earnings.ts`                   |
+| Action                                  | Schedule      | What It Does                                                                                                                                        | Criteria                                                                                         | Source                                                        |
+| --------------------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| **Auto-complete appointments**          | Hourly        | Marks events as COMPLETED when all sessions have ended                                                                                              | All AppointmentOccurrence.endsAt < (now - 1 hour)                                                | `scripts/appointments/auto-complete-appointments.ts`          |
+| **Cleanup tentative slots**             | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                                                                         | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts`       |
+| **Expire stale requests**               | Hourly        | Sets PENDING consultations to EXPIRED after 48 hours and PENDING subscriptions after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                                                                     | `scripts/appointments/expire-stale-requests.ts`               |
+| **Cleanup stale pending consultations** | Hourly        | Cancels APPROVED/APPROVED_PENDING_PAYMENT consultations with no payment activity after 7 days                                                       | No payment record or payment stuck in PENDING                                                    | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
+| **Sync payment earnings**               | Periodic      | Safety net: finds payments with SUCCEEDED status but no earnings record, creates missing earnings                                                   | Payment.status=SUCCEEDED AND no Earnings linked                                                  | `scripts/payments/sync-payment-earnings.ts`                   |
 
 ### Auto-Complete Details by Event Type
 
 The auto-complete cron (`autoCompleteAppointments()`) runs five separate queries, one for each event type:
 
-| Function                  | Finds                                                                                          | Transition                 | Extra Actions                                               |
-| ------------------------- | ---------------------------------------------------------------------------------------------- | -------------------------- | ----------------------------------------------------------- |
-| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED        | None                                                        |
-| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED        | None                                                        |
+| Function                  | Finds                                                                                          | Transition          | Extra Actions                                               |
+| ------------------------- | ---------------------------------------------------------------------------------------------- | ------------------- | ----------------------------------------------------------- |
+| `completeWebinars()`      | SCHEDULED or IN_PROGRESS webinars where every slot's endsAt < bufferTime                       | Status -> COMPLETED | None                                                        |
+| `completeClasses()`       | SCHEDULED or IN_PROGRESS classes where every appointment's every slot's endsAt < bufferTime    | Status -> COMPLETED | None                                                        |
 | `completeConsultations()` | APPROVED or SCHEDULED consultations where every slot's endsAt < bufferTime                     | status -> COMPLETED | None                                                        |
 | `completeSubscriptions()` | APPROVED or SCHEDULED subscriptions where every appointment's every slot's endsAt < bufferTime | status -> COMPLETED | None                                                        |
-| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED        | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |
+| `completeTrials()`        | SCHEDULED trials where every slot's endsAt < bufferTime                                        | status -> COMPLETED | Sets `completedAt`, creates `ActivityLog` (TRIAL_COMPLETED) |
 
 **Buffer time**: 1 hour. The reason for the buffer is to give participants time for post-session activities (filling feedback forms, downloading materials) before the system considers the session complete. The `COMPLETION_BUFFER_HOURS` constant is defined at the top of the auto-complete script.
 
@@ -1188,7 +1191,8 @@ gantt
 
     section Stale Request Windows
     APPROVED_PENDING_PAYMENT (7d)     :a5, 0, 10080
-    PENDING request (30d)             :a6, 0, 43200
+    PENDING consultation (48h)        :a6, 0, 2880
+    PENDING subscription (30d)        :a9, 0, 43200
 
     section Session
     Session takes place               :a7, 1440, 1500
@@ -1241,8 +1245,11 @@ T+session+1hr   auto-complete-appointments cron runs
                  --> Finds consultation with all slots ended > 1hr ago
                  --> Consultation status: APPROVED -> COMPLETED
 
-T+30 days       (If request was never acted on)
-                 expire-stale-requests cron sets PENDING -> EXPIRED
+T+48 hours      (If the request was never acted on)
+                 expire-stale-requests cron sets PENDING -> EXPIRED and
+                 releases the request-for-approval tentative slots
+                 (PENDING_CONSULTATION_EXPIRATION_HOURS = 48; subscriptions
+                 hold no slots at request time and keep a 30-day window)
 ```
 
 ---
@@ -1253,7 +1260,7 @@ T+30 days       (If request was never acted on)
 | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Slot allocation architecture (services, data model, validation) | [01-architecture.md](./01-architecture.md)                                                                             |
 | Event type rules and validation logic                           | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                                 |
-| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                                 |
+| Slot math (30-min intervals, weekly distribution)               | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                         |
 | Allocation and validation API endpoints                         | [04-api-reference.md](./04-api-reference.md)                                                                           |
 | Troubleshooting and recent fixes                                | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                                           |
 | Reschedule implementation                                       | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                                   |
@@ -1272,3 +1279,45 @@ T+30 days       (If request was never acted on)
 Three behaviors of the approve flow changed together. First, the payment link is minted **after** the approval transaction commits, never inside it: a gateway round-trip inside the Serializable transaction pinned a pooled connection, could exceed the 30-second budget, and on rollback left a live payment link for an approval that never persisted. If minting fails, the request stays `APPROVED_PENDING_PAYMENT` with no link and the response says so with a 502; approving again re-mints, because while the gateway call itself failed no Payment row exists for the duplicate guard to find. That 502 is reserved for the mint itself. Once a link exists, a failure to write it to `pendingPaymentUrl` or to email it is reported to Sentry and the request still succeeds, because answering with a 502 there would invite a retry that mints a **second** live payment link for the same booking — since #1181 the duplicate guard inside `createApprovalPaymentIntent` does see approval payments (they carry the request-time `appointmentId`, so the guard's walk over appointment payments matches), and its answer to an already-minted PENDING payment is to **reuse** it — returning the same intent instead of minting a parallel order. Second, confirming a paid request's tentative slots excludes `RESCHEDULED` rows, which keep their original `startsAt` — flipping them re-confirmed exactly the time the consultee had asked to move away from. Third, a request that is paid but has no appointment row (its capture webhook has not landed) is **refused** with a 409 rather than papered over: the old fallback fabricated a confirmed slot at now+1h with no availability check, no lock, and no `consultantProfileId`, on the global client, so it even survived the transaction's rollback. The `reconcile-orphaned-confirmations` sweep (#830) settles that state, after which approval succeeds normally.
 
 Approval links also now mint on RAZORPAY across all three request types (#1165), and org sponsorship survives the flow end-to-end (#1166): the request validates an ACTIVE membership of a `canSponsor` organization that is itself transactable (`ACTIVE` or `PENDING_VERIFICATION`, the same standing the checkout path demands), stamps `Appointment.organizationId` at creation, and the approval payment carries the org onto the `Payment` row and gateway metadata. Approval payments now also write the `CARD` funding leg that every `Payment` is required to carry; this was the one gateway path that created a payment with no leg at all, which mattered little while the rows were untagged and matters a great deal now that they carry an organization.
+
+## 14. Every Cron That Can Touch a Booking
+
+The timeline in section 12 shows the path a consultation is meant to take. This section adds every scheduled job that can also touch that same booking if the path breaks somewhere, verified against [`docs/maintenance/04-cron-jobs-reference.md`](../maintenance/04-cron-jobs-reference.md) and the `jobs/` entrypoints it inventories. None of the crons on the right is "the" path; they are the safety net under a path that is allowed to fail halfway, because a webhook can be lost, a serverless instance can die mid-request, and a consultant can simply not show up.
+
+```
+t=0        Book -> Appointment + AppointmentOccurrence isTentative=true (HOLD), Payment PENDING, Razorpay order
+             never paid -> cleanup-tentative-occurrences (`38 */2 * * *`, every 2h) releases the held occurrence
+                            cleanup-abandoned-payments (`6-59/15 * * * *`, ~15 min) expires the Payment, restores referral credits
+t=1m       webhook payment.captured -> handlePaymentSuccess (one transaction): Payment SUCCEEDED,
+             occurrence isTentative=false, ConsultantEarnings on hold, ledger posted
+             after(): chat channel, invoice, email, Novu bell
+             Lambda died after the money commit -> reconcile-orphaned-confirmations (`13-59/30 * * * *`, ~30 min)
+                            re-runs the confirmation and, since #1356, ensures the chat channel too
+             webhook failed or never arrived -> reconcile-payment-status (`18-59/30 * * * *`, ~30 min) asks Razorpay directly;
+                            sweep-stuck-webhook-events (`4-59/10 * * * *`, ~10 min) re-drives a stored-but-unprocessed WebhookEvent
+t=1d       Reschedule proposed -> the old occurrence is released in place: isTentative=true, completionStatus=RESCHEDULED
+             (kept on the row, not deleted; re-confirmed if the proposal is accepted)
+             proposal ignored -> expire-reschedule-proposals (`45 * * * *`, hourly)
+t=call     Meeting on Stream -> reconcile-orphaned-sessions (`25,55 * * * *`, twice hourly) closes the Meeting record
+                            against the Stream call state
+             consultant never joined -> detect-consultant-no-shows (`57 * * * *`, hourly): cancels and fully refunds
+                            through `refundBookingPayment`, releases the occurrence
+             nobody marked it done -> auto-complete-appointments (`7 * * * *`, hourly); the two jobs share one
+                            attendance predicate (`lib/booking/attendance.ts`) so a booking in the no-show shape
+                            is never completed out from under the detector
+t+7d       release-earnings (`17 * * * *`, hourly) moves ConsultantEarnings/OrganizationEarnings past their hold window to READY
+             create-payout-batch (`0 20 * * 1`, Mondays) batches READY earnings into a ConsultantPayout
+cancel     Refund row PENDING (reserves the amount) -> gateway -> refund.processed webhook
+             gateway slow or the webhook is lost -> reconcile-pending-refunds (`11-59/15 * * * *`, ~15 min)
+             earnings not yet clawed back -> cascade-refund-earnings (`1-59/15 * * * *`, ~15 min)
+```
+
+The Netlify scheduled ticker (`netlify/functions/cron-tick.mts`, every 5 minutes) drives the ten money-sensitive rows of this table — `sweep-stuck-webhook-events`, `cascade-refund-earnings`, `reconcile-refunds`, `abandoned-payments`, `reconcile-payment-status`, `reconcile-orphaned-confirmations`, `sweep-orphaned-topup-captures`, `dispatch-outbound-webhooks`, `sync-payment-earnings` and `release-earnings` — as an HTTP twin under `/api/cleanup/*`, because GitHub Actions' own sub-hourly schedules deliver roughly once every hundred minutes rather than once a minute (ADR 22). Every other job in the table above still runs on its GitHub Actions schedule alone.
+
+### Why sweeps go wrong
+
+A sweep breaks in exactly one way in this codebase: it treats a row that is permanent as if it were merely not-yet-settled, and retries something that will never succeed. The fix each time has been a shared predicate that tells the sweep which case it is looking at, rather than a bigger retry budget. `lib/webhooks/event-log.ts` prefixes a webhook processing error with `"permanent:"` when the failure is a decode or validation error that a replay cannot fix, so `sweep-stuck-webhook-events` skips those rows instead of re-processing them forever. The refund reconciler does the same with a status rather than a string prefix: a Razorpay lookup that comes back `BAD_REQUEST_ERROR` / `input_validation_failed` means the gateway has no record of that refund id at all, so the row is moved to `FAILED` with a `failureReason` instead of being polled on every future tick. And `lib/appointments/occurrences.ts` exports `liveOccurrenceWhere` and `isDeadOccurrence` as the one Prisma-`where` definition of "this occurrence still represents a live hold" — `reconcile-orphaned-confirmations` filters on it so that a `RESCHEDULED` occurrence, which keeps `isTentative=true` on purpose, is never mistaken for an abandoned one and flipped back into the consultant's calendar.
+
+## Times are rendered in the viewer's zone (2026-09-15)
+
+Every absolute instant on the Appointments list (`components/appointments/AppointmentsShell.tsx`, its rows and the next-up hero) is formatted through `formatInViewerZone` from `lib/time/viewer-zone.ts` in one IANA zone that is resolved once per page: the signed-in user's saved `User.timezone`, else the appointment's scheduling zone where the caller has one, else UTC. The RSC page reads that zone from the session with `getViewerZone()` and passes it down as a prop, so the server render and the hydrating client format each time from the same value; date-fns's bare `format()` reads the runtime's local zone, and with Netlify in UTC and the browser in Asia/Kolkata the same instant produced two wall clocks and React hydration error #418 on both dashboards. A short zone label such as `IST` or `UTC` is appended only when the displayed zone is not the viewer's own, so a time shown in a fallback zone is never mistaken for theirs. Client-only surfaces that never server-render their times, such as the earnings table, take the same zone from the `useViewerZone()` hook. The pin is `__tests__/time/viewer-zone.test.ts`, and the remaining bare `format()` sites are listed in `engineering-log-2026-09-15-viewer-timezone.md`.

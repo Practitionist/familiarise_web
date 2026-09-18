@@ -28,6 +28,12 @@ import {
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
+import {
+  attemptOnboardingEmail,
+  stageOrgMembershipChangedEmail,
+  type StagedOnboardingEmail,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
@@ -47,7 +53,12 @@ const MemberRoleSchema = z.enum([
   "SUPPORT",
 ]);
 
-const MemberStatusSchema = z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"]);
+const MemberStatusSchema = z.enum([
+  "PENDING",
+  "ACTIVE",
+  "SUSPENDED",
+  "REMOVED",
+]);
 
 const PatchBodySchema = z
   .object({
@@ -134,6 +145,9 @@ export async function PATCH(
   }
   const patch = parsed.data;
 
+  // The membership-changed email, staged inside the transaction below.
+  let stagedRoleEmail: StagedOnboardingEmail | null = null;
+
   try {
     const result = await prisma.$transaction(async (tx) => {
       const current = await tx.membership.findFirst({
@@ -154,10 +168,9 @@ export async function PATCH(
         patch.role !== current.role &&
         isBlockedRoleTransition(current.role, patch.role)
       ) {
-        throw Object.assign(
-          new Error("ROLE_TRANSITION_BLOCKED"),
-          { httpStatus: 409 },
-        );
+        throw Object.assign(new Error("ROLE_TRANSITION_BLOCKED"), {
+          httpStatus: 409,
+        });
       }
 
       // OWNER role gate: only OWNERs can assign or revoke the OWNER role.
@@ -321,10 +334,7 @@ export async function PATCH(
         current.consultantProfileId &&
         (patch.role !== undefined || patch.status !== undefined)
       ) {
-        await recomputeConsultantIsIndependent(
-          tx,
-          current.consultantProfileId,
-        );
+        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
       }
 
       const auditActions: string[] = [];
@@ -360,19 +370,63 @@ export async function PATCH(
         });
       }
 
+      // P3 email twin: role changes notify the affected member; a PATCH
+      // status move to REMOVED notifies non-EXPERT members (EXPERT removals
+      // stay Novu-only via the DELETE path — no duplicate here either).
+      const movedToRemoved =
+        patch.status !== undefined &&
+        patch.status === "REMOVED" &&
+        current.status !== "REMOVED";
+      const roleChanged =
+        patch.role !== undefined && patch.role !== current.role;
+      let kind: "ROLE_CHANGED" | "REMOVED" | null = null;
+      if (movedToRemoved) {
+        if (current.role !== "EXPERT") kind = "REMOVED";
+      } else if (roleChanged) {
+        kind = "ROLE_CHANGED";
+      }
+      // Staged inside this transaction so the notice row commits with the
+      // membership change or rolls back with it (review round 2 on #1700).
+      if (kind !== null) {
+        stagedRoleEmail = await stageOrgMembershipChangedEmail(
+          {
+            userId: current.userId,
+            membershipId: memberId,
+            kind,
+            orgName: access.org.name,
+            roleBefore: current.role,
+            roleAfter: kind === "ROLE_CHANGED" ? patch.role : undefined,
+            actorName:
+              access.session.user.name ??
+              access.session.user.email ??
+              "An operator",
+            dashboardUrl: "/dashboard",
+          },
+          tx,
+        );
+      }
+
       return updated;
     });
+
+    // Vendor attempt after the response; the row was written in the tx.
+    if (stagedRoleEmail) {
+      const staged = stagedRoleEmail;
+      scheduleAfter(() => attemptOnboardingEmail(staged));
+    }
 
     return NextResponse.json({ membership: result });
   } catch (err) {
     // Structured error handling keeps the switch between 404/403/409
     // explicit — never leak a 500 for user-facing validation issues.
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }
@@ -401,6 +455,9 @@ export async function DELETE(
     consultantUserId: string;
     payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
   } | null = null;
+
+  // The removal email for a non-EXPERT member, staged inside the transaction below.
+  let stagedRemovedEmail: StagedOnboardingEmail | null = null;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -439,10 +496,9 @@ export async function DELETE(
         // not privilege escalation. Caught during the 2026-06 MAINTAINER
         // role audit.
         if (!isAtLeastRole(access.member.role, "OWNER")) {
-          throw Object.assign(
-            new Error("Only an OWNER can remove an OWNER"),
-            { httpStatus: 403 },
-          );
+          throw Object.assign(new Error("Only an OWNER can remove an OWNER"), {
+            httpStatus: 403,
+          });
         }
         // Last-OWNER guard — unchanged semantically. Now applied to
         // soft-delete (status → REMOVED) so a sole OWNER can't orphan
@@ -556,10 +612,7 @@ export async function DELETE(
       // to true and the consultant re-appears as "independent" on
       // /explore/experts.
       if (current.role === "EXPERT" && current.consultantProfileId) {
-        await recomputeConsultantIsIndependent(
-          tx,
-          current.consultantProfileId,
-        );
+        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
       }
 
       // A7 note: past `OrganizationEarnings` are NOT touched on member
@@ -656,6 +709,31 @@ export async function DELETE(
             },
           };
         }
+      } else {
+        // P3 email twin for non-EXPERT removals. EXPERT keeps Novu-only.
+        const org = await tx.organization.findUnique({
+          where: { id: orgId },
+          select: { name: true },
+        });
+        const actor = await tx.user.findUnique({
+          where: { id: access.session.user.id },
+          select: { name: true, email: true },
+        });
+        if (org) {
+          // Staged inside this transaction (review round 2 on #1700).
+          stagedRemovedEmail = await stageOrgMembershipChangedEmail(
+            {
+              userId: current.userId,
+              membershipId: memberId,
+              kind: "REMOVED",
+              orgName: org.name,
+              roleBefore: current.role,
+              actorName: actor?.name ?? actor?.email ?? "An operator",
+              dashboardUrl: "/dashboard",
+            },
+            tx,
+          );
+        }
       }
     });
 
@@ -670,7 +748,10 @@ export async function DELETE(
       try {
         await notifyOrgExpertRemoved(ctx.consultantUserId, ctx.payload);
       } catch (notifyErr) {
-        Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), { tags: { subsystem: "organizations" } });
+        Sentry.captureException(
+          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+          { tags: { subsystem: "organizations" } },
+        );
         console.error(
           "[member-delete] Novu notify failed (non-fatal):",
           notifyErr,
@@ -678,11 +759,16 @@ export async function DELETE(
       }
     }
 
+    // Vendor attempt after the response; the row was written in the tx.
+    if (stagedRemovedEmail) {
+      const staged = stagedRemovedEmail;
+      scheduleAfter(() => attemptOnboardingEmail(staged));
+    }
+
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       // #779 §C — forward the structured code + breakdown counts so the UI
       // renders the in-flight-money wind-down message.
       const code =
@@ -692,11 +778,18 @@ export async function DELETE(
           ? err.counts
           : undefined;
       return NextResponse.json(
-        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        {
+          error: err.message,
+          ...(code && { code }),
+          ...(counts && { counts }),
+        },
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

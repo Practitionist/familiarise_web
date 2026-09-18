@@ -52,6 +52,8 @@ import {
   windowAtoms,
 } from "@/utils/scheduling-engine/availabilityCoverage";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
+import { EMAIL_BUDGET_MS, sendTrialScheduledEmail } from "@/lib/email";
+import { getAppUrl } from "@/lib/url";
 import { reportSentryError } from "@/lib/observability/report";
 
 interface RouteContext {
@@ -671,7 +673,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // Notify the consultee — "pay to confirm" for a paid trial, plain
           // confirmation for a free one. Sending "your trial is scheduled" for
           // something still awaiting payment would be a lie.
-          void notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
+          await notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
             consultantName:
               existingTrial.consultantProfile.user.name || "Consultant",
             consulteeName: existingTrial.consulteeProfile.user.name || "User",
@@ -682,6 +684,25 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               : TrialStatus.SCHEDULED,
             dashboardUrl: paymentUrl ?? "/dashboard",
           });
+
+          // #1653 — the email twin, to both parties: the consultee's CTA is
+          // the pay link while the trial awaits payment. The sender never throws.
+          await sendTrialScheduledEmail(
+            {
+              trialId,
+              consulteeUserId: existingTrial.consulteeProfile.user.id,
+              consultantUserId: existingTrial.consultantProfile.user.id,
+              consulteeName: existingTrial.consulteeProfile.user.name || "User",
+              consultantName:
+                existingTrial.consultantProfile.user.name || "Consultant",
+              planTitle: existingTrial.subscriptionPlan.title,
+              startsAt: startTime,
+              awaitingPayment: requiresPayment,
+              dashboardUrl: `${getAppUrl()}/dashboard`,
+              paymentUrl,
+            },
+            EMAIL_BUDGET_MS.REQUEST,
+          );
 
           return NextResponse.json({ data: result });
         } catch (error) {
@@ -933,12 +954,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         },
       });
     });
+    // #1654 — awaited: an un-awaited trigger is dropped when the instance
+    // freezes after the response; each effect still fails on its own.
     for (const effect of afterCommit) {
-      void Promise.resolve()
-        .then(effect)
-        .catch((err) =>
-          console.error("[trial] post-commit effect failed", trialId, err),
-        );
+      try {
+        await effect();
+      } catch (err) {
+        console.error("[trial] post-commit effect failed", trialId, err);
+      }
     }
 
     // #1009 — the trial has left SCHEDULED/AWAITING_PAYMENT, so its slot is
@@ -1036,9 +1059,13 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       );
     }
 
-    // Only allow cancellation of PENDING or SCHEDULED trials
+    // Only allow cancellation of PENDING, pay-link-live (AWAITING_PAYMENT) or
+    // SCHEDULED trials. AWAITING_PAYMENT occupies the slot (occupancyPolicy)
+    // and PATCH already allows AWAITING_PAYMENT → CANCELLED, so excluding it
+    // here pinned the slot until the payment-expiry sweep released it.
     const cancellableStatuses: TrialStatus[] = [
       TrialStatus.PENDING,
+      TrialStatus.AWAITING_PAYMENT,
       TrialStatus.SCHEDULED,
     ];
 
@@ -1077,7 +1104,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     });
 
     // FIX #554: Send cancellation notification (DELETE path was missing this)
-    void notifyTrialCancelled(
+    await notifyTrialCancelled(
       [
         existingTrial.consultantProfile.user.id,
         existingTrial.consulteeProfile.user.id,

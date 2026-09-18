@@ -29,6 +29,7 @@ import {
   PaymentStatus,
 } from "@prisma/client";
 import {
+  type ConflictDetail,
   EventType,
   ValidationResult,
   ConsultantAllocationData,
@@ -36,7 +37,10 @@ import {
 } from "./types";
 import { ScheduleCalculationService } from "./ScheduleCalculationService";
 import { SubscriptionValidationService } from "../subscriptionValidation";
-import { buildOccupiedAppointmentFilter } from "./occupancyPolicy";
+import {
+  buildCohostCommitmentFilter,
+  buildOccupiedAppointmentFilter,
+} from "./occupancyPolicy";
 import {
   MAX_CLASS_SESSIONS_PER_DAY,
   MAX_SUBSCRIPTION_SESSIONS_PER_DAY,
@@ -123,6 +127,51 @@ export function isOccupiedByLiveAppointment(
 /**
  * Service for validating slot allocations
  */
+/**
+ * The structured twin of a `[CONFLICT]` string: which booking and whose, so
+ * the validate routes never parse prose. Slot is seconds-precision ISO, the
+ * shape those routes already report.
+ */
+function conflictDetailOf(
+  slot: Date,
+  appointment: {
+    id: string;
+    consultation: {
+      requestedBy: { user: { id: string; name: string | null } | null } | null;
+    } | null;
+    subscription: {
+      requestedBy: { user: { id: string; name: string | null } | null } | null;
+    } | null;
+    webinar: { webinarPlan: { title: string } | null } | null;
+    class: { classPlan: { title: string } | null } | null;
+  },
+): ConflictDetail {
+  const requester =
+    appointment.consultation?.requestedBy?.user ??
+    appointment.subscription?.requestedBy?.user ??
+    null;
+  let type: ConflictDetail["type"] = "Booking";
+  let title: string | null = null;
+  if (appointment.consultation) type = "Consultation";
+  else if (appointment.subscription) type = "Subscription";
+  else if (appointment.webinar) {
+    type = "Webinar";
+    title = appointment.webinar.webinarPlan?.title ?? null;
+  } else if (appointment.class) {
+    type = "Class";
+    title = appointment.class.classPlan?.title ?? null;
+  }
+  return {
+    slot: slot.toISOString().slice(0, 19),
+    appointmentId: appointment.id,
+    type,
+    otherParty: requester
+      ? { userId: requester.id, name: requester.name }
+      : null,
+    title,
+  };
+}
+
 export class ScheduleValidationService {
   constructor(private readonly prismaClient: PrismaLike = prisma) {}
 
@@ -136,8 +185,16 @@ export class ScheduleValidationService {
   async checkSlotAvailability(
     slots: Date[],
     consultantUserId: string,
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
-    return await this.validateNoConflicts(slots, consultantUserId);
+    return await this.validateNoConflicts(
+      slots,
+      consultantUserId,
+      undefined,
+      undefined,
+      undefined,
+      consultantProfileId,
+    );
   }
 
   /**
@@ -154,6 +211,7 @@ export class ScheduleValidationService {
     excludeAppointmentIds?: string[],
     consulteeUserId?: string,
     excludeOccurrenceIds?: string[],
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
     return await this.validateNoConflicts(
       slots,
@@ -161,6 +219,7 @@ export class ScheduleValidationService {
       excludeAppointmentIds,
       consulteeUserId,
       excludeOccurrenceIds,
+      consultantProfileId,
     );
   }
 
@@ -206,6 +265,15 @@ export class ScheduleValidationService {
        * wrapper's other calls must still count while the released ones do not.
        */
       excludeOccurrenceIds?: string[];
+      /**
+       * Consultant's profile id for the co-host arm of the conflict check.
+       * An ACCEPTED webinar/class seat commits real time but is not a slot
+       * participation, so without this the roster clause below never sees it
+       * and the grid (which counts it via buildConsultantOccupancyWhere)
+       * disagrees with validation. Optional so callers without a profile in
+       * scope keep the old participant-only behavior.
+       */
+      consultantProfileId?: string;
     },
   ): Promise<ValidationResult> {
     // Universal validations (apply to all event types)
@@ -223,8 +291,10 @@ export class ScheduleValidationService {
       excludeAppointmentIds,
       options?.consulteeUserId,
       options?.excludeOccurrenceIds,
+      options?.consultantProfileId,
     );
     if (!conflictCheck.isValid) return conflictCheck;
+    const conflicts = conflictCheck.conflicts;
 
     // FIX: Server-side scheduling period validation
     // This was only done client-side, which could be bypassed
@@ -239,6 +309,25 @@ export class ScheduleValidationService {
     }
 
     // Event-specific validations
+    const typed = await this.validateByType(
+      eventType,
+      eventId,
+      slots,
+      config,
+      excludeAppointmentIds,
+      options?.excludeOccurrenceIds,
+    );
+    return { ...typed, conflicts };
+  }
+
+  private async validateByType(
+    eventType: EventType,
+    eventId: string,
+    slots: Date[],
+    config: EventConfig,
+    excludeAppointmentIds?: string[],
+    excludeOccurrenceIds?: string[],
+  ): Promise<ValidationResult> {
     switch (eventType) {
       case "consultation":
         return this.validateConsultation(slots, config);
@@ -249,7 +338,7 @@ export class ScheduleValidationService {
           slots,
           config,
           excludeAppointmentIds,
-          options?.excludeOccurrenceIds,
+          excludeOccurrenceIds,
         );
 
       case "webinar":
@@ -263,7 +352,7 @@ export class ScheduleValidationService {
           slots,
           config,
           excludeAppointmentIds,
-          options?.excludeOccurrenceIds,
+          excludeOccurrenceIds,
         );
 
       default:
@@ -345,6 +434,9 @@ export class ScheduleValidationService {
     // sharing either party is a real conflict.
     consulteeUserId?: string,
     excludeOccurrenceIds?: string[],
+    // Co-host arm (AE-2 #784) — see the validate() options field of the same
+    // name. Absent keeps the old participant-only behavior.
+    consultantProfileId?: string,
   ): Promise<ValidationResult> {
     const occurrenceExclusion =
       excludeOccurrenceIds && excludeOccurrenceIds.length > 0
@@ -393,11 +485,26 @@ export class ScheduleValidationService {
               ? [{ NOT: { id: { in: excludeAppointmentIds } } }]
               : []),
             // #1554 — the roster is AppointmentParticipant; the occurrence
-            // window is a separate predicate on the same appointment.
+            // window is a separate predicate on the same appointment. The
+            // co-host arm rides an OR beside the roster: an ACCEPTED
+            // webinar/class seat is a commitment without a participation row
+            // (AE-2 #784), and the grid counts it via
+            // buildConsultantOccupancyWhere — validation must too, or green
+            // cells fail only at commit time.
             {
-              participants: {
-                some: { userId: { in: participantIds }, ...liveParticipant() },
-              },
+              OR: [
+                {
+                  participants: {
+                    some: {
+                      userId: { in: participantIds },
+                      ...liveParticipant(),
+                    },
+                  },
+                },
+                ...(consultantProfileId
+                  ? [{ OR: buildCohostCommitmentFilter(consultantProfileId) }]
+                  : []),
+              ],
             },
             {
               occurrences: {
@@ -450,11 +557,16 @@ export class ScheduleValidationService {
             },
           },
           payment: true, // Need payment data to check expiry
+          // #1721 QA — a group event names itself by plan title, so the
+          // consultant's own conflict view is never a nameless "Booking".
+          webinar: { select: { webinarPlan: { select: { title: true } } } },
+          class: { select: { classPlan: { select: { title: true } } } },
         },
       });
 
     // Step 3: Match conflicts back to specific proposed slots in JS
     const now = new Date();
+    const conflicts: ConflictDetail[] = [];
     for (const slot of slots) {
       const slotEnd = new Date(slot.getTime() + SCHEDULING_INTERVAL_MS);
 
@@ -482,6 +594,7 @@ export class ScheduleValidationService {
           conflictDetails += ` (conflicts with subscription for ${existingAppointment.subscription.requestedBy?.user?.name || "unknown"})`;
         }
         errors.push(`[CONFLICT] Slot already booked: ${conflictDetails}`);
+        conflicts.push(conflictDetailOf(slot, existingAppointment));
       }
     }
 
@@ -489,6 +602,7 @@ export class ScheduleValidationService {
       isValid: errors.length === 0,
       errors,
       warnings: [],
+      conflicts,
     };
   }
 

@@ -14,6 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
@@ -26,10 +27,19 @@ import {
 } from "@/utils/purchase-intent";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrency } from "@/hooks/useCurrency";
+import type { BookingMode } from "@prisma/client";
+import {
+  CONSULTANT_PAUSED_HINT,
+  consultationCtaFor,
+} from "@/lib/booking/booking-mode";
 
 interface ConsultantDetailsForBooking {
   id: string;
   scheduleType?: string;
+  /** #1703 D1 — absent on older payloads; INSTANT is the pre-#1703 behaviour. */
+  bookingMode?: BookingMode;
+  /** #1703 D4 — false while the expert has paused new requests. */
+  acceptingRequests?: boolean;
   consultationPlans: Array<{
     id: string;
     durationInHours: number;
@@ -90,6 +100,15 @@ export default function ConsultationPricingToggle({
   );
 
   const selectedDuration = activePlanOption?.durationInHours ?? 1;
+
+  // #1703 D1 — REQUEST routes every slot through approval; INSTANT keeps the
+  // contended-slot-only arm. Decided once here so the button and its hint agree.
+  const cta = consultationCtaFor(
+    consultantDetails.bookingMode ?? "INSTANT",
+    selectedSlot?.isAllocated ?? false,
+  );
+  const paused =
+    cta.action === "request" && consultantDetails.acceptingRequests === false;
 
   const availableSlots = useMemo((): SlotWithStatus[] => {
     if (
@@ -252,11 +271,13 @@ export default function ConsultationPricingToggle({
         body: JSON.stringify(requestBody),
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to submit request for approval");
-      }
+      // Never bare response.json(): an edge 504/HTML page would throw a
+      // SyntaxError into the toast instead of the server's reason.
+      // requireJsonResponse throws on !ok, so reaching here means success.
+      await requireJsonResponse(
+        response,
+        "Failed to submit request for approval",
+      );
 
       toast({
         title: "Request Submitted",
@@ -269,7 +290,7 @@ export default function ConsultationPricingToggle({
     } catch (error) {
       console.error("Error requesting approval:", error);
       toast({
-        title: "Error",
+        title: "Couldn't submit approval request",
         description:
           error instanceof Error
             ? error.message
@@ -641,26 +662,28 @@ export default function ConsultationPricingToggle({
                     </div>
                   </div>
                 </div>
-                <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex justify-end rounded-b-2xl border-t border-zinc-800">
+                <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
+                  {(paused || cta.hint) && (
+                    <p className="text-xs text-zinc-400 text-right">
+                      {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
+                    </p>
+                  )}
                   <Button
                     className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
                     onClick={
-                      selectedSlot?.isAllocated
+                      cta.action === "request"
                         ? handleRequestForApproval
                         : () => handleConsultationBooking(option.id)
                     }
                     disabled={
                       !selectedSlot ||
+                      paused ||
                       isRequestingApproval ||
                       (selectedSlot as SlotWithStatus)?._isPast ||
                       selectedSlot?.bookingStatus === "fully-booked"
                     }
                   >
-                    {isRequestingApproval
-                      ? "Submitting..."
-                      : selectedSlot?.isAllocated
-                        ? "Request for Approval"
-                        : "Continue to Checkout"}
+                    {isRequestingApproval ? "Submitting..." : cta.label}
                   </Button>
                 </div>
               </DialogContent>

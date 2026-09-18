@@ -157,7 +157,54 @@ Since #1322 merged, `db:push` on `dev` is push-then-sidecars-then-assert
 escape hatch survives as `db:push:no-sidecars-DANGEROUS`. Either way, "Prisma
 schema is up to date" says nothing about the sidecars.
 
-## 8. The agent-run E2E corpus
+## 8. The preview-QA recipe used on the 2026-09-18/19 requests train (#1703)
+
+Five previews in a row (#1702, #1717, #1720, #1721, #1724) were QA'd with the
+same recipe, which is worth writing down once rather than re-deriving per PR.
+
+**Accounts.** Two seeded users carried the whole train: consultant
+`ethan.anderson@gmail.com` and consultee `olivia.anderson@gmail.com`, both at
+the seed password (`SEED_PASSWORD`, defaulted in
+`prisma/seedFiles/1a-create-users.ts`; §5). These are faker-generated seed
+accounts, and the shared project is also production, so never reuse the recipe
+against a customer account. A plain-`CONSULTEE`-role second account (Patrick) was
+needed once, because Olivia is also dual-role and a pre-existing role gate
+hides her own request CTA from her.
+
+**Fixtures came from the real route, not SQL.** Every request fixture this
+train created went through the real `POST /api/scheduling/request-for-approval`
+endpoint rather than a direct insert, because the route itself refuses an
+overlapping request at creation time — a SQL-inserted fixture would skip that
+guard and could assert something the app can never actually produce. Where a
+genuine slot conflict was needed, one occurrence's time was shifted by SQL
+_after_ the route created it, not instead of the route.
+
+**Cleanup order.** This applies only to rows the QA run itself created — never
+to a seeded or customer row, and never to any row a real `Payment` points at
+(doctrine rule 2). Delete children before parents: appointment participants and
+occurrences, then the booking-status-history rows, then the appointment
+wrapper, then the consultation/subscription/plan row. A fixture that carried a
+mock payment deletes its own payment graph first (legs, and any
+`ConsultantEarnings` row the healer created against it), because
+`Payment.appointment` cascades on delete. The mock booking fixture
+(`aaaaaaaa-…-aa01`) is never touched by any QA cleanup — it is a fixed,
+permanently-present fixture other tests and demos rely on.
+
+**The preview's own sign-in limiter.** `authLimiter` (10 requests per 15
+minutes per IP, `lib/rate-limit.ts`) applies to a preview exactly as it does to
+production, and switching test identities in the same browser context burns
+through it fast. Budget for one full 15-minute cooldown if a QA pass needs more
+than a handful of sign-ins from one IP; the #1724 QA run paid this cost once.
+
+**The Sentry sweep.** After each preview case, sweep Sentry filtered to
+`branch:pull/<N>/head` (the PR's own preview release) rather than the whole
+project, so an unrelated production event does not read as a regression this
+change caused. Cross-reference against the issue ids the PR's own root-cause
+section names, and treat anything new as either an expected refusal's Sentry
+face (an `expected: true, level: info` event is a typed refusal working as
+designed, not a defect) or a finding to send back to the builder.
+
+## 9. The agent-run E2E corpus
 
 `prompts/booking-algorithm-tests/` holds the numbered end-to-end cases, each a
 self-contained QA run that seeds via SQL, exercises the APIs, asserts database

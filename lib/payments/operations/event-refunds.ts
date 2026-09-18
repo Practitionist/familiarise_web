@@ -10,6 +10,7 @@ import {
 import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
+import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
 import { applyReversal } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
 import {
@@ -394,7 +395,7 @@ export async function refundRemovedAttendeeSeat(args: {
     // licence — the member never paid, so telling them a refund is coming is
     // simply false.
     if (result.rail === "GATEWAY") {
-      void notifyRefundProcessed(args.attendeeUserId, {
+      await notifyRefundProcessed(args.attendeeUserId, {
         ...notificationScope(payment.organizationId),
         amount: amountPaise,
         currency: payment.currency,
@@ -403,6 +404,17 @@ export async function refundRemovedAttendeeSeat(args: {
           : `You left this ${args.kind}.`,
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch(() => {});
+      // #1653 — the email twin; the sender never throws, the catch is belt
+      // and braces so a settled refund can never fail on its receipt.
+      await sendRefundProcessedEmail(
+        {
+          userId: args.attendeeUserId,
+          paymentId: payment.id,
+          amountPaise,
+          currency: payment.currency,
+        },
+        { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+      ).catch(() => {});
     }
 
     return {

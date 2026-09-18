@@ -8,11 +8,13 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import HomeTab from "./HomeTab";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { useUser } from "../../UserContext";
 
 export default function HomePageClient({
   consulteeId,
-}: Readonly<{ consulteeId: string }>) {
+  viewerZone,
+}: Readonly<{ consulteeId: string; viewerZone: ViewerZone }>) {
   const { userDetails } = useUser();
 
   // Personal pin, matching the sibling Appointments page (ADR 19). The old
@@ -59,6 +61,7 @@ export default function HomePageClient({
       )}
       <HomeTab
         eventsData={eventsData}
+        viewerZone={viewerZone}
         userDetails={{
           id: userDetails.id,
           name: userDetails.name ?? "User",

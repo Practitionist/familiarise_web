@@ -1,13 +1,17 @@
-import { Button } from "@react-email/button";
-import { Container } from "@react-email/container";
-import { Head } from "@react-email/head";
-import { Html } from "@react-email/html";
-import { Link } from "@react-email/link";
-import { Preview } from "@react-email/preview";
-import { Section } from "@react-email/section";
-import { Text } from "@react-email/text";
+import {
+  Button,
+  Container,
+  Head,
+  Html,
+  Preview,
+  Section,
+  Text,
+} from "react-email";
 import * as React from "react";
 import { getAppUrl } from "@/lib/url";
+import { EmailFooter } from "@/emails/components/EmailFooter";
+import { EmailLogo } from "@/emails/components/EmailLogo";
+import { memberRoleLabel } from "./OrgMembershipChangedEmail";
 
 interface OrgInvitationEmailProps {
   inviterName: string;
@@ -21,10 +25,10 @@ export const OrgInvitationEmail = ({
   inviterName = "An administrator",
   orgName = "an organization",
   role = "member",
-  inviteUrl = "https://familiarise.com",
+  inviteUrl = getAppUrl(),
   expiresAt,
 }: OrgInvitationEmailProps) => {
-  const roleLabel = role.replace("ORG_", "").toLowerCase();
+  const roleLabel = memberRoleLabel(role);
   const expiryText = expiresAt
     ? `This invitation expires on ${new Date(expiresAt).toLocaleDateString("en-IN", { dateStyle: "long" })}.`
     : "This invitation expires in 14 days.";
@@ -32,23 +36,20 @@ export const OrgInvitationEmail = ({
   return (
     <Html>
       <Head />
-      <Preview>
-        You have been invited to join {orgName} on Familiarise
-      </Preview>
+      <Preview>You have been invited to join {orgName} on Familiarise</Preview>
       <Section style={main}>
         <Container style={container}>
+          <EmailLogo />
           <Section style={content}>
-            <Text style={heading}>
-              You&apos;re invited to join {orgName}
-            </Text>
+            <Text style={heading}>You&apos;re invited to join {orgName}</Text>
             <Text style={paragraph}>
-              {inviterName} has invited you to join <strong>{orgName}</strong> on
-              Familiarise as a <strong>{roleLabel}</strong>.
+              {inviterName} has invited you to join <strong>{orgName}</strong>{" "}
+              on Familiarise as a <strong>{roleLabel}</strong>.
             </Text>
             <Text style={paragraph}>
               Familiarise is an expert services marketplace where you can
-              connect with consultants, join webinars, attend classes, and
-              grow your skills.
+              connect with consultants, join webinars, attend classes, and grow
+              your skills.
             </Text>
             <Section style={buttonContainer}>
               <Button style={button} href={inviteUrl}>
@@ -57,8 +58,8 @@ export const OrgInvitationEmail = ({
             </Section>
             <Text style={smallText}>{expiryText}</Text>
             <Text style={paragraph}>
-              If you did not expect this invitation, you can safely ignore
-              this email.
+              If you did not expect this invitation, you can safely ignore this
+              email.
             </Text>
             <Text style={paragraph}>
               Best regards,
@@ -66,20 +67,7 @@ export const OrgInvitationEmail = ({
               The Familiarise Team
             </Text>
           </Section>
-          <Section style={footer}>
-            <Text style={footerText}>
-              © {new Date().getFullYear()} Familiarise, All Rights Reserved
-            </Text>
-            <Text style={footerLinks}>
-              <Link href={`${getAppUrl()}/privacy`} style={link}>
-                Privacy Policy
-              </Link>{" "}
-              &bull;{" "}
-              <Link href={`${getAppUrl()}/terms`} style={link}>
-                Terms of Service
-              </Link>
-            </Text>
-          </Section>
+          <EmailFooter showSupport />
         </Container>
       </Section>
     </Html>
@@ -128,17 +116,3 @@ const button = {
   display: "block",
   padding: "12px 20px",
 };
-const footer = { textAlign: "center" as const, margin: "20px 0" };
-const footerText = {
-  fontSize: "12px",
-  color: "#666",
-  margin: "10px 0",
-  lineHeight: "1.5",
-};
-const footerLinks = {
-  fontSize: "12px",
-  color: "#666",
-  margin: "10px 0",
-  lineHeight: "1.5",
-};
-const link = { color: "#666", textDecoration: "underline" };

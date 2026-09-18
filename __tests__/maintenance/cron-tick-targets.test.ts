@@ -22,7 +22,11 @@ type TargetRequest = (
   name: string,
 ) => { url: string; timeoutMs: number };
 
-function loadTicker(): { targetRequest: TargetRequest } {
+function loadTicker(): {
+  targetRequest: TargetRequest;
+  dueTargets: (now: Date) => string[];
+  statusFor: (failed: { name: string; status: number }[]) => number;
+} {
   const file = path.join(
     __dirname,
     "..",
@@ -37,7 +41,7 @@ function loadTicker(): { targetRequest: TargetRequest } {
       target: ts.ScriptTarget.ES2022,
     },
   });
-  const mod = { exports: {} as { targetRequest: TargetRequest } };
+  const mod = { exports: {} as ReturnType<typeof loadTicker> };
   vm.runInNewContext(outputText, { module: mod, exports: mod.exports });
   return mod.exports;
 }
@@ -62,5 +66,69 @@ describe("cron-tick targetRequest", () => {
       url: "https://site.test/api/cleanup/abandoned-payments?limit=10",
       timeoutMs: 6_000,
     });
+  });
+
+  // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
+  // 20 s budget, where fifty under 6 s was aborted on every tick.
+  it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "reconcile-orphaned-confirmations")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-orphaned-confirmations?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
+});
+
+// #1686 — six sweeps run on the 15-minute slots only; the customer-visible
+// five stay on every tick (ADR 27 consequences, 2026-09-17).
+describe("cron-tick dueTargets cadence", () => {
+  const { dueTargets } = loadTicker();
+  const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
+
+  it("fires the fifteen-minute sweeps only on a 15-minute slot", () => {
+    const off = dueTargets(at(5));
+    const on = dueTargets(at(15));
+    for (const name of [
+      "reconcile-ledgers",
+      "sync-payment-earnings",
+      "release-earnings",
+      "cascade-refund-earnings",
+      "reconcile-refunds",
+      "abandoned-payments",
+      "retry-failed-emails",
+    ]) {
+      expect(off).not.toContain(name);
+      expect(on).toContain(name);
+    }
+  });
+
+  it("keeps the customer-visible sweeps on every tick", () => {
+    const off = dueTargets(at(5));
+    for (const name of [
+      "reconcile-payment-status",
+      "reconcile-orphaned-confirmations",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
+      "drain-notification-outbox",
+      "sweep-stuck-webhook-events",
+    ]) {
+      expect(off).toContain(name);
+    }
+  });
+});
+
+// #1686 — Netlify re-invokes a scheduled function that answers 5xx, up to
+// three attempts within ~10 s, each re-firing every due target. The failed
+// list in the logged body is the operator's signal; the status must stay 200.
+describe("cron-tick statusFor", () => {
+  const { statusFor } = loadTicker();
+
+  it("answers 200 even when a target failed", () => {
+    expect(statusFor([])).toBe(200);
+    expect(
+      statusFor([
+        { name: "reconcile-payment-status", status: 500 },
+        { name: "reconcile-orphaned-confirmations", status: 0 },
+      ]),
+    ).toBe(200);
   });
 });

@@ -26,9 +26,12 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { confirmExistingAppointment } from "@/lib/payments/webhooks/handlers";
+import { liveOccurrenceWhere } from "@/lib/appointments/occurrences";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { DmNotPermittedError } from "@/lib/stream/dm-eligibility";
+import * as Sentry from "@sentry/nextjs";
 
 export interface OrphanedConfirmationResult {
   success: boolean;
@@ -39,6 +42,8 @@ export interface OrphanedConfirmationResult {
   channelsEnsured: number;
   /** #1356 — appointments still without a channel; retried next run. */
   channelsFailed: number;
+  /** #1708 — appointments whose channel can never be ensured; stamped out of the queue. */
+  channelsSkipped: number;
   /** #1391 — buyer-level Stream operations the channel pass spent this run. */
   channelBuyerOps: number;
   /** #1391 — selected appointments the buyer-operation budget left for the next run. */
@@ -58,23 +63,50 @@ const CHANNEL_PASS_MAX_BUYER_OPS = 500;
 // ensured/failed counters stay with the caller since they govern the loop's
 // own control flow (the deferred-budget break), not this one appointment's
 // outcome.
-async function ensureChannelForOrphan(appointmentId: string): Promise<boolean> {
+type OrphanChannelOutcome = "ensured" | "skipped" | "failed";
+
+// #1708 — no retry can make this pair's channel succeed, so the row leaves the
+// `chatChannelEnsuredAt IS NULL` queue; rationale in the cron reference.
+async function markChannelTerminal(
+  appointmentId: string,
+  reason: string,
+): Promise<void> {
+  await prisma.appointment.updateMany({
+    where: { id: appointmentId, chatChannelEnsuredAt: null },
+    data: { chatChannelEnsuredAt: new Date() },
+  });
+  console.warn(
+    `💬 Chat channel for appointment ${appointmentId} marked terminal: ${reason}`,
+  );
+}
+
+async function ensureChannelForOrphan(
+  appointmentId: string,
+): Promise<OrphanChannelOutcome> {
   try {
     const result = await ensureChannelsForAppointment(appointmentId);
     if (result.ensured) {
       console.log(`💬 Ensured chat channel for appointment ${appointmentId}`);
-      return true;
+      return "ensured";
+    }
+    if (result.reason === "no_channel_branch_for_appointment") {
+      await markChannelTerminal(appointmentId, result.reason);
+      return "skipped";
     }
     console.warn(
       `💬 Could not ensure chat channel for appointment ${appointmentId}: ${result.reason}`,
     );
-    return false;
+    return "failed";
   } catch (err) {
+    if (err instanceof DmNotPermittedError) {
+      await markChannelTerminal(appointmentId, err.message);
+      return "skipped";
+    }
     console.error(
       `❌ Chat-channel ensure failed for appointment ${appointmentId}:`,
       err,
     );
-    return false;
+    return "failed";
   }
 }
 
@@ -111,8 +143,10 @@ async function reconcileOrphanedConfirmationsUnlocked(
       paymentStatus: "SUCCEEDED",
       updatedAt: { lt: cutoff },
       appointmentId: { not: null },
+      // FAMILIARISE_WEB-46 — a rescheduled-away row keeps isTentative and
+      // would be re-driven every tick; only a live hold is an orphan.
       appointment: {
-        occurrences: { some: { isTentative: true } },
+        occurrences: { some: { isTentative: true, ...liveOccurrenceWhere } },
       },
     },
     select: { id: true, appointmentId: true, userId: true },
@@ -146,7 +180,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
         where: {
           appointmentId: orphan.appointmentId!,
           isTentative: true,
-          deletedAt: null,
+          ...liveOccurrenceWhere,
         },
       });
       if (remaining === 0) {
@@ -186,7 +220,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
       deletedAt: null,
       createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) },
       payment: { some: { paymentStatus: "SUCCEEDED", deletedAt: null } },
-      occurrences: { none: { isTentative: true, deletedAt: null } },
+      occurrences: { none: { isTentative: true, ...liveOccurrenceWhere } },
     },
     select: {
       id: true,
@@ -205,11 +239,15 @@ async function reconcileOrphanedConfirmationsUnlocked(
 
   let channelsEnsured = 0;
   let channelsFailed = 0;
+  const skippedAppointmentIds: string[] = [];
   let channelBuyerOps = 0;
   let channelsDeferred = 0;
   for (const [index, appointment] of unchanneled.entries()) {
-    if (await ensureChannelForOrphan(appointment.id)) {
+    const outcome = await ensureChannelForOrphan(appointment.id);
+    if (outcome === "ensured") {
       channelsEnsured += 1;
+    } else if (outcome === "skipped") {
+      skippedAppointmentIds.push(appointment.id);
     } else {
       channelsFailed += 1;
     }
@@ -233,9 +271,23 @@ async function reconcileOrphanedConfirmationsUnlocked(
     }
   }
 
+  const channelsSkipped = skippedAppointmentIds.length;
+  // #1708 — one warning per run that counts up, not one event per row per tick.
+  if (channelsSkipped > 0) {
+    Sentry.captureMessage(
+      `reconcile-orphaned-confirmations: ${channelsSkipped} appointment(s) marked terminal — DM not permitted or no channel branch`,
+      {
+        level: "warning",
+        fingerprint: ["reconcile-orphaned-confirmations", "dm_not_permitted"],
+        tags: { subsystem: "payments" },
+        extra: { appointmentIds: skippedAppointmentIds },
+      },
+    );
+  }
+
   console.log(
     `🩹 Orphaned confirmations: scanned=${orphans.length} confirmed=${confirmed} stillBlocked=${stillBlocked} ` +
-      `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed} ` +
+      `channelsEnsured=${channelsEnsured} channelsFailed=${channelsFailed} channelsSkipped=${channelsSkipped} ` +
       `channelBuyerOps=${channelBuyerOps} channelsDeferred=${channelsDeferred}`,
   );
   return {
@@ -245,6 +297,7 @@ async function reconcileOrphanedConfirmationsUnlocked(
     stillBlocked,
     channelsEnsured,
     channelsFailed,
+    channelsSkipped,
     channelBuyerOps,
     channelsDeferred,
   };

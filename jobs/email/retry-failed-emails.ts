@@ -1,18 +1,22 @@
 /**
- * #474 — Transactional-email retry worker.
+ * #474 — Transactional-email retry worker; since #1654 also the outbox relay.
  *
- * Drains `FailedEmail` rows that lib/email.ts dead-lettered when a Resend
- * send failed (status PENDING on first persist, RETRY on any subsequent
- * scheduled attempt) and whose `nextRetryAt` is now or earlier. One tick:
+ * Drains `FailedEmail` rows that lib/email/deliver.ts staged before its inline
+ * send (status PENDING when that send timed out, failed transiently or never
+ * ran; RETRY on any subsequent scheduled attempt) and whose `nextRetryAt` is
+ * now or earlier. One tick:
  *
  *   1. Picks up to `MAX_BATCH` rows ordered by `nextRetryAt ASC NULLS FIRST`.
- *   2. RE-SENDS the stored message verbatim — `resend.emails.send` with the
+ *   2. Dead-letters a row whose link has expired (EMAIL_TTL_MS) without a
+ *      send — the token is useless by now (#1298).
+ *   3. RE-SENDS the stored message verbatim — `resend.emails.send` with the
  *      persisted html/text/subject/from/replyTo. NO dispatcher, NO re-render:
  *      the row IS the rendered message, so retry can't drift from the original.
- *   3. Records the outcome:
+ *   4. Records the outcome:
  *        - success → status=SENT, sentAt=now.
  *        - failure → status=RETRY with the next backoff slot, OR
- *          status=DEAD_LETTER if we just used the last attempt (5).
+ *          status=DEAD_LETTER if we just used the last attempt (5) or the
+ *          error is terminal (#1298: dead key, unverified domain).
  *
  * Backoff schedule (mirrors the outbound-webhook worker)
  * ------------------------------------------------------
@@ -28,14 +32,37 @@
  * first-class queue, and an indexed (status, nextRetryAt) walk handles the
  * transactional-email volume comfortably. The table IS the queue.
  *
+ * #1647 — two additions on the same tick and lock: a row whose recipient is on
+ * `EmailSuppression` is dead-lettered without a send, and `FailedEmailBatch`
+ * rows (the newsletter's batch requests) are replayed through
+ * `resend.batch.send` under their stored idempotency key, five per tick.
+ *
  * Best-effort by contract: a re-send failure increments + reschedules; it
  * never throws into the cron wrapper.
  */
 
 import prisma from "@/lib/prisma";
-import type { FailedEmail, Prisma } from "@prisma/client";
-import { Resend } from "resend";
-import { DEFAULT_FROM_ADDRESS } from "@/lib/email";
+import type {
+  EmailSuppression,
+  FailedEmail,
+  FailedEmailBatch,
+  Prisma,
+} from "@prisma/client";
+import {
+  Resend,
+  type CreateBatchOptions,
+  type CreateBatchRequestOptions,
+  type CreateEmailRequestOptions,
+} from "resend";
+import { DEFAULT_FROM_ADDRESS, EMAIL_BUDGET_MS } from "@/lib/email/config";
+import {
+  EMAIL_TTL_MS,
+  isExpiredForReplay,
+  resendErrorText,
+  terminalSendReason,
+} from "@/lib/email/classify";
+import { idempotencyKeyFor } from "@/lib/email/idempotency";
+import { findSuppressed, normaliseEmail } from "@/lib/email/suppression";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -45,6 +72,14 @@ import { nextRetryAt } from "@/lib/retry/backoff";
 
 const MAX_BATCH = 50;
 const MAX_ATTEMPTS = 5;
+// #1647 — one batch request is up to 100 messages; five keeps a tick well
+// inside its target timeout even when every batch is slow.
+const MAX_BATCH_ROWS = 5;
+// #1654 — Resend's team limit is 10 requests/s; eight a second leaves room for
+// the inline fast path sending alongside the relay.
+export const SEND_GAP_MS = 125;
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
  * The shared outbox schedule (lib/retry/backoff.ts), re-exported so the
@@ -58,11 +93,16 @@ export interface EmailRetryRunResult {
   sent: number;
   retried: number;
   deadLettered: number;
+  // #1647 — the FailedEmailBatch drain, counted apart from the single rows.
+  batchesScanned: number;
+  batchesSent: number;
+  batchesRetried: number;
+  batchesDeadLettered: number;
   errors: string[];
 }
 
 /**
- * The slice of the client this worker touches. Typing only the two methods used
+ * The slice of the client this worker touches. Typing only the methods used
  * (rather than the whole PrismaClient) lets the unit test inject a faithful stub
  * without an `any` cast; the full client satisfies it structurally.
  */
@@ -71,6 +111,23 @@ export interface FailedEmailStore {
     findMany(args: Prisma.FailedEmailFindManyArgs): Promise<FailedEmail[]>;
     update(args: Prisma.FailedEmailUpdateArgs): Promise<FailedEmail>;
   };
+  emailSuppression: {
+    findMany(
+      args: Prisma.EmailSuppressionFindManyArgs,
+    ): Promise<Pick<EmailSuppression, "email" | "reason">[]>;
+  };
+  failedEmailBatch: {
+    findMany(
+      args: Prisma.FailedEmailBatchFindManyArgs,
+    ): Promise<FailedEmailBatch[]>;
+    update(args: Prisma.FailedEmailBatchUpdateArgs): Promise<FailedEmailBatch>;
+  };
+}
+
+/** The two Resend surfaces the relay sends through; the tests inject a fake. */
+export interface RelaySender {
+  emails: Pick<Resend["emails"], "send">;
+  batch: Pick<Resend["batch"], "send">;
 }
 
 /**
@@ -80,7 +137,7 @@ export interface FailedEmailStore {
 export async function runEmailRetryTick(params: {
   prisma: FailedEmailStore;
   /// Inject a Resend stub for testing; production builds one from the env key.
-  resend?: Pick<Resend["emails"], "send">;
+  resend?: RelaySender;
   /// Override the clock for deterministic tests.
   now?: () => number;
   /// Batch ceiling override; defaults to MAX_BATCH.
@@ -95,16 +152,21 @@ export async function runEmailRetryTick(params: {
     sent: 0,
     retried: 0,
     deadLettered: 0,
+    batchesScanned: 0,
+    batchesSent: 0,
+    batchesRetried: 0,
+    batchesDeadLettered: 0,
     errors: [],
   };
 
   // Resolve the sender once. Without a key (and no injected stub) there's
   // nothing to retry against — bail cleanly so the cron stays green.
-  const emails = params.resend ?? buildResendEmails();
-  if (!emails) {
+  const sender = params.resend ?? buildResendSender();
+  if (!sender) {
     result.errors.push("RESEND_API_KEY not configured; skipping email retry");
     return result;
   }
+  const { emails } = sender;
 
   const nowDate = new Date(now());
   const dueRows = await prisma.failedEmail.findMany({
@@ -118,25 +180,77 @@ export async function runEmailRetryTick(params: {
     take: batchLimit,
   });
 
-  for (const row of dueRows) {
+  // #1647 — one read for the whole batch; a suppressed recipient is refused
+  // before any pacing or send, and never paged (the refusal is the point).
+  const suppressed = await findSuppressed(
+    dueRows.map((row) => row.recipient),
+    prisma,
+  );
+
+  for (const [index, row] of dueRows.entries()) {
     result.scanned += 1;
 
+    const suppression = suppressed.get(normaliseEmail(row.recipient));
+    if (suppression) {
+      await prisma.failedEmail.update({
+        where: { id: row.id },
+        data: { status: "DEAD_LETTER", lastError: `suppressed:${suppression}` },
+      });
+      result.deadLettered += 1;
+      continue;
+    }
+
+    // #1654 — pace the drain under the provider's rate limit; the first send
+    // goes out at once, every later one waits the gap.
+    if (index > 0) await sleep(SEND_GAP_MS);
+
+    // #1298 — a verification or reset link outlives its token only as spam:
+    // dead-letter it without a send (and without paging) once the TTL passed.
+    if (isExpiredForReplay(row.emailType, row.createdAt, nowDate)) {
+      const minutes = Math.round(EMAIL_TTL_MS[row.emailType] / 60_000);
+      await prisma.failedEmail.update({
+        where: { id: row.id },
+        data: {
+          status: "DEAD_LETTER",
+          lastError: `expired before delivery: ${row.emailType} links are valid for ${minutes} minutes`,
+        },
+      });
+      result.deadLettered += 1;
+      continue;
+    }
+
     let sendError: string | undefined;
+    let resendId: string | null = null;
     try {
       // Verbatim re-send of the stored rendered message. No dispatcher, no
       // re-render: replay exactly what the original sender handed Resend.
-      const result = await emails.send({
-        from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
-        to: row.recipient,
-        subject: row.subject,
-        html: row.htmlBody,
-        text: row.textBody ?? undefined,
-        replyTo: row.replyTo ?? undefined,
-      });
+      // #1298 — the same key the sender derived, so a replay of a send whose
+      // response was lost is deduplicated by Resend instead of doubled.
+      // #1654 — bounded by the job budget so one hung call cannot hold the
+      // tick past the function ceiling; the SDK spreads `signal` into fetch.
+      const result = await emails.send(
+        {
+          from: row.fromAddress ?? DEFAULT_FROM_ADDRESS,
+          to: row.recipient,
+          subject: row.subject,
+          html: row.htmlBody,
+          text: row.textBody ?? undefined,
+          replyTo: row.replyTo ?? undefined,
+        },
+        {
+          idempotencyKey: idempotencyKeyFor(
+            { to: row.recipient, subject: row.subject, html: row.htmlBody },
+            row.emailType,
+          ),
+          signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
+        } as CreateEmailRequestOptions,
+      );
       // Resend resolves (does not throw) on API-level errors — a non-null
       // `error` is still a failure, so it must not be mistaken for a success.
       if (result.error) {
-        sendError = result.error.message || "Resend API error";
+        sendError = resendErrorText(result.error);
+      } else {
+        resendId = result.data?.id ?? null;
       }
     } catch (err) {
       sendError = err instanceof Error ? err.message : String(err);
@@ -150,6 +264,8 @@ export async function runEmailRetryTick(params: {
           attempts: row.attempts + 1,
           sentAt: nowDate,
           lastError: null,
+          // #1654 — the provider id, so support can trace the row to Resend's log.
+          resendId,
         },
       });
       result.sent += 1;
@@ -159,7 +275,18 @@ export async function runEmailRetryTick(params: {
     const attemptNumber = row.attempts + 1;
     const nextAttemptNumber = attemptNumber + 1;
 
-    if (attemptNumber >= MAX_ATTEMPTS) {
+    // #1298 — a dead key or unverified domain fails every attempt the same
+    // way: dead-letter now and page once per reason, not once per row.
+    const terminalReason = terminalSendReason(sendError);
+    if (terminalReason) {
+      Sentry.captureMessage(`email retry hit a terminal error: ${sendError}`, {
+        level: "error",
+        fingerprint: ["email-retry-terminal", terminalReason],
+        tags: { subsystem: "email", emailType: row.emailType },
+      });
+    }
+
+    if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
       // DEAD_LETTER: retries exhausted, terminal but operator-replayable
       // (the rendered message is still on the row — see optional replay route).
       await prisma.failedEmail.update({
@@ -185,15 +312,111 @@ export async function runEmailRetryTick(params: {
     }
   }
 
+  await drainBatches({ prisma, sender, nowDate, result });
+
   return result;
+}
+
+/**
+ * #1647 — replays `FailedEmailBatch` rows (the newsletter's batch requests
+ * that the broadcast route staged) under the stored idempotency key, so a
+ * request whose response was lost is deduplicated by Resend, not doubled.
+ * Same statuses, ladder and terminal reasons as the single-row drain.
+ */
+async function drainBatches(ctx: {
+  prisma: FailedEmailStore;
+  sender: RelaySender;
+  nowDate: Date;
+  result: EmailRetryRunResult;
+}): Promise<void> {
+  const { prisma, sender, nowDate, result } = ctx;
+  const dueBatches = await prisma.failedEmailBatch.findMany({
+    where: {
+      OR: [
+        { status: "PENDING" },
+        { status: "RETRY", nextRetryAt: { lte: nowDate } },
+      ],
+    },
+    orderBy: { createdAt: "asc" },
+    take: MAX_BATCH_ROWS,
+  });
+
+  for (const [index, row] of dueBatches.entries()) {
+    result.batchesScanned += 1;
+    if (index > 0) await sleep(SEND_GAP_MS);
+
+    let sendError: string | undefined;
+    try {
+      const response = await sender.batch.send(
+        row.payload as CreateBatchOptions,
+        {
+          idempotencyKey: row.idempotencyKey,
+          signal: AbortSignal.timeout(EMAIL_BUDGET_MS.JOB),
+        } as CreateBatchRequestOptions,
+      );
+      if (response.error) sendError = resendErrorText(response.error);
+    } catch (err) {
+      // A timeout is transient like any other failed attempt: the row walks
+      // the ladder and the key makes a late completion harmless.
+      sendError = err instanceof Error ? err.message : String(err);
+    }
+
+    if (!sendError) {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: {
+          status: "SENT",
+          attempts: row.attempts + 1,
+          sentAt: nowDate,
+          lastError: null,
+        },
+      });
+      result.batchesSent += 1;
+      continue;
+    }
+
+    const attemptNumber = row.attempts + 1;
+    const terminalReason = terminalSendReason(sendError);
+    if (terminalReason) {
+      Sentry.captureMessage(`email retry hit a terminal error: ${sendError}`, {
+        level: "error",
+        fingerprint: ["email-retry-terminal", terminalReason],
+        tags: { subsystem: "email", emailType: row.emailType },
+      });
+    }
+
+    if (terminalReason || attemptNumber >= MAX_ATTEMPTS) {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: {
+          status: "DEAD_LETTER",
+          attempts: attemptNumber,
+          lastError: sendError,
+        },
+      });
+      result.batchesDeadLettered += 1;
+    } else {
+      await prisma.failedEmailBatch.update({
+        where: { id: row.id },
+        data: {
+          status: "RETRY",
+          attempts: attemptNumber,
+          nextRetryAt: nextRetryAt(attemptNumber + 1, nowDate),
+          lastError: sendError,
+        },
+      });
+      result.batchesRetried += 1;
+    }
+  }
 }
 
 // Resolve a Resend sender from the env key. Returns null when unset so the
 // tick can bail cleanly instead of throwing on a missing key.
-function buildResendEmails(): Pick<Resend["emails"], "send"> | null {
+function buildResendSender(): RelaySender | null {
   const key = process.env.RESEND_API_KEY;
   if (!key) return null;
-  return new Resend(key).emails;
+  const client = new Resend(key);
+  return { emails: client.emails, batch: client.batch };
 }
 
 // #476 — no IN_FLIGHT soft lock on FailedEmail, so the cron lock is the only
@@ -204,9 +427,12 @@ function buildResendEmails(): Pick<Resend["emails"], "send"> | null {
 // fail-open silently allowed two replicas to send every failed email twice.
 // Deferred retries resume next tick once Redis recovers — no message loss,
 // just delay.
-export async function retryFailedEmails(): Promise<EmailRetryRunResult> {
+export async function retryFailedEmails(opts?: {
+  /** #1654 — the ticker's bite; the Actions run omits it and drains MAX_BATCH. */
+  limit?: number;
+}): Promise<EmailRetryRunResult> {
   return withCronLock("retry-failed-emails", { failMode: "closed" }, () =>
-    runEmailRetryTick({ prisma }),
+    runEmailRetryTick({ prisma, maxBatch: opts?.limit }),
   );
 }
 
@@ -227,6 +453,10 @@ if (require.main === module) {
         sent: result.sent,
         retried: result.retried,
         deadLettered: result.deadLettered,
+        batchesScanned: result.batchesScanned,
+        batchesSent: result.batchesSent,
+        batchesRetried: result.batchesRetried,
+        batchesDeadLettered: result.batchesDeadLettered,
         errors: result.errors.length,
       });
       if (result.errors.length > 0) process.exitCode = 1;

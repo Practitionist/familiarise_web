@@ -43,6 +43,12 @@ import {
 } from "../../lib/novu/service";
 import { notificationScope } from "../../lib/novu/workflows";
 import { notificationHref } from "../../lib/novu/resolve-href";
+import {
+  EMAIL_BUDGET_MS,
+  refundOnItsWay,
+  sendAppointmentCancelledEmail,
+  sendRefundProcessedEmail,
+} from "../../lib/email";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
@@ -516,13 +522,13 @@ async function refundNoShowConsultation(
   }
 }
 
-// Fire-and-forget notifications (non-blocking, reusing the Novu service).
-function notifyNoShowParties(
+// #1654 — awaited notifications (staged, then attempted) reusing the Novu service.
+async function notifyNoShowParties(
   consultation: NoShowCandidate,
   party: NoShowParty,
   refundedPaise: number,
   paidPayment: PaidPayment | undefined,
-): void {
+): Promise<void> {
   const consultantName =
     consultation.consultationPlan?.consultantProfile?.user?.name ??
     "Consultant";
@@ -531,7 +537,7 @@ function notifyNoShowParties(
   const noShowOrgId = consultation.appointment?.organizationId ?? null;
   const dashboardUrl = notificationHref(noShowOrgId, "appointments");
 
-  void notifyAppointmentCancelled(
+  await notifyAppointmentCancelled(
     [party.consultantUserId, party.consulteeUserId],
     {
       ...notificationScope(noShowOrgId),
@@ -546,8 +552,28 @@ function notifyNoShowParties(
     },
   ).catch((e) => console.error(`[no-show] cancellation notify failed:`, e));
 
+  // #1653 — the email twin of the bell above; the refund line goes to the
+  // consultee alone. The sender never throws, so the catch is the same
+  // belt-and-braces the bell wears.
+  await sendAppointmentCancelledEmail(
+    {
+      appointmentId: party.appointmentId,
+      userIds: [party.consultantUserId, party.consulteeUserId],
+      startsAt: consultation.appointment?.occurrences?.[0]?.startsAt ?? null,
+      cancelledBy: "Familiarise",
+      reason: "Consultant did not attend the scheduled session.",
+      refundText:
+        refundedPaise > 0 && paidPayment
+          ? refundOnItsWay(refundedPaise, paidPayment.currency)
+          : undefined,
+      refundUserIds: [party.consulteeUserId],
+      dashboardUrl,
+    },
+    EMAIL_BUDGET_MS.JOB,
+  ).catch((e) => console.error(`[no-show] cancellation email failed:`, e));
+
   if (refundedPaise > 0 && paidPayment) {
-    void notifyRefundProcessed(party.consulteeUserId, {
+    await notifyRefundProcessed(party.consulteeUserId, {
       ...notificationScope(noShowOrgId),
       amount: refundedPaise,
       currency: paidPayment.currency,
@@ -556,6 +582,17 @@ function notifyNoShowParties(
       consultantName,
       dashboardUrl,
     }).catch((e) => console.error(`[no-show] refund notify failed:`, e));
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundProcessedEmail(
+      {
+        userId: party.consulteeUserId,
+        paymentId: paidPayment.id,
+        amountPaise: refundedPaise,
+        currency: paidPayment.currency,
+        planTitle,
+      },
+      { budgetMs: EMAIL_BUDGET_MS.JOB },
+    );
   }
 }
 
@@ -622,7 +659,12 @@ async function detectConsultantNoShowsUnlocked(): Promise<NoShowResult> {
         await refundNoShowConsultation(consultation, errors);
       if (succeeded) refunded++;
 
-      notifyNoShowParties(consultation, party, refundedPaise, paidPayment);
+      await notifyNoShowParties(
+        consultation,
+        party,
+        refundedPaise,
+        paidPayment,
+      );
     } catch (error) {
       const msg = `Failed to handle candidate consultation ${consultation.id}: ${error}`;
       console.error(`   ❌ ${msg}`);

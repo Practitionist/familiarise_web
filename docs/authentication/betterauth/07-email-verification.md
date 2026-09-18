@@ -1,11 +1,11 @@
 # Email Verification and Phone Step-Up
 
-| Field | Value |
-|---|---|
-| Status | Email verification: implemented on `feat/email-verification-referral-capture`. Phone step-up: stub only (tracked in #884). |
-| Audience | All engineers |
-| Last reviewed | 2026-06-17 |
-| Source files | `lib/auth.ts`, `lib/email.ts`, `emails/auth/VerificationEmail.tsx`, `app/auth/verify-email/page.tsx`, `app/auth/signup/page.tsx`, `app/auth/signin/page.tsx`, `lib/auth-phone-stepup.ts` |
+| Field         | Value                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Status        | Email verification: implemented on `feat/email-verification-referral-capture`. Phone step-up: stub only (tracked in #884).                                                                     |
+| Audience      | All engineers                                                                                                                                                                                  |
+| Last reviewed | 2026-06-17                                                                                                                                                                                     |
+| Source files  | `lib/auth.ts`, `lib/email/index.ts`, `emails/auth/VerificationEmail.tsx`, `app/auth/verify-email/page.tsx`, `app/auth/signup/page.tsx`, `app/auth/signin/page.tsx`, `lib/auth-phone-stepup.ts` |
 
 ## 1. Decision
 
@@ -28,10 +28,15 @@ price.
 configures the `emailVerification` block with `sendOnSignUp: true`,
 `autoSignInAfterVerification: true`, a one-hour `expiresIn`, and a
 `sendVerificationEmail` hook that delegates to `sendVerificationEmail` in
-`lib/email.ts`. That sender renders `emails/auth/VerificationEmail.tsx`, sends
-through Resend with the same dead-letter handling as the other transactional
-emails, and logs the verification URL to the server console when `RESEND_API_KEY`
-is unset so the flow is testable locally.
+`lib/email/index.ts`. That sender renders `emails/auth/VerificationEmail.tsx`,
+sends through `deliver()` (`lib/email/deliver.ts`) with the same dead-letter
+handling as the other transactional emails — a missing or invalid
+`RESEND_API_KEY` dead-letters into `FailedEmail` rather than dropping the
+send — and logs the verification URL to the server console when
+`RESEND_API_KEY` is unset so the flow is testable locally. The retry worker
+(`jobs/email/retry-failed-emails.ts`) dead-letters an `EMAIL_VERIFICATION` row
+without a send once it is older than 60 minutes, because a stale verification
+link is no longer useful to the recipient.
 
 The end-to-end path is as follows. A credential signup creates the account but,
 because verification is required, issues no session — `signUp.email` returns with

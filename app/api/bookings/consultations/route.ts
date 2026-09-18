@@ -6,7 +6,13 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { requestListOrderBy } from "@/lib/booking/list-query";
+import {
+  parseRequestListQueryOrRespond,
+  refuseApprovalOnListRoute,
+} from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -16,6 +22,13 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+
+// Typed instead of cast: the old `status as AppointmentStatus` let any string
+// reach the transition helper (#1704).
+const ListStatusPatchSchema = z.object({
+  id: z.string().min(1),
+  status: z.nativeEnum(AppointmentStatus),
+});
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,11 +40,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
     const consulteeProfileId = searchParams.get("consulteeProfileId");
-    const status = searchParams.get("status") as AppointmentStatus | null;
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    // #1704 — validated, clamped paging; a bad value is a 400, not a 500.
+    const listQuery = parseRequestListQueryOrRespond(searchParams);
+    if (listQuery.response) return listQuery.response;
+    const { page, limit, status, sortOrder } = listQuery.query;
 
-    const whereClause: Record<string, unknown> = {};
+    const whereClause: Prisma.ConsultationWhereInput = {};
 
     // Authorization: filter by ownership for non-privileged users.
     // #org-appts — profile ids are carried independently of the singular
@@ -170,9 +184,7 @@ export async function GET(request: NextRequest) {
           requestedBy: PROFILE_WITH_USER_SELECT,
           appointment: APPOINTMENT_LIST_SELECT,
         },
-        orderBy: {
-          requestedAt: "desc",
-        },
+        orderBy: requestListOrderBy(sortOrder),
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -213,20 +225,14 @@ export async function PATCH(request: NextRequest) {
     if (rl) return rl;
 
     const body = await request.json();
-    const { id, status } = body;
-
-    if (!id || !status) {
+    const parsedBody = ListStatusPatchSchema.safeParse(body);
+    if (!parsedBody.success) {
       return NextResponse.json(
-        { error: "ID and status are required" },
+        { error: "ID and a valid status are required" },
         { status: 400 },
       );
     }
-
-    if (
-      !Object.values(AppointmentStatus).includes(status as AppointmentStatus)
-    ) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    const { id, status } = parsedBody.data;
 
     // Verify ownership before allowing status change
     const existingConsultation = await prisma.consultation.findUnique({
@@ -262,6 +268,10 @@ export async function PATCH(request: NextRequest) {
         "You can only update consultations you are a participant in",
       );
     }
+
+    // #1704 — approval lives on the [id] route only, for everyone.
+    const approvalRefusal = refuseApprovalOnListRoute(status);
+    if (approvalRefusal) return approvalRefusal;
 
     // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
     // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee

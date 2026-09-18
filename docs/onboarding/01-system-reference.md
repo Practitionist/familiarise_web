@@ -2,7 +2,7 @@
 
 > **Audience:** Coding agents (Claude, Codex, Copilot), future interns, and any developer touching the onboarding flow.
 >
-> **Last updated:** 2026-08-23
+> **Last updated:** 2026-09-18
 
 ---
 
@@ -53,18 +53,18 @@ inside the same transaction that creates the `Organization`,
 immediately navigate to `/dashboard/org-workspace/:id/home`. See
 `docs/enterprise/12-dashboard-pages.md` for the operator home route.
 
-### Placeholder ConsultantProfile on EXPERT invite accept
+### EXPERT invite accept stays strict (no placeholder)
 
 When a user accepts an EXPERT invitation without a pre-existing
 `ConsultantProfile`, `app/api/organizations/invitations/accept/route.ts`
-upserts a placeholder with:
+rejects with `NOT_A_CONSULTANT` (400) instead of provisioning anything —
+an expert identity carries domain/rates/verification/payout prerequisites
+that no invite click can substitute for (who-is-acting rule, #819). The
+invite page humanizes the code (`humanizeOrgError`) and tells the user to
+finish consultant onboarding first; the emailed link still accepts
+afterwards. SSO JIT keeps its own lazy path; admin direct-add stays
+strict for both EXPERT and LEARNER.
 
-- `domain` → upserted `Domain "General"`
-- `scheduleType = WEEKLY`
-- `verificationStatus = PENDING_VERIFICATION`
-
-The user fills in their real domain, schedule, and verification
-materials afterwards through the consultant profile editor.
 Marketplace visibility in `/explore/experts` still gates on platform
 verification, not on membership existence.
 
@@ -141,9 +141,9 @@ The onboarding system is a **multi-step wizard** that collects role-specific dat
 | Step | Component | What It Collects |
 |------|-----------|-----------------|
 | 0 | `PersonalInfoAndRoleForm` | Name, email, phone, role=CONSULTANT, gender, city, country, bio, linkedinUrl |
-| 1 | `ConsultantProfessionalStep` | **Tab 1:** Domain, subDomains, tags, description, headline, experience, scheduleType. **Tab 2:** Work experiences, education, certifications, achievements |
-| 2 | `ConsultantPreferredScheduleForm` | Weekly slots (day + UTC minutes) or custom slots (datetime range). Timezone-aware display |
-| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
+| 1 | `ConsultantProfessionalStep` | **Tab "Expertise":** field of expertise (`domain`), specialties (`subDomains`), skills (`tags`), description, headline, experience. **Tab "Experience & credentials (optional)":** work experiences, education, certifications, achievements — marked optional at the point of use, with a "Skip for now" exit |
+| 2 | `ConsultantPreferredScheduleForm` | The one place the schedule type is chosen (a Weekly / Custom toggle), then weekly windows (day + UTC minutes) or custom windows (datetime range); only the active grid renders. Timezone-aware display |
+| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (pre-filled from step 0; optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
 | 4 | `ConsultantReviewForm` | Read-only review of all data → Submit |
 
 ### Consultee (2 steps)
@@ -202,17 +202,28 @@ Draft layer (resumable wizard, #onboarding-ux):
 Handlers:
   handleNext(stepData)  → merge data, advance step
   handleBack()          → decrement step
-  handleSubmit(data)    → validate, transform, submit to server action
+  handleGoToStep(n)     → jump back to a completed step (stepper button,
+                          review-step pencil)
+  handleSubmit(data)    → validate, transform, submit to server action;
+                          a refusal is routed to the step that owns the
+                          first failing field (see "Refusals" below)
   startOver()           → quiesce saves, clear draft row, restart at step 0;
                           autosave stays armed afterwards
 
 Layout:
   Header with step counter + sign-out
-  Resume banner when a saved draft was restored (with Start over)
-  Progress stepper (circles + connector lines)
+  Resume banner when a saved draft was restored (Start over; "Resume at
+  step N" when the user had already started typing before the draft loaded)
+  Progress stepper — a <nav><ol> of buttons: completed steps are clickable
+  and keyboard-operable (aria-current="step" on the active one); upcoming
+  steps are inert because moving forward requires the current step to pass
   Form card (renders current step)
   Help text footer
 ```
+
+**Typing while the draft loads.** The wizard renders step 0 immediately and hydrates the saved draft afterwards, which on a cold instance can take seconds. Two rules keep what the user typed in that window: step 0 resets with `keepDirtyValues`, so a field the user has touched is never overwritten by the stored draft or the add-mode seed, and the shell records the first pointer or key event before hydration resolved (`interactedRef`) — when the draft then points at a later step, the banner offers "Resume at step N" instead of jumping there and abandoning the half-typed step.
+
+**Refusals reach the field that caused them.** Every step renders its inline errors through `components/ui/field-error.tsx` (`role="alert"`, `data-field-error`), and a refused submit calls `lib/forms/scroll-to-first-error.ts`, which scrolls the first `aria-invalid` control or error marker into view and focuses it — react-hook-form only does this for inputs it registered itself, so Controller-driven pickers and the agreement/verification steps were refusing off-screen. The final submit validates the whole payload; `app/form/onboarding/field-map.ts` maps each top-level field to the step that owns it (`personal`, `professional`, `availability`, `agreement`, `roleDetails`) and to its on-screen label, so the toast reads "Weekly hours (row 3): …" and the wizard opens that step. A server refusal is typed the same way: the availability contract's `AvailabilityContractError`, the server schema's issues (`refusalFromIssues` maps `consultantProfile.create.availabilityWindowsWeekly` and friends back to the wizard's field names) and the tag/specialty ownership checks are wrapped in `OnboardingRefusedError` (`utils/onboarding-shared.ts`) carrying `code`, `field` and `index`, `refusalResult` puts them on the action result, and the shell opens the owning step with the server's sentence; any untyped exception reaches the customer only as the generic fallback. Verification is the exception by design: the profile is already committed when the verification core refuses, so `maybeSubmitConsultantVerification` turns that into `verificationWarning` / `verificationDeferred` on a successful result, and the consultant finishes from Settings → Verification. The LinkedIn rule is one expression, `LINKEDIN_PROFILE_URL_RE` in `schemas/user.ts`, used by the verification step, the settings form and the hint copy.
 
 ### 3.2 Step 0: `PersonalInfoAndRoleForm`
 
@@ -233,21 +244,18 @@ Layout:
 
 Two-tab layout:
 
-**Tab 1 — Expertise & Domain** (via `ConsultantProfileForm`):
+**Tab "Expertise"** (via `ConsultantProfileForm`). On screen the three taxonomy levels are called *field of expertise*, *specialties* and *skills*; the model names (`Domain`, `SubDomain`, `Tag`) stay until the reset window:
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
 | `description` | textarea | Yes | min 1 char |
 | `headline` | text | No | max 120 chars |
 | `experience` | number | No | 0–100 years, step 0.5 |
-| `domain` | select | Yes | Fetched from `/api/user/consultants/meta` |
-| `subDomains` | multi-checkbox | No | Filtered by selected domain |
-| `tags` | multi-checkbox | No | Filtered by selected domain |
-| `scheduleType` | radio | Yes | WEEKLY or CUSTOM |
+| `domain` ("Field of expertise") | select | Yes | Fetched from `/api/user/consultants/meta` |
+| `subDomains` ("Specialties") | multi-checkbox | No | Filtered by the selected field |
+| `tags` ("Skills") | multi-checkbox | No | Filtered by the selected field |
 
-**Tab 2 — Experience & Credentials** (4 card sections):
-
-Each section uses a list + modal pattern (Add/Edit/Delete):
+**Tab "Experience & credentials (optional)"** (4 card sections). Every section is optional and says so in its own title; one inline line repeats that it can be added later from the dashboard, and the footer offers "Skip for now" beside "Continue" (NN/g: mark optional at the point of use, never with a warning banner, and keep the asterisk for required fields only). Each section uses a list + modal pattern (Add/Edit/Delete):
 
 - **WorkExperienceSection**: company, companyDomain, title, location, startDate, endDate, isCurrent, description
 - **EducationSection**: institution, degree, fieldOfStudy, startYear, endYear, grade, activities, description
@@ -256,11 +264,13 @@ Each section uses a list + modal pattern (Add/Edit/Delete):
 
 ### 3.4 Step 2 Consultant: `ConsultantPreferredScheduleForm`
 
+The Weekly / Custom toggle at the top of this step is the only place the schedule type is chosen (it used to be asked on the Professional step as well, with the later answer silently winning), and only the active type's grid renders — the earlier layout showed both side by side with the inactive one dimmed (#494 §2.2).
+
 **WEEKLY mode:**
 - Day-by-day grid (7 days)
 - Time inputs per day (start/end, 15-minute steps)
 - Timezone display and conversion
-- Overlap validation between slots
+- Overlap validation between windows
 
 **CUSTOM mode:**
 - Calendar month view (click to select dates)
@@ -350,7 +360,6 @@ Layer 4: Form Schemas (utils/onboarding.ts)
   React-hook-form compatible, progressive fill
   ├── PersonalInfoAndRoleFormSchema
   ├── ConsultantProfileFormSchema       (stricter: description required)
-  ├── ConsulteeProfileFormSchema        (stricter: occupation, aboutMe required)
   ├── StaffProfileFormSchema            (stricter: department, position required)
   ├── PreferredScheduleFormSchema
   ├── consultantFormFields              (role-specific, domain optional in step-state)
@@ -644,21 +653,7 @@ Step 6: RETURN
 
 `syncAvailabilitySlots(consultantProfileId, scheduleType, profileData, tx, timezone?)`
 
-**WEEKLY mode:**
-1. Delete all custom AND weekly slots for this consultant
-2. Filter slots through `isValidTimeRange()` (30min–12h duration)
-3. Validate time order: `validateWeeklySlotTimeOrder(startDay, endDay, startTimeUtc, endTimeUtc)`
-   - Same-day: `startTimeUtc < endTimeUtc`
-   - Overnight: allowed only if `startDay !== endDay` and `startTimeUtc > endTimeUtc`
-4. O(n^2) pairwise overlap detection via `slotsOverlap()`
-5. Create slots with `utcOffsetMinutes` computed from consultant's timezone
-
-**CUSTOM mode:**
-1. Delete all weekly AND custom slots
-2. Filter through `isValidTimeRange()`
-3. Validate: `startsAt < endsAt` for each slot
-4. Pairwise overlap check
-5. Create with absolute DateTime
+Both arms delete every row of both tables and recreate the chosen arm inside the onboarding transaction. Validation is no longer inline: the rows go through `assertWeeklyWindows` / `assertCustomWindows` from `lib/scheduling/availability-contract.ts`, the rule set the settings PUT and the per-row routes share (30 minutes to 12 hours, time order, pairwise overlap, no already-ended custom window, and at least one window for the chosen type). The wire schema (`ConsultantProfileCreateObjectSchema`) refuses the empty set before the transaction starts, so a direct caller cannot onboard an unbookable consultant. Adjacent entries are folded into one row on save (#1320) and weekly rows carry the frozen `utcOffsetMinutes` plus the dual-written local columns (#872). The full rule table and where each path enforces it live in [03-availability-contract.md](03-availability-contract.md).
 
 **Time storage:** Weekly slots use `Int SmallInt` (0–1439 = minutes since midnight UTC). Custom slots use `DateTime` (Timestamptz).
 
@@ -683,19 +678,7 @@ Then in persistence:
 
 ### Verification Flow
 
-Runs **after** the main transaction commits. If verification fails, the user profile is still saved.
-
-```
-1. Update User.linkedinUrl (if provided)
-2. Create ConsultantProfileVerification (status: "PENDING")
-3. Handle documents:
-   - Existing docs (have id, not onboarding upload): update verificationId
-   - New docs (isOnboardingUpload or no id): create ProfileVerificationDocument
-4. Update ConsultantProfile:
-   - verificationStatus → "UNDER_REVIEW"
-   - isVerified → false
-5. Fire-and-forget: notify all ADMIN users via Novu
-```
+Runs **after** the main transaction commits, through the one submission writer in `lib/verification/submit-request.ts` (the same one `POST /api/verification/submit` and `/resubmit` call). Uploads made from the wizard are already rows owned by the user (`uploadedByUserId`, `verificationId` null), so the writer links them by id under an ownership predicate, supersedes any open request, CASes the profile to `UNDER_REVIEW`, and refuses a request with no document. The admin bells are staged before the response and attempted in `after()`. If filing fails, the profile stays `PENDING_VERIFICATION`, the failure is captured in Sentry, and the response carries `verificationDeferred: true` plus a warning — the consultant finishes from Settings (#698 OB-3). The full lifecycle, the review side and the sweep are in [04-verification-lifecycle.md](04-verification-lifecycle.md).
 
 ---
 
@@ -746,7 +729,6 @@ orgWorkspaceProfileId    String?  @unique    // one row per user who operates an
 id                  String    @id @default(uuid())
 description         String?   @db.Text
 experience          Float?
-rating              Float     @default(0)
 headline            String?   @db.VarChar(120)
 websiteUrl          String?
 twitterUrl          String?
@@ -904,14 +886,18 @@ fileName         String
 originalName     String
 fileSize         Int
 mimeType         String
-fileUrl          String
+fileUrl          String                  // the download route, never a signed URL
 storagePath      String
 description      String?
 isValid          Boolean?                // null=not reviewed, true/false
 staffFeedback    String?
-verificationId   String    (FK)
+issue            VerificationDocumentIssue?   // reason code when invalid
+verificationId   String?   (FK, null until a submission links the row)
+linkedAt         DateTime?
+uploadedByUserId String?   (FK → User; the owner, #1224)
 uploadedAt       DateTime  @default(now())
 ```
+Rationale for every column above is in [05-schema-reference.md](05-schema-reference.md).
 
 ---
 
@@ -919,7 +905,7 @@ uploadedAt       DateTime  @default(now())
 
 | Enum | Values |
 |------|--------|
-| `UserRole` | `CONSULTANT`, `CONSULTEE`, `ADMIN`, `STAFF` |
+| `UserRole` | `CONSULTANT`, `CONSULTEE`, `ADMIN`, `STAFF`, `ORG_WORKSPACE` |
 | `ScheduleType` | `WEEKLY`, `CUSTOM` |
 | `DayOfWeek` | `MONDAY`, `TUESDAY`, `WEDNESDAY`, `THURSDAY`, `FRIDAY`, `SATURDAY`, `SUNDAY` |
 | `Gender` | `MALE`, `FEMALE`, `NON_BINARY`, `PREFER_NOT_TO_SAY` |
@@ -929,7 +915,8 @@ uploadedAt       DateTime  @default(now())
 | `AdminLevel` | `SUPER_ADMIN`, `ADMIN`, `MODERATOR` |
 | `AchievementType` | `AWARD`, `PUBLICATION`, `PROJECT`, `TALK`, `OPEN_SOURCE`, `OTHER` |
 | `ConsultantVerificationStatus` | `PENDING_VERIFICATION`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED` |
-| `ProfileVerificationStatus` | `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_INFO` |
+| `ProfileVerificationStatus` | `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_INFO`, `SUPERSEDED` |
+| `VerificationDocumentIssue` | `UNCLEAR_SCAN`, `EXPIRED`, `NAME_MISMATCH`, `MISSING_PAGE`, `WRONG_TYPE`, `OTHER` |
 
 ---
 
@@ -956,12 +943,17 @@ uploadedAt       DateTime  @default(now())
 | `verificationNotes` | Max 500 chars |
 
 ### Slot Validation (server-side)
-| Rule | Description |
-|------|-------------|
-| Duration | 30 minutes minimum, 12 hours maximum |
-| Time order | Same-day: start < end. Overnight: start > end with next-day end |
-| No overlaps | O(n^2) pairwise check. Back-to-back allowed (end1 === start2) |
-| Time range | 0–1439 minutes (weekly), valid DateTime (custom) |
+
+The rules below are the availability contract (`lib/scheduling/availability-contract.ts`); the table lists each with the refusal code a route answers with.
+
+| Code | Rule |
+|------|------|
+| `EMPTY` | At least one window for the chosen schedule type |
+| `RANGE` | Weekly minutes are whole numbers 0–1439; custom instants parse |
+| `ORDER` | Same-day: start < end. Overnight: end on the next weekday and start > end |
+| `DURATION` | 30 minutes minimum, 12 hours maximum, measured across midnight for overnight rows |
+| `OVERLAP` | Pairwise check; back-to-back allowed and folded on save |
+| `PAST` | A custom window that has already ended is refused |
 
 ### Professional Background
 | Field | Rule |
@@ -1006,6 +998,9 @@ uploadedAt       DateTime  @default(now())
 12. **Consultant verification is deferrable.** A submission without LinkedIn + ≥1 persistable document still completes onboarding: the profile is saved with the model default `PENDING_VERIFICATION` and the response carries `verificationDeferred: true`. Marketplace visibility continues to gate on verification, so a deferred consultant is simply unlisted until they finish from Settings → Verification (`/api/verification/submit`, `VerificationSection.tsx`). Policy lives in `shouldSubmitVerification()` (onboarding-shared.ts); "persistable" means the entry would actually create/link a row (`isPersistableVerificationDoc()`), so junk like `[{}]` defers instead of flipping the profile to `UNDER_REVIEW` with zero documents.
 
 13. **The consultee flow is intentionally two screens.** Demand-side users must reach marketplace value with one form + consent; every profile field is optional server-side, and enrichment is owned by the dashboard Settings tab + lazy `ensureConsulteeProfile()`.
+
+14. **EXPERT invites stay strict, and the wizard's add mode is the way through.** Accepting an EXPERT invitation requires an existing `ConsultantProfile` (`NOT_A_CONSULTANT` otherwise). A brand-new user finishes consultant onboarding first. An onboarded learner or org operator opens `/form/onboarding?add=CONSULTANT` (the invite page links there): `requireNotOnboarded` admits the session when `canAddConsultantIdentity` holds, the wizard runs the consultant steps with step 0 pre-filled and the role fixed, and `addConsultantIdentity` links the new profile without nulling any other link — a `CONSULTEE` becomes a `CONSULTANT`, an `ORG_WORKSPACE` keeps its role. The full matrix is in [02-identity-and-org-permutations.md](02-identity-and-org-permutations.md).
+15. **Availability has one contract, and shrinking it is reported, not refused.** Every availability write (onboarding, settings PUT, per-row routes) validates through `lib/scheduling/availability-contract.ts`; the WEEKLY↔CUSTOM switch stays a hard block while anything is booked (now including trials and open reschedule requests, checked again inside the transaction with a CAS on `scheduleType`); narrowing hours within a type succeeds and the response carries `uncoveredUpcoming` for the settings toast. `profileCompletionPercentage` is computed (`lib/profiles/profile-completion.ts`, #698 OB-1) rather than seeded. Details in [03-availability-contract.md](03-availability-contract.md).
 
 ### Alternatives considered (#onboarding-ux, 2026-08)
 
@@ -1086,6 +1081,9 @@ whole design.
 |------|---------|
 | `components/verification/VerificationDocumentUpload.tsx` | Drag & drop file upload with progress |
 | `components/ui/company-logo.tsx` | Auto-detect company logos from name (Logo.dev) |
+| `lib/scheduling/availability-contract.ts` | The shared availability rule set (`validate*Windows`, `assert*Windows`, refusal codes) |
+| `lib/scheduling/uncovered-upcoming.ts` | `settleAvailabilityWrite()` — shrink notice + completion recompute after every availability write |
+| `lib/profiles/profile-completion.ts` | `calculateProfileCompletion()` / `recomputeProfileCompletion()` (#698 OB-1) |
 | `utils/scheduling-engine/slotTimeUtils.ts` | Slot overlap detection, time validation, `getTimezoneOffsetMinutes()` |
 | `utils/timeScheduleValidation.ts` | `isValidTimeRange()` — duration bounds (30min–12h) |
 | `lib/novu.ts` | `notifyNewConsultantApplication()` — admin notifications |

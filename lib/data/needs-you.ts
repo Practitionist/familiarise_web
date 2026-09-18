@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import type { AppointmentStatus, Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 
@@ -47,10 +48,20 @@ export interface NeedsYouSummary {
 export function pendingConsultationWhere(
   consultantProfileId: string,
   scope: Scope,
-) {
+): Prisma.ConsultationWhereInput {
+  return consultationRequestWhere(consultantProfileId, scope, "PENDING");
+}
+
+/** The pending predicate at any status; Home's "Awaiting payment" row reads
+ * it at APPROVED_PENDING_PAYMENT so the two cohorts share one scope. #1703 */
+export function consultationRequestWhere(
+  consultantProfileId: string,
+  scope: Scope,
+  status: AppointmentStatus,
+): Prisma.ConsultationWhereInput {
   const orgWhere = scopeToWhereOrgId(scope);
   return {
-    status: "PENDING" as const,
+    status,
     consultationPlan: { consultantProfileId },
     ...(scope.kind === "personal"
       ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
@@ -58,20 +69,28 @@ export function pendingConsultationWhere(
   };
 }
 
+// #1638 made Subscription.appointment singular; the return is typed so the
+// next relation rename fails tsc instead of the dashboard route (FAMILIARISE_WEB-3Y).
 export function pendingSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
-) {
+): Prisma.SubscriptionWhereInput {
+  return subscriptionRequestWhere(consultantProfileId, scope, "PENDING");
+}
+
+export function subscriptionRequestWhere(
+  consultantProfileId: string,
+  scope: Scope,
+  status: AppointmentStatus,
+): Prisma.SubscriptionWhereInput {
+  const orgWhere = scopeToWhereOrgId(scope);
   return {
-    status: "PENDING" as const,
+    status,
     subscriptionPlan: { consultantProfileId },
-    // The personal arm cannot use the projector: a subscription spans many
-    // appointments, so "personal" is the absence of ANY org-tagged child
-    // rather than a pin on one row.
-    appointments:
-      scope.kind === "personal"
-        ? { none: { organizationId: { not: null } } }
-        : { some: scopeToWhereOrgId(scope) },
+    ...(scope.kind === "personal"
+      ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
+      : // "all" keeps the old `some: {}` meaning: any allocated wrapper.
+        { appointment: scope.kind === "all" ? { isNot: null } : orgWhere }),
   };
 }
 

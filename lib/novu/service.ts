@@ -2,11 +2,20 @@
  * Novu Notification Service
  * High-level methods for triggering notifications in business logic.
  * Non-throwing: logs errors and returns success/failure status.
- * Pattern follows lib/email.ts (graceful degradation).
+ * Pattern follows lib/email/deliver.ts (graceful degradation).
  */
-import { createHash } from "node:crypto";
 import * as Sentry from "@sentry/nextjs";
+import type { Tx } from "@/lib/prisma";
 import { getNovuClient, isNovuConfigured } from "./client";
+import {
+  attemptTrigger,
+  deriveTransactionId,
+  reportTriggerFailure,
+  stageTrigger,
+  type NovuPayload,
+  type StageTriggerArgs,
+  type TriggerResult,
+} from "./outbox";
 import { toWire } from "./templates";
 import type { NovuWorkflowId } from "./templates/types";
 import {
@@ -82,169 +91,86 @@ import {
 // Core trigger function
 // ============================================================================
 
-/** Payload base type — all workflow payloads extend this. */
-type NovuPayload = Record<string, string | number | boolean | null | undefined>;
-
-interface TriggerResult {
-  success: boolean;
-  error?: Error | string;
+/**
+ * #1654 — every trigger is stage + attempt (lib/novu/outbox.ts): the
+ * NotificationOutbox row is written first, then one inline attempt runs under
+ * the client's timeout, and the drain finishes whatever that left PENDING.
+ * With `tx` the row is staged in the caller's transaction and only staged:
+ * the result carries `staged` for `attemptTrigger` after the commit.
+ */
+export interface TriggerOptions {
+  // #691 — "membership" too, so the org roster reads through the same tx
+  // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
+  // #1697 item 5 — "user" too: the recipient-timezone read must ride the
+  // caller's transaction for the same single-connection reason.
+  tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
+  entityRef?: string;
 }
 
 // Unconfigured Novu in a deployed env means notifications silently vanish —
 // a console.warn nobody reads is not enough. Local dev stays console-only.
+// #1654 — the row is still staged, so the relay delivers once configured.
 function reportNotConfigured(workflowId: string): void {
-  console.warn(`[Novu] Not configured. Skipped workflow: ${workflowId}`);
+  console.warn(`[Novu] Not configured. Staged only: ${workflowId}`);
   if (process.env.NODE_ENV === "production") {
-    Sentry.captureMessage(`[Novu] Not configured — dropped ${workflowId}`, {
+    Sentry.captureMessage(`[Novu] Not configured — staged ${workflowId}`, {
       level: "warning",
       tags: { subsystem: "novu" },
     });
   }
 }
 
-/**
- * What the SDK actually told us about a failed trigger.
- *
- * `@novu/api` validates the RESPONSE against its own generated Zod schema and
- * throws `ResponseValidationError` before handing back the status. Its 422
- * schema requires an `errors` record, but the two 422s Novu documents for this
- * endpoint — an unknown or unpublished workflow (`workflow_not_found`) and an
- * idempotency key reused with a different body — both answer with `statusCode`
- * and `message` only. So all that reached Sentry was a ZodError about a field
- * of the SDK's own error envelope: the status and Novu's reason were both lost
- * (FAMILIARISE_WEB-1B). No published `@novu/api` relaxes that field (checked
- * through 3.19.1), so read the status off the error instead of chasing a bump.
- *
- * Duck-typed on `statusCode`: every `NovuError` subclass carries it, and the
- * class itself is not re-exported from the package root, so an `instanceof`
- * would mean deep-importing generated internals.
- */
-function describeNovuFailure(error: unknown): {
-  statusCode?: number;
-  /** Novu's own error text. Never the whole body — it can echo payload values. */
-  novuMessage?: string;
-  /** True when the SDK rejected a body Novu had already accepted. */
-  accepted: boolean;
-} {
-  if (!error || typeof error !== "object") return { accepted: false };
-  const { statusCode, body } = error as {
-    statusCode?: unknown;
-    body?: unknown;
-  };
-  if (typeof statusCode !== "number") return { accepted: false };
-
-  let novuMessage: string | undefined;
-  if (typeof body === "string" && body.length > 0) {
-    try {
-      const parsed: unknown = JSON.parse(body);
-      const message =
-        parsed && typeof parsed === "object"
-          ? (parsed as { message?: unknown }).message
-          : undefined;
-      if (typeof message === "string") novuMessage = message.slice(0, 200);
-    } catch {
-      // Not JSON (an HTML gateway page); the status alone is the signal.
-    }
-  }
-
-  return {
-    statusCode,
-    novuMessage,
-    accepted: statusCode >= 200 && statusCode < 300,
-  };
-}
-
-/**
- * One report shape for every `novu.trigger` failure. `accepted` means the
- * notification is already queued at Novu and only the SDK's response parsing
- * failed, so it is an expected outcome rather than a lost notification.
- */
-function reportTriggerFailure(
-  error: unknown,
-  workflowId: string,
-  recipientCount: number,
-): { accepted: boolean } {
-  const { statusCode, novuMessage, accepted } = describeNovuFailure(error);
-  // Never pass the raw SDK error: `NovuError.body` is the submitted payload
-  // echoed back on validation failures, so it can carry notification PII.
-  console.error(`[Novu] Failed to trigger ${workflowId}:`, {
-    workflowId,
-    statusCode,
-    novuMessage,
-    recipientCount,
-    accepted,
-  });
-  Sentry.captureException(
-    error instanceof Error ? error : new Error(String(error)),
-    {
-      tags: {
-        subsystem: "novu",
-        op: "trigger",
-        expected: String(accepted),
-      },
-      level: "warning",
-      extra: { workflowId, statusCode, novuMessage, recipientCount },
-    },
-  );
-  return { accepted };
-}
-
-// Deterministic transactionId so app-level retries can't double-notify: Novu
-// rejects a repeated transactionId. Derived from recipient(s) + workflow +
-// canonical payload (the payloads carry the entity ids). `dedupeKey` lets a
-// caller that legitimately re-sends an identical payload (e.g. 24h vs 1h
-// appointment reminders) disambiguate the sends.
-function deriveTransactionId(
-  workflowId: string,
-  recipients: string | string[],
-  payload: NovuPayload,
-  dedupeKey?: string,
-): string {
-  const canonicalPayload = JSON.stringify(
-    Object.fromEntries(
-      Object.entries(payload).sort(([a], [b]) => a.localeCompare(b)),
-    ),
-  );
-  const recipientKey = Array.isArray(recipients)
-    ? recipients.toSorted((a, b) => a.localeCompare(b)).join(",")
-    : recipients;
-  const hash = createHash("sha256")
-    .update(`${workflowId}|${recipientKey}|${dedupeKey ?? canonicalPayload}`)
-    .digest("hex");
-  return `${workflowId}:${hash.slice(0, 32)}`;
-}
-
-async function triggerWorkflow<T extends NovuPayload>(
-  workflowId: NovuWorkflowId,
-  subscriberId: string,
-  payload: T,
-  dedupeKey?: string,
+/** Stage, then attempt unless the caller's transaction owns the commit. */
+async function stageAndAttempt(
+  args: Omit<StageTriggerArgs, "tx" | "entityRef">,
+  opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
+  const staged = await stageTrigger({ ...args, ...opts });
   if (!isNovuConfigured()) {
-    reportNotConfigured(workflowId);
+    reportNotConfigured(args.workflowId);
     return { success: false, error: "Novu not configured" };
   }
+  if (!staged) {
+    // Staging failed outside a transaction: send-first, as before #1654, so
+    // a database hiccup does not also drop the bell.
+    return sendUnstaged(args);
+  }
+  if (opts?.tx) return { success: true, staged };
+  return attemptTrigger(staged);
+}
 
+async function sendUnstaged(
+  args: Omit<StageTriggerArgs, "tx" | "entityRef">,
+): Promise<TriggerResult> {
+  const transactionId = deriveTransactionId(
+    args.workflowId,
+    args.kind === "BROADCAST" ? [] : args.recipients,
+    args.payload,
+    args.dedupeKey,
+  );
   try {
     const novu = getNovuClient();
-    const wire = toWire(workflowId, payload);
-    await novu.trigger({
-      workflowId: wire.workflowId,
-      to: subscriberId,
-      payload: wire.payload,
-      transactionId: deriveTransactionId(
-        workflowId,
-        subscriberId,
-        payload,
-        dedupeKey,
-      ),
-    });
-    console.log(`[Novu] Triggered ${workflowId} for ${subscriberId}`);
+    const wire = toWire(args.workflowId, args.payload);
+    if (args.kind === "BROADCAST") {
+      await novu.triggerBroadcast({
+        name: wire.workflowId,
+        payload: wire.payload,
+        transactionId,
+      });
+    } else {
+      await novu.trigger({
+        workflowId: wire.workflowId,
+        to: args.kind === "SINGLE" ? args.recipients[0] : args.recipients,
+        payload: wire.payload,
+        transactionId,
+      });
+    }
     return { success: true };
   } catch (error) {
-    // A 2xx the SDK could not parse still queued the notification; reporting it
-    // as a failed send made callers retry a send Novu had already accepted.
-    if (reportTriggerFailure(error, workflowId, 1).accepted) {
+    if (
+      reportTriggerFailure(error, args.workflowId, args.recipients.length)
+        .accepted
+    ) {
       return { success: true };
     }
     return {
@@ -254,62 +180,52 @@ async function triggerWorkflow<T extends NovuPayload>(
   }
 }
 
+export async function triggerWorkflow<T extends NovuPayload>(
+  workflowId: NovuWorkflowId,
+  subscriberId: string,
+  payload: T,
+  dedupeKey?: string,
+  opts?: TriggerOptions,
+): Promise<TriggerResult> {
+  return stageAndAttempt(
+    {
+      workflowId,
+      kind: "SINGLE",
+      recipients: [subscriberId],
+      payload,
+      dedupeKey,
+    },
+    opts,
+  );
+}
+
 /**
  * Helper to trigger the same workflow for multiple users (e.g. both parties).
  * Uses a single API call with array `to` field (max 100 per call).
  */
-async function triggerForMultiple<T extends NovuPayload>(
+export async function triggerForMultiple<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   userIds: string[],
   payload: T,
   dedupeKey?: string,
+  opts?: TriggerOptions,
 ): Promise<TriggerResult[]> {
-  if (!isNovuConfigured()) {
-    reportNotConfigured(workflowId);
-    return userIds.map(() => ({
-      success: false,
-      error: "Novu not configured" as const,
-    }));
-  }
-
   if (userIds.length === 0) return [];
   if (userIds.length === 1)
-    return [await triggerWorkflow(workflowId, userIds[0], payload, dedupeKey)];
+    return [
+      await triggerWorkflow(workflowId, userIds[0], payload, dedupeKey, opts),
+    ];
 
   const BATCH_SIZE = 100;
   const results: TriggerResult[] = [];
 
   for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
     const batch = userIds.slice(i, i + BATCH_SIZE);
-    try {
-      const novu = getNovuClient();
-      const wire = toWire(workflowId, payload);
-      await novu.trigger({
-        workflowId: wire.workflowId,
-        to: batch,
-        payload: wire.payload,
-        transactionId: deriveTransactionId(
-          workflowId,
-          batch,
-          payload,
-          dedupeKey,
-        ),
-      });
-      console.log(
-        `[Novu] Triggered ${workflowId} for ${batch.length} subscribers`,
-      );
-      results.push(...batch.map(() => ({ success: true }) as TriggerResult));
-    } catch (error) {
-      if (reportTriggerFailure(error, workflowId, batch.length).accepted) {
-        results.push(...batch.map(() => ({ success: true }) as TriggerResult));
-        continue;
-      }
-      const err: TriggerResult = {
-        success: false,
-        error: error instanceof Error ? error : String(error),
-      };
-      results.push(...batch.map(() => err));
-    }
+    const result = await stageAndAttempt(
+      { workflowId, kind: "MULTI", recipients: batch, payload, dedupeKey },
+      opts,
+    );
+    results.push(...batch.map(() => result));
   }
 
   return results;
@@ -322,28 +238,12 @@ async function triggerForMultiple<T extends NovuPayload>(
 async function triggerBroadcastWorkflow<T extends NovuPayload>(
   workflowId: NovuWorkflowId,
   payload: T,
+  opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  if (!isNovuConfigured()) {
-    reportNotConfigured(workflowId);
-    return { success: false, error: "Novu not configured" };
-  }
-
-  try {
-    const novu = getNovuClient();
-    const wire = toWire(workflowId, payload);
-    await novu.triggerBroadcast({
-      name: wire.workflowId,
-      payload: wire.payload,
-    });
-    console.log(`[Novu] Broadcast triggered: ${workflowId}`);
-    return { success: true };
-  } catch (error) {
-    console.error(`[Novu] Failed to broadcast ${workflowId}:`, error);
-    return {
-      success: false,
-      error: error instanceof Error ? error : String(error),
-    };
-  }
+  return stageAndAttempt(
+    { workflowId, kind: "BROADCAST", recipients: [], payload },
+    opts,
+  );
 }
 
 // ============================================================================
@@ -361,24 +261,19 @@ async function triggerBroadcastWorkflow<T extends NovuPayload>(
  * common case and two in the cross-border one.
  *
  * The zones are loaded in a single query; see `resolveRecipientTimezones` for
- * why that read is bounded and never throws.
+ * why that read is bounded and never throws. The zone only shapes the rendered
+ * payload; nothing here defers the send, so the row's `notBefore` stays null.
  */
-async function triggerForMultipleZoned(
+export async function triggerForMultipleZoned(
   workflowId: NovuWorkflowId,
   userIds: string[],
   build: (timezone: string) => NovuPayload,
   dedupeKey?: string,
+  opts?: TriggerOptions,
 ): Promise<TriggerResult[]> {
-  if (!isNovuConfigured()) {
-    reportNotConfigured(workflowId);
-    return userIds.map(() => ({
-      success: false,
-      error: "Novu not configured" as const,
-    }));
-  }
   if (userIds.length === 0) return [];
 
-  const zones = await resolveRecipientTimezones(userIds);
+  const zones = await resolveRecipientTimezones(userIds, opts?.tx);
   const results: TriggerResult[] = [];
   for (const [timezone, recipients] of groupRecipientsByTimezone(
     userIds,
@@ -390,6 +285,7 @@ async function triggerForMultipleZoned(
         recipients,
         build(timezone),
         dedupeKey,
+        opts,
       )),
     );
   }
@@ -397,19 +293,22 @@ async function triggerForMultipleZoned(
 }
 
 /** Single-recipient sibling of {@link triggerForMultipleZoned}. */
-async function triggerWorkflowZoned(
+export async function triggerWorkflowZoned(
   workflowId: NovuWorkflowId,
   subscriberId: string,
   build: (timezone: string) => NovuPayload,
   dedupeKey?: string,
+  opts?: TriggerOptions,
 ): Promise<TriggerResult> {
-  if (!isNovuConfigured()) {
-    reportNotConfigured(workflowId);
-    return { success: false, error: "Novu not configured" };
-  }
   const zones = await resolveRecipientTimezones([subscriberId]);
   const timezone = zones.get(subscriberId) ?? DEFAULT_NOTIFICATION_TIMEZONE;
-  return triggerWorkflow(workflowId, subscriberId, build(timezone), dedupeKey);
+  return triggerWorkflow(
+    workflowId,
+    subscriberId,
+    build(timezone),
+    dedupeKey,
+    opts,
+  );
 }
 
 /** Raw enum in, sentence label plus the original out. */
@@ -532,11 +431,14 @@ function bookingRequestWire(
 export async function notifyAppointmentBooked(
   userIds: string[],
   payload: AppointmentPayloadInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.APPOINTMENT_BOOKED,
     userIds,
     (timezone) => appointmentWire(payload, timezone),
+    undefined,
+    opts,
   );
 }
 
@@ -548,11 +450,14 @@ export async function notifyAppointmentBooked(
 export async function notifyAppointmentPartiallyScheduled(
   userIds: string[],
   payload: AppointmentPartiallyScheduledInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultipleZoned(
     NOVU_WORKFLOWS.APPOINTMENT_PARTIALLY_SCHEDULED,
     userIds,
     (timezone) => partiallyScheduledWire(payload, timezone),
+    undefined,
+    opts,
   );
 }
 
@@ -626,6 +531,7 @@ export async function notifyPaymentSuccess(
 export async function notifyPaymentFailed(
   userId: string,
   payload: PaymentFailedInput,
+  opts?: TriggerOptions,
 ) {
   const wire: PaymentFailedPayload = {
     ...payload,
@@ -635,7 +541,13 @@ export async function notifyPaymentFailed(
     appointmentType: appointmentTypeLabel(payload.appointmentType),
     appointmentTypeCode: payload.appointmentType,
   };
-  return triggerWorkflow(NOVU_WORKFLOWS.PAYMENT_FAILED, userId, wire);
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.PAYMENT_FAILED,
+    userId,
+    wire,
+    undefined,
+    opts,
+  );
 }
 
 /**
@@ -663,11 +575,14 @@ function refundWire(payload: RefundInput): RefundPayload {
 export async function notifyRefundProcessed(
   userId: string,
   payload: RefundInput,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.REFUND_PROCESSED,
     userId,
     refundWire(payload),
+    undefined,
+    opts,
   );
 }
 
@@ -862,14 +777,35 @@ export async function notifyNewBookingRequest(
   );
 }
 
+/**
+ * #1703 — a paid subscription still without session times, nudged at day 3,
+ * 7 and 14. Rides the new-booking-request event with `nudgeDay`; the
+ * dedupe key makes each stage exactly-once through the outbox.
+ */
+export async function notifyUnscheduledSubscriptionNudge(
+  consultantUserId: string,
+  payload: BookingRequestInput & { nudgeDay: number },
+  dedupeKey: string,
+) {
+  return triggerWorkflowZoned(
+    NOVU_WORKFLOWS.NEW_BOOKING_REQUEST,
+    consultantUserId,
+    (timezone) => bookingRequestWire(payload, timezone),
+    dedupeKey,
+  );
+}
+
 export async function notifyVerificationStatusChanged(
   consultantUserId: string,
   payload: VerificationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED,
     consultantUserId,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -958,11 +894,14 @@ export async function notifyGeneralAnnouncement(payload: AnnouncementPayload) {
 export async function notifyNewConsultantApplication(
   adminUserIds: string[],
   payload: ConsultantApplicationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
     adminUserIds,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -981,22 +920,28 @@ function disputeWire(payload: DisputeInput): DisputePayload {
 export async function notifyDisputeCreated(
   userIds: string[],
   payload: DisputeInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.DISPUTE_CREATED,
     userIds,
     disputeWire(payload),
+    undefined,
+    opts,
   );
 }
 
 export async function notifyDisputeResolved(
   userIds: string[],
   payload: DisputeInput,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.DISPUTE_RESOLVED,
     userIds,
     disputeWire(payload),
+    undefined,
+    opts,
   );
 }
 

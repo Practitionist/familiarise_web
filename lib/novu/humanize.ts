@@ -15,7 +15,8 @@
  */
 
 import type { CancellationReason, SupportTicketStatus } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
+import { ZONE_ABBREVIATION } from "@/lib/time/viewer-zone";
 import {
   formatCurrencyAmount,
   formatCurrencyAmountBare,
@@ -31,10 +32,6 @@ export const DEFAULT_NOTIFICATION_TIMEZONE = "Asia/Kolkata";
  * abbreviation (EDT, AEST, …) is both correct and unambiguous, so only the
  * zones this platform actually defaults to are overridden here.
  */
-const ZONE_ABBREVIATION: Record<string, string> = {
-  "Asia/Kolkata": "IST",
-  "Asia/Calcutta": "IST",
-};
 
 /** A junk zone throws inside Intl, which would turn a notification into a 500. */
 function isRenderableTimezone(timezone: string): boolean {
@@ -285,6 +282,8 @@ const TIMEZONE_LOOKUP_TIMEOUT_MS = 2_000;
  */
 export async function resolveRecipientTimezones(
   userIds: string[],
+  /** The caller's transaction when the trigger is staged inside one (#1697). */
+  db: Pick<Db, "user"> = prisma,
 ): Promise<Map<string, string>> {
   const zones = new Map<string, string>();
   const unique = Array.from(new Set(userIds));
@@ -294,7 +293,7 @@ export async function resolveRecipientTimezones(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const users = await Promise.race([
-      prisma.user.findMany({
+      db.user.findMany({
         where: { id: { in: unique } },
         select: { id: true, timezone: true },
       }),

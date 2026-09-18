@@ -28,6 +28,11 @@ import {
   classifyConnectFailure,
   type ConnectFailure,
 } from "@/lib/stream/connect-failure";
+import { refusalFromShape } from "@/lib/errors/client-refusal";
+import { isRefusal, type Refusal } from "@/lib/errors/refusal";
+import { STREAM_TOKEN_CACHE_MS } from "@/lib/stream/token-ttl";
+import { seedFromInitialTokens } from "@/lib/stream/seed-token-cache";
+import { useStreamInitialTokens } from "@/components/stream/StreamInitialTokens";
 import * as Sentry from "@sentry/nextjs";
 
 /** Backoff attempts for a RETRYABLE connect failure; a non-retryable one stops at 1. */
@@ -35,6 +40,21 @@ const MAX_CONNECT_ATTEMPTS = 5;
 
 const settled = <T,>(result: PromiseSettledResult<T>): T | null =>
   result.status === "fulfilled" ? result.value : null;
+
+/**
+ * The token action answered "no session" — a state to show, not an outage to
+ * retry or report. Shaped like a Stream failure so ChatUnavailable renders it.
+ */
+function refusedConnectFailure(refusal: Refusal): ConnectFailure {
+  return {
+    kind: "not-retryable",
+    code: null,
+    detail: refusal.devMessage,
+    title: "Please sign in again",
+    description: refusal.userMessage,
+    action: "reload",
+  };
+}
 
 /**
  * One Sentry event per non-retryable connect outcome — `warning` for an
@@ -61,6 +81,37 @@ function reportNonRetryableConnectFailure(
         "stream.code": String(classified.code ?? ""),
       },
       contexts: { stream: { operation: "connect" } },
+    },
+  );
+}
+
+/**
+ * The fifth retryable failure in a row. Reported as a WARNING with an
+ * `expected` tag, not an error: the pattern behind it is the cold-instance
+ * stall (#1124), which the app cannot fix and the user recovers from with
+ * Retry (#1625). One fingerprint so every stalled load lands in one issue.
+ * FAMILIARISE_WEB-4A / FAMILIARISE_WEB-3N
+ */
+function reportRetryableConnectExhausted(
+  error: unknown,
+  classified: ConnectFailure,
+): void {
+  if (process.env.NODE_ENV === "development") return;
+  Sentry.captureException(
+    error instanceof Error ? error : new Error(classified.detail),
+    {
+      level: "warning",
+      fingerprint: ["stream-connect", "retryable-exhausted"],
+      tags: {
+        subsystem: "stream",
+        expected: "true",
+        "stream.failure": "retryable-exhausted",
+        "stream.code": String(classified.code ?? ""),
+        platform: "cold-instance",
+      },
+      contexts: {
+        stream: { operation: "connect", attempts: MAX_CONNECT_ATTEMPTS },
+      },
     },
   );
 }
@@ -156,6 +207,12 @@ const StreamProviderImpl = ({
 
   const { userDetails, isLoading } = useUserData(userId);
 
+  // The tokens the page arrived with (see components/stream/StreamInitialTokens).
+  // Seeded into the cache ONCE per userId, below, so the first connect makes no
+  // network hop for its token (FAMILIARISE_WEB-4A / #1124).
+  const initialTokens = useStreamInitialTokens();
+  const seededForRef = useRef<string | null>(null);
+
   // The token action refuses to mint without a session, and a tab whose cookie
   // expired while it sat open kept calling it anyway — 8 unauthorized throws on
   // the error feed with nobody to show them to (FAMILIARISE_WEB-10). The
@@ -212,6 +269,26 @@ const StreamProviderImpl = ({
     chat?: Promise<string>;
     video?: Promise<string>;
   }>({});
+  // The SDKs may wrap what a token provider throws; the ref is the reliable
+  // handle on the refusal by the time connectServices classifies the failure.
+  const tokenRefusalRef = useRef<Refusal | null>(null);
+
+  // Runs synchronously in render, before any effect can call getCachedToken.
+  // A ref, not an effect: the prefetch effect below would otherwise fire a
+  // fetch for a token the page already carried. Re-seeding is bounded by the
+  // guard, and a user switch below wipes the cache and lets the guard reset.
+  if (seededForRef.current !== userId) {
+    const seeded = seedFromInitialTokens(initialTokens, userId, Date.now());
+    if (seeded) {
+      tokenCacheRef.current = { userId, ...seeded };
+      // getCachedToken wipes both refs when EITHER names another user, so the
+      // promise ref must already name this one or the seed is lost at once.
+      if (tokenPromiseRef.current.userId !== userId) {
+        tokenPromiseRef.current = { userId };
+      }
+    }
+    seededForRef.current = userId;
+  }
 
   const getCachedToken = useCallback(
     async (type: "chat" | "video"): Promise<string> => {
@@ -239,16 +316,27 @@ const StreamProviderImpl = ({
         throw new Error("Stream token skipped: no signed-in session");
       }
 
-      // Generate new token
-      const request =
-        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId);
+      // Generate new token. The action RETURNS a refusal (an expired cookie)
+      // rather than throwing it, so nothing here reaches Sentry
+      // (FAMILIARISE_WEB-13); rethrown locally so the connect path stops.
+      const request = (
+        type === "chat" ? chatTokenProvider(userId) : tokenProvider(userId)
+      ).then((result) => {
+        if (!result.ok) {
+          const refusal = refusalFromShape(result.refusal, 401);
+          tokenRefusalRef.current = refusal;
+          throw refusal;
+        }
+        tokenRefusalRef.current = null;
+        return result.data;
+      });
       if (type === "chat") tokenPromiseRef.current.chat = request;
       else tokenPromiseRef.current.video = request;
 
       void request.then(
         (newToken) => {
-          // Cache with 50-minute expiry (tokens usually last 1 hour)
-          const expiresAt = Date.now() + 50 * 60 * 1000;
+          // Cache for STREAM_TOKEN_CACHE_MS, ten minutes inside the token TTL.
+          const expiresAt = Date.now() + STREAM_TOKEN_CACHE_MS;
           if (type === "chat") {
             tokenCacheRef.current.chatToken = newToken;
             tokenCacheRef.current.chatExpiresAt = expiresAt;
@@ -561,6 +649,14 @@ const StreamProviderImpl = ({
       connectionAttemptsRef.current = 0; // Reset on success
       setRetryCount(0);
     } catch (error) {
+      const refusal = isRefusal(error) ? error : tokenRefusalRef.current;
+      if (refusal) {
+        // Not retried and not reported: the server answered, and the answer
+        // is "sign in again".
+        setError(refusal.userMessage);
+        setFailure(refusedConnectFailure(refusal));
+        return;
+      }
       const classified = classifyConnectFailure(error);
       setError(classified.detail || "Connection failed");
       setFailure(classified);
@@ -585,7 +681,13 @@ const StreamProviderImpl = ({
         return;
       }
       if (currentAttempts >= MAX_CONNECT_ATTEMPTS) {
-        streamLogger.error("Max connection attempts reached", error);
+        // warn, not error: streamLogger.error captures at error level itself,
+        // which is the FAMILIARISE_WEB-4A/3N noise this report replaces.
+        streamLogger.warn("Max connection attempts reached", {
+          attempts: currentAttempts,
+          detail: classified.detail,
+        });
+        reportRetryableConnectExhausted(error, classified);
         return;
       }
 

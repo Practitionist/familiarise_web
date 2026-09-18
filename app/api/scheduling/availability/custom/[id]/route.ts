@@ -5,6 +5,11 @@ import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  validateCustomWindow,
+  AVAILABILITY_REFUSAL_STATUS,
+} from "@/lib/scheduling/availability-contract";
+import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 
 /**
  * The tail both custom-slot edits share: reject an overlap with any other row,
@@ -64,7 +69,14 @@ async function applyCustomSlotEdit(
           updatedSlot.consultantProfileId,
           { startsAt: updatedSlot.startsAt, endsAt: updatedSlot.endsAt },
         );
-        return NextResponse.json({ data: covering }, { status: 200 });
+        const { uncoveredUpcoming } = await settleAvailabilityWrite(
+          tx,
+          updatedSlot.consultantProfileId,
+        );
+        return NextResponse.json(
+          { data: covering, uncoveredUpcoming },
+          { status: 200 },
+        );
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -171,6 +183,19 @@ export async function PUT(
       return NextResponse.json(
         { error: "Start time must be before end time" },
         { status: 400 },
+      );
+    }
+
+    // Contract (lib/scheduling/availability-contract): duration bound and no
+    // already-ended window, the rules the wizard enforces.
+    const refusal = validateCustomWindow({
+      startsAt: startTime,
+      endsAt: endTime,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
       );
     }
 
@@ -282,6 +307,19 @@ export async function PATCH(
       );
     }
 
+    // Contract (lib/scheduling/availability-contract): duration bound and no
+    // already-ended window, the rules the wizard enforces.
+    const refusal = validateCustomWindow({
+      startsAt: startTime,
+      endsAt: endTime,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // Uses the authoritative consultantProfileId from the existing row.
     return await applyCustomSlotEdit(id, currentSlot.consultantProfileId, {
       startsAt: startTime,
@@ -346,9 +384,18 @@ export async function DELETE(
         consultantProfile: true,
       },
     });
+    // Shrink notice + completion recompute (allowed, reported — see contract doc).
+    const { uncoveredUpcoming } = await settleAvailabilityWrite(
+      prisma,
+      deletedSlot.consultantProfileId,
+    );
 
     return NextResponse.json(
-      { message: "Custom slot deleted successfully", data: deletedSlot },
+      {
+        message: "Custom slot deleted successfully",
+        data: deletedSlot,
+        uncoveredUpcoming,
+      },
       { status: 200 },
     );
   } catch (error) {

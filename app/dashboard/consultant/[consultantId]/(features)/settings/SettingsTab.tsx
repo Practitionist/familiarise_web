@@ -1,6 +1,7 @@
 "use client";
 
 import { ScheduleType } from "@prisma/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "components/ui/button";
 import { Card, CardContent } from "components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "components/ui/tabs";
@@ -27,11 +28,17 @@ import {
 } from "@/utils/scheduling-engine/interval-validation";
 import { formatSlotsForApi } from "@/utils/schedule/formatting";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  isExpectedRefusal,
+  userMessageFrom,
+} from "@/lib/errors/client-refusal";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import type { SlotsType } from "@/utils/schedule/types";
 import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
 import { VerificationSection } from "./sections/VerificationSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
+import { BookingRequestsSection } from "./sections/BookingRequestsSection";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
@@ -40,6 +47,7 @@ interface SettingsTabProps {
 const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "availability", label: "Availability" },
+  { key: "booking", label: "Booking requests" },
   { key: "verification", label: "Verification" },
   { key: "notifications", label: "Notifications" },
 ] as const;
@@ -66,6 +74,7 @@ const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -482,9 +491,15 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         body: JSON.stringify(updatedData),
       });
 
-      if (!response.ok) {
-        throw new Error("Failed to update settings");
-      }
+      // The route answers its validation refusals as 400s with a sentence
+      // ("Cannot switch schedule type while…"); dropping the body turned every
+      // one of them into a captured fault and a blank toast (FAMILIARISE_WEB-2T).
+      const saved = (await requireJsonResponse(
+        response,
+        "Failed to update settings",
+      )) as {
+        uncoveredUpcoming?: { count: number; appointmentIds: string[] };
+      };
 
       // Refetch the consultant data to show what was actually saved
       const updatedResponse = await fetch(
@@ -504,24 +519,41 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         setScheduleType(updatedConsultant.scheduleType);
       }
 
+      // #1703 D4 — the Requests page reads the same query for its paused
+      // banner; remount refetching is off, so the save must invalidate it.
+      await queryClient.invalidateQueries({
+        queryKey: ["consultant-settings", consultant.id],
+      });
+
+      // Shrink notice: a booking is a contract and keeps its time; the new
+      // hours are an offer for future bookings. Say how many sit outside them
+      // rather than refuse the save (docs/onboarding/03-availability-contract.md).
+      const uncovered = saved.uncoveredUpcoming?.count ?? 0;
       toast({
         title: "Settings updated",
-        description: "Your profile settings have been successfully updated.",
+        description:
+          uncovered > 0
+            ? `Saved. ${uncovered} upcoming ${uncovered === 1 ? "session now falls" : "sessions now fall"} outside your published hours — they keep their time; reschedule or cancel from Appointments if needed.`
+            : "Your profile settings have been successfully updated.",
       });
     } catch (error) {
       // formatSlotsForApi now throws rather than degrading, so a slot-formatting
       // regression lands here instead of silently shipping a short or empty
       // availability payload. Worth capturing: the consultant sees a retry toast
       // and would otherwise be the only one who ever knew. (#1125)
-      reportSentryError(error, {
-        subsystem: "consultants",
-        op: "SettingsTab.save",
-        extra: { consultantId: consultant.id, scheduleType },
-      });
+      if (!isExpectedRefusal(error)) {
+        reportSentryError(error, {
+          subsystem: "consultants",
+          op: "SettingsTab.save",
+          extra: { consultantId: consultant.id, scheduleType },
+        });
+      }
       console.error("Error updating settings:", error);
       toast({
         title: "Error",
-        description: "Failed to update settings. Please try again.",
+        description: isExpectedRefusal(error)
+          ? userMessageFrom(error)
+          : "Failed to update settings. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -604,6 +636,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               onAddSlot={handleAddSlot}
               onUpdateSlot={handleUpdateSlot}
               onDeleteSlot={handleDeleteSlot}
+            />
+          )}
+
+          {activeTab === "booking" && (
+            <BookingRequestsSection
+              formData={formData}
+              setFormData={setFormData}
             />
           )}
 

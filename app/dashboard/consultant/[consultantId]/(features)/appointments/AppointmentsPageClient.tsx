@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, CalendarX } from "lucide-react";
@@ -9,9 +9,11 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { AppointmentsShell } from "@/components/appointments/AppointmentsShell";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
+import { CONSULTANT_APPOINTMENTS_WINDOW_MONTHS } from "@/lib/appointments/window";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
 import { TrialsTab } from "../trials/TrialsTab";
 
@@ -50,7 +52,8 @@ function SideQueryNotice({
 
 export default function AppointmentsPageClient({
   consultantId,
-}: Readonly<{ consultantId: string }>) {
+  viewerZone,
+}: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
   const searchParams = useSearchParams();
   const highlightedId = normalizeHighlight(
     searchParams?.get("highlight") ?? null,
@@ -58,16 +61,43 @@ export default function AppointmentsPageClient({
 
   // keepPreviousData: refetches show the previous list while the new one
   // loads instead of a skeleton flash (#346).
-  const appointmentsQuery = createConsultantQueries(consultantId).appointments;
+  const consultantQueries = createConsultantQueries(consultantId);
   const {
-    data: appointments,
+    data: recentAppointments,
     isLoading,
     error,
     refetch: refetchAppointments,
   } = useQuery({
-    ...appointmentsQuery,
+    ...consultantQueries.appointments,
     placeholderData: keepPreviousData,
   });
+
+  // #1703 B12 — the default read stops 12 months back; "Load older" swaps
+  // in the unbounded read once, on demand.
+  const [showOlder, setShowOlder] = useState(false);
+  const {
+    data: allAppointments,
+    isFetching: olderLoading,
+    isError: olderError,
+    refetch: refetchOlder,
+  } = useQuery({
+    ...consultantQueries.appointmentsAll,
+    enabled: showOlder,
+    placeholderData: keepPreviousData,
+  });
+  // A second click after a failed read must start a new request; flipping
+  // an already-true flag starts nothing.
+  const olderButtonLabel = (loading: boolean, failed: boolean): string => {
+    if (loading) return "Loading…";
+    if (failed) return "Retry";
+    return "Load older";
+  };
+  const loadOlder = () => {
+    if (showOlder) void refetchOlder();
+    else setShowOlder(true);
+  };
+  const appointments =
+    showOlder && allAppointments ? allAppointments : recentAppointments;
 
   // Side queries keep their own state so a slow/failed trials or
   // classes/webinars read degrades to a notice instead of blanking the list.
@@ -137,7 +167,13 @@ export default function AppointmentsPageClient({
         unscheduledWebinars: webinarEventsData ?? [],
         consultantId,
       }),
-    [appointments, trialsData, classEventsData, webinarEventsData, consultantId],
+    [
+      appointments,
+      trialsData,
+      classEventsData,
+      webinarEventsData,
+      consultantId,
+    ],
   );
 
   const notices =
@@ -195,8 +231,36 @@ export default function AppointmentsPageClient({
           <AppointmentsShell
             vms={vms}
             adapter={adapter}
+            viewerZone={viewerZone}
             highlightedId={highlightedId}
             notices={notices}
+            footer={
+              <div className="flex items-center justify-center gap-3 py-4 text-xs text-muted-foreground">
+                {showOlder && allAppointments ? (
+                  <span>Showing your full history.</span>
+                ) : (
+                  <>
+                    <span>
+                      Showing the last {CONSULTANT_APPOINTMENTS_WINDOW_MONTHS}{" "}
+                      months and everything upcoming.
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={olderLoading}
+                      onClick={loadOlder}
+                    >
+                      {olderButtonLabel(olderLoading, olderError)}
+                    </Button>
+                    {olderError && (
+                      <span className="text-destructive">
+                        Couldn&apos;t load older appointments.
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+            }
             // ADR 19 folded trials onto Appointments on the org side because a
             // trial IS an appointment. This is the personal half of that move —
             // the standalone /trials nav entry is gone.

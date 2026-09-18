@@ -34,21 +34,37 @@ import {
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
-import { buildOccurrenceForWindow } from "@/lib/appointments/occurrences";
+import {
+  buildOccurrenceForWindow,
+  liveOccurrenceWhere,
+} from "@/lib/appointments/occurrences";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { refundPayment } from "@/lib/payments/operations/refund";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { mintConsumerInvoiceBestEffort } from "@/lib/payments/billing/consumer-invoice";
 import {
   normalizeLegacySlotKeys,
   validateWebhookMetadata,
 } from "@/schemas/webhooks/metadata";
 import { ZodError } from "zod";
-import { sendPaymentSuccessEmail, sendPaymentFailedEmail } from "@/lib/email";
+import {
+  attempt as attemptEmail,
+  attemptStaged,
+  EMAIL_BUDGET_MS,
+  renderPaymentFailedEmail,
+  renderPaymentSuccessEmail,
+  stage as stageEmail,
+  stageAppointmentBookedEmail,
+  type RenderedEmail,
+  type StagedEmail,
+  type StagedRecipientEmail,
+} from "@/lib/email";
 import {
   createEarningsFromPayment,
   resolvePaymentForEarnings,
 } from "@/lib/payments/payouts";
 import {
+  attemptTrigger,
   notifyPaymentSuccess,
   notifyPaymentFailed,
   notifyAppointmentBooked,
@@ -60,6 +76,8 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
+import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -163,6 +181,14 @@ type PaymentSuccessTxResult =
       expectedAmount: number;
     }
   | {
+      // #1695 — the hold this capture paid for is already gone (the abandoned
+      // sweep, a supersede, a `payment.failed`, or the unpaid-trial sweep won);
+      // the money is real and the booking is not, so Phase 2 refunds it.
+      outcome: "captured_after_release";
+      paymentId: string;
+      releasedBy: string;
+    }
+  | {
       outcome: "confirmed";
       paymentId: string;
       appointmentId: string;
@@ -173,7 +199,14 @@ type PaymentSuccessTxResult =
       currency: string;
       capturedAfterTerminal: boolean;
       doubleBookingBlocked: boolean;
+      // #1654 — the receipt row staged inside Phase 1; Phase 2 attempts it.
+      successEmail: StagedOutboxEmail | null;
+      // #1653 — the booked-confirmation rows, staged and attempted the same way.
+      bookedEmails: StagedRecipientEmail[];
     };
+
+/** #1654 — an outbox row plus the rendered message the inline attempt sends. */
+type StagedOutboxEmail = { staged: StagedEmail; message: RenderedEmail };
 
 /**
  * #1446 — Phase 2 runs inside `after()`, on the same warm instance that is
@@ -336,6 +369,41 @@ export async function handlePaymentSuccess(
               extra: { paymentIntentId },
             });
             return null; // Signal: already processed, skip Phase 2
+          }
+
+          // #1695 — EXPIRED means the abandoned sweep (or a supersede) already
+          // released the hold; FAILED means a `payment.failed` did. Either way
+          // the gateway holds real money that funds nothing, and nothing used
+          // to move it back (#1439 reported it and stopped). Claim the row as
+          // SUCCEEDED — gateway truth — so Phase 2 can refund through the
+          // front door; the CAS keeps a concurrent writer honest (ADR 21).
+          if (
+            payment.paymentStatus === PaymentStatus.EXPIRED ||
+            payment.paymentStatus === PaymentStatus.FAILED
+          ) {
+            const claimed = await tx.payment.updateMany({
+              where: { id: payment.id, paymentStatus: payment.paymentStatus },
+              data: {
+                paymentStatus: PaymentStatus.SUCCEEDED,
+                ...capturedGatewayId,
+                description: `Auto-refund pending: capture landed on a ${payment.paymentStatus} payment whose hold was already released. Booking NOT confirmed.`,
+              },
+            });
+            if (claimed.count === 0) {
+              await reportTerminalCaptureRace({
+                db: tx,
+                paymentId: payment.id,
+                orderId: paymentIntentId,
+                observedStatus: payment.paymentStatus,
+                reason: "capture arrived after the payment reached a terminal state",
+              });
+              return null;
+            }
+            return {
+              outcome: "captured_after_release",
+              paymentId: payment.id,
+              releasedBy: `payment ${payment.paymentStatus}`,
+            };
           }
 
           // #677 — defence-in-depth amount parity (mirrors handleOrgPaymentSuccess).
@@ -573,17 +641,15 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             throw new Error("Failed to create or find appointment");
           }
 
-          // Confirm appointment: set isTentative = false and update status to APPROVED
-          const confirmResult = await confirmExistingAppointment(
-            tx,
-            appointment.id,
-            payment.userId,
-          );
-
           // TRIAL: the session is AWAITING_PAYMENT with its slot already held, so
           // capture is what schedules it. Scoped to AWAITING_PAYMENT via
           // updateMany so a re-delivered webhook is a no-op rather than
           // resurrecting a trial the learner cancelled or the expiry job closed.
+          // #1695 — runs BEFORE the slot confirmation: a trial the unpaid-trial
+          // sweep already cancelled must not get confirmed occurrences and
+          // kept money. A miss on a non-SCHEDULED trial is a released hold —
+          // Phase 2 refunds it in full (the learner never cancelled; the
+          // platform closed the trial before the money arrived).
           if (metadata.trialId) {
             const scheduled = await tx.trial.updateMany({
               where: {
@@ -608,11 +674,65 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 timestamp: new Date().toISOString(),
               }),
             );
+
+            if (scheduled.count === 0) {
+              const trial = await tx.trial.findUnique({
+                where: { id: metadata.trialId },
+                select: { status: true },
+              });
+              if (trial?.status !== TrialStatus.SCHEDULED) {
+                await tx.payment.update({
+                  where: { id: payment.id },
+                  data: {
+                    description: `Auto-refund pending: capture landed on a ${trial?.status ?? "missing"} trial. Booking NOT confirmed.`,
+                  },
+                });
+                return {
+                  outcome: "captured_after_release",
+                  paymentId: payment.id,
+                  releasedBy: `trial ${trial?.status ?? "missing"}`,
+                };
+              }
+            }
           }
+
+          // Confirm appointment: set isTentative = false and update status to APPROVED
+          const confirmResult = await confirmExistingAppointment(
+            tx,
+            appointment.id,
+            payment.userId,
+          );
 
           console.log(
             `✅ Payment ${paymentIntentId} processed successfully. Appointment ID: ${appointment.id}`,
           );
+
+          // #1654 — the receipt is staged in THIS transaction so a rollback
+          // takes it too; the send waits for the commit. The two blocked
+          // outcomes refund in Phase 2 and get no receipt. #1653 — the
+          // booked confirmation rides the same read and the same rule.
+          const blocked =
+            confirmResult.capturedAfterTerminal ||
+            confirmResult.doubleBookingBlocked;
+          const appointmentForEmails = blocked
+            ? null
+            : await loadAppointmentForEmails(tx, appointment.id);
+          const successEmail = appointmentForEmails
+            ? await stagePaymentSuccessEmail(
+                tx,
+                payment,
+                appointmentForEmails,
+                metadata.appointmentType,
+              )
+            : null;
+          const bookedEmails = appointmentForEmails
+            ? await stageBookedEmails(
+                tx,
+                payment,
+                appointmentForEmails,
+                metadata.appointmentType,
+              )
+            : [];
 
           // Return data needed for Phase 2
           return {
@@ -630,6 +750,8 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
             // #837 — the #827 first-confirmed-wins guard blocked this booking; Phase 2
             // auto-refunds the loser and releases its tentative hold.
             doubleBookingBlocked: confirmResult.doubleBookingBlocked ?? false,
+            successEmail,
+            bookedEmails,
           };
         },
         {
@@ -760,6 +882,40 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
     return;
   }
 
+  // #1695 — the hold was released before the money landed. Nothing to
+  // release here (the releaser did that); refund through the front door so
+  // the rail is chosen by intent, and leave the manual marker only if that
+  // throws. Idempotent: a replay hits the SUCCEEDED early-return first, and
+  // the refundable-balance guard blocks a double refund.
+  if (txResult.outcome === "captured_after_release") {
+    try {
+      await refundBookingPayment({
+        paymentId: txResult.paymentId,
+        reason: `capture after hold release (${txResult.releasedBy})`,
+        initiatedByUserId: null,
+      });
+      await prisma.payment.update({
+        where: { id: txResult.paymentId },
+        data: {
+          description: `Auto-refunded: capture landed after the hold was released (${txResult.releasedBy}). Booking NOT confirmed.`,
+        },
+      });
+    } catch (refundError) {
+      reportSentryError(refundError, {
+        subsystem: "payments",
+        contexts: { payment: { paymentId: txResult.paymentId } },
+      });
+      void recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Capture after hold release (${txResult.releasedBy}) could not be auto-refunded — refund by hand`,
+        err: new Error("CAPTURE_AFTER_RELEASE_REFUND_FAILED"),
+        context: { paymentId: txResult.paymentId },
+      }).catch(() => {});
+    }
+    return;
+  }
+
   // #855 — the capture landed after the booking was cancelled. The payment is
   // SUCCEEDED (gateway truth) but the booking is dead, so auto-refund and skip
   // the rest of Phase 2 — no success email, earnings, invoice, or notifications
@@ -830,26 +986,23 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // Failures here are logged but do NOT roll back the payment.
   // The `sync-payment-earnings` and related background jobs serve as safety nets.
 
-  // M5 FIX: Send payment success email in Phase 2 (post-commit) so a
-  // transaction rollback cannot leave the user with a false confirmation.
-  try {
-    const paymentForEmail = await prisma.payment.findUnique({
-      where: { id: txResult.paymentId },
-      include: { user: { include: { consulteeProfile: true } } },
-    });
-    if (paymentForEmail) {
-      await sendPaymentSuccessNotification(
-        prisma,
-        paymentForEmail as PaymentWithUser,
-        txResult.appointmentId,
-        txResult.appointmentType,
-      );
-    }
-  } catch (emailError) {
-    reportSentryError(emailError, { subsystem: "payments", level: "warning" });
-    console.error(
-      "Failed to send payment success email (Phase 2):",
-      emailError,
+  // M5 FIX: the receipt is SENT in Phase 2 (post-commit) so a rollback cannot
+  // leave the user with a false confirmation; #1654 stages its row in Phase 1
+  // so a crash here cannot lose it either. `attempt` never throws.
+  if (txResult.successEmail) {
+    await attemptEmail(
+      txResult.successEmail.staged,
+      txResult.successEmail.message,
+      "PAYMENT_SUCCESS",
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+    );
+  }
+  // #1653 — the booked confirmation to both parties, same contract.
+  if (txResult.bookedEmails.length > 0) {
+    await attemptStaged(
+      txResult.bookedEmails,
+      "APPOINTMENT_BOOKED",
+      EMAIL_BUDGET_MS.WEBHOOK,
     );
   }
 
@@ -897,6 +1050,14 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // FIX #437: Process for the buyer (consultee) — their first paid booking qualifies their referral
   try {
     await processQualifyingAction(userId, "first_paid_booking");
+    // P3 referral bells, post-commit. scheduleAfter, not after(): this
+    // handler also runs from scripts/payments/reconcile-orphaned-confirmations
+    // where no request scope exists and a bare after() throws.
+    scheduleAfter(() =>
+      notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+        console.error("[referral-qualification-bell] failed:", bellErr),
+      ),
+    );
   } catch (referralError) {
     reportSentryError(referralError, {
       subsystem: "payments",
@@ -1163,7 +1324,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
  * Handle failed payment - cleans up tentative appointments
  */
 export async function handlePaymentFailure(paymentIntentId: string) {
-  return await prisma.$transaction(async (tx) => {
+  const staged = await prisma.$transaction(async (tx) => {
     // #734 — narrowed from a 5-level include; the failure path only reads
     // the payer's email/name and the consultant's name for notifications.
     const consultantUserSelect = {
@@ -1268,44 +1429,51 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
     }
 
-    // Send payment failure email
-    await sendPaymentFailureNotification(tx, payment);
+    // #1654 — the failure notice is staged in this transaction and sent
+    // after it commits, below.
+    const failedEmail = await stagePaymentFailedEmail(tx, payment);
 
-    // --- Novu notification (fire-and-forget) ---
-    try {
-      const consultantUser =
-        payment.appointment?.consultation?.consultationPlan?.consultantProfile
-          ?.user ||
-        payment.appointment?.subscription?.subscriptionPlan?.consultantProfile
-          ?.user;
+    // --- Novu notification (#1654: staged in the tx, attempted after commit) ---
+    const consultantUser =
+      payment.appointment?.consultation?.consultationPlan?.consultantProfile
+        ?.user ||
+      payment.appointment?.subscription?.subscriptionPlan?.consultantProfile
+        ?.user;
 
-      const consultantName = consultantUser?.name || "Consultant";
-      const appointmentType =
-        payment.appointment?.appointmentType || "CONSULTATION";
+    const consultantName = consultantUser?.name || "Consultant";
+    const appointmentType =
+      payment.appointment?.appointmentType || "CONSULTATION";
 
-      void Promise.resolve(
-        notifyPaymentFailed(payment.userId, {
-          amount: payment.amount,
-          currency: payment.currency,
-          consultantName,
-          appointmentType,
-          failureReason:
-            payment.description || "Payment could not be processed",
-          retryUrl: `${getAppUrl()}/dashboard`,
-        }),
-      ).catch(() => {});
-    } catch (novuError) {
-      reportSentryError(novuError, { subsystem: "payments", level: "warning" });
-      console.error(
-        `⚠️ Failed to send Novu payment failed notification for payment ${payment.id}:`,
-        novuError,
-      );
-    }
+    const bell = await notifyPaymentFailed(
+      payment.userId,
+      {
+        amount: payment.amount,
+        currency: payment.currency,
+        consultantName,
+        appointmentType,
+        failureReason: payment.description || "Payment could not be processed",
+        retryUrl: `${getAppUrl()}/dashboard`,
+      },
+      { tx, entityRef: `payment:${payment.id}` },
+    );
 
     console.log(
-      `📧 Payment failure notification sent for payment ${paymentIntentId}`,
+      `📧 Payment failure notification staged for payment ${paymentIntentId}`,
     );
+    return { failedEmail, bell: bell?.staged ?? null };
   });
+
+  // #1654 — the inline fast path, after the commit: a timeout leaves the rows
+  // PENDING for the relays. Neither attempt throws.
+  if (staged?.failedEmail) {
+    await attemptEmail(
+      staged.failedEmail.staged,
+      staged.failedEmail.message,
+      "PAYMENT_FAILED",
+      { budgetMs: EMAIL_BUDGET_MS.WEBHOOK },
+    );
+  }
+  if (staged?.bell) await attemptTrigger(staged.bell);
 }
 
 // ============================================================================
@@ -1759,8 +1927,10 @@ export async function confirmExistingAppointment(
   // conflict is surfaced loudly instead of double-booking the consultant.
   // Webinars/classes are capacity-based, not exclusive — skipped.
   if (appointment.consultation || appointment.subscription) {
+    // FAMILIARISE_WEB-46 — a row a reschedule released in place is still
+    // isTentative; it is not a hold and must not be checked or flipped.
     const mySlots = await tx.appointmentOccurrence.findMany({
-      where: { appointmentId, isTentative: true },
+      where: { appointmentId, isTentative: true, ...liveOccurrenceWhere },
       select: { id: true, startsAt: true, endsAt: true },
     });
     // The non-booker participants (the consultant) attend both bookings —
@@ -1815,17 +1985,27 @@ export async function confirmExistingAppointment(
             timestamp: new Date().toISOString(),
           }),
         );
-        void recordSystemError({
-          organizationId: null,
-          category: "PAYMENT",
-          summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
-          err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
-          context: {
-            appointmentId,
-            conflictingAppointmentId: conflict.appointmentId,
-            slotId: slot.id,
-          },
-        }).catch(() => {});
+        // Once per appointment, not per sweep tick: the #830 re-drive hits
+        // this branch every 5 minutes until the refund lands (FAMILIARISE_WEB-46).
+        const correlationId = `double-booking-blocked:${appointmentId}`;
+        const alreadyRecorded = await tx.systemEvent.findFirst({
+          where: { correlationId, category: "PAYMENT" },
+          select: { id: true },
+        });
+        if (!alreadyRecorded) {
+          void recordSystemError({
+            organizationId: null,
+            category: "PAYMENT",
+            summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
+            err: new Error("CONFIRMATION_BLOCKED_DOUBLE_BOOKING"),
+            context: {
+              appointmentId,
+              conflictingAppointmentId: conflict.appointmentId,
+              slotId: slot.id,
+            },
+            correlationId,
+          }).catch(() => {});
+        }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
         // the loser and releases the hold. The #830 sweep re-drives via this
         // same guard and reports (doesn't refund), so signalling the block up is
@@ -1945,8 +2125,10 @@ export async function confirmExistingAppointment(
   }
   // For CONSULTATION and SUBSCRIPTION: original behavior (single user per appointment)
   else {
+    // Live rows only — a released (RESCHEDULED) row flipped back would
+    // re-block the consultant's old time and break reschedule withdrawal.
     await tx.appointmentOccurrence.updateMany({
-      where: { appointmentId },
+      where: { appointmentId, ...liveOccurrenceWhere },
       data: { isTentative: false },
     });
     await setParticipantStatus(
@@ -2055,108 +2237,123 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
 // ============================================================================
 
 /**
- * Send payment success email notification
+ * #1654 / #1653 — the one appointment read both Phase-1 emails share, through
+ * the caller's transaction. Null is reported here so neither stager has to.
  */
-async function sendPaymentSuccessNotification(
-  tx: Tx,
-  payment: PaymentWithUser,
-  appointmentId: string,
-  appointmentType: string,
-) {
-  try {
-    const appointment = await tx.appointment.findUnique({
-      where: { id: appointmentId },
-      include: {
-        consultation: {
-          include: {
-            consultationPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        subscription: {
-          include: {
-            subscriptionPlan: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: true,
-                  },
-                },
-              },
-            },
-          },
-        },
-        webinar: {
-          include: {
-            webinarPlan: {
-              include: {
-                consultantProfile: {
-                  include: { user: { select: { name: true } } },
-                },
-              },
-            },
-          },
-        },
-        class: {
-          include: {
-            classPlan: {
-              include: {
-                consultantProfile: {
-                  include: { user: { select: { name: true } } },
+async function loadAppointmentForEmails(tx: Tx, appointmentId: string) {
+  const appointment = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    include: {
+      // #1653 — the booked email names a time; a subscription placeholder
+      // has none yet and is skipped, as Phase 2's bell is.
+      occurrences: {
+        where: liveOccurrenceWhere,
+        orderBy: { startsAt: "asc" },
+        take: 1,
+        select: { startsAt: true },
+      },
+      consultation: {
+        include: {
+          consultationPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
                 },
               },
             },
           },
         },
       },
-    });
+      subscription: {
+        include: {
+          subscriptionPlan: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      webinar: {
+        include: {
+          webinarPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      },
+      class: {
+        include: {
+          classPlan: {
+            include: {
+              consultantProfile: {
+                include: { user: { select: { id: true, name: true } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
 
-    if (!appointment) {
-      reportSentryError(
-        new Error(
-          `Cannot send payment success email: appointment ${appointmentId} not found`,
-        ),
-        { subsystem: "payments", level: "warning" },
-      );
-      console.error(
+  if (!appointment) {
+    reportSentryError(
+      new Error(
         `Cannot send payment success email: appointment ${appointmentId} not found`,
-      );
-      return;
-    }
+      ),
+      { subsystem: "payments", level: "warning" },
+    );
+    console.error(
+      `Cannot send payment success email: appointment ${appointmentId} not found`,
+    );
+  }
+  return appointment;
+}
 
-    let consultantName = "Consultant";
-    const amount = payment.amount;
-    const currency = payment.currency;
+type AppointmentForEmails = NonNullable<
+  Awaited<ReturnType<typeof loadAppointmentForEmails>>
+>;
 
-    // Get consultant name based on appointment type
-    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.consultation.consultationPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-    ) {
-      consultantName =
-        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (appointment.webinar?.webinarPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.webinar.webinarPlan.consultantProfile.user.name ||
-        "Consultant";
-    } else if (appointment.class?.classPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.class.classPlan.consultantProfile.user.name || "Consultant";
-    }
+// Whichever of the four plan shapes the appointment has.
+function planForEmails(appointment: AppointmentForEmails) {
+  return (
+    appointment.consultation?.consultationPlan ??
+    appointment.subscription?.subscriptionPlan ??
+    appointment.webinar?.webinarPlan ??
+    appointment.class?.classPlan ??
+    null
+  );
+}
 
-    // Send email
-    await sendPaymentSuccessEmail({
+/**
+ * #1654 — renders the receipt from the shared read and stages the outbox row
+ * in the caller's transaction. Returns null (reported) when there is nothing
+ * to send; a database failure propagates so the business write and the row
+ * roll back together.
+ */
+async function stagePaymentSuccessEmail(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<StagedOutboxEmail | null> {
+  const consultantName =
+    planForEmails(appointment)?.consultantProfile?.user?.name || "Consultant";
+  const amount = payment.amount;
+  const currency = payment.currency;
+
+  // Render is pure CPU; a render failure has nothing to replay, so it is
+  // reported and the receipt skipped, never the payment.
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentSuccessEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
@@ -2168,22 +2365,57 @@ async function sendPaymentSuccessNotification(
       amount,
       currency,
       dashboardUrl: `${getAppUrl()}/dashboard`,
+      paymentReference: payment.id,
     });
-
-    console.log(
-      `📧 Payment success email sent to ${payment.user.email} for ${appointmentType}`,
-    );
   } catch (error) {
     reportSentryError(error, { subsystem: "payments", level: "warning" });
-    // Don't throw - email failures shouldn't block payment processing
-    console.error("Failed to send payment success email:", error);
+    console.error("Failed to render payment success email:", error);
+    return null;
   }
+
+  const staged = await stageEmail(message, "PAYMENT_SUCCESS", {
+    tx,
+    entityRef: `payment:${payment.id}`,
+  });
+  return staged ? { staged, message } : null;
 }
 
 /**
- * Send payment failure email notification
+ * #1653 — the booked confirmation to payer and consultant, staged next to
+ * the receipt. Mirrors Phase 2's bell: the plan title is resolved the same
+ * way (#1484), a placeholder with no session yet sends nothing (B9), and the
+ * href is the org route or the /dashboard bounce. Recipients are read
+ * through `tx`; a render failure is dropped inside, a staging failure
+ * propagates with the transaction.
  */
-async function sendPaymentFailureNotification(
+async function stageBookedEmails(
+  tx: Tx,
+  payment: PaymentWithUser,
+  appointment: AppointmentForEmails,
+  appointmentType: string,
+): Promise<StagedRecipientEmail[]> {
+  const startsAt = appointment.occurrences[0]?.startsAt;
+  if (!startsAt) return [];
+  const plan = planForEmails(appointment);
+  const planTitle =
+    appointmentType === AppointmentsType.TRIAL
+      ? "Trial session"
+      : planTitleOrSessionLabel(plan?.title ?? null, appointmentType);
+  return stageAppointmentBookedEmail(tx, {
+    appointmentId: appointment.id,
+    consulteeUserId: payment.userId,
+    consultantUserId: plan?.consultantProfile?.user?.id ?? null,
+    consulteeName: payment.user.name || "User",
+    consultantName: plan?.consultantProfile?.user?.name || "Consultant",
+    planTitle,
+    appointmentType,
+    startsAt,
+    dashboardUrl: notificationHref(appointment.organizationId, "appointments"),
+  });
+}
+
+/** #1654 — the failure notice's twin of {@link stagePaymentSuccessEmail}. */
+async function stagePaymentFailedEmail(
   tx: Tx,
   payment: {
     id: string;
@@ -2193,63 +2425,63 @@ async function sendPaymentFailureNotification(
     description: string | null;
     user: { email: string | null; name: string | null };
   },
-) {
-  try {
-    const consultantUserSelect = {
-      select: {
-        consultantProfile: {
-          select: { user: { select: { name: true } } },
-        },
+): Promise<StagedOutboxEmail | null> {
+  const consultantUserSelect = {
+    select: {
+      consultantProfile: {
+        select: { user: { select: { name: true } } },
       },
-    } as const;
-    const appointment = await tx.appointment.findUnique({
-      where: { id: payment.appointmentId || "" },
-      select: {
-        consultation: {
-          select: { id: true, consultationPlan: consultantUserSelect },
-        },
-        subscription: {
-          select: { id: true, subscriptionPlan: consultantUserSelect },
-        },
+    },
+  } as const;
+  const appointment = await tx.appointment.findUnique({
+    where: { id: payment.appointmentId || "" },
+    select: {
+      consultation: {
+        select: { id: true, consultationPlan: consultantUserSelect },
       },
-    });
+      subscription: {
+        select: { id: true, subscriptionPlan: consultantUserSelect },
+      },
+    },
+  });
 
-    if (!appointment) {
-      reportSentryError(
-        new Error(
-          `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
-        ),
-        { subsystem: "payments", level: "warning" },
-      );
-      console.error(
+  if (!appointment) {
+    reportSentryError(
+      new Error(
         `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
-      );
-      return;
-    }
+      ),
+      { subsystem: "payments", level: "warning" },
+    );
+    console.error(
+      `Cannot send payment failure email: appointment not found for payment ${payment.id}`,
+    );
+    return null;
+  }
 
-    let consultantName = "Consultant";
-    let appointmentType: "consultation" | "subscription" = "consultation";
-    let retryUrl = `${getAppUrl()}/dashboard`;
+  let consultantName = "Consultant";
+  let appointmentType: "consultation" | "subscription" = "consultation";
+  let retryUrl = `${getAppUrl()}/dashboard`;
 
-    // Get consultant name and appointment type
-    if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
-      consultantName =
-        appointment.consultation.consultationPlan.consultantProfile.user.name ||
-        "Consultant";
-      appointmentType = "consultation";
-      retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
-    } else if (
-      appointment.subscription?.subscriptionPlan?.consultantProfile?.user
-    ) {
-      consultantName =
-        appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
-        "Consultant";
-      appointmentType = "subscription";
-      retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
-    }
+  // Get consultant name and appointment type
+  if (appointment.consultation?.consultationPlan?.consultantProfile?.user) {
+    consultantName =
+      appointment.consultation.consultationPlan.consultantProfile.user.name ||
+      "Consultant";
+    appointmentType = "consultation";
+    retryUrl = `${getAppUrl()}/consultations/${appointment.consultation.id}/payment`;
+  } else if (
+    appointment.subscription?.subscriptionPlan?.consultantProfile?.user
+  ) {
+    consultantName =
+      appointment.subscription.subscriptionPlan.consultantProfile.user.name ||
+      "Consultant";
+    appointmentType = "subscription";
+    retryUrl = `${getAppUrl()}/subscriptions/${appointment.subscription.id}/payment`;
+  }
 
-    // Send email
-    await sendPaymentFailedEmail({
+  let message: RenderedEmail;
+  try {
+    message = await renderPaymentFailedEmail({
       email: payment.user.email || "",
       name: payment.user.name || "User",
       consultantName,
@@ -2260,13 +2492,15 @@ async function sendPaymentFailureNotification(
       failureReason: payment.description || "Payment could not be processed",
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // 48 hours from now
     });
-
-    console.log(
-      `📧 Payment failure email sent to ${payment.user.email} for ${appointmentType}`,
-    );
   } catch (error) {
     reportSentryError(error, { subsystem: "payments", level: "warning" });
-    // Don't throw - email failures shouldn't block payment processing
-    console.error("Failed to send payment failure email:", error);
+    console.error("Failed to render payment failure email:", error);
+    return null;
   }
+
+  const staged = await stageEmail(message, "PAYMENT_FAILED", {
+    tx,
+    entityRef: `payment:${payment.id}`,
+  });
+  return staged ? { staged, message } : null;
 }

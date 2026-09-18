@@ -13,21 +13,32 @@
  *     attempt 5 is exhausted (operator-replayable; verbatim message preserved).
  *   - the stored fields are replayed verbatim (no re-render, no dispatcher),
  *     falling back to the app default `from` only when fromAddress is null.
+ *   - #1298: the replay carries the content-derived idempotency key, a
+ *     terminal error dead-letters on attempt 1, and an expired verification
+ *     row is dead-lettered without a send.
  */
 
 import {
   runEmailRetryTick,
   BACKOFF_MS,
+  SEND_GAP_MS,
   type FailedEmailStore,
+  type RelaySender,
 } from "@/jobs/email/retry-failed-emails";
-import type { FailedEmail, Prisma } from "@prisma/client";
-import type { Resend, CreateEmailResponse } from "resend";
+import { idempotencyKeyFor } from "@/lib/email/idempotency";
+import type {
+  EmailSuppression,
+  FailedEmail,
+  FailedEmailBatch,
+  Prisma,
+} from "@prisma/client";
+import type { CreateEmailResponse } from "resend";
 
 function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
   return {
     id: "fe-1",
     recipient: "user@example.com",
-    fromAddress: "Familiarise Payments <payments@familiarise.com>",
+    fromAddress: "Familiarise Payments <payments@mail.familiarisenow.com>",
     replyTo: null,
     subject: "Payment Confirmed",
     htmlBody: "<p>Thanks</p>",
@@ -38,14 +49,45 @@ function makeRow(overrides: Partial<FailedEmail> = {}): FailedEmail {
     nextRetryAt: new Date("2026-06-16T11:59:00Z"),
     lastError: "rate limited",
     sentAt: null,
+    // #1654 — the outbox columns; a replayed dead-letter row has neither yet.
+    resendId: null,
+    entityRef: null,
     createdAt: new Date("2026-06-16T11:58:00Z"),
     updatedAt: new Date("2026-06-16T11:58:00Z"),
     ...overrides,
   };
 }
 
-function makePrismaStub(initialRow: FailedEmail) {
+function makeBatchRow(
+  overrides: Partial<FailedEmailBatch> = {},
+): FailedEmailBatch {
+  return {
+    id: "feb-1",
+    idempotencyKey: "WAITLIST_BROADCAST/abc",
+    emailType: "WAITLIST_BROADCAST",
+    payload: [{ from: "a@x", to: "b@y", subject: "s", html: "<p/>" }],
+    status: "PENDING",
+    attempts: 0,
+    nextRetryAt: null,
+    lastError: null,
+    sentAt: null,
+    createdAt: new Date("2026-06-16T11:58:00Z"),
+    updatedAt: new Date("2026-06-16T11:58:00Z"),
+    ...overrides,
+  };
+}
+
+// #1647 — the store grew a suppression read and the batch outbox; both are
+// empty unless a test hands them rows.
+function makePrismaStub(
+  initialRow: FailedEmail,
+  extra: {
+    suppressions?: Pick<EmailSuppression, "email" | "reason">[];
+    batches?: FailedEmailBatch[];
+  } = {},
+) {
   const updates: Prisma.FailedEmailUpdateArgs[] = [];
+  const batchUpdates: Prisma.FailedEmailBatchUpdateArgs[] = [];
   const prisma: FailedEmailStore = {
     failedEmail: {
       findMany: jest.fn().mockResolvedValue([initialRow]),
@@ -56,14 +98,32 @@ function makePrismaStub(initialRow: FailedEmail) {
           return Promise.resolve({ ...initialRow, ...args.data });
         }),
     },
+    emailSuppression: {
+      findMany: jest.fn().mockResolvedValue(extra.suppressions ?? []),
+    },
+    failedEmailBatch: {
+      findMany: jest.fn().mockResolvedValue(extra.batches ?? []),
+      update: jest
+        .fn()
+        .mockImplementation((args: Prisma.FailedEmailBatchUpdateArgs) => {
+          batchUpdates.push(args);
+          return Promise.resolve({ ...makeBatchRow(), ...args.data });
+        }),
+    },
   };
-  return { prisma, updates };
+  return { prisma, updates, batchUpdates };
 }
 
 function mockResend(
   impl: () => Promise<CreateEmailResponse>,
-): Pick<Resend["emails"], "send"> {
-  return { send: jest.fn(impl) };
+  batchImpl: jest.Mock = jest.fn(),
+): RelaySender & { send: jest.Mock } {
+  const send = jest.fn(impl);
+  return {
+    send,
+    emails: { send },
+    batch: { send: batchImpl } as unknown as RelaySender["batch"],
+  };
 }
 
 const FROZEN_NOW_MS = new Date("2026-06-16T12:00:00Z").getTime();
@@ -144,7 +204,10 @@ describe("runEmailRetryTick — backoff schedule", () => {
 describe("runEmailRetryTick — success path", () => {
   it("marks SENT with sentAt and replays the stored fields verbatim", async () => {
     const stub = makePrismaStub(
-      makeRow({ textBody: "Thanks (text)", replyTo: "support@familiarise.com" }),
+      makeRow({
+        textBody: "Thanks (text)",
+        replyTo: "support@familiarisenow.com",
+      }),
     );
     const resend = mockResend(async () => ({
       data: { id: "re-1" },
@@ -159,19 +222,34 @@ describe("runEmailRetryTick — success path", () => {
     });
 
     expect(result.sent).toBe(1);
-    // Verbatim replay — exactly the persisted rendered fields.
-    expect(resend.send).toHaveBeenCalledWith({
-      from: "Familiarise Payments <payments@familiarise.com>",
-      to: "user@example.com",
-      subject: "Payment Confirmed",
-      html: "<p>Thanks</p>",
-      text: "Thanks (text)",
-      replyTo: "support@familiarise.com",
-    });
+    // Verbatim replay — exactly the persisted rendered fields — under the
+    // same content-derived key the sender used, so Resend dedupes a replay.
+    expect(resend.send).toHaveBeenCalledWith(
+      {
+        from: "Familiarise Payments <payments@mail.familiarisenow.com>",
+        to: "user@example.com",
+        subject: "Payment Confirmed",
+        html: "<p>Thanks</p>",
+        text: "Thanks (text)",
+        replyTo: "support@familiarisenow.com",
+      },
+      expect.objectContaining({
+        idempotencyKey: idempotencyKeyFor(
+          {
+            to: "user@example.com",
+            subject: "Payment Confirmed",
+            html: "<p>Thanks</p>",
+          },
+          "PAYMENT_SUCCESS",
+        ),
+      }),
+    );
+    // #1654 — the provider id lands on the row so support can trace it.
     expect(stub.updates[0].data).toMatchObject({
       status: "SENT",
       attempts: 1,
       lastError: null,
+      resendId: "re-1",
     });
     expect(
       (stub.updates[0].data as { sentAt: Date }).sentAt.toISOString(),
@@ -194,10 +272,11 @@ describe("runEmailRetryTick — success path", () => {
 
     expect(resend.send).toHaveBeenCalledWith(
       expect.objectContaining({
-        from: "Familiarise <onboarding@familiarise.com>",
+        from: "Familiarise <onboarding@mail.familiarisenow.com>",
         text: undefined,
         replyTo: undefined,
       }),
+      expect.objectContaining({ idempotencyKey: expect.any(String) }),
     );
   });
 
@@ -225,7 +304,193 @@ describe("runEmailRetryTick — success path", () => {
     expect(result.retried).toBe(1);
     expect(stub.updates[0].data).toMatchObject({
       status: "RETRY",
-      lastError: "rate_limited",
+      lastError: "rate_limit_exceeded: rate_limited",
+    });
+  });
+});
+
+describe("runEmailRetryTick — pacing (#1654)", () => {
+  afterEach(() => jest.useRealTimers());
+
+  it("waits the send gap between two rows so the drain stays under Resend's rate limit", async () => {
+    jest.useFakeTimers();
+    const rows = [makeRow({ id: "fe-a" }), makeRow({ id: "fe-b" })];
+    const prisma: FailedEmailStore = {
+      failedEmail: {
+        findMany: jest.fn().mockResolvedValue(rows),
+        update: jest
+          .fn()
+          .mockImplementation((args) =>
+            Promise.resolve({ ...rows[0], ...args.data }),
+          ),
+      },
+      emailSuppression: { findMany: jest.fn().mockResolvedValue([]) },
+      failedEmailBatch: {
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn(),
+      },
+    };
+    const resend = mockResend(async () => ({
+      data: { id: "re-x" },
+      error: null,
+      headers: null,
+    }));
+
+    const tick = runEmailRetryTick({
+      prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(resend.send).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(SEND_GAP_MS - 1);
+    expect(resend.send).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1);
+    const result = await tick;
+    expect(resend.send).toHaveBeenCalledTimes(2);
+    expect(result.sent).toBe(2);
+  });
+});
+
+describe("runEmailRetryTick — terminal and expired rows (#1298)", () => {
+  it("dead-letters a terminal error on attempt 1 instead of walking the backoff", async () => {
+    const stub = makePrismaStub(makeRow());
+    const resend = mockResend(async () => ({
+      data: null,
+      error: {
+        message: "API key is invalid",
+        name: "validation_error",
+        statusCode: 401,
+      },
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.retried).toBe(0);
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      attempts: 1,
+      lastError: "validation_error: API key is invalid",
+    });
+  });
+
+  it("treats a 422 validation_error (e.g. an example.com recipient) as terminal on attempt 1", async () => {
+    // #1298 — the retry worker replayed such a row four times on 2026-09-14;
+    // a body Resend rejects is never accepted by re-sending it unchanged.
+    const stub = makePrismaStub(makeRow());
+    const resend = mockResend(async () => ({
+      data: null,
+      error: {
+        message:
+          "Invalid `to` field. Please use our testing email address instead of domains like `example.com`.",
+        name: "validation_error",
+        statusCode: 422,
+      },
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({ status: "DEAD_LETTER" });
+    expect(String(stub.updates[0].data.lastError)).toMatch(
+      /^validation_error: Invalid `to` field/,
+    );
+  });
+
+  it("dead-letters an expired verification row without sending", async () => {
+    const stub = makePrismaStub(
+      makeRow({
+        emailType: "EMAIL_VERIFICATION",
+        createdAt: new Date(FROZEN_NOW_MS - 61 * 60_000),
+      }),
+    );
+    const resend = mockResend(async () => ({
+      data: { id: "re-never" },
+      error: null,
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({ status: "DEAD_LETTER" });
+    expect((stub.updates[0].data as { lastError: string }).lastError).toContain(
+      "expired before delivery",
+    );
+  });
+});
+
+describe("runEmailRetryTick — suppression and batch outbox (#1647)", () => {
+  it("dead-letters a pending row whose recipient is suppressed without a send", async () => {
+    const stub = makePrismaStub(makeRow({ recipient: "Dead@Example.com" }), {
+      suppressions: [{ email: "dead@example.com", reason: "COMPLAINT" }],
+    });
+    const resend = mockResend(async () => ({
+      data: { id: "re-never" },
+      error: null,
+      headers: null,
+    }));
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(resend.send).not.toHaveBeenCalled();
+    expect(result.deadLettered).toBe(1);
+    expect(stub.updates[0].data).toMatchObject({
+      status: "DEAD_LETTER",
+      lastError: "suppressed:COMPLAINT",
+    });
+  });
+
+  it("replays a PENDING batch row under its stored idempotency key and marks it SENT", async () => {
+    const batch = makeBatchRow();
+    const stub = makePrismaStub(makeRow({ status: "SENT" }), {
+      batches: [batch],
+    });
+    stub.prisma.failedEmail.findMany = jest.fn().mockResolvedValue([]);
+    const batchSend = jest.fn().mockResolvedValue({
+      data: { data: [{ id: "re-b1" }] },
+      error: null,
+      headers: null,
+    });
+    const resend = mockResend(async () => {
+      throw new Error("single send must not run");
+    }, batchSend);
+
+    const result = await runEmailRetryTick({
+      prisma: stub.prisma,
+      resend,
+      now: () => FROZEN_NOW_MS,
+    });
+
+    expect(batchSend).toHaveBeenCalledWith(
+      batch.payload,
+      expect.objectContaining({ idempotencyKey: "WAITLIST_BROADCAST/abc" }),
+    );
+    expect(result).toMatchObject({ batchesScanned: 1, batchesSent: 1 });
+    expect(stub.batchUpdates[0].data).toMatchObject({
+      status: "SENT",
+      attempts: 1,
+      lastError: null,
     });
   });
 });

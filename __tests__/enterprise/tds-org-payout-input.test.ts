@@ -65,7 +65,7 @@ jest.mock("../../lib/payments/tax/tds-service", () => ({
 jest.mock("../../lib/novu/org-workflows", () => ({
   __esModule: true,
   notifyOrgPayoutCompleted: jest.fn().mockResolvedValue(undefined),
-  notifyOrgPayoutFailed: jest.fn().mockResolvedValue(undefined),
+  notifyOrgPayoutFailed: jest.fn().mockResolvedValue([]),
 }));
 
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({

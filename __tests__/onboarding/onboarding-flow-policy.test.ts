@@ -83,21 +83,20 @@ describe("reduced 2-screen consultee flow", () => {
 });
 
 describe("shouldSubmitVerification policy (#onboarding-ux)", () => {
-  // Shapes submitVerificationRequest actually persists: an existing record
-  // uploaded earlier via /api/verification/documents, or an onboarding upload
-  // carrying its storage URL.
+  // The one shape submitVerificationRequest links: a row created by
+  // /api/verification/documents (every upload has one since #1719). A
+  // pre-#1719 draft entry without an id is not persistable and defers.
   const EXISTING_RECORD = { id: "doc_1", fileName: "degree.pdf" };
-  const ONBOARDING_UPLOAD = {
+  const LEGACY_TRANSIENT = {
     isOnboardingUpload: true,
     fileUrl: "https://storage.example.com/vd/doc_2.pdf",
   };
 
   it.each([
     ["an existing record", [EXISTING_RECORD]],
-    ["an onboarding upload", [ONBOARDING_UPLOAD]],
     [
       "a persistable doc among junk entries",
-      [{}, null, undefined, ONBOARDING_UPLOAD],
+      [{}, null, undefined, LEGACY_TRANSIENT, EXISTING_RECORD],
     ],
   ])("submits when BOTH signals are present: %s", (_label, documents) => {
     const full = shouldSubmitVerification({
@@ -113,10 +112,7 @@ describe("shouldSubmitVerification policy (#onboarding-ux)", () => {
       { verificationLinkedinUrl: "https://linkedin.com/in/ada" },
       "linkedin without documents",
     ],
-    [
-      { verificationDocuments: [] },
-      "empty document array",
-    ],
+    [{ verificationDocuments: [] }, "empty document array"],
     [
       {
         verificationLinkedinUrl: "https://linkedin.com/in/ada",
@@ -130,6 +126,13 @@ describe("shouldSubmitVerification policy (#onboarding-ux)", () => {
         verificationDocuments: [null, undefined, { fileName: "ghost.pdf" }],
       },
       "non-object / metadata-only entries",
+    ],
+    [
+      {
+        verificationLinkedinUrl: "https://linkedin.com/in/ada",
+        verificationDocuments: [LEGACY_TRANSIENT],
+      },
+      "a legacy id-less draft upload",
     ],
     [
       {
@@ -149,9 +152,9 @@ describe("shouldSubmitVerification policy (#onboarding-ux)", () => {
     expect(isPersistableVerificationDoc("junk")).toBe(false);
     expect(isPersistableVerificationDoc({ id: "" })).toBe(false); // falsy id
     expect(isPersistableVerificationDoc(EXISTING_RECORD)).toBe(true);
-    expect(isPersistableVerificationDoc(ONBOARDING_UPLOAD)).toBe(true);
+    expect(isPersistableVerificationDoc(LEGACY_TRANSIENT)).toBe(false);
     expect(
-      isPersistableVerificationDoc({ id: "doc_3", fileUrl: "u" }),
-    ).toBe(true); // id wins even with fileUrl present
+      isPersistableVerificationDoc({ id: "doc_3", isOnboardingUpload: true }),
+    ).toBe(false); // a client-side flag never overrides the missing row
   });
 });

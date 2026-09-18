@@ -150,20 +150,22 @@ model User {
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed      ErasureRequest[]      @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed      ErasureRequest[]              @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned              Dispute[]             @relation("DisputeAssignee")
+  disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed             AppointmentDocument[] @relation("DocumentReviewer")
+  documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted              AppointmentDocument[] @relation("DocumentDeleter")
+  documentsDeleted              AppointmentDocument[]         @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested     Recording[]           @relation("RecordingConsentAttestor")
+  recordingsConsentAttested     Recording[]                   @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases            RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
+  recordingPurchases            RecordingPurchase[]           @relation("RecordingPurchaseBuyer")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
-  publishedCancellationPolicies CancellationPolicy[]  @relation("CancellationPolicyPublisher")
+  publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
+  // Verification documents this user uploaded (owner column, #1224).
+  verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -3044,6 +3046,14 @@ model ConsultantProfile {
   memberships   Membership[] @relation("ConsultantMembership")
   isIndependent Boolean      @default(true)
 
+  // #1703 D1 — INSTANT pays on a free slot; REQUEST routes every slot through
+  // approval. Rationale: docs/booking/21-schema-reference.md.
+  bookingMode       BookingMode @default(INSTANT)
+  // #1703 D4 — the pause toggle and the optional open-PENDING cap (null = off);
+  // the request route refuses with a typed 409 when either bites.
+  acceptingRequests Boolean     @default(true)
+  maxOpenRequests   Int?
+
   // India statutory (compliance stubs read these)
   panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
@@ -3086,6 +3096,12 @@ model ConsultantProfile {
   // its trailing column, so two single-column indexes.
   @@index([publishedRatingOneToOne])
   @@index([publishedRatingGroup])
+}
+
+// #1703 D1 — placed after ConsultantProfile, the one model it serves.
+enum BookingMode {
+  INSTANT
+  REQUEST
 }
 
 model Domain {
@@ -6624,6 +6640,10 @@ model ConsultantProfileVerification {
   rejectionReason String? @db.Text // Brief reason shown to consultant (e.g., "Documents unclear")
   feedbackDetails String? @db.Text // Detailed feedback (e.g., "12th certificate appears to be forged")
 
+  // Day-7 reminder stamp for an unanswered NEEDS_INFO; the day-14 sweep closes it.
+  // See docs/onboarding/05-schema-reference.md.
+  reminderSentAt DateTime? @db.Timestamptz
+
   documents ProfileVerificationDocument[]
 
   createdAt DateTime @default(now())
@@ -6648,13 +6668,33 @@ model ProfileVerificationDocument {
   // Document-specific review (for granular feedback)
   isValid       Boolean? // null = not reviewed, true = valid, false = invalid
   staffFeedback String? // Feedback on this specific document (e.g., "Certificate appears forged")
+  // Structured reason when staff mark a document invalid; drives the consultant's fix list.
+  issue         VerificationDocumentIssue?
 
-  verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  verificationId String
+  // A row exists from upload; null until a submission links it (unlinked rows are swept).
+  verification   ConsultantProfileVerification? @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  verificationId String?
+  linkedAt       DateTime?                      @db.Timestamptz
+
+  // The uploader: ownership proof for linking (#1224) and the per-user byte quota.
+  // Null only on rows written before this column existed.
+  uploadedBy       User?   @relation("VerificationDocumentUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  uploadedByUserId String?
 
   uploadedAt DateTime @default(now())
 
   @@index([verificationId])
+  @@index([uploadedByUserId])
+}
+
+// Reasons a reviewer can attach to an invalid document; see docs/onboarding/04-verification-lifecycle.md.
+enum VerificationDocumentIssue {
+  UNCLEAR_SCAN
+  EXPIRED
+  NAME_MISMATCH
+  MISSING_PAGE
+  WRONG_TYPE
+  OTHER
 }
 
 // System Jobs Models
@@ -6894,20 +6934,108 @@ model FailedEmail {
   nextRetryAt DateTime?           @db.Timestamptz
   lastError   String?             @db.Text
   sentAt      DateTime?           @db.Timestamptz
+  // #1654 — provider id once SENT, so support can trace a message to Resend's log.
+  resendId    String?
+  // #1654 — business anchor (`payment:<id>`, `user:<id>`, `waitlist:<email>`) for support and tracing.
+  entityRef   String?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
 
   @@index([status, nextRetryAt])
   @@index([status, updatedAt])
+  @@index([entityRef])
 }
 
+/// #1647 — outbox row for one Resend batch request (up to 100 messages); the relay
+/// replays the serialized batch under `idempotencyKey`, the same way FailedEmail replays one message.
+model FailedEmailBatch {
+  id             String              @id @default(cuid())
+  idempotencyKey String              @unique
+  emailType      String
+  payload        Json
+  status         EmailDeliveryStatus @default(PENDING)
+  attempts       Int                 @default(0)
+  nextRetryAt    DateTime?           @db.Timestamptz
+  lastError      String?             @db.Text
+  sentAt         DateTime?           @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([status, nextRetryAt])
+}
+
+/// #1654 — the Novu trigger outbox: written where the business change commits, drained by
+/// the relay; `workflowId` is the EVENT id from lib/novu/workflows.ts (`toWire()` maps it to the family).
+model NotificationOutbox {
+  id            String                 @id @default(cuid())
+  workflowId    String
+  kind          NotificationOutboxKind
+  // #1654 — subscriber ids; empty for BROADCAST.
+  recipients    String[]
+  payload       Json
+  // #1654 — Novu's dedupe key, derived at stage time so a re-drained row cannot ring twice.
+  transactionId String                 @unique
+  entityRef     String?
+  // #1654 — quiet-hours / zoned deferral: the relay skips the row until this instant.
+  notBefore     DateTime?              @db.Timestamptz
+  status        EmailDeliveryStatus    @default(PENDING)
+  attempts      Int                    @default(0)
+  nextRetryAt   DateTime?              @db.Timestamptz
+  lastError     String?                @db.Text
+  sentAt        DateTime?              @db.Timestamptz
+
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@index([status, nextRetryAt])
+  @@index([entityRef])
+}
+
+enum NotificationOutboxKind {
+  SINGLE
+  MULTI
+  BROADCAST
+}
+
+/// #1654 — deliberately shared by every outbox-shaped table (FailedEmail, FailedEmailBatch, NotificationOutbox).
 enum EmailDeliveryStatus {
   PENDING
   RETRY
   SENT
   /// All retries exhausted — terminal, operator-replayable.
   DEAD_LETTER
+}
+
+/// #1647 — one row per Resend webhook event (`email.delivered`, `email.bounced`, ...);
+/// `svixId` is unique so a redelivery or dashboard replay is a no-op.
+model EmailEvent {
+  id         String   @id @default(cuid())
+  svixId     String   @unique
+  resendId   String
+  type       String
+  recipient  String
+  payload    Json
+  receivedAt DateTime @default(now()) @db.Timestamptz
+
+  @@index([resendId])
+  @@index([recipient, receivedAt])
+}
+
+/// #1647 — addresses the senders must not write to; mirrors Resend's own list so support can
+/// explain a non-delivery. `sourceEventId` is the EmailEvent that created the row, null for MANUAL.
+model EmailSuppression {
+  email         String                 @id
+  reason        EmailSuppressionReason
+  sourceEventId String?
+  createdAt     DateTime               @default(now()) @db.Timestamptz
+}
+
+enum EmailSuppressionReason {
+  HARD_BOUNCE
+  COMPLAINT
+  MANUAL
 }
 
 /// Per-org SCIM 2.0 bearer tokens. Stored as SHA-256 hashes; the raw token

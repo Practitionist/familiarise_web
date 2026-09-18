@@ -29,7 +29,12 @@ import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { notifyOrgInvoiceOverdue } from "@/lib/novu/org-workflows";
+import {
+  notifyOrgInvoiceOverdue,
+  rosterForOrg,
+  VISIBILITY_ROLES,
+} from "@/lib/novu/org-workflows";
+import { sendOrgInvoiceOverdueEmail } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
@@ -64,6 +69,46 @@ interface DunningStats {
   scannedStage2: number;
   remindersSent: number;
   suspended: number;
+}
+
+/**
+ * #1653 — the email twin of `notifyOrgInvoiceOverdue`, to the same visibility
+ * roster the bell resolves. The roster lookup is the one thing here that can
+ * throw, and a job loop must outlive it, so it is caught and logged like the
+ * bell's own failure.
+ */
+async function emailInvoiceOverdue(
+  inv: {
+    id: string;
+    organizationId: string;
+    invoiceNumber: string;
+    totalPaise: number | bigint;
+    displayCurrency: string;
+    dueDate: Date;
+    organization: { name: string };
+  },
+  reminderStage: number,
+  now: Date,
+): Promise<void> {
+  let roster: string[];
+  try {
+    roster = await rosterForOrg(inv.organizationId, VISIBILITY_ROLES);
+  } catch (err) {
+    console.error("[dunning] roster lookup failed:", err);
+    return;
+  }
+  await sendOrgInvoiceOverdueEmail({
+    recipientUserIds: roster,
+    invoiceId: inv.id,
+    invoiceNumber: inv.invoiceNumber,
+    orgName: inv.organization.name,
+    totalPaise: inv.totalPaise,
+    currency: inv.displayCurrency,
+    dueDate: inv.dueDate,
+    daysLate: daysBetween(inv.dueDate, now),
+    reminderStage,
+    payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
+  });
 }
 
 function daysBetween(from: Date, to: Date): number {
@@ -159,7 +204,7 @@ export async function runDunning(): Promise<DunningStats> {
     stats.markedOverdue += 1;
 
     // Fire-and-forget notify outside the tx — committed state, no DB writes.
-    void notifyOrgInvoiceOverdue(inv.organizationId, {
+    await notifyOrgInvoiceOverdue(inv.organizationId, {
       invoiceNumber: inv.invoiceNumber,
       orgName: inv.organization.name,
       totalPaise: inv.totalPaise,
@@ -168,6 +213,8 @@ export async function runDunning(): Promise<DunningStats> {
       reminderStage: 0,
       payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
     }).catch((err) => console.error("[dunning] stage-1 notify failed:", err));
+    // #1653 — the email twin, after the bell; never throws.
+    await emailInvoiceOverdue(inv, 0, now);
   }
 
   // ── Stage 2: OVERDUE escalation reminders (7-day cadence, cap 3) ────────
@@ -230,7 +277,7 @@ export async function runDunning(): Promise<DunningStats> {
     if (!claimed) continue;
     stats.remindersSent += 1;
 
-    void notifyOrgInvoiceOverdue(inv.organizationId, {
+    await notifyOrgInvoiceOverdue(inv.organizationId, {
       invoiceNumber: inv.invoiceNumber,
       orgName: inv.organization.name,
       totalPaise: inv.totalPaise,
@@ -239,6 +286,8 @@ export async function runDunning(): Promise<DunningStats> {
       reminderStage: nextStage,
       payUrl: `${getAppUrl()}/dashboard/organization/${inv.organizationId}/billing`,
     }).catch((err) => console.error("[dunning] stage-2 notify failed:", err));
+    // #1653 — the email twin, after the bell; never throws.
+    await emailInvoiceOverdue(inv, nextStage, now);
   }
 
   // ── Stage 3 (#812, config-gated): suspend sponsored bookings ────────────

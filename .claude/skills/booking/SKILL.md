@@ -28,15 +28,15 @@ as wrong until proven otherwise.
 status column may be written any other way. As of wave 5 (#1319) the set is
 complete:
 
-| Helper                          | Guards                               | Allowed-from map               |
-| ------------------------------- | ------------------------------------ | ------------------------------ |
-| `transitionConsultationRequest` | `Consultation.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionSubscriptionRequest` | `Subscription.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionWebinarEvent`        | `Webinar.status`                     | `EVENT_ALLOWED_FROM`           |
-| `transitionClassEvent`          | `Class.status`                       | `CLASS_EVENT_ALLOWED_FROM`     |
-| `transitionOccurrenceCompletion`      | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
-| `transitionTrial`        | `Trial.status`                | `TRIAL_ALLOWED_FROM`           |
-| `transitionRescheduleRequest`   | `RescheduleRequest.status`           | `RESCHEDULE_ALLOWED_FROM`      |
+| Helper                           | Guards                                   | Allowed-from map               |
+| -------------------------------- | ---------------------------------------- | ------------------------------ |
+| `transitionConsultationRequest`  | `Consultation.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionSubscriptionRequest`  | `Subscription.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionWebinarEvent`         | `Webinar.status`                         | `EVENT_ALLOWED_FROM`           |
+| `transitionClassEvent`           | `Class.status`                           | `CLASS_EVENT_ALLOWED_FROM`     |
+| `transitionOccurrenceCompletion` | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
+| `transitionTrial`                | `Trial.status`                           | `TRIAL_ALLOWED_FROM`           |
+| `transitionRescheduleRequest`    | `RescheduleRequest.status`               | `RESCHEDULE_ALLOWED_FROM`      |
 
 Every map is keyed by **target** state: `ALLOWED_FROM[to]` lists the only states
 the row may currently be in, and that set is baked into the `updateMany`'s
@@ -159,6 +159,20 @@ to `EXPIRED` through `transitionConsultationRequest`, with `fromIn:
 ["APPROVED_PENDING_PAYMENT"]` and the `UNPAID_CONSULTATION` money predicate
 repeated inside the CAS `where`, the same two guards this rule requires of any
 new sweep.
+
+A lapsed pay-link (#1703 D2) can be seen first by either of two sweeps —
+`cleanupAbandonedPayments` and `cleanupExpiredApprovalPendingPayments`, both in
+`scripts/payments/cleanup-abandoned-payments.ts` — and both now call one shared
+helper, `expireLapsedPayLink`, rather than each running its own CAS. The helper
+is the same `fromIn: [APPROVED_PENDING_PAYMENT]` plus repeated-money-predicate
+shape this rule already requires, and the consultee's `PAY_LINK_LAPSED_REASON`
+notice is tied to the CAS **win** inside the helper, not to either caller
+individually, so the notice fires exactly once regardless of which sweep gets
+to the row first. Before this was fixed (#1724 QA, 2026-09-19), whichever sweep
+claimed the row first could leave the consultee un-notified. The rule this
+generalizes to: when two sweeps can legally claim the same row, give them one
+shared CAS-plus-notice function, not two copies that only one of them
+remembers to notify from.
 
 ### 6. There are no backfill migrations
 

@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { CalendarDays, List } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +15,7 @@ import type {
   AppointmentBucket,
   AppointmentVM,
 } from "@/lib/appointments/view-model";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { cn } from "@/utils/tailwind";
 import { AppointmentCalendar } from "./AppointmentCalendar";
 import { AppointmentList } from "./AppointmentList";
@@ -54,8 +49,7 @@ const EMPTY_COPY: Record<TabValue, { title: string; description: string }> = {
   },
   needsAction: {
     title: "Nothing needs your attention",
-    description:
-      "Payments, approvals, and scheduling tasks will collect here.",
+    description: "Payments, approvals, and scheduling tasks will collect here.",
   },
   past: {
     title: "No past appointments",
@@ -109,21 +103,28 @@ export interface AppointmentsExtraTab {
 interface AppointmentsShellProps {
   vms: AppointmentVM[];
   adapter: AppointmentActionAdapter;
+  /** From the RSC page's session, so the server render and the hydrating
+   *  client format every time from one zone (hydration #418). */
+  viewerZone: ViewerZone;
   orgFilterSlot?: ReactNode;
   /** Side-query error/retry banners (consultant trials/unscheduled). */
   notices?: ReactNode;
   /** Row id (VM id) to flash + scroll to (consultant ?highlight= deep-link). */
   highlightedId?: string | null;
   extraTabs?: AppointmentsExtraTab[];
+  /** Under the bucket tabs: the consultant's window notice + "Load older". */
+  footer?: ReactNode;
 }
 
 export function AppointmentsShell({
   vms,
   adapter,
+  viewerZone,
   orgFilterSlot,
   notices,
   highlightedId = null,
   extraTabs = [],
+  footer,
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -265,11 +266,22 @@ export function AppointmentsShell({
 
   return (
     <div className="space-y-5">
-      <NextUpHero vm={heroVm} adapter={adapter} stats={stats} onOpen={openVm} />
+      <NextUpHero
+        vm={heroVm}
+        adapter={adapter}
+        viewerZone={viewerZone}
+        stats={stats}
+        onOpen={openVm}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <TabsList className={cn("flex-wrap h-auto", view === "calendar" && "opacity-60")}>
+          <TabsList
+            className={cn(
+              "flex-wrap h-auto",
+              view === "calendar" && "opacity-60",
+            )}
+          >
             {TABS.map(({ value, label }) => (
               <TabsTrigger key={value} value={value} className="gap-1.5">
                 {label}
@@ -337,6 +349,7 @@ export function AppointmentsShell({
         )}
 
         {notices && !onExtraTab && <div className="mt-4">{notices}</div>}
+        {footer && !onExtraTab && footer}
 
         {extraTabs.map(({ value, content }) => (
           <TabsContent key={value} value={value} className="mt-4">
@@ -355,6 +368,7 @@ export function AppointmentsShell({
                 vms={value === "all" ? filtered : byBucket[value]}
                 bucket={value}
                 adapter={adapter}
+                viewerZone={viewerZone}
                 resolveSponsoredLabel={resolveSponsoredLabel}
                 onOpen={openVm}
                 highlightedId={flashId}
@@ -375,7 +389,9 @@ export function AppointmentsShell({
         onOpenChange={(open) => !open && setSheetVm(null)}
         adapter={adapter}
         sponsoredLabel={
-          activeSheetVm ? resolveSponsoredLabel(activeSheetVm.organizationId) : null
+          activeSheetVm
+            ? resolveSponsoredLabel(activeSheetVm.organizationId)
+            : null
         }
         joinWindowMs={joinWindowMs}
       />

@@ -25,13 +25,12 @@ import type { EventType } from "@/utils/scheduling-engine/types";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { transitionRescheduleRequest } from "@/lib/booking/transitions";
 import { notifyAppointmentRescheduled } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendAppointmentRescheduledEmail } from "@/lib/email";
 import { notificationScope } from "@/lib/novu/workflows";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
-export type RespondOutcome =
-  | { done: true }
-  | { done: false; reason: string };
+export type RespondOutcome = { done: true } | { done: false; reason: string };
 
 export async function acceptProposal(args: {
   rescheduleRequestId: string;
@@ -128,26 +127,35 @@ export async function acceptProposal(args: {
         initiatedById: true,
         appointment: {
           select: {
+            id: true,
             organizationId: true,
             appointmentType: true,
             consultation: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 consultationPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
             },
             subscription: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 subscriptionPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
@@ -155,7 +163,11 @@ export async function acceptProposal(args: {
           },
         },
         releasedOccurrenceIds: true,
-        proposedTimes: { orderBy: { startsAt: "asc" }, take: 1, select: { startsAt: true } },
+        proposedTimes: {
+          orderBy: { startsAt: "asc" },
+          take: 1,
+          select: { startsAt: true },
+        },
       },
     });
     const appt = detail?.appointment;
@@ -186,7 +198,7 @@ export async function acceptProposal(args: {
       const userIds = [recipient, other].filter(
         (id): id is string => !!id && id !== recipient,
       );
-      void notifyAppointmentRescheduled([recipient, ...userIds], {
+      await notifyAppointmentRescheduled([recipient, ...userIds], {
         ...notificationScope(appt.organizationId),
         appointmentType: appt.appointmentType,
         consultantName: consultantUser.name || "Consultant",
@@ -197,14 +209,33 @@ export async function acceptProposal(args: {
         oldDateTime: released.startsAt.toISOString(),
         newDateTime: detail.proposedTimes[0].startsAt.toISOString(),
       });
+      // #1653 — the email twin; the sender never throws.
+      await sendAppointmentRescheduledEmail(
+        {
+          appointmentId: appt.id,
+          userIds: [recipient, ...userIds],
+          outcome: "MOVED",
+          appointmentType: appt.appointmentType,
+          oldStartsAt: released.startsAt,
+          newStartsAt: detail.proposedTimes[0].startsAt,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
   } catch (notifyErr) {
-    await import("@/lib/observability/report").then((m) =>
-      m.reportSentryError(
-        notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
-        { subsystem: "bookings", op: "reschedule-accept-notify", expected: true },
-      ),
-    ).catch(() => {});
+    await import("@/lib/observability/report")
+      .then((m) =>
+        m.reportSentryError(
+          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+          {
+            subsystem: "bookings",
+            op: "reschedule-accept-notify",
+            expected: true,
+          },
+        ),
+      )
+      .catch(() => {});
   }
 
   return { done: true };
@@ -244,26 +275,35 @@ export async function declineProposal(args: {
         initiatedById: true,
         appointment: {
           select: {
+            id: true,
             organizationId: true,
             appointmentType: true,
             consultation: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 consultationPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
             },
             subscription: {
               select: {
-                requestedBy: { select: { user: { select: { id: true, name: true } } } },
+                requestedBy: {
+                  select: { user: { select: { id: true, name: true } } },
+                },
                 subscriptionPlan: {
                   select: {
                     title: true,
-                    consultantProfile: { select: { user: { select: { id: true, name: true } } } },
+                    consultantProfile: {
+                      select: { user: { select: { id: true, name: true } } },
+                    },
                   },
                 },
               },
@@ -283,27 +323,41 @@ export async function declineProposal(args: {
       const consultantUser = isConsultation
         ? side.consultationPlan.consultantProfile.user
         : side.subscriptionPlan.consultantProfile.user;
-      void notifyAppointmentRescheduled(
-        [detail.initiatedById, consultantUser.id, side.requestedBy.user.id].filter(
-          (id, i, arr) => arr.indexOf(id) === i,
-        ),
+      const declinedUserIds = [
+        detail.initiatedById,
+        consultantUser.id,
+        side.requestedBy.user.id,
+      ].filter((id, i, arr) => arr.indexOf(id) === i);
+      await notifyAppointmentRescheduled(declinedUserIds, {
+        ...notificationScope(appt.organizationId),
+        appointmentType: appt.appointmentType,
+        consultantName: consultantUser.name || "Consultant",
+        consulteeName: side.requestedBy.user.name || "Consultee",
+        planTitle,
+        dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+        outcome: "DECLINED",
+      });
+      // #1653 — the email twin; the sender never throws.
+      await sendAppointmentRescheduledEmail(
         {
-          ...notificationScope(appt.organizationId),
-          appointmentType: appt.appointmentType,
-          consultantName: consultantUser.name || "Consultant",
-          consulteeName: side.requestedBy.user.name || "Consultee",
-          planTitle,
-          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
+          appointmentId: appt.id,
+          userIds: declinedUserIds,
           outcome: "DECLINED",
+          appointmentType: appt.appointmentType,
+          dashboardUrl: notificationHref(appt.organizationId, "appointments"),
         },
+        EMAIL_BUDGET_MS.REQUEST,
       );
     }
   } catch (notifyErr) {
-    reportSentryError(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), {
-      subsystem: "bookings",
-      op: "reschedule-decline-notify",
-      expected: true,
-    });
+    reportSentryError(
+      notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+      {
+        subsystem: "bookings",
+        op: "reschedule-decline-notify",
+        expected: true,
+      },
+    );
   }
 
   return { done: true };

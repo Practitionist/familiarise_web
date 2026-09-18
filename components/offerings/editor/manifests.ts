@@ -14,8 +14,9 @@ import {
   IndianRupee,
   Layers,
   MessageSquareQuote,
+  Video,
 } from "lucide-react";
-import type { OfferingManifest, SectionSpec } from "./manifest";
+import type { FieldSpec, OfferingManifest, SectionSpec } from "./manifest";
 
 /** Identity and framing. Identical for all four types. */
 const basicsSection = (noun: string): SectionSpec => ({
@@ -29,6 +30,8 @@ const basicsSection = (noun: string): SectionSpec => ({
       kind: "text",
       label: "Title",
       placeholder: `e.g. Career strategy ${noun}`,
+      description: "Keep it short and specific.",
+      required: true,
       span: 6,
     },
     {
@@ -43,6 +46,9 @@ const basicsSection = (noun: string): SectionSpec => ({
       kind: "textarea",
       label: "Description",
       placeholder: `Describe what someone gets from this ${noun}.`,
+      description:
+        "Two or three sentences on who this is for and what they get.",
+      required: true,
       span: 6,
     },
     {
@@ -63,6 +69,7 @@ const basicsSection = (noun: string): SectionSpec => ({
       itemNoun: "topics",
       maxItems: 10,
       description: "Helps people find this in search.",
+      required: true,
       span: 6,
     },
   ],
@@ -80,6 +87,7 @@ const contentSection = (noun: string): SectionSpec => ({
       kind: "learningOutcomes",
       label: "Learning outcomes",
       maxItems: 10,
+      required: true,
       span: 6,
     },
     {
@@ -123,6 +131,7 @@ const faqSection: SectionSpec = {
   icon: MessageSquareQuote,
   fields: [],
   slot: "faq",
+  slotFields: ["faqs"],
 };
 
 /**
@@ -155,6 +164,82 @@ const supportLevelField = {
 };
 
 /**
+ * Shared pricing fields. Subscription and class pricing were line-identical
+ * blocks (Sonar flags the copy past 30 lines), so the common fields live
+ * here once: span varies, so these are factories, not consts.
+ */
+const priceField = (span: 2 | 3): FieldSpec => ({
+  name: "price",
+  kind: "price",
+  label: "Price (₹)",
+  currencyName: "priceCurrency",
+  description: "Use ₹0 for a free offering.",
+  required: true,
+  span,
+});
+
+const durationHoursField = (span: 2 | 3): FieldSpec => ({
+  name: "durationInHours",
+  kind: "number",
+  label: "Duration (hours)",
+  min: 0.5,
+  step: 0.5,
+  description: "Hours per session, in 30-minute steps, up to 8.",
+  required: true,
+  span,
+});
+
+const durationMonthsField: FieldSpec = {
+  name: "durationInMonths",
+  kind: "number",
+  label: "Duration (months)",
+  min: 1,
+  step: 1,
+  description: "Whole months, from 1 to 24.",
+  required: true,
+  span: 2,
+};
+
+const sessionsPerWeekField: FieldSpec = {
+  name: "sessionsPerWeek",
+  kind: "number",
+  label: "Sessions per week",
+  min: 1,
+  max: 7,
+  step: 1,
+  description: "From 1 to 7 sessions a week.",
+  required: true,
+  span: 2,
+};
+
+const maxParticipantsField: FieldSpec = {
+  name: "maxParticipants",
+  kind: "number",
+  label: "Max participants",
+  min: 1,
+  step: 1,
+  description: "From 1 to 10,000 people.",
+  required: true,
+  span: 2,
+};
+
+/**
+ * Subscription has no 30-minute-step refine on this column (ClassPlan does,
+ * #1071), so the copy differs and stays a parameter rather than a shared
+ * string that would lie on one of the two types.
+ */
+const sessionDurationField = (description: string): FieldSpec => ({
+  name: "sessionDurationInHours",
+  kind: "number",
+  label: "Session duration (hours)",
+  min: 0.5,
+  step: 0.5,
+  description,
+  required: true,
+  span: 2,
+});
+
+/**
  * Recording and certification promises. Every model carries the recording
  * columns (#1134 P1-6 made them reachable for 1:1 types too); only webinar
  * and class can issue a certificate, so the toggle is opt-in per type.
@@ -163,12 +248,14 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
   id: "extras",
   title: "Extras",
   description: "Recordings and certificates.",
+  icon: Video,
   fields: [
     {
       name: "recordingEnabled",
       kind: "switch",
       label: "Record sessions",
-      description: "Sessions are recorded for attendees to revisit.",
+      description:
+        "Sessions can be recorded for attendees to revisit. The host starts recording during a session, subject to consent.",
       span: 3,
     },
     {
@@ -178,6 +265,8 @@ const extrasSection = (withCertificate: boolean): SectionSpec => ({
       name: "recordingStoragePolicy",
       kind: "select",
       label: "Recording storage",
+      description:
+        "Stream keeps recordings 14 days; Permanent library keeps them indefinitely.",
       span: 3,
       options: [
         { value: "STREAM_ONLY", label: "Stream only" },
@@ -207,23 +296,7 @@ export const CONSULTATION_MANIFEST: OfferingManifest = {
       id: "pricing",
       title: "Pricing",
       icon: IndianRupee,
-      fields: [
-        {
-          name: "price",
-          kind: "price",
-          label: "Price (₹)",
-          currencyName: "priceCurrency",
-          span: 3,
-        },
-        {
-          name: "durationInHours",
-          kind: "number",
-          label: "Duration (hours)",
-          min: 0.5,
-          step: 0.5,
-          span: 3,
-        },
-      ],
+      fields: [priceField(3), durationHoursField(3)],
     },
     contentSection("consultation"),
     extrasSection(false),
@@ -241,38 +314,10 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       title: "Pricing & cadence",
       icon: IndianRupee,
       fields: [
-        {
-          name: "price",
-          kind: "price",
-          label: "Price (₹)",
-          currencyName: "priceCurrency",
-          span: 2,
-        },
-        {
-          name: "durationInMonths",
-          kind: "number",
-          label: "Duration (months)",
-          min: 1,
-          step: 1,
-          span: 2,
-        },
-        {
-          name: "sessionsPerWeek",
-          kind: "number",
-          label: "Sessions per week",
-          min: 1,
-          max: 7,
-          step: 1,
-          span: 2,
-        },
-        {
-          name: "sessionDurationInHours",
-          kind: "number",
-          label: "Session duration (hours)",
-          min: 0.5,
-          step: 0.5,
-          span: 2,
-        },
+        priceField(2),
+        durationMonthsField,
+        sessionsPerWeekField,
+        sessionDurationField("Hours per session, from 30 minutes to 4 hours."),
         supportLevelField,
       ],
     },
@@ -285,6 +330,7 @@ export const SUBSCRIPTION_MANIFEST: OfferingManifest = {
       icon: CalendarRange,
       fields: [],
       slot: "roadmap",
+      slotFields: ["subscriptionContents"],
     },
     faqSection,
   ],
@@ -299,31 +345,7 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
       id: "pricing",
       title: "Pricing & capacity",
       icon: IndianRupee,
-      fields: [
-        {
-          name: "price",
-          kind: "price",
-          label: "Price (₹)",
-          currencyName: "priceCurrency",
-          span: 2,
-        },
-        {
-          name: "durationInHours",
-          kind: "number",
-          label: "Duration (hours)",
-          min: 0.5,
-          step: 0.5,
-          span: 2,
-        },
-        {
-          name: "maxParticipants",
-          kind: "number",
-          label: "Max participants",
-          min: 1,
-          step: 1,
-          span: 2,
-        },
-      ],
+      fields: [priceField(2), durationHoursField(2), maxParticipantsField],
     },
     contentSection("webinar"),
     extrasSection(true),
@@ -339,6 +361,8 @@ export const WEBINAR_MANIFEST: OfferingManifest = {
           name: "scheduledAt",
           kind: "date",
           label: "Scheduled for",
+          description: "Required before publishing.",
+          required: true,
           span: 3,
         },
       ],
@@ -358,48 +382,13 @@ export const CLASS_MANIFEST: OfferingManifest = {
       title: "Pricing & cadence",
       icon: IndianRupee,
       fields: [
-        {
-          name: "price",
-          kind: "price",
-          label: "Price (₹)",
-          currencyName: "priceCurrency",
-          span: 2,
-        },
-        {
-          name: "durationInMonths",
-          kind: "number",
-          label: "Duration (months)",
-          min: 1,
-          step: 1,
-          span: 2,
-        },
-        {
-          name: "maxParticipants",
-          kind: "number",
-          label: "Max participants",
-          min: 1,
-          step: 1,
-          span: 2,
-        },
-        {
-          name: "sessionsPerWeek",
-          kind: "number",
-          label: "Sessions per week",
-          min: 1,
-          max: 7,
-          step: 1,
-          span: 2,
-        },
-        {
-          // Was hardcoded to 1 in the dialog and never rendered, so every class
-          // was a one-hour-session class regardless of what its plan said.
-          name: "sessionDurationInHours",
-          kind: "number",
-          label: "Session duration (hours)",
-          min: 0.5,
-          step: 0.5,
-          span: 2,
-        },
+        priceField(2),
+        durationMonthsField,
+        maxParticipantsField,
+        sessionsPerWeekField,
+        // Was hardcoded to 1 in the dialog and never rendered, so every class
+        // was a one-hour-session class regardless of what its plan said.
+        sessionDurationField("Hours per session, in 30-minute steps, up to 4."),
         supportLevelField,
       ],
     },
@@ -418,6 +407,8 @@ export const CLASS_MANIFEST: OfferingManifest = {
           name: "schedulingStartDate",
           kind: "date",
           label: "Start date",
+          description: "Required before publishing.",
+          required: true,
           span: 3,
         },
       ],
@@ -429,6 +420,7 @@ export const CLASS_MANIFEST: OfferingManifest = {
       icon: CalendarRange,
       fields: [],
       slot: "curriculum",
+      slotFields: ["classContents"],
     },
     collaboratorsSection,
     faqSection,

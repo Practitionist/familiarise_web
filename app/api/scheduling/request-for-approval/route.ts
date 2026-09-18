@@ -12,6 +12,8 @@ import {
 import { SlotLockError } from "@/utils/errors/SlotLockError";
 import { ScheduleValidationService } from "@/utils/scheduling-engine/ScheduleValidationService";
 import { notifyNewBookingRequest } from "@/lib/novu";
+import { EMAIL_BUDGET_MS, sendNewBookingRequestEmail } from "@/lib/email";
+import { PENDING_CONSULTATION_EXPIRATION_HOURS } from "@/scripts/appointments/expire-stale-requests";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 import { appendCreationHistory } from "@/lib/booking/transitions";
@@ -25,7 +27,9 @@ import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   MAX_ACTIVE_REQUESTS_PER_USER,
+  capacityRefusal,
   countActiveConsultationRequests,
+  pausedRefusal,
 } from "@/lib/booking/request-caps";
 
 import { getSession } from "@/lib/auth-server";
@@ -145,6 +149,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1703 D4 — the pause is a profile switch, so it is answered before any
+    // lock is taken; the cap needs a count and runs inside the slot lock.
+    const paused = pausedRefusal(consultationPlan.consultantProfile);
+    if (paused) {
+      return NextResponse.json(
+        { error: paused.message, code: paused.code },
+        { status: 409 },
+      );
+    }
+
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
@@ -202,6 +216,19 @@ export async function POST(req: NextRequest) {
             timestamp: new Date().toISOString(),
           }),
         );
+
+        // #1703 D4 — counted under the slot lock (consultant + interval atoms)
+        // so a burst on one slot overshoots the cap by at most what it allows.
+        const atCapacity = await capacityRefusal(
+          prisma,
+          consultationPlan.consultantProfile,
+        );
+        if (atCapacity) {
+          return NextResponse.json(
+            { error: atCapacity.message, code: atCapacity.code },
+            { status: 409 },
+          );
+        }
 
         // The 30-minute interval starts the window covers — the validator's
         // unit of arithmetic (#1554: the persisted shape is one row below).
@@ -359,7 +386,15 @@ export async function POST(req: NextRequest) {
         // pins organizationId: null. Single recipient with a known side, so this
         // resolves to a precise route rather than the /dashboard bounce.
         const requestOrgId = consultation.appointment?.organizationId ?? null;
-        void notifyNewBookingRequest(
+        const reviewUrl = scopedHref({
+          organizationId: requestOrgId,
+          surface: "requests",
+          personal: {
+            kind: "consultant",
+            profileId: consultation.consultationPlan.consultantProfile.id,
+          },
+        });
+        await notifyNewBookingRequest(
           consultation.consultationPlan.consultantProfile.user.id,
           {
             ...notificationScope(requestOrgId),
@@ -367,15 +402,33 @@ export async function POST(req: NextRequest) {
             planTitle: consultation.consultationPlan.title,
             appointmentType: "CONSULTATION",
             requestedDateTime: startTime.toISOString(),
-            dashboardUrl: scopedHref({
-              organizationId: requestOrgId,
-              surface: "requests",
-              personal: {
-                kind: "consultant",
-                profileId: consultation.consultationPlan.consultantProfile.id,
-              },
-            }),
+            dashboardUrl: reviewUrl,
           },
+        );
+
+        // #1653 — the email twin. The deadline is the stale-request sweep's
+        // window from `requestedAt`, capped at the session itself: an approval
+        // after either is moot. The sender never throws.
+        const sweepExpiry = new Date(
+          consultation.requestedAt.getTime() +
+            PENDING_CONSULTATION_EXPIRATION_HOURS * 60 * 60 * 1000,
+        );
+        await sendNewBookingRequestEmail(
+          {
+            requestId: consultation.id,
+            consultantUserId:
+              consultation.consultationPlan.consultantProfile.user.id,
+            consultantName:
+              consultation.consultationPlan.consultantProfile.user.name ||
+              "Consultant",
+            consulteeName: consultation.requestedBy.user.name || "A consultee",
+            planTitle: consultation.consultationPlan.title,
+            appointmentType: "CONSULTATION",
+            requestedAt: startTime,
+            respondBy: sweepExpiry < startTime ? sweepExpiry : startTime,
+            reviewUrl,
+          },
+          EMAIL_BUDGET_MS.REQUEST,
         );
 
         return NextResponse.json(

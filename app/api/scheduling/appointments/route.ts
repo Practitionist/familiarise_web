@@ -4,7 +4,10 @@ import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
+import { z } from "zod";
+import { CONSULTANT_APPOINTMENTS_WINDOWS } from "@/lib/appointments/window";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
+import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
 export async function GET(request: NextRequest) {
   const authResult = await requireApiAuth();
@@ -34,7 +37,9 @@ export async function GET(request: NextRequest) {
   const webinarStatus = searchParams.get("webinarStatus")?.toUpperCase();
   const classStatus = searchParams.get("classStatus")?.toUpperCase();
 
-  // Non-privileged users must scope to their own data
+  // Non-privileged users must scope to their own data. The session's profile
+  // ids are the cheap first answer; canReadEventSlots re-reads them fresh and
+  // admits an event's own two parties (FAMILIARISE_WEB-2V, #1703 B10).
   if (!isPrivileged(session.user.role)) {
     const hasOwnFilter =
       (consultantProfileId &&
@@ -42,7 +47,14 @@ export async function GET(request: NextRequest) {
       (consulteeProfileId &&
         consulteeProfileId === session.user.consulteeProfileId) ||
       (userId && userId === session.user.id);
-    if (!hasOwnFilter) {
+    const allowed =
+      hasOwnFilter ||
+      (await canReadEventSlots({
+        userId: session.user.id,
+        filter: { consultantProfileId, consulteeProfileId },
+        eventIds: { webinarId, classId, consultationId, subscriptionId },
+      }));
+    if (!allowed) {
       return NextResponse.json(
         { error: "Forbidden: must filter by your own profile" },
         { status: 403 },
@@ -138,6 +150,18 @@ export async function GET(request: NextRequest) {
   try {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
+    // #1703 B12 — ?window=all is the "Load older" read; absent means recent.
+    const windowParse = z
+      .enum(CONSULTANT_APPOINTMENTS_WINDOWS)
+      .default("recent")
+      .safeParse(searchParams.get("window") ?? undefined);
+    if (!windowParse.success) {
+      return NextResponse.json(
+        { error: "window must be 'recent' or 'all'", code: "INVALID_WINDOW" },
+        { status: 400 },
+      );
+    }
+    const window = windowParse.data;
 
     const appointments = await getConsultantAppointments({
       type: type as AppointmentsType | undefined,
@@ -164,6 +188,7 @@ export async function GET(request: NextRequest) {
       // through to the empty filter and got every org's appointments plus
       // their personal ones — the opposite of picking one org.
       scope: scopeResolution.scope,
+      window,
     });
 
     // #997 Phase 3 — opt-in aggregate, only computed when the caller scopes

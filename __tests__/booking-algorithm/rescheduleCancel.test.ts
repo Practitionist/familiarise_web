@@ -247,6 +247,8 @@ function makeMockTx() {
     appointment: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1695 — the refund context is read on the tx client, under the lock.
+      findFirst: jest.fn().mockResolvedValue(null),
       delete: jest.fn(),
       deleteMany: jest.fn(),
     },
@@ -524,7 +526,9 @@ describe("Reschedule Route Handler - POST", () => {
     const res = await rescheduleHandler(req, makeParams("apt-1"));
     const body = await res.json();
 
-    expect(res.status).toBe(400);
+    // A typed refusal: 409 RESCHEDULE_WINDOW, the sentence the toast shows.
+    expect(res.status).toBe(409);
+    expect(body.code).toBe("RESCHEDULE_WINDOW");
     expect(body.error).toContain("24 hours");
   });
 
@@ -542,7 +546,7 @@ describe("Reschedule Route Handler - POST", () => {
     });
     const res = await rescheduleHandler(req, makeParams("apt-1"));
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(409);
   });
 
   // ─── CONSULTATION Reschedule ────────────────────────────────────────────

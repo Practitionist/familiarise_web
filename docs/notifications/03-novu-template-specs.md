@@ -41,15 +41,9 @@ The in-app templates described below are generated from `lib/novu/templates/` an
 
 ---
 
-## Setup: Resend Integration
+## Setup: Resend Integration — not applicable
 
-1. Go to **Novu Dashboard → Integrations → Email**
-2. Select **Resend** as provider
-3. Configure:
-   - **API Key**: Your `RESEND_API_KEY`
-   - **From Email**: `notifications@familiarise.com`
-   - **From Name**: `Familiarise`
-4. Save and activate
+All sixteen Novu workflow families are in-app only; none has an email step, so there is no Resend provider to configure in Novu → Integrations. Email for a Novu-triggered event, if ever wanted, is tracked separately as a product decision and is out of scope for this specs file. See [ADR 30](../enterprise/70-design-decisions/30-novu-templates-as-code-and-workflow-families.md) for why the workflows are in-app only and how they are synced from `lib/novu/templates/`.
 
 ---
 
@@ -91,6 +85,17 @@ The Novu environment holds one workflow per family, not one per event; a family 
 | `org-membership` | org-invite-sent, org-invite-accepted, org-expert-removed, org-sso-provider-deleted, org-sso-cert-expiring                                                                                                                  |
 | `org-program`    | org-program-exhausted, org-program-cap-near, org-license-renewal-upcoming, org-data-export-ready                                                                                                                           |
 
+### Email twins (#1653)
+
+Six events in the `refund` and `org-billing` families have an email twin since #1653: a React Email template under `emails/` sent by `lib/email/senders/money.ts` alongside the in-app bell, to the same recipients, gated by the same preference category, and never able to fail the request or job that rang the bell. The list below records each pairing.
+
+- `refund-processed` — Email twin: `REFUND_PROCESSED` (`emails/payments/RefundProcessedEmail.tsx`), to the payer from `payments@`, category `payments`; the body repeats the 5–7 working days line, cites the credit-note number when the caller has one, and links `/refund`.
+- `refund-failed` — Email twin: `REFUND_FAILED` (`emails/payments/RefundFailedEmail.tsx`), to the payer from `payments@`, category `payments`; the CTA is a `mailto:` to the support inbox because that is the only address on the domain that can receive mail (#1649).
+- `org-invoice-overdue` — Email twin: `ORG_INVOICE_OVERDUE` (`emails/orgs/OrgInvoiceOverdueEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`; the due date renders in each recipient's zone and the reminder number matches the dunning stage.
+- `org-wallet-low` — Email twin: `ORG_WALLET_LOW` (`emails/orgs/OrgWalletLowEmail.tsx`), to the visibility roster from `finance@`, category `orgBilling`.
+- `org-payout-failed` and `org-payout-reversed` — Email twin: `ORG_PAYOUT_FAILED` (`emails/orgs/OrgPayoutFailedEmail.tsx`), one template branching on `kind`, to the visibility roster from `finance@`, category `orgBilling`.
+- `org-program-overage-due` — Email twin: `ORG_PROGRAM_OVERAGE_DUE` (`emails/orgs/OrgOverageDueEmail.tsx`), to the member from `finance@`, category `orgBilling`, awaited inside the same post-commit helper as the bell.
+
 ---
 
 ## Design Notes
@@ -117,6 +122,7 @@ In the Novu editor, replicate this using their visual builder or paste the HTML 
 **Trigger function**: `notifyAppointmentBooked(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_BOOKED` (`emails/booking/AppointmentBookedEmail.tsx`), sent by `sendAppointmentBookedEmail()` / staged by `stageAppointmentBookedEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -214,6 +220,7 @@ Booking Confirmed — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentCancelled(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_CANCELLED` (`emails/booking/AppointmentCancelledEmail.tsx`), sent by `sendAppointmentCancelledEmail()` right after this bell (#1653).
 
 **Payload variables** (`AppointmentCancelledPayload`):
 
@@ -312,6 +319,7 @@ Appointment Cancelled — {{payload.planTitle}}
 **Trigger function**: `notifyAppointmentReminder(userIds[], payload)`
 **Recipient**: Both consultant and consultee
 **Preference category**: `appointments`
+**Email twin**: `APPOINTMENT_REMINDER` (`emails/booking/AppointmentReminderEmail.tsx`), sent by `sendAppointmentReminderEmail()` inside the same Redis guard as this bell (#1653).
 
 **Payload variables** (`AppointmentPayload`):
 
@@ -584,6 +592,7 @@ Payment Failed — Action Required
 **Trigger function**: `notifyNewBookingRequest(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `appointments`
+**Email twin**: `NEW_BOOKING_REQUEST` (`emails/booking/NewBookingRequestEmail.tsx`), sent by `sendNewBookingRequestEmail()` right after this bell (#1653).
 
 **Payload variables** (`BookingRequestPayload`):
 
@@ -852,6 +861,7 @@ New Trial Request — {{payload.planTitle}}
 **Trigger function**: `notifyTrialScheduled(consulteeUserId, payload)`
 **Recipient**: Consultee only
 **Preference category**: `trials`
+**Email twin**: `TRIAL_SESSION_SCHEDULED` (`emails/booking/TrialScheduledEmail.tsx`), sent by `sendTrialScheduledEmail()` to both parties right after this bell (#1653).
 
 **Payload variables** (`TrialPayload`):
 
@@ -1132,6 +1142,7 @@ New Support Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketUpdate(userId, payload)`
 **Recipient**: The ticket's owner, when ops changes its status
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_UPDATE` (`emails/support/SupportTicketUpdateEmail.tsx`), sent by `sendSupportTicketUpdateEmail()` right after this bell from both staff routes (#1653); the body adds a next-step sentence per status.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1201,6 +1212,7 @@ Ticket Activity — {{payload.ticketTitle}}
 **Trigger function**: `notifySupportTicketResponse(userId, payload)`
 **Recipient**: Ticket creator (user)
 **Preference category**: `support`
+**Email twin**: `SUPPORT_TICKET_RESPONSE` (`emails/support/SupportTicketResponseEmail.tsx`), sent by `sendSupportTicketResponseEmail()` right after this bell (#1653); the inbox preview is the reply's first 140 characters, the same truncation the bell applies.
 
 **Payload variables** (`SupportTicketPayload`):
 
@@ -1275,6 +1287,7 @@ Update on Your Ticket — {{payload.ticketTitle}}
 **Trigger function**: `notifyNewReview(consultantUserId, payload)`
 **Recipient**: Consultant only
 **Preference category**: `feedback`
+**Email twin**: `NEW_REVIEW_RECEIVED` (`emails/reviews/NewReviewEmail.tsx`), sent by `sendNewReviewEmail()` right after this bell with the same anonymised reviewer name and a 140-character excerpt (#1653).
 
 **Payload variables** (`ReviewPayload`):
 
@@ -1358,7 +1371,7 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 **Payload variables** (`VerificationPayload`):
 
 ```
-{{payload.status}}            - "VERIFIED" | "REJECTED" | "PENDING_VERIFICATION" (the profile enum after the routes map APPROVED→VERIFIED and NEEDS_INFO→PENDING_VERIFICATION)
+{{payload.status}}            - "VERIFIED" | "REJECTED" | "NEEDS_INFO" (the decision: APPROVED→VERIFIED; NEEDS_INFO is named so the bell asks for more information instead of saying "pending review")
 {{payload.reason}}            - Reason for status change (optional)
 {{payload.dashboardUrl}}       - Link to dashboard
 ```
@@ -1366,7 +1379,7 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 **In-App notification** (`lib/novu/templates/b2c.ts`, verbatim):
 
 ```
-{% case payload.status %}{% when "VERIFIED" %}Your profile is verified and now visible to clients.{% when "REJECTED" %}Your profile verification was not approved.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}
+{% case payload.status %}{% when "VERIFIED" %}Your profile is verified and now visible to clients.{% when "REJECTED" %}Your profile verification was not approved.{% when "NEEDS_INFO" %}The reviewer needs more information before your profile can be verified.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}
 ```
 
 **Email subject**:
@@ -1448,7 +1461,7 @@ verification-status-changed
 
 These need Dashboard configuration after Tier 1 is done:
 
-- `appointment-rescheduled` — AppointmentRescheduledPayload
+- `appointment-rescheduled` — AppointmentRescheduledPayload. Email twin: `APPOINTMENT_RESCHEDULED` (`emails/booking/AppointmentRescheduledEmail.tsx`), sent by `sendAppointmentRescheduledEmail()` right after each of the four bells with the same `outcome` (#1653); the PROPOSED copy names the reschedule request's `expiresAt` as the deadline.
 - `appointment-completed` — AppointmentPayload
 - `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload
@@ -1458,6 +1471,19 @@ These need Dashboard configuration after Tier 1 is done:
 - `collaborator-removed` — CollaboratorRemovedPayload
 - `collaborator-declined` — CollaboratorDeclinedPayload (#1580 C-P1-5). In-app + email to the host when an invitee declines; the same shape as `collaborator-accepted`.
 - `collaborator-withdrawn` — CollaboratorWithdrawnPayload (#1580 C-P1-7). In-app + email to the HOST when a collaborator withdraws their own pending or accepted row; the payload is the removed shape plus `collaboratorName`, so the copy can say who left.
-- `new-consultant-application` — ConsultantApplicationPayload
+- `new-consultant-application` — ConsultantApplicationPayload. Since #1700 the verification submit route stages this bell's outbox rows before it answers and attempts them inside `after()`, so the applicant never waits on the Novu budget and the rows survive a dropped `after()`.
 - `document-uploaded` — DocumentUploadedPayload (`lib/novu/workflows.ts`). In-app + email to the reviewer (consultant) on a new submission, or to the uploader on a consultant response. Payload carries `versionNo` + `isThreaded` so copy can say "Revision v3 uploaded" vs "New document".
 - `document-reviewed` — DocumentReviewedPayload. In-app to the consultee when their submission moves status; templates branch on `reviewStatus` (APPROVED / REJECTED / NEEDS_REVISION / IN_REVIEW). Both workflows must exist in the Novu dashboard with matching slugs before enabling in production.
+- `account-suspended` — the suspended user, no preference category. Email twin: `ACCOUNT_SUSPENDED` (`emails/account/AccountSuspendedEmail.tsx`), sent by `sendAccountSuspendedEmail()` right after this bell inside the moderation side-effects (#1653); a required notice with the end date in the user's zone, the reason, the cancelled-appointment count and a `mailto:` CTA to support.
+- `account-banned` — the banned user, no preference category. Email twin: `ACCOUNT_BANNED` (`emails/account/AccountBannedEmail.tsx`), sent by `sendAccountBannedEmail()` right after this bell (#1653); the suspension notice without an end date.
+- `org-invite-sent` — the invitee by email, no preference row to read. Email twin: `ORG_INVITATION` (`emails/organizations/OrgInvitationEmail.tsx`), staged by `stageOrgInvitationEmail()` beside this bell from the invitations route and the bulk import (#1653, resequenced in #1700); the bell reaches an invitee who already has an account and the email reaches one who does not. Both outbox rows are written before the response and attempted inside `after()` — see the sequencing rule below.
+- `org-invite-accepted` — the org's OWNER + MAINTAINER roster. Acceptee twin: `ORG_WELCOME` (`emails/organizations/OrgWelcomeEmail.tsx`), staged by `stageOrgWelcomeEmail()` for the joiner (not the roster) from the accept route, skipped when the accept was idempotent (#1700); a required notice naming the org, the role and the dashboard.
+- `org-expert-removed` — the removed EXPERT. Non-EXPERT removals and every role change get the email twin instead: `ORG_MEMBERSHIP_REMOVED` / `ORG_MEMBERSHIP_ROLE_CHANGED` (`emails/organizations/OrgMembershipChangedEmail.tsx`), staged by `stageOrgMembershipChangedEmail()` after the member PATCH or DELETE commits (#1700); the EXPERT removal stays bell-only so nobody receives two notices for one act.
+- `verification-status-changed` — the consultant. Email twin: `VERIFICATION_DECIDED` (`emails/verification/VerificationDecidedEmail.tsx`), staged by `stageVerificationDecidedEmail()` beside this bell from the staff review route with the same status and reason (#1700); the subject and body switch on VERIFIED, REJECTED and PENDING_VERIFICATION (the NEEDS_INFO mapping).
+- Organisation creation has no bell. Email only: `ORG_CREATED` (`emails/organizations/OrgCreatedEmail.tsx`), staged by `stageOrgCreatedEmail()` to the creator after `POST /api/organizations` commits (#1700); it explains the PENDING_VERIFICATION state and the verification → billing → invite checklist.
+
+### Sequencing rule for route-triggered notices (#1700)
+
+A route that owes a notice stages it INSIDE the transaction that makes the business change — one `NotificationOutbox` row per bell and one `FailedEmail` row per email, so a recipient reached on both channels has two rows; no vendor call — and runs the vendor attempts after the response inside `after()` through `scheduleAfter()` (`lib/api/after-safe.ts`). The rows and the change therefore commit or roll back together: an invitation, an accepted membership, a created organisation, a member's role change, a verification decision or a filed verification request cannot exist without its notice row, and a notice row cannot exist for a change that rolled back. Recipient lookups inside the transaction go through `tx` as well (`loadEmailRecipients(userIds, category, tx)`, the org roster in `notifyOrgInviteAccepted`), because a global-client read while the transaction holds the single Netlify connection deadlocks. Netlify holds the invocation for `after()` (`context.waitUntil`, full support), so the attempts normally run at once, but nothing depends on that: the relay finishes whatever the attempt did not settle. The Novu helpers return their staged rows when given `{ tx }`; the onboarding senders expose a `stage*` twin of every `send*` that takes the transaction and propagates a staging failure into it, plus `attemptOnboardingEmail()` for the `after()` half.
+
+- `org-sso-cert-expiring` — the org's OWNER roster. Email twin: `ORG_SSO_CERT_EXPIRING` (`emails/organizations/OrgSsoCertExpiringEmail.tsx`), sent by `sendOrgSsoCertExpiringEmail()` right after this bell from the certificate sweep to the same roster (#1653); a required notice whose subject switches on `severity`.

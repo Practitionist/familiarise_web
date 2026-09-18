@@ -22,6 +22,11 @@ import {
 import { notificationScope } from "@/lib/novu/workflows";
 import { supportTicketStatusLabel } from "@/lib/novu/humanize";
 import { notificationHref } from "@/lib/novu/resolve-href";
+import {
+  EMAIL_BUDGET_MS,
+  sendSupportTicketResponseEmail,
+  sendSupportTicketUpdateEmail,
+} from "@/lib/email";
 import { SupportThreadIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import { MESSAGE_ORDER, allocateMessageSeq } from "@/lib/support/message-seq";
@@ -204,19 +209,39 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     });
 
     if (thread.supportTicketId) {
+      // Org-hosted threads land on the org appointments surface; B2C stays a
+      // bare /dashboard and the capability router picks the viewer's tree
+      // (resolve-href doctrine — never guess the personal route).
+      const dashboardUrl = notificationHref(
+        thread.organizationId,
+        "appointments",
+      );
+      const reference = thread.supportTicket?.referenceNumber ?? undefined;
+      const ticketTitle = thread.supportTicket?.title ?? "Support";
+      const respondedBy = session.user.name ?? "Support";
       await notifySupportTicketResponse(thread.userId, {
         ticketId: thread.supportTicketId,
-        reference: thread.supportTicket?.referenceNumber ?? undefined,
-        ticketTitle: thread.supportTicket?.title ?? "Support",
+        reference,
+        ticketTitle,
         message,
-        respondedBy: session.user.name ?? "Support",
-        // Org-hosted threads land on the org appointments surface; B2C stays a
-        // bare /dashboard and the capability router picks the viewer's tree
-        // (resolve-href doctrine — never guess the personal route).
-        dashboardUrl: notificationHref(thread.organizationId, "appointments"),
+        respondedBy,
+        dashboardUrl,
         // ADR 23 — inherit the thread's org-ness (attribution only).
         ...notificationScope(thread.organizationId),
       });
+      // #1653 — the email twin of the bell; the sender never throws.
+      await sendSupportTicketResponseEmail(
+        {
+          ticketId: thread.supportTicketId,
+          ownerUserId: thread.userId,
+          reference,
+          title: ticketTitle,
+          respondedBy,
+          replyText: message,
+          ticketUrl: dashboardUrl,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
 
     return NextResponse.json({ data: result }, { status: 201 });
@@ -336,15 +361,35 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // #705 — the user is the only party who cannot see the ops queue, and this
     // route was the one status change nobody told them about.
     if (thread.supportTicketId) {
+      const dashboardUrl = notificationHref(
+        thread.organizationId,
+        "appointments",
+      );
+      const reference = thread.supportTicket?.referenceNumber ?? undefined;
+      const ticketTitle = thread.supportTicket?.title ?? "Support";
+      const statusLabel = supportTicketStatusLabel(status);
       await notifySupportTicketUpdate(thread.userId, {
         ticketId: thread.supportTicketId,
-        reference: thread.supportTicket?.referenceNumber ?? undefined,
-        ticketTitle: thread.supportTicket?.title ?? "Support",
-        status: supportTicketStatusLabel(status),
+        reference,
+        ticketTitle,
+        status: statusLabel,
         statusCode: status,
-        dashboardUrl: notificationHref(thread.organizationId, "appointments"),
+        dashboardUrl,
         ...notificationScope(thread.organizationId),
       });
+      // #1653 — the email twin of the bell; the sender never throws.
+      await sendSupportTicketUpdateEmail(
+        {
+          ticketId: thread.supportTicketId,
+          ownerUserId: thread.userId,
+          reference,
+          title: ticketTitle,
+          statusCode: status,
+          statusLabel,
+          ticketUrl: dashboardUrl,
+        },
+        EMAIL_BUDGET_MS.REQUEST,
+      );
     }
 
     return NextResponse.json({ data: { id: thread.id, status } });

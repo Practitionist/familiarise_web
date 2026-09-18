@@ -164,11 +164,13 @@ function deriveActorRoles(
  * told them "no refund at this notice" while the click was about to return
  * every attendee's money.
  *
- * The payment set is `refundWholeEventPayments`' own, filter for filter,
- * including its absence of a `deletedAt` clause: a quote that reads a different
- * set than the charge is just a second opinion. Each seat is worth its
- * refundable balance rather than its gross, because that is what a full refund
- * of an already partly-refunded seat returns.
+ * The payment set is `refundWholeEventPayments`' own, filter for filter:
+ * SUCCEEDED, live (`deletedAt: null`) seats with no amount floor — free_
+ * (credit-funded) seats refund too, via credit restoration (#1161), and
+ * retired rows stay out (#781 §B). A quote that reads a different set than
+ * the charge is just a second opinion. Each seat is worth its refundable
+ * balance rather than its gross, because that is what a full refund of an
+ * already partly-refunded seat returns.
  */
 async function quoteWholeEventRefund(
   kind: "class" | "webinar",
@@ -179,7 +181,7 @@ async function quoteWholeEventRefund(
       appointment:
         kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
       paymentStatus: "SUCCEEDED",
-      amount: { gt: 0 },
+      deletedAt: null,
     },
     select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
   });

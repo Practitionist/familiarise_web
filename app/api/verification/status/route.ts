@@ -3,13 +3,16 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
+import { withDownloadUrls } from "@/lib/verification/review-route";
 /**
  * GET /api/verification/status
  * Get the current verification status for the authenticated consultant
  */
 export async function GET() {
   try {
-    const session = await getSession();
+    // Read-only status check, but force-fresh so a revoked/erased session
+    // stops seeing verification state the moment the row is gone.
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -49,6 +52,7 @@ export async function GET() {
                 uploadedAt: true,
                 isValid: true,
                 staffFeedback: true,
+                issue: true,
               },
             },
           },
@@ -88,13 +92,16 @@ export async function GET() {
               rejectionReason: latestRequest.rejectionReason,
               feedbackDetails: latestRequest.feedbackDetails,
               notes: latestRequest.notes,
-              documents: latestRequest.documents,
+              documents: withDownloadUrls(latestRequest.documents),
             }
           : null,
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Verification status error:", error);
     return NextResponse.json(
       {

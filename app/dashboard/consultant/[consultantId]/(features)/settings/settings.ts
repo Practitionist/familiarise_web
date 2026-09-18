@@ -7,7 +7,12 @@ import {
 import { minuteUtcToDate } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isValidTimeRange } from "@/utils/scheduling-engine/interval-validation";
 import type { SlotsType } from "@/utils/schedule/types";
-import { DayOfWeek, ScheduleType, OfferingFormat } from "@prisma/client";
+import {
+  BookingMode,
+  DayOfWeek,
+  ScheduleType,
+  OfferingFormat,
+} from "@prisma/client";
 
 export interface FormData {
   description: string;
@@ -27,6 +32,10 @@ export interface FormData {
   toolsAndTechnologies: string[];
   mentoringStyle: string;
   offeringFormats: OfferingFormat[];
+  // #1703 D1/D4 — the "Booking requests" section; null cap = no limit.
+  bookingMode: BookingMode;
+  acceptingRequests: boolean;
+  maxOpenRequests: number | null;
 }
 
 export interface Domain {
@@ -77,6 +86,9 @@ export const getInitialFormData = (
   toolsAndTechnologies: consultant?.toolsAndTechnologies ?? [],
   mentoringStyle: consultant?.mentoringStyle ?? "",
   offeringFormats: consultant?.offeringFormats ?? [],
+  bookingMode: consultant?.bookingMode ?? BookingMode.INSTANT,
+  acceptingRequests: consultant?.acceptingRequests ?? true,
+  maxOpenRequests: consultant?.maxOpenRequests ?? null,
 });
 
 /**

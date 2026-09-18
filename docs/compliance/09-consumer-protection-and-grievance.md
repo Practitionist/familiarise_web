@@ -151,12 +151,12 @@ On `app/explore/consultants/[slug]/page.tsx` (or wherever the public profile liv
 1. Legal name (separate from display name if different).
 2. Principal address (city + state minimum; full address optional for privacy).
 3. GSTIN if registered, with a "Not GST registered" indicator otherwise.
-4. Customer-care email — typically `support@familiarise.com` for marketplace orders, plus the consultant's preferred channel.
+4. Customer-care email — typically `support@familiarisenow.com` for marketplace orders, plus the consultant's preferred channel.
 
 ### G. Customer-care channel (PR 4)
 
 1. Footer link to `/support`.
-2. `support@familiarise.com` published prominently.
+2. `support@familiarisenow.com` published prominently.
 3. Optional: in-app chat-bot or contact form.
 4. Response SLA: 24 hr first response, separate from grievance SLA.
 

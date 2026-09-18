@@ -35,7 +35,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   // user added as Expert, which silently promoted strangers to
   // consultants. The dashboard now refuses with this message.
   NOT_A_CONSULTANT:
-    "This user is not a consultant on Familiarise yet. They need to sign up as an Expert first before they can be added to an organization as one.",
+    "This account has no expert profile yet. Set one up first — it takes a few minutes — then accept the invitation again.",
   // Symmetric to NOT_A_CONSULTANT — the org dashboard refuses to
   // lazy-create a ConsulteeProfile for a stranger being added as
   // Learner. The target must already have a consumer-side identity on
@@ -45,7 +45,7 @@ export const ORG_ERROR_COPY: Record<string, string> = {
     "This user does not have a learner profile on Familiarise yet. They need to sign up or complete onboarding before they can be added to an organization as a Learner.",
   LEARNER_REQUIRES_CANSPONSOR:
     "Learner can only be assigned on sponsor-capable organizations. Enable sponsorship under Settings → Capabilities first.",
-// Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/08-invoicing.md
+  // Why: PO balance enforcement (see docs/enterprise/10-money-and-ledger/08-invoicing.md
   // "PO balance enforcement" section). The server emits EXCEEDED; the
   // INSUFFICIENT alias exists so route renames don't break the UI copy.
   PO_BALANCE_EXCEEDED:
@@ -68,8 +68,8 @@ export const ORG_ERROR_COPY: Record<string, string> = {
   // Why: hard-gate replacing the WIP banner on `canHost`. The friendly
   // copy points operators at the recovery path (talk to ops) rather
   // than leaving them stranded with a generic 400.
-  HOST_ORGS_GATED:
-    "Host-capable organizations are not yet enabled on this tenant. Contact ops at support@familiarise.work to flip ENABLE_HOST_ORGS for your account.",
+  // #1298 — static NEXT_PUBLIC read: this table ships to client components.
+  HOST_ORGS_GATED: `Host-capable organizations are not yet enabled on this tenant. Contact ops at ${process.env.NEXT_PUBLIC_SUPPORT_EMAIL ?? "support@familiarisenow.com"} to flip ENABLE_HOST_ORGS for your account.`,
 };
 
 /**

@@ -30,6 +30,22 @@ interface TConsultantApproval {
   time: string;
 }
 
+export interface TConsultantOrgSession {
+  occurrenceId: string;
+  appointmentId: string;
+  organizationId: string;
+  organizationName: string;
+  startsAt: Date | string;
+  endsAt: Date | string | null;
+  isTentative: boolean;
+  completionStatus: string | null;
+  meeting: {
+    id: string;
+    endedAt: Date | string | null;
+    endedReason: string | null;
+  } | null;
+}
+
 // Performance snapshot for consultant dashboard KPIs
 export interface TPerformanceSnapshot {
   /** Earnings this month in paise (divide by 100 for INR) */
@@ -63,6 +79,16 @@ export interface TConsultantDashboardResponse {
   approvals: TConsultantApproval[];
   /** Total pending requests — `approvals` is a capped preview, so don't count it. */
   pendingRequestsCount: number;
+  /** Approved-but-unpaid requests: total plus the newest three. #1703 */
+  awaitingPayment: { count: number; items: TConsultantApproval[] };
+  /** Next org-funded sessions to deliver, metadata only (ADR 20). #1703 */
+  orgSessions: TConsultantOrgSession[];
+  /** Share of requests answered within a day over the last 30 days. #1703 */
+  responseRate: {
+    withinTarget: number;
+    total: number;
+    withinTargetPct: number | null;
+  };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
 }

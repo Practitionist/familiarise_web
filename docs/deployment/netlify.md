@@ -39,6 +39,49 @@
 | GitHub repo            | `https://github.com/Practitionist/familiarise_web`    |
 | DNS managed by         | Netlify DNS (zone ID: `$NETLIFY_DNS_ZONE_ID`)         |
 
+### Hosting machinery, end to end
+
+The diagram below is the whole hosting picture in one place: how a request reaches this site, which Netlify context it lands in, and which third-party service reads which environment variable once the Next.js application is running. Each Netlify context — production, deploy-preview, branch-deploy and the `dev` branch itself — holds its own copies of every environment variable, which is why a leaked or rotated key in one context has no effect on the others and why a preview can never page a real user's inbox (`lib/novu/secret-key.ts` picks `NOVU_PRODUCTION_KEY` only when `NEXT_PUBLIC_SENTRY_ENVIRONMENT` is `production`). The registrar for `familiarisenow.com` is out of this repository's view; what the repository can state is that Netlify DNS is the zone's authoritative nameserver today; a request that resolves to it lands on Netlify's `sin` (Singapore) load balancer, the region chosen because it is the closest offered region to the Supabase project's `ap-south-1` database.
+
+```mermaid
+flowchart LR
+  DNS["familiarisenow.com<br/>Netlify DNS (zone $NETLIFY_DNS_ZONE_ID) is the authoritative nameserver"]
+  LB["Netlify load balancer<br/>functions region sin (Singapore)"]
+  subgraph Contexts["Netlify contexts — each holds its own env values"]
+    PROD["production"]
+    PREVIEW["deploy-preview"]
+    BRANCH["branch-deploy"]
+    DEV["dev branch"]
+  end
+  APP["Next.js App Router<br/>AWS Lambda — 60s hard cap<br/>~26s edge cap for a non-streaming Route Handler response"]
+  TICK["netlify/functions/cron-tick.mts<br/>every 5 min → POST /api/cleanup/*"]
+  BG["netlify/functions/reconcile-ledgers-background<br/>never runs on previews or branch deploys"]
+  DB[("Supabase Postgres — ONE project serves dev AND prod<br/>DATABASE_URL, PG_POOL_MAX=1")]
+  REDIS[("Upstash Redis<br/>UPSTASH_REDIS_REST_URL — locks, circuit breaker")]
+  RZP[("Razorpay<br/>RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET")]
+  STREAM[("Stream — chat + video<br/>STREAM_API_KEY / STREAM_API_SECRET")]
+  NOVU[("Novu — in-app bell<br/>NOVU_DEVELOPMENT_KEY or NOVU_PRODUCTION_KEY,<br/>resolved from NEXT_PUBLIC_SENTRY_ENVIRONMENT<br/>NEXT_PUBLIC_NOVU_APP_ID (client)")]
+  RESEND[("Resend — transactional email<br/>RESEND_API_KEY")]
+  SENTRY[("Sentry — errors + traces<br/>release = git sha")]
+
+  DNS --> LB --> Contexts
+  PROD --> APP
+  PREVIEW --> APP
+  BRANCH --> APP
+  DEV --> APP
+  APP --> DB
+  APP --> REDIS
+  APP --> RZP
+  APP --> STREAM
+  APP --> NOVU
+  APP --> RESEND
+  APP --> SENTRY
+  TICK --> APP
+  BG -. "202 only; kick never runs off production (unverified there too, #1635)" .-> APP
+```
+
+Two ceilings bound every request the Lambda serves: a page render is bounded by the 60-second synchronous execution limit because it can stream its shell early, while a Route Handler that awaits everything before returning JSON is bounded by the roughly 26-second, undocumented edge inactivity timeout instead. Because one Supabase project backs both `dev` and production, every script that touches the database — a seed, a one-off backfill, a reconciliation dry run — is a production operation and should be treated with the same care as a change shipped through the app itself.
+
 ---
 
 ## Platform Limits, Plan, Region and the MCP
@@ -48,6 +91,8 @@ The facts below were verified on 2026-09-12 and are kept in full, with sources a
 Functions run in Singapore (`sin`, `ap-southeast-1`), the closest region Netlify offers to the Supabase project in Mumbai; Netlify has no Mumbai region. The Next.js server handler runs on `@netlify/plugin-nextjs@5.15.13` (runtime API v2) under Node 22 at 1024 MB with streaming invocation, and `cron-tick` is the one scheduled function, every five minutes.
 
 A request has two ceilings. The Lambda execution limit is 60 seconds and this site completes 32–39 second invocations, but the edge returns a 504 at roughly 26 seconds to any response that has not started streaming, so a Route Handler that awaits a long query before returning JSON fails at ~26 s while its write lands (#1454). Fit under ~25 s, stream early, or move the work to a Background Function (15 minutes, enabled on this plan, standalone file only); no setting raises the edge cut.
+
+What that means in practice was settled in the week of 2026-09-15 and confirmed by Netlify support on 2026-09-16 (ticket #1112198): an instance created alone serves a page in 1.8–2.7 s, but an instance created while others are being created stalls about 28 s before any application code runs, requests bound for warm instances are held at the edge for the same window, and the edge answers "the edge function timed out" at ~37–38 s from receipt if nothing has started streaming — a deadline Netlify says is not configurable on Pro. No plan offers provisioned concurrency. The proof (a zero-import route that stalls identically), the research that ruled out every application-side cause, Netlify's own words, the interim keep-warm (`netlify/functions/keep-warm.mts`, every four minutes, `KEEP_WARM_CONCURRENCY`, PR #1685), and the hosting decision with its pre-committed rule are in `docs/perf/2026-09-15-cold-start-isolation-results.md`, `docs/perf/2026-09-15-cold-start-research.md`, `.claude/skills/deployment/netlify/platform-limits.md` ("What Netlify said"), and ADR 32.
 
 The per-function `memory`/`vcpu` setting works on this plan when targeted by name in `netlify.toml`, and the 2048 MB A/B of 2026-08-22 showed it does not touch the ~24 s cold-instance stall (#1124); do not re-add it without new evidence. The stall is open with a drafted support ticket at `docs/perf/netlify-stall-ticket-draft.md`.
 

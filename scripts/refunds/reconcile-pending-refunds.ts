@@ -15,9 +15,11 @@ import prisma from "../../lib/prisma";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import { getRefund, listRefunds } from "../../lib/payments";
+import { isRazorpayUnknownRefundIdError } from "../../lib/payments/core/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
 import { notifyRefundFailed } from "../../lib/novu/service";
+import { sendRefundFailedEmail } from "@/lib/email";
 import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -41,6 +43,12 @@ export interface RefundReconciliationResult {
    * polling because STRIPE_ENABLED is off".
    */
   skippedFenced: number;
+  /**
+   * FAMILIARISE_WEB-3V — the subset of `failedCount` whose gateway has no
+   * record of the refund id (unknown id, or a test-mode id read with live
+   * keys). Terminal: the row is moved to FAILED instead of polled forever.
+   */
+  failedUnknownId: number;
   errors: string[];
   timestamp: string;
 }
@@ -98,6 +106,7 @@ async function reconcilePendingRefundsUnlocked(
   let failedCount = 0;
   let skippedCount = 0;
   let skippedFenced = 0;
+  let failedUnknownId = 0;
   let totalProcessed = 0;
 
   /**
@@ -338,6 +347,37 @@ async function reconcilePendingRefundsUnlocked(
         skippedCount++;
       }
     } catch (error) {
+      if (isRazorpayUnknownRefundIdError(error)) {
+        // FAMILIARISE_WEB-3V — terminal, not transient; same FAILED shape as
+        // above, CAS on PENDING so a webhook that settled it is not undone.
+        const claim = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
+          data: {
+            status: RefundStatus.FAILED,
+            failureReason: `Gateway has no record of refund id ${refund.refundId} (unknown id, or a test-mode id read with live keys); the customer was not refunded — issue a new refund`,
+            failedAt: new Date(),
+          },
+        });
+        if (claim.count === 1) {
+          failedCount++;
+          failedUnknownId++;
+          reportSentryMessage(
+            `Refund ${refund.id} moved to FAILED: gateway has no record of ${refund.refundId}`,
+            {
+              subsystem: "payments",
+              op: "refund-reconcile.unknown-id",
+              expected: true,
+              level: "warning",
+              tags: { provider: "razorpay" },
+              extra: { refundRowId: refund.id, refundId: refund.refundId },
+            },
+          );
+        }
+        console.error(
+          `❌ Real-id refund ${refund.id} (${refund.refundId}) unknown at gateway; marked FAILED`,
+        );
+        continue;
+      }
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       errors.push(`Refund ${refund.id}: ${errorMessage}`);
@@ -352,6 +392,7 @@ async function reconcilePendingRefundsUnlocked(
     failedCount,
     skippedCount,
     skippedFenced,
+    failedUnknownId,
     errors,
     timestamp: new Date().toISOString(),
   };
@@ -490,12 +531,19 @@ async function notifyFailedRefundsUnlocked(): Promise<FailedRefundNotifyResult> 
     notified++;
 
     // Fire-and-forget — committed state, no DB writes in the notify path.
-    void notifyRefundFailed(refund.payment.userId, {
+    await notifyRefundFailed(refund.payment.userId, {
       ...notificationScope(refund.payment.organizationId),
       amount: refund.amountPaise,
       currency: refund.currency,
       reason: failureReason,
       dashboardUrl: `${getAppUrl()}/dashboard`,
+    });
+    // #1653 — the email twin; the sender never throws.
+    await sendRefundFailedEmail({
+      userId: refund.payment.userId,
+      paymentId: refund.paymentId,
+      amountPaise: refund.amountPaise,
+      currency: refund.currency,
     });
   }
 

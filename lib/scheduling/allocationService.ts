@@ -1,4 +1,10 @@
 import { reportSentryError } from "@/lib/observability/report";
+import { isExpectedRefusal } from "@/lib/errors/client-refusal";
+import {
+  ApiResponseError,
+  OUTCOME_UNKNOWN_MESSAGE,
+  retryAfterMsFromHeaders,
+} from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
@@ -40,6 +46,12 @@ export interface AllocationRequest {
   /** #1206 — the consultant's explicit "place what fits now". Only ever sent
    * on the second attempt, after the server has said how many sessions fit. */
   allowPartial?: boolean;
+  /**
+   * The consultant explicitly accepting the stored times as-is. Honoured
+   * server-side only for the event's consultant or a privileged caller —
+   * a consultee cannot assert times outside someone else's schedule.
+   */
+  override?: boolean;
 }
 
 /** What the allocate endpoints actually return in `data`: the created (or
@@ -78,12 +90,46 @@ export interface AllocationCallOptions {
   idempotencyKey?: string;
   /** #1206 — allocate the sessions that fit instead of refusing them all. */
   allowPartial?: boolean;
+  /** The consultant explicitly accepting the stored times as-is. */
+  override?: boolean;
 }
 
 export interface ValidationResponse {
   success: boolean;
   data?: SlotConflictResult;
   error?: string;
+  /** HTTP status of a failed answer; absent when the fetch itself threw. #1705 */
+  httpStatus?: number;
+}
+
+/**
+ * A fetch that threw never got an HTTP answer, so the outcome is unknown:
+ * the request may have landed. Browser error text ("Failed to fetch",
+ * "Load failed") names nothing the consultant can act on and is Sentry's.
+ */
+export const REQUEST_INDETERMINATE_ERROR =
+  "Couldn't reach the server — check your connection, then look for the times before retrying.";
+
+/**
+ * True when a fetch died because the CALLER cancelled it — an aborted signal
+ * or the AbortError it raises. Nothing to fix and nothing to alert on
+ * (FAMILIARISE_WEB-4J, #1703 QA-4). A bare "Failed to fetch" is NOT read as
+ * an abort: offline looks the same, and that must still reach Sentry.
+ */
+export function isAbortedFetch(
+  error: unknown,
+  signal?: AbortSignal | null,
+): boolean {
+  if (signal?.aborted) return true;
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/** The browser's TypeError for a request that never got an answer. */
+export function isNetworkFailure(error: unknown): boolean {
+  return (
+    error instanceof TypeError &&
+    /^(Failed to fetch|Load failed|NetworkError)/.test(error.message)
+  );
 }
 
 /**
@@ -119,6 +165,21 @@ export interface ValidationResponse {
  */
 export class AllocationService {
   /**
+   * Defensive JSON read shared by the validate endpoints: edge 504s/HTML
+   * error pages throw out of response.json(). Null means "no usable body" —
+   * callers answer with the HTTP status instead of a SyntaxError string.
+   */
+  private static async readValidationBody(
+    response: Response,
+  ): Promise<{ error?: string; data?: SlotConflictResult } | null> {
+    try {
+      return await response.json();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Shared PATCH for all four allocate endpoints.
    */
   private static async patchAllocation(
@@ -141,17 +202,55 @@ export class AllocationService {
         body: JSON.stringify(request),
       });
 
-      const data = await response.json();
+      // The error body is not always JSON — edge 504s/HTML under spikes throw
+      // out of response.json(). Parse defensively but ALWAYS propagate the
+      // HTTP status, so callers can still take the 409/allocated-elsewhere
+      // branch instead of reporting a status-less network error. A 2xx with
+      // an unreadable or malformed body must NOT report success: the allocate
+      // routes always return `{ data: [...] }`, so a body without it is a
+      // failure, not an empty booking.
+      let data: {
+        error?: string;
+        errorCode?: string;
+        data?: AllocatedAppointmentDto[];
+        partial?: boolean;
+        placedSessions?: number;
+        requiredSessions?: number;
+        unplacedSessions?: number;
+        placeableSessions?: number;
+      } = {};
+      let parseFailed = false;
+      try {
+        data = await response.json();
+      } catch {
+        parseFailed = true;
+        data = {};
+      }
 
       if (!response.ok) {
+        // A 5xx with no sentence is the edge giving up (504) or a crash: the
+        // allocation may have committed underneath, so say so (#1696).
+        const fallback =
+          response.status >= 500 ? OUTCOME_UNKNOWN_MESSAGE : fallbackError;
         return {
           success: false,
-          error: data.error || fallbackError,
+          error: data.error || fallback,
           errorCode: data.errorCode,
           httpStatus: response.status,
           // #1206 — a shortage the consultant can still act on.
           placeableSessions: data.placeableSessions,
           requiredSessions: data.requiredSessions,
+        };
+      }
+
+      if (parseFailed || !Array.isArray(data.data)) {
+        return {
+          success: false,
+          error: parseFailed
+            ? `Could not read the allocation response (HTTP ${response.status}). Please try again.`
+            : fallbackError,
+          errorCode: "VALIDATION_ERROR",
+          httpStatus: response.status,
         };
       }
 
@@ -169,11 +268,60 @@ export class AllocationService {
         subsystem: "client",
         tags: { feature: "scheduling" },
       });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
+    }
+  }
+
+  /**
+   * One POST shared by the four validate endpoints: only the path, the log
+   * label, and the fallback sentence differ. (The four public wrappers used
+   * to carry full copies of this body — 4×41 duplicated lines.)
+   */
+  private static async postForValidation(
+    endpoint: string,
+    slots: string[],
+    logLabel: string,
+    fallbackError: string,
+  ): Promise<ValidationResponse> {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ slots }),
+      });
+
+      const data = await this.readValidationBody(response);
+      if (!data) {
+        return {
+          success: false,
+          error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+          httpStatus: response.status,
+        };
+      }
+
+      if (!response.ok) {
+        return {
+          success: false,
+          error: data.error || fallbackError,
+          httpStatus: response.status,
+        };
+      }
+
+      // A 2xx with no payload proves nothing about the slots: fail closed.
+      if (!data.data) {
+        return { success: false, error: fallbackError };
+      }
+
+      return { success: true, data: data.data };
+    } catch (error) {
+      console.error(`Error validating ${logLabel} slots:`, error);
+      reportSentryError(error, {
+        subsystem: "scheduling",
+        op: "scheduling",
+      });
+      return { success: false, error: REQUEST_INDETERMINATE_ERROR };
     }
   }
 
@@ -184,43 +332,12 @@ export class AllocationService {
     consultationId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/consultations/${consultationId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate consultation slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating consultation slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/consultations/${consultationId}/validate`,
+      slots,
+      "consultation",
+      "Failed to validate consultation slots",
+    );
   }
 
   /**
@@ -230,43 +347,12 @@ export class AllocationService {
     subscriptionId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/subscriptions/${subscriptionId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate subscription slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating subscription slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/subscriptions/${subscriptionId}/validate`,
+      slots,
+      "subscription",
+      "Failed to validate subscription slots",
+    );
   }
 
   /**
@@ -280,12 +366,22 @@ export class AllocationService {
   ): Promise<AllocationResponse> {
     // Fail closed before the Zod 400 — mock/hand-crafted PKs (e.g.
     // mock0801-appt-pending) are legal Prisma String @ids but rejected by
-    // eventIdSchema. Surface a clear recreate message instead.
+    // eventIdSchema. The user gets friendly copy; the offending id rides
+    // to Sentry, never to the toast.
     if (!isEventIdFormat(eventId)) {
+      reportSentryError(
+        new Error(`Allocation refused: event id failed format check`),
+        {
+          subsystem: "client",
+          tags: { feature: "scheduling" },
+          extra: { eventType, eventId },
+        },
+      );
       return {
         success: false,
         error:
-          "This booking has an invalid event id — reseed or recreate it with a generated UUID/CUID.",
+          "This booking can't be scheduled as shown. Please reload and try again.",
+        errorCode: "VALIDATION_ERROR",
       };
     }
 
@@ -300,6 +396,7 @@ export class AllocationService {
       initialAllocation: allocationOptions?.initialAllocation,
       expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
       allowPartial: allocationOptions?.allowPartial,
+      override: allocationOptions?.override,
     };
 
     const paths = {
@@ -332,43 +429,12 @@ export class AllocationService {
     classId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/classes/${classId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate class slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating class slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/classes/${classId}/validate`,
+      slots,
+      "class",
+      "Failed to validate class slots",
+    );
   }
 
   /**
@@ -378,43 +444,12 @@ export class AllocationService {
     webinarId: string,
     slots: string[],
   ): Promise<ValidationResponse> {
-    try {
-      const response = await fetch(
-        `/api/bookings/webinars/${webinarId}/validate`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ slots }),
-        },
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        return {
-          success: false,
-          error: data.error || "Failed to validate webinar slots",
-        };
-      }
-
-      return {
-        success: true,
-        data: data.data,
-      };
-    } catch (error) {
-      console.error("Error validating webinar slots:", error);
-      reportSentryError(error, {
-        subsystem: "scheduling",
-        op: "scheduling",
-      });
-      return {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Network error occurred",
-      };
-    }
+    return this.postForValidation(
+      `/api/bookings/webinars/${webinarId}/validate`,
+      slots,
+      "webinar",
+      "Failed to validate webinar slots",
+    );
   }
 
   /**
@@ -579,12 +614,16 @@ export class AllocationService {
       }
       if (!response.ok) {
         const errorData = await response.json();
-        // See fetchConsultantData: httpStatus lets the catch distinguish a
-        // 4xx business answer from a real fault without changing the thrown
-        // Error's message/shape.
-        throw Object.assign(
-          new Error(errorData.error || "Failed to fetch availability slots"),
-          { httpStatus: response.status },
+        // The status and code ride on the error so the catch can tell a
+        // refusal (a 403 the route answered on purpose) from a fault.
+        throw new ApiResponseError(
+          errorData.error || "Failed to fetch availability slots",
+          {
+            status: response.status,
+            code: errorData.code,
+            detail: errorData,
+            retryAfterMs: retryAfterMsFromHeaders(response.headers),
+          },
         );
       }
       const result = await response.json();
@@ -603,18 +642,19 @@ export class AllocationService {
       };
     } catch (error) {
       console.error("Error fetching availability slots:", error);
-      const httpStatus =
-        error && typeof error === "object" && "httpStatus" in error
-          ? (error as { httpStatus?: number }).httpStatus
-          : undefined;
-      const expected =
-        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
-      reportSentryError(error, {
-        subsystem: "client",
-        op: "scheduling",
-        expected,
-        extra: { consultantId, httpStatus },
-      });
+      // A refusal is the route's answer; the caller toasts it and nobody is
+      // paged (FAMILIARISE_WEB-3Z).
+      if (!isExpectedRefusal(error)) {
+        reportSentryError(error, {
+          subsystem: "client",
+          op: "scheduling",
+          extra: {
+            consultantId,
+            httpStatus:
+              error instanceof ApiResponseError ? error.status : undefined,
+          },
+        });
+      }
       throw error;
     }
   }
@@ -634,6 +674,8 @@ export class AllocationService {
     eventId: string,
     consultantProfileId: string,
     slotsPerCall?: number,
+    /** Lets the caller cancel on unmount; an aborted read is not a fault. */
+    signal?: AbortSignal,
   ) {
     try {
       const params = new URLSearchParams({
@@ -655,7 +697,9 @@ export class AllocationService {
         params.append("consultationId", eventId);
       }
 
-      const response = await fetch(`/api/scheduling/appointments?${params}`);
+      const response = await fetch(`/api/scheduling/appointments?${params}`, {
+        signal,
+      });
 
       if (!response.ok) {
         // See fetchConsultantData: httpStatus lets the catch distinguish a
@@ -674,13 +718,22 @@ export class AllocationService {
           {},
       };
     } catch (error) {
+      if (isAbortedFetch(error, signal)) {
+        // The page moved on mid-read: the same quiet "nothing known" the
+        // hook degrades to, minus the Sentry event (FAMILIARISE_WEB-4J).
+        return { data: [], weeklyConfirmedCallCounts: {} };
+      }
       console.error("Error fetching event slots:", error);
       const httpStatus =
         error && typeof error === "object" && "httpStatus" in error
           ? (error as { httpStatus?: number }).httpStatus
           : undefined;
+      // Offline is expected (info), not an alert; a 5xx or a parse fault is.
       const expected =
-        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+        (typeof httpStatus === "number" &&
+          httpStatus >= 400 &&
+          httpStatus < 500) ||
+        isNetworkFailure(error);
       reportSentryError(error, {
         subsystem: "client",
         op: "scheduling",
