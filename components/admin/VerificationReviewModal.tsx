@@ -219,7 +219,7 @@ export function VerificationReviewModal({
       const docFeedbackArray = Object.values(documentFeedback).filter(
         (df) => df.documentId,
       );
-      const unreasoned = docFeedbackArray.find(
+      const unreasoned = docFeedbackArray.some(
         (df) => !df.isValid && !df.issue,
       );
       if (unreasoned) {

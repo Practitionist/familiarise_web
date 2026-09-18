@@ -22,6 +22,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { ConsultantVerificationStatus } from "@prisma/client";
+import type { UploadedDocument } from "@/components/verification/VerificationDocumentUpload";
 import type { TConsultantProfile } from "types/consultant";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
@@ -32,11 +33,8 @@ import {
   VERIFICATION_DOCUMENT_ISSUE_LABEL,
 } from "@/lib/labels/verification-labels";
 
-interface VerificationDocument {
-  id?: string;
-  /** The uploader's states; "uploaded" is the only one that carries an id worth sending. */
-  status: "uploading" | "uploaded" | "error" | string;
-}
+/** The uploader's row; "uploaded" is the only state that carries an id worth sending. */
+type VerificationDocument = Pick<UploadedDocument, "status"> & { id?: string };
 
 interface VerificationSubmitData {
   verificationLinkedinUrl?: string;

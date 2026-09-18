@@ -111,7 +111,7 @@ export async function submitVerificationRequest(
             where: { id: input.consultantProfileId },
             select: { userId: true, verificationStatus: true },
           });
-          if (!profile || profile.userId !== input.userId) {
+          if (profile?.userId !== input.userId) {
             throw new SubmitRefused(
               "PROFILE_NOT_FOUND",
               "Consultant profile not found",

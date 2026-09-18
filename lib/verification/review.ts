@@ -14,7 +14,7 @@ import {
   type ConsultantVerificationStatus,
   type VerificationDocumentIssue,
 } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import {
@@ -108,6 +108,81 @@ export function findFeedbackWithoutIssue(
   return null;
 }
 
+/** The `isVerified` write per decision; NEEDS_INFO leaves it untouched. */
+const IS_VERIFIED_FOR_DECISION: Record<
+  ReviewDecision,
+  { isVerified?: boolean }
+> = {
+  APPROVED: { isVerified: true },
+  REJECTED: { isVerified: false },
+  NEEDS_INFO: {},
+};
+
+/** Per-document verdicts; a document that is not on this request rolls the decision back. */
+async function applyDocumentFeedback(
+  tx: Tx,
+  verificationId: string,
+  feedback: DocumentFeedbackInput[],
+): Promise<void> {
+  for (const f of feedback) {
+    const updated = await tx.profileVerificationDocument.updateMany({
+      where: { id: f.documentId, verificationId },
+      data: {
+        isValid: f.isValid,
+        staffFeedback: f.staffFeedback ?? null,
+        issue: f.isValid ? null : (f.issue ?? null),
+      },
+    });
+    if (updated.count === 0) {
+      throw new ReviewRefused(
+        "DOCUMENT_NOT_ON_REQUEST",
+        "A document in the feedback does not belong to this request",
+      );
+    }
+  }
+}
+
+/**
+ * The decision and its notice exist together or not at all: the bell and the
+ * email rows are staged inside the decision's transaction and the caller
+ * attempts them after commit. `profileStatus` is never UNDER_REVIEW here.
+ */
+async function stageDecisionNotices(
+  tx: Tx,
+  args: {
+    consultantUserId: string | null;
+    consultantProfileId: string;
+    verificationId: string;
+    profileStatus: ConsultantVerificationStatus;
+    reason: string | undefined;
+  },
+): Promise<{
+  bell: TriggerResult | null;
+  email: StagedOnboardingEmail | null;
+}> {
+  if (!args.consultantUserId) return { bell: null, email: null };
+  const dashboardUrl = `/dashboard/consultant/${args.consultantProfileId}/settings`;
+  const bell = await notifyVerificationStatusChanged(
+    args.consultantUserId,
+    { status: args.profileStatus, reason: args.reason, dashboardUrl },
+    { tx },
+  );
+  const email =
+    args.profileStatus === "UNDER_REVIEW"
+      ? null
+      : await stageVerificationDecidedEmail(
+          {
+            userId: args.consultantUserId,
+            verificationId: args.verificationId,
+            status: args.profileStatus,
+            reason: args.reason,
+            dashboardUrl,
+          },
+          tx,
+        );
+  return { bell, email };
+}
+
 export async function reviewVerification(
   input: ReviewVerificationInput,
 ): Promise<ReviewVerificationOutcome> {
@@ -181,33 +256,18 @@ export async function reviewVerification(
             );
           }
 
-          for (const f of input.documentFeedback ?? []) {
-            const updated = await tx.profileVerificationDocument.updateMany({
-              where: { id: f.documentId, verificationId: input.verificationId },
-              data: {
-                isValid: f.isValid,
-                staffFeedback: f.staffFeedback ?? null,
-                issue: f.isValid ? null : (f.issue ?? null),
-              },
-            });
-            if (updated.count === 0) {
-              throw new ReviewRefused(
-                "DOCUMENT_NOT_ON_REQUEST",
-                "A document in the feedback does not belong to this request",
-              );
-            }
-          }
+          await applyDocumentFeedback(
+            tx,
+            input.verificationId,
+            input.documentFeedback ?? [],
+          );
 
           const profileStatus = PROFILE_STATUS_FOR_DECISION[input.status];
           await tx.consultantProfile.update({
             where: { id: verification.consultantProfileId },
             data: {
               verificationStatus: profileStatus,
-              ...(input.status === "APPROVED"
-                ? { isVerified: true }
-                : input.status === "REJECTED"
-                  ? { isVerified: false }
-                  : {}),
+              ...IS_VERIFIED_FOR_DECISION[input.status],
             },
           });
           await recomputeProfileCompletion(
@@ -215,34 +275,15 @@ export async function reviewVerification(
             verification.consultantProfileId,
           );
 
-          // The decision and its notice exist together or not at all: bell
-          // + email rows are staged here; the caller attempts them after
-          // commit. profileStatus is never UNDER_REVIEW for a decision.
           const consultantUserId =
             verification.consultantProfile.userId ?? null;
-          const payload = {
-            status: profileStatus,
+          const staged = await stageDecisionNotices(tx, {
+            consultantUserId,
+            consultantProfileId: verification.consultantProfileId,
+            verificationId: input.verificationId,
+            profileStatus,
             reason: input.rejectionReason || input.feedbackDetails || undefined,
-            dashboardUrl: `/dashboard/consultant/${verification.consultantProfileId}/settings`,
-          };
-          const bell = consultantUserId
-            ? await notifyVerificationStatusChanged(consultantUserId, payload, {
-                tx,
-              })
-            : null;
-          const email =
-            consultantUserId && profileStatus !== "UNDER_REVIEW"
-              ? await stageVerificationDecidedEmail(
-                  {
-                    userId: consultantUserId,
-                    verificationId: input.verificationId,
-                    status: profileStatus,
-                    reason: payload.reason,
-                    dashboardUrl: payload.dashboardUrl,
-                  },
-                  tx,
-                )
-              : null;
+          });
 
           return {
             ok: true as const,
@@ -250,7 +291,7 @@ export async function reviewVerification(
             consultantUserId,
             profileStatus,
             round,
-            staged: { bell, email },
+            staged,
           };
         },
         {

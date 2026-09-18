@@ -1,10 +1,10 @@
 "use client";
 
-import type { VerificationDocumentIssue } from "@prisma/client";
 import { useQuery } from "@tanstack/react-query";
 import type {
   ConsultantVerificationStatus,
   ProfileVerificationStatus,
+  VerificationDocumentIssue,
 } from "@prisma/client";
 
 export interface VerificationDocumentFeedback {

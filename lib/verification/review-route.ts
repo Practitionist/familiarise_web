@@ -12,7 +12,11 @@ import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import { attemptTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
-import { reviewVerification, REVIEW_REFUSAL_STATUS } from "./review";
+import {
+  reviewVerification,
+  REVIEW_REFUSAL_STATUS,
+  type ReviewDecision,
+} from "./review";
 import { documentDownloadPath } from "./documents";
 
 /** Replace the stored (possibly expired, signed) fileUrl with the ACL'd download route. */
@@ -21,6 +25,12 @@ export function withDownloadUrls<T extends { id: string; fileUrl: string }>(
 ): T[] {
   return documents.map((d) => ({ ...d, fileUrl: documentDownloadPath(d.id) }));
 }
+
+const DECISION_MESSAGE: Record<ReviewDecision, string> = {
+  APPROVED: "Profile approved and verified",
+  REJECTED: "Profile verification rejected",
+  NEEDS_INFO: "More information requested",
+};
 
 export async function handleReviewPatch(
   body: unknown,
@@ -79,11 +89,6 @@ export async function handleReviewPatch(
       ? { ...verification, documents: withDownloadUrls(verification.documents) }
       : null,
     round: outcome.round,
-    message:
-      status === "APPROVED"
-        ? "Profile approved and verified"
-        : status === "REJECTED"
-          ? "Profile verification rejected"
-          : "More information requested",
+    message: DECISION_MESSAGE[status],
   });
 }
