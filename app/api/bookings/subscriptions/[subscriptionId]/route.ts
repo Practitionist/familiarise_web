@@ -195,6 +195,8 @@ export async function PUT(
             consultantProfile: true,
           },
         },
+        // bookingOrgId's fallback when the plan carries no org.
+        appointment: { select: { organizationId: true } },
       },
     });
 
@@ -223,11 +225,15 @@ export async function PUT(
     // request; connecting any plan let a request migrate to another seller.
     const planRefusal = await refusePlanNotOwned(
       validatedData.planId,
-      existingSubscription.subscriptionPlan?.consultantProfileId,
+      {
+        consultantProfileId:
+          existingSubscription.subscriptionPlan?.consultantProfileId,
+        organizationId: bookingOrgId(existingSubscription),
+      },
       () =>
         prisma.subscriptionPlan.findUnique({
           where: { id: validatedData.planId },
-          select: { consultantProfileId: true },
+          select: { consultantProfileId: true, organizationId: true },
         }),
     );
     if (planRefusal) return planRefusal;
