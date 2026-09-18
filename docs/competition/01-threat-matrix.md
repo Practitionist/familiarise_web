@@ -57,7 +57,7 @@ This is where it gets interesting. Topmate has serious, structural problems:
   - Unresponsive support
   - Creators locked out of their own earnings
 - **No RBI PA license confirmed.** Operating payment aggregation in India without confirmed compliance is a regulatory time bomb. If RBI cracks down, their Indian operations are at risk.
-- **Stripe-only payments.** Indian creators lose 3% Stripe fee + 3-5% forex conversion on every transaction. Effective take rate is 16-18%, not the advertised 10%. This is a massive hidden cost that most creators don't realize until they see their payouts.
+- **Stripe-only payments is out of date.** Topmate now runs its own INR rails alongside Stripe, with a first payout 7 days after the first paid booking and withdrawals within about an hour after that; international payouts still take about 7 business days (verified 2026-09-18, topmate.io/pricing and the payout-guidelines help article). Its take rate is a dual 10% on bookings from the expert's own link and 20% on marketplace-sourced bookings, plus a 2% transaction fee on INR, with GST charged on the fee only. This is no longer a payment-rail advantage for us; see the executive summary's rewritten "Unfair advantage 3" for where the real edge now sits.
 - **Zoom dependency.** Sessions happen on Zoom. No integrated video, no session recordings owned by the platform, no chat continuity. The experience is fragmented.
 - **Power-law economics.** A tiny fraction of creators earn real money. The rest get a few bookings and churn. Topmate doesn't solve this — they just provide a link.
 - **No multi-service support.** No webinars, no classes, no subscriptions, no document review. Creators who want to offer more than 1-on-1 calls need additional tools.
@@ -74,25 +74,25 @@ This is where it gets interesting. Topmate has serious, structural problems:
 
 ### 2. SuperProfile (superprofile.bio)
 
-| Metric      | Value                                       |
-| ----------- | ------------------------------------------- |
-| Creators    | ~38,000                                     |
-| Users       | ~4,000,000                                  |
-| Funding     | Undisclosed (backed by notable angels)      |
-| Revenue     | Not publicly disclosed                      |
-| Pricing     | ₹99/month flat subscription (no commission) |
-| Founded     | 2022 (India)                                |
-| Mobile Apps | No                                          |
+| Metric      | Value                                               |
+| ----------- | --------------------------------------------------- |
+| Creators    | ~38,000                                             |
+| Users       | ~4,000,000                                          |
+| Funding     | Undisclosed (backed by notable angels)              |
+| Revenue     | Not publicly disclosed                              |
+| Pricing     | Disputed — see note below (third-party, 2026-09-18) |
+| Founded     | 2022 (India)                                        |
+| Mobile Apps | No                                                  |
 
 **Overview:**
-SuperProfile is the newest serious threat and the one growing fastest. They've taken a radically different approach: flat ₹99/month subscription instead of commission. This is a direct attack on the commission model that Topmate (and we) use. They position as a "link-in-bio store" for creators — consultations, digital products, courses, community, all in one link.
+SuperProfile is the newest serious threat and the one growing fastest. Their own pricing page returned an HTTP 429 during the 2026-09-18 review, so the numbers below are third-party and disagree with each other (third-party, 2026-09-18): one May 2026 review reports a free Starter tier with a 10% platform fee, a ₹11,999/yr Premium tier at 5%, and a ₹49,999/yr Pro tier, while a July 2026 review reports ₹99 for the first month then ₹499/month. The March 2026 claim of "₹99/month flat, zero commission" is not supported by either source and should be treated as stale. They position as a "link-in-bio store" for creators — digital downloads, courses, paid Telegram/Discord groups, and memberships, with no 1:1 session product observed and "bundles" meaning a single listing holding many files (third-party, 2026-09-18).
 
 **Business Model:**
-₹99/month subscription. Zero commission. Creators keep 100% of their earnings minus payment gateway fees. They support UPI, which means Indian transactions are nearly free for creators. Revenue comes from volume of subscriptions, not transaction volume.
+The fee structure is disputed between the two third-party sources above; neither claims zero commission at scale. They support UPI, which means Indian transactions are inexpensive for creators regardless of which fee schedule applies. Revenue comes from a mix of subscription tiers rather than pure transaction volume.
 
 **Why They're a Threat:**
 
-- **The pricing is devastating.** ₹99/month with zero commission is impossible to compete with on price alone. A creator doing ₹50K/month in bookings pays ₹99 on SuperProfile vs ₹5,000 on Familiarise (at 10%). The math is brutal.
+- **The pricing, even taken conservatively, is aggressive.** Even the higher of the two third-party readings puts a creator's cost well below a pure commission model at volume. The exact math depends on which tier and which source is correct, so lead with the qualitative threat rather than a specific number until we can read their own page.
 - **4M users already.** They're growing fast, possibly faster than Topmate in India.
 - **UPI support.** They've solved the payment problem that Topmate hasn't.
 - **Digital products.** They support selling PDFs, templates, courses — not just calls. This broadens their creator base beyond consultants.

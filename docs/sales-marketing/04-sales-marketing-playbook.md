@@ -32,13 +32,13 @@ This document is the **operational manual** for Familiarise's sales and marketin
 
 You are pre-MVP, 2-3 person team, competing against:
 
-| Competitor | Funding | Team | Dominant channel | Weakness |
-|---|---|---|---|---|
-| **Topmate** | $1.13M | ~30-50 | Creator word-of-mouth + Twitter | Stripe-only (FX losses), external Zoom, no integrated video |
-| **Preplaced** | $1M+ | ~20-30 | SEO + paid ads on "career mentorship" | Subscription-only model, high commission, narrow focus |
-| **GrowthSchool** | $4M+ | ~50-100 | YouTube creator partnerships, paid ads | Cohort-based, no 1:1 marketplace |
-| **Metvy** | $600K | ~15-25 | LinkedIn + Discord community | Smaller supply, less brand equity |
-| **upGrad** | $400M+ | 1000+ | TV ads, Google Ads, partnership programs | Enterprise learning, not creator-led |
+| Competitor       | Funding | Team    | Dominant channel                         | Weakness                                                    |
+| ---------------- | ------- | ------- | ---------------------------------------- | ----------------------------------------------------------- |
+| **Topmate**      | $1.13M  | ~30-50  | Creator word-of-mouth + Twitter          | Stripe-only (FX losses), external Zoom, no integrated video |
+| **Preplaced**    | $1M+    | ~20-30  | SEO + paid ads on "career mentorship"    | Subscription-only model, high commission, narrow focus      |
+| **GrowthSchool** | $4M+    | ~50-100 | YouTube creator partnerships, paid ads   | Cohort-based, no 1:1 marketplace                            |
+| **Metvy**        | $600K   | ~15-25  | LinkedIn + Discord community             | Smaller supply, less brand equity                           |
+| **upGrad**       | $400M+  | 1000+   | TV ads, Google Ads, partnership programs | Enterprise learning, not creator-led                        |
 
 You cannot out-spend any of them on paid acquisition. You cannot out-hire any of them. You must win by being **categorically different in the eyes of your first 100 customers.**
 
@@ -46,7 +46,7 @@ You cannot out-spend any of them on paid acquisition. You cannot out-hire any of
 
 > **Familiarise is the India-native creator platform where you keep more of your money and your customers get a better experience.**
 >
-> **For creators:** 10% commission, UPI settlement (not Stripe FX), integrated video/chat (no Zoom-link gymnastics), 4 service types in one dashboard.
+> **For creators:** 10% on bookings from your own link, 20% on marketplace-sourced bookings (#1711), UPI settlement (not Stripe FX), integrated video/chat (no Zoom-link gymnastics), 4 service types in one dashboard.
 >
 > **For teams:** Sponsor your people's learning with Indian compliance built-in, GST invoicing, SSO when you need it, and per-seat or per-credit billing — not another imported LMS.
 
@@ -64,30 +64,30 @@ Every sales or marketing motion must reinforce at least one of these:
 
 ### 3.1 Phase 0 hires (now, before first 5 paying customers)
 
-| Role | Type | Stipend | Hours | Duration | Converts to |
-|---|---|---|---|---|---|
-| **Customer Success / Sales intern** | Paid intern | ₹10-12K/month | 25-30/week | 3-6 months | CS Lead (₹35-50K FT) |
-| **Marketing / Content intern** | Paid intern | ₹10-12K/month | 25-30/week | 3-6 months | Content Marketer (₹30-45K FT) |
+| Role                                | Type        | Stipend       | Hours      | Duration   | Converts to                   |
+| ----------------------------------- | ----------- | ------------- | ---------- | ---------- | ----------------------------- |
+| **Customer Success / Sales intern** | Paid intern | ₹10-12K/month | 25-30/week | 3-6 months | CS Lead (₹35-50K FT)          |
+| **Marketing / Content intern**      | Paid intern | ₹10-12K/month | 25-30/week | 3-6 months | Content Marketer (₹30-45K FT) |
 
 **Total Phase 0 sales/marketing spend: ~₹25K/month.**
 
 ### 3.2 Phase 1 conversions (after 5-10 paying customers)
 
-| Role | Type | Salary | When to hire |
-|---|---|---|---|
-| **CS Lead** | FT (convert intern) | ₹35-50K/month | After first 10 paying customers; convert best-performing CS intern |
-| **Content marketer** | FT | ₹30-45K/month | After 20 paying customers + organic content signal |
-| **CS intern** (new) | Paid intern | ₹10-12K/month | Reports to CS Lead; rotates every 3-6 months |
-| **Marketing intern** (new) | Paid intern | ₹10-12K/month | Reports to content marketer |
+| Role                       | Type                | Salary        | When to hire                                                       |
+| -------------------------- | ------------------- | ------------- | ------------------------------------------------------------------ |
+| **CS Lead**                | FT (convert intern) | ₹35-50K/month | After first 10 paying customers; convert best-performing CS intern |
+| **Content marketer**       | FT                  | ₹30-45K/month | After 20 paying customers + organic content signal                 |
+| **CS intern** (new)        | Paid intern         | ₹10-12K/month | Reports to CS Lead; rotates every 3-6 months                       |
+| **Marketing intern** (new) | Paid intern         | ₹10-12K/month | Reports to content marketer                                        |
 
 **Total Phase 1 sales/marketing spend: ~₹1.0-1.2L/month.**
 
 ### 3.3 Phase 2 hires (after ₹3-5L MRR)
 
-| Role | Type | Salary |
-|---|---|---|
-| **Growth marketer (paid channels)** | FT | ₹60-90K/month |
-| **Enterprise account executive** (if B2B traction) | FT | ₹80K-1.2L base + 5-10% commission |
+| Role                                               | Type | Salary                            |
+| -------------------------------------------------- | ---- | --------------------------------- |
+| **Growth marketer (paid channels)**                | FT   | ₹60-90K/month                     |
+| **Enterprise account executive** (if B2B traction) | FT   | ₹80K-1.2L base + 5-10% commission |
 
 ---
 
@@ -103,13 +103,13 @@ Every sales or marketing motion must reinforce at least one of these:
 
 ### 4.2 Daily responsibilities
 
-| Time block | Activity | Output |
-|---|---|---|
-| 9-10 AM | Review overnight signups + intercom tickets | Triage, assign, respond to L1 |
-| 10-12 PM | Outbound sales: LinkedIn / Twitter / WhatsApp to target creators | 10 outreach messages/day, 2-3 replies logged in Notion |
-| 12-1 PM | Onboarding calls (30 min each, up to 2/day) with new paying creators | Call notes logged, success metric tagged |
-| 2-4 PM | L1 support + canned-response library maintenance | FAQ updates, ticket tag-cluster |
-| 4-5 PM | Daily standup with CEO (15 min) + weekly report prep (30 min) | Daily log: calls made, tickets handled, obstacles |
+| Time block | Activity                                                             | Output                                                 |
+| ---------- | -------------------------------------------------------------------- | ------------------------------------------------------ |
+| 9-10 AM    | Review overnight signups + intercom tickets                          | Triage, assign, respond to L1                          |
+| 10-12 PM   | Outbound sales: LinkedIn / Twitter / WhatsApp to target creators     | 10 outreach messages/day, 2-3 replies logged in Notion |
+| 12-1 PM    | Onboarding calls (30 min each, up to 2/day) with new paying creators | Call notes logged, success metric tagged               |
+| 2-4 PM     | L1 support + canned-response library maintenance                     | FAQ updates, ticket tag-cluster                        |
+| 4-5 PM     | Daily standup with CEO (15 min) + weekly report prep (30 min)        | Daily log: calls made, tickets handled, obstacles      |
 
 **Weekly deliverable (every Friday):**
 
@@ -121,14 +121,14 @@ Every sales or marketing motion must reinforce at least one of these:
 
 ### 4.3 Success metrics (90-day trial)
 
-| Metric | Target | Failure threshold |
-|---|---|---|
-| Qualified creator conversations | 30+ total | < 15 |
-| Paying creators acquired (direct attribution) | 10+ | < 5 |
-| Onboarding call coverage | 100% of new paying creators | < 80% |
-| NPS average | > 40 | < 25 |
-| First-response time p50 | < 4 business hours | > 8 business hours |
-| Ticket tag-cluster actionable | 80%+ tickets tagged with clear category | < 60% |
+| Metric                                        | Target                                  | Failure threshold  |
+| --------------------------------------------- | --------------------------------------- | ------------------ |
+| Qualified creator conversations               | 30+ total                               | < 15               |
+| Paying creators acquired (direct attribution) | 10+                                     | < 5                |
+| Onboarding call coverage                      | 100% of new paying creators             | < 80%              |
+| NPS average                                   | > 40                                    | < 25               |
+| First-response time p50                       | < 4 business hours                      | > 8 business hours |
+| Ticket tag-cluster actionable                 | 80%+ tickets tagged with clear category | < 60%              |
 
 **Conversion decision (day 90):** if all targets met, offer FT CS Lead role at ₹35-50K. If 3+ metrics failing, end contract, hire replacement intern.
 
@@ -295,25 +295,25 @@ Log response + outcome in Notion. Every churn interaction produces either a fix,
 
 ### 5.2 Daily responsibilities
 
-| Time block | Activity |
-|---|---|
-| 9-11 AM | SEO blog writing (target: 1 post every 2 days, 1500+ words) |
-| 11-12 PM | Competitor monitoring (Topmate / Preplaced / GrowthSchool new content, pricing moves, product updates) |
-| 1-3 PM | Social content (LinkedIn post, Twitter thread, Instagram carousel) |
-| 3-4 PM | Community management (Discord/Telegram/WhatsApp for beta creators) |
-| 4-5 PM | Daily metrics log + weekly content calendar |
+| Time block | Activity                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------ |
+| 9-11 AM    | SEO blog writing (target: 1 post every 2 days, 1500+ words)                                            |
+| 11-12 PM   | Competitor monitoring (Topmate / Preplaced / GrowthSchool new content, pricing moves, product updates) |
+| 1-3 PM     | Social content (LinkedIn post, Twitter thread, Instagram carousel)                                     |
+| 3-4 PM     | Community management (Discord/Telegram/WhatsApp for beta creators)                                     |
+| 4-5 PM     | Daily metrics log + weekly content calendar                                                            |
 
 ### 5.3 Success metrics (90-day trial)
 
-| Metric | Target | Failure threshold |
-|---|---|---|
-| Blog posts published | 24+ | < 12 |
-| Organic sessions/month by day 90 | > 5K | < 1K |
-| LinkedIn followers | +500 | +100 |
-| Twitter followers | +1000 | +200 |
-| Community members (Discord/WA) | > 100 active | < 30 |
-| Content-attributable signups (UTM-tracked) | 20+ | < 5 |
-| At least 3 content pieces at 5K+ organic reach | Yes | No |
+| Metric                                         | Target       | Failure threshold |
+| ---------------------------------------------- | ------------ | ----------------- |
+| Blog posts published                           | 24+          | < 12              |
+| Organic sessions/month by day 90               | > 5K         | < 1K              |
+| LinkedIn followers                             | +500         | +100              |
+| Twitter followers                              | +1000        | +200              |
+| Community members (Discord/WA)                 | > 100 active | < 30              |
+| Content-attributable signups (UTM-tracked)     | 20+          | < 5               |
+| At least 3 content pieces at 5K+ organic reach | Yes          | No                |
 
 ### 5.4 Content pillars (blog + social)
 
@@ -386,22 +386,22 @@ Hashtags: #IndianCreators #CreatorEconomy #Mentorship #SideIncome. Don't over-ha
 
 **Target keywords (month 1-3):**
 
-| Keyword | Volume | Difficulty | Our angle |
-|---|---|---|---|
-| "Topmate alternatives India" | ~200/mo | Medium | Direct competitive piece |
-| "Sell 1:1 consultations India" | ~500/mo | Medium | How-to guide with our platform as recommendation |
-| "Creator commission rates comparison" | ~100/mo | Low | Benchmark article |
-| "UPI vs Stripe for creators" | ~80/mo | Low | Data-driven breakdown |
-| "Mentor platform India 2026" | ~300/mo | High | Long-tail SEO play |
+| Keyword                               | Volume  | Difficulty | Our angle                                        |
+| ------------------------------------- | ------- | ---------- | ------------------------------------------------ |
+| "Topmate alternatives India"          | ~200/mo | Medium     | Direct competitive piece                         |
+| "Sell 1:1 consultations India"        | ~500/mo | Medium     | How-to guide with our platform as recommendation |
+| "Creator commission rates comparison" | ~100/mo | Low        | Benchmark article                                |
+| "UPI vs Stripe for creators"          | ~80/mo  | Low        | Data-driven breakdown                            |
+| "Mentor platform India 2026"          | ~300/mo | High       | Long-tail SEO play                               |
 
 **Target keywords (month 4-6):**
 
-| Keyword | Volume | Difficulty |
-|---|---|---|
-| "How to monetize expertise India" | ~400/mo | Medium |
-| "Online consultation booking India" | ~600/mo | High |
-| "Creator tax India GST" | ~200/mo | Low |
-| "Sell webinars India" | ~150/mo | Low |
+| Keyword                             | Volume  | Difficulty |
+| ----------------------------------- | ------- | ---------- |
+| "How to monetize expertise India"   | ~400/mo | Medium     |
+| "Online consultation booking India" | ~600/mo | High       |
+| "Creator tax India GST"             | ~200/mo | Low        |
+| "Sell webinars India"               | ~150/mo | Low        |
 
 **Tactics:**
 
@@ -430,23 +430,23 @@ Hashtags: #IndianCreators #CreatorEconomy #Mentorship #SideIncome. Don't over-ha
 
 ### 6.1 Why these numbers (justification)
 
-| Role | Stipend/salary | Rationale |
-|---|---|---|
-| CS/Sales intern | ₹10-12K/month | India Internshala benchmark for 25-30hr/week CS roles. Low enough to fit Phase 0 budget. High enough to attract quality interns (Tier 2-3 engineering/business college students). |
-| Marketing intern | ₹10-12K/month | Same as CS; comparable effort profile. |
-| CS Lead (FT, post-conversion) | ₹35-50K/month | India fresher-to-1yr CS manager market rate. Below Tier-1 product company rates but higher than typical CS rep. |
-| Content marketer (FT) | ₹30-45K/month | India fresher-to-2yr content marketing role. Higher range justified if candidate shows SEO + data analysis skill. |
+| Role                          | Stipend/salary | Rationale                                                                                                                                                                         |
+| ----------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CS/Sales intern               | ₹10-12K/month  | India Internshala benchmark for 25-30hr/week CS roles. Low enough to fit Phase 0 budget. High enough to attract quality interns (Tier 2-3 engineering/business college students). |
+| Marketing intern              | ₹10-12K/month  | Same as CS; comparable effort profile.                                                                                                                                            |
+| CS Lead (FT, post-conversion) | ₹35-50K/month  | India fresher-to-1yr CS manager market rate. Below Tier-1 product company rates but higher than typical CS rep.                                                                   |
+| Content marketer (FT)         | ₹30-45K/month  | India fresher-to-2yr content marketing role. Higher range justified if candidate shows SEO + data analysis skill.                                                                 |
 
 ### 6.2 Performance bonuses (optional, fund from commission upside)
 
 For both interns and FT roles, consider adding commission-based upside that aligns to business outcomes:
 
-| Role | Base | Performance bonus |
-|---|---|---|
-| CS/Sales intern | ₹10-12K | + ₹500 per paying creator acquired (cap ₹5K/month) |
-| Marketing intern | ₹10-12K | + ₹200 per content-attributable signup (cap ₹4K/month) |
-| CS Lead (FT) | ₹35-50K | + 2% of net commission from customers they onboarded, first 6 months |
-| Content marketer (FT) | ₹30-45K | + 1% of net commission attributable to content UTMs |
+| Role                  | Base    | Performance bonus                                                    |
+| --------------------- | ------- | -------------------------------------------------------------------- |
+| CS/Sales intern       | ₹10-12K | + ₹500 per paying creator acquired (cap ₹5K/month)                   |
+| Marketing intern      | ₹10-12K | + ₹200 per content-attributable signup (cap ₹4K/month)               |
+| CS Lead (FT)          | ₹35-50K | + 2% of net commission from customers they onboarded, first 6 months |
+| Content marketer (FT) | ₹30-45K | + 1% of net commission attributable to content UTMs                  |
 
 **Total potential earnings:**
 
@@ -486,23 +486,23 @@ That translates to:
 
 ### 7.1 Intern weekly rhythm
 
-| Day | Activity |
-|---|---|
-| **Monday** | Weekly planning (30 min with CEO): targets for the week, blockers, priorities |
-| **Tuesday-Thursday** | Execution: outreach, onboarding calls, content, social |
-| **Friday AM** | Weekly report (written): numbers, highlights, asks |
-| **Friday PM** | Weekly 1:1 with CEO (30 min): review, coaching, escalations |
+| Day                  | Activity                                                                      |
+| -------------------- | ----------------------------------------------------------------------------- |
+| **Monday**           | Weekly planning (30 min with CEO): targets for the week, blockers, priorities |
+| **Tuesday-Thursday** | Execution: outreach, onboarding calls, content, social                        |
+| **Friday AM**        | Weekly report (written): numbers, highlights, asks                            |
+| **Friday PM**        | Weekly 1:1 with CEO (30 min): review, coaching, escalations                   |
 
 ### 7.2 CEO weekly rhythm (sales/marketing time allocation)
 
 At this stage, CEO is still closing sales and setting marketing direction:
 
-| Day | CEO activity |
-|---|---|
-| Monday | Planning with interns (1 hr total) |
+| Day               | CEO activity                                                           |
+| ----------------- | ---------------------------------------------------------------------- |
+| Monday            | Planning with interns (1 hr total)                                     |
 | Tuesday-Wednesday | Close calls (2-3 close calls with warm leads the intern has qualified) |
-| Thursday | Enterprise outbound (2-3 high-intent prospects) |
-| Friday | 1:1s with interns + content strategy review |
+| Thursday          | Enterprise outbound (2-3 high-intent prospects)                        |
+| Friday            | 1:1s with interns + content strategy review                            |
 
 Time allocation goal: CEO spends **10-15 hours/week on sales**, **5 hours/week on marketing strategy**, **20-25 hours/week on product + engineering**.
 
@@ -518,28 +518,28 @@ Time allocation goal: CEO spends **10-15 hours/week on sales**, **5 hours/week o
 
 ### 8.1 Leading indicators (tracked weekly)
 
-| Metric | Phase 0 target | Phase 1 target |
-|---|---|---|
-| Outbound messages sent | 50-70/week | 150-200/week |
-| Qualified conversations | 10-15/week | 30-40/week |
-| New signups | 5-10/week | 20-30/week |
-| Paying creators added | 1-3/week | 4-8/week |
-| Blog posts published | 2-3/week | 3-5/week |
-| Organic traffic (monthly) | > 1K | > 10K |
-| Community members | > 30 | > 200 |
+| Metric                    | Phase 0 target | Phase 1 target |
+| ------------------------- | -------------- | -------------- |
+| Outbound messages sent    | 50-70/week     | 150-200/week   |
+| Qualified conversations   | 10-15/week     | 30-40/week     |
+| New signups               | 5-10/week      | 20-30/week     |
+| Paying creators added     | 1-3/week       | 4-8/week       |
+| Blog posts published      | 2-3/week       | 3-5/week       |
+| Organic traffic (monthly) | > 1K           | > 10K          |
+| Community members         | > 30           | > 200          |
 
 ### 8.2 Lagging indicators (tracked monthly)
 
-| Metric | Phase 0 target (month 3) | Phase 1 target (month 6) |
-|---|---|---|
-| Total paying creators | 10-15 | 40-60 |
-| MRR (commission revenue) | ₹50-80K | ₹2-3L |
-| Enterprise customers | 0-1 | 2-3 Starter tier |
-| Creator NPS | > 40 | > 50 |
-| Creator 60-day retention | > 70% | > 80% |
-| Monthly churn | < 10% | < 5% |
-| CAC (B2C) | < ₹2K/creator | < ₹1.5K/creator |
-| CAC (Enterprise) | < ₹50K/deal | < ₹75K/deal |
+| Metric                   | Phase 0 target (month 3) | Phase 1 target (month 6) |
+| ------------------------ | ------------------------ | ------------------------ |
+| Total paying creators    | 10-15                    | 40-60                    |
+| MRR (commission revenue) | ₹50-80K                  | ₹2-3L                    |
+| Enterprise customers     | 0-1                      | 2-3 Starter tier         |
+| Creator NPS              | > 40                     | > 50                     |
+| Creator 60-day retention | > 70%                    | > 80%                    |
+| Monthly churn            | < 10%                    | < 5%                     |
+| CAC (B2C)                | < ₹2K/creator            | < ₹1.5K/creator          |
+| CAC (Enterprise)         | < ₹50K/deal              | < ₹75K/deal              |
 
 ### 8.3 Intern → FT conversion criteria
 
@@ -626,22 +626,22 @@ Shift from "launch" mode to "grow" mode:
 
 ### 10.1 When to hire beyond Phase 1
 
-| Signal | Hire to consider |
-|---|---|
-| CS Lead handles > 50 tickets/week solo | Add CS intern #2 |
-| Content marketer can't keep up with 5 posts/week | Add content writer (contract or FT) |
-| Paid ads becoming measurably profitable (CAC < 0.5 × LTV) | Growth marketer (FT) |
-| Enterprise pipeline > 10 qualified opps | Enterprise AE |
-| Support L2 escalations > 5/week | Junior dev doing 20% support rotation |
+| Signal                                                    | Hire to consider                      |
+| --------------------------------------------------------- | ------------------------------------- |
+| CS Lead handles > 50 tickets/week solo                    | Add CS intern #2                      |
+| Content marketer can't keep up with 5 posts/week          | Add content writer (contract or FT)   |
+| Paid ads becoming measurably profitable (CAC < 0.5 × LTV) | Growth marketer (FT)                  |
+| Enterprise pipeline > 10 qualified opps                   | Enterprise AE                         |
+| Support L2 escalations > 5/week                           | Junior dev doing 20% support rotation |
 
 ### 10.2 When to pull back
 
-| Signal | Action |
-|---|---|
-| Burn > ₹3L/month with < ₹2L MRR | Freeze all hiring, reduce intern count |
+| Signal                                      | Action                                    |
+| ------------------------------------------- | ----------------------------------------- |
+| Burn > ₹3L/month with < ₹2L MRR             | Freeze all hiring, reduce intern count    |
 | Churn > 10%/month for 2+ consecutive months | Pause marketing spend, focus on retention |
-| CAC > 50% of LTV | Pause outbound, pivot to organic-only |
-| Stream.io cliff triggers before ₹10L GMV | Reduce team to < 5 FT, stretch Maker tier |
+| CAC > 50% of LTV                            | Pause outbound, pivot to organic-only     |
+| Stream.io cliff triggers before ₹10L GMV    | Reduce team to < 5 FT, stretch Maker tier |
 
 ---
 
@@ -706,14 +706,14 @@ Store all of these in `/marketing/templates/` (create the directory).
 
 ### 13.2 Glossary
 
-| Term | Meaning |
-|---|---|
-| CAC | Customer acquisition cost — total sales+marketing spend ÷ customers acquired. |
-| LTV | Lifetime value — total revenue a customer generates over their lifetime. |
-| MRR | Monthly recurring revenue — predictable monthly revenue, usually subscriptions. |
-| GMV | Gross merchandise value — total money flowing through platform before commission. |
-| NPS | Net promoter score — customer satisfaction metric (0-10, -100 to +100 scale). |
-| UTM | URL-based tracking parameter for content-to-signup attribution. |
+| Term | Meaning                                                                           |
+| ---- | --------------------------------------------------------------------------------- |
+| CAC  | Customer acquisition cost — total sales+marketing spend ÷ customers acquired.     |
+| LTV  | Lifetime value — total revenue a customer generates over their lifetime.          |
+| MRR  | Monthly recurring revenue — predictable monthly revenue, usually subscriptions.   |
+| GMV  | Gross merchandise value — total money flowing through platform before commission. |
+| NPS  | Net promoter score — customer satisfaction metric (0-10, -100 to +100 scale).     |
+| UTM  | URL-based tracking parameter for content-to-signup attribution.                   |
 
 ### 13.3 Review cadence
 

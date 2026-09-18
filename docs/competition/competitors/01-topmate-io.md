@@ -108,6 +108,8 @@ Topmate enables creators, influencers, experts, and professionals to monetize th
 | **Transaction Fees**    | Payment gateway fees (2-3%) |
 | **Effective Take Rate** | ~8-9% total                 |
 
+This 5% figure is from this document's original deep dive and is now two revisions old: by March 2026 the rate had risen to a flat 10%, and by the 2026-09-18 review it had become a dual rate of 10% on bookings from the expert's own link and 20% on marketplace-sourced bookings, plus a 2% transaction fee on INR with GST charged on the fee only (verified 2026-09-18, topmate.io/pricing). Payouts have also changed: the first INR payout lands 7 days after the first paid booking, after which withdrawals complete within about an hour; international payouts take about 7 business days (verified 2026-09-18, the payout-guidelines help article).
+
 ### 3.2 Pricing Philosophy
 
 > "We earn when you earn" - Commission-only model, no monthly subscription fees for experts.
