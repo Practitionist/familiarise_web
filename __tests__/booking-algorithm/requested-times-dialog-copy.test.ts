@@ -20,7 +20,10 @@ describe("validation failure copy", () => {
   it("maps 401, 403, 5xx/network and a plain refusal", () => {
     expect(classifyValidationFailure(401)).toBe("session-ended");
     expect(classifyValidationFailure(403)).toBe("forbidden");
-    expect(classifyValidationFailure(503)).toBe("indeterminate");
+    // #1716 — a 503 is a refusal with nothing done (a failed session lookup,
+    // a lock outage), so it carries the route's own "try again" sentence.
+    expect(classifyValidationFailure(503)).toBe("retry-later");
+    expect(classifyValidationFailure(502)).toBe("indeterminate");
     expect(classifyValidationFailure(undefined)).toBe("indeterminate");
     expect(classifyValidationFailure(409)).toBe("refused");
 
@@ -34,6 +37,12 @@ describe("validation failure copy", () => {
       REQUEST_INDETERMINATE_ERROR,
     );
     expect(validationFailureCopy("refused", "Slot taken")).toBe("Slot taken");
+    expect(
+      validationFailureCopy(
+        "retry-later",
+        "We couldn't confirm your session just now. Try again in a moment.",
+      ),
+    ).toMatch(/try again in a moment/i);
   });
 
   it("keeps the current page as callbackUrl on the sign-in link", () => {

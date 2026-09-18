@@ -107,10 +107,18 @@ export function isOutcomeUnknown(error: ApiResponseError): boolean {
   return error.status >= 500 && !error.fromServerBody;
 }
 
-/** The sentence a failed action toasts, with the timeout case answered honestly. */
+/** #1716 — 401 is reserved for a session that really ended; say so. */
+export const SESSION_ENDED_MESSAGE = "Your session has ended — sign in again.";
+
+/**
+ * The sentence a failed action toasts, with the timeout case answered
+ * honestly and a 401 named for what it now means. A 503 keeps the route's
+ * own "try again" sentence (a failed session lookup, a lock outage).
+ */
 export function actionFailureMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiResponseError && isOutcomeUnknown(error)) {
-    return OUTCOME_UNKNOWN_MESSAGE;
+  if (error instanceof ApiResponseError) {
+    if (isOutcomeUnknown(error)) return OUTCOME_UNKNOWN_MESSAGE;
+    if (error.status === 401) return SESSION_ENDED_MESSAGE;
   }
   if (error instanceof Error) return error.message;
   return fallback;
