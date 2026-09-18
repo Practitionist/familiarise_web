@@ -20,10 +20,14 @@ import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
   assertWeeklyWindows,
+  AvailabilityContractError,
 } from "@/lib/scheduling/availability-contract";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
   canAddConsultantIdentity,
+  OnboardingRefusedError,
+  refusalFromIssues,
+  refusalResult,
   buildUserUpdateData,
   buildConsultantScalarData,
   buildConsulteeScalarData,
@@ -33,6 +37,19 @@ import {
   shouldSubmitVerification,
   isPersistableVerificationDoc,
 } from "./onboarding-shared";
+
+// A contract refusal names its window; the wizard needs the field too.
+function toRefusal(error: unknown, field: "weeklySlots" | "customSlots") {
+  if (error instanceof AvailabilityContractError) {
+    return new OnboardingRefusedError(
+      error.code,
+      error.message,
+      field,
+      error.index,
+    );
+  }
+  return error;
+}
 
 // ============================================================================
 // TYPES
@@ -64,7 +81,8 @@ interface VerificationBody {
 
 async function assertUserExists(id: string) {
   const user = await prisma.user.findUnique({ where: { id } });
-  if (!user) throw new Error("User not found");
+  if (!user)
+    throw new OnboardingRefusedError("USER_NOT_FOUND", "User not found");
 }
 
 // ============================================================================
@@ -90,8 +108,10 @@ async function upsertConsultantProfile(
       where: { id: { in: tagIds }, domainId },
     });
     if (validTags !== tagIds.length) {
-      throw new Error(
-        "One or more selected skills do not belong to the chosen domain",
+      throw new OnboardingRefusedError(
+        "INVALID_SELECTION",
+        "One or more selected skills do not belong to the chosen field of expertise",
+        "tags",
       );
     }
   }
@@ -101,8 +121,10 @@ async function upsertConsultantProfile(
       where: { id: { in: subDomainIds }, domainId },
     });
     if (validSubDomains !== subDomainIds.length) {
-      throw new Error(
-        "One or more selected sub-domains do not belong to the chosen domain",
+      throw new OnboardingRefusedError(
+        "INVALID_SELECTION",
+        "One or more selected specialties do not belong to the chosen field of expertise",
+        "subDomains",
       );
     }
   }
@@ -172,7 +194,11 @@ async function syncAvailabilitySlots(
     // enforced "at least one" client-side only).
     const weeklySlotsToCreate =
       profileData.availabilityWindowsWeekly?.create ?? [];
-    assertWeeklyWindows(weeklySlotsToCreate);
+    try {
+      assertWeeklyWindows(weeklySlotsToCreate);
+    } catch (error) {
+      throw toRefusal(error, "weeklySlots");
+    }
     // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
     // storage matches the window the customer is shown and can book.
     //
@@ -207,7 +233,11 @@ async function syncAvailabilitySlots(
 
     const customSlotsToCreate =
       profileData.availabilityWindowsCustom?.create ?? [];
-    assertCustomWindows(customSlotsToCreate);
+    try {
+      assertCustomWindows(customSlotsToCreate);
+    } catch (error) {
+      throw toRefusal(error, "customSlots");
+    }
     // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
     // adjacent entries still has each entry checked on its own.
     await tx.availabilityWindowCustom.createMany({
@@ -280,7 +310,10 @@ export async function addConsultantIdentity(
   try {
     const validationResult = validateOnboardingData(body);
     if (!validationResult.success) {
-      return { success: false, error: validationResult.error };
+      return refusalResult(
+        refusalFromIssues(validationResult.issues, validationResult.error),
+        validationResult.error,
+      );
     }
     const validatedBody = validationResult.data;
     if (validatedBody.role !== UserRole.CONSULTANT) {
@@ -300,7 +333,9 @@ export async function addConsultantIdentity(
         timezone: true,
       },
     });
-    if (!current) throw new Error("User not found");
+    if (!current) {
+      throw new OnboardingRefusedError("USER_NOT_FOUND", "User not found");
+    }
     if (!canAddConsultantIdentity(current)) {
       return {
         success: false,
@@ -343,7 +378,8 @@ export async function addConsultantIdentity(
           },
         });
         if (linked.count === 0) {
-          throw new Error(
+          throw new OnboardingRefusedError(
+            "IDENTITY_ALREADY_ADDED",
             "An expert profile was just added to this account elsewhere. Reload to continue.",
           );
         }
@@ -373,13 +409,10 @@ export async function addConsultantIdentity(
     };
   } catch (error: unknown) {
     console.error("Error in addConsultantIdentity:", error);
-    return {
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "An unknown error occurred while adding the expert profile.",
-    };
+    return refusalResult(
+      error,
+      "An unknown error occurred while adding the expert profile.",
+    );
   }
 }
 
@@ -569,7 +602,11 @@ async function submitVerificationRequest(
     adminDashboardUrl: "/dashboard/admin/verification",
   });
   if (!outcome.ok) {
-    throw new Error(`${outcome.code}: ${outcome.message}`);
+    throw new OnboardingRefusedError(
+      outcome.code,
+      outcome.message,
+      "verificationDocuments",
+    );
   }
   // The admin bells were staged inside the submission transaction; the
   // caller attempts them after the response.
@@ -604,6 +641,11 @@ type OnboardingUser = Prisma.UserGetPayload<{
 
 type OnboardingResult = {
   success: boolean;
+  /** Machine word for a typed refusal (contract or verification core). */
+  code?: string;
+  /** The payload field the refusal is about; the wizard opens its step. */
+  field?: string;
+  index?: number;
   // `user` is a Prisma User with deeply-included relations (consultantProfile,
   // consulteeProfile, slots, domain, etc.). Typing it precisely would require a
   // shared Prisma payload type across server/action/client layers — not worth
@@ -769,7 +811,12 @@ export async function processOnboardingData(
     const validationResult = validateOnboardingData(body);
     if (!validationResult.success) {
       console.error("Validation Error:", validationResult.error);
-      return { success: false, error: validationResult.error };
+      // The schema's issue is routed to the wizard field it is about, the
+      // same way a contract or verification refusal is (qa-1730 defect 2).
+      return refusalResult(
+        refusalFromIssues(validationResult.issues, validationResult.error),
+        validationResult.error,
+      );
     }
 
     const validatedBody = validationResult.data;
@@ -845,16 +892,15 @@ export async function processOnboardingData(
     };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "An unknown error occurred while updating onboarding information.";
     if (error instanceof Error) {
       console.error("Error details:", {
         message: error.message,
         stack: error.stack,
       });
     }
-    return { success: false, error: errorMessage };
+    return refusalResult(
+      error,
+      "An unknown error occurred while updating onboarding information.",
+    );
   }
 }

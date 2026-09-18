@@ -57,6 +57,10 @@ export async function updateOnboardingInformationAction(
   success: boolean;
   user?: Record<string, unknown>;
   error?: string;
+  /** Typed refusal: the server's code and the payload field it is about. */
+  code?: string;
+  field?: string;
+  index?: number;
   verificationWarning?: string;
   verificationDeferred?: boolean;
 }> {
@@ -125,6 +129,10 @@ export async function addConsultantIdentityAction(
   success: boolean;
   user?: Record<string, unknown>;
   error?: string;
+  /** Typed refusal: the server's code and the payload field it is about. */
+  code?: string;
+  field?: string;
+  index?: number;
   verificationWarning?: string;
   verificationDeferred?: boolean;
 }> {

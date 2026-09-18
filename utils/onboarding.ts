@@ -791,16 +791,28 @@ export function transformFrontendToServerData(
 // VALIDATION UTILITIES
 // ============================================================================
 
-export function validateOnboardingData(
-  data: unknown,
-): { success: true; data: OnboardingData } | { success: false; error: string } {
+export function validateOnboardingData(data: unknown):
+  | { success: true; data: OnboardingData }
+  | {
+      success: false;
+      error: string;
+      /** The raw issues, so the caller can route the first one to its field. */
+      issues: { path: (string | number)[]; message: string }[];
+    } {
   const validationResult = OnboardingDataSchema.safeParse(data);
 
   if (!validationResult.success) {
     const errorMessage = validationResult.error.errors
       .map((e) => `Field '${e.path.join(".")}': ${e.message}`)
       .join("; ");
-    return { success: false, error: `Invalid input: ${errorMessage}` };
+    return {
+      success: false,
+      error: `Invalid input: ${errorMessage}`,
+      issues: validationResult.error.errors.map((e) => ({
+        path: e.path,
+        message: e.message,
+      })),
+    };
   }
 
   return { success: true, data: validationResult.data };
