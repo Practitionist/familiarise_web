@@ -26,7 +26,6 @@ import {
   addDays,
   startOfWeek,
   endOfWeek,
-  isSameDay,
   addWeeks,
   subWeeks,
   addMonths,
@@ -102,7 +101,13 @@ import {
   formatMonthLabel,
   formatWeekdayShort,
 } from "@/lib/time/display";
-import { canonicalZone, zoneDisplayLabel } from "@/lib/time/viewer-zone";
+import {
+  calendarDayOf,
+  footerZoneLine,
+  isOnCalendarDay,
+  resolveGridZone,
+  rowOf,
+} from "@/lib/time/grid-zone";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -452,6 +457,12 @@ export interface UnifiedCalendarProps {
    * propose surfaces set this explicitly while staying in select mode.
    */
   showConsultantLegend?: boolean;
+  /**
+   * The viewer's profile zone, from the page's `getViewerZone()` or the
+   * session hook; the grid is drawn in it, falling back to the browser zone
+   * only when the profile has none (#1703 QA-1).
+   */
+  viewerZone?: string | null;
 }
 
 export function UnifiedCalendar({
@@ -480,19 +491,24 @@ export function UnifiedCalendar({
   totalSessions,
   schedulingTimezone,
   focus,
+  viewerZone,
 }: UnifiedCalendarProps) {
   const { toast } = useToast();
+  // ONE zone for cells, labels, focus and the footer (#1703 QA-1). Read once:
+  // this component is client-only (SafeUnifiedCalendar loads it with ssr
+  // false), so there is no server render to disagree with.
+  const [browserTimezone] = useState(() => gridTimeZone());
+  const gridZone = resolveGridZone(viewerZone, browserTimezone);
   // State
   const [currentDate, setCurrentDate] = useState(() => {
     if (!focus) return new Date();
     // Noon on the target's calendar date AS THE GRID READS IT: weekDates are
     // derived from this with local date-fns, so a target near a midnight
     // boundary lands a week out if the date is read in any other zone.
-    const { year, month, day } = focusGridPosition(focus.at, gridTimeZone());
+    const { year, month, day } = focusGridPosition(focus.at, gridZone);
     return new Date(year, month - 1, day, 12);
   });
   const [view, setView] = useState<"week" | "month">("week");
-  const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [configWarning, setConfigWarning] = useState<string | null>(null);
   // Wall clock for the Today button, the header highlight and the now-line;
   // re-read once a minute so the line moves without a re-mount (#1703 F2).
@@ -500,11 +516,6 @@ export function UnifiedCalendar({
   useEffect(() => {
     const tick = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(tick);
-  }, []);
-
-  // Initialize timezone
-  useEffect(() => {
-    setBrowserTimezone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
 
   // Use calendar data hook
@@ -531,6 +542,7 @@ export function UnifiedCalendar({
     allowedEnd,
     sessionDurationInHours,
     consulteeUserId,
+    gridZone,
     // Follows `mode` rather than being its own prop: "allocate" is the
     // consultant's own surface, the only one that renders the overlap
     // tooltips, and the only one the route authorizes for them. A consultee
@@ -776,10 +788,8 @@ export function UnifiedCalendar({
         )
           return null;
 
-        const interval = {
-          hour: targetTime.getHours(),
-          minute: targetTime.getMinutes(),
-        };
+        const wall = ScheduleCalculationService.wallClock(targetTime, gridZone);
+        const interval = { hour: wall.hour, minute: wall.minute };
         const status = getSlotStatusForInterval(interval, clickedDate);
 
         // Must be available, not booked, not in past
@@ -849,6 +859,7 @@ export function UnifiedCalendar({
       allowedStart,
       allowedEnd,
       schedulingTimezone,
+      gridZone,
     ],
   );
 
@@ -1166,10 +1177,10 @@ export function UnifiedCalendar({
     return rows;
   }, [folded, openBands]);
 
-  // Where the now-line sits: the row holding the current minute, and how far
-  // down that row. Local clock, because the rows are drawn in the local zone.
-  const nowRow = now.getHours() * 2 + (now.getMinutes() >= 30 ? 1 : 0);
-  const nowFraction = (now.getMinutes() % 30) / 30;
+  // Where the now-line sits: the row holding the current minute in the grid
+  // zone, and how far down that row.
+  const { rowIndex: nowRow, fraction: nowFraction } = rowOf(now, gridZone);
+  const footerZone = footerZoneLine(now, gridZone, schedulingTimezone);
 
   // "Go to selection" (#1703 F2): the footer counter scrolls the earliest
   // selected cell into view, changing week first when it is not on screen.
@@ -1180,10 +1191,14 @@ export function UnifiedCalendar({
     if (!first) return;
     pendingSelectionScrollRef.current = first.startTime.toISOString();
     setView("week");
-    if (!weekDates.some((date) => isSameDay(date, first.startTime))) {
-      setCurrentDate(first.startTime);
+    if (
+      !weekDates.some((date) =>
+        isOnCalendarDay(date, first.startTime, gridZone),
+      )
+    ) {
+      setCurrentDate(calendarDayOf(first.startTime, gridZone));
     }
-  }, [selectedSlots, weekDates]);
+  }, [selectedSlots, weekDates, gridZone]);
   useEffect(() => {
     const target = pendingSelectionScrollRef.current;
     if (!target || !weekGridEl) return;
@@ -1212,7 +1227,7 @@ export function UnifiedCalendar({
       return;
     }
 
-    const targetRow = focusTargetRow(focus, availableSlots, gridTimeZone());
+    const targetRow = focusTargetRow(focus, availableSlots, gridZone);
     // Rows inside a folded band are not in the DOM, so aim at the nearest
     // rendered row rather than a child index (#1703 F1).
     const scrollRow = nearestVisibleRow(focusScrollRow(targetRow), visibleRows);
@@ -1225,7 +1240,7 @@ export function UnifiedCalendar({
     // this component should not be re-deriving.
     weekGridEl.scrollTop +=
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
-  }, [focus, weekGridEl, availableSlots, visibleRows]);
+  }, [focus, weekGridEl, availableSlots, visibleRows, gridZone]);
 
   // Render time cell
   const renderTimeCell = useCallback(
@@ -1389,8 +1404,8 @@ export function UnifiedCalendar({
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const firstDayOfMonth = new Date(year, month, 1).getDay();
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const today = calendarDayOf(now, gridZone);
+    today.setHours(0, 0, 0, 0);
 
     const countAvailableSlotsForDay = (date: Date): number => {
       let count = 0;
@@ -1420,7 +1435,7 @@ export function UnifiedCalendar({
           { length: new Date(year, month + 1, 0).getDate() },
           (_, i) => {
             const date = new Date(year, month, i + 1);
-            const isCurrentDay = isSameDay(date, now);
+            const isCurrentDay = isOnCalendarDay(date, now, gridZone);
             const isPastDay = date < today;
             const availableCount = isPastDay
               ? 0
@@ -1458,7 +1473,7 @@ export function UnifiedCalendar({
         )}
       </div>
     );
-  }, [currentDate, getSlotStatusForInterval]);
+  }, [currentDate, getSlotStatusForInterval, now, gridZone]);
 
   // Loading state — keep week-grid anatomy to avoid spinner → calendar CLS
   if (loading) {
@@ -1579,11 +1594,11 @@ export function UnifiedCalendar({
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setCurrentDate(new Date())}
+            onClick={() => setCurrentDate(calendarDayOf(now, gridZone))}
             disabled={
               view === "week"
-                ? weekDates.some((date) => isSameDay(date, now))
-                : isSameMonth(currentDate, now)
+                ? weekDates.some((date) => isOnCalendarDay(date, now, gridZone))
+                : isSameMonth(currentDate, calendarDayOf(now, gridZone))
             }
             title="Jump to today"
           >
@@ -1616,7 +1631,7 @@ export function UnifiedCalendar({
           >
             <div></div>
             {weekDates.map((date, index) => {
-              const isToday = isSameDay(date, now);
+              const isToday = isOnCalendarDay(date, now, gridZone);
               const isInPeriod = isDateInSchedulingPeriod(
                 date,
                 allowedStart,
@@ -1700,7 +1715,8 @@ export function UnifiedCalendar({
                     </div>
                     {weekDates.map((date) => {
                       const holdsNow =
-                        isSameDay(date, now) && nowRow === rowIndex;
+                        isOnCalendarDay(date, now, gridZone) &&
+                        nowRow === rowIndex;
                       return (
                         <div
                           key={date.toISOString()}
@@ -1849,17 +1865,13 @@ export function UnifiedCalendar({
               instead of letting the viewer assume their own midnight. Only
               cap-bearing surfaces thread the prop; others keep the old line.
               Named as "IST (UTC+05:30)" with the IANA zone in the title (F3). */}
-          <span title={canonicalZone(browserTimezone)}>
-            Times in {zoneDisplayLabel(now, browserTimezone)}
-          </span>
-          {schedulingTimezone &&
-            canonicalZone(schedulingTimezone) !==
-              canonicalZone(browserTimezone) && (
-              <span title={canonicalZone(schedulingTimezone)}>
-                {" · Limits counted in "}
-                {zoneDisplayLabel(now, schedulingTimezone)}
-              </span>
-            )}
+          <span title={footerZone.title}>{footerZone.label}</span>
+          {footerZone.limits && (
+            <span title={footerZone.limits.title}>
+              {" · "}
+              {footerZone.limits.label}
+            </span>
+          )}
         </div>
       </div>
 

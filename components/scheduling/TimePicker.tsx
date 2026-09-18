@@ -28,6 +28,7 @@ import {
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
 import { consultantLegendKeys } from "@/lib/scheduling/interval-status-tokens";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -102,6 +103,12 @@ export interface TimePickerProps {
    * conflicting cell is in view (#1703 F2/F5).
    */
   focusAt?: Date;
+  /**
+   * The viewer's zone from the RSC page (`getViewerZone`), so the grid is
+   * drawn in the same zone the rest of the page renders (#1703 QA-1). When
+   * absent the session hook supplies it; the browser zone is the last resort.
+   */
+  viewerZone?: string | null;
 }
 
 export function TimePicker({
@@ -112,7 +119,11 @@ export function TimePicker({
   className,
   legendPosition = "top",
   focusAt,
+  viewerZone,
 }: Readonly<TimePickerProps>) {
+  const sessionViewer = useViewerZone();
+  const gridViewerZone =
+    viewerZone ?? (sessionViewer.own ? sessionViewer.zone : null);
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
     [subject.slots],
@@ -277,6 +288,7 @@ export function TimePicker({
         // starting position, and re-aiming the grid while someone is reading
         // it is worse than the empty night rows it replaces (#1073).
         focus={focus}
+        viewerZone={gridViewerZone}
         // Fresh allocations only: a partial reschedule legitimately keeps
         // confirmed slots and must not trip the guard.
         initialAllocation={

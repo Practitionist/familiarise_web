@@ -6,6 +6,7 @@ import { DashboardViewportFill } from "@/components/dashboard/DashboardViewportF
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { ALLOCATION_APPROVABLE_FROM } from "@/lib/booking/transitions";
 import { readAllocationRequest } from "@/lib/data/allocation-request";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 
 import { AllocateClient } from "./AllocateClient";
@@ -158,12 +159,17 @@ export default async function AllocateSlotsPage({
     );
   }
 
+  // The same zone source as the Appointments pages (#1703 QA-1). Only a
+  // profile zone travels; without one the grid falls back to the browser's.
+  const viewer = await getViewerZone();
+
   return (
     <DashboardViewportFill className="gap-4">
       <AllocateClient
         backHref={backHref}
         title={request.title}
         pinnedAt={parsePinnedAt(at)}
+        viewerZone={viewer.own ? viewer.zone : null}
         subject={{
           consultantProfileId: consultantId,
           eventType: request.eventType,

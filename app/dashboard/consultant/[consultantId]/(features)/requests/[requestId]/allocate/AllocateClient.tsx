@@ -20,12 +20,15 @@ export function AllocateClient({
   backHref,
   title,
   pinnedAt,
+  viewerZone,
 }: Readonly<{
   subject: TimePickerSubject;
   backHref: string;
   title: string;
   /** Open the grid on this instant instead of the resolved focus (#1703 F5). */
   pinnedAt?: Date | null;
+  /** The viewer's profile zone from the page, so the grid matches the dashboard (#1703 QA-1). */
+  viewerZone: string | null;
 }>) {
   const router = useRouter();
   // Replaces the generic "allocate" crumb with the booking's own name (#1064).
@@ -59,6 +62,7 @@ export function AllocateClient({
       policy={policy}
       subject={subject}
       focusAt={pinnedAt ?? undefined}
+      viewerZone={viewerZone}
       onCancel={goBack}
       // The legend lives between the grid and the action footer here: the
       // footer is always on screen, and the top space goes to the heatmap.
