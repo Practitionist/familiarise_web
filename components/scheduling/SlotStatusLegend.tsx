@@ -25,8 +25,13 @@ export function SlotStatusLegend({
   className,
 }: Readonly<SlotStatusLegendProps>) {
   return (
+    // Sticky so a tall grid that scrolls the page keeps its key in view; in a
+    // height-bound shell (the allocate page) it simply stays put (#1703 F4).
     <ul
-      className={cn("flex flex-wrap items-center gap-x-4 gap-y-2", className)}
+      className={cn(
+        "sticky top-0 z-10 flex flex-wrap items-center gap-x-4 gap-y-2 bg-background",
+        className,
+      )}
       aria-label="What the colours mean"
     >
       {keys.map((key) => {
@@ -36,6 +41,8 @@ export function SlotStatusLegend({
             key={key}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             title={token.hint}
+            role="img"
+            aria-label={`${token.label}: ${token.hint}`}
           >
             {/* No border-COLOUR of its own: `swatchClassName` carries the
                 cell's, and a hardcoded one here would win or lose by
@@ -43,11 +50,11 @@ export function SlotStatusLegend({
             <span
               aria-hidden
               className={cn(
-                "h-3 w-3 shrink-0 rounded-sm border",
+                "h-3.5 w-3.5 shrink-0 rounded-sm border",
                 token.swatchClassName,
               )}
             />
-            {token.label}
+            <span aria-hidden>{token.label}</span>
           </li>
         );
       })}

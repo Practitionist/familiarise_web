@@ -13,7 +13,9 @@ import path from "node:path";
 import {
   SLOT_CELL_BASE_CLASS,
   SLOT_STATUS_TOKENS,
+  BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
+  legendKeysFor,
   resolveSlotStatusKey,
   slotCellClassName,
   type SlotStatusKey,
@@ -23,10 +25,20 @@ const KEYS = Object.keys(SLOT_STATUS_TOKENS) as SlotStatusKey[];
 
 const classesOf = (value: string) => value.split(/\s+/).filter(Boolean);
 
+/** Border STYLE utilities are a pattern cue, not a colour (#1703 F4). */
+const BORDER_STYLES = new Set([
+  "border-dashed",
+  "border-solid",
+  "border-dotted",
+]);
+
 /** Every colour utility on an element, ignoring variants like `hover:`. */
 const colourUtilities = (value: string, prefix: string) =>
   classesOf(value).filter(
-    (name) => !name.includes(":") && name.startsWith(prefix),
+    (name) =>
+      !name.includes(":") &&
+      name.startsWith(prefix) &&
+      !BORDER_STYLES.has(name),
   );
 
 describe("slot palette — cells and legend render the same colours", () => {
@@ -108,9 +120,9 @@ describe("slot palette — the base cell string cannot fight the token", () => {
    * and must keep working.
    */
   it("still fades a cell that asks to be faded", () => {
-    expect(classesOf(slotCellClassName("unavailable", { faded: true }))).toContain(
-      "opacity-60",
-    );
+    expect(
+      classesOf(slotCellClassName("unavailable", { faded: true })),
+    ).toContain("opacity-60");
     expect(classesOf(slotCellClassName("unavailable"))).not.toContain(
       "opacity-60",
     );
@@ -136,26 +148,64 @@ describe("slot palette — Tailwind can see where the tokens live", () => {
   });
 });
 
-describe("slot palette — unavailable stays visible", () => {
+describe("slot palette — unavailable is flat and off the legend", () => {
   /**
-   * bg-slate-100 on a white card is what made a sparse week read as an empty
-   * grid instead of a full one with little availability. Whatever this token
-   * becomes, it may not go back to near-white.
+   * #1064 darkened this token so a sparse week did not read as empty. The
+   * dead-hour fold (#1703 F1) now names those hours in a strip, so the cells
+   * left inside the published band are deliberately paint-free — and a state
+   * with nothing to swatch must not sit in the legend.
    */
-  it("is not a near-white fill", () => {
-    expect([
-      "bg-white",
-      "bg-transparent",
-      "bg-slate-50",
-      "bg-slate-100",
-    ]).not.toContain(SLOT_STATUS_TOKENS.unavailable.fill);
+  it("carries no fill and no border", () => {
+    expect(SLOT_STATUS_TOKENS.unavailable.fill).toBe("bg-transparent");
+    expect(SLOT_STATUS_TOKENS.unavailable.border).toBe("border-transparent");
   });
 
-  it("is lighter than a booked slot but darker than nothing", () => {
-    expect(SLOT_STATUS_TOKENS.unavailable.fill).not.toBe(
-      SLOT_STATUS_TOKENS.fullyBooked.fill,
+  it("has no legend row", () => {
+    expect(CONSULTANT_LEGEND_KEYS).not.toContain("unavailable");
+    expect(BUYER_LEGEND_KEYS).not.toContain("unavailable");
+  });
+});
+
+describe("slot palette — the two amber states are told apart without a hue", () => {
+  it("rescheduling carries a dashed border on cell and swatch alike", () => {
+    expect(classesOf(slotCellClassName("rescheduling"))).toContain(
+      "border-dashed",
     );
-    expect(SLOT_STATUS_TOKENS.unavailable.border).toBeTruthy();
+    expect(
+      classesOf(SLOT_STATUS_TOKENS.rescheduling.swatchClassName),
+    ).toContain("border-dashed");
+    expect(classesOf(slotCellClassName("partiallyBooked"))).not.toContain(
+      "border-dashed",
+    );
+  });
+
+  it("past and outside-period are hatched at different angles, no new hue", () => {
+    expect(SLOT_STATUS_TOKENS.past.fill).toMatch(
+      /repeating-linear-gradient\(135deg/,
+    );
+    expect(SLOT_STATUS_TOKENS.outsidePeriod.fill).toMatch(
+      /repeating-linear-gradient\(45deg/,
+    );
+  });
+
+  /**
+   * The legend follows the cells, not the subject (#1703 QA-2): a fresh
+   * single-session allocation with a "This booking" cell on screen must list
+   * it, and a state nobody can see must not appear.
+   */
+  it("lists exactly the painted states, in legend order", () => {
+    const painted = new Set<SlotStatusKey>([
+      "thisEvent",
+      "available",
+      "unavailable",
+    ]);
+    expect(legendKeysFor(CONSULTANT_LEGEND_KEYS, painted)).toEqual([
+      "available",
+      "thisEvent",
+    ]);
+    expect(legendKeysFor(CONSULTANT_LEGEND_KEYS, null)).toEqual(
+      CONSULTANT_LEGEND_KEYS,
+    );
   });
 });
 
@@ -177,7 +227,14 @@ describe("slot palette — the grid resolves states through the tokens", () => {
     ["fullyBooked" as const, { isBookedForDisplay: true }],
     ["partiallyBooked" as const, { isPartiallyBooked: true }],
     ["available" as const, { isAvailable: true }],
-    ["unavailable" as const, { isAvailable: true, isInPast: true }],
+    ["past" as const, { isAvailable: true, isInPast: true }],
+    ["outsidePeriod" as const, { isAvailable: true, isOutsidePeriod: true }],
+    // Gone is gone, whatever the window.
+    [
+      "past" as const,
+      { isAvailable: true, isOutsidePeriod: true, isInPast: true },
+    ],
+    ["unavailable" as const, { isOutsidePeriod: true }],
     ["unavailable" as const, {}],
   ])("resolves to %s", (expected, overrides) => {
     expect(resolveSlotStatusKey({ ...flags, ...overrides })).toBe(expected);

@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useState } from "react";
 import type { UnifiedCalendarProps } from "./UnifiedCalendar";
 import CalendarErrorBoundary from "./CalendarErrorBoundary";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
@@ -8,6 +9,8 @@ import { SlotStatusLegend } from "./SlotStatusLegend";
 import {
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
+  legendKeysFor,
+  type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
 
@@ -47,13 +50,18 @@ export function SafeUnifiedCalendar({
    */
   legendPosition?: "top" | "bottom";
 }) {
+  // The states the grid painted this render; null until the first report so
+  // the legend shows the full set rather than nothing while loading.
+  const [painted, setPainted] = useState<ReadonlySet<SlotStatusKey> | null>(
+    null,
+  );
+  const order =
+    (props.showConsultantLegend ?? props.mode === "allocate")
+      ? CONSULTANT_LEGEND_KEYS
+      : BUYER_LEGEND_KEYS;
   const legend = (
     <SlotStatusLegend
-      keys={
-        (props.showConsultantLegend ?? props.mode === "allocate")
-          ? CONSULTANT_LEGEND_KEYS
-          : BUYER_LEGEND_KEYS
-      }
+      keys={legendKeysFor(order, painted)}
       className="shrink-0"
     />
   );
@@ -73,10 +81,9 @@ export function SafeUnifiedCalendar({
         {legendPosition === "top" && legend}
         <UnifiedCalendar
           {...props}
+          onPaintedKeysChange={setPainted}
           className="min-h-0 flex-1"
-          aboveActionsSlot={
-            legendPosition === "bottom" ? legend : undefined
-          }
+          aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
         />
       </div>
     </CalendarErrorBoundary>
