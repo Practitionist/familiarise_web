@@ -229,16 +229,16 @@ const ConsultantReviewForm: React.FC<Props> = ({
       )}
 
       {renderSection(
-        "Domain & Tags",
+        "Field & Skills",
         <div className="bg-muted/50 rounded-lg p-4 space-y-4">
-          {renderField("Domain", formData.domain?.name)}
+          {renderField("Field of expertise", formData.domain?.name)}
           <div>
-            <p className="text-sm text-muted-foreground mb-2">Sub-Domains</p>
-            {renderList(formData.subDomains, "No sub-domains selected")}
+            <p className="text-sm text-muted-foreground mb-2">Specialties</p>
+            {renderList(formData.subDomains, "No specialties selected")}
           </div>
           <div>
-            <p className="text-sm text-muted-foreground mb-2">Tags</p>
-            {renderList(formData.tags, "No tags selected")}
+            <p className="text-sm text-muted-foreground mb-2">Skills</p>
+            {renderList(formData.tags, "No skills selected")}
           </div>
         </div>,
         1,
@@ -246,104 +246,111 @@ const ConsultantReviewForm: React.FC<Props> = ({
 
       {renderSchedule()}
 
-      {/* Professional Background */}
-      {(formData.workExperiences?.length ||
-        formData.educationHistory?.length ||
-        formData.certificationsList?.length) && (
-        <div className="space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
-            Professional Background
-          </h3>
-
-          {/* Work Experience */}
-          {formData.workExperiences && formData.workExperiences.length > 0 && (
-            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Briefcase className="h-4 w-4" />
-                Work Experience
-              </div>
-              {formData.workExperiences.map((exp, index) => (
-                <div
-                  key={index}
-                  className="px-3 py-2 bg-background border rounded-lg text-sm"
-                >
-                  <p className="font-medium">{exp.title}</p>
-                  <p className="text-muted-foreground">
-                    {exp.company}
-                    {exp.location && ` • ${exp.location}`}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(exp.startDate).getFullYear()} -{" "}
-                    {exp.isCurrent
-                      ? "Present"
-                      : exp.endDate
-                        ? new Date(exp.endDate).getFullYear()
-                        : ""}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Education */}
-          {formData.educationHistory &&
-            formData.educationHistory.length > 0 && (
-              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <GraduationCap className="h-4 w-4" />
-                  Education
-                </div>
-                {formData.educationHistory.map((edu, index) => (
-                  <div
-                    key={index}
-                    className="px-3 py-2 bg-background border rounded-lg text-sm"
-                  >
-                    <p className="font-medium">{edu.degree}</p>
-                    <p className="text-muted-foreground">
-                      {edu.institution}
-                      {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
-                    </p>
-                    {(edu.startYear || edu.endYear) && (
-                      <p className="text-xs text-muted-foreground">
-                        {edu.startYear || ""} - {edu.endYear || ""}
+      {/* Professional Background — always shown, with the edit pencil the
+          other sections have; empty sections say so instead of vanishing. */}
+      {renderSection(
+        "Professional Background",
+        formData.workExperiences?.length ||
+          formData.educationHistory?.length ||
+          formData.certificationsList?.length ? (
+          <div className="space-y-4">
+            {/* Work Experience */}
+            {formData.workExperiences &&
+              formData.workExperiences.length > 0 && (
+                <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Briefcase className="h-4 w-4" />
+                    Work Experience
+                  </div>
+                  {formData.workExperiences.map((exp, index) => (
+                    <div
+                      key={index}
+                      className="px-3 py-2 bg-background border rounded-lg text-sm"
+                    >
+                      <p className="font-medium">{exp.title}</p>
+                      <p className="text-muted-foreground">
+                        {exp.company}
+                        {exp.location && ` • ${exp.location}`}
                       </p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-          {/* Certifications */}
-          {formData.certificationsList &&
-            formData.certificationsList.length > 0 && (
-              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <Award className="h-4 w-4" />
-                  Certifications
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(exp.startDate).getFullYear()} -{" "}
+                        {exp.isCurrent
+                          ? "Present"
+                          : exp.endDate
+                            ? new Date(exp.endDate).getFullYear()
+                            : ""}
+                      </p>
+                    </div>
+                  ))}
                 </div>
-                {formData.certificationsList.map((cert, index) => (
-                  <div
-                    key={index}
-                    className="px-3 py-2 bg-background border rounded-lg text-sm"
-                  >
-                    <p className="font-medium">{cert.name}</p>
-                    <p className="text-muted-foreground">
-                      {cert.issuingOrganization}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Issued{" "}
-                      {new Date(cert.issueDate).toLocaleDateString("en-US", {
-                        month: "short",
-                        year: "numeric",
-                      })}
-                      {cert.expiryDate &&
-                        ` • Expires ${new Date(cert.expiryDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
-                    </p>
+              )}
+
+            {/* Education */}
+            {formData.educationHistory &&
+              formData.educationHistory.length > 0 && (
+                <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <GraduationCap className="h-4 w-4" />
+                    Education
                   </div>
-                ))}
-              </div>
-            )}
-        </div>
+                  {formData.educationHistory.map((edu, index) => (
+                    <div
+                      key={index}
+                      className="px-3 py-2 bg-background border rounded-lg text-sm"
+                    >
+                      <p className="font-medium">{edu.degree}</p>
+                      <p className="text-muted-foreground">
+                        {edu.institution}
+                        {edu.fieldOfStudy && ` • ${edu.fieldOfStudy}`}
+                      </p>
+                      {(edu.startYear || edu.endYear) && (
+                        <p className="text-xs text-muted-foreground">
+                          {edu.startYear || ""} - {edu.endYear || ""}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+            {/* Certifications */}
+            {formData.certificationsList &&
+              formData.certificationsList.length > 0 && (
+                <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Award className="h-4 w-4" />
+                    Certifications
+                  </div>
+                  {formData.certificationsList.map((cert, index) => (
+                    <div
+                      key={index}
+                      className="px-3 py-2 bg-background border rounded-lg text-sm"
+                    >
+                      <p className="font-medium">{cert.name}</p>
+                      <p className="text-muted-foreground">
+                        {cert.issuingOrganization}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Issued{" "}
+                        {new Date(cert.issueDate).toLocaleDateString("en-US", {
+                          month: "short",
+                          year: "numeric",
+                        })}
+                        {cert.expiryDate &&
+                          ` • Expires ${new Date(cert.expiryDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground italic">
+            Not added yet — optional; you can add it from your dashboard
+            settings after onboarding.
+          </p>
+        ),
+        1,
       )}
 
       {/* Verification */}

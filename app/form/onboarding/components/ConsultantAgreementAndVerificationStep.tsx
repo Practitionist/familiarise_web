@@ -37,7 +37,9 @@ export default function ConsultantAgreementAndVerificationStep({
 
   // Verification state
   const [linkedinUrl, setLinkedinUrl] = useState(
-    formData.verificationLinkedinUrl || "",
+    // Pre-filled from step 0's LinkedIn field so nobody types the same URL
+    // twice; both land on User.linkedinUrl server-side (wizard UI audit).
+    formData.verificationLinkedinUrl || formData.linkedinUrl || "",
   );
   const [notes, setNotes] = useState(formData.verificationNotes || "");
   const [documents, setDocuments] = useState<UploadedDocument[]>(
@@ -89,7 +91,10 @@ export default function ConsultantAgreementAndVerificationStep({
         method: "DELETE",
       });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Failed to delete verification document:", error);
     }
   }, []);
@@ -212,7 +217,7 @@ export default function ConsultantAgreementAndVerificationStep({
             disabled={isUploading}
           />
           <p className="text-xs text-muted-foreground">
-            Accepted formats: PDF, PNG, JPG, JPEG (max 10MB per file)
+            Accepted formats: PDF, PNG, JPG, WEBP (max 10MB per file)
           </p>
         </div>
 
@@ -270,7 +275,8 @@ export default function ConsultantAgreementAndVerificationStep({
         <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
           <li>Our team will review your LinkedIn profile and documents</li>
           <li>
-            You&apos;ll receive an email notification once the review is complete
+            You&apos;ll receive an email notification once the review is
+            complete
           </li>
           <li>
             Once verified, your profile will be visible in the consultant

@@ -48,7 +48,7 @@ const ConsultantInfo = ({
 );
 
 /**
- * A labelled row of badges. The label column is fixed-width so the "Domain" and
+ * A labelled row of badges. The label column is fixed-width so the "Field" and
  * "Skills" rows align with each other and with the ConsultantInfo rows above.
  */
 const BadgeRow = ({
@@ -351,7 +351,7 @@ export const ConsultantCard = memo(function ConsultantCard({
               so without a label the reader can't tell which taxonomy they're
               looking at. */}
           {(consultant.domain?.name || consultant.subDomains.length > 0) && (
-            <BadgeRow label="Domain">
+            <BadgeRow label="Field">
               {consultant.domain?.name && (
                 <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 px-3 py-1">
                   {consultant.domain.name}

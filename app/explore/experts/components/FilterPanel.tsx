@@ -214,17 +214,17 @@ function FilterPanelImpl({
           <div className="space-y-3">
             <div>
               <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Domain
+                Field
               </label>
               <Select
                 value={selectedDomain || "all"}
                 onValueChange={handleDomainChange}
               >
                 <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring">
-                  <SelectValue placeholder="All Domains" />
+                  <SelectValue placeholder="All fields" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Domains</SelectItem>
+                  <SelectItem value="all">All fields</SelectItem>
                   {metadata?.domains.map((domain) => (
                     <SelectItem key={domain.id} value={domain.id}>
                       {domain.name}
@@ -235,7 +235,7 @@ function FilterPanelImpl({
             </div>
             <div>
               <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Subdomain
+                Specialty
               </label>
               <Select
                 disabled={!selectedDomain}
@@ -245,12 +245,12 @@ function FilterPanelImpl({
                 <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring disabled:opacity-50">
                   <SelectValue
                     placeholder={
-                      selectedDomain ? "All Subdomains" : "Select domain first"
+                      selectedDomain ? "All specialties" : "Select a field first"
                     }
                   />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Subdomains</SelectItem>
+                  <SelectItem value="all">All specialties</SelectItem>
                   {metadata?.subdomains
                     .filter(
                       (subdomain) => subdomain.domainId === selectedDomain,
@@ -282,7 +282,7 @@ function FilterPanelImpl({
               <input
                 className="w-full h-11 px-4 bg-muted border border-border text-foreground text-sm rounded-lg focus:ring-2 focus:ring-ring focus:border-transparent transition-all disabled:opacity-50"
                 placeholder={
-                  selectedDomain ? "Search skills..." : "Select domain first"
+                  selectedDomain ? "Search skills..." : "Select a field first"
                 }
                 type="text"
                 value={searchTerm}

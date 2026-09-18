@@ -335,7 +335,7 @@ export function UserDetailModal({
                   </Card>
                   <Card>
                     <CardContent className="p-3">
-                      <p className="text-xs text-zinc-500">Domain</p>
+                      <p className="text-xs text-zinc-500">Field</p>
                       <p className="font-medium mt-1">
                         {user.consultantProfile.domain?.name || "Not set"}
                       </p>
