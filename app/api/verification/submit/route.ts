@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
@@ -7,6 +7,8 @@ import { VerificationSubmitSchema } from "@/schemas/verifications";
 import { canSubmitVerification } from "@/utils/onboarding-shared";
 import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
 import { notifyNewConsultantApplication } from "@/lib/novu/service";
+import { attemptTrigger } from "@/lib/novu";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
 /**
  * POST /api/verification/submit
@@ -175,34 +177,45 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Notify admin/staff about the new verification request in `after()`:
-    // the response must not wait on the Novu budget, and `after()` holds
-    // the invocation so the outbox stage commits for the relay to backstop.
-    after(async () => {
-      try {
-        const admins = await prisma.user.findMany({
-          where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
-          select: { id: true },
+    // Notify admin/staff about the new verification request: the outbox
+    // rows are staged before the response (two reads + one insert per
+    // batch, no vendor call) and attempted in `after()`, so the response
+    // never waits on the Novu budget and the rows survive without it.
+    try {
+      const admins = await prisma.user.findMany({
+        where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
+        select: { id: true },
+      });
+      const adminIds = admins.map((a) => a.id);
+      if (adminIds.length > 0) {
+        const user = await prisma.user.findUnique({
+          where: { id: session.user.id },
+          select: { name: true, email: true },
         });
-        const adminIds = admins.map((a) => a.id);
-        if (adminIds.length > 0) {
-          const user = await prisma.user.findUnique({
-            where: { id: session.user.id },
-            select: { name: true, email: true },
-          });
-          await notifyNewConsultantApplication(adminIds, {
+        const results = await notifyNewConsultantApplication(
+          adminIds,
+          {
             applicantName: user?.name ?? "Unknown",
             applicantEmail: user?.email ?? "",
             dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
-          });
-        }
-      } catch (error) {
-        console.error(
-          "[verification/submit] Failed to send notification:",
-          error,
+          },
+          { tx: prisma },
         );
+        const staged = new Map(
+          results.flatMap((r) =>
+            r.success && r.staged ? [[r.staged.id, r.staged] as const] : [],
+          ),
+        );
+        scheduleAfter(async () => {
+          for (const row of staged.values()) await attemptTrigger(row);
+        });
       }
-    });
+    } catch (error) {
+      console.error(
+        "[verification/submit] Failed to stage notification:",
+        error,
+      );
+    }
 
     return NextResponse.json({
       success: true,

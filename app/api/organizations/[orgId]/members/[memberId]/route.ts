@@ -12,7 +12,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { NextResponse, type NextRequest, after } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -28,7 +28,11 @@ import {
   recomputeConsultantIsIndependent,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgExpertRemoved } from "@/lib/novu/service";
-import { sendOrgMembershipChangedEmail } from "@/lib/email";
+import {
+  attemptOnboardingEmail,
+  stageOrgMembershipChangedEmail,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 // Mirror the full Prisma MemberRole enum. The earlier hand-rolled list
 // omitted BILLING_ADMIN — invitable via POST /members but un-PATCH-able
@@ -48,7 +52,12 @@ const MemberRoleSchema = z.enum([
   "SUPPORT",
 ]);
 
-const MemberStatusSchema = z.enum(["PENDING", "ACTIVE", "SUSPENDED", "REMOVED"]);
+const MemberStatusSchema = z.enum([
+  "PENDING",
+  "ACTIVE",
+  "SUSPENDED",
+  "REMOVED",
+]);
 
 const PatchBodySchema = z
   .object({
@@ -163,10 +172,9 @@ export async function PATCH(
         patch.role !== current.role &&
         isBlockedRoleTransition(current.role, patch.role)
       ) {
-        throw Object.assign(
-          new Error("ROLE_TRANSITION_BLOCKED"),
-          { httpStatus: 409 },
-        );
+        throw Object.assign(new Error("ROLE_TRANSITION_BLOCKED"), {
+          httpStatus: 409,
+        });
       }
 
       // OWNER role gate: only OWNERs can assign or revoke the OWNER role.
@@ -330,10 +338,7 @@ export async function PATCH(
         current.consultantProfileId &&
         (patch.role !== undefined || patch.status !== undefined)
       ) {
-        await recomputeConsultantIsIndependent(
-          tx,
-          current.consultantProfileId,
-        );
+        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
       }
 
       const auditActions: string[] = [];
@@ -398,11 +403,9 @@ export async function PATCH(
       return updated;
     });
 
-    // P3 email twin, post-commit in `after()` (context was captured in-tx;
-    // audit + bumpGeneration already committed). `after()` holds the
-    // invocation so the outbox stage commits for the relay to backstop —
-    // a floating promise would risk the freeze dropping the stage.
-    // Never fails the PATCH on email error.
+    // P3 email twin (context captured in-tx; audit + bumpGeneration already
+    // committed). Staged before the response — the outbox row is the
+    // durable part — and attempted in `after()`. Never fails the PATCH.
     if (roleEmailContext !== null) {
       const ctx = roleEmailContext as {
         userId: string;
@@ -410,33 +413,20 @@ export async function PATCH(
         roleBefore: string;
         roleAfter?: string;
       };
-      after(() =>
-        sendOrgMembershipChangedEmail({
-          userId: ctx.userId,
-          membershipId: memberId,
-          kind: ctx.kind,
-          orgName: access.org.name,
-          roleBefore: ctx.roleBefore,
-          roleAfter: ctx.roleAfter,
-          actorName:
-            access.session.user.name ?? access.session.user.email ?? "An operator",
-          dashboardUrl: "/dashboard",
-        }).catch((emailErr) => {
-          Sentry.captureException(
-            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-            {
-              tags: {
-                subsystem: "email",
-                emailType:
-                  ctx.kind === "REMOVED"
-                    ? "ORG_MEMBERSHIP_REMOVED"
-                    : "ORG_MEMBERSHIP_ROLE_CHANGED",
-              },
-            },
-          );
-          console.error("[member-patch] membership email failed:", emailErr);
-        }),
-      );
+      const staged = await stageOrgMembershipChangedEmail({
+        userId: ctx.userId,
+        membershipId: memberId,
+        kind: ctx.kind,
+        orgName: access.org.name,
+        roleBefore: ctx.roleBefore,
+        roleAfter: ctx.roleAfter,
+        actorName:
+          access.session.user.name ??
+          access.session.user.email ??
+          "An operator",
+        dashboardUrl: "/dashboard",
+      });
+      scheduleAfter(() => attemptOnboardingEmail(staged));
     }
 
     return NextResponse.json({ membership: result });
@@ -444,11 +434,13 @@ export async function PATCH(
     // Structured error handling keeps the switch between 404/403/409
     // explicit — never leak a 500 for user-facing validation issues.
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }
@@ -523,10 +515,9 @@ export async function DELETE(
         // not privilege escalation. Caught during the 2026-06 MAINTAINER
         // role audit.
         if (!isAtLeastRole(access.member.role, "OWNER")) {
-          throw Object.assign(
-            new Error("Only an OWNER can remove an OWNER"),
-            { httpStatus: 403 },
-          );
+          throw Object.assign(new Error("Only an OWNER can remove an OWNER"), {
+            httpStatus: 403,
+          });
         }
         // Last-OWNER guard — unchanged semantically. Now applied to
         // soft-delete (status → REMOVED) so a sole OWNER can't orphan
@@ -640,10 +631,7 @@ export async function DELETE(
       // to true and the consultant re-appears as "independent" on
       // /explore/experts.
       if (current.role === "EXPERT" && current.consultantProfileId) {
-        await recomputeConsultantIsIndependent(
-          tx,
-          current.consultantProfileId,
-        );
+        await recomputeConsultantIsIndependent(tx, current.consultantProfileId);
       }
 
       // A7 note: past `OrganizationEarnings` are NOT touched on member
@@ -772,7 +760,10 @@ export async function DELETE(
       try {
         await notifyOrgExpertRemoved(ctx.consultantUserId, ctx.payload);
       } catch (notifyErr) {
-        Sentry.captureException(notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)), { tags: { subsystem: "organizations" } });
+        Sentry.captureException(
+          notifyErr instanceof Error ? notifyErr : new Error(String(notifyErr)),
+          { tags: { subsystem: "organizations" } },
+        );
         console.error(
           "[member-delete] Novu notify failed (non-fatal):",
           notifyErr,
@@ -780,8 +771,8 @@ export async function DELETE(
       }
     }
 
-    // P3 email twin for non-EXPERT removals, post-commit in `after()`
-    // (same freeze rationale as the PATCH twin above).
+    // P3 email twin for non-EXPERT removals: staged before the response,
+    // attempted in `after()` (same shape as the PATCH twin above).
     if (removedEmailContext !== null) {
       const ctx = removedEmailContext as {
         userId: string;
@@ -789,35 +780,22 @@ export async function DELETE(
         orgName: string;
         actorName: string;
       };
-      after(() =>
-        sendOrgMembershipChangedEmail({
-          userId: ctx.userId,
-          membershipId: memberId,
-          kind: "REMOVED",
-          orgName: ctx.orgName,
-          roleBefore: ctx.roleBefore,
-          actorName: ctx.actorName,
-          dashboardUrl: "/dashboard",
-        }).catch((emailErr) => {
-          Sentry.captureException(
-            emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-            {
-              tags: {
-                subsystem: "email",
-                emailType: "ORG_MEMBERSHIP_REMOVED",
-              },
-            },
-          );
-          console.error("[member-delete] membership email failed:", emailErr);
-        }),
-      );
+      const staged = await stageOrgMembershipChangedEmail({
+        userId: ctx.userId,
+        membershipId: memberId,
+        kind: "REMOVED",
+        orgName: ctx.orgName,
+        roleBefore: ctx.roleBefore,
+        actorName: ctx.actorName,
+        dashboardUrl: "/dashboard",
+      });
+      scheduleAfter(() => attemptOnboardingEmail(staged));
     }
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       // #779 §C — forward the structured code + breakdown counts so the UI
       // renders the in-flight-money wind-down message.
       const code =
@@ -827,11 +805,18 @@ export async function DELETE(
           ? err.counts
           : undefined;
       return NextResponse.json(
-        { error: err.message, ...(code && { code }), ...(counts && { counts }) },
+        {
+          error: err.message,
+          ...(code && { code }),
+          ...(counts && { counts }),
+        },
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

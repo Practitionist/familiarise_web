@@ -2,11 +2,15 @@
  * Staff Moderation Profile Verification Detail API
  */
 
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ConsultantVerificationStatus } from "@prisma/client";
-import { notifyVerificationStatusChanged } from "@/lib/novu";
-import { sendVerificationDecidedEmail } from "@/lib/email";
+import { attemptTrigger, notifyVerificationStatusChanged } from "@/lib/novu";
+import {
+  attemptOnboardingEmail,
+  stageVerificationDecidedEmail,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -198,10 +202,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // consultant on the public surfaces, anything else takes them off.
     purgeExpertSurfaces(verification.consultantProfileId);
 
-    // Notify the consultant of the decision in `after()`: the review
-    // response must not wait on the Novu budget (previously an awaited bell
-    // here could 500 an already-committed review), and `after()` holds the
-    // invocation so both outbox stages commit for the relays to backstop.
+    // Notify the consultant of the decision. Both notices are staged before
+    // the response (outbox rows only — the review must not wait on a vendor
+    // budget, and an awaited bell here once 500'd an already-committed
+    // review) and attempted in `after()`.
     const consultantUserId = verification.consultantProfile?.user?.id;
     if (consultantUserId) {
       const verificationPayload = {
@@ -209,11 +213,13 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         reason: rejectionReason || feedbackDetails || undefined,
         dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
       };
-      after(async () => {
-        await notifyVerificationStatusChanged(
-          consultantUserId,
-          verificationPayload,
-        );
+      const bell = await notifyVerificationStatusChanged(
+        consultantUserId,
+        verificationPayload,
+        { tx: prisma },
+      ).catch((err) => {
+        console.error("[verification-decided-bell] stage failed:", err);
+        return null;
       });
       // P3 email twin: same payload, never fails the review.
       const emailStatus =
@@ -222,28 +228,19 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
         verificationPayload.status === "PENDING_VERIFICATION"
           ? verificationPayload.status
           : null;
-      if (emailStatus) {
-        after(() =>
-          sendVerificationDecidedEmail({
+      const stagedEmail = emailStatus
+        ? await stageVerificationDecidedEmail({
             userId: consultantUserId,
             verificationId,
             status: emailStatus,
             reason: verificationPayload.reason,
             dashboardUrl: verificationPayload.dashboardUrl,
-          }).catch((emailErr) => {
-            Sentry.captureException(
-              emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-              {
-                tags: {
-                  subsystem: "email",
-                  emailType: "VERIFICATION_DECIDED",
-                },
-              },
-            );
-            console.error("[verification-decided-email] failed:", emailErr);
-          }),
-        );
-      }
+          })
+        : null;
+      scheduleAfter(async () => {
+        if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
+        if (stagedEmail) await attemptOnboardingEmail(stagedEmail);
+      });
     }
 
     return NextResponse.json({

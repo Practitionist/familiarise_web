@@ -13,7 +13,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { NextResponse, type NextRequest, after } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { HostInvitableMemberRoleSchema } from "@/lib/labels/org-labels";
 import crypto from "node:crypto";
@@ -28,7 +28,13 @@ import {
   UNVERIFIED_ORG_SEAT_CAP,
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
-import { sendOrgInvitationEmail } from "@/lib/email";
+import { attemptTrigger } from "@/lib/novu";
+import {
+  attemptStagedEmail,
+  EMAIL_BUDGET_MS,
+  stageOrgInvitationEmail,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -306,11 +312,11 @@ export async function POST(
   }
 
   // The bell reaches an invitee who already has an account; the email is the
-  // channel that reaches one who does not (#1653). Both run in `after()`:
-  // the response must not wait on Novu + Resend budgets, and `after()` holds
-  // the invocation open so the outbox stages commit (a floating promise
-  // would risk the freeze dropping the stage before the relay can backstop
-  // it). Failures stay logged, never surfaced.
+  // channel that reaches one who does not (#1653). Both are STAGED before the
+  // response — one outbox insert each, no vendor call — and ATTEMPTED inside
+  // `after()`. The row is what makes the send durable (the relay finishes
+  // it), so the stage must not depend on `after()` running; the attempt may.
+  // Failures stay logged, never surfaced.
   const origin = new URL(req.url).origin;
   const invite = {
     inviterName: access.session.user.name ?? access.session.user.email,
@@ -319,27 +325,31 @@ export async function POST(
     inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
     expiresAt: expiresAt.toISOString(),
   };
-  after(() =>
-    notifyOrgInviteSent(email, invite).catch((err) => {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "organizations" } },
-      );
-      console.error("[notifyOrgInviteSent] failed:", err);
-    }),
-  );
-  after(() =>
-    sendOrgInvitationEmail(
-      { email, ...invite },
-      { entityRef: `orgInvite:${invitation.id}` },
-    ).catch((err) => {
-      Sentry.captureException(
-        err instanceof Error ? err : new Error(String(err)),
-        { tags: { subsystem: "email", emailType: "ORG_INVITATION" } },
-      );
-      console.error("[sendOrgInvitationEmail] failed:", err);
-    }),
-  );
+  const stagedBells = await notifyOrgInviteSent(email, invite, {
+    tx: prisma,
+  }).catch((err) => {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
+    console.error("[notifyOrgInviteSent] stage failed:", err);
+    return [];
+  });
+  const stagedEmail = await stageOrgInvitationEmail(
+    { email, ...invite },
+    { entityRef: `orgInvite:${invitation.id}` },
+  ).catch((err) => {
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "email", emailType: "ORG_INVITATION" } },
+    );
+    console.error("[stageOrgInvitationEmail] failed:", err);
+    return null;
+  });
+  scheduleAfter(async () => {
+    for (const row of stagedBells) await attemptTrigger(row);
+    await attemptStagedEmail(stagedEmail, EMAIL_BUDGET_MS.AUTH);
+  });
 
   return NextResponse.json({ invitation }, { status: wasExisting ? 200 : 201 });
 }

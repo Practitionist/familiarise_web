@@ -35,7 +35,7 @@ export async function notifyReferralQualificationBestEffort(
       where: { referredUserId: qualifyingUserId },
       include: { referralCode: { select: { userId: true } } },
     });
-    if (!referral || referral.status !== "REWARDED") return;
+    if (referral?.status !== "REWARDED") return;
 
     const referrerUserId = referral.referralCode.userId;
     const [referrer, referee] = await Promise.all([

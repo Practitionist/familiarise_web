@@ -12,7 +12,7 @@
  * the second sees count=0 and reports 409.
  */
 
-import { NextResponse, type NextRequest, after } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -27,8 +27,9 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
-import * as Sentry from "@sentry/nextjs";
-import { sendOrgWelcomeEmail } from "@/lib/email";
+import { attemptTrigger } from "@/lib/novu";
+import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -64,7 +65,10 @@ export async function POST(req: NextRequest) {
     },
   });
   if (!invitation) {
-    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invitation not found" },
+      { status: 404 },
+    );
   }
   // Closure-friendly non-null alias. TS doesn't carry the
   // null-narrowed flow type into the inner `runAcceptTx` function
@@ -125,9 +129,7 @@ export async function POST(req: NextRequest) {
   // bugs.
   const MAX_ATTEMPTS = 2;
   let lastErr: unknown;
-  let result:
-    | Awaited<ReturnType<typeof runAcceptTx>>
-    | undefined;
+  let result: Awaited<ReturnType<typeof runAcceptTx>> | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       result = await runAcceptTx();
@@ -157,38 +159,38 @@ export async function POST(req: NextRequest) {
 
   // Side-effect: notify the org's operator roster that someone new
   // joined. Skip when the caller was already a member — the "accept"
-  // button was just idempotent, nothing newsworthy happened. Both sends
-  // run in `after()`: non-blocking, and held open past the response so
-  // the outbox stages commit for the relays to backstop.
+  // button was just idempotent, nothing newsworthy happened. Both notices
+  // are staged before the response (outbox rows only) and attempted in
+  // `after()`, so the response never waits on a vendor and the rows are
+  // durable whether or not `after()` gets to run.
   if (!result.alreadyMember) {
     const origin = new URL(req.url).origin;
-    after(() =>
-      notifyOrgInviteAccepted(result.organization.id, {
+    const stagedBells = await notifyOrgInviteAccepted(
+      result.organization.id,
+      {
         accepteeName: auth.session.user.name ?? auth.session.user.email,
         accepteeEmail: auth.session.user.email,
         orgName: result.organization.name,
         role: result.membership.role,
         dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
-      }).catch((err) =>
-        console.error("[notifyOrgInviteAccepted] failed:", err),
-      ),
-    );
+      },
+      { tx: prisma },
+    ).catch((err) => {
+      console.error("[notifyOrgInviteAccepted] stage failed:", err);
+      return [];
+    });
     // P3 email twin to the joiner; skipped when alreadyMember like the bell.
-    after(() =>
-      sendOrgWelcomeEmail({
-        userId,
-        membershipId: result.membership.id,
-        orgName: result.organization.name,
-        role: result.membership.role,
-        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
-      }).catch((emailErr) => {
-        Sentry.captureException(
-          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-          { tags: { subsystem: "email", emailType: "ORG_WELCOME" } },
-        );
-        console.error("[org-welcome-email] failed:", emailErr);
-      }),
-    );
+    const stagedWelcome = await stageOrgWelcomeEmail({
+      userId,
+      membershipId: result.membership.id,
+      orgName: result.organization.name,
+      role: result.membership.role,
+      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
+    });
+    scheduleAfter(async () => {
+      for (const row of stagedBells) await attemptTrigger(row);
+      await attemptOnboardingEmail(stagedWelcome);
+    });
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects
@@ -214,10 +216,9 @@ export async function POST(req: NextRequest) {
         data: { status: "accepted", userId },
       });
       if (claim.count === 0) {
-        throw Object.assign(
-          new Error("Invitation is no longer pending"),
-          { httpStatus: 409 },
-        );
+        throw Object.assign(new Error("Invitation is no longer pending"), {
+          httpStatus: 409,
+        });
       }
 
       // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
@@ -229,10 +230,9 @@ export async function POST(req: NextRequest) {
         select: { id: true, name: true, status: true },
       });
       if (!org) {
-        throw Object.assign(
-          new Error("Organization no longer exists"),
-          { httpStatus: 404 },
-        );
+        throw Object.assign(new Error("Organization no longer exists"), {
+          httpStatus: 404,
+        });
       }
       if (isOnboardingBlocked(org.status)) {
         throw Object.assign(

@@ -76,6 +76,7 @@ import {
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
 import { notifyReferralQualificationBestEffort } from "@/lib/referrals/referral-notify";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { ensureChannelsForAppointment } from "@/lib/payments/webhooks/ensure-channels";
 import { streamLogger } from "@/lib/stream-logger";
 import { getAppUrl } from "@/lib/url";
@@ -946,10 +947,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
   // FIX #437: Process for the buyer (consultee) — their first paid booking qualifies their referral
   try {
     await processQualifyingAction(userId, "first_paid_booking");
-    // P3 referral bells, post-commit fire-and-forget (read back the REWARDED
-    // row; silent when nothing qualified).
-    notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
-      console.error("[referral-qualification-bell] failed:", bellErr),
+    // P3 referral bells, post-commit. scheduleAfter, not after(): this
+    // handler also runs from scripts/payments/reconcile-orphaned-confirmations
+    // where no request scope exists and a bare after() throws.
+    scheduleAfter(() =>
+      notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+        console.error("[referral-qualification-bell] failed:", bellErr),
+      ),
     );
   } catch (referralError) {
     reportSentryError(referralError, {

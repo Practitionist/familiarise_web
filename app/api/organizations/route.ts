@@ -17,7 +17,7 @@
  *  - canSponsor=true → BillingAccount created with the chosen fundingSource.
  */
 
-import { NextResponse, type NextRequest, after } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -29,8 +29,8 @@ import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
-import * as Sentry from "@sentry/nextjs";
-import { sendOrgCreatedEmail } from "@/lib/email";
+import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -108,18 +108,16 @@ const CreateBodySchema = z
       .string()
       .nullable()
       .optional()
-      .refine(
-        (v) => v === null || v === undefined || isValidGstin(v),
-        { message: "INVALID_GSTIN_FORMAT" },
-      ),
+      .refine((v) => v === null || v === undefined || isValidGstin(v), {
+        message: "INVALID_GSTIN_FORMAT",
+      }),
     pan: z
       .string()
       .nullable()
       .optional()
-      .refine(
-        (v) => v === null || v === undefined || isValidPan(v),
-        { message: "INVALID_PAN_FORMAT" },
-      ),
+      .refine((v) => v === null || v === undefined || isValidPan(v), {
+        message: "INVALID_PAN_FORMAT",
+      }),
     requiresPO: z.boolean().default(false),
   })
   .refine((v) => v.canSponsor || v.canHost, {
@@ -230,7 +228,10 @@ export async function POST(req: NextRequest) {
           paymentTermsDays: body.paymentTermsDays ?? 60,
           // #768 — branding fields live on OrgBrandingProfile. Upserted
           // below in the same transaction when any branding column is set.
-          ...(body.description || body.industry || body.website || body.sizeBucket
+          ...(body.description ||
+          body.industry ||
+          body.website ||
+          body.sizeBucket
             ? {
                 brandingProfile: {
                   create: {
@@ -339,22 +340,15 @@ export async function POST(req: NextRequest) {
       };
     });
 
-    // P3 email twin: confirmation to the creator, post-commit in `after()`
-    // (same freeze rationale — a floating promise risks the stage).
-    after(() =>
-      sendOrgCreatedEmail({
-        userId: auth.session.user.id,
-        orgId: result.organization.id,
-        orgName: result.organization.name,
-        dashboardUrl: `/dashboard/organization/${result.organization.id}/home`,
-      }).catch((emailErr) => {
-        Sentry.captureException(
-          emailErr instanceof Error ? emailErr : new Error(String(emailErr)),
-          { tags: { subsystem: "email", emailType: "ORG_CREATED" } },
-        );
-        console.error("[org-created-email] failed:", emailErr);
-      }),
-    );
+    // P3 email twin: confirmation to the creator. Staged (outbox row) before
+    // the response, attempted in `after()`; the sender never throws.
+    const stagedCreated = await stageOrgCreatedEmail({
+      userId: auth.session.user.id,
+      orgId: result.organization.id,
+      orgName: result.organization.name,
+      dashboardUrl: `/dashboard/organization/${result.organization.id}/home`,
+    });
+    scheduleAfter(() => attemptOnboardingEmail(stagedCreated));
 
     return NextResponse.json(result, { status: 201 });
   } catch (err) {

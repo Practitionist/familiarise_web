@@ -13,7 +13,7 @@
  * Bulk REMOVE and bulk ROLE-CHANGE remain 405 (anti-lockout risk).
  */
 
-import { NextResponse, type NextRequest, after } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -24,7 +24,14 @@ import {
 } from "@/lib/enterprise/governance";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
-import { sendOrgInvitationEmail } from "@/lib/email";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import {
+  attemptStagedEmail,
+  EMAIL_BUDGET_MS,
+  stageOrgInvitationEmail,
+  type StagedSend,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const EntrySchema = z.object({
@@ -92,38 +99,51 @@ export async function POST(
 
   // Auto-send invite emails to successfully imported members (#1230 wave-8).
   // Fire-and-forget per ADR-14 — email failures don't undo the membership.
-  // The whole fan-out runs in ONE `after()`: awaiting Novu + Resend per
-  // entry in the response path would multiply provider budgets by the batch
-  // size (up to 200), while `after()` keeps the response fast and holds the
-  // invocation so every outbox stage commits for the relay to backstop.
+  // Every notice is STAGED before the response (two outbox inserts per
+  // member, no vendor call — a 200-row import is a few hundred inserts on
+  // the single connection, well under the edge budget) and ATTEMPTED in one
+  // `after()`. The rows are what make the sends durable; the attempts only
+  // shorten the wait for the relay.
   const importedMembers = results.flatMap((r) =>
     r.ok && r.membershipId
       ? [{ email: r.email, membershipId: r.membershipId }]
       : [],
   );
 
-  after(async () => {
-    for (const { email, membershipId } of importedMembers) {
-      const invite = {
-        inviterName:
-          access.session.user.name ?? access.session.user.email ?? "An operator",
-        orgName: access.org.name,
-        role: "LEARNER",
-        inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
-        expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
-      };
-      try {
-        await notifyOrgInviteSent(email, invite);
-      } catch {
-        // Non-fatal: the membership exists; admin can resend manually.
-      }
-      // #1653 — the bell reaches an invitee who already has an account; the
-      // email reaches one who does not. No invitation row exists here, so the
-      // membership is the anchor.
-      await sendOrgInvitationEmail(
-        { email, ...invite },
-        { entityRef: `membership:${membershipId}` },
-      ).catch((err) => console.error("[bulk-import] invite email failed:", err));
+  const stagedBells: StagedTrigger[] = [];
+  const stagedEmails: StagedSend[] = [];
+  for (const { email, membershipId } of importedMembers) {
+    const invite = {
+      inviterName:
+        access.session.user.name ?? access.session.user.email ?? "An operator",
+      orgName: access.org.name,
+      role: "LEARNER",
+      inviteUrl: `${process.env.NEXT_PUBLIC_APP_URL}/organizations/invite/${orgId}`,
+      expiresAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    };
+    try {
+      stagedBells.push(
+        ...(await notifyOrgInviteSent(email, invite, { tx: prisma })),
+      );
+    } catch {
+      // Non-fatal: the membership exists; admin can resend manually.
+    }
+    // #1653 — the bell reaches an invitee who already has an account; the
+    // email reaches one who does not. No invitation row exists here, so the
+    // membership is the anchor.
+    const staged = await stageOrgInvitationEmail(
+      { email, ...invite },
+      { entityRef: `membership:${membershipId}` },
+    ).catch((err) => {
+      console.error("[bulk-import] invite email stage failed:", err);
+      return null;
+    });
+    if (staged) stagedEmails.push(staged);
+  }
+  scheduleAfter(async () => {
+    for (const row of stagedBells) await attemptTrigger(row);
+    for (const staged of stagedEmails) {
+      await attemptStagedEmail(staged, EMAIL_BUDGET_MS.AUTH);
     }
   });
 
