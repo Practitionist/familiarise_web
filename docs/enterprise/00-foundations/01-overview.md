@@ -51,7 +51,7 @@ backs the operator home at `/dashboard/org-workspace/:orgWorkspaceId/home`. That
 home redirects single-org operators straight into their one org, shows a chooser
 for multi-org operators, and presents a "create an organization" call to action
 for operators whose orgs have all been deactivated. See
-`docs/onboarding/onboarding-system-reference.md` §0 for the full profile-model
+`docs/onboarding/01-system-reference.md` §0 for the full profile-model
 roster.
 
 ## Anatomy of one booking
