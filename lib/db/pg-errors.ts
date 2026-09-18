@@ -56,3 +56,20 @@ export function isExclusionViolation(error: unknown): boolean {
     msg.includes("23P01") || msg.includes("occurrence_no_confirmed_overlap")
   );
 }
+
+/**
+ * #1696 — the pool ran dry. Prisma P2024 is "timed out fetching a connection
+ * from the pool"; the interactive-transaction twin has no code and only the
+ * text "Unable to start a transaction in the given time". With PG_POOL_MAX=1
+ * on Netlify a burst turns straight into this, so it is tagged centrally
+ * (`lib/observability/report.ts`) for an alert rule rather than per call site.
+ */
+export function isPoolExhaustion(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ((error as MaybePgError).code === "P2024") return true;
+  const msg = message(error);
+  return (
+    msg.includes("Unable to start a transaction in the given time") ||
+    msg.includes("Timed out fetching a new connection from the connection pool")
+  );
+}
