@@ -51,6 +51,20 @@ async function sessionTokenFromCookie(): Promise<string | null> {
 }
 
 /**
+ * Next's control-flow throws (DYNAMIC_SERVER_USAGE while prerendering,
+ * NEXT_REDIRECT, NEXT_NOT_FOUND, BAILOUT_TO_CLIENT_SIDE_RENDERING) carry a
+ * string `digest` and must reach the framework; a database fault carries none.
+ */
+function isNextControlFlowError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "digest" in error &&
+    typeof error.digest === "string"
+  );
+}
+
+/**
  * `getSession` with the failure made visible. A thrown lookup is a failure;
  * a null WITH a session cookie is ambiguous, so one indexed read of the row
  * settles it: a live row means the lookup did not complete (fail), no row
@@ -64,6 +78,7 @@ export async function lookupSession(
   try {
     session = await getSession(disableCookieCache);
   } catch (cause) {
+    if (isNextControlFlowError(cause)) throw cause;
     return { kind: "failed", cause };
   }
   if (session?.user?.id) return { kind: "found", session };

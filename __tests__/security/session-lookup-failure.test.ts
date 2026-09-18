@@ -77,6 +77,17 @@ describe("requireApiAuth — session lookup failure is 503, not 401 (#1716)", ()
     expect(out.error?.status).toBe(503);
   });
 
+  it("lets Next's prerender bail-out through untouched", async () => {
+    // The build prerenders pages whose guards call this; the DYNAMIC_SERVER_USAGE
+    // throw is how Next marks the route dynamic and must not read as a fault.
+    const bailout = Object.assign(new Error("Dynamic server usage: headers"), {
+      digest: "DYNAMIC_SERVER_USAGE",
+    });
+    getSession.mockRejectedValue(bailout);
+
+    await expect(requireApiAuth()).rejects.toBe(bailout);
+  });
+
   it("keeps 401 for a cookie whose session row is gone, and for no cookie at all", async () => {
     getSession.mockResolvedValue(null);
     sessionFindUnique.mockResolvedValue(null);

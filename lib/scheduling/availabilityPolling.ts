@@ -26,12 +26,18 @@ export const RETURN_REFETCH_MIN_STALENESS_MS = 5_000;
 export const POLL_JITTER_MIN_MS = 10_000;
 export const POLL_JITTER_MAX_MS = 15_000;
 
+/** Two unit-interval draws from Web Crypto — not a secret, but S2245 wants no Math.random. */
+function unitDraws(): [number, number] {
+  const words = globalThis.crypto.getRandomValues(new Uint32Array(2));
+  return [words[0] / 0x1_0000_0000, words[1] / 0x1_0000_0000];
+}
+
 /** A signed offset whose magnitude lies in [POLL_JITTER_MIN_MS, POLL_JITTER_MAX_MS]. */
 export function availabilityPollJitterMs(): number {
+  const [span, sign] = unitDraws();
   const magnitude =
-    POLL_JITTER_MIN_MS +
-    Math.random() * (POLL_JITTER_MAX_MS - POLL_JITTER_MIN_MS);
-  return Math.random() < 0.5 ? -magnitude : magnitude;
+    POLL_JITTER_MIN_MS + span * (POLL_JITTER_MAX_MS - POLL_JITTER_MIN_MS);
+  return sign < 0.5 ? -magnitude : magnitude;
 }
 
 /** Default hold-off when a 429 arrives without a usable Retry-After (#1697). */
