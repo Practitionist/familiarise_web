@@ -111,9 +111,13 @@ export async function GET(
     // every week-slide — so resolve it ONCE rather than awaiting getSession in
     // each gate. Still skipped entirely on the public path, where neither
     // parameter is present and the route stays anonymous.
+    // Cookie-cached, not force-fresh (#1697 item 4): this is polled once a
+    // minute per open calendar, the ownership gate below re-reads the profile
+    // when the payload disagrees, and a revoked session reads busy/free cells
+    // for at most the cache's five minutes — the write routes stay fresh.
     const session =
       includeAppointmentDetailsRequested || requestedConsulteeUserId
-        ? await getSession(true)
+        ? await getSession()
         : null;
     // Ownership is a fact about the database, not about the session.
     //

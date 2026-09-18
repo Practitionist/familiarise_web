@@ -252,14 +252,18 @@ export const auth = betterAuth({
             // org-operators (UserRole.ORG_WORKSPACE) and consultants from
             // carrying a dangling consumer profile they never use.
 
-            // Create CookiePreference
-            await prisma.cookiePreference.create({
-              data: { userId: user.id },
+            // Upserts, not creates (#1697 item 4): a re-run of this hook
+            // (an SSO auto-provision retry, a replayed signup) used to die
+            // on the userId unique and skip every step below it.
+            await prisma.cookiePreference.upsert({
+              where: { userId: user.id },
+              create: { userId: user.id },
+              update: {},
             });
-
-            // Create NotificationPreference
-            await prisma.notificationPreference.create({
-              data: { userId: user.id },
+            await prisma.notificationPreference.upsert({
+              where: { userId: user.id },
+              create: { userId: user.id },
+              update: {},
             });
 
             // DPDP Act 2023: stamp a ConsentArtifact for the essential

@@ -144,6 +144,16 @@ describe("availability grid conditional GET", () => {
     expect(second.headers.get("ETag")).not.toBe(etag);
   });
 
+  it("reads the session cookie-cached on the polled detail path (#1697 item 4)", async () => {
+    const { getSession } = jest.requireMock("../../lib/auth-server");
+    await GET(
+      new NextRequest(`${URL_BASE}?${QUERY}&includeAppointmentDetails=true`),
+      { params },
+    );
+    expect(getSession).toHaveBeenCalledTimes(1);
+    expect(getSession).not.toHaveBeenCalledWith(true);
+  });
+
   it("answers 200 when only the clock fold moved — a hold lapsed with no write", async () => {
     const withHold = await GET(request(), {
       params,
