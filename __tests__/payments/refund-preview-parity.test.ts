@@ -82,6 +82,12 @@ const txStub = {
     findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
+  // #1695 — the cancel POST reads the refund context on the tx client, under
+  // the lock and before the CAS; the preview GET keeps the global read.
+  appointment: {
+    findFirst: async (...a: unknown[]) =>
+      (await mockAppointmentFindMany(...a))[0] ?? null,
+  },
 };
 
 jest.mock("../../lib/prisma", () => ({

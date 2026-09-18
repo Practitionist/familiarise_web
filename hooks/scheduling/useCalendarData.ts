@@ -10,7 +10,13 @@ import {
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
-import { createAvailabilityPoller } from "@/lib/scheduling/availabilityPolling";
+import {
+  availabilityPollJitterMs,
+  createAvailabilityPoller,
+  RATE_LIMIT_FALLBACK_BACKOFF_MS,
+  type PollFetchOutcome,
+} from "@/lib/scheduling/availabilityPolling";
+import { ApiResponseError } from "@/lib/fetch-helpers";
 import { cellInstant, dayRangeBounds } from "@/lib/time/grid-zone";
 import { gridTimeZone } from "@/lib/scheduling/time-picker-focus";
 import { INTERVALS } from "@/utils/scheduling-engine/interval-meta";
@@ -333,7 +339,7 @@ export function useCalendarData(
       background?: boolean;
       /** Skip the browser HTTP cache — the caller just changed the data. */
       fresh?: boolean;
-    }): Promise<void> => {
+    }): Promise<PollFetchOutcome | void> => {
       if (!consultantId) return;
 
       const requestId = ++availabilityRequestIdRef.current;
@@ -454,7 +460,17 @@ export function useCalendarData(
         // #1164 — a background poll failed: the grid still shows the last good
         // answer and the next tick retries, so neither the banner nor a toast is
         // the user's problem. A flaky minute would otherwise toast every 60s.
-        if (options?.background) return;
+        // A 429 is the exception: it hands the poller the server's Retry-After
+        // so the retry waits it out instead of re-tripping the limiter (#1697).
+        if (options?.background) {
+          if (error instanceof ApiResponseError && error.status === 429) {
+            return {
+              rateLimitedForMs:
+                error.retryAfterMs ?? RATE_LIMIT_FALLBACK_BACKOFF_MS,
+            };
+          }
+          return;
+        }
         setError(errorMessage);
         toast({
           variant: "destructive",
@@ -885,6 +901,7 @@ export function useCalendarData(
       msSinceLastFetch: () => Date.now() - availabilityFetchedAtRef.current,
       inFlight: () => availabilityInFlightRef.current,
       fetch: () => fetchAvailabilitySlots({ background: true }),
+      jitterMs: availabilityPollJitterMs,
     });
 
     const onReturn = () => poller.onReturn();

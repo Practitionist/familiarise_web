@@ -32,7 +32,10 @@ import {
   refundBookingPayment,
   type FundingRail,
 } from "@/lib/payments/operations/booking-refund";
-import { isModelledRefundRefusal } from "@/lib/payments/operations/refund";
+import {
+  isModelledRefundRefusal,
+  RefundGatewayError,
+} from "@/lib/payments/operations/refund";
 import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
@@ -77,6 +80,11 @@ function reportRefundFailure(err: unknown, subsystem: string): void {
     op: "cancel.refund",
     expected: modelled,
     ...(modelled ? { level: "warning" as const } : {}),
+    // The gateway's own answer, so "no capture on this order" (a mock or seed
+    // intent, FAMILIARISE_WEB-3K) is told apart from a transport fault.
+    ...(err instanceof RefundGatewayError && err.gatewayCode
+      ? { tags: { gatewayCode: err.gatewayCode } }
+      : {}),
   });
 }
 
@@ -337,24 +345,21 @@ export async function POST(
     const isExclusiveType =
       !!appointment.consultation || !!appointment.subscription;
 
-    // #1006 — resolve the refund facts BEFORE the transaction, alongside the
-    // rest of the pre-transaction fetch.
+    // #1006 — the refund facts are resolved BEFORE the cancel writes and, as
+    // of #1695, INSIDE the appointment lock and transaction (see below).
     //
-    // This read MUST precede the cancel: the transaction below stamps every
+    // The read must precede the cancel: the transaction stamps every
     // SCHEDULED/RESCHEDULED slot CANCELLED, and "which session is still owed"
     // is derived from exactly those two statuses. Resolved afterwards, the
     // booking always looks like it has no live session left, every
     // consultee-initiated cancellation falls to the 0% tier, and the refund is
-    // silently skipped. It reads no transaction state, so hoisting it costs
-    // nothing; the alternative — teaching the resolver to treat slots
-    // cancelled by this very run as live — would couple it to one call site.
-    const bookingCtx = isExclusiveType
-      ? await resolveBookingRefundContext({
-          appointmentId,
-          consultationId: appointment.consultationId,
-          subscriptionId: appointment.subscriptionId,
-        })
-      : null;
+    // silently skipped. Resolved before the lock, a reschedule or a capture
+    // landing in the gap quoted the wrong tier against the wrong payment.
+    const bookingRef = {
+      appointmentId,
+      consultationId: appointment.consultationId,
+      subscriptionId: appointment.subscriptionId,
+    };
 
     // Prepare cancellation data. `status` is NOT here: the transition helpers
     // own that column, and their `data` type excludes it so a caller cannot
@@ -390,6 +395,14 @@ export async function POST(
     const result = await withAppointmentLock(appointmentId, () =>
       prisma.$transaction(
         async (tx) => {
+          // #1695 — the quote's inputs (the next live session, the SUCCEEDED
+          // payment and its refundable balance, the frozen policy) are read
+          // under the lock, before the CAS terminalises the slots, on the
+          // transaction's own client (#1435).
+          const bookingCtx = isExclusiveType
+            ? await resolveBookingRefundContext(bookingRef, undefined, tx)
+            : null;
+
           // Update appointment status based on type — through the CAS helpers,
           // which bake the same allowed-from set into the WHERE and append the
           // BookingStatusHistory row this route used to skip entirely.
@@ -487,6 +500,7 @@ export async function POST(
             cancelledAt: cancellationData.cancelledAt,
             webinarId: appointment.webinar?.id,
             classId: appointment.class?.id,
+            bookingCtx,
           };
         },
         {
@@ -495,6 +509,7 @@ export async function POST(
         },
       ),
     );
+    const bookingCtx = result.bookingCtx;
 
     // B1 — policy-driven refund, AFTER the cancel tx commits (the refund runs
     // its own Serializable tx; the CAS above guarantees this block runs at most

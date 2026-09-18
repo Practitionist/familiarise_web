@@ -435,21 +435,27 @@ export type ValidationFailureKind =
   | "session-ended"
   | "forbidden"
   | "indeterminate"
+  | "retry-later"
   | "refused";
 
 /**
- * What a failed validate call means for the dialog. A 401 here has a known
- * platform cause (#1716: a cold instance reads a valid cookie as
- * Unauthorized), so the copy says what to do, not "Unauthorized".
+ * What a failed validate call means for the dialog. A 401 is now reserved
+ * for a session that really ended; a failed session lookup answers 503
+ * `SESSION_LOOKUP_FAILED` (#1716), which — like every 503, a refusal with a
+ * sentence and nothing done — reads as "try again in a moment" rather than
+ * as an unknown outcome.
  */
 export function classifyValidationFailure(
   httpStatus: number | undefined,
 ): ValidationFailureKind {
   if (httpStatus === 401) return "session-ended";
   if (httpStatus === 403) return "forbidden";
+  if (httpStatus === 503) return "retry-later";
   if (httpStatus === undefined || httpStatus >= 500) return "indeterminate";
   return "refused";
 }
+
+const RETRY_LATER_FALLBACK = "The server is busy — try again in a moment.";
 
 export function validationFailureCopy(
   kind: ValidationFailureKind,
@@ -462,6 +468,8 @@ export function validationFailureCopy(
       return "You can't schedule this booking.";
     case "indeterminate":
       return REQUEST_INDETERMINATE_ERROR;
+    case "retry-later":
+      return serverMessage || RETRY_LATER_FALLBACK;
     default:
       return serverMessage;
   }

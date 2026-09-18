@@ -2,6 +2,10 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  lookupSession,
+  SessionLookupFailedError,
+} from "@/lib/auth-session-lookup";
 import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import {
@@ -29,6 +33,20 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
  */
 function redirectWithCookieCleanup(): never {
   redirect("/api/auth/clear-stale-session");
+}
+
+/**
+ * #1716 — a lookup that did not complete must not clear the cookie: the
+ * stale-session cleanup signs the user out, and a cold-instance stall on a
+ * valid cookie was doing exactly that. A failed read throws to the nearest
+ * error boundary, whose retry re-runs the guard; only "no session" redirects.
+ */
+async function resolveGuardSession() {
+  const lookup = await lookupSession(true);
+  if (lookup.kind === "failed")
+    throw new SessionLookupFailedError(lookup.cause);
+  if (lookup.kind === "none") redirectWithCookieCleanup();
+  return lookup.session;
 }
 
 /**
@@ -60,10 +78,7 @@ function isFullyOnboarded(user: SessionUser): boolean {
  * the intended trade.
  */
 export async function requireAuth() {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    redirectWithCookieCleanup();
-  }
+  const session = await resolveGuardSession();
   // Mirrors requireApiAuth's #693 check. `banned` is rebuilt by customSession on
   // every call, so it stays accurate even in the window where ban-time session
   // deletion has not landed yet — worth checking explicitly rather than relying
@@ -111,10 +126,7 @@ async function onboardingRedirectTarget(
  * is getSession's React.cache.
  */
 export async function requireOnboarded() {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    redirectWithCookieCleanup();
-  }
+  const session = await resolveGuardSession();
   // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
   // session minted inside the ban race window still resolves a `banned: true`
   // payload before row deletion lands, and this guard must not admit it to
