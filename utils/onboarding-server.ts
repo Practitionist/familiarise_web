@@ -15,12 +15,12 @@ import {
 import type { StagedTrigger } from "@/lib/novu";
 import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
+import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
   assertWeeklyWindows,
 } from "@/lib/scheduling/availability-contract";
-import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
   canAddConsultantIdentity,
