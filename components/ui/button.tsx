@@ -20,6 +20,9 @@ const buttonVariants = cva(
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
         night: "bg-black text-white hover:bg-black/90",
+        // An override the user must notice but that destroys nothing (#1705).
+        warning:
+          "bg-amber-500 text-white shadow-sm hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500",
       },
       size: {
         default: "h-9 px-4 py-2",

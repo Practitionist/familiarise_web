@@ -32,6 +32,7 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
@@ -58,7 +59,15 @@ import {
   allocationFailedWithCode,
   planConfigIncomplete,
   requestChangedElsewhere,
+  timesConfirmed,
 } from "@/lib/scheduling/allocationMessages";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import {
+  formatInViewerZone,
+  zoneLabel,
+  type ViewerZone,
+} from "@/lib/time/viewer-zone";
+import { getRequestTypeLabel } from "./labels";
 import {
   computeAttemptFingerprint,
   fingerprintGuards,
@@ -236,9 +245,14 @@ function answerableProposal(request: Request): RescheduleProposalInfo | null {
 
 // Helper function to fetch and process data. `meta` is the server's page
 // envelope; the tab used to discard it and so could never page (#1704).
-async function fetchDataFromApi<T>(
-  url: string,
-): Promise<{ ok: boolean; data: T | null; meta?: ListMeta; error?: string }> {
+async function fetchDataFromApi<T>(url: string): Promise<{
+  ok: boolean;
+  data: T | null;
+  meta?: ListMeta;
+  error?: string;
+  /** The server's structured code, when the body carried one. #1705 */
+  code?: string;
+}> {
   try {
     const response = await fetch(url);
     if (!response.ok) {
@@ -249,6 +263,7 @@ async function fetchDataFromApi<T>(
         data: null,
         // Keep server errors somewhat specific
         error: `Server error (${response.status}) while fetching data.`,
+        code: readErrorCode(errorText),
       };
     }
     const data = await response.json();
@@ -286,14 +301,30 @@ async function fetchDataFromApi<T>(
   }
 }
 
-/** One line, one time. Long-form dates wrap into three lines in a table cell. */
-function formatDateTime(value: string | Date): string {
+/** `code` off an error body, if the body was JSON and carried one. */
+function readErrorCode(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "code" in parsed &&
+      typeof parsed.code === "string"
+    ) {
+      return parsed.code;
+    }
+  } catch {
+    // Not JSON — an edge/HTML error page.
+  }
+  return undefined;
+}
+
+/** One line, one time, always with its zone: the consultee who asked for
+ * these times is often in another one (#1705). */
+function formatDateTime(value: string | Date, viewer: ViewerZone): string {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return "Invalid date";
-  return date.toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return `${formatInViewerZone(date, viewer.zone, "d MMM yyyy, h:mm a")} ${zoneLabel(date, viewer.zone)}`;
 }
 
 /** Beyond this the list stops being scannable and starts being a wall. */
@@ -404,7 +435,13 @@ function preferenceSummary(proposal: RescheduleProposalInfo): string | null {
   return null;
 }
 
-function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
+function ProposalBlock({
+  proposal,
+  viewer,
+}: {
+  proposal: RescheduleProposalInfo;
+  viewer: ViewerZone;
+}) {
   const slots = currentRoundSlots(proposal);
   const preference = preferenceSummary(proposal);
   // A preference-only request names no times but is still the whole reason this
@@ -436,9 +473,9 @@ function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
           {slots.map((slot) => (
             <li
               key={slot.startsAt}
-              className="whitespace-nowrap text-sm font-medium tabular-nums text-foreground"
+              className="text-sm font-medium tabular-nums text-foreground lg:whitespace-nowrap"
             >
-              {formatDateTime(slot.startsAt)}
+              {formatDateTime(slot.startsAt, viewer)}
             </li>
           ))}
         </ul>
@@ -453,8 +490,8 @@ function ProposalBlock({ proposal }: { proposal: RescheduleProposalInfo }) {
           &ldquo;{proposal.reason}&rdquo;
         </p>
       )}
-      <p className="mt-1 whitespace-nowrap text-[11px] text-muted-foreground">
-        Expires {formatDateTime(proposal.expiresAt)}
+      <p className="mt-1 text-[11px] text-muted-foreground lg:whitespace-nowrap">
+        Expires {formatDateTime(proposal.expiresAt, viewer)}
       </p>
     </div>
   );
@@ -589,7 +626,13 @@ function RescheduleBadge({ request }: { request: Request }) {
  * they are the only ones needing a decision, and the truncation used to hide
  * them behind a dozen untouched sessions.
  */
-function StoredTimes({ request }: { request: Request }) {
+function StoredTimes({
+  request,
+  viewer,
+}: {
+  request: Request;
+  viewer: ViewerZone;
+}) {
   const slots =
     request.requestedSlots && request.requestedSlots.length > 0
       ? request.requestedSlots
@@ -616,7 +659,7 @@ function StoredTimes({ request }: { request: Request }) {
           <div
             key={`${request.id}-slot-${index}`}
             className={cn(
-              "flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums",
+              "flex items-center gap-1.5 text-xs tabular-nums lg:whitespace-nowrap",
               // Amber is reserved for released reschedules: a fresh hold is
               // tentative too, but those times ARE the request.
               isReleasedForReschedule(slot)
@@ -629,7 +672,7 @@ function StoredTimes({ request }: { request: Request }) {
             ) : (
               <CheckCircle2 className="h-3 w-3 flex-shrink-0 text-emerald-600/70" />
             )}
-            <span>{formatDateTime(slot.startsAt)}</span>
+            <span>{formatDateTime(slot.startsAt, viewer)}</span>
             {isReleasedForReschedule(slot) && (
               <span className="sr-only">(needs rescheduling)</span>
             )}
@@ -652,9 +695,10 @@ function StoredTimes({ request }: { request: Request }) {
     return (
       <div className="text-xs">
         <p className="font-medium text-foreground">Scheduling period</p>
-        <p className="whitespace-nowrap text-muted-foreground">
-          {request.startDate.toLocaleDateString()} &ndash;{" "}
-          {request.endDate.toLocaleDateString()}
+        <p className="text-muted-foreground lg:whitespace-nowrap">
+          {formatInViewerZone(request.startDate, viewer.zone, "d MMM yyyy")}{" "}
+          &ndash;{" "}
+          {formatInViewerZone(request.endDate, viewer.zone, "d MMM yyyy")}
         </p>
       </div>
     );
@@ -662,6 +706,9 @@ function StoredTimes({ request }: { request: Request }) {
 
   return <p className="text-xs text-muted-foreground">Not available</p>;
 }
+
+/** 44 px on the phone cards (WCAG 2.5.5), the compact table height from lg. */
+const TOUCH_TARGET = "min-h-11 lg:min-h-8";
 
 export function RequestSchedulingTab({
   type,
@@ -677,8 +724,13 @@ export function RequestSchedulingTab({
   // supplies its own, and the org route supplies the VIEWER's own consultant
   // profile (allocation is a delivery act — only the deliverer allocates).
   const consultantId = consultantProfileId ?? (routeConsultantId as string);
+  const viewer = useViewerZone();
+  const allocateHrefFor = (request: Pick<Request, "id" | "type">) =>
+    `/dashboard/consultant/${consultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`;
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; code?: string } | null>(
+    null,
+  );
   const [requests, setRequests] = useState<Request[]>([]);
   /** One page cursor and one envelope per list; the two lists page apart. */
   const [pages, setPages] = useState<Record<PagedKind, number>>({
@@ -733,7 +785,7 @@ export function RequestSchedulingTab({
       for (const result of results) {
         if (!result.ok && result.error) {
           // Set the first encountered error and stop. `finally` clears loading.
-          setError(result.error);
+          setError({ message: result.error, code: result.code });
           return;
         }
       }
@@ -915,11 +967,12 @@ export function RequestSchedulingTab({
         { tags: { subsystem: "client" } },
       );
       console.error("Error processing fetched data:", err);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred while processing data.",
-      );
+      setError({
+        message:
+          err instanceof Error
+            ? err.message
+            : "An unexpected error occurred while processing data.",
+      });
     } finally {
       // Loading always clears; the timestamp only moves on a real success.
       setLoading(false);
@@ -1062,10 +1115,9 @@ export function RequestSchedulingTab({
       }
 
       toast({
-        title: "Times confirmed",
+        ...timesConfirmed(),
         description:
           data.message ?? "The booking has moved to the proposed times.",
-        variant: "default",
       });
       setRequestedSlotsDialogOpen(false);
       setSelectedRequestForDialog(null);
@@ -1166,12 +1218,7 @@ export function RequestSchedulingTab({
         throw new Error(result.error || "Failed to allocate slots");
       }
 
-      // Success handling
-      toast({
-        title: "Times confirmed",
-        description: "Your requested times have been scheduled.",
-        variant: "default",
-      });
+      toast(timesConfirmed());
 
       // Close dialog and reset state
       setRequestedSlotsDialogOpen(false);
@@ -1248,7 +1295,11 @@ export function RequestSchedulingTab({
   if (loading) {
     return (
       <Card className="border-0 shadow-none rounded-none">
-        <CardContent className="flex flex-col items-center justify-center gap-3 p-8">
+        <CardContent
+          role="status"
+          aria-live="polite"
+          className="flex flex-col items-center justify-center gap-3 p-8"
+        >
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-foreground"></div>
           <p className="text-sm text-muted-foreground">
             Loading requests and availability...
@@ -1262,11 +1313,18 @@ export function RequestSchedulingTab({
     return (
       <Card className="border-0 shadow-none rounded-none">
         <CardHeader>
-          <CardTitle>Error</CardTitle>
-          <CardDescription>{error}</CardDescription>
+          <CardTitle>Couldn&apos;t load requests</CardTitle>
+          <CardDescription>
+            {error.message}
+            {error.code && (
+              <span className="ml-2 font-mono text-xs">({error.code})</span>
+            )}
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <Button onClick={() => window.location.reload()}>Retry</Button>
+          {/* In place, not a page reload: the reload lost every filter and
+              the scroll position for the same fetch (#1705). */}
+          <Button onClick={() => fetchData()}>Retry</Button>
         </CardContent>
       </Card>
     );
@@ -1324,16 +1382,13 @@ export function RequestSchedulingTab({
       cell: (request) => {
         const requestedAt = new Date(request.requestedAt);
         return (
-          <div className="whitespace-nowrap text-xs">
+          <div className="text-xs lg:whitespace-nowrap">
             <div className="text-foreground">
-              {requestedAt.toLocaleDateString(undefined, {
-                dateStyle: "medium",
-              })}
+              {formatInViewerZone(requestedAt, viewer.zone, "d MMM yyyy")}
             </div>
             <div className="text-muted-foreground">
-              {requestedAt.toLocaleTimeString(undefined, {
-                timeStyle: "short",
-              })}
+              {formatInViewerZone(requestedAt, viewer.zone, "h:mm a")}{" "}
+              {zoneLabel(requestedAt, viewer.zone)}
             </div>
           </div>
         );
@@ -1351,8 +1406,10 @@ export function RequestSchedulingTab({
       // "from -> to" reading instead of two competing cards.
       cell: (request) => (
         <div className="space-y-1.5 text-left">
-          {request.proposal && <ProposalBlock proposal={request.proposal} />}
-          <StoredTimes request={request} />
+          {request.proposal && (
+            <ProposalBlock proposal={request.proposal} viewer={viewer} />
+          )}
+          <StoredTimes request={request} viewer={viewer} />
         </div>
       ),
     },
@@ -1378,16 +1435,16 @@ export function RequestSchedulingTab({
       header: "Status",
       headClassName: "w-[116px]",
       className: "align-top",
-      cell: (request) => (
-        <div className="flex flex-col items-start gap-1">
+      cell: (request) =>
+        // One badge per state (#1705): the payment case used to stack a
+        // status pill AND the payment pill with two different labels.
+        request.status === AppointmentStatus.APPROVED_PENDING_PAYMENT ? (
+          <PaymentRequiredBadge variant="full" />
+        ) : (
           <Badge variant={getRequestStatusBadgeVariant(request.status)}>
             {getRequestStatusLabel(request.status)}
           </Badge>
-          {request.status === AppointmentStatus.APPROVED_PENDING_PAYMENT && (
-            <PaymentRequiredBadge variant="full" />
-          )}
-        </div>
-      ),
+        ),
     },
     {
       key: "actions",
@@ -1398,9 +1455,29 @@ export function RequestSchedulingTab({
         request.status === AppointmentStatus.PENDING ? (
           <div className="flex flex-col gap-1.5">
             {request.requiredSlots === undefined ? (
-              <p className="text-xs text-muted-foreground">
-                {planConfigIncomplete().description}
-              </p>
+              // Not a dead end: say what to do, name the request, offer a
+              // re-read (#1705).
+              <div className="space-y-1.5 text-xs text-muted-foreground">
+                <p>{planConfigIncomplete().description}</p>
+                <p className="font-mono text-[11px]">Request {request.id}</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <Button asChild variant="outline" size="sm">
+                    <Link
+                      href={`/dashboard/consultant/${consultantId}/support`}
+                    >
+                      Contact support
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={TOUCH_TARGET}
+                    onClick={() => fetchData()}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              </div>
             ) : (
               <>
                 {/* A page, not a dialog: placing N sessions across a
@@ -1408,12 +1485,8 @@ export function RequestSchedulingTab({
                     the width, and a URL the notification can link to. */}
                 <Button
                   size="sm"
-                  className="w-full"
-                  onClick={() =>
-                    router.push(
-                      `/dashboard/consultant/${consultantId}/requests/${request.id}/allocate?type=${request.type.toLowerCase()}`,
-                    )
-                  }
+                  className={cn("w-full", TOUCH_TARGET)}
+                  onClick={() => router.push(allocateHrefFor(request))}
                 >
                   Allocate Slots
                 </Button>
@@ -1423,15 +1496,15 @@ export function RequestSchedulingTab({
                     re-confirm the times the consultee just asked to move.
                     A live proposal lifts that suppression — the button then
                     answers with the PROPOSED times via respond-accept. #1163 */}
-                {(answerableProposal(request) ||
-                  (request.requestedTimes &&
-                    request.requestedTimes.length > 0 &&
-                    request.bookingSource === "REQUEST_SUBMITTED" &&
-                    (request.rescheduledSlotCount ?? 0) === 0)) && (
+                {answerableProposal(request) ||
+                (request.requestedTimes &&
+                  request.requestedTimes.length > 0 &&
+                  request.bookingSource === "REQUEST_SUBMITTED" &&
+                  (request.rescheduledSlotCount ?? 0) === 0) ? (
                   <Button
                     variant="outline"
                     size="sm"
-                    className="w-full"
+                    className={cn("w-full", TOUCH_TARGET)}
                     disabled={respondInFlight}
                     onClick={() => {
                       setSelectedRequestForDialog(request);
@@ -1440,6 +1513,15 @@ export function RequestSchedulingTab({
                   >
                     Use Requested Times
                   </Button>
+                ) : (
+                  request.bookingSource === "DIRECT_CHECKOUT" && (
+                    // Say why the affordance is absent instead of leaving a
+                    // gap the consultant reads as "broken" (#1705).
+                    <p className="text-[11px] text-muted-foreground">
+                      Booked at checkout without requested times — pick them in
+                      Allocate Slots.
+                    </p>
+                  )
                 )}
               </>
             )}
@@ -1452,7 +1534,10 @@ export function RequestSchedulingTab({
               <Button
                 variant="ghost"
                 size="sm"
-                className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                className={cn(
+                  "w-full text-destructive hover:bg-destructive/10 hover:text-destructive",
+                  TOUCH_TARGET,
+                )}
                 disabled={declining}
                 onClick={() => setDeclineTarget(request)}
               >
@@ -1583,6 +1668,11 @@ export function RequestSchedulingTab({
               : undefined
           }
           confirming={respondInFlight || allocatingRequest}
+          allocateHref={
+            selectedRequestForDialog
+              ? allocateHrefFor(selectedRequestForDialog)
+              : `/dashboard/consultant/${consultantId}/requests`
+          }
           rescheduleNeedsAllocator={
             // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
             // the stored times un-approvable: they are the times being moved
@@ -1685,7 +1775,8 @@ function getRequestStatusLabel(status: AppointmentStatus): string {
     case AppointmentStatus.APPROVED:
       return "Approved";
     case AppointmentStatus.APPROVED_PENDING_PAYMENT:
-      return "Awaiting Payment";
+      // Same words as lib/labels/session-labels.ts (#1705).
+      return "Payment required";
     case AppointmentStatus.SCHEDULED:
       return "Scheduled";
     case AppointmentStatus.COMPLETED:
@@ -1698,20 +1789,5 @@ function getRequestStatusLabel(status: AppointmentStatus): string {
       return "Expired";
     default:
       return status;
-  }
-}
-
-function getRequestTypeLabel(type: AppointmentsType): string {
-  switch (type) {
-    case AppointmentsType.CONSULTATION:
-      return "Consultation";
-    case AppointmentsType.SUBSCRIPTION:
-      return "Subscription";
-    case AppointmentsType.WEBINAR:
-      return "Webinar";
-    case AppointmentsType.CLASS:
-      return "Class";
-    default:
-      return type;
   }
 }

@@ -9,9 +9,24 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AppointmentsType } from "@prisma/client";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  CalendarRange,
+  CheckCircle2,
+  Loader2,
+  RefreshCw,
+  XCircle,
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { AllocationService } from "@/lib/scheduling/allocationService";
+import {
+  classifyValidationFailure,
+  signInHref,
+  validationFailureCopy,
+  type ValidationFailureKind,
+} from "@/lib/scheduling/allocationMessages";
 import { CalendarInterval } from "@/lib/scheduling/calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
@@ -52,8 +67,16 @@ interface RequestedSlotsDialogProps {
    * which is where replacement times are actually placed.
    */
   rescheduleNeedsAllocator?: boolean;
+  /** The allocate page for this request — every "pick other times" exit
+   * in the dialog is a real link there, never a disabled button. #1705 */
+  allocateHref: string;
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
+}
+
+interface ValidationFailure {
+  kind: ValidationFailureKind;
+  message: string;
 }
 
 export function RequestedSlotsDialog({
@@ -66,9 +89,11 @@ export function RequestedSlotsDialog({
   schedulingPeriod,
   confirming = false,
   rescheduleNeedsAllocator = false,
+  allocateHref,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
+  const pathname = usePathname();
   // Calculate reschedule info from slots with status. Only released rows
   // count (see isReleasedForReschedule): every fresh request also carries
   // tentative holds, and those times ARE the request — the server's
@@ -79,12 +104,11 @@ export function RequestedSlotsDialog({
   const rescheduledCount =
     requestedSlotsWithStatus?.filter(isReleasedForReschedule).length ?? 0;
   const hasReschedule = rescheduledCount > 0;
-  const isFullReschedule =
-    rescheduledCount === totalCount && totalCount > 0;
+  const isFullReschedule = rescheduledCount === totalCount && totalCount > 0;
   const [loading, setLoading] = useState(false);
   const [validationResult, setValidationResult] =
     useState<ValidationResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ValidationFailure | null>(null);
 
   // Validate slots when dialog opens
   const validateSlots = useCallback(async () => {
@@ -117,7 +141,19 @@ export function RequestedSlotsDialog({
       );
 
       if (!validationResponse.success) {
-        throw new Error(validationResponse.error || "Failed to validate slots");
+        // Mapped, not thrown: a 401 (#1716 cold-instance read of a valid
+        // cookie) or 403 is an answer, not an exception, and the copy has to
+        // say what to do rather than echo "Unauthorized".
+        const kind = classifyValidationFailure(validationResponse.httpStatus);
+        setError({
+          kind,
+          message: validationFailureCopy(
+            kind,
+            validationResponse.error ?? "Failed to validate slots",
+          ),
+        });
+        setValidationResult(null);
+        return;
       }
 
       // Client-side scheduling period validation
@@ -143,8 +179,15 @@ export function RequestedSlotsDialog({
         validSlots: validationResponse.data?.validSlots || [],
       });
     } catch (err) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "client" } });
-      setError(err instanceof Error ? err.message : "Failed to validate slots");
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "client" } },
+      );
+      setError({
+        kind: "indeterminate",
+        message: validationFailureCopy("indeterminate", ""),
+      });
+      setValidationResult(null);
     } finally {
       setLoading(false);
     }
@@ -190,24 +233,35 @@ export function RequestedSlotsDialog({
   const renderDialogContent = () => {
     if (loading) {
       return (
-        <div className="flex items-center justify-center p-8">
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center justify-center p-8"
+        >
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+          <span className="sr-only">Checking the requested times</span>
         </div>
       );
     }
 
     if (error) {
       return (
-        <div className="bg-red-50 p-4 rounded-md">
-          <p className="text-red-700 mb-3">{error}</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={validateSlots}
-            className="text-red-700 border-red-300"
-          >
-            Retry Validation
-          </Button>
+        <div role="alert" className="bg-red-50 p-4 rounded-md">
+          <p className="text-red-700 mb-3">{error.message}</p>
+          {error.kind === "session-ended" ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={signInHref(pathname ?? "/")}>Sign in</Link>
+            </Button>
+          ) : (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={validateSlots}
+              className="text-red-700 border-red-300"
+            >
+              Retry Validation
+            </Button>
+          )}
         </div>
       );
     }
@@ -218,7 +272,7 @@ export function RequestedSlotsDialog({
           {/* Summary Statistics Section */}
           <div className="bg-gray-50 p-4 rounded-md mb-4 border border-gray-200">
             <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <span>📊</span> Validation Summary
+              Validation Summary
             </h3>
             <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
               <div className="flex items-center justify-between">
@@ -229,7 +283,11 @@ export function RequestedSlotsDialog({
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 flex items-center gap-1">
-                  <span className="text-green-600">✅</span> Available:
+                  <CheckCircle2
+                    className="h-3.5 w-3.5 text-green-600"
+                    aria-hidden
+                  />{" "}
+                  Available:
                 </span>
                 <span className="font-semibold text-green-700">
                   {availableSlotsCount}
@@ -237,7 +295,8 @@ export function RequestedSlotsDialog({
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 flex items-center gap-1">
-                  <span className="text-red-600">🔴</span> Conflicting:
+                  <XCircle className="h-3.5 w-3.5 text-red-600" aria-hidden />{" "}
+                  Conflicting:
                 </span>
                 <span className="font-semibold text-red-700">
                   {conflicts.length}
@@ -245,8 +304,11 @@ export function RequestedSlotsDialog({
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-gray-600 flex items-center gap-1">
-                  <span className="text-yellow-600">🟡</span> Outside
-                  Availability:
+                  <AlertTriangle
+                    className="h-3.5 w-3.5 text-yellow-600"
+                    aria-hidden
+                  />{" "}
+                  Outside Availability:
                 </span>
                 <span className="font-semibold text-yellow-700">
                   {outsideAvailability.length}
@@ -255,7 +317,11 @@ export function RequestedSlotsDialog({
               {requestType === AppointmentsType.SUBSCRIPTION && (
                 <div className="col-span-1 flex items-center justify-between sm:col-span-2">
                   <span className="text-gray-600 flex items-center gap-1">
-                    <span className="text-blue-600">🔵</span> Outside Period:
+                    <CalendarRange
+                      className="h-3.5 w-3.5 text-blue-600"
+                      aria-hidden
+                    />{" "}
+                    Outside Period:
                   </span>
                   <span className="font-semibold text-blue-700">
                     {outsidePeriod.length}
@@ -268,7 +334,8 @@ export function RequestedSlotsDialog({
           {hasConflicts && (
             <div className="bg-red-50 p-4 rounded-md mb-4 border border-red-200">
               <h3 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
-                <span>🔴</span> Conflicting Slots ({conflicts.length})
+                <XCircle className="h-4 w-4" aria-hidden /> Conflicting Slots (
+                {conflicts.length})
               </h3>
               <div className="max-h-48 overflow-y-auto mb-2">
                 <ul className="space-y-1">
@@ -285,8 +352,7 @@ export function RequestedSlotsDialog({
                 </ul>
               </div>
               <p className="text-xs text-red-600">
-                ❌ Cannot allocate slots that conflict with existing
-                appointments.
+                Cannot allocate slots that conflict with existing appointments.
               </p>
             </div>
           )}
@@ -294,8 +360,8 @@ export function RequestedSlotsDialog({
           {hasOutsideSlots && (
             <div className="bg-yellow-50 p-4 rounded-md mb-4 border border-yellow-200">
               <h3 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
-                <span>🟡</span> Slots Outside Availability (
-                {outsideAvailability.length})
+                <AlertTriangle className="h-4 w-4" aria-hidden /> Slots Outside
+                Availability ({outsideAvailability.length})
               </h3>
               <div className="max-h-48 overflow-y-auto mb-2">
                 {/* Group outside availability slots by date */}
@@ -317,7 +383,7 @@ export function RequestedSlotsDialog({
                 ))}
               </div>
               <p className="text-sm text-yellow-700 font-medium">
-                ⚠️ These slots are outside your regular availability. You can
+                These slots are outside your regular availability. You can
                 override and allocate them if needed.
               </p>
             </div>
@@ -326,8 +392,8 @@ export function RequestedSlotsDialog({
           {hasOutsidePeriod && (
             <div className="bg-blue-50 p-4 rounded-md mb-4 border border-blue-200">
               <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                <span>🔵</span> Slots Outside Scheduling Period (
-                {outsidePeriod.length})
+                <CalendarRange className="h-4 w-4" aria-hidden /> Slots Outside
+                Scheduling Period ({outsidePeriod.length})
               </h3>
               <p className="text-sm text-blue-700 mb-3">
                 The following slots are outside the subscription scheduling
@@ -358,7 +424,7 @@ export function RequestedSlotsDialog({
                 ))}
               </div>
               <p className="text-xs text-blue-600">
-                ❌ Cannot allocate slots outside the subscription period.
+                Cannot allocate slots outside the subscription period.
               </p>
             </div>
           )}
@@ -368,7 +434,8 @@ export function RequestedSlotsDialog({
             /* All slots available - show immediately */
             <div className="bg-green-50 p-4 rounded-md mb-4 border border-green-200">
               <h3 className="font-semibold text-green-900 mb-2 flex items-center gap-2">
-                <span>✅</span> All Slots Available
+                <CheckCircle2 className="h-4 w-4" aria-hidden /> All Slots
+                Available
               </h3>
               <p className="text-sm text-green-700 mb-3">
                 All {requestedSlots.length} requested slots are within your
@@ -389,7 +456,7 @@ export function RequestedSlotsDialog({
               ) : (
                 <details className="mt-2">
                   <summary className="cursor-pointer font-medium text-green-800 hover:text-green-900 select-none">
-                    ▶ View all {requestedSlots.length} available slots
+                    View all {requestedSlots.length} available slots
                   </summary>
                   <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
                     {Array.from(groupSlotsByDate(requestedSlots)).map(
@@ -414,7 +481,7 @@ export function RequestedSlotsDialog({
             /* Some issues but also some available - show collapsible */
             <details className="bg-green-50 p-4 rounded-md border border-green-200">
               <summary className="cursor-pointer font-semibold text-green-900 hover:text-green-800 select-none flex items-center gap-2">
-                <span>▶</span> View {availableSlotsCount} available slot
+                View {availableSlotsCount} available slot
                 {availableSlotsCount !== 1 ? "s" : ""}
               </summary>
               <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
@@ -449,8 +516,31 @@ export function RequestedSlotsDialog({
     return null; // Should not happen if validation runs on open
   };
 
+  // Mirrors the decline dialog: while the confirm is in flight the dialog
+  // cannot be dismissed, so success is the only thing that closes it.
+  const guardedOpenChange = (next: boolean) => {
+    if (!next && confirming) return;
+    onOpenChange(next);
+  };
+
+  // Validation must have run AND passed; a failed or absent validation used
+  // to leave "Allocate Requested Times" clickable (#1705, #1716).
+  const canConfirm =
+    validationResult !== null &&
+    !error &&
+    !loading &&
+    !confirming &&
+    !hasConflicts &&
+    !hasOutsidePeriod;
+
+  const blockedReason = hasConflicts
+    ? `${conflicts.length} slot(s) conflict with existing appointments`
+    : hasOutsidePeriod
+      ? `${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
+      : null;
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guardedOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col">
         <DialogHeader className="shrink-0">
           <DialogTitle>Confirm Slot Allocation</DialogTitle>
@@ -499,36 +589,45 @@ export function RequestedSlotsDialog({
             // The stored times are what the consultee asked to MOVE AWAY
             // from — confirming them here would re-book the very times the
             // reschedule is trying to leave, and the server refuses it.
-            // Point at the surface that places replacement times instead of
-            // letting a guaranteed-failing submit answer as an error toast.
-            <Button
-              variant="outline"
-              disabled
-              title="A reschedule needs new times. Open Allocate Slots to place replacements."
-            >
-              Use Allocate Slots for new times
+            // A real link to the surface that places replacement times.
+            <Button asChild>
+              <Link href={allocateHref}>Pick new times in Allocate Slots</Link>
             </Button>
           ) : (
-            <Button
-              variant={hasOutsideSlots ? "destructive" : "default"}
-              onClick={() => onConfirm(hasOutsideSlots)}
-              disabled={
-                loading || confirming || hasConflicts || hasOutsidePeriod
-              }
-              title={
-                hasConflicts
-                  ? `Cannot allocate: ${conflicts.length} slot(s) have conflicts with existing appointments`
-                  : hasOutsidePeriod
-                    ? `Cannot allocate: ${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
-                    : hasOutsideSlots
-                      ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
-                      : "Allocate all requested time slots"
-              }
-            >
-              {hasOutsideSlots
-                ? "Override and Allocate"
-                : "Allocate Requested Times"}
-            </Button>
+            <>
+              {blockedReason && validationResult && (
+                // Blocked here is not blocked everywhere: other times can
+                // still be placed on the allocate page.
+                <Button asChild variant="outline">
+                  <Link href={allocateHref}>Choose other times</Link>
+                </Button>
+              )}
+              {validationResult && !error && (
+                <Button
+                  variant={hasOutsideSlots ? "warning" : "default"}
+                  onClick={() => onConfirm(hasOutsideSlots)}
+                  disabled={!canConfirm}
+                  title={
+                    blockedReason
+                      ? `Cannot allocate: ${blockedReason}`
+                      : hasOutsideSlots
+                        ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
+                        : "Allocate all requested time slots"
+                  }
+                >
+                  {confirming ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      Allocating...
+                    </>
+                  ) : hasOutsideSlots ? (
+                    "Override and Allocate"
+                  ) : (
+                    "Allocate Requested Times"
+                  )}
+                </Button>
+              )}
+            </>
           )}
         </DialogFooter>
       </DialogContent>
