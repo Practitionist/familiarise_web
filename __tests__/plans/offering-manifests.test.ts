@@ -11,7 +11,10 @@ import {
   SUBSCRIPTION_MANIFEST,
   WEBINAR_MANIFEST,
 } from "@/components/offerings/editor/manifests";
-import type { FieldSpec, OfferingManifest } from "@/components/offerings/editor/manifest";
+import type {
+  FieldSpec,
+  OfferingManifest,
+} from "@/components/offerings/editor/manifest";
 
 const ALL = [
   CONSULTATION_MANIFEST,
@@ -115,9 +118,7 @@ describe("offering manifests", () => {
   });
 
   it("gives every slot section an id the editor can look up", () => {
-    const slotSections = ALL.flatMap((m) =>
-      m.sections.filter((s) => s.slot),
-    );
+    const slotSections = ALL.flatMap((m) => m.sections.filter((s) => s.slot));
 
     expect(slotSections.length).toBeGreaterThan(0);
     // A slot section renders bespoke JSX instead of fields, so declaring both
@@ -180,14 +181,12 @@ describe("declared slots are all supplied", () => {
  */
 describe("slot status tokens", () => {
   it("defines a label, cell class and swatch for every state", async () => {
-    const { SLOT_STATUS_TOKENS } = await import(
-      "@/lib/scheduling/interval-status-tokens"
-    );
+    const { SLOT_STATUS_TOKENS } =
+      await import("@/lib/scheduling/interval-status-tokens");
     // The legend surfaces `hint` as a title, so an empty one is a silent gap.
     const incomplete = Object.entries(SLOT_STATUS_TOKENS)
       .filter(
-        ([, t]) =>
-          !t.label || !t.className || !t.swatchClassName || !t.hint,
+        ([, t]) => !t.label || !t.className || !t.swatchClassName || !t.hint,
       )
       .map(([key]) => key);
 
@@ -203,13 +202,16 @@ describe("slot status tokens", () => {
   });
 
   it("explains every state the consultant grid can render", async () => {
-    const { SLOT_STATUS_TOKENS, CONSULTANT_LEGEND_KEYS } = await import(
-      "@/lib/scheduling/interval-status-tokens"
-    );
+    const { SLOT_STATUS_TOKENS, CONSULTANT_LEGEND_KEYS } =
+      await import("@/lib/scheduling/interval-status-tokens");
     // The allocate calendar can show all of them, so its legend must too — a
-    // state with no legend entry is a colour nobody can interpret.
+    // state with no legend entry is a colour nobody can interpret. The one
+    // exception is `unavailable`, which paints nothing (#1703 F1) and is
+    // named by the folded band strip instead.
     expect([...CONSULTANT_LEGEND_KEYS].sort()).toEqual(
-      Object.keys(SLOT_STATUS_TOKENS).sort(),
+      Object.keys(SLOT_STATUS_TOKENS)
+        .filter((key) => key !== "unavailable")
+        .sort(),
     );
   });
 
