@@ -27,11 +27,18 @@ import {
 } from "@/lib/collaborators/standing";
 import { apiError } from "@/lib/errors";
 import * as Sentry from "@sentry/nextjs";
+import { dateToMinuteUtc } from "@/utils/scheduling-engine/slotTimeUtils";
 import {
-  dateToMinuteUtc,
-  validateWeeklySlotTimeOrder,
-  slotsOverlap,
-} from "@/utils/scheduling-engine/slotTimeUtils";
+  AVAILABILITY_REFUSAL_STATUS,
+  validateCustomWindows,
+  validateWeeklyWindows,
+} from "@/lib/scheduling/availability-contract";
+import {
+  NONE_UNCOVERED,
+  settleAvailabilityWrite,
+  type UncoveredUpcoming,
+} from "@/lib/scheduling/uncovered-upcoming";
+import type { ActiveAppointmentsResult } from "../utils/consultant-appointments";
 import {
   resolveWeeklyTimezone,
   resolveWeeklyUtcOffsetMinutes,
@@ -337,277 +344,210 @@ export async function PUT(
       linkedinUrl,
     } = data;
 
-    // Check if schedule type is being changed
+    // ------------------------------------------------------------------
+    // Availability + scheduleType. Everything below the validation runs in
+    // ONE Serializable transaction: the switch guard is re-read inside it
+    // and the type flips through a CAS, so a booking that lands between the
+    // pre-flight and the write is caught, and a crash can no longer leave
+    // scheduleType flipped with the other type's rows still present (both
+    // tables are replaced, as the onboarding sync does).
+    // ------------------------------------------------------------------
     const existingConsultant = await prisma.consultantProfile.findUnique({
       where: { id },
-      select: { scheduleType: true },
+      select: { scheduleType: true, user: { select: { timezone: true } } },
     });
+    if (!existingConsultant) {
+      return NextResponse.json(
+        { error: "Consultant not found" },
+        { status: 404 },
+      );
+    }
+    const previousScheduleType = existingConsultant.scheduleType;
+    const switching = previousScheduleType !== scheduleType;
 
-    if (
-      existingConsultant &&
-      existingConsultant.scheduleType !== scheduleType
-    ) {
-      // Validate that there are no active appointments before allowing switch
-      const activeAppointments = await checkActiveAppointments(id);
+    const switchBlocked = (active: ActiveAppointmentsResult) =>
+      NextResponse.json(
+        {
+          error: `Cannot switch schedule type while you have ${active.total} active appointment(s). Please complete or cancel them first.`,
+          code: "SCHEDULE_SWITCH_BLOCKED",
+          breakdown: active.breakdown,
+          details: active.details,
+        },
+        { status: 400 },
+      );
 
-      if (activeAppointments.hasActive) {
-        return NextResponse.json(
-          {
-            error: `Cannot switch schedule type while you have ${activeAppointments.total} active appointment(s). Please complete or cancel them first.`,
-            code: "SCHEDULE_SWITCH_BLOCKED",
-            breakdown: activeAppointments.breakdown,
-          },
-          { status: 400 },
-        );
-      }
+    // Pre-flight so the common refusal costs no transaction; re-checked in-tx.
+    if (switching) {
+      const active = await checkActiveAppointments(id);
+      if (active.hasActive) return switchBlocked(active);
     }
 
-    // Update consultant profile
-    await prisma.consultantProfile.update({
-      where: { id },
-      data: {
-        description,
-        experience,
-        scheduleType,
-        domain: {
-          connect: { id: domainId },
-        },
-        subDomains: {
-          set: subDomainIds.map((id: string) => ({ id })),
-        },
-        tags: {
-          set: tagIds.map((id: string) => ({ id })),
-        },
-        // New fields
-        headline: headline ?? null,
-        websiteUrl: websiteUrl || null,
-        twitterUrl: twitterUrl || null,
-        githubUrl: githubUrl || null,
-        videoIntroUrl: videoIntroUrl || null,
-        languages: languages ?? [],
-        toolsAndTechnologies: toolsAndTechnologies ?? [],
-        mentoringStyle: mentoringStyle ?? null,
-        offeringFormats: offeringFormats ?? [],
-      },
-    });
+    // Build + validate the submitted set through the shared contract.
+    const userTimezone = existingConsultant.user?.timezone ?? null;
+    const rowTimezone = resolveWeeklyTimezone(userTimezone);
+    let mergedWeekly: (Prisma.AvailabilityWindowWeeklyCreateManyInput & {
+      startDay: DayOfWeek;
+      startTimeUtc: number;
+      endTimeUtc: number;
+      utcOffsetMinutes: number;
+    })[] = [];
+    let mergedCustom: (Prisma.AvailabilityWindowCustomCreateManyInput & {
+      startsAt: Date;
+      endsAt: Date;
+    })[] = [];
 
-    // Update user's linkedinUrl if provided (linkedinUrl is stored on User model)
-    if (linkedinUrl !== undefined) {
-      const consultant = await prisma.consultantProfile.findUnique({
-        where: { id },
-        select: { userId: true },
-      });
-
-      if (consultant?.userId) {
-        await prisma.user.update({
-          where: { id: consultant.userId },
-          data: { linkedinUrl: linkedinUrl || null },
-        });
-      }
-    }
-
-    // Update weekly slots if schedule type is WEEKLY
     if (scheduleType === ScheduleType.WEEKLY) {
-      if (availabilityWindowsWeekly?.length) {
-        // Resolve timezone offset once for all slots (same user → same
-        // timezone), through the one resolver every write path shares (#1326).
-        const userTimezone = await prisma.user
-          .findUnique({
-            where: { id: session.user.id },
-            select: { timezone: true },
-          })
-          .then((u) => u?.timezone ?? null);
-        let utcOffsetMinutes: number;
-        try {
-          utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
-            profileTimezone: userTimezone,
-            callerSupplied: data.utcOffsetMinutes ?? null,
-            consultantProfileId: id,
-          });
-        } catch (error) {
-          if (error instanceof WeeklyOffsetConflictError) {
-            return NextResponse.json(
-              { error: error.message, code: error.code },
-              { status: 400 },
-            );
-          }
-          throw error;
-        }
-        const rowTimezone = resolveWeeklyTimezone(userTimezone);
-
-        const weeklySlotData: Prisma.AvailabilityWindowWeeklyCreateManyInput[] =
-          availabilityWindowsWeekly.map((slot) => {
-            const startTimeUtc = dateToMinuteUtc(new Date(slot.startsAt));
-            const endTimeUtc = dateToMinuteUtc(new Date(slot.endsAt));
-            // #1343 — dayOfWeekforStartTimeInUTC is the wire name the settings
-            // form still sends; what it carries is the consultant's LOCAL day.
-            return {
-              consultantProfileId: id,
-              startDay: slot.dayOfWeekforStartTimeInUTC,
-              endDay: slot.dayOfWeekforEndTimeInUTC,
-              startTimeUtc,
-              endTimeUtc,
-              utcOffsetMinutes,
-            };
-          });
-
-        // Validate each weekly slot before saving
-        for (const slot of weeklySlotData) {
-          const timeError = validateWeeklySlotTimeOrder(
-            slot.startDay as DayOfWeek,
-            slot.endDay as DayOfWeek,
-            slot.startTimeUtc,
-            slot.endTimeUtc,
+      // Resolve the timezone offset once for all slots, through the one
+      // resolver every write path shares (#1326).
+      let utcOffsetMinutes: number;
+      try {
+        utcOffsetMinutes = resolveWeeklyUtcOffsetMinutes({
+          profileTimezone: userTimezone,
+          callerSupplied: data.utcOffsetMinutes ?? null,
+          consultantProfileId: id,
+        });
+      } catch (error) {
+        if (error instanceof WeeklyOffsetConflictError) {
+          return NextResponse.json(
+            { error: error.message, code: error.code },
+            { status: 400 },
           );
-          if (timeError) {
-            return NextResponse.json({ error: timeError }, { status: 400 });
-          }
         }
-
-        // Check for overlaps within the submitted set
-        for (let i = 0; i < weeklySlotData.length; i++) {
-          for (let j = i + 1; j < weeklySlotData.length; j++) {
-            if (
-              slotsOverlap(
-                weeklySlotData[i] as {
-                  startDay: DayOfWeek;
-                  endDay: DayOfWeek;
-                  startTimeUtc: number;
-                  endTimeUtc: number;
-                },
-                weeklySlotData[j] as {
-                  startDay: DayOfWeek;
-                  endDay: DayOfWeek;
-                  startTimeUtc: number;
-                  endTimeUtc: number;
-                },
-              )
-            ) {
-              return NextResponse.json(
-                {
-                  error:
-                    "Submitted weekly slots contain overlapping time ranges",
-                },
-                { status: 400 },
-              );
-            }
-          }
-        }
-
-        // Delete existing then create new, atomically — a failure between the
-        // two halves would leave the consultant with no availability at all.
-        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
-        //
-        // Serializable, like the per-row slot routes: at Read Committed a
-        // second replacement running concurrently takes its snapshot before
-        // the first commits, so its delete misses the rows the first inserted
-        // and both sets survive — overlapping availability, which every
-        // downstream reader assumes cannot exist.
-        // #872 — the five DST columns are dual-written from the same resolver,
-        // and computed AFTER the merge so they describe the row that is
-        // actually stored. No reader consults them until the reader flip.
-        const mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData).map(
-          (row) => ({
-            ...row,
-            ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
-          }),
+        throw error;
+      }
+      // #1343 — dayOfWeekforStartTimeInUTC is the wire name the settings form
+      // still sends; what it carries is the consultant's LOCAL day.
+      const weeklySlotData = (availabilityWindowsWeekly ?? []).map((slot) => ({
+        consultantProfileId: id,
+        startDay: slot.dayOfWeekforStartTimeInUTC as DayOfWeek,
+        endDay: slot.dayOfWeekforEndTimeInUTC as DayOfWeek,
+        startTimeUtc: dateToMinuteUtc(new Date(slot.startsAt)),
+        endTimeUtc: dateToMinuteUtc(new Date(slot.endsAt)),
+        utcOffsetMinutes,
+      }));
+      const refusal = validateWeeklyWindows(weeklySlotData);
+      if (refusal) {
+        return NextResponse.json(
+          { error: refusal.message, code: refusal.code, index: refusal.index },
+          { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
         );
-        await withSerializableRetry(() =>
-          prisma.$transaction(
-            async (tx) => {
-              await tx.availabilityWindowWeekly.deleteMany({
-                where: { consultantProfileId: id },
+      }
+      // #1320 — merge adjacent entries; #872 — the DST columns describe the
+      // merged row that is actually stored.
+      mergedWeekly = mergeAdjacentWeeklyRows(weeklySlotData).map((row) => ({
+        ...row,
+        ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
+      }));
+    } else {
+      const customSlotData = (availabilityWindowsCustom ?? []).map((slot) => ({
+        consultantProfileId: id,
+        startsAt: new Date(slot.startsAt),
+        endsAt: new Date(slot.endsAt),
+      }));
+      const refusal = validateCustomWindows(customSlotData);
+      if (refusal) {
+        return NextResponse.json(
+          { error: refusal.message, code: refusal.code, index: refusal.index },
+          { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+        );
+      }
+      mergedCustom = mergeAdjacentCustomRows(customSlotData);
+    }
+
+    class SwitchBlockedInTx extends Error {
+      constructor(readonly active: ActiveAppointmentsResult) {
+        super("SCHEDULE_SWITCH_BLOCKED");
+      }
+    }
+    class SwitchConflictInTx extends Error {}
+
+    let uncoveredUpcoming: UncoveredUpcoming = NONE_UNCOVERED;
+    try {
+      await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            if (switching) {
+              const active = await checkActiveAppointments(id, tx);
+              if (active.hasActive) throw new SwitchBlockedInTx(active);
+              const flipped = await tx.consultantProfile.updateMany({
+                where: { id, scheduleType: previousScheduleType },
+                data: { scheduleType },
               });
+              if (flipped.count === 0) throw new SwitchConflictInTx();
+            }
+
+            await tx.consultantProfile.update({
+              where: { id },
+              data: {
+                description,
+                experience,
+                domain: { connect: { id: domainId } },
+                subDomains: { set: subDomainIds.map((id: string) => ({ id })) },
+                tags: { set: tagIds.map((id: string) => ({ id })) },
+                headline: headline ?? null,
+                websiteUrl: websiteUrl || null,
+                twitterUrl: twitterUrl || null,
+                githubUrl: githubUrl || null,
+                videoIntroUrl: videoIntroUrl || null,
+                languages: languages ?? [],
+                toolsAndTechnologies: toolsAndTechnologies ?? [],
+                mentoringStyle: mentoringStyle ?? null,
+                offeringFormats: offeringFormats ?? [],
+              },
+            });
+
+            // linkedinUrl lives on User, not ConsultantProfile.
+            if (linkedinUrl !== undefined) {
+              await tx.user.update({
+                where: { id: ownerCheck.userId },
+                data: { linkedinUrl: linkedinUrl || null },
+              });
+            }
+
+            // Replace BOTH tables — the dormant arm must not keep stale rows.
+            await tx.availabilityWindowWeekly.deleteMany({
+              where: { consultantProfileId: id },
+            });
+            await tx.availabilityWindowCustom.deleteMany({
+              where: { consultantProfileId: id },
+            });
+            if (scheduleType === ScheduleType.WEEKLY) {
               await tx.availabilityWindowWeekly.createMany({
                 data: mergedWeekly,
               });
-            },
-            {
-              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-              maxWait: 10_000,
-              timeout: 15_000,
-            },
-          ),
-        );
-      } else {
-        // No weekly slots submitted — clear existing
-        await prisma.availabilityWindowWeekly.deleteMany({
-          where: { consultantProfileId: id },
-        });
-      }
-    }
-
-    // Update custom slots if schedule type is CUSTOM
-    if (scheduleType === ScheduleType.CUSTOM) {
-      if (availabilityWindowsCustom?.length) {
-        // Dates, not the wider `string | Date` the Prisma input allows, so the
-        // merge below can compare instants (#1320).
-        const customSlotData: (Prisma.AvailabilityWindowCustomCreateManyInput & {
-          startsAt: Date;
-          endsAt: Date;
-        })[] = availabilityWindowsCustom.map((slot) => ({
-          consultantProfileId: id,
-          startsAt: new Date(slot.startsAt),
-          endsAt: new Date(slot.endsAt),
-        }));
-
-        // Validate custom slot ordering and check for pairwise overlaps
-        for (const slot of customSlotData) {
-          if (
-            new Date(slot.startsAt).getTime() >= new Date(slot.endsAt).getTime()
-          ) {
-            return NextResponse.json(
-              { error: "Custom slot start time must be before end time" },
-              { status: 400 },
-            );
-          }
-        }
-        for (let i = 0; i < customSlotData.length; i++) {
-          for (let j = i + 1; j < customSlotData.length; j++) {
-            const a = customSlotData[i];
-            const b = customSlotData[j];
-            if (
-              new Date(a.startsAt).getTime() < new Date(b.endsAt).getTime() &&
-              new Date(b.startsAt).getTime() < new Date(a.endsAt).getTime()
-            ) {
-              return NextResponse.json(
-                {
-                  error:
-                    "Submitted custom slots contain overlapping time ranges",
-                },
-                { status: 400 },
-              );
-            }
-          }
-        }
-
-        // Delete existing then create new, atomically and Serializably — see
-        // the weekly arm for both reasons.
-        // #1320 — see utils/scheduling-engine/mergeAdjacentWeeklyRows.ts.
-        const mergedCustom = mergeAdjacentCustomRows(customSlotData);
-        await withSerializableRetry(() =>
-          prisma.$transaction(
-            async (tx) => {
-              await tx.availabilityWindowCustom.deleteMany({
-                where: { consultantProfileId: id },
-              });
+            } else {
               await tx.availabilityWindowCustom.createMany({
                 data: mergedCustom,
               });
-            },
-            {
-              isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-              maxWait: 10_000,
-              timeout: 15_000,
-            },
-          ),
+            }
+
+            // Shrink notice: which upcoming sessions now sit outside the new
+            // hours. Reported, never refused — a booking is a contract, the
+            // published hours are an offer for new ones.
+            uncoveredUpcoming = (await settleAvailabilityWrite(tx, id))
+              .uncoveredUpcoming;
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        ),
+      );
+    } catch (error) {
+      if (error instanceof SwitchBlockedInTx)
+        return switchBlocked(error.active);
+      if (error instanceof SwitchConflictInTx) {
+        return NextResponse.json(
+          {
+            error:
+              "Your schedule type changed in another tab. Reload and try again.",
+            code: "SCHEDULE_SWITCH_CONFLICT",
+          },
+          { status: 409 },
         );
-      } else {
-        // No custom slots submitted — clear existing
-        await prisma.availabilityWindowCustom.deleteMany({
-          where: { consultantProfileId: id },
-        });
       }
+      throw error;
     }
 
     // Fetch and return the updated consultant with all relations
@@ -658,7 +598,7 @@ export async function PUT(
     // should see it live rather than wait out the ISR window.
     purgeExpertSurfaces(id);
 
-    return NextResponse.json({ data: updatedConsultant });
+    return NextResponse.json({ data: updatedConsultant, uncoveredUpcoming });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

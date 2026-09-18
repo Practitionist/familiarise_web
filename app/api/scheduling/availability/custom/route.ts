@@ -5,6 +5,11 @@ import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  validateCustomWindow,
+  AVAILABILITY_REFUSAL_STATUS,
+} from "@/lib/scheduling/availability-contract";
+import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 
 export async function GET(req: NextRequest) {
   try {
@@ -140,6 +145,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Contract (lib/scheduling/availability-contract): duration bound and no
+    // already-ended window, the rules the wizard enforces.
+    const refusal = validateCustomWindow({
+      startsAt: startTime,
+      endsAt: endTime,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // Overlap check, write and coalescing share one Serializable transaction:
     // coalescing deletes the folded rows and extends the survivor, so on the
     // bare client a failure between those writes destroys availability (#1320).
@@ -192,7 +210,14 @@ export async function POST(req: NextRequest) {
             consultantProfileId,
             { startsAt: startTime, endsAt: endTime },
           );
-          return NextResponse.json({ data: covering }, { status: 201 });
+          const { uncoveredUpcoming } = await settleAvailabilityWrite(
+            tx,
+            consultantProfileId,
+          );
+          return NextResponse.json(
+            { data: covering, uncoveredUpcoming },
+            { status: 201 },
+          );
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

@@ -32,6 +32,11 @@ export async function GET(
         { status: 404 },
       );
     }
+    // Only the owner may read their booking-load pre-flight; the count leaks
+    // how busy a consultant is.
+    if (consultant.userId !== session.user.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
 
     // Check for active appointments using shared utility
     const activeAppointments = await checkActiveAppointments(consultantId);
@@ -53,7 +58,10 @@ export async function GET(
       currentScheduleType: consultant.scheduleType,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     console.error("Error checking schedule switch eligibility:", error);
     return NextResponse.json(
       { error: "Internal server error" },
