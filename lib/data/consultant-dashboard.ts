@@ -69,6 +69,9 @@ const PERSONAL_SCOPE = { kind: "personal" } as const;
  */
 const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 
+/** The "Organisation sessions" strip shows the next few, not the book. */
+const HOME_ORG_SESSIONS_TAKE = 5;
+
 /**
  * Every appointment this consultant owns or collaborates on. Shared by the
  * Home display read and the active-clients count so the two can never drift.
@@ -76,55 +79,70 @@ const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
     ...PERSONAL_ORG_PIN,
-    OR: [
-      {
-        consultation: {
-          consultationPlan: { consultantProfileId },
-          status: "APPROVED" as const,
-        },
-      },
-      {
-        subscription: {
-          subscriptionPlan: { consultantProfileId },
-          status: "APPROVED" as const,
-        },
-      },
-      {
-        webinar: {
-          webinarPlan: { consultantProfileId },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        // Collaborated webinars (co-host, moderator, etc.)
-        webinar: {
-          webinarPlan: {
-            collaborators: {
-              some: { consultantProfileId, status: "ACCEPTED" as const },
-            },
-          },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        class: {
-          classPlan: { consultantProfileId },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        // Collaborated classes (co-instructor, TA, etc.)
-        class: {
-          classPlan: {
-            collaborators: {
-              some: { consultantProfileId, status: "ACCEPTED" as const },
-            },
-          },
-          status: "SCHEDULED" as const,
-        },
-      },
-    ],
+    OR: consultantDeliveryArms(consultantProfileId),
   }) satisfies Prisma.AppointmentWhereInput;
+
+/**
+ * #1703 B13 — the same delivery predicate with the personal pin inverted:
+ * an org-funded session this consultant must still show up for. Read as
+ * metadata only (ADR 20): org name, time, join state.
+ */
+const consultantOrgAppointmentScope = (consultantProfileId: string) =>
+  ({
+    organizationId: { not: null },
+    OR: consultantDeliveryArms(consultantProfileId),
+  }) satisfies Prisma.AppointmentWhereInput;
+
+const consultantDeliveryArms = (
+  consultantProfileId: string,
+): Prisma.AppointmentWhereInput[] => [
+  {
+    consultation: {
+      consultationPlan: { consultantProfileId },
+      status: "APPROVED" as const,
+    },
+  },
+  {
+    subscription: {
+      subscriptionPlan: { consultantProfileId },
+      status: "APPROVED" as const,
+    },
+  },
+  {
+    webinar: {
+      webinarPlan: { consultantProfileId },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    // Collaborated webinars (co-host, moderator, etc.)
+    webinar: {
+      webinarPlan: {
+        collaborators: {
+          some: { consultantProfileId, status: "ACCEPTED" as const },
+        },
+      },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    class: {
+      classPlan: { consultantProfileId },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    // Collaborated classes (co-instructor, TA, etc.)
+    class: {
+      classPlan: {
+        collaborators: {
+          some: { consultantProfileId, status: "ACCEPTED" as const },
+        },
+      },
+      status: "SCHEDULED" as const,
+    },
+  },
+];
 
 const appointmentInclude = {
   occurrences: {
@@ -425,6 +443,46 @@ export async function getConsultantDashboard(
   const homeAppointmentIds = [
     ...new Set(soonestSlots.map((s) => s.appointmentId)),
   ].slice(0, HOME_APPOINTMENTS_TAKE);
+
+  // #1703 B13 — the next org-funded sessions this consultant delivers. Same
+  // occurrence predicate as above with the org pin inverted; metadata only.
+  const orgSessionRows = await prisma.appointmentOccurrence.findMany({
+    where: {
+      deletedAt: null,
+      completionStatus: "SCHEDULED",
+      isTentative: false,
+      endsAt: { gte: startOfToday },
+      appointment: consultantOrgAppointmentScope(consultantProfileId),
+    },
+    select: {
+      id: true,
+      appointmentId: true,
+      startsAt: true,
+      endsAt: true,
+      isTentative: true,
+      completionStatus: true,
+      meeting: { select: { id: true, endedAt: true, endedReason: true } },
+      appointment: {
+        select: {
+          organizationId: true,
+          organization: { select: { name: true } },
+        },
+      },
+    },
+    orderBy: { startsAt: "asc" },
+    take: HOME_ORG_SESSIONS_TAKE,
+  });
+  const orgSessions = orgSessionRows.map((row) => ({
+    occurrenceId: row.id,
+    appointmentId: row.appointmentId,
+    organizationId: row.appointment.organizationId ?? "",
+    organizationName: row.appointment.organization?.name ?? "Organisation",
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    isTentative: row.isTentative,
+    completionStatus: row.completionStatus,
+    meeting: row.meeting,
+  }));
 
   // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
   // This eliminates network overhead and reduces response time significantly
@@ -869,6 +927,7 @@ export async function getConsultantDashboard(
     approvals,
     pendingRequestsCount,
     awaitingPayment,
+    orgSessions,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

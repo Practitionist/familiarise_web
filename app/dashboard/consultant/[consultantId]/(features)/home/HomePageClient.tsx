@@ -86,6 +86,7 @@ export default function HomePageClient({
         consultantId={consultantId}
         pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
         awaitingPayment={dashboardData.awaitingPayment}
+        orgSessions={dashboardData.orgSessions}
         viewerZone={viewerZone}
         performanceSnapshot={dashboardData.performanceSnapshot}
         financialSummary={dashboardData.financialSummary}

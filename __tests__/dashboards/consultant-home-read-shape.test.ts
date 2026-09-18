@@ -66,8 +66,15 @@ describe("consultant Home read shape (#1101)", () => {
   it("ranks Home appointments by slot time anchored at today, not by createdAt", async () => {
     await getConsultantDashboard("cp-1").catch(() => undefined);
 
-    expect(slotFindMany).toHaveBeenCalledTimes(1);
+    // Two occurrence reads: the ranking read first, then the #1703 B13
+    // org-sessions strip (personal pin inverted, metadata only).
+    expect(slotFindMany).toHaveBeenCalledTimes(2);
     const args = slotFindMany.mock.calls[0][0];
+    const orgArgs = slotFindMany.mock.calls[1][0];
+    expect(orgArgs.where.appointment.organizationId).toEqual({ not: null });
+    expect(orgArgs.select.appointment.select.organization).toEqual({
+      select: { name: true },
+    });
 
     // Ordering must key off the slot clock. `createdAt` truncated on the wrong
     // key: a consultant who booked next month a fortnight ago and then took a
@@ -210,7 +217,11 @@ describe("consultant Home read shape (#1101)", () => {
   it("still issues the display read when there IS something upcoming (#1121)", async () => {
     // Non-vacuity anchor for the assertion above: prove the guard is keyed on
     // emptiness and has not simply deleted the read.
-    slotFindMany.mockResolvedValue([{ appointmentId: "appt-1" }]);
+    // Only the ranking read (select: { appointmentId }) answers; the B13 org
+    // read keys off a wider select and stays empty.
+    slotFindMany.mockImplementation((args: { select: { id?: boolean } }) =>
+      Promise.resolve(args.select.id ? [] : [{ appointmentId: "appt-1" }]),
+    );
 
     await getConsultantDashboard("cp-1");
 

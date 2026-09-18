@@ -54,7 +54,12 @@ import {
   eventUnionStatusBadge,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/occurrences";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  getOccurrenceJoinState,
+  getProximityLabel,
+  type OccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
@@ -73,11 +78,19 @@ import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
  * viewer has no saved zone (docs/booking/19-dst-and-timezone-posture.md). */
 const HOME_TIME_PATTERN = "EEE, MMM d, h:mm a";
 
+const ORG_JOIN_STATE_LABEL: Record<OccurrenceJoinState, string> = {
+  joinable: "Open to join",
+  countdown: "Upcoming",
+  ended: "Ended",
+  disabled: "Not joinable",
+};
+
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   pendingRequestsCount?: number;
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
+  orgSessions?: TConsultantDashboardResponse["orgSessions"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
   viewerZone: ViewerZone;
   performanceSnapshot?: TPerformanceSnapshot;
@@ -102,6 +115,7 @@ export function HomeTab({
   consultantId,
   pendingRequestsCount = 0,
   awaitingPayment,
+  orgSessions = [],
   viewerZone,
   performanceSnapshot,
   financialSummary,
@@ -636,6 +650,60 @@ export function HomeTab({
                         </span>
                       </li>
                     ))}
+                  </ul>
+                </DataCard>
+              )}
+
+              {/* #1703 B13 — org-funded sessions this consultant delivers.
+                  Home pins personal scope everywhere else (ADR 19), so
+                  without this strip a session they must show up for never
+                  appeared. Metadata only (ADR 20): org, time, join state. */}
+              {orgSessions.length > 0 && (
+                <DataCard title="Organisation sessions" icon={Building2}>
+                  <ul className="divide-y divide-border text-sm">
+                    {orgSessions.map((session) => {
+                      const joinState = getOccurrenceJoinState(
+                        { id: session.occurrenceId, ...session },
+                        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
+                      );
+                      const membership = orgMemberships.find(
+                        (m) => m.organizationId === session.organizationId,
+                      );
+                      return (
+                        <li
+                          key={session.occurrenceId}
+                          className="flex items-center justify-between gap-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-foreground">
+                              {session.organizationName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatForViewer(
+                                session.startsAt,
+                                viewerZone,
+                                HOME_TIME_PATTERN,
+                              )}
+                            </p>
+                          </div>
+                          {/* The org dashboard owns the session; only a
+                              member can open it there. */}
+                          {membership ? (
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                href={`/dashboard/organization/${session.organizationId}/appointments`}
+                              >
+                                {ORG_JOIN_STATE_LABEL[joinState]}
+                              </Link>
+                            </Button>
+                          ) : (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {ORG_JOIN_STATE_LABEL[joinState]}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 </DataCard>
               )}
