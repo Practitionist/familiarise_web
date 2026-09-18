@@ -209,7 +209,9 @@ function FilterPanelImpl({
         <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Layers className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Category</span>
+            <span className="text-sm font-medium text-muted-foreground">
+              Category
+            </span>
           </div>
           <div className="space-y-3">
             <div>
@@ -245,7 +247,9 @@ function FilterPanelImpl({
                 <SelectTrigger className="w-full h-11 bg-muted border-border rounded-lg focus:ring-ring disabled:opacity-50">
                   <SelectValue
                     placeholder={
-                      selectedDomain ? "All specialties" : "Select a field first"
+                      selectedDomain
+                        ? "All specialties"
+                        : "Select a field first"
                     }
                   />
                 </SelectTrigger>
@@ -271,12 +275,12 @@ function FilterPanelImpl({
           <div className="flex items-center gap-2 mb-4">
             <TagIcon className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-medium text-muted-foreground">
-              Skills & Tags
+              Skills
             </span>
           </div>
           <div>
             <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              Search Tags
+              Search skills
             </label>
             <div className="relative" ref={tagDropdownRef}>
               <input
@@ -443,7 +447,9 @@ function FilterPanelImpl({
         <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Building2 className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Company</span>
+            <span className="text-sm font-medium text-muted-foreground">
+              Company
+            </span>
           </div>
           <div>
             <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -497,7 +503,9 @@ function FilterPanelImpl({
         <div className="pb-4 border-b border-border last:border-b-0">
           <div className="flex items-center gap-2 mb-4">
             <Globe className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm font-medium text-muted-foreground">Language</span>
+            <span className="text-sm font-medium text-muted-foreground">
+              Language
+            </span>
           </div>
           <div>
             <label className="block mb-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
