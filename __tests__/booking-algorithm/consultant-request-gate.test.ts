@@ -44,8 +44,13 @@ jest.mock("../../lib/novu", () => ({
   notifyNewBookingRequest: jest.fn(async () => ({ success: true })),
 }));
 jest.mock("../../lib/novu/workflows", () => ({
+  ...jest.requireActual("../../lib/novu/workflows"),
   notificationScope: () => ({ organizationId: null, scope: "personal" }),
 }));
+// The route imports the stale-request sweep for its window constant, and the
+// sweep's nudge pass (#1703) pulls the Novu service and outbox.
+jest.mock("../../lib/novu/service", () => ({}));
+jest.mock("../../lib/novu/outbox", () => ({ deriveTransactionId: jest.fn() }));
 jest.mock("../../lib/novu/resolve-href", () => ({ scopedHref: () => "/x" }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { REQUEST: 1 },
@@ -75,7 +80,7 @@ jest.mock("../../lib/prisma", () => {
     requestedBy: { user: { name: "Sam" } },
     appointment: { id: "apt_1", organizationId: null, occurrences: [] },
   });
-  const db = {
+  const db: Record<string, unknown> = {
     consulteeProfile: {
       findUnique: jest.fn(async () => ({ id: "cs_1", user: {} })),
     },

@@ -10,7 +10,7 @@
  */
 
 jest.mock("../../lib/prisma", () => {
-  const db = {
+  const db: Record<string, unknown> = {
     consultation: {
       findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn(),
