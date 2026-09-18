@@ -1664,35 +1664,21 @@ export function UnifiedCalendar({
             {folded.segments.map((segment) => {
               const key = bandKey(segment);
               const isOpenBand = segment.kind === "band" && openBands.has(key);
-              if (segment.kind === "band" && !isOpenBand) {
-                return (
+              const strip =
+                segment.kind === "band" ? (
                   <button
                     key={`band-${key}`}
                     type="button"
                     onClick={() => toggleBand(key)}
-                    aria-expanded={false}
+                    aria-expanded={isOpenBand}
                     className="my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted"
                   >
                     {bandLabel(segment)}
-                    <span aria-hidden>· show</span>
+                    <span aria-hidden>{isOpenBand ? "· hide" : "· show"}</span>
                   </button>
-                );
-              }
-              const rows: React.ReactNode[] = [];
-              if (isOpenBand) {
-                rows.push(
-                  <button
-                    key={`band-${key}`}
-                    type="button"
-                    onClick={() => toggleBand(key)}
-                    aria-expanded
-                    className="my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted"
-                  >
-                    {bandLabel(segment)}
-                    <span aria-hidden>· hide</span>
-                  </button>,
-                );
-              }
+                ) : null;
+              if (segment.kind === "band" && !isOpenBand) return strip;
+              const rows: React.ReactNode[] = strip ? [strip] : [];
               for (
                 let rowIndex = segment.from;
                 rowIndex < segment.to;
