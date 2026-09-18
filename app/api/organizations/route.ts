@@ -332,25 +332,32 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // P3 email twin: confirmation to the creator, staged inside this
+      // transaction so the row exists iff the organisation does; the vendor
+      // attempt runs in after() below.
+      const stagedCreated = await stageOrgCreatedEmail(
+        {
+          userId: auth.session.user.id,
+          orgId: org.id,
+          orgName: org.name,
+          dashboardUrl: `/dashboard/organization/${org.id}/home`,
+        },
+        tx,
+      );
+
       return {
         organization: org,
         billingAccountId,
         membership,
         orgWorkspaceProfileId: orgWorkspace.id,
+        stagedCreated,
       };
     });
 
-    // P3 email twin: confirmation to the creator. Staged (outbox row) before
-    // the response, attempted in `after()`; the sender never throws.
-    const stagedCreated = await stageOrgCreatedEmail({
-      userId: auth.session.user.id,
-      orgId: result.organization.id,
-      orgName: result.organization.name,
-      dashboardUrl: `/dashboard/organization/${result.organization.id}/home`,
-    });
+    const { stagedCreated, ...responseBody } = result;
     scheduleAfter(() => attemptOnboardingEmail(stagedCreated));
 
-    return NextResponse.json(result, { status: 201 });
+    return NextResponse.json(responseBody, { status: 201 });
   } catch (err) {
     // Centralised error mapper. Every branch returns a structured envelope
     // so the wizard never falls through to its generic "Failed to create

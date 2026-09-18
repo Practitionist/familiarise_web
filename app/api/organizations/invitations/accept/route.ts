@@ -27,7 +27,7 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
-import { attemptTrigger } from "@/lib/novu";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 
@@ -100,6 +100,9 @@ export async function POST(req: NextRequest) {
   const normalizedRole = roleResult.data;
 
   const userId = auth.session.user.id;
+  // Same closure-friendly aliasing as `inv` above, for the staging inside runAcceptTx.
+  const accepteeEmail = auth.session.user.email;
+  const accepteeName = auth.session.user.name ?? accepteeEmail;
 
   // #701 — DPDP: the invitee must hold live core-processing consent before we
   // provision membership (which processes their PII on the org's behalf).
@@ -157,39 +160,14 @@ export async function POST(req: NextRequest) {
     throw lastErr ?? new Error("Invitation accept failed for unknown reason");
   }
 
-  // Side-effect: notify the org's operator roster that someone new
-  // joined. Skip when the caller was already a member — the "accept"
-  // button was just idempotent, nothing newsworthy happened. Both notices
-  // are staged before the response (outbox rows only) and attempted in
-  // `after()`, so the response never waits on a vendor and the rows are
-  // durable whether or not `after()` gets to run.
+  // The roster bell and the joiner's welcome were staged inside the accept
+  // transaction (skipped when the accept was idempotent — nothing
+  // newsworthy happened); only the vendor attempts run after the response.
   if (!result.alreadyMember) {
-    const origin = new URL(req.url).origin;
-    const stagedBells = await notifyOrgInviteAccepted(
-      result.organization.id,
-      {
-        accepteeName: auth.session.user.name ?? auth.session.user.email,
-        accepteeEmail: auth.session.user.email,
-        orgName: result.organization.name,
-        role: result.membership.role,
-        dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
-      },
-      { tx: prisma },
-    ).catch((err) => {
-      console.error("[notifyOrgInviteAccepted] stage failed:", err);
-      return [];
-    });
-    // P3 email twin to the joiner; skipped when alreadyMember like the bell.
-    const stagedWelcome = await stageOrgWelcomeEmail({
-      userId,
-      membershipId: result.membership.id,
-      orgName: result.organization.name,
-      role: result.membership.role,
-      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/home`,
-    });
+    const { stagedBells, stagedWelcome } = result;
     scheduleAfter(async () => {
       for (const row of stagedBells) await attemptTrigger(row);
-      await attemptOnboardingEmail(stagedWelcome);
+      if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
     });
   }
 
@@ -255,7 +233,13 @@ export async function POST(req: NextRequest) {
         },
       });
       if (existing) {
-        return { membership: existing, organization: org, alreadyMember: true };
+        return {
+          membership: existing,
+          organization: org,
+          alreadyMember: true,
+          stagedBells: [] as StagedTrigger[],
+          stagedWelcome: null,
+        };
       }
 
       // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Accepting an
@@ -344,7 +328,39 @@ export async function POST(req: NextRequest) {
       // next page load instead of after a manual logout. Audit B.5.
       await bumpUserSessionGeneration(tx, userId);
 
-      return { membership: created, organization: org, alreadyMember: false };
+      // Staged HERE so the roster bell and the joiner's welcome commit with
+      // the membership or roll back with it (review round 2 on #1700); the
+      // roster is read through `tx` too. Attempted in after() by the caller.
+      const origin = new URL(req.url).origin;
+      const stagedBells = await notifyOrgInviteAccepted(
+        inv.organizationId,
+        {
+          accepteeName,
+          accepteeEmail,
+          orgName: org.name,
+          role: normalizedRole,
+          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/members`,
+        },
+        { tx },
+      );
+      const stagedWelcome = await stageOrgWelcomeEmail(
+        {
+          userId,
+          membershipId: created.id,
+          orgName: org.name,
+          role: normalizedRole,
+          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
+        },
+        tx,
+      );
+
+      return {
+        membership: created,
+        organization: org,
+        alreadyMember: false,
+        stagedBells,
+        stagedWelcome,
+      };
     });
   }
 }

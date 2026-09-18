@@ -28,11 +28,12 @@ import {
   UNVERIFIED_ORG_SEAT_CAP,
 } from "@/lib/enterprise/governance";
 import { notifyOrgInviteSent } from "@/lib/novu/org-workflows";
-import { attemptTrigger } from "@/lib/novu";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
 import {
   attemptStagedEmail,
   EMAIL_BUDGET_MS,
   stageOrgInvitationEmail,
+  type StagedSend,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { applyRateLimit, orgInviteLimiter } from "@/lib/rate-limit";
@@ -206,6 +207,11 @@ export async function POST(
   // surfaced P2002.
   let wasExisting = false;
   let invitation;
+  // Staged inside the transaction below: the notice rows commit with the
+  // invitation or roll back with it (review round 2 on #1700).
+  let stagedBells: StagedTrigger[] = [];
+  let stagedEmail: StagedSend | null = null;
+  const origin = new URL(req.url).origin;
   try {
     // #1132 follow-up — the tx below assumed a retry budget that never
     // existed; a P2034 abort surfaced as a raw 500 to the invite sender.
@@ -274,6 +280,23 @@ export async function POST(
             },
           });
 
+          // The bell reaches an invitee who already has an account; the
+          // email is the channel that reaches one who does not (#1653). Both
+          // outbox rows are written HERE, so they exist iff the invitation
+          // does; the vendor attempts run in after() below.
+          const invite = {
+            inviterName: access.session.user.name ?? access.session.user.email,
+            orgName: access.org.name,
+            role,
+            inviteUrl: `${origin}/organizations/invite/${record.id}`,
+            expiresAt: expiresAt.toISOString(),
+          };
+          stagedBells = await notifyOrgInviteSent(email, invite, { tx });
+          stagedEmail = await stageOrgInvitationEmail(
+            { email, ...invite },
+            { tx, entityRef: `orgInvite:${record.id}` },
+          );
+
           return record;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -311,41 +334,7 @@ export async function POST(
     throw err;
   }
 
-  // The bell reaches an invitee who already has an account; the email is the
-  // channel that reaches one who does not (#1653). Both are STAGED before the
-  // response — one outbox insert each, no vendor call — and ATTEMPTED inside
-  // `after()`. The row is what makes the send durable (the relay finishes
-  // it), so the stage must not depend on `after()` running; the attempt may.
-  // Failures stay logged, never surfaced.
-  const origin = new URL(req.url).origin;
-  const invite = {
-    inviterName: access.session.user.name ?? access.session.user.email,
-    orgName: access.org.name,
-    role,
-    inviteUrl: `${origin}/organizations/invite/${invitation.id}`,
-    expiresAt: expiresAt.toISOString(),
-  };
-  const stagedBells = await notifyOrgInviteSent(email, invite, {
-    tx: prisma,
-  }).catch((err) => {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "organizations" } },
-    );
-    console.error("[notifyOrgInviteSent] stage failed:", err);
-    return [];
-  });
-  const stagedEmail = await stageOrgInvitationEmail(
-    { email, ...invite },
-    { entityRef: `orgInvite:${invitation.id}` },
-  ).catch((err) => {
-    Sentry.captureException(
-      err instanceof Error ? err : new Error(String(err)),
-      { tags: { subsystem: "email", emailType: "ORG_INVITATION" } },
-    );
-    console.error("[stageOrgInvitationEmail] failed:", err);
-    return null;
-  });
+  // Vendor attempts after the response; the rows above are the durable part.
   scheduleAfter(async () => {
     for (const row of stagedBells) await attemptTrigger(row);
     await attemptStagedEmail(stagedEmail, EMAIL_BUDGET_MS.AUTH);

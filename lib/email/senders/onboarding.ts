@@ -33,7 +33,7 @@ import OrgMembershipChangedEmail, {
 import OrgWelcomeEmail, {
   orgWelcomeSubject,
 } from "@/emails/organizations/OrgWelcomeEmail";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import { getAppUrl } from "@/lib/url";
 import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
@@ -85,18 +85,24 @@ function greet(r: EmailRecipient): string {
   return r.name?.trim() || "there";
 }
 
-// Stage only: recipients are resolved on the global client (never inside a
-// transaction — PG_POOL_MAX=1), then one FailedEmail row per allowed
-// recipient. A failure here is reported and yields an empty list; the
-// caller's business write is already committed and must not be undone.
+/** The transaction a route stages inside; recipients are read through it too (PG_POOL_MAX=1). */
+export type StagingTx = Pick<Tx, "failedEmail" | "emailSuppression" | "user">;
+
+// Stage only: one FailedEmail row per allowed recipient, no vendor call.
+// With `tx` the rows join the caller's transaction — recipients are read
+// through it (a global-client read would deadlock on the single
+// connection) and a staging failure PROPAGATES so the business change and
+// its notice commit or roll back together. Without `tx` (a caller with no
+// transaction) a failure is reported and yields an empty list.
 async function stageGuarded(
   spec: Spec,
   userIds: string[],
+  tx?: StagingTx,
 ): Promise<StagedOnboardingEmail> {
-  try {
-    const recipients = await loadEmailRecipients(userIds, null);
+  const run = async () => {
+    const recipients = await loadEmailRecipients(userIds, null, tx ?? prisma);
     const list = await stageToRecipients({
-      tx: prisma,
+      tx: tx ?? prisma,
       recipients,
       emailType: spec.emailType,
       from: spec.from,
@@ -105,6 +111,10 @@ async function stageGuarded(
       render: spec.render,
     });
     return { emailType: spec.emailType, budgetMs: spec.budgetMs, list };
+  };
+  if (tx) return run();
+  try {
+    return await run();
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -192,8 +202,9 @@ export function sendVerificationDecidedEmail(
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
 export function stageVerificationDecidedEmail(
   args: VerificationDecidedEmailArgs,
+  tx?: StagingTx,
 ): Promise<StagedOnboardingEmail> {
-  return stageGuarded(verificationDecidedSpec(args), [args.userId]);
+  return stageGuarded(verificationDecidedSpec(args), [args.userId], tx);
 }
 
 // ── Membership role change / removal (non-EXPERT) ───────────────────────────
@@ -246,8 +257,9 @@ export function sendOrgMembershipChangedEmail(
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
 export function stageOrgMembershipChangedEmail(
   args: OrgMembershipChangedEmailArgs,
+  tx?: StagingTx,
 ): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgMembershipChangedSpec(args), [args.userId]);
+  return stageGuarded(orgMembershipChangedSpec(args), [args.userId], tx);
 }
 
 // ── Org created ─────────────────────────────────────────────────────────────
@@ -286,8 +298,9 @@ export function sendOrgCreatedEmail(
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
 export function stageOrgCreatedEmail(
   args: OrgCreatedEmailArgs,
+  tx?: StagingTx,
 ): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgCreatedSpec(args), [args.userId]);
+  return stageGuarded(orgCreatedSpec(args), [args.userId], tx);
 }
 
 // ── Org welcome (acceptee) ──────────────────────────────────────────────────
@@ -328,6 +341,7 @@ export function sendOrgWelcomeEmail(
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
 export function stageOrgWelcomeEmail(
   args: OrgWelcomeEmailArgs,
+  tx?: StagingTx,
 ): Promise<StagedOnboardingEmail> {
-  return stageGuarded(orgWelcomeSpec(args), [args.userId]);
+  return stageGuarded(orgWelcomeSpec(args), [args.userId], tx);
 }

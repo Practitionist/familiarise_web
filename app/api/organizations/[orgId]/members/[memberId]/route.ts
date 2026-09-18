@@ -31,6 +31,7 @@ import { notifyOrgExpertRemoved } from "@/lib/novu/service";
 import {
   attemptOnboardingEmail,
   stageOrgMembershipChangedEmail,
+  type StagedOnboardingEmail,
 } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 
@@ -144,13 +145,8 @@ export async function PATCH(
   }
   const patch = parsed.data;
 
-  // P3 email twin context: captured inside the tx, fired after commit.
-  let roleEmailContext: {
-    userId: string;
-    kind: "ROLE_CHANGED" | "REMOVED";
-    roleBefore: string;
-    roleAfter?: string;
-  } | null = null;
+  // The membership-changed email, staged inside the transaction below.
+  let stagedRoleEmail: StagedOnboardingEmail | null = null;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -383,49 +379,39 @@ export async function PATCH(
         current.status !== "REMOVED";
       const roleChanged =
         patch.role !== undefined && patch.role !== current.role;
+      let kind: "ROLE_CHANGED" | "REMOVED" | null = null;
       if (movedToRemoved) {
-        if (current.role !== "EXPERT") {
-          roleEmailContext = {
-            userId: current.userId,
-            kind: "REMOVED",
-            roleBefore: current.role,
-          };
-        }
+        if (current.role !== "EXPERT") kind = "REMOVED";
       } else if (roleChanged) {
-        roleEmailContext = {
-          userId: current.userId,
-          kind: "ROLE_CHANGED",
-          roleBefore: current.role,
-          roleAfter: patch.role,
-        };
+        kind = "ROLE_CHANGED";
+      }
+      // Staged inside this transaction so the notice row commits with the
+      // membership change or rolls back with it (review round 2 on #1700).
+      if (kind !== null) {
+        stagedRoleEmail = await stageOrgMembershipChangedEmail(
+          {
+            userId: current.userId,
+            membershipId: memberId,
+            kind,
+            orgName: access.org.name,
+            roleBefore: current.role,
+            roleAfter: kind === "ROLE_CHANGED" ? patch.role : undefined,
+            actorName:
+              access.session.user.name ??
+              access.session.user.email ??
+              "An operator",
+            dashboardUrl: "/dashboard",
+          },
+          tx,
+        );
       }
 
       return updated;
     });
 
-    // P3 email twin (context captured in-tx; audit + bumpGeneration already
-    // committed). Staged before the response — the outbox row is the
-    // durable part — and attempted in `after()`. Never fails the PATCH.
-    if (roleEmailContext !== null) {
-      const ctx = roleEmailContext as {
-        userId: string;
-        kind: "ROLE_CHANGED" | "REMOVED";
-        roleBefore: string;
-        roleAfter?: string;
-      };
-      const staged = await stageOrgMembershipChangedEmail({
-        userId: ctx.userId,
-        membershipId: memberId,
-        kind: ctx.kind,
-        orgName: access.org.name,
-        roleBefore: ctx.roleBefore,
-        roleAfter: ctx.roleAfter,
-        actorName:
-          access.session.user.name ??
-          access.session.user.email ??
-          "An operator",
-        dashboardUrl: "/dashboard",
-      });
+    // Vendor attempt after the response; the row was written in the tx.
+    if (stagedRoleEmail) {
+      const staged = stagedRoleEmail;
       scheduleAfter(() => attemptOnboardingEmail(staged));
     }
 
@@ -470,13 +456,8 @@ export async function DELETE(
     payload: import("@/lib/novu/workflows").OrgExpertRemovedPayload;
   } | null = null;
 
-  // P3 email twin for non-EXPERT removals (EXPERT stays Novu-only).
-  let removedEmailContext: {
-    userId: string;
-    roleBefore: string;
-    orgName: string;
-    actorName: string;
-  } | null = null;
+  // The removal email for a non-EXPERT member, staged inside the transaction below.
+  let stagedRemovedEmail: StagedOnboardingEmail | null = null;
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -739,12 +720,19 @@ export async function DELETE(
           select: { name: true, email: true },
         });
         if (org) {
-          removedEmailContext = {
-            userId: current.userId,
-            roleBefore: current.role,
-            orgName: org.name,
-            actorName: actor?.name ?? actor?.email ?? "An operator",
-          };
+          // Staged inside this transaction (review round 2 on #1700).
+          stagedRemovedEmail = await stageOrgMembershipChangedEmail(
+            {
+              userId: current.userId,
+              membershipId: memberId,
+              kind: "REMOVED",
+              orgName: org.name,
+              roleBefore: current.role,
+              actorName: actor?.name ?? actor?.email ?? "An operator",
+              dashboardUrl: "/dashboard",
+            },
+            tx,
+          );
         }
       }
     });
@@ -771,24 +759,9 @@ export async function DELETE(
       }
     }
 
-    // P3 email twin for non-EXPERT removals: staged before the response,
-    // attempted in `after()` (same shape as the PATCH twin above).
-    if (removedEmailContext !== null) {
-      const ctx = removedEmailContext as {
-        userId: string;
-        roleBefore: string;
-        orgName: string;
-        actorName: string;
-      };
-      const staged = await stageOrgMembershipChangedEmail({
-        userId: ctx.userId,
-        membershipId: memberId,
-        kind: "REMOVED",
-        orgName: ctx.orgName,
-        roleBefore: ctx.roleBefore,
-        actorName: ctx.actorName,
-        dashboardUrl: "/dashboard",
-      });
+    // Vendor attempt after the response; the row was written in the tx.
+    if (stagedRemovedEmail) {
+      const staged = stagedRemovedEmail;
       scheduleAfter(() => attemptOnboardingEmail(staged));
     }
 
