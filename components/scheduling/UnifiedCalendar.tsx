@@ -1699,6 +1699,16 @@ export function UnifiedCalendar({
             {folded.segments.map((segment) => {
               const key = bandKey(segment);
               const isOpenBand = segment.kind === "band" && openBands.has(key);
+              // "Now" inside a folded band still gets its marker, so Today
+              // always shows the moment (#1703 QA-5): a primary rule on the
+              // strip's left edge and a "· now" word, since a folded strip
+              // has no columns to place the line under.
+              const stripHoldsNow =
+                segment.kind === "band" &&
+                !isOpenBand &&
+                nowRow >= segment.from &&
+                nowRow < segment.to &&
+                weekDates.some((date) => isOnCalendarDay(date, now, gridZone));
               const strip =
                 segment.kind === "band" ? (
                   <button
@@ -1706,10 +1716,20 @@ export function UnifiedCalendar({
                     type="button"
                     onClick={() => toggleBand(key)}
                     aria-expanded={isOpenBand}
-                    className="my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted"
+                    className={cn(
+                      "relative my-0.5 flex h-6 w-full items-center justify-center gap-1 rounded-sm border border-dashed border-border text-[10px] text-muted-foreground hover:bg-muted",
+                      stripHoldsNow && "border-primary/60",
+                    )}
                   >
+                    {stripHoldsNow && (
+                      <span
+                        aria-hidden
+                        className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
+                      />
+                    )}
                     {bandLabel(segment)}
                     <span aria-hidden>{isOpenBand ? "· hide" : "· show"}</span>
+                    {stripHoldsNow && <span aria-hidden>· now</span>}
                   </button>
                 ) : null;
               if (segment.kind === "band" && !isOpenBand) return strip;
