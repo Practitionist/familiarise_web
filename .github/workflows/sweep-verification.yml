@@ -1,0 +1,69 @@
+name: Sweep Verification
+
+on:
+  schedule:
+    # Daily at 08:50 IST (03:20 UTC), offset from the other early-morning
+    # sweeps so Prisma connections + CPU do not contend during the cron window.
+    # GitHub Actions `schedule` interprets the cron expression in UTC.
+    - cron: "20 3 * * *"
+  workflow_dispatch: # allow manual trigger from the Actions tab
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+  # A second workflow_dispatch while one is already pending would replace it
+  # under the default single-pending-run policy; queue: max keeps every
+  # trigger instead of silently dropping one.
+  queue: max
+
+jobs:
+  sweep-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # #1066 — jobs run as bare Node processes, so Sentry.init only sees
+      # what the step env carries. Without the DSN the runner initialises
+      # a disabled client and every captureException is a no-op again.
+      NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+      NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DIRECT_URL: ${{ secrets.DIRECT_URL }}
+      UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
+      UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+      # Storage: the sweep deletes abandoned upload objects from the private bucket.
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      # Notices: the day-7 reminder and the day-14 close send through the outbox.
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      NOVU_PRODUCTION_KEY: ${{ secrets.NOVU_PRODUCTION_KEY }}
+      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Run verification sweep
+        run: npx --yes tsx@4.23.1 jobs/cleanup/sweep-verification.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          # Fallback sink — Slack has never been provisioned, so this is
+          # what actually pages today. See 07-required-secrets.md.
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: bash scripts/ci/notify-ops-failure.sh "sweep-verification"

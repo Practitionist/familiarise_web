@@ -3,6 +3,7 @@ import {
   mergeAdjacentCustomRows,
   mergeAdjacentWeeklyRows,
 } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
+import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import { UserRole, ScheduleType } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
@@ -11,7 +12,13 @@ import {
   resolveWeeklyUtcOffsetMinutes,
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
-import { notifyNewConsultantApplication } from "@/lib/novu";
+import type { StagedTrigger } from "@/lib/novu";
+import {
+  attemptBellsAfterResponse,
+  stageNewApplicationBells,
+} from "@/lib/verification/notify-admins";
+import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
+import { documentDownloadPath } from "@/lib/verification/documents";
 import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
@@ -405,17 +412,24 @@ export async function persistProfessionalBackground(
 // VERIFICATION HANDLING
 // ============================================================================
 
+/**
+ * Onboarding-completion adapter over the one submission writer
+ * (`lib/verification/submit-request.ts`). Uploads made from the wizard are
+ * rows already (unlinked, owned by this user), so the core links them by id
+ * with the ownership predicate — the arbitrary-id linking #1224 described is
+ * gone. A pre-PR-5 draft can still carry transient uploads (no id, a storage
+ * URL); those are persisted here as owned rows first, then linked the same way.
+ */
 async function submitVerificationRequest(
   userId: string,
   consultantProfileId: string,
   body: VerificationBody,
   userName: string,
   userEmail: string,
-) {
+): Promise<{ staged: StagedTrigger[] }> {
   const { verificationLinkedinUrl, verificationNotes, verificationDocuments } =
     body;
 
-  // Enforce verification requirements server-side
   if (!verificationLinkedinUrl?.trim()) {
     throw new Error("LinkedIn URL is required for consultant verification");
   }
@@ -423,100 +437,66 @@ async function submitVerificationRequest(
     throw new Error("At least one verification document is required");
   }
 
-  if (verificationLinkedinUrl) {
-    await prisma.user.update({
-      where: { id: userId },
-      data: { linkedinUrl: verificationLinkedinUrl },
-    });
-  }
+  const persistableDocs = verificationDocuments.filter(
+    isPersistableVerificationDoc,
+  ) as VerificationDocumentInput[];
+  const documentIds = persistableDocs
+    .filter((doc) => doc.id && !doc.isOnboardingUpload)
+    .map((doc) => doc.id as string);
 
-  // Auto-supersede any existing PENDING/NEEDS_INFO requests
-  await prisma.consultantProfileVerification.updateMany({
-    where: {
-      consultantProfileId,
-      status: { in: ["PENDING", "NEEDS_INFO"] },
-    },
-    data: { status: "SUPERSEDED" },
-  });
-
-  const verification = await prisma.consultantProfileVerification.create({
-    data: {
-      consultantProfileId,
-      notes: verificationNotes || null,
-      status: "PENDING",
-    },
-  });
-
-  if (verificationDocuments && verificationDocuments.length > 0) {
-    // Same predicate that gated the deferral decision in
-    // maybeSubmitConsultantVerification — a doc that would not persist here
-    // must never have started a review (review round 1).
-    const persistableDocs = verificationDocuments.filter(
-      isPersistableVerificationDoc,
-    ) as VerificationDocumentInput[];
-
-    const existingDocuments = persistableDocs.filter(
-      (doc) => doc.id && !doc.isOnboardingUpload,
-    );
-    if (existingDocuments.length > 0) {
-      await prisma.profileVerificationDocument.updateMany({
-        where: {
-          id: {
-            in: existingDocuments.map((d) => d.id).filter(Boolean) as string[],
+  // Legacy transient uploads (drafts saved before rows-at-upload).
+  const transient = persistableDocs.filter(
+    (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
+  );
+  if (transient.length > 0) {
+    const created = await prisma.$transaction(
+      transient.map((doc) =>
+        prisma.profileVerificationDocument.create({
+          data: {
+            uploadedByUserId: userId,
+            verificationId: null,
+            fileName: doc.fileName ?? "",
+            originalName: doc.originalName ?? "",
+            fileSize: doc.fileSize ?? 0,
+            mimeType: doc.mimeType ?? "",
+            fileUrl: "",
+            storagePath: doc.storagePath ?? "",
+            description: doc.description || null,
           },
-        },
-        data: { verificationId: verification.id },
-      });
-    }
-
-    const onboardingDocuments = persistableDocs.filter(
-      (doc) => doc.isOnboardingUpload || (!doc.id && doc.fileUrl),
+          select: { id: true },
+        }),
+      ),
     );
-    if (onboardingDocuments.length > 0) {
-      await prisma.profileVerificationDocument.createMany({
-        data: onboardingDocuments.map((doc) => ({
-          verificationId: verification.id,
-          fileName: doc.fileName ?? "",
-          originalName: doc.originalName ?? "",
-          fileSize: doc.fileSize ?? 0,
-          mimeType: doc.mimeType ?? "",
-          fileUrl: doc.fileUrl ?? "",
-          storagePath: doc.storagePath ?? "",
-          description: doc.description || null,
-        })),
+    for (const row of created) {
+      await prisma.profileVerificationDocument.update({
+        where: { id: row.id },
+        data: { fileUrl: documentDownloadPath(row.id) },
       });
+      documentIds.push(row.id);
     }
   }
 
-  await prisma.consultantProfile.update({
-    where: { id: consultantProfileId },
-    data: { verificationStatus: "UNDER_REVIEW", isVerified: false },
+  const outcome = await submitVerificationRequestCore({
+    userId,
+    consultantProfileId,
+    notes: verificationNotes || null,
+    linkedinUrl: verificationLinkedinUrl,
+    documentIds,
+    carryOver: false,
   });
+  if (!outcome.ok) {
+    throw new Error(`${outcome.code}: ${outcome.message}`);
+  }
 
-  // Fire-and-forget: notify admins
-  void (async () => {
-    try {
-      const admins = await prisma.user.findMany({
-        where: { role: UserRole.ADMIN },
-        select: { id: true },
-      });
-      if (admins.length > 0) {
-        await notifyNewConsultantApplication(
-          admins.map((a) => a.id),
-          {
-            applicantName: userName || "Unknown",
-            applicantEmail: userEmail || "Unknown",
-            dashboardUrl: "/dashboard/admin/users",
-          },
-        );
-      }
-    } catch (notifyError) {
-      console.error(
-        "[Novu] Failed to notify admins of new consultant application:",
-        notifyError,
-      );
-    }
-  })();
+  // Stage the admin bells before the response; the caller attempts them in
+  // after(). Failure to stage is reported inside the helper, never thrown —
+  // the profile and the request are already committed.
+  const staged = await stageNewApplicationBells({
+    name: userName || null,
+    email: userEmail || null,
+    dashboardUrl: "/dashboard/admin/verification",
+  });
+  return { staged };
 }
 
 // ============================================================================
@@ -673,19 +653,33 @@ async function maybeSubmitConsultantVerification(
   }
 
   try {
-    await submitVerificationRequest(
+    const { staged } = await submitVerificationRequest(
       userId,
       updatedUser.consultantProfileId,
       verificationBody,
       updatedUser.name || "",
       updatedUser.email || "",
     );
+    attemptBellsAfterResponse(staged);
     return undefined;
   } catch (verificationError) {
+    // #698 OB-3 — never silent: the profile is committed and stays
+    // PENDING_VERIFICATION, so the consultant can finish from Settings; the
+    // failure itself is paged so ops sees the rate, not just the user.
+    Sentry.captureException(
+      verificationError instanceof Error
+        ? verificationError
+        : new Error(String(verificationError)),
+      {
+        tags: { subsystem: "onboarding", op: "verification-submit" },
+        extra: { userId, consultantProfileId: updatedUser.consultantProfileId },
+      },
+    );
     console.error("Failed to create verification request:", verificationError);
     return {
+      deferred: true,
       warning:
-        "Your profile was saved but verification submission failed. Please contact support.",
+        "Your profile was saved, but the verification request could not be filed. You can submit it from Settings → Verification.",
     };
   }
 }

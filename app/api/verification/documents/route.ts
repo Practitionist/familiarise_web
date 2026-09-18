@@ -1,18 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import {
   uploadToSupabase,
   deleteFromSupabase,
   generateStorageFileName,
 } from "@/lib/supabase";
-
 import { getSession } from "@/lib/auth-server";
 import { canUploadVerificationDoc } from "@/utils/onboarding-shared";
+import { applyRateLimit, documentUploadLimiter } from "@/lib/rate-limit";
+import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
-  applyRateLimit,
-  documentUploadLimiter,
-} from "@/lib/rate-limit";
+  declaredMimeMatchesBytes,
+  normalizeDeclaredMime,
+} from "@/lib/storage/sniff-mime";
+import {
+  decideUploadAdmission,
+  documentDownloadPath,
+  loadUploadCounters,
+  type UploadRefusal,
+} from "@/lib/verification/documents";
 import * as Sentry from "@sentry/nextjs";
+
 const ALLOWED_TYPES = [
   "image/png",
   "image/jpeg",
@@ -21,22 +30,28 @@ const ALLOWED_TYPES = [
   "application/pdf",
 ];
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const MAX_DOCS_PER_VERIFICATION = 10;
+
+class UploadRefusedError extends Error {
+  constructor(readonly refusal: UploadRefusal) {
+    super(refusal.code);
+  }
+}
 
 /**
  * POST /api/verification/documents
- * Upload a verification document
+ * Upload a verification document.
  *
- * Supports two modes:
- * 1. Normal mode: Requires existing consultant profile
- * 2. Onboarding mode (onboarding=true): Allows upload before profile exists
- *    Documents are stored with userId reference and linked during onboarding completion
+ * A row is created for EVERY upload, unlinked (`verificationId` null) until a
+ * submission links it. That is what gives the document an owner (#1224), a
+ * place in the uploader's byte quota, a delete path, and a sweep when it is
+ * abandoned. The `onboarding=true` flag only decides the gate for a caller
+ * with no consultant profile yet (the wizard) — the write is the same.
  */
 export async function POST(request: NextRequest) {
+  let uploadedStoragePath: string | null = null;
   try {
     // Force-fresh: a revoked/erased/banned user must lose upload within the
-    // call, not up to 5 minutes later on the cookie cache. All other
-    // onboarding writes already use getSession(true).
+    // call, not up to 5 minutes later on the cookie cache.
     const session = await getSession(true);
 
     if (!session?.user?.id) {
@@ -45,20 +60,19 @@ export async function POST(request: NextRequest) {
         { status: 401 },
       );
     }
+    const userId = session.user.id;
 
-    // Reuse the appointment-upload bucket (scoped key per the module docs):
-    // every upload touches Supabase Storage, so an unthrottled loop balloons
-    // storage cost even when no DB row is created (onboarding mode).
+    // Every upload touches Supabase Storage, so an unthrottled loop balloons
+    // storage cost; the quota below bounds the total, the limiter the rate.
     const rateLimited = await applyRateLimit(
       documentUploadLimiter,
-      `verification-docs:${session.user.id}`,
+      `verification-docs:${userId}`,
     );
     if (rateLimited) return rateLimited;
 
     const formData = await request.formData();
     const file = formData.get("file") as File;
     const description = formData.get("description") as string | null;
-    const verificationId = formData.get("verificationId") as string | null;
     const isOnboarding = formData.get("onboarding") === "true";
 
     if (!file) {
@@ -68,7 +82,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
         {
@@ -79,7 +92,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file size
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
         { success: false, error: "File size exceeds 10MB limit" },
@@ -87,40 +99,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the consultant profile (may not exist during onboarding)
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      include: {
-        verificationRequests: {
-          where: { status: "PENDING" },
-          orderBy: { createdAt: "desc" },
-          take: 1,
-        },
-      },
-    });
-
-    // In onboarding mode, allow uploads without a profile
-    // Documents will be linked during onboarding completion
-    if (!consultantProfile && !isOnboarding) {
+    // The declared type is whatever the client said; the bytes decide.
+    const buffer = Buffer.from(await file.arrayBuffer());
+    if (!declaredMimeMatchesBytes(file.type, new Uint8Array(buffer))) {
       return NextResponse.json(
-        { success: false, error: "Consultant profile not found" },
-        { status: 404 },
+        {
+          success: false,
+          error:
+            "The file's contents do not match its type. Upload a real PDF, PNG, JPG or WEBP.",
+        },
+        { status: 400 },
       );
     }
+    const mimeType = normalizeDeclaredMime(file.type);
 
-    // Transient onboarding uploads create NO database row, so the
-    // per-verification count cap below cannot see them. Gate the mode on
-    // actual consultant-wizard intent (draft role picked at step 0 and
-    // autosaved on step transition) — otherwise any authenticated user of
-    // any role could store unbounded 10MB objects with no record.
-    if (isOnboarding && !consultantProfile) {
+    // Gate: a caller with no consultant profile may upload only from the
+    // consultant wizard (draft role picked at step 0 and autosaved).
+    const consultantProfile = await prisma.consultantProfile.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!consultantProfile) {
       const draft = await prisma.onboardingDraft.findUnique({
-        where: { userId: session.user.id },
+        where: { userId },
         select: { role: true },
       });
       if (
         !canUploadVerificationDoc({
-          isOnboardingMode: true,
+          isOnboardingMode: isOnboarding,
           hasConsultantProfile: false,
           draftRole: draft?.role ?? null,
         })
@@ -136,121 +142,70 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let verification = null;
-
-    // Only try to get/create verification if we have a consultant profile
-    if (consultantProfile) {
-      verification = consultantProfile.verificationRequests[0] ?? null;
-
-      if (!verification && verificationId) {
-        const found = await prisma.consultantProfileVerification.findUnique({
-          where: { id: verificationId },
-        });
-        if (found) {
-          verification = found;
-        }
-      }
-
-      if (!verification) {
-        // Create a new verification request if none exists
-        verification = await prisma.consultantProfileVerification.create({
-          data: {
-            consultantProfileId: consultantProfile.id,
-            status: "PENDING",
-          },
-        });
-      }
+    // Pre-flight admission (quota + outstanding cap) so a refusal costs no
+    // storage write; re-checked inside the transaction that inserts the row.
+    const preflight = decideUploadAdmission({
+      incomingBytes: file.size,
+      ...(await loadUploadCounters(prisma, userId, null)),
+      linkingToRequest: false,
+    });
+    if (preflight) {
+      return NextResponse.json(
+        { success: false, error: preflight.message, code: preflight.code },
+        { status: 400 },
+      );
     }
 
-    // Enforce server-side document count limit (max 10 per verification).
-    // For onboarding mode (no verification yet), count all docs owned by
-    // this user's consultant profile to prevent storage abuse via onboarding=true.
-    if (verification) {
-      const existingDocCount =
-        await prisma.profileVerificationDocument.count({
-          where: { verificationId: verification.id },
-        });
-      if (existingDocCount >= MAX_DOCS_PER_VERIFICATION) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Maximum ${MAX_DOCS_PER_VERIFICATION} documents per verification request. Delete an existing document before uploading a new one.`,
-          },
-          { status: 400 },
-        );
-      }
-    } else if (consultantProfile) {
-      // Onboarding with existing profile but no verification yet
-      const totalDocs = await prisma.profileVerificationDocument.count({
-        where: {
-          verification: { consultantProfileId: consultantProfile.id },
-        },
-      });
-      if (totalDocs >= MAX_DOCS_PER_VERIFICATION) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Maximum ${MAX_DOCS_PER_VERIFICATION} documents allowed. Delete an existing document before uploading a new one.`,
-          },
-          { status: 400 },
-        );
-      }
-    }
-    // For pure onboarding (no profile at all), uploads are transient
-    // Supabase storage and file size limits (10MB) provide baseline protection
-
-    // Upload file to Supabase
-    const fileBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(fileBuffer);
-    const fileName = generateStorageFileName(file.type);
-    const storagePath = `verification/${session.user.id}/${fileName}`;
-
-    const { url: fileUrl, error: uploadError } = await uploadToSupabase(
+    const fileName = generateStorageFileName(mimeType);
+    const storagePath = `verification/${userId}/${fileName}`;
+    const { url: signedUrl, error: uploadError } = await uploadToSupabase(
       storagePath,
       buffer,
-      file.type,
+      mimeType,
     );
-
-    if (uploadError || !fileUrl) {
+    if (uploadError || !signedUrl) {
       return NextResponse.json(
         { success: false, error: uploadError || "Failed to upload file" },
         { status: 500 },
       );
     }
+    uploadedStoragePath = storagePath;
 
-    // In onboarding mode, skip DB record creation - just return file info
-    // The onboarding completion will create the records
-    if (isOnboarding && !verification) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          // No database ID yet - will be created during onboarding completion
-          fileName,
-          originalName: file.name,
-          fileSize: file.size,
-          mimeType: file.type,
-          fileUrl,
-          storagePath,
-          description: description || undefined,
-          status: "uploaded",
-          isOnboardingUpload: true,
+    // The row, with the admission re-checked under Serializable so a burst of
+    // parallel uploads cannot each see "one below the cap" (the count-cap race
+    // CodeRabbit flagged on #1698). The stored fileUrl is the ACL'd download
+    // route, never the one-hour signed URL the upload helper hands back.
+    const document = await withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const admission = decideUploadAdmission({
+            incomingBytes: file.size,
+            ...(await loadUploadCounters(tx, userId, null)),
+            linkingToRequest: false,
+          });
+          if (admission) throw new UploadRefusedError(admission);
+          const created = await tx.profileVerificationDocument.create({
+            data: {
+              uploadedByUserId: userId,
+              verificationId: null,
+              fileName,
+              originalName: file.name,
+              fileSize: file.size,
+              mimeType,
+              fileUrl: "", // patched below once the id exists
+              storagePath,
+              description: description || undefined,
+            },
+          });
+          return tx.profileVerificationDocument.update({
+            where: { id: created.id },
+            data: { fileUrl: documentDownloadPath(created.id) },
+          });
         },
-      });
-    }
-
-    // Normal mode: Create document record in database
-    const document = await prisma.profileVerificationDocument.create({
-      data: {
-        verificationId: verification!.id,
-        fileName,
-        originalName: file.name,
-        fileSize: file.size,
-        mimeType: file.type,
-        fileUrl,
-        storagePath,
-        description: description || undefined,
-      },
-    });
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+    uploadedStoragePath = null;
 
     return NextResponse.json({
       success: true,
@@ -261,31 +216,48 @@ export async function POST(request: NextRequest) {
         fileSize: document.fileSize,
         mimeType: document.mimeType,
         fileUrl: document.fileUrl,
+        storagePath: document.storagePath,
         description: document.description,
         status: "uploaded",
+        // A row now exists for every upload; onboarding completion links by id.
+        isOnboardingUpload: false,
       },
     });
   } catch (error) {
+    // The object is already in storage; a refused or failed row must not
+    // leave it orphaned until the sweep.
+    if (uploadedStoragePath) {
+      await deleteFromSupabase(uploadedStoragePath).catch(() => undefined);
+    }
+    if (error instanceof UploadRefusedError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: error.refusal.message,
+          code: error.refusal.code,
+        },
+        { status: 400 },
+      );
+    }
     console.error("Document upload error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "verification" } },
+    );
     return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to upload document",
-      },
+      { success: false, error: "Failed to upload document" },
       { status: 500 },
     );
   }
 }
 
 /**
- * DELETE /api/verification/documents
- * Delete a verification document
+ * DELETE /api/verification/documents?id=...
+ * The owner removes an unlinked upload, or a document on a request that is
+ * still open (PENDING / NEEDS_INFO). Decided documents stay for the record.
  */
 export async function DELETE(request: NextRequest) {
   try {
-    // Same force-fresh rationale as POST above.
     const session = await getSession(true);
 
     if (!session?.user?.id) {
@@ -305,13 +277,16 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Get the document and verify ownership
     const document = await prisma.profileVerificationDocument.findUnique({
       where: { id: documentId },
-      include: {
+      select: {
+        id: true,
+        storagePath: true,
+        uploadedByUserId: true,
         verification: {
-          include: {
-            consultantProfile: true,
+          select: {
+            status: true,
+            consultantProfile: { select: { userId: true } },
           },
         },
       },
@@ -324,16 +299,24 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Check ownership
-    if (document.verification.consultantProfile.userId !== session.user.id) {
+    // Owner = uploader; a legacy row with no uploader falls back to the
+    // profile that owns its request.
+    const ownerUserId =
+      document.uploadedByUserId ??
+      document.verification?.consultantProfile.userId ??
+      null;
+    if (ownerUserId !== session.user.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
         { status: 403 },
       );
     }
 
-    // Only allow deletion if verification is still pending
-    if (document.verification.status !== "PENDING") {
+    if (
+      document.verification &&
+      document.verification.status !== "PENDING" &&
+      document.verification.status !== "NEEDS_INFO"
+    ) {
       return NextResponse.json(
         {
           success: false,
@@ -343,10 +326,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Delete from Supabase storage
     await deleteFromSupabase(document.storagePath);
-
-    // Delete the document record
     await prisma.profileVerificationDocument.delete({
       where: { id: documentId },
     });
@@ -357,13 +337,12 @@ export async function DELETE(request: NextRequest) {
     });
   } catch (error) {
     console.error("Document delete error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "verification" } },
+    );
     return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error ? error.message : "Failed to delete document",
-      },
+      { success: false, error: "Failed to delete document" },
       { status: 500 },
     );
   }
