@@ -686,7 +686,7 @@ The five public auth pages (`app/auth/{signin,signup,forgot-password,reset-passw
 | Code | HTTP | Emitted by | The customer reads |
 |---|---|---|---|
 | `INVALID_EMAIL` | 400 | sign-in, sign-up | "Enter a valid email address." under the email field. |
-| `INVALID_EMAIL_OR_PASSWORD` | 401 | sign-in: unknown address, no credential account, wrong password | "That email and password don't match" with the SSO/Google hint, under the password field. The server deliberately answers all three the same way, and the copy never hints that the account does not exist. |
+| `INVALID_EMAIL_OR_PASSWORD` | 401 | sign-in: unknown address, no credential account, wrong password | "That email and password don't match — check both and try again, or use Forgot password?" under the password field. The server deliberately answers all three the same way; the copy never hints that the account does not exist, and it does not mention Google or SSO either — the provider buttons on the same page already cover the no-password account. |
 | `EMAIL_NOT_VERIFIED` | 403 | sign-in | The page switches to its resend state. |
 | `BANNED_USER` | 403 | sign-in (admin plugin) | "This account is suspended" with the support address. |
 | `SSO_REQUIRED` | 403 | session creation (our hook) | "Use your organisation's sign-in." |
