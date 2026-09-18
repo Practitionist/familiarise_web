@@ -59,10 +59,11 @@ Key characteristics:
 
 ### TrialStatus Enum
 
-| Value       | Description                           |
-| ----------- | ------------------------------------- |
-| `PENDING`   | Requested, awaiting consultant action |
-| `SCHEDULED` | Time slot confirmed                   |
+| Value              | Description                                                                 |
+| ------------------ | --------------------------------------------------------------------------- |
+| `PENDING`          | Requested, awaiting consultant action                                       |
+| `AWAITING_PAYMENT` | Accepted by the consultant, slot held, waiting on the consultee to pay      |
+| `SCHEDULED`        | Time slot confirmed                                                         |
 | `COMPLETED` | Trial session finished                |
 | `CONVERTED` | Consultee subscribed after trial      |
 | `CANCELLED` | Cancelled by consultee                |
@@ -75,7 +76,10 @@ Key characteristics:
 ```mermaid
 stateDiagram-v2
     [*] --> PENDING : Consultee requests trial
-    PENDING --> SCHEDULED : Consultant approves & picks slot
+    PENDING --> SCHEDULED : Consultant approves a free trial & picks slot
+    PENDING --> AWAITING_PAYMENT : Consultant approves a paid trial & picks slot
+    AWAITING_PAYMENT --> SCHEDULED : Webhook confirms payment
+    AWAITING_PAYMENT --> CANCELLED : Consultee cancels or the pay-link lapses (expire-unpaid-trials sweep)
     PENDING --> REJECTED : Consultant declines
     PENDING --> CANCELLED : Consultee cancels
     SCHEDULED --> COMPLETED : Session ends (auto or manual)
@@ -86,12 +90,13 @@ stateDiagram-v2
     CONVERTED --> [*]
 ```
 
-Valid transitions (enforced in `app/api/trials/[trialId]/route.ts`):
+Valid transitions, as `TRIAL_ALLOWED_FROM` in `lib/booking/transitions.ts` encodes them and `transitionTrial` enforces them; `AWAITING_PAYMENT` is server-set only and is deliberately absent from the client-facing `TrialSessionStatusEnum`, so a request body can never assert it:
 
-| From        | Allowed targets                      |
-| ----------- | ------------------------------------ |
-| `PENDING`   | `SCHEDULED`, `CANCELLED`, `REJECTED` |
-| `SCHEDULED` | `COMPLETED`, `CANCELLED`             |
+| From               | Allowed targets                                          |
+| ------------------ | -------------------------------------------------------- |
+| `PENDING`          | `AWAITING_PAYMENT`, `SCHEDULED`, `CANCELLED`, `REJECTED` |
+| `AWAITING_PAYMENT` | `SCHEDULED`, `CANCELLED`                                 |
+| `SCHEDULED`        | `COMPLETED`, `CANCELLED`                                 |
 | `COMPLETED` | `CONVERTED`                          |
 | `CONVERTED` | (terminal)                           |
 | `CANCELLED` | (terminal)                           |

@@ -267,11 +267,10 @@ sequenceDiagram
 PENDING --> APPROVED_PENDING_PAYMENT  (consultant approves, sends payment link)
 PENDING --> APPROVED                  (direct checkout + webhook confirms)
 APPROVED_PENDING_PAYMENT --> APPROVED (webhook confirms payment)
-any non-APPROVED --> APPROVED         (webhook catch-all for consultation)
 APPROVED --> COMPLETED                (auto-complete cron, 1hr after session ends)
 ```
 
-The reason `confirmApprovalStatus` has a catch-all for consultations (any non-APPROVED to APPROVED) is to handle edge cases where the status might be in an unexpected state when the webhook arrives. This is intentionally more permissive for consultations than for subscriptions.
+The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `APPROVED_PENDING_PAYMENT`; the allowed-from set rides inside the `updateMany` WHERE clause (#825 CAS doctrine), so a capture that lands after a cancellation matches zero rows and is surfaced for refund instead of resurrecting the booking. There is no catch-all.
 
 #### Source References
 
@@ -841,7 +840,9 @@ flowchart TD
 
 ### When Does Each Path Apply?
 
-- **Consultations**: Support both paths. Some consultants enable direct checkout; others require approval.
+There is no per-consultant "requires approval" setting today; that switch (`bookingMode`) ships with PR-C of #1703. Until then the trigger is the slot itself.
+
+- **Consultations**: The explore page's booking dialog (`app/explore/experts/[consultantId]/components/ConsultationPricingToggle.tsx`) sends a consultee to direct checkout when the chosen slot is clean, and to `POST /api/scheduling/request-for-approval` when the slot is contended, which the availability grid reports as `isAllocated` (the 30-minute atom already overlaps another booking's occurrence, tentative or confirmed). A contended slot cannot be sold outright because the consultant has to decide who gets it, so the request holds tentative occurrences and waits in the Requests tab; the 48-hour expiry above is what releases that hold if nobody decides.
 - **Subscriptions**: Support both paths. Direct checkout is more common; the subscription stays PENDING in either case until slots are allocated.
 - **Webinars and Classes**: Always direct checkout. The consultant creates the event; consultees enroll directly.
 - **Trials**: Neither. Trials do not involve payment, so there is no checkout. The consultant approves directly.
@@ -865,7 +866,7 @@ stateDiagram-v2
     PENDING --> APPROVED: Direct checkout - webhook confirms (consultation only)
     PENDING --> APPROVED_PENDING_PAYMENT: Approval flow - consultant approves, sends payment link
     PENDING --> REJECTED: Consultant rejects the request
-    PENDING --> EXPIRED: Cron runs after 30 days with no action
+    PENDING --> EXPIRED: Cron runs after 48 hours (consultation) or 30 days (subscription) with no action
     PENDING --> CANCELLED: Consultee cancels their request
 
     APPROVED_PENDING_PAYMENT --> APPROVED: Webhook confirms payment (both consultation and subscription)
@@ -1146,7 +1147,7 @@ Background jobs run on schedules via GitHub Actions and are also exposed as API 
 | ------------------------------------------ | ------------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- |
 | **Auto-complete appointments**             | Hourly        | Marks events as COMPLETED when all sessions have ended                                                | All AppointmentOccurrence.endsAt < (now - 1 hour)              | `scripts/appointments/auto-complete-appointments.ts`          |
 | **Cleanup tentative slots**                | Every 2 hours | Deletes `isTentative=true` slots with no successful payment                                           | Tentative slot created > 24 hours ago, payment not SUCCEEDED (`TENTATIVE_EXPIRATION_HOURS = 24`) | `scripts/appointments/cleanup-tentative-occurrences.ts`             |
-| **Expire stale requests**                  | Daily         | Sets PENDING requests to EXPIRED after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                               | `scripts/appointments/expire-stale-requests.ts`               |
+| **Expire stale requests**                  | Hourly        | Sets PENDING consultations to EXPIRED after 48 hours and PENDING subscriptions after 30 days; sets APPROVED_PENDING_PAYMENT to EXPIRED after 7 days | No activity within threshold                               | `scripts/appointments/expire-stale-requests.ts`               |
 | **Cleanup stale pending consultations**    | Hourly        | Cancels APPROVED/APPROVED_PENDING_PAYMENT consultations with no payment activity after 7 days         | No payment record or payment stuck in PENDING              | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
 | **Sync payment earnings**                  | Periodic      | Safety net: finds payments with SUCCEEDED status but no earnings record, creates missing earnings     | Payment.status=SUCCEEDED AND no Earnings linked            | `scripts/payments/sync-payment-earnings.ts`                   |
 
@@ -1241,8 +1242,11 @@ T+session+1hr   auto-complete-appointments cron runs
                  --> Finds consultation with all slots ended > 1hr ago
                  --> Consultation status: APPROVED -> COMPLETED
 
-T+30 days       (If request was never acted on)
-                 expire-stale-requests cron sets PENDING -> EXPIRED
+T+48 hours      (If the request was never acted on)
+                 expire-stale-requests cron sets PENDING -> EXPIRED and
+                 releases the request-for-approval tentative slots
+                 (PENDING_CONSULTATION_EXPIRATION_HOURS = 48; subscriptions
+                 hold no slots at request time and keep a 30-day window)
 ```
 
 ---
