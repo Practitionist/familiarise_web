@@ -119,11 +119,8 @@ export interface VerificationSignals {
 export function isPersistableVerificationDoc(doc: unknown): boolean {
   if (typeof doc !== "object" || doc === null) return false;
   const d = doc as Record<string, unknown>;
-  return Boolean(
-    (d.id && !d.isOnboardingUpload) ||
-    d.isOnboardingUpload ||
-    (!d.id && d.fileUrl),
-  );
+  // A row exists for every upload; only a server-issued id can be linked.
+  return Boolean(d.id && !d.isOnboardingUpload);
 }
 
 /**

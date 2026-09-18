@@ -1371,7 +1371,7 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 **Payload variables** (`VerificationPayload`):
 
 ```
-{{payload.status}}            - "VERIFIED" | "REJECTED" | "PENDING_VERIFICATION" (the profile enum after the routes map APPROVED→VERIFIED and NEEDS_INFO→PENDING_VERIFICATION)
+{{payload.status}}            - "VERIFIED" | "REJECTED" | "NEEDS_INFO" (the decision: APPROVED→VERIFIED; NEEDS_INFO is named so the bell asks for more information instead of saying "pending review")
 {{payload.reason}}            - Reason for status change (optional)
 {{payload.dashboardUrl}}       - Link to dashboard
 ```
@@ -1379,7 +1379,7 @@ New Review — {{payload.rating}} Stars from {{payload.reviewerName}}
 **In-App notification** (`lib/novu/templates/b2c.ts`, verbatim):
 
 ```
-{% case payload.status %}{% when "VERIFIED" %}Your profile is verified and now visible to clients.{% when "REJECTED" %}Your profile verification was not approved.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}
+{% case payload.status %}{% when "VERIFIED" %}Your profile is verified and now visible to clients.{% when "REJECTED" %}Your profile verification was not approved.{% when "NEEDS_INFO" %}The reviewer needs more information before your profile can be verified.{% else %}Your profile verification is pending review.{% endcase %}{% if payload.reason %} {{payload.reason}}{% endif %}
 ```
 
 **Email subject**:
