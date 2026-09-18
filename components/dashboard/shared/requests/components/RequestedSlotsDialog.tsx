@@ -1,13 +1,13 @@
 import * as Sentry from "@sentry/nextjs";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  ResponsiveModal,
+  ResponsiveModalContent,
+  ResponsiveModalDescription,
+  ResponsiveModalFooter,
+  ResponsiveModalHeader,
+  ResponsiveModalTitle,
+} from "@/components/ui/responsive-modal";
 import { AppointmentsType } from "@prisma/client";
 import {
   AlertTriangle,
@@ -28,8 +28,20 @@ import {
   type ValidationFailureKind,
 } from "@/lib/scheduling/allocationMessages";
 import { CalendarInterval } from "@/lib/scheduling/calendarUtils";
-import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
+import { formatDateTimeLabel } from "@/lib/time/display";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
+import { zoneLabel, type ViewerZone } from "@/lib/time/viewer-zone";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import { cn } from "@/utils/tailwind";
+import {
+  allocateHrefAt,
+  parseSlotInstant,
+  resolvePrimaryTitle,
+  summarizeVerdicts,
+  verdictFor,
+  type SlotVerdict,
+  type ValidationVerdictSource,
+} from "./requested-slots-verdicts";
 
 // Slot with tentative status. completionStatus distinguishes a fresh
 // REQUEST_SUBMITTED hold (tentative + SCHEDULED — the requested times ARE the
@@ -41,10 +53,12 @@ interface SlotWithStatus {
   completionStatus?: string | null;
 }
 
-interface ValidationResult extends SlotConflictResult {
-  outsidePeriod?: Array<{
-    slot: string;
-  }>;
+type ValidationResult = ValidationVerdictSource;
+
+/** What the host reports once the allocation has been written (#1703 F5). */
+export interface RequestedSlotsConfirmation {
+  /** The consultant's own detail page for the new appointment, when known. */
+  appointmentHref: string | null;
 }
 
 interface RequestedSlotsDialogProps {
@@ -59,6 +73,12 @@ interface RequestedSlotsDialogProps {
    * fire a second submit. #1163 */
   confirming?: boolean;
   /**
+   * Set by the host after a successful confirm: the dialog switches to its
+   * success state instead of closing, and the row leaves the list when the
+   * dialog does (#1703 F5).
+   */
+  confirmation?: RequestedSlotsConfirmation | null;
+  /**
    * A reschedule with no answerable consultee proposal cannot confirm its
    * stored times: those rows still carry the times being moved AWAY from
    * (the reschedule route never rewrites startsAt), so the server's
@@ -67,7 +87,7 @@ interface RequestedSlotsDialogProps {
    * which is where replacement times are actually placed.
    */
   rescheduleNeedsAllocator?: boolean;
-  /** The allocate page for this request — every "pick other times" exit
+  /** The allocate page for this request — every "pick another time" exit
    * in the dialog is a real link there, never a disabled button. #1705 */
   allocateHref: string;
   onConfirm: (override: boolean) => Promise<void>;
@@ -79,6 +99,68 @@ interface ValidationFailure {
   message: string;
 }
 
+/** "Thu 24 Sep, 2:00 pm IST" in the viewer's zone. */
+function slotLabel(slot: string, viewer: ViewerZone): string {
+  const at = new Date(parseSlotInstant(slot));
+  return `${formatDateTimeLabel(at, { zone: viewer.zone })} ${zoneLabel(at, viewer.zone)}`;
+}
+
+const CHIP: Record<
+  SlotVerdict["kind"],
+  { label: string; icon: typeof CheckCircle2; className: string }
+> = {
+  checking: {
+    label: "Checking…",
+    icon: Loader2,
+    className: "bg-muted text-muted-foreground",
+  },
+  free: {
+    label: "Free",
+    icon: CheckCircle2,
+    className:
+      "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-200",
+  },
+  conflict: {
+    label: "Conflict",
+    icon: XCircle,
+    className: "bg-red-100 text-red-900 dark:bg-red-900/40 dark:text-red-200",
+  },
+  outsideAvailability: {
+    label: "Outside hours",
+    icon: AlertTriangle,
+    className:
+      "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
+  },
+  outsidePeriod: {
+    label: "Outside period",
+    icon: CalendarRange,
+    className:
+      "bg-slate-200 text-slate-800 dark:bg-slate-800 dark:text-slate-200",
+  },
+};
+
+function VerdictChip({ verdict }: Readonly<{ verdict: SlotVerdict }>) {
+  const chip = CHIP[verdict.kind];
+  const Icon = chip.icon;
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+        chip.className,
+      )}
+    >
+      <Icon
+        className={cn(
+          "h-3 w-3",
+          verdict.kind === "checking" && "motion-safe:animate-spin",
+        )}
+        aria-hidden
+      />
+      {chip.label}
+    </span>
+  );
+}
+
 export function RequestedSlotsDialog({
   open,
   onOpenChange,
@@ -88,12 +170,14 @@ export function RequestedSlotsDialog({
   requestedSlotsWithStatus,
   schedulingPeriod,
   confirming = false,
+  confirmation = null,
   rescheduleNeedsAllocator = false,
   allocateHref,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
   const pathname = usePathname();
+  const viewer = useViewerZone();
   // Calculate reschedule info from slots with status. Only released rows
   // count (see isReleasedForReschedule): every fresh request also carries
   // tentative holds, and those times ARE the request — the server's
@@ -120,6 +204,7 @@ export function RequestedSlotsDialog({
     try {
       setLoading(true);
       setError(null);
+      setValidationResult(null);
 
       const eventType =
         requestType === AppointmentsType.SUBSCRIPTION
@@ -158,20 +243,17 @@ export function RequestedSlotsDialog({
             validationResponse.error ?? "Failed to validate slots",
           ),
         });
-        setValidationResult(null);
         return;
       }
 
       // Client-side scheduling period validation
       const outsidePeriodSlots: Array<{ slot: string }> = [];
-      if (schedulingPeriod?.startDate && schedulingPeriod?.endDate) {
+      const { startDate, endDate } = schedulingPeriod ?? {};
+      if (startDate && endDate) {
         requestedSlots.forEach((slot) => {
           const slotDate = new Date(slot);
           const slotEndDate = new Date(slotDate.getTime() + 30 * 60 * 1000);
-          if (
-            slotDate < schedulingPeriod.startDate! ||
-            slotEndDate > schedulingPeriod.endDate!
-          ) {
+          if (slotDate < startDate || slotEndDate > endDate) {
             outsidePeriodSlots.push({ slot });
           }
         });
@@ -194,334 +276,34 @@ export function RequestedSlotsDialog({
         kind: "indeterminate",
         message: validationFailureCopy("indeterminate", ""),
       });
-      setValidationResult(null);
     } finally {
       if (isCurrent()) setLoading(false);
     }
   }, [requestType, requestedSlots, requestId, schedulingPeriod]);
 
-  // Validate on open
+  // Validate on open — not while the success state is showing.
   useEffect(() => {
-    if (open) {
+    if (open && !confirmation) {
       validateSlots();
     }
-  }, [open, requestId, requestedSlots, validateSlots]);
+  }, [open, confirmation, requestId, requestedSlots, validateSlots]);
 
-  // Safe access to validation result arrays
-  const conflicts = validationResult?.conflicts || [];
-  const outsideAvailability = validationResult?.outsideAvailability || [];
-  const outsidePeriod = validationResult?.outsidePeriod || [];
-  const _validSlots = validationResult?.validSlots || [];
-  const hasConflicts = conflicts.length > 0;
-  const hasOutsideSlots = outsideAvailability.length > 0;
-  const hasOutsidePeriod = outsidePeriod.length > 0;
-  const hasIssues = hasConflicts || hasOutsideSlots || hasOutsidePeriod;
-
-  // Calculate available slots count
-  const availableSlotsCount =
-    requestedSlots.length -
-    conflicts.length -
-    outsideAvailability.length -
-    outsidePeriod.length;
-
-  // Group slots by date for better visualization
-  const groupSlotsByDate = (slots: string[]) => {
-    const grouped = new Map<string, string[]>();
-    slots.forEach((slot) => {
-      const date = new Date(slot).toLocaleDateString();
-      if (!grouped.has(date)) {
-        grouped.set(date, []);
-      }
-      grouped.get(date)?.push(slot);
-    });
-    return grouped;
-  };
-
-  const renderDialogContent = () => {
-    if (loading) {
-      return (
-        <div
-          role="status"
-          aria-live="polite"
-          className="flex items-center justify-center p-8"
-        >
-          <div className="motion-safe:animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
-          <span className="sr-only">Checking the requested times</span>
-        </div>
-      );
-    }
-
-    if (error) {
-      return (
-        <div role="alert" className="bg-red-50 p-4 rounded-md">
-          <p className="text-red-700 mb-3">{error.message}</p>
-          {error.kind === "session-ended" ? (
-            <Button asChild variant="outline" size="sm">
-              <Link href={signInHref(pathname ?? "/")}>Sign in</Link>
-            </Button>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={validateSlots}
-              className="text-red-700 border-red-300"
-            >
-              Retry Validation
-            </Button>
-          )}
-        </div>
-      );
-    }
-
-    if (validationResult) {
-      return (
-        <>
-          {/* Summary Statistics Section */}
-          <div className="bg-gray-50 p-4 rounded-md mb-4 border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              Validation Summary
-            </h3>
-            <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600">Total Slots:</span>
-                <span className="font-semibold text-gray-900">
-                  {requestedSlots.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600 flex items-center gap-1">
-                  <CheckCircle2
-                    className="h-3.5 w-3.5 text-green-600"
-                    aria-hidden
-                  />{" "}
-                  Available:
-                </span>
-                <span className="font-semibold text-green-700">
-                  {availableSlotsCount}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600 flex items-center gap-1">
-                  <XCircle className="h-3.5 w-3.5 text-red-600" aria-hidden />{" "}
-                  Conflicting:
-                </span>
-                <span className="font-semibold text-red-700">
-                  {conflicts.length}
-                </span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-gray-600 flex items-center gap-1">
-                  <AlertTriangle
-                    className="h-3.5 w-3.5 text-yellow-600"
-                    aria-hidden
-                  />{" "}
-                  Outside Availability:
-                </span>
-                <span className="font-semibold text-yellow-700">
-                  {outsideAvailability.length}
-                </span>
-              </div>
-              {requestType === AppointmentsType.SUBSCRIPTION && (
-                <div className="col-span-1 flex items-center justify-between sm:col-span-2">
-                  <span className="text-gray-600 flex items-center gap-1">
-                    <CalendarRange
-                      className="h-3.5 w-3.5 text-blue-600"
-                      aria-hidden
-                    />{" "}
-                    Outside Period:
-                  </span>
-                  <span className="font-semibold text-blue-700">
-                    {outsidePeriod.length}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {hasConflicts && (
-            <div className="bg-red-50 p-4 rounded-md mb-4 border border-red-200">
-              <h3 className="font-semibold text-red-900 mb-2 flex items-center gap-2">
-                <XCircle className="h-4 w-4" aria-hidden /> Conflicting Slots (
-                {conflicts.length})
-              </h3>
-              <div className="max-h-48 overflow-y-auto mb-2">
-                <ul className="space-y-1">
-                  {conflicts.map((conflict) => (
-                    <li key={conflict.slot} className="text-sm text-red-700">
-                      <span className="font-medium">
-                        {new Date(conflict.slot).toLocaleString()}
-                      </span>
-                      {" - "}
-                      {conflict.existingAppointment.type} with{" "}
-                      {conflict.existingAppointment.with}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <p className="text-xs text-red-600">
-                Cannot allocate slots that conflict with existing appointments.
-              </p>
-            </div>
-          )}
-
-          {hasOutsideSlots && (
-            <div className="bg-yellow-50 p-4 rounded-md mb-4 border border-yellow-200">
-              <h3 className="font-semibold text-yellow-900 mb-2 flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4" aria-hidden /> Slots Outside
-                Availability ({outsideAvailability.length})
-              </h3>
-              <div className="max-h-48 overflow-y-auto mb-2">
-                {/* Group outside availability slots by date */}
-                {Array.from(
-                  groupSlotsByDate(outsideAvailability.map((s) => s.slot)),
-                ).map(([date, slots]) => (
-                  <div key={date} className="mb-2">
-                    <p className="text-sm font-medium text-yellow-900">
-                      {date}:
-                    </p>
-                    <ul className="ml-3 space-y-1">
-                      {slots.map((slot) => (
-                        <li key={slot} className="text-sm text-yellow-700">
-                          {new Date(slot).toLocaleTimeString()}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-              <p className="text-sm text-yellow-700 font-medium">
-                These slots are outside your regular availability. You can
-                override and allocate them if needed.
-              </p>
-            </div>
-          )}
-
-          {hasOutsidePeriod && (
-            <div className="bg-blue-50 p-4 rounded-md mb-4 border border-blue-200">
-              <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
-                <CalendarRange className="h-4 w-4" aria-hidden /> Slots Outside
-                Scheduling Period ({outsidePeriod.length})
-              </h3>
-              <p className="text-sm text-blue-700 mb-3">
-                The following slots are outside the subscription scheduling
-                period{" "}
-                {schedulingPeriod?.startDate && schedulingPeriod?.endDate && (
-                  <>
-                    ({schedulingPeriod.startDate.toLocaleDateString()} -{" "}
-                    {schedulingPeriod.endDate.toLocaleDateString()})
-                  </>
-                )}
-                :
-              </p>
-              <div className="max-h-48 overflow-y-auto mb-2">
-                {/* Group outside period slots by date */}
-                {Array.from(
-                  groupSlotsByDate(outsidePeriod.map((s) => s.slot)),
-                ).map(([date, slots]) => (
-                  <div key={date} className="mb-2">
-                    <p className="text-sm font-medium text-blue-800">{date}:</p>
-                    <ul className="ml-3 space-y-1">
-                      {slots.map((slot) => (
-                        <li key={slot} className="text-sm text-blue-700">
-                          {new Date(slot).toLocaleTimeString()}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-blue-600">
-                Cannot allocate slots outside the subscription period.
-              </p>
-            </div>
-          )}
-
-          {/* Show available slots section */}
-          {!hasIssues ? (
-            /* All slots available - show immediately */
-            <div className="bg-green-50 p-4 rounded-md mb-4 border border-green-200">
-              <h3 className="font-semibold text-green-900 mb-2 flex items-center gap-2">
-                <CheckCircle2 className="h-4 w-4" aria-hidden /> All Slots
-                Available
-              </h3>
-              <p className="text-sm text-green-700 mb-3">
-                All {requestedSlots.length} requested slots are within your
-                availability and have no conflicts.
-              </p>
-              {/* Show requested slots - collapsible if more than 10 */}
-              {requestedSlots.length <= 10 ? (
-                <div className="text-sm text-green-700">
-                  <p className="font-medium mb-1">Requested Times:</p>
-                  <div className="ml-2 space-y-1">
-                    {requestedSlots.map((slot, index) => (
-                      <div key={slot + index}>
-                        {new Date(slot).toLocaleString()}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <details className="mt-2">
-                  <summary className="cursor-pointer font-medium text-green-800 hover:text-green-900 select-none">
-                    View all {requestedSlots.length} available slots
-                  </summary>
-                  <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
-                    {Array.from(groupSlotsByDate(requestedSlots)).map(
-                      ([date, slots]) => (
-                        <div key={date} className="mb-2">
-                          <p className="font-medium text-green-900">{date}:</p>
-                          <div className="ml-3 space-y-1">
-                            {slots.map((s, idx) => (
-                              <div key={s + idx}>
-                                {new Date(s).toLocaleTimeString()}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </details>
-              )}
-            </div>
-          ) : availableSlotsCount > 0 ? (
-            /* Some issues but also some available - show collapsible */
-            <details className="bg-green-50 p-4 rounded-md border border-green-200">
-              <summary className="cursor-pointer font-semibold text-green-900 hover:text-green-800 select-none flex items-center gap-2">
-                View {availableSlotsCount} available slot
-                {availableSlotsCount !== 1 ? "s" : ""}
-              </summary>
-              <div className="mt-3 max-h-64 overflow-y-auto text-sm text-green-700">
-                {Array.from(
-                  groupSlotsByDate(
-                    requestedSlots.filter(
-                      (slot) =>
-                        !conflicts.some((c) => c.slot === slot) &&
-                        !outsideAvailability.some((o) => o.slot === slot) &&
-                        !outsidePeriod.some((p) => p.slot === slot),
-                    ),
-                  ),
-                ).map(([date, slots]) => (
-                  <div key={date} className="mb-2">
-                    <p className="font-medium text-green-900">{date}:</p>
-                    <div className="ml-3 space-y-1">
-                      {slots.map((s, idx) => (
-                        <div key={s + idx}>
-                          {new Date(s).toLocaleTimeString()}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </details>
-          ) : null}
-        </>
-      );
-    }
-
-    return null; // Should not happen if validation runs on open
-  };
+  const verdicts = requestedSlots.map((slot) =>
+    verdictFor(slot, validationResult),
+  );
+  const conflicts = verdicts.filter((v) => v.kind === "conflict").length;
+  const outsidePeriod = verdicts.filter(
+    (v) => v.kind === "outsidePeriod",
+  ).length;
+  const outsideHours = verdicts.filter(
+    (v) => v.kind === "outsideAvailability",
+  ).length;
+  // Conflicts and out-of-period slots cannot be overridden; out-of-hours can.
+  const blocked = conflicts > 0 || outsidePeriod > 0;
+  const firstBlockedSlot = requestedSlots.find((slot, index) => {
+    const kind = verdicts[index].kind;
+    return kind === "conflict" || kind === "outsidePeriod";
+  });
 
   // Mirrors the decline dialog: while the confirm is in flight the dialog
   // cannot be dismissed, so success is the only thing that closes it.
@@ -533,46 +315,193 @@ export function RequestedSlotsDialog({
   // Validation must have run AND passed; a failed or absent validation used
   // to leave "Allocate Requested Times" clickable (#1705, #1716).
   const canConfirm =
-    validationResult !== null &&
-    !error &&
-    !loading &&
-    !confirming &&
-    !hasConflicts &&
-    !hasOutsidePeriod;
+    validationResult !== null && !error && !loading && !confirming && !blocked;
 
-  const blockedReason = hasConflicts
-    ? `${conflicts.length} slot(s) conflict with existing appointments`
-    : hasOutsidePeriod
-      ? `${outsidePeriod.length} slot(s) are outside the subscription scheduling period`
-      : null;
+  const renderSlotList = () => (
+    <ul className="divide-y divide-border rounded-md border border-border">
+      {requestedSlots.map((slot, index) => {
+        const verdict = verdicts[index];
+        const needsAnotherTime =
+          verdict.kind === "conflict" || verdict.kind === "outsidePeriod";
+        return (
+          <li
+            key={`${slot}-${index}`}
+            className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm"
+          >
+            <span className="font-medium tabular-nums">
+              {slotLabel(slot, viewer)}
+            </span>
+            <VerdictChip verdict={verdict} />
+            {verdict.kind === "conflict" && (
+              <span className="text-muted-foreground">{verdict.existing}</span>
+            )}
+            {verdict.kind === "outsidePeriod" && (
+              <span className="text-muted-foreground">
+                Outside the subscription&apos;s scheduling period
+              </span>
+            )}
+            {needsAnotherTime && (
+              <Link
+                href={allocateHrefAt(allocateHref, slot)}
+                className="ml-auto text-xs underline underline-offset-4"
+              >
+                Pick another time
+              </Link>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  const renderDialogContent = () => {
+    if (confirmation) {
+      return (
+        <div
+          role="status"
+          className="flex flex-col items-center gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-6 text-center dark:border-emerald-900/50 dark:bg-emerald-900/20"
+        >
+          <CheckCircle2
+            className="h-8 w-8 text-emerald-700 dark:text-emerald-300"
+            aria-hidden
+          />
+          <p className="text-base font-semibold">Times confirmed</p>
+          <ul className="text-sm text-muted-foreground">
+            {requestedSlots.map((slot, index) => (
+              <li key={`${slot}-${index}`}>{slotLabel(slot, viewer)}</li>
+            ))}
+          </ul>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div
+          role="alert"
+          className="rounded-md bg-red-50 p-4 dark:bg-red-950/40"
+        >
+          <p className="mb-3 text-red-700 dark:text-red-200">{error.message}</p>
+          {error.kind === "session-ended" ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={signInHref(pathname ?? "/")}>Sign in</Link>
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={validateSlots}>
+              <RefreshCw className="h-4 w-4" aria-hidden />
+              Retry Validation
+            </Button>
+          )}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col gap-3">
+        {/* One sentence, not a 2×2 of counters (#1703 F5). */}
+        <p className="text-sm font-medium" aria-live="polite">
+          {summarizeVerdicts(verdicts)}
+        </p>
+        {renderSlotList()}
+        {!blocked && outsideHours > 0 && (
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            {outsideHours === 1
+              ? "This time is outside your published hours — allocating still books it."
+              : "These times are outside your published hours — allocating still books them."}
+          </p>
+        )}
+      </div>
+    );
+  };
+
+  const renderPrimary = () => {
+    if (confirmation) {
+      return (
+        <>
+          {confirmation.appointmentHref && (
+            <Button asChild variant="outline">
+              <Link href={confirmation.appointmentHref}>View appointment</Link>
+            </Button>
+          )}
+          <Button onClick={onCancel}>Back to requests</Button>
+        </>
+      );
+    }
+    if (rescheduleNeedsAllocator) {
+      // The stored times are what the consultee asked to MOVE AWAY from —
+      // confirming them here would re-book the very times the reschedule is
+      // trying to leave, and the server refuses it. A real link to the
+      // surface that places replacement times.
+      return (
+        <Button asChild>
+          <Link href={allocateHref}>Pick new times in Allocate Slots</Link>
+        </Button>
+      );
+    }
+    if (validationResult && blocked) {
+      // The dead-end hand-off (#1703 F5): the primary deep-links to the grid
+      // pinned on the first blocked slot, so the conflicting cell is in view.
+      return (
+        <Button asChild title={resolvePrimaryTitle({ blocked, outsideHours })}>
+          <Link
+            href={
+              firstBlockedSlot
+                ? allocateHrefAt(allocateHref, firstBlockedSlot)
+                : allocateHref
+            }
+          >
+            Pick another time
+          </Link>
+        </Button>
+      );
+    }
+    if (!validationResult || error) return null;
+    return (
+      <Button
+        variant={outsideHours > 0 ? "warning" : "default"}
+        onClick={() => onConfirm(outsideHours > 0)}
+        disabled={!canConfirm}
+        title={resolvePrimaryTitle({ blocked, outsideHours })}
+      >
+        {confirming && (
+          <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden />
+        )}
+        {confirming ? "Allocating…" : "Allocate requested times"}
+      </Button>
+    );
+  };
 
   return (
-    <Dialog open={open} onOpenChange={guardedOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90dvh] overflow-hidden flex flex-col">
-        <DialogHeader className="shrink-0">
-          <DialogTitle>Confirm Slot Allocation</DialogTitle>
-          <DialogDescription>
-            Review requested slots before allocation
-          </DialogDescription>
-        </DialogHeader>
+    <ResponsiveModal open={open} onOpenChange={guardedOpenChange}>
+      <ResponsiveModalContent className="flex max-h-[90dvh] max-w-2xl flex-col overflow-hidden">
+        <ResponsiveModalHeader className="shrink-0">
+          <ResponsiveModalTitle>
+            {confirmation ? "Booked" : "Confirm requested times"}
+          </ResponsiveModalTitle>
+          <ResponsiveModalDescription>
+            {confirmation
+              ? "The consultee has been told."
+              : "Check the requested times before booking them."}
+          </ResponsiveModalDescription>
+        </ResponsiveModalHeader>
 
         <div className="min-h-0 flex-1 overflow-y-auto">
           {/* Reschedule indicator */}
-          {hasReschedule && (
+          {hasReschedule && !confirmation && (
             <div className="mb-4">
               {isFullReschedule ? (
-                <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-2 rounded-md border border-blue-200">
-                  <RefreshCw className="h-4 w-4" />
+                <div className="flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-800 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-200">
+                  <RefreshCw className="h-4 w-4" aria-hidden />
                   <span>
-                    Full Reschedule - All {totalCount} session
+                    Full reschedule — all {totalCount} session
                     {totalCount !== 1 ? "s" : ""} need new times
                   </span>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 px-3 py-2 rounded-md border border-amber-200">
-                  <AlertTriangle className="h-4 w-4" />
+                <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
+                  <AlertTriangle className="h-4 w-4" aria-hidden />
                   <span>
-                    Partial Reschedule - {rescheduledCount} of {totalCount}{" "}
+                    Partial reschedule — {rescheduledCount} of {totalCount}{" "}
                     session{rescheduledCount !== 1 ? "s" : ""} need new times
                   </span>
                 </div>
@@ -583,64 +512,19 @@ export function RequestedSlotsDialog({
           {renderDialogContent()}
         </div>
 
-        <DialogFooter className="shrink-0 gap-2 border-t pt-4">
-          <Button
-            variant="outline"
-            onClick={onCancel}
-            disabled={loading || confirming}
-          >
-            Cancel
-          </Button>
-
-          {rescheduleNeedsAllocator ? (
-            // The stored times are what the consultee asked to MOVE AWAY
-            // from — confirming them here would re-book the very times the
-            // reschedule is trying to leave, and the server refuses it.
-            // A real link to the surface that places replacement times.
-            <Button asChild>
-              <Link href={allocateHref}>Pick new times in Allocate Slots</Link>
+        <ResponsiveModalFooter className="shrink-0 gap-2 border-t pt-4">
+          {!confirmation && (
+            <Button
+              variant="outline"
+              onClick={onCancel}
+              disabled={loading || confirming}
+            >
+              Cancel
             </Button>
-          ) : (
-            <>
-              {blockedReason && validationResult && (
-                // Blocked here is not blocked everywhere: other times can
-                // still be placed on the allocate page.
-                <Button asChild variant="outline">
-                  <Link href={allocateHref}>Choose other times</Link>
-                </Button>
-              )}
-              {validationResult && !error && (
-                <Button
-                  variant={hasOutsideSlots ? "warning" : "default"}
-                  onClick={() => onConfirm(hasOutsideSlots)}
-                  disabled={!canConfirm}
-                  title={
-                    blockedReason
-                      ? `Cannot allocate: ${blockedReason}`
-                      : hasOutsideSlots
-                        ? `Warning: ${outsideAvailability.length} slot(s) are outside your regular availability. Click to override and allocate.`
-                        : "Allocate all requested time slots"
-                  }
-                >
-                  {confirming ? (
-                    <>
-                      <Loader2
-                        className="h-4 w-4 motion-safe:animate-spin"
-                        aria-hidden
-                      />
-                      Allocating...
-                    </>
-                  ) : hasOutsideSlots ? (
-                    "Override and Allocate"
-                  ) : (
-                    "Allocate Requested Times"
-                  )}
-                </Button>
-              )}
-            </>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          {renderPrimary()}
+        </ResponsiveModalFooter>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
   );
 }

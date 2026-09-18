@@ -36,7 +36,10 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
-import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
+import {
+  RequestedSlotsDialog,
+  type RequestedSlotsConfirmation,
+} from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import {
   ConsultationApiResponse,
@@ -757,6 +760,10 @@ export function RequestSchedulingTab({
     useState<Request | null>(null);
   /** Respond-accept in flight — holds the dialog and disables its exits. #1163 */
   const [respondInFlight, setRespondInFlight] = useState(false);
+  /** A confirm that succeeded: the dialog shows it, and the row leaves the
+   * list only when the dialog closes (#1703 F5). */
+  const [confirmation, setConfirmation] =
+    useState<RequestedSlotsConfirmation | null>(null);
   const [allocatingRequest, setAllocatingRequest] = useState(false);
   /** Row awaiting the decline confirmation, and the decline in flight. */
   const [declineTarget, setDeclineTarget] = useState<Request | null>(null);
@@ -1170,6 +1177,18 @@ export function RequestSchedulingTab({
     }
   };
 
+  /** Every exit from the confirm dialog; a confirmed row leaves the list here. */
+  const closeRequestedSlotsDialog = () => {
+    const confirmedId = confirmation ? selectedRequestForDialog?.id : undefined;
+    setRequestedSlotsDialogOpen(false);
+    setSelectedRequestForDialog(null);
+    setConfirmation(null);
+    if (confirmedId) {
+      setRequests((prev) => prev.filter((r) => r.id !== confirmedId));
+      onUpdate();
+    }
+  };
+
   const handleRequestedAllocation = async (override: boolean) => {
     if (!selectedRequestForDialog) return;
 
@@ -1250,17 +1269,13 @@ export function RequestSchedulingTab({
 
       toast(timesConfirmed());
 
-      // Close dialog and reset state
-      setRequestedSlotsDialogOpen(false);
-      setSelectedRequestForDialog(null);
-
-      // Remove request from list
-      setRequests((prev) =>
-        prev.filter((r) => r.id !== selectedRequestForDialog.id),
-      );
-
-      // Notify parent
-      onUpdate();
+      // Stay open in the success state; closing removes the row (#1703 F5).
+      const appointmentId = result.data?.[0]?.id;
+      setConfirmation({
+        appointmentHref: appointmentId
+          ? `/dashboard/consultant/${consultantId}/appointments/${appointmentId}`
+          : null,
+      });
     } catch (error) {
       Sentry.captureException(
         error instanceof Error ? error : new Error(String(error)),
@@ -1672,7 +1687,11 @@ export function RequestSchedulingTab({
 
         <RequestedSlotsDialog
           open={requestedSlotsDialogOpen}
-          onOpenChange={setRequestedSlotsDialogOpen}
+          onOpenChange={(next) => {
+            if (!next) closeRequestedSlotsDialog();
+            else setRequestedSlotsDialogOpen(true);
+          }}
+          confirmation={confirmation}
           requestId={selectedRequestForDialog?.id || ""}
           requestType={
             selectedRequestForDialog?.type || AppointmentsType.CONSULTATION
@@ -1716,10 +1735,7 @@ export function RequestSchedulingTab({
             !answerableProposal(selectedRequestForDialog)
           }
           onConfirm={handleRequestedAllocation}
-          onCancel={() => {
-            setRequestedSlotsDialogOpen(false);
-            setSelectedRequestForDialog(null);
-          }}
+          onCancel={closeRequestedSlotsDialog}
         />
 
         <AlertDialog
