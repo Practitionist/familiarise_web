@@ -114,8 +114,27 @@ const prismaRelationsSchema = z.object({
 export const BaseConsultantProfileCreateInputSchema =
   consultantScalarFields.merge(prismaRelationsSchema);
 
+// The wizard's "at least one window" rule lived only in the client; the
+// server now refuses a CONSULTANT payload whose chosen schedule type carries no
+// windows (the same rule the settings PUT and lib/scheduling/availability-contract
+// enforce), so a direct caller cannot onboard an unbookable consultant.
 export const ConsultantProfileCreateObjectSchema = z.object({
-  create: BaseConsultantProfileCreateInputSchema,
+  create: BaseConsultantProfileCreateInputSchema.superRefine((data, ctx) => {
+    const weekly = data.availabilityWindowsWeekly?.create?.length ?? 0;
+    const custom = data.availabilityWindowsCustom?.create?.length ?? 0;
+    const count = data.scheduleType === ScheduleType.CUSTOM ? custom : weekly;
+    if (count === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Add at least one availability window for the chosen schedule",
+        path: [
+          data.scheduleType === ScheduleType.CUSTOM
+            ? "availabilityWindowsCustom"
+            : "availabilityWindowsWeekly",
+        ],
+      });
+    }
+  }),
 });
 
 export const BaseConsulteeProfileCreateInputSchema = ConsulteeProfileSchema;

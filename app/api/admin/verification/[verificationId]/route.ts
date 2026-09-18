@@ -12,6 +12,7 @@ import { notifyVerificationStatusChanged } from "@/lib/novu";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
+import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 
 interface RouteParams {
   params: Promise<{ verificationId: string }>;
@@ -204,6 +205,8 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // what puts them on the landing page and the experts directory, and any other
     // status takes them off. Purge now rather than leave the ISR window to expire.
     purgeExpertSurfaces(verification.consultantProfileId);
+    // #698 OB-1 — the verified bit of the completion score flips here.
+    await recomputeProfileCompletion(prisma, verification.consultantProfileId);
 
     // Fire-and-forget: notify consultant of verification status change
     const consultantUserId = verification.consultantProfile?.user?.id;
