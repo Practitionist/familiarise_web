@@ -133,6 +133,79 @@ export class OnboardingRefusedError extends Error {
   }
 }
 
+/**
+ * The server payload nests the profile (`consultantProfile.create.…`) and
+ * names two fields differently from the wizard; a schema issue is routed to
+ * the wizard's field by the first segment of its path that the wizard knows.
+ */
+const SERVER_FIELD_TO_WIZARD: Record<string, string> = {
+  availabilityWindowsWeekly: "weeklySlots",
+  availabilityWindowsCustom: "customSlots",
+};
+
+export function refusalFromIssues(
+  issues: readonly { path: readonly (string | number)[]; message: string }[],
+  fallbackMessage: string,
+): OnboardingRefusedError {
+  for (const issue of issues) {
+    for (const segment of issue.path) {
+      if (typeof segment !== "string") continue;
+      const field = SERVER_FIELD_TO_WIZARD[segment] ?? segment;
+      if (WIZARD_FIELDS.has(field)) {
+        return new OnboardingRefusedError("VALIDATION", issue.message, field);
+      }
+    }
+  }
+  return new OnboardingRefusedError("VALIDATION", fallbackMessage);
+}
+
+/** Top-level wizard payload fields (mirrors app/form/onboarding/field-map.ts). */
+const WIZARD_FIELDS = new Set([
+  "name",
+  "email",
+  "phone",
+  "address",
+  "timezone",
+  "gender",
+  "city",
+  "country",
+  "linkedinUrl",
+  "bio",
+  "dateOfBirth",
+  "image",
+  "role",
+  "description",
+  "headline",
+  "experience",
+  "domain",
+  "domainId",
+  "subDomains",
+  "tags",
+  "languages",
+  "toolsAndTechnologies",
+  "offeringFormats",
+  "workExperiences",
+  "educationHistory",
+  "certificationsList",
+  "achievements",
+  "scheduleType",
+  "weeklySlots",
+  "customSlots",
+  "termsAccepted",
+  "privacyAccepted",
+  "termsAcceptedAt",
+  "privacyAcceptedAt",
+  "verificationLinkedinUrl",
+  "verificationNotes",
+  "verificationDocuments",
+  "aboutMe",
+  "skillsToDevelop",
+  "consulteeInlineEducation",
+  "consulteeInlineWorkExperience",
+  "department",
+  "position",
+]);
+
 /** The `{ success: false }` arm every onboarding action returns. */
 export function refusalResult(error: unknown, fallback: string) {
   if (error instanceof OnboardingRefusedError) {
@@ -144,10 +217,9 @@ export function refusalResult(error: unknown, fallback: string) {
       index: error.index,
     };
   }
-  return {
-    success: false as const,
-    error: error instanceof Error ? error.message : fallback,
-  };
+  // Anything else is a database or implementation failure: its message is
+  // for the log, never for the customer.
+  return { success: false as const, error: fallback };
 }
 
 export function isPersistableVerificationDoc(doc: unknown): boolean {

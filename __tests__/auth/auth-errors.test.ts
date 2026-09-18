@@ -74,6 +74,12 @@ describe("humanizeAuthError", () => {
     );
   });
 
+  it("an unknown URL code with no status is not a network failure", () => {
+    expect(humanizeAuthError("reset", { code: "WHATEVER" }).title).not.toMatch(
+      /couldn't reach/,
+    );
+  });
+
   it("an unknown 4xx never leaks the raw server message", () => {
     const copy = humanizeAuthError("signup", {
       code: "FIELD_NOT_ALLOWED",

@@ -200,7 +200,14 @@ function copyForCode(
   return null;
 }
 
-function copyForStatus(flow: AuthFlow, status: number): AuthErrorCopy {
+// Status 0 is the explicit "nothing answered" a page passes for a thrown
+// fetch; an error with no status at all (a URL code the page did not know)
+// is not a network failure.
+function copyForStatus(
+  flow: AuthFlow,
+  status: number | undefined,
+): AuthErrorCopy {
+  if (status === undefined) return GENERIC[flow];
   if (status === 429) return RATE_LIMITED;
   if (status === 0 || status >= 500) return UNREACHABLE;
   return GENERIC[flow];
@@ -213,5 +220,5 @@ export function humanizeAuthError(
   if (!error) return GENERIC[flow];
   const code = error.code?.toUpperCase();
   const byCode = code ? copyForCode(flow, code, error.message ?? "") : null;
-  return byCode ?? copyForStatus(flow, error.status ?? 0);
+  return byCode ?? copyForStatus(flow, error.status);
 }

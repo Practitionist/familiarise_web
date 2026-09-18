@@ -18,7 +18,10 @@ export default function ForgotPassword() {
   const { data: session, isPending } = useSession();
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Redirect authenticated users away from forgot-password. `replace` (not
   // push) so /auth/* never lands in history — Back from the dashboard used to
@@ -35,7 +38,7 @@ export default function ForgotPassword() {
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-    setMessage(""); // Clear previous messages
+    setMessage(null); // Clear previous messages
     toast({ title: "Sending reset link..." });
 
     try {
@@ -45,7 +48,7 @@ export default function ForgotPassword() {
       });
       if (error) {
         const copy = humanizeAuthError("forgot", error);
-        setMessage(copy.description);
+        setMessage({ kind: "error", text: copy.description });
         toast({
           title: copy.title,
           description: copy.description,
@@ -54,7 +57,7 @@ export default function ForgotPassword() {
       } else {
         // The server answers the same way whether or not the address exists.
         const successMessage = `If an account exists for ${email}, we've sent a reset link. It works once and expires in 30 minutes.`;
-        setMessage(successMessage);
+        setMessage({ kind: "success", text: successMessage });
         toast({ title: "Request Sent", description: successMessage });
       }
     } catch (error: unknown) {
@@ -64,7 +67,7 @@ export default function ForgotPassword() {
       );
       console.error("Forgot password error:", error);
       const copy = humanizeAuthError("forgot", { status: 0 });
-      setMessage(copy.description);
+      setMessage({ kind: "error", text: copy.description });
       toast({
         title: copy.title,
         description: copy.description,
@@ -107,9 +110,9 @@ export default function ForgotPassword() {
 
           {message && (
             <p
-              className={`text-sm ${message.includes("Error") ? "text-red-400" : "text-green-400"}`}
+              className={`text-sm ${message.kind === "error" ? "text-red-400" : "text-green-400"}`}
             >
-              {message}
+              {message.text}
             </p>
           )}
 

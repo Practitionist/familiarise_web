@@ -856,7 +856,11 @@ const MultiStepForm: React.FC = () => {
           : -1;
         toast({
           title: result.field
-            ? `${describeIssuePath([result.field])} needs a change`
+            ? `${describeIssuePath(
+                result.index === undefined
+                  ? [result.field]
+                  : [result.field, result.index],
+              )} needs a change`
             : "Unable to Save Profile",
           description: errorMessage,
           variant: "destructive",

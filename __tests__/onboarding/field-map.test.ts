@@ -13,6 +13,7 @@ import {
 } from "../../app/form/onboarding/field-map";
 import {
   OnboardingRefusedError,
+  refusalFromIssues,
   refusalResult,
 } from "../../utils/onboarding-shared";
 
@@ -63,7 +64,25 @@ describe("field-map", () => {
     }
   });
 
-  it("a typed refusal keeps its code, field and index; a plain error keeps only the message", () => {
+  it("a server-schema issue is routed to the wizard field by its nested path", () => {
+    const refusal = refusalFromIssues(
+      [
+        {
+          path: ["consultantProfile", "create", "availabilityWindowsWeekly"],
+          message:
+            "Add at least one availability window for the chosen schedule",
+        },
+      ],
+      "Invalid input",
+    );
+    expect(refusal.field).toBe("weeklySlots");
+    expect(refusal.message).toMatch(/at least one availability window/);
+    expect(
+      refusalFromIssues([{ path: ["nope"], message: "x" }], "fb").field,
+    ).toBeUndefined();
+  });
+
+  it("a typed refusal keeps its code, field and index; an untyped error never reaches the customer", () => {
     expect(
       refusalResult(
         new OnboardingRefusedError("DURATION", "Too short", "weeklySlots", 1),
@@ -76,9 +95,11 @@ describe("field-map", () => {
       field: "weeklySlots",
       index: 1,
     });
-    expect(refusalResult(new Error("boom"), "fallback")).toEqual({
+    expect(
+      refusalResult(new Error("P2002 on users_phone_key"), "fallback"),
+    ).toEqual({
       success: false,
-      error: "boom",
+      error: "fallback",
     });
     expect(refusalResult("junk", "fallback")).toEqual({
       success: false,

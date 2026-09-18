@@ -442,19 +442,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 handleDeleteSlot(dateString, index, customSlots, setCustomSlots)
               }
             />
+            {/* Inside the row so the first-error scroll lands on this slot's inputs. */}
+            {!slot.isValid && (
+              <FieldError className="col-span-5" message={slot.errorMessage} />
+            )}
           </div>
         ))}
-        {customSlots[dateString]?.map(
-          (slot: SlotType, index: number) =>
-            !slot.isValid &&
-            slot.errorMessage && (
-              <FieldError
-                key={`custom-error-${dateString}-${index}`}
-                className="mt-1"
-                message={slot.errorMessage}
-              />
-            ),
-        )}
         <Button
           type="button"
           variant="outline"
