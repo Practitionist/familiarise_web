@@ -23,7 +23,6 @@ import { DAYS, INTERVALS } from "@/utils/scheduling-engine/interval-meta";
 import { TWENTY_FOUR_HOURS_IN_MS } from "@/utils/scheduling-engine/slotTimeUtils";
 import { isRecurringEventType } from "@/utils/scheduling-engine/types";
 import {
-  format,
   addDays,
   startOfWeek,
   endOfWeek,
@@ -94,7 +93,16 @@ import {
   nearestVisibleRow,
   type RowSegment,
 } from "@/lib/scheduling/dead-hour-bands";
-import { formatClockTime, formatDateTimeLabel } from "@/lib/time/display";
+import {
+  formatClockTime,
+  formatDateLabel,
+  formatDateRangeLabel,
+  formatDateTimeLabel,
+  formatDayOfMonth,
+  formatMonthLabel,
+  formatWeekdayShort,
+} from "@/lib/time/display";
+import { canonicalZone, zoneDisplayLabel } from "@/lib/time/viewer-zone";
 
 /**
  * Small pure helpers for clarity and reuse. These do not cause side effects.
@@ -200,13 +208,9 @@ function isDateInSchedulingPeriod(
 
 /** Formats the allowed [start, end] range for user-facing messages. */
 function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
-  const startText = allowedStart
-    ? format(allowedStart, "MMM d, yyyy 'at' h:mm a")
-    : "-";
-  const endText = allowedEnd
-    ? format(allowedEnd, "MMM d, yyyy 'at' h:mm a")
-    : "-";
-  return `${startText} – ${endText}`;
+  const at = (date?: Date) =>
+    date ? `${formatDateLabel(date)} at ${formatClockTime(date)}` : "-";
+  return `${at(allowedStart)} – ${at(allowedEnd)}`;
 }
 
 /**
@@ -1570,8 +1574,11 @@ export function UnifiedCalendar({
           </Button>
           <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
             {view === "week"
-              ? `${format(startOfWeek(currentDate, { weekStartsOn: 0 }), "MMM d")} - ${format(endOfWeek(currentDate, { weekStartsOn: 0 }), "MMM d, yyyy")}`
-              : format(currentDate, "MMMM yyyy")}
+              ? formatDateRangeLabel(
+                  startOfWeek(currentDate, { weekStartsOn: 0 }),
+                  endOfWeek(currentDate, { weekStartsOn: 0 }),
+                )
+              : formatMonthLabel(currentDate)}
           </div>
           <Button
             variant="outline"
@@ -1647,10 +1654,10 @@ export function UnifiedCalendar({
                       isToday ? "text-primary" : ""
                     }`}
                   >
-                    {DAYS[index].slice(0, 3)}
+                    {formatWeekdayShort(date)}
                   </div>
                   <div className="text-xs md:text-sm text-muted-foreground">
-                    {format(date, "d")}
+                    {formatDayOfMonth(date)}
                   </div>
                 </div>
               );
@@ -1871,10 +1878,19 @@ export function UnifiedCalendar({
           {/* #1076 — the day/week caps bucket on the EVENT's scheduling
               timezone, not the viewer's. When they differ, say so here
               instead of letting the viewer assume their own midnight. Only
-              cap-bearing surfaces thread the prop; others keep the old line. */}
-          {schedulingTimezone && schedulingTimezone !== browserTimezone
-            ? `Times shown in ${browserTimezone} · Limits counted in ${schedulingTimezone}`
-            : `Timezone: ${browserTimezone}`}
+              cap-bearing surfaces thread the prop; others keep the old line.
+              Named as "IST (UTC+05:30)" with the IANA zone in the title (F3). */}
+          <span title={canonicalZone(browserTimezone)}>
+            Times in {zoneDisplayLabel(now, browserTimezone)}
+          </span>
+          {schedulingTimezone &&
+            canonicalZone(schedulingTimezone) !==
+              canonicalZone(browserTimezone) && (
+              <span title={canonicalZone(schedulingTimezone)}>
+                {" · Limits counted in "}
+                {zoneDisplayLabel(now, schedulingTimezone)}
+              </span>
+            )}
         </div>
       </div>
 

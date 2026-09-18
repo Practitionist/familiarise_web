@@ -41,6 +41,21 @@ export function formatDateTimeLabel(date: Date, opts?: DisplayOpts): string {
   return `${formatDayLabel(date, opts)}, ${formatClockTime(date, opts)}`;
 }
 
+/** "Thu" — the weekday over a grid column. */
+export function formatWeekdayShort(date: Date, opts?: DisplayOpts): string {
+  return formatter({ weekday: "short" }, opts).format(date);
+}
+
+/** "22" — the day number under a weekday header. */
+export function formatDayOfMonth(date: Date, opts?: DisplayOpts): string {
+  return formatter({ day: "numeric" }, opts).format(date);
+}
+
+/** "September 2026". */
+export function formatMonthLabel(date: Date, opts?: DisplayOpts): string {
+  return formatter({ month: "long", year: "numeric" }, opts).format(date);
+}
+
 /** "24 Sep 2026". */
 export function formatDateLabel(date: Date, opts?: DisplayOpts): string {
   return formatter(

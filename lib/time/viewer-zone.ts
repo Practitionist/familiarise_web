@@ -66,6 +66,33 @@ export function formatInViewerZone(
   return formatInTimeZone(date, zone, pattern);
 }
 
+/**
+ * Legacy IANA spellings browsers and old profiles still report, folded to
+ * the canonical name so one zone is never shown under two names (#1703 F3).
+ */
+const ZONE_ALIASES: Record<string, string> = {
+  "Asia/Calcutta": "Asia/Kolkata",
+  "Asia/Katmandu": "Asia/Kathmandu",
+  "Asia/Dacca": "Asia/Dhaka",
+  "Asia/Rangoon": "Asia/Yangon",
+  "Asia/Saigon": "Asia/Ho_Chi_Minh",
+  "Europe/Kiev": "Europe/Kyiv",
+  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+  "US/Eastern": "America/New_York",
+  "US/Central": "America/Chicago",
+  "US/Mountain": "America/Denver",
+  "US/Pacific": "America/Los_Angeles",
+  "Etc/UTC": "UTC",
+  "Etc/GMT": "UTC",
+  GMT: "UTC",
+};
+
+/** The canonical IANA name for a zone string, trimmed; unknown names pass through. */
+export function canonicalZone(zone: string): string {
+  const trimmed = zone.trim();
+  return ZONE_ALIASES[trimmed] ?? trimmed;
+}
+
 /** Short zone name for a label ("IST", "UTC", "GMT+8"); DST-aware, hence the date. */
 /**
  * ICU prints "GMT+5:30" for India on Linux and "IST" on macOS, so the label a
@@ -73,11 +100,30 @@ export function formatInViewerZone(
  */
 export const ZONE_ABBREVIATION: Record<string, string> = {
   "Asia/Kolkata": "IST",
+  // Kept for readers that index this map directly (lib/novu/humanize.ts).
   "Asia/Calcutta": "IST",
 };
 
 export function zoneLabel(date: Date | string | number, zone: string): string {
-  return ZONE_ABBREVIATION[zone] ?? formatInTimeZone(date, zone, "zzz");
+  const canonical = canonicalZone(zone);
+  return (
+    ZONE_ABBREVIATION[canonical] ?? formatInTimeZone(date, canonical, "zzz")
+  );
+}
+
+/**
+ * "IST (UTC+05:30)" — the abbreviation plus the offset in force at `date`,
+ * for the grid footer and anywhere a zone is named to a person (#1703 F3).
+ * Callers put `canonicalZone(zone)` in a `title` so the IANA name is one
+ * hover away without cluttering the line.
+ */
+export function zoneDisplayLabel(
+  date: Date | string | number,
+  zone: string,
+): string {
+  const canonical = canonicalZone(zone);
+  const offset = formatInTimeZone(date, canonical, "xxx");
+  return `${zoneLabel(date, canonical)} (UTC${offset === "+00:00" ? "" : offset})`;
 }
 
 /**
