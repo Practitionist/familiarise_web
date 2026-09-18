@@ -35,6 +35,7 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { z } from "zod";
 import { RequestedSlotsDialog } from "./components/RequestedSlotsDialog";
 import { PaymentRequiredBadge } from "./components/PaymentRequiredBadge";
 import {
@@ -302,21 +303,15 @@ async function fetchDataFromApi<T>(url: string): Promise<{
 }
 
 /** `code` off an error body, if the body was JSON and carried one. */
+const ErrorBodySchema = z.object({ code: z.string() });
 function readErrorCode(body: string): string | undefined {
   try {
-    const parsed: unknown = JSON.parse(body);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "code" in parsed &&
-      typeof parsed.code === "string"
-    ) {
-      return parsed.code;
-    }
+    const parsed = ErrorBodySchema.safeParse(JSON.parse(body));
+    return parsed.success ? parsed.data.code : undefined;
   } catch {
     // Not JSON — an edge/HTML error page.
+    return undefined;
   }
-  return undefined;
 }
 
 /** One line, one time, always with its zone: the consultee who asked for
