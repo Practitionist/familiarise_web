@@ -25,15 +25,16 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ## Schedule Overview
 
-| Job                                 | Cron Expression | Human-Readable          | Source Script                                                 | API Route                                  |
-| ----------------------------------- | --------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------ |
-| Auto-complete appointments          | `7 * * * *`     | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`  |
-| Cleanup tentative slots             | `0 */2 * * *`   | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`             | `/api/cleanup/tentative-occurrences`             |
-| Cleanup stale pending consultations | `30 * * * *`    | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations` |
-| Cleanup invalid appointments        | `0 * * * *`     | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`        |
-| Expire stale requests               | `10 * * * *`    | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`       |
-| Reconcile slot availability         | `15 * * * *`    | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts`         | `/api/cleanup/reconcile-occurrence-availability` |
-| Detect consultant no-shows          | `57 * * * *`    | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                  |
+| Job                                 | Cron Expression   | Human-Readable          | Source Script                                                 | API Route                                        |
+| ----------------------------------- | ----------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------------ |
+| Auto-complete appointments          | `7 * * * *`       | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`        |
+| Cleanup tentative slots             | `0 */2 * * *`     | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`       | `/api/cleanup/tentative-occurrences`             |
+| Cleanup stale pending consultations | `30 * * * *`      | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations`       |
+| Cleanup invalid appointments        | `0 * * * *`       | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`              |
+| Expire stale requests               | `10 * * * *`      | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`             |
+| Cleanup abandoned payments          | `6-59/15 * * * *` | Every 15 minutes        | `scripts/payments/cleanup-abandoned-payments.ts`              | `/api/cleanup/abandoned-payments`                |
+| Reconcile slot availability         | `15 * * * *`      | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts`   | `/api/cleanup/reconcile-occurrence-availability` |
+| Detect consultant no-shows          | `57 * * * *`      | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                        |
 
 ---
 
@@ -100,7 +101,7 @@ real numbers whenever a heavy one wants in.
 | Class        | `SCHEDULED`, `IN_PROGRESS` | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
 | Consultation | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots ended > 1h ago, unless the consultant never joined (see below)             |
 | Subscription | `APPROVED`, `SCHEDULED`    | `COMPLETED`   | All slots across all appointments ended > 1h ago                                     |
-| Trial | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
+| Trial        | `SCHEDULED`                | `COMPLETED`   | All slots ended > 1h ago; also sets `completedAt` and creates an `ActivityLog` entry |
 
 **The consultant no-show handoff (#1504).** A consultation that the consultant never joined is not this job's to close. The only path that cancels such a booking and refunds the consultee in full is the no-show detector described in section g, and that detector only considers bookings that are still `APPROVED` or `SCHEDULED`. Because this job's buffer is one hour and the detector's grace window is two, this job used to reach every unattended consultation first and mark it `COMPLETED`, which removed it from the detector's candidate set permanently; the platform's promised refund could therefore never fire in production.
 
@@ -116,13 +117,13 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 ### b. Cleanup Tentative Slots
 
-| Field              | Value                                             |
-| ------------------ | ------------------------------------------------- |
-| **Schedule**       | `0 */2 * * *` -- every 2 hours                    |
+| Field              | Value                                                   |
+| ------------------ | ------------------------------------------------------- |
+| **Schedule**       | `0 */2 * * *` -- every 2 hours                          |
 | **Source**         | `scripts/appointments/cleanup-tentative-occurrences.ts` |
 | **API**            | `app/api/cleanup/tentative-occurrences/route.ts`        |
 | **GitHub Actions** | `.github/workflows/cleanup-tentative-occurrences.yml`   |
-| **HTTP Methods**   | `GET`, `POST`                                     |
+| **HTTP Methods**   | `GET`, `POST`                                           |
 
 **Purpose**: Releases slots marked `isTentative = true` that are associated with abandoned booking flows. These tentative slots block consultant availability; if not cleaned up, abandoned checkouts permanently reduce the consultant's bookable calendar.
 
@@ -218,17 +219,19 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 **Safety**: Three separate operations (PENDING consultations, PENDING subscriptions, payment-pending requests), each with its own `try/catch`. Uses bulk `updateMany` rather than per-record updates for efficiency. Hourly cadence bounds worst-case hold lifetime at ~49h. Because two of those operations refund SUCCEEDED payments through `refundPaymentsForExpired`, this job is in `FINANCIAL_JOB_NAMES` and is held during DEGRADED maintenance as well as OFFLINE (#1506).
 
+**Consultant nudges for unallocated paid subscriptions (#1703 D4, added 2026-09-19).** This same run also calls `nudgeUnscheduledSubscriptions`, which reads paid `APPROVED` subscriptions with zero live confirmed slots and sends the consultant one nudge at each of `SUBSCRIPTION_NUDGE_DAYS = [3, 7, 14]` days since the subscription's `updatedAt`, through the `new-booking-request` Novu bell family and its email twin. `nudgeStageFor` maps an age to the latest stage that age has crossed, so a run that missed day 3 (a run outage, a paused job) sends day 7 once rather than both; the once-guard is a `FailedEmail` row keyed by stage. This is deliberately additive to the existing 30-day auto-refund in this same job, not a replacement for it: the refund stays the buyer-protective backstop, and the nudge is what gives the consultant a chance to act before it fires. The job's response body carries `subscriptionNudgesSent` alongside its existing counts.
+
 ---
 
 ### f. Reconcile Slot Availability
 
-| Field              | Value                                                  |
-| ------------------ | ------------------------------------------------------ |
-| **Schedule**       | `15 * * * *` -- every hour, at :15                     |
+| Field              | Value                                                        |
+| ------------------ | ------------------------------------------------------------ |
+| **Schedule**       | `15 * * * *` -- every hour, at :15                           |
 | **Source**         | `scripts/appointments/reconcile-occurrence-availability.ts`  |
 | **API**            | `app/api/cleanup/reconcile-occurrence-availability/route.ts` |
 | **GitHub Actions** | `.github/workflows/reconcile-occurrence-availability.yml`    |
-| **HTTP Methods**   | `GET`, `POST`                                          |
+| **HTTP Methods**   | `GET`, `POST`                                                |
 
 **Purpose**: Fixes slot availability inconsistencies and detects booking conflicts. Performs two operations:
 
@@ -264,6 +267,25 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 **Grace window**: A session must have ended at least 120 minutes ago (`NO_SHOW_GRACE_MINUTES = 120`) before a missing consultant is treated as a no-show, so a late join or a delayed Stream participant webhook cannot trigger a false-positive refund. The constant lives in `lib/booking/attendance.ts` alongside the attendance predicate, because the auto-completion job in section a has to honour the same window: it defers a booking in the no-show shape rather than completing it out from under this job (#1504).
 
 **Safety**: The job runs under a fail-closed cron lock. Because it moves money, it refuses to run without a real Redis lock rather than risk a silent unlocked double-run, and `refundPayment`'s refundable-balance guard remains the correctness backstop. It is also in `FINANCIAL_JOB_NAMES`, so it is held during DEGRADED maintenance as well as OFFLINE (#1506).
+
+---
+
+### h. Cleanup Abandoned Payments (Pay-Link Reminder and Lapsed-Link Expiry)
+
+| Field              | Value                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Schedule**       | Netlify ticker every 15 minutes (`TARGET_EVERY_MINUTES`, #1686); GitHub Actions `6-59/15 * * * *` as the fallback twin |
+| **Source**         | `scripts/payments/cleanup-abandoned-payments.ts`                                                                       |
+| **API**            | `app/api/cleanup/abandoned-payments/route.ts`                                                                          |
+| **GitHub Actions** | `.github/workflows/cleanup-abandoned-payments.yml`                                                                     |
+
+**Purpose**: The delivered cadence comes from the Netlify ticker (ADR 22, ADR 27), which since #1686 fires this target every third tick — every 15 minutes — because each row costs a gateway round trip; the GitHub Actions schedule is the fallback twin at the same cadence, not the primary invocation. It cancels an abandoned direct-checkout payment and cancels a lapsed approval pay-link.
+
+**The pay-link reminder (#1703 D2, added 2026-09-18).** `remindApprovalPaymentsDue` sends one reminder email when half the 24-hour pay-link window is left (`APPROVAL_PAYMENT_EXPIRATION_HOURS = 24`, so the reminder fires with 12 hours left on the link). It is the existing pay-link email re-sent with a different heading, staged as a `FailedEmail` row of type `PAYMENT_LINK_REMINDER` keyed by the payment id, which is the once-guard: a second run against the same payment finds the row and sends nothing. The reminder never fires after a capture or after the link itself has lapsed, because both of those move the row out of the reminder's `APPROVED_PENDING_PAYMENT`-with-a-live-pay-link cohort.
+
+**The lapsed-link expiry, and the single-CAS rule it shares (#1703 D2, fixed 2026-09-19).** A pay-link that nobody paid before its 24-hour deadline has to move to `EXPIRED`, and two different sweeps can reach that same row first: this job's abandoned-payment cohort (it sees the row through its expired-`PENDING`-payment read) and `expireStaleRequests`' payment-pending cohort (section e). Both now call the same helper, `expireLapsedPayLink`, which transitions the request with `fromIn: [APPROVED_PENDING_PAYMENT]` and repeats the money predicate (no `SUCCEEDED` payment on the wrapper) inside the CAS `where`, exactly as doctrine rule 5 requires of any sweep that can expire a request. Preview QA on #1724 (`qa-1724.md` case 8) found that before this fix, whichever sweep claimed the row first left the consultee un-notified, because only one of the two callers fired the `PAY_LINK_LAPSED_REASON` notice; the fix ties the notice to the CAS win itself, so it fires exactly once regardless of which pass gets there first. This is pinned by running both sweeps, in their real order, over one fixture.
+
+**Safety**: Same doctrine-rule-5 guards as every lapsed-request sweep — the status guard alone is not sufficient, and the money predicate rides inside the CAS `where`, not just the cohort read.
 
 ---
 
@@ -353,9 +375,9 @@ All endpoints return a JSON result object with at minimum:
 
 Each job adds additional fields specific to its operation (e.g., `webinarsCompleted`, `slotsReleased`, `doubleBookingsDetected`). HTTP status codes:
 
-| Code  | Meaning                                                                 |
-| ----- | ----------------------------------------------------------------------- |
-| `200` | Job completed successfully                                              |
+| Code  | Meaning                                                                       |
+| ----- | ----------------------------------------------------------------------------- |
+| `200` | Job completed successfully                                                    |
 | `207` | Partial success (reconcile-occurrence-availability: double bookings detected) |
-| `401` | Missing or invalid `CRON_SECRET`                                        |
-| `500` | Job failed or returned errors                                           |
+| `401` | Missing or invalid `CRON_SECRET`                                              |
+| `500` | Job failed or returned errors                                                 |

@@ -53,6 +53,8 @@ Issues: #920 (open), #282 (closed by #284), plus two incidents in `docs/deployme
 
 The build prerenders against the live database, so a slow pooler can fail a deploy; #919 added a 30 s connect budget and #920 asks for the pages to become dynamic. Netlify removed the 4 KB env-var cap on 2026-06-12. A keys-only drift check on 2026-09-12 found nothing actionable. Next action: #920 remains a code change.
 
+**2026-09-19, #1724:** the concrete instance of this — `/explore/experts/[consultantId]` calls `getConsultantDetail`, which selects `ConsultantProfile.bookingMode`/`acceptingRequests`, so the build's prerender of that page needs those columns to exist in the database _before_ the branch's build runs, not before its code merges. A schema PR that ships code reading a new column ahead of the column landing on the shared project fails the build at the prerender step, not at review; sequence the DDL first. This is exactly what #1724's first CI run did: `The column \`ConsultantProfile.bookingMode\` does not exist in the current database … Error occurred prerendering page "/explore/experts" … code: 'P2022'`, green again once the columns were applied.
+
 ## 8. The 250 MB unzipped function cap
 
 Issues: #1158 (open), #639 (open), #636 (closed).
