@@ -25,7 +25,7 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: jest.fn(),
       findUnique: jest.fn(),
     },
-    appointmentOccurrence: { count: jest.fn() },
+    appointmentOccurrence: { count: jest.fn(), findFirst: jest.fn() },
   },
   ALLOCATION_TX_MAX_WAIT_MS: 8000,
   ALLOCATION_TX_TIMEOUT_MS: 30000,
@@ -69,7 +69,7 @@ const mockPrisma = prisma as unknown as {
     findFirst: jest.Mock;
     findUnique: jest.Mock;
   };
-  appointmentOccurrence: { count: jest.Mock };
+  appointmentOccurrence: { count: jest.Mock; findFirst: jest.Mock };
 };
 
 const FUTURE_SLOTS = ["2026-08-03T09:00:00.000Z", "2026-08-03T09:30:00.000Z"];
@@ -417,5 +417,41 @@ describe("#1692 — a non-fresh (reschedule) manual allocation is advisory-locke
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     expect(mockTx.appointment.deleteMany).not.toHaveBeenCalled();
     expect(mockTx.appointmentOccurrence.count).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1697 item 3 — the loser's fast exit. A manual allocation onto a time the
+ * consultant already holds confirmed answers SLOT_TAKEN from one indexed
+ * probe, before the lock wait, the full validation and the transaction.
+ */
+describe("#1697 — pre-lock occupancy probe on manual allocation", () => {
+  it("answers SLOT_TAKEN before taking any lock when a confirmed row overlaps", async () => {
+    const { lockAutoAllocate } = jest.requireMock(
+      "../../utils/appointmentlock",
+    );
+    mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue({
+      startsAt: new Date(FUTURE_SLOTS[0]),
+    });
+
+    const result = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: FUTURE_SLOTS,
+    });
+
+    expect(result.httpStatus).toBe(409);
+    expect(result.errorCode).toBe("SLOT_TAKEN");
+    expect(lockAutoAllocate).not.toHaveBeenCalled();
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    const where =
+      mockPrisma.appointmentOccurrence.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({
+      consultantProfileId: "cp-1",
+      isTentative: false,
+      deletedAt: null,
+      appointment: { NOT: { subscriptionId: "sub-1" } },
+    });
   });
 });

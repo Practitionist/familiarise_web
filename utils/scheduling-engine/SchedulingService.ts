@@ -1001,12 +1001,7 @@ export class SchedulingService {
     return {
       success: true,
       appointments,
-      ...(await this.replayPartialCounts(
-        eventType,
-        eventId,
-        appointments,
-        db,
-      )),
+      ...(await this.replayPartialCounts(eventType, eventId, appointments, db)),
     };
   }
 
@@ -1100,6 +1095,58 @@ export class SchedulingService {
           .reduce((n, slot) => n + intervalCountOf(slot), 0),
       0,
     );
+  }
+
+  /**
+   * One read on `AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`
+   * with the exclusion constraint's own predicate (confirmed, live, this
+   * consultant) over the envelope of the proposed slots, minus the event's
+   * own rows. A hit is a SLOT_TAKEN 409 nobody has to wait for. A fault in
+   * the probe is reported and ignored: it is an optimisation, not a guard.
+   */
+  private static async probeConfirmedOverlap(
+    consultantProfileId: string,
+    eventType: EventType,
+    eventId: string,
+    slotStrings: string[],
+  ): Promise<void> {
+    const starts = slotStrings
+      .map((s) => new Date(s).getTime())
+      .filter((t) => !Number.isNaN(t));
+    if (starts.length === 0) return;
+    const earliest = new Date(Math.min(...starts));
+    const latest = new Date(Math.max(...starts) + SCHEDULING_INTERVAL_MS);
+    const relationField = this.getEventRelationField(eventType);
+    let taken: { startsAt: Date } | null;
+    try {
+      taken = await prisma.appointmentOccurrence.findFirst({
+        where: {
+          consultantProfileId,
+          isTentative: false,
+          deletedAt: null,
+          startsAt: { lt: latest },
+          endsAt: { gt: earliest },
+          appointment: {
+            NOT: { [`${relationField}Id`]: eventId },
+          } as Prisma.AppointmentWhereInput,
+        },
+        select: { startsAt: true },
+      });
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "bookings",
+        op: "probeConfirmedOverlap",
+        expected: true,
+        level: "warning",
+      });
+      return;
+    }
+    if (taken) {
+      throw new AllocationConflictError(
+        `Slot taken: ${taken.startsAt.toISOString()} is already booked. Please pick another time.`,
+        "SLOT_TAKEN",
+      );
+    }
   }
 
   /** Tentative ROWS, the unit #1012's stale-tab precondition compares. */
@@ -1940,6 +1987,19 @@ export class SchedulingService {
             .sort((a, b) => a.getTime() - b.getTime())[0]
             ?.toISOString()
             .slice(0, 10);
+    // #1697 item 3 — the loser's fast exit. Mirrors checkout's EventFullError
+    // gate: one indexed probe against what the GiST constraint would refuse,
+    // BEFORE the lock wait and the full validation, so the 499 losers of a
+    // last-seat race pay one read for their 409 instead of a lock, a
+    // validation and a transaction. Advisory only: a clean answer proves
+    // nothing (the in-txn re-check and the constraint stay authoritative).
+    await this.probeConfirmedOverlap(
+      consultantProfileId,
+      eventType,
+      eventId,
+      slotStrings,
+    );
+
     const lock = await lockAutoAllocate(consultantProfileId, lockScope);
     // #898 follow-up — serialize on the consultee too (consultant → consultee
     // lock order) so one person can't be booked with two consultants at once.
