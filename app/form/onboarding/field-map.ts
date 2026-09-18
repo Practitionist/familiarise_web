@@ -14,113 +14,68 @@ export type OnboardingStepKey =
   | "review"
   | "org";
 
-const STEP_OF: Record<string, OnboardingStepKey> = {
+/** [owning step, on-screen label] per top-level payload field. */
+const FIELDS: Record<string, [OnboardingStepKey, string]> = {
   // Step 0 — the account and the role.
-  name: "personal",
-  email: "personal",
-  phone: "personal",
-  address: "personal",
-  timezone: "personal",
-  gender: "personal",
-  city: "personal",
-  country: "personal",
-  linkedinUrl: "personal",
-  bio: "personal",
-  dateOfBirth: "personal",
-  image: "personal",
-  role: "personal",
+  name: ["personal", "Full name"],
+  email: ["personal", "Email"],
+  phone: ["personal", "Phone number"],
+  address: ["personal", "Address"],
+  timezone: ["personal", "Time zone"],
+  gender: ["personal", "Gender"],
+  city: ["personal", "City"],
+  country: ["personal", "Country"],
+  linkedinUrl: ["personal", "LinkedIn URL"],
+  bio: ["personal", "Short bio"],
+  dateOfBirth: ["personal", "Date of birth"],
+  image: ["personal", "Profile photo"],
+  role: ["personal", "How you'll use Familiarise"],
   // Consultant professional profile (expertise + background tabs).
-  description: "professional",
-  headline: "professional",
-  experience: "professional",
-  domain: "professional",
-  domainId: "professional",
-  subDomains: "professional",
-  tags: "professional",
-  languages: "professional",
-  toolsAndTechnologies: "professional",
-  offeringFormats: "professional",
-  workExperiences: "professional",
-  educationHistory: "professional",
-  certificationsList: "professional",
-  achievements: "professional",
+  description: ["professional", "About your expertise"],
+  headline: ["professional", "Professional headline"],
+  experience: ["professional", "Years of experience"],
+  domain: ["professional", "Field of expertise"],
+  domainId: ["professional", "Field of expertise"],
+  subDomains: ["professional", "Specialties"],
+  tags: ["professional", "Skills"],
+  languages: ["professional", "Languages"],
+  toolsAndTechnologies: ["professional", "Tools and technologies"],
+  offeringFormats: ["professional", "Offering formats"],
+  workExperiences: ["professional", "Work experience"],
+  educationHistory: ["professional", "Education"],
+  certificationsList: ["professional", "Certifications"],
+  achievements: ["professional", "Achievements and portfolio"],
   // Availability.
-  scheduleType: "availability",
-  weeklySlots: "availability",
-  customSlots: "availability",
+  scheduleType: ["availability", "Schedule type"],
+  weeklySlots: ["availability", "Weekly hours"],
+  customSlots: ["availability", "Custom dates"],
   // Agreement (+ verification for consultants; + profile for consultees).
-  termsAccepted: "agreement",
-  privacyAccepted: "agreement",
-  termsAcceptedAt: "agreement",
-  privacyAcceptedAt: "agreement",
-  verificationLinkedinUrl: "agreement",
-  verificationNotes: "agreement",
-  verificationDocuments: "agreement",
-  aboutMe: "agreement",
-  skillsToDevelop: "agreement",
-  consulteeInlineEducation: "agreement",
-  consulteeInlineWorkExperience: "agreement",
+  termsAccepted: ["agreement", "Terms of service"],
+  privacyAccepted: ["agreement", "Privacy policy"],
+  termsAcceptedAt: ["agreement", "Terms of service"],
+  privacyAcceptedAt: ["agreement", "Privacy policy"],
+  verificationLinkedinUrl: ["agreement", "LinkedIn profile for verification"],
+  verificationNotes: ["agreement", "Verification notes"],
+  verificationDocuments: ["agreement", "Verification documents"],
+  aboutMe: ["agreement", "About me"],
+  skillsToDevelop: ["agreement", "Skills to develop"],
+  consulteeInlineEducation: ["agreement", "Education"],
+  consulteeInlineWorkExperience: ["agreement", "Work experience"],
   // Staff.
-  department: "roleDetails",
-  position: "roleDetails",
-};
-
-const LABEL_OF: Record<string, string> = {
-  name: "Full name",
-  email: "Email",
-  phone: "Phone number",
-  address: "Address",
-  timezone: "Time zone",
-  gender: "Gender",
-  city: "City",
-  country: "Country",
-  linkedinUrl: "LinkedIn URL",
-  bio: "Short bio",
-  dateOfBirth: "Date of birth",
-  image: "Profile photo",
-  role: "How you'll use Familiarise",
-  description: "About your expertise",
-  headline: "Professional headline",
-  experience: "Years of experience",
-  domain: "Field of expertise",
-  domainId: "Field of expertise",
-  subDomains: "Specialties",
-  tags: "Skills",
-  languages: "Languages",
-  toolsAndTechnologies: "Tools and technologies",
-  offeringFormats: "Offering formats",
-  workExperiences: "Work experience",
-  educationHistory: "Education",
-  certificationsList: "Certifications",
-  achievements: "Achievements and portfolio",
-  scheduleType: "Schedule type",
-  weeklySlots: "Weekly hours",
-  customSlots: "Custom dates",
-  termsAccepted: "Terms of service",
-  privacyAccepted: "Privacy policy",
-  termsAcceptedAt: "Terms of service",
-  privacyAcceptedAt: "Privacy policy",
-  verificationLinkedinUrl: "LinkedIn profile for verification",
-  verificationNotes: "Verification notes",
-  verificationDocuments: "Verification documents",
-  aboutMe: "About me",
-  skillsToDevelop: "Skills to develop",
-  consulteeInlineEducation: "Education",
-  consulteeInlineWorkExperience: "Work experience",
-  department: "Department",
-  position: "Position",
+  department: ["roleDetails", "Department"],
+  position: ["roleDetails", "Position"],
 };
 
 /** The step that owns a top-level payload field, or null for an unknown one. */
 export function stepKeyForField(field: string): OnboardingStepKey | null {
-  return STEP_OF[field] ?? null;
+  return FIELDS[field]?.[0] ?? null;
 }
 
 /** "Weekly hours (row 3)", never an internal key. */
 export function describeIssuePath(path: readonly (string | number)[]): string {
   const [head, ...rest] = path;
   if (typeof head !== "string") return "A field";
-  const label = LABEL_OF[head] ?? "A field";
+  const label = FIELDS[head]?.[1] ?? "A field";
   const index = rest.find((p): p is number => typeof p === "number");
   return index === undefined ? label : `${label} (row ${index + 1})`;
 }

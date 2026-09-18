@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
   type AuthErrorField,
@@ -449,27 +450,16 @@ function SignInContent() {
             Enter your email and password below to sign in.
           </p>
           <form onSubmit={handleEmailSignIn}>
-            <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                placeholder="name@example.com"
-                type="email"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect="off"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setFieldError((f) => ({ ...f, email: undefined }));
-                }}
-                onBlur={handleEmailBlur}
-                required
-                disabled={isLoading || ssoChecking}
-                {...invalidProps(fieldError.email, "email-error")}
-              />
-              <FieldError id="email-error" message={fieldError.email} />
-            </div>
+            <AuthEmailField
+              value={email}
+              onChange={(v) => {
+                setEmail(v);
+                setFieldError((f) => ({ ...f, email: undefined }));
+              }}
+              onBlur={handleEmailBlur}
+              disabled={isLoading || ssoChecking}
+              error={fieldError.email}
+            />
             {!ssoCheck?.enforceSSO && (
               <div className="grid gap-2 mt-4">
                 <div className="flex items-center justify-between">

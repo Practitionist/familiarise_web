@@ -15,6 +15,7 @@ import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ReferralCodeField } from "./ReferralCodeField";
 import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { AuthEmailField } from "../AuthEmailField";
 import {
   humanizeAuthError,
   type AuthErrorField,
@@ -368,27 +369,17 @@ function SignUpContent() {
                 disabled={isLoading}
               />
             </div>
-            <div className="grid gap-2 mt-4">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                placeholder="name@example.com"
-                type="email"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect="off"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  setFieldError((f) => ({ ...f, email: undefined }));
-                }}
-                onBlur={handleEmailBlur}
-                required
-                disabled={isLoading || ssoChecking}
-                {...invalidProps(fieldError.email, "email-error")}
-              />
-              <FieldError id="email-error" message={fieldError.email} />
-            </div>
+            <AuthEmailField
+              value={email}
+              onChange={(v) => {
+                setEmail(v);
+                setFieldError((f) => ({ ...f, email: undefined }));
+              }}
+              onBlur={handleEmailBlur}
+              disabled={isLoading || ssoChecking}
+              error={fieldError.email}
+              className="grid gap-2 mt-4"
+            />
             {!ssoCheck?.enforceSSO && (
               <>
                 <div className="grid gap-2 mt-4">
