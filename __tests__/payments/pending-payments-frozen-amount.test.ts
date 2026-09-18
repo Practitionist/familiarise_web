@@ -43,6 +43,11 @@ const mockedSubscriptions = prisma.subscription.findMany as jest.Mock;
 const mockedGatewayPayments = prisma.payment.findMany as jest.Mock;
 const mockedTrials = prisma.trial.findMany as jest.Mock;
 
+// Stamps sit ahead of now: #1703 drops a lapsed link from the payable list,
+// and these pins are about the amount, not the deadline.
+const approvedAt = new Date(Date.now() + 60 * 60 * 1000);
+const dueAt = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+
 function frozenPayment(amount: number, currency = "INR") {
   return [{ amount, currency }];
 }
@@ -84,7 +89,7 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     mockedConsultations.mockResolvedValue([
       {
         id: "cons-1",
-        updatedAt: new Date("2026-08-01T10:00:00Z"),
+        updatedAt: approvedAt,
         pendingPaymentUrl: "order_123",
         appointment: { id: "appt-1", payment: frozenPayment(350_000) },
         consultationPlan: {
@@ -107,7 +112,7 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     mockedConsultations.mockResolvedValue([
       {
         id: "cons-2",
-        updatedAt: new Date("2026-08-01T10:00:00Z"),
+        updatedAt: approvedAt,
         pendingPaymentUrl: null,
         appointment: { id: "appt-2", payment: [] },
         consultationPlan: {
@@ -128,7 +133,7 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     mockedSubscriptions.mockResolvedValue([
       {
         id: "sub-1",
-        updatedAt: new Date("2026-08-01T10:00:00Z"),
+        updatedAt: approvedAt,
         pendingPaymentUrl: "order_456",
         appointment: {
           id: "appt-s1",
@@ -154,8 +159,8 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     mockedTrials.mockResolvedValue([
       {
         id: "trial-1",
-        updatedAt: new Date("2026-08-01T10:00:00Z"),
-        paymentDueAt: new Date("2026-08-05T10:00:00Z"),
+        updatedAt: approvedAt,
+        paymentDueAt: dueAt,
         pendingPaymentUrl: "order_789",
         appointment: { id: "appt-t1" },
         payment: { amount: 100_000, currency: "INR" },
@@ -177,7 +182,7 @@ describe("pending-payments quotes the frozen Payment.amount (#1182)", () => {
     mockedTrials.mockResolvedValue([
       {
         id: "trial-free",
-        updatedAt: new Date("2026-08-01T10:00:00Z"),
+        updatedAt: approvedAt,
         paymentDueAt: null,
         pendingPaymentUrl: null,
         appointment: { id: "appt-t2" },

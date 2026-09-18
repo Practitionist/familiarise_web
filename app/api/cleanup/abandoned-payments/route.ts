@@ -4,6 +4,7 @@ import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
   disconnectDatabase,
+  remindApprovalPaymentsDue,
 } from "@/scripts/payments/cleanup-abandoned-payments";
 import {
   InvalidLimitError,
@@ -46,18 +47,25 @@ export async function POST(req: NextRequest) {
     const consultationResult = await cleanupExpiredApprovalPendingPayments({
       limit,
     });
+    // #1703 D2 — the half-window pay-link reminder, same lock and limit.
+    const reminderResult = await remindApprovalPaymentsDue({ limit });
     await disconnectDatabase();
 
     Sentry.logger.info("cron:cleanup-abandoned-payments finished", {
       paymentSuccess: paymentResult.success,
       consultationSuccess: consultationResult.success,
+      reminderSuccess: reminderResult.success,
     });
 
-    const overallSuccess = paymentResult.success && consultationResult.success;
+    const overallSuccess =
+      paymentResult.success &&
+      consultationResult.success &&
+      reminderResult.success;
     return NextResponse.json(
       {
         paymentCleanup: paymentResult,
         consultationCleanup: consultationResult,
+        paymentReminders: reminderResult,
         overallSuccess,
       },
       // #1464 — this twin always answered 200, so a run that reported failures

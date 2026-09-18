@@ -87,11 +87,13 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.NEW_BOOKING_REQUEST,
     name: "New booking request",
-    description: "The consultant, when a request needs their approval.",
+    description:
+      "The consultant, when a request needs their approval; with `nudgeDay`, a paid subscription still waiting for session times (#1703).",
     category: "appointments",
     inApp: {
-      subject: "New booking request",
-      body: "{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.",
+      subject:
+        "{% if payload.nudgeDay %}Waiting for session times{% else %}New booking request{% endif %}",
+      body: "{% if payload.nudgeDay %}{{payload.consulteeName}}'s {{payload.appointmentType}} for {{payload.planTitle}} is waiting for session times — {{payload.nudgeDay}} days since payment.{% else %}{{payload.consulteeName}} requested a {{payload.appointmentType}} for {{payload.planTitle}}{% if payload.requestedDateTime %} on {{payload.requestedDateTime}}{% endif %}.{% endif %}",
       redirect: "dashboardUrl",
     },
   },

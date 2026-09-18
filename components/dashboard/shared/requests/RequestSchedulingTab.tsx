@@ -1722,6 +1722,9 @@ export function RequestSchedulingTab({
               ? allocateHrefFor(selectedRequestForDialog)
               : `/dashboard/consultant/${consultantId}/requests`
           }
+          appointmentHrefFor={(appointmentId) =>
+            `/dashboard/consultant/${consultantId}/appointments/${appointmentId}`
+          }
           rescheduleNeedsAllocator={
             // Only an actual reschedule-in-flight (RESCHEDULED rows) makes
             // the stored times un-approvable: they are the times being moved

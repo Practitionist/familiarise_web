@@ -15,6 +15,10 @@ import { getAppUrl } from "@/lib/url";
 import { EmailFooter } from "@/emails/components/EmailFooter";
 import { EmailLogo } from "@/emails/components/EmailLogo";
 import { supportEmail } from "@/lib/email/config";
+import {
+  APPROVAL_PAYMENT_EXPIRATION_HOURS,
+  APPROVAL_PAYMENT_EXPIRATION_MS,
+} from "@/lib/payments/constants";
 
 interface PaymentLinkEmailProps {
   name: string;
@@ -24,6 +28,8 @@ interface PaymentLinkEmailProps {
   currency: string;
   paymentUrl: string;
   expiresAt: string; // ISO date string
+  /** #1703 D2 — the half-window nudge; same link, different heading. */
+  reminder?: boolean;
 }
 
 export const PaymentLinkEmail = ({
@@ -33,9 +39,14 @@ export const PaymentLinkEmail = ({
   amount = 100,
   currency = "USD",
   paymentUrl = `${getAppUrl()}/payment`,
-  expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+  expiresAt = new Date(
+    Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS,
+  ).toISOString(),
+  reminder = false,
 }: PaymentLinkEmailProps) => {
-  const previewText = `Payment required for your ${appointmentType} with ${consultantName}`;
+  const previewText = reminder
+    ? `Reminder: payment due for your ${appointmentType} with ${consultantName}`
+    : `Payment required for your ${appointmentType} with ${consultantName}`;
   const expiryDate = new Date(expiresAt).toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -53,12 +64,24 @@ export const PaymentLinkEmail = ({
         <Container style={container}>
           <EmailLogo />
           <Section style={content}>
-            <Text style={heading}>Payment Required</Text>
+            <Text style={heading}>
+              {reminder ? "Reminder: Payment Due" : "Payment Required"}
+            </Text>
             <Text style={paragraph}>Hi {name},</Text>
             <Text style={paragraph}>
-              Great news! <strong>{consultantName}</strong> has approved your{" "}
-              {appointmentType} request. To confirm your booking, please
-              complete the payment.
+              {reminder ? (
+                <>
+                  Your payment link for the {appointmentType} with{" "}
+                  <strong>{consultantName}</strong> is still open, but not for
+                  long. Complete the payment to confirm your booking.
+                </>
+              ) : (
+                <>
+                  Great news! <strong>{consultantName}</strong> has approved
+                  your {appointmentType} request. To confirm your booking,
+                  please complete the payment.
+                </>
+              )}
             </Text>
 
             <Section style={paymentDetails}>
@@ -94,9 +117,12 @@ export const PaymentLinkEmail = ({
             <Hr style={divider} />
 
             <Text style={warningText}>
-              ⏰ <strong>Important:</strong> This payment link will expire in 48
-              hours. If you don't complete the payment, your request will be
-              reverted to pending status and you'll need to reapply.
+              ⏰ <strong>Important:</strong> This payment link expires{" "}
+              {reminder
+                ? `on ${expiryDate}`
+                : `${APPROVAL_PAYMENT_EXPIRATION_HOURS} hours after approval`}
+              . If you don&apos;t complete the payment, the request expires and
+              you&apos;ll need to ask for the time again.
             </Text>
 
             <Text style={paragraph}>

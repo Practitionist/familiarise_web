@@ -150,10 +150,17 @@ beforeEach(() => {
     order.push("tombstoneAppointment");
     return Promise.resolve({ count: 1 });
   });
-  tx.consultation.updateMany.mockImplementation(() => {
-    order.push("expireConsultation");
-    return Promise.resolve({ count: 1 });
-  });
+  // CAS-faithful: the fixture is PENDING, so the lapsed-link attempt (#1703,
+  // fromIn APPROVED_PENDING_PAYMENT) matches nothing and the wide edge wins.
+  tx.consultation.updateMany.mockImplementation(
+    (args: { where: { status: { in: string[] } } }) => {
+      if (!args.where.status.in.includes("PENDING")) {
+        return Promise.resolve({ count: 0 });
+      }
+      order.push("expireConsultation");
+      return Promise.resolve({ count: 1 });
+    },
+  );
   tx.subscription.updateMany.mockResolvedValue({ count: 1 });
   tx.consultation.findUnique.mockResolvedValue({ status: "PENDING" });
   tx.subscription.findUnique.mockResolvedValue({ status: "PENDING" });

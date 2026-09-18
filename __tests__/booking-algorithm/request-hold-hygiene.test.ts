@@ -45,12 +45,39 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
     refundBookingPayment(...(a as [never])),
 }));
 
+// #1703 D2 — the consultee's "nobody answered" notice rides after each commit.
+const mockNotifyExpired = jest.fn();
+jest.mock("../../lib/booking/expiry-notices", () => ({
+  UNANSWERED_REQUEST_REASON: "unanswered",
+  notifyConsulteeRequestExpired: (...a: unknown[]) =>
+    mockNotifyExpired(...(a as [])),
+}));
+
+// #1703 — the nudge pass imports the Novu service and outbox directly; both
+// pull @novu/api, whose Request global the jsdom environment lacks.
+jest.mock("../../lib/novu/service", () => ({
+  notifyUnscheduledSubscriptionNudge: jest.fn().mockResolvedValue({
+    success: true,
+  }),
+}));
+jest.mock("../../lib/novu/outbox", () => ({
+  deriveTransactionId: (...parts: unknown[]) => parts.join("|"),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { JOB: 1 },
+  sendUnscheduledSubscriptionNudgeEmail: jest.fn().mockResolvedValue({
+    success: true,
+  }),
+}));
+
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
   // Pass-through so tests drive the unlocked core directly.
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import prisma from "../../lib/prisma";
 import {
   MAX_ACTIVE_REQUESTS_PER_USER,
@@ -62,11 +89,8 @@ import { expireStaleRequests } from "../../scripts/appointments/expire-stale-req
 // route must acquire the CONSULTEE lock before the slot atoms — direct
 // checkout uses consultee → atoms, and the reverse order here would be a
 // classic ABBA deadlock against it (audit B8a).
-const rfaRoute = require("fs").readFileSync(
-  require("path").resolve(
-    __dirname,
-    "../../app/api/scheduling/request-for-approval/route.ts",
-  ),
+const rfaRoute = readFileSync(
+  resolve(__dirname, "../../app/api/scheduling/request-for-approval/route.ts"),
   "utf8",
 );
 
@@ -120,7 +144,12 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
 
   it("expires stale consultations by id and soft-cancels their tentative slots", async () => {
     (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
-      { id: "c1", appointment: { id: "apt-1" } },
+      {
+        id: "c1",
+        appointment: { id: "apt-1", organizationId: null, occurrences: [] },
+        requestedBy: { user: { id: "u1", name: "Sam" } },
+        consultationPlan: { title: "Plan" },
+      },
       { id: "c2", appointment: { id: "apt-2" } },
       { id: "c3", appointment: null }, // slot-less placeholder
     ]);
@@ -143,6 +172,15 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
     expect(result.success).toBe(true);
     expect(result.consultationsExpired).toBe(3);
     expect(result.consultationSlotsReleased).toBe(5);
+    // #1703 D2 — the 48 h expiry tells the consultee (c1 carries a party).
+    expect(mockNotifyExpired).toHaveBeenCalledTimes(1);
+    expect(mockNotifyExpired).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: "apt-1",
+        consulteeUserId: "u1",
+        reason: "unanswered",
+      }),
+    );
 
     // One transaction per consultation: the CAS guard rides the WHERE (only a
     // row still PENDING flips), and the release of its tentative holds commits
