@@ -116,6 +116,40 @@ export interface VerificationSignals {
  *   - an onboarding upload carrying its storage URL
  * An empty object like `{}` satisfies neither, so it must not start a review.
  */
+/**
+ * A refusal the wizard can act on: `code` is the server's machine word,
+ * `field` the top-level payload field it is about (see
+ * app/form/onboarding/field-map.ts), so the shell can open the owning step.
+ */
+export class OnboardingRefusedError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly field?: string,
+    readonly index?: number,
+  ) {
+    super(message);
+    this.name = "OnboardingRefusedError";
+  }
+}
+
+/** The `{ success: false }` arm every onboarding action returns. */
+export function refusalResult(error: unknown, fallback: string) {
+  if (error instanceof OnboardingRefusedError) {
+    return {
+      success: false as const,
+      error: error.message,
+      code: error.code,
+      field: error.field,
+      index: error.index,
+    };
+  }
+  return {
+    success: false as const,
+    error: error instanceof Error ? error.message : fallback,
+  };
+}
+
 export function isPersistableVerificationDoc(doc: unknown): boolean {
   if (typeof doc !== "object" || doc === null) return false;
   const d = doc as Record<string, unknown>;

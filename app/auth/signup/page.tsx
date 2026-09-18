@@ -13,6 +13,12 @@ import {
 } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
+import { FieldError } from "@/components/ui/field-error";
+import { cn } from "@/utils/tailwind";
+import {
+  humanizeAuthError,
+  type AuthErrorField,
+} from "@/lib/labels/auth-errors";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -50,6 +56,18 @@ function SignUpContent() {
   const [ssoChecking, setSsoChecking] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
   const [resending, setResending] = useState(false);
+  // The sentence under the input the server refused, cleared on retype.
+  const [fieldError, setFieldError] = useState<
+    Partial<Record<AuthErrorField, string>>
+  >({});
+  // The referral code is checked as it is typed so a typo is caught here,
+  // not silently dropped at onboarding (where /api/referrals/apply refuses it).
+  const [referralCheck, setReferralCheck] = useState<
+    | { state: "idle" }
+    | { state: "checking" }
+    | { state: "valid"; referrerName: string | null }
+    | { state: "invalid" }
+  >({ state: "idle" });
 
   // Validate the callbackUrl once and reuse the safe value across onboarding,
   // verification, and social login. safeSameOriginPath rejects backslash /
@@ -121,6 +139,43 @@ function SignUpContent() {
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
+  useEffect(() => {
+    const code = refCode.trim();
+    if (!code || referralCode) {
+      setReferralCheck({ state: "idle" });
+      return;
+    }
+    let cancelled = false;
+    setReferralCheck({ state: "checking" });
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/referrals/code/check/${encodeURIComponent(code)}`,
+        );
+        if (cancelled) return;
+        // A limiter or outage must not block sign-up: fall back to "unknown".
+        if (!res.ok) {
+          setReferralCheck({ state: "idle" });
+          return;
+        }
+        const body = (await res.json()) as {
+          data?: { valid: boolean; referrerName: string | null };
+        };
+        setReferralCheck(
+          body.data?.valid
+            ? { state: "valid", referrerName: body.data.referrerName }
+            : { state: "invalid" },
+        );
+      } catch {
+        if (!cancelled) setReferralCheck({ state: "idle" });
+      }
+    }, 500);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [refCode, referralCode]);
+
   if (isPending) {
     return <AuthFormSkeleton />;
   }
@@ -146,7 +201,7 @@ function SignUpContent() {
       });
       toast({
         title: "Verification email sent",
-        description: `Check ${email} for the link.`,
+        description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
     } catch {
       toast({
@@ -245,35 +300,11 @@ function SignUpContent() {
     }
   };
 
-  const friendlyAuthError = (raw: string | undefined): string => {
-    if (!raw) return "An unexpected error occurred. Please try again.";
-    const lower = raw.toLowerCase();
-    const issues: string[] = [];
-    if (
-      lower.includes("email") &&
-      (lower.includes("invalid") || lower.includes("required"))
-    )
-      issues.push("Please enter a valid email address.");
-    if (
-      lower.includes("password") &&
-      (lower.includes("too small") ||
-        lower.includes(">=") ||
-        lower.includes("required"))
-    )
-      issues.push("Password must be at least 8 characters.");
-    if (lower.includes("already") || lower.includes("exists"))
-      return "An account with this email already exists. Try signing in instead.";
-    if (issues.length > 0) return issues.join(" ");
-    // Strip "[body.field]" prefixes for anything we didn't catch
-    return (
-      raw.replace(/\[body\.\w+\]\s*/g, "").trim() ||
-      "An unexpected error occurred."
-    );
-  };
-
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldError({});
     if (password !== confirmPassword) {
+      setFieldError({ password: "The two passwords don't match." });
       toast({ title: "Passwords do not match", variant: "destructive" });
       return;
     }
@@ -289,9 +320,11 @@ function SignUpContent() {
       });
 
       if (error) {
+        const copy = humanizeAuthError("signup", error);
+        if (copy.field) setFieldError({ [copy.field]: copy.description });
         toast({
-          title: "Sign Up Failed",
-          description: friendlyAuthError(error.message),
+          title: copy.title,
+          description: copy.description,
           variant: "destructive",
         });
       } else if (data && !data.token) {
@@ -389,11 +422,17 @@ function SignUpContent() {
                 autoComplete="email"
                 autoCorrect="off"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  setFieldError((f) => ({ ...f, email: undefined }));
+                }}
                 onBlur={handleEmailBlur}
                 required
                 disabled={isLoading || ssoChecking}
+                aria-invalid={fieldError.email ? true : undefined}
+                aria-describedby={fieldError.email ? "email-error" : undefined}
               />
+              <FieldError id="email-error" message={fieldError.email} />
             </div>
             {!ssoCheck?.enforceSSO && (
               <>
@@ -404,10 +443,24 @@ function SignUpContent() {
                     type="password"
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setFieldError((f) => ({ ...f, password: undefined }));
+                    }}
                     required
+                    minLength={8}
+                    maxLength={128}
                     disabled={isLoading}
+                    aria-invalid={fieldError.password ? true : undefined}
+                    aria-describedby={
+                      fieldError.password ? "password-error" : undefined
+                    }
                   />
+                  <FieldError
+                    id="password-error"
+                    message={fieldError.password}
+                  />
+                  <p className="text-xs text-zinc-400">8 to 128 characters.</p>
                 </div>
                 <div className="grid gap-2 mt-4">
                   <Label htmlFor="confirm-password">Confirm Password</Label>
@@ -433,7 +486,29 @@ function SignUpContent() {
                   value={refCode}
                   onChange={(e) => setRefCode(e.target.value)}
                   disabled={isLoading}
+                  aria-invalid={
+                    referralCheck.state === "invalid" ? true : undefined
+                  }
+                  aria-describedby="referral-code-status"
                 />
+                <p
+                  id="referral-code-status"
+                  role="status"
+                  className={cn(
+                    "text-sm",
+                    referralCheck.state === "invalid"
+                      ? "text-destructive"
+                      : "text-zinc-400",
+                  )}
+                >
+                  {referralCheck.state === "checking" && "Checking the code…"}
+                  {referralCheck.state === "valid" &&
+                    (referralCheck.referrerName
+                      ? `Referred by ${referralCheck.referrerName} — you'll get a welcome bonus after your first booking.`
+                      : "Valid code — you'll get a welcome bonus after your first booking.")}
+                  {referralCheck.state === "invalid" &&
+                    "We don't recognise this code. You can still sign up without it."}
+                </p>
               </div>
             )}
             {referralCode && !ssoCheck?.enforceSSO && (

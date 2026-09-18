@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -24,6 +25,9 @@ function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  // Better Auth redirects here with ?error=INVALID_TOKEN when the link's
+  // token fails before the form is ever shown.
+  const linkError = searchParams.get("error");
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -32,11 +36,14 @@ function ResetPasswordContent() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!token) {
-      setError("Invalid or missing password reset token.");
+    if (!token || linkError) {
+      const copy = humanizeAuthError("reset", {
+        code: linkError ?? "INVALID_TOKEN",
+      });
+      setError(copy.description);
       toast({
-        title: "Error",
-        description: "Invalid or missing password reset token.",
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
       // Auto-redirect to forgot-password after 3 seconds
@@ -45,7 +52,7 @@ function ResetPasswordContent() {
       }, 3000);
       return () => clearTimeout(timer);
     }
-  }, [token, router, toast]);
+  }, [token, linkError, router, toast]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54,8 +61,12 @@ function ResetPasswordContent() {
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError("The two passwords don't match.");
       toast({ title: "Passwords do not match", variant: "destructive" });
+      return;
+    }
+    if (password.length < 8 || password.length > 128) {
+      setError("Use 8 to 128 characters.");
       return;
     }
 
@@ -70,10 +81,11 @@ function ResetPasswordContent() {
         token,
       });
       if (resetError) {
-        setError(resetError.message || "An unexpected error occurred.");
+        const copy = humanizeAuthError("reset", resetError);
+        setError(copy.description);
         toast({
-          title: "Error Resetting Password",
-          description: resetError.message || "An unexpected error occurred.",
+          title: copy.title,
+          description: copy.description,
           variant: "destructive",
         });
       } else {
@@ -83,13 +95,16 @@ function ResetPasswordContent() {
         setTimeout(() => router.push("/auth/signin"), 3000);
       }
     } catch (err: unknown) {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "auth" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "auth" } },
+      );
       console.error("Reset password error:", err);
-      const errorMessage = err instanceof Error ? err.message : "An unexpected error occurred.";
-      setError(errorMessage);
+      const copy = humanizeAuthError("reset", { status: 0 });
+      setError(copy.description);
       toast({
-        title: "Error Resetting Password",
-        description: errorMessage,
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {

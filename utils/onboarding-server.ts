@@ -20,10 +20,13 @@ import { trackOnboardingEvent } from "./onboarding-telemetry";
 import {
   assertCustomWindows,
   assertWeeklyWindows,
+  AvailabilityContractError,
 } from "@/lib/scheduling/availability-contract";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
   canAddConsultantIdentity,
+  OnboardingRefusedError,
+  refusalResult,
   buildUserUpdateData,
   buildConsultantScalarData,
   buildConsulteeScalarData,
@@ -33,6 +36,19 @@ import {
   shouldSubmitVerification,
   isPersistableVerificationDoc,
 } from "./onboarding-shared";
+
+// A contract refusal names its window; the wizard needs the field too.
+function toRefusal(error: unknown, field: "weeklySlots" | "customSlots") {
+  if (error instanceof AvailabilityContractError) {
+    return new OnboardingRefusedError(
+      error.code,
+      error.message,
+      field,
+      error.index,
+    );
+  }
+  return error;
+}
 
 // ============================================================================
 // TYPES
@@ -172,7 +188,11 @@ async function syncAvailabilitySlots(
     // enforced "at least one" client-side only).
     const weeklySlotsToCreate =
       profileData.availabilityWindowsWeekly?.create ?? [];
-    assertWeeklyWindows(weeklySlotsToCreate);
+    try {
+      assertWeeklyWindows(weeklySlotsToCreate);
+    } catch (error) {
+      throw toRefusal(error, "weeklySlots");
+    }
     // #1320 — adjacent entries ("3:30–4:30" + "4:30–5:30") become one row so
     // storage matches the window the customer is shown and can book.
     //
@@ -207,7 +227,11 @@ async function syncAvailabilitySlots(
 
     const customSlotsToCreate =
       profileData.availabilityWindowsCustom?.create ?? [];
-    assertCustomWindows(customSlotsToCreate);
+    try {
+      assertCustomWindows(customSlotsToCreate);
+    } catch (error) {
+      throw toRefusal(error, "customSlots");
+    }
     // #1320 — merge AFTER the per-slot 12-hour cap above, so a chain of
     // adjacent entries still has each entry checked on its own.
     await tx.availabilityWindowCustom.createMany({
@@ -373,13 +397,10 @@ export async function addConsultantIdentity(
     };
   } catch (error: unknown) {
     console.error("Error in addConsultantIdentity:", error);
-    return {
-      success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "An unknown error occurred while adding the expert profile.",
-    };
+    return refusalResult(
+      error,
+      "An unknown error occurred while adding the expert profile.",
+    );
   }
 }
 
@@ -569,7 +590,11 @@ async function submitVerificationRequest(
     adminDashboardUrl: "/dashboard/admin/verification",
   });
   if (!outcome.ok) {
-    throw new Error(`${outcome.code}: ${outcome.message}`);
+    throw new OnboardingRefusedError(
+      outcome.code,
+      outcome.message,
+      "verificationDocuments",
+    );
   }
   // The admin bells were staged inside the submission transaction; the
   // caller attempts them after the response.
@@ -604,6 +629,11 @@ type OnboardingUser = Prisma.UserGetPayload<{
 
 type OnboardingResult = {
   success: boolean;
+  /** Machine word for a typed refusal (contract or verification core). */
+  code?: string;
+  /** The payload field the refusal is about; the wizard opens its step. */
+  field?: string;
+  index?: number;
   // `user` is a Prisma User with deeply-included relations (consultantProfile,
   // consulteeProfile, slots, domain, etc.). Typing it precisely would require a
   // shared Prisma payload type across server/action/client layers — not worth
@@ -845,16 +875,15 @@ export async function processOnboardingData(
     };
   } catch (error: unknown) {
     console.error("Error in processOnboardingData:", error);
-    const errorMessage =
-      error instanceof Error
-        ? error.message
-        : "An unknown error occurred while updating onboarding information.";
     if (error instanceof Error) {
       console.error("Error details:", {
         message: error.message,
         stack: error.stack,
       });
     }
-    return { success: false, error: errorMessage };
+    return refusalResult(
+      error,
+      "An unknown error occurred while updating onboarding information.",
+    );
   }
 }

@@ -29,6 +29,12 @@ import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
 import {
+  describeIssuePath,
+  stepKeyForField,
+  summarizeIssues,
+  type OnboardingStepKey,
+} from "./field-map";
+import {
   getPendingReferral,
   clearPendingReferral,
 } from "@/lib/pending-referral";
@@ -130,6 +136,8 @@ interface OnboardingStepContext {
 }
 
 interface OnboardingStep {
+  /** Which payload fields the step owns (see field-map.ts). */
+  key: OnboardingStepKey;
   /** Shown in the progress stepper and as the card title. */
   label: string;
   render: (ctx: OnboardingStepContext) => React.ReactNode;
@@ -150,6 +158,7 @@ type OnboardingRole = z.infer<typeof OnboardingFormDataSchema>["role"];
 // Shared across every role: step 0 is where the role is picked, so it cannot be
 // role-specific.
 const personalInfoStep: OnboardingStep = {
+  key: "personal",
   label: "Personal Info",
   render: (ctx) => (
     <PersonalInfoAndRoleForm
@@ -175,6 +184,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   CONSULTANT: [
     personalInfoStep,
     {
+      key: "professional",
       label: "Professional Profile",
       render: (ctx) => (
         <ConsultantProfessionalStep
@@ -201,6 +211,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
       ),
     },
     {
+      key: "availability",
       label: "Availability",
       // The weekly slot grid does not fit the default card width.
       wide: true,
@@ -213,6 +224,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
       ),
     },
     {
+      key: "agreement",
       label: "Agreement & Verification",
       render: (ctx) => (
         <ConsultantAgreementAndVerificationStep
@@ -223,6 +235,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
       ),
     },
     {
+      key: "review",
       label: "Review",
       render: (ctx) => (
         <ConsultantReviewForm
@@ -237,6 +250,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   CONSULTEE: [
     personalInfoStep,
     {
+      key: "agreement",
       label: "Agreement",
       render: (ctx) => (
         <ConsulteeAgreementForm
@@ -250,6 +264,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   STAFF: [
     personalInfoStep,
     {
+      key: "roleDetails",
       label: "Role Details",
       render: (ctx) => (
         <StaffProfileForm
@@ -260,6 +275,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
       ),
     },
     {
+      key: "agreement",
       label: "Agreement",
       render: (ctx) => (
         <StaffAgreementForm
@@ -270,6 +286,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
       ),
     },
     {
+      key: "review",
       label: "Review",
       render: (ctx) => (
         <StaffReviewForm
@@ -284,6 +301,7 @@ const ONBOARDING_STEPS: Record<OnboardingRole, OnboardingStep[]> = {
   ORG_WORKSPACE: [
     personalInfoStep,
     {
+      key: "org",
       label: "Create Organization",
       // The shared wizard owns the remaining 5-6 screens (Org Info → Review)
       // and ships its own stepper and cards, so the onboarding shell would
@@ -390,6 +408,12 @@ const MultiStepForm: React.FC = () => {
   const [step, setStep] = useState(0);
   const [formData, setFormData] = useState<Partial<OnboardingFormData>>({});
   const [draftRestored, setDraftRestored] = useState(false);
+  // The step a saved draft points at when the user had already started
+  // typing before it loaded: offered as a button instead of jumped to.
+  const [resumeStep, setResumeStep] = useState<number | null>(null);
+  // Set by the first pointer or key event inside the wizard before hydration
+  // resolved; read once, when the draft lands.
+  const interactedRef = useRef(false);
   // The stored draft existed but could not be restored (wizard version bump or
   // a corrupt row). Silence here reads as data loss, so it gets its own banner.
   const [draftQuarantined, setDraftQuarantined] = useState(false);
@@ -522,7 +546,11 @@ const MultiStepForm: React.FC = () => {
       const effectiveRole = resolveRegistryRole(merged.role);
       const registry = ONBOARDING_STEPS[effectiveRole];
       if (currentStep > 0) {
-        setStep(Math.max(0, Math.min(currentStep, registry.length - 1)));
+        const target = Math.max(0, Math.min(currentStep, registry.length - 1));
+        // Someone already typing on step 0 keeps their place; the banner
+        // offers the stored step instead of yanking the form away.
+        if (interactedRef.current) setResumeStep(target);
+        else setStep(target);
       }
       if (currentStep > 0 || hasPayload) setDraftRestored(true);
       trackOnboardingEvent("draft_restored", { currentStep, role });
@@ -634,9 +662,16 @@ const MultiStepForm: React.FC = () => {
     await draftSaveQueueRef.current?.drain().catch(() => {});
   };
 
+  // Only the window before the draft lands matters; afterwards the flag is
+  // never read again, so the handler is a no-op once hydration resolved.
+  const markInteracted = useCallback(() => {
+    if (!draftReadyRef.current) interactedRef.current = true;
+  }, []);
+
   const startOver = async () => {
     await quiesceDraftSaves();
     setDraftRestored(false);
+    setResumeStep(null);
     // Both warnings describe the draft being discarded here, so neither can
     // outlive it.
     setDraftQuarantined(false);
@@ -751,14 +786,25 @@ const MultiStepForm: React.FC = () => {
       const validationResult = OnboardingFormDataSchema.safeParse(finalData);
       if (!validationResult.success) {
         const errors = validationResult.error.errors;
-        const fieldErrors = errors.map((e) => e.path.join(" > ")).join(", ");
-
+        // Name the fields in the customer's words and send them to the step
+        // that owns the first one; the review step cannot fix anything itself.
+        const groups = summarizeIssues(
+          errors,
+          steps.map((s) => s.key),
+        );
+        const first = groups[0];
+        const targetStep = first?.stepKey
+          ? steps.findIndex((s) => s.key === first.stepKey)
+          : -1;
         toast({
-          title: "Please Complete Required Fields",
-          description: `Missing or invalid: ${fieldErrors}`,
+          title: "A few answers need attention",
+          description: groups
+            .flatMap((g) => g.lines)
+            .slice(0, 4)
+            .join(" · "),
           variant: "destructive",
         });
-
+        if (targetStep >= 0 && targetStep !== step) setStep(targetStep);
         console.warn("Form validation errors:", errors);
         return;
       }
@@ -800,12 +846,22 @@ const MultiStepForm: React.FC = () => {
           return;
         }
 
-        trackOnboardingEvent("submit_error", { error: errorMessage });
+        trackOnboardingEvent("submit_error", {
+          error: result.code ?? errorMessage,
+        });
+        // A typed refusal names the field it is about; the step that owns it
+        // is where the fix happens, so go there with the sentence.
+        const refusedStep = result.field
+          ? steps.findIndex((s) => s.key === stepKeyForField(result.field!))
+          : -1;
         toast({
-          title: "Unable to Save Profile",
+          title: result.field
+            ? `${describeIssuePath([result.field])} needs a change`
+            : "Unable to Save Profile",
           description: errorMessage,
           variant: "destructive",
         });
+        if (refusedStep >= 0 && refusedStep !== step) setStep(refusedStep);
         return;
       }
 
@@ -998,6 +1054,8 @@ const MultiStepForm: React.FC = () => {
       {/* Main Content */}
       <main
         className={`container mx-auto px-4 py-8 ${activeStep?.wide ? "max-w-[80%]" : "max-w-3xl"}`}
+        onPointerDownCapture={markInteracted}
+        onKeyDownCapture={markInteracted}
       >
         {/* Resume banner — shown once when a saved draft was restored */}
         {draftRestored && (
@@ -1005,17 +1063,33 @@ const MultiStepForm: React.FC = () => {
             <div className="flex items-center gap-2 text-sm">
               <History className="h-4 w-4 shrink-0 text-primary" />
               <span className="text-foreground">
-                Welcome back — we saved your progress.
+                {resumeStep !== null && resumeStep !== step
+                  ? `Welcome back — you had reached step ${resumeStep + 1}. Your typing here is kept either way.`
+                  : "Welcome back — we saved your progress."}
               </span>
             </div>
-            <button
-              onClick={() => void startOver()}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors shrink-0"
-              title="Discard saved progress and start from the beginning"
-            >
-              <RotateCcw className="w-4 h-4" />
-              Start over
-            </button>
+            <div className="flex items-center gap-4 shrink-0">
+              {resumeStep !== null && resumeStep !== step && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep(resumeStep);
+                    setResumeStep(null);
+                  }}
+                  className="text-sm font-medium text-primary hover:underline"
+                >
+                  Resume at step {resumeStep + 1}
+                </button>
+              )}
+              <button
+                onClick={() => void startOver()}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                title="Discard saved progress and start from the beginning"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Start over
+              </button>
+            </div>
           </div>
         )}
 
@@ -1051,48 +1125,61 @@ const MultiStepForm: React.FC = () => {
           </div>
         )}
 
-        {/* Progress Stepper */}
-        <div className="flex items-start justify-between mb-8">
-          {steps.map(({ label }, index) => (
-            <React.Fragment key={label}>
-              {/* Step circle + label */}
-              <div className="flex flex-col items-center">
-                <div
-                  className={cn(
-                    "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all",
-                    index < step &&
-                      "bg-primary border-primary text-primary-foreground",
-                    index === step &&
-                      "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20",
-                    index > step &&
-                      "border-muted-foreground/30 text-muted-foreground",
-                  )}
-                >
-                  {index < step ? <Check className="w-4 h-4" /> : index + 1}
-                </div>
-                <span
-                  className={cn(
-                    "text-xs mt-1.5 text-center max-w-[80px] truncate",
-                    index <= step
-                      ? "text-primary font-medium"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {label}
-                </span>
-              </div>
-              {/* Connector line */}
-              {index < steps.length - 1 && (
-                <div
-                  className={cn(
-                    "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
-                    index < step ? "bg-primary" : "bg-muted-foreground/20",
-                  )}
-                />
-              )}
-            </React.Fragment>
-          ))}
-        </div>
+        {/* Progress Stepper — completed steps are buttons, so a keyboard
+            user can go back without hunting for the Back button at the
+            bottom of a long step; upcoming steps stay inert because moving
+            forward requires the current step to validate. */}
+        <nav aria-label="Onboarding steps" className="mb-8">
+          <ol className="flex items-start justify-between">
+            {steps.map(({ label }, index) => (
+              <React.Fragment key={label}>
+                <li className="flex flex-col items-center">
+                  <button
+                    type="button"
+                    onClick={() => handleGoToStep(index)}
+                    disabled={index >= step}
+                    aria-current={index === step ? "step" : undefined}
+                    aria-label={`Step ${index + 1} of ${totalSteps}: ${label}${
+                      index < step ? " (completed, go back)" : ""
+                    }`}
+                    className={cn(
+                      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium border-2 transition-all focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/40",
+                      index < step &&
+                        "bg-primary border-primary text-primary-foreground cursor-pointer hover:ring-4 hover:ring-primary/20",
+                      index === step &&
+                        "bg-primary border-primary text-primary-foreground ring-4 ring-primary/20 cursor-default",
+                      index > step &&
+                        "border-muted-foreground/30 text-muted-foreground cursor-default",
+                    )}
+                  >
+                    {index < step ? <Check className="w-4 h-4" /> : index + 1}
+                  </button>
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "text-xs mt-1.5 text-center max-w-[80px] truncate",
+                      index <= step
+                        ? "text-primary font-medium"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {label}
+                  </span>
+                </li>
+                {/* Connector line */}
+                {index < steps.length - 1 && (
+                  <li
+                    aria-hidden="true"
+                    className={cn(
+                      "flex-1 h-0.5 mx-2 mt-[18px] transition-colors",
+                      index < step ? "bg-primary" : "bg-muted-foreground/20",
+                    )}
+                  />
+                )}
+              </React.Fragment>
+            ))}
+          </ol>
+        </nav>
 
         {/* Form Card */}
         <Card className="shadow-lg">

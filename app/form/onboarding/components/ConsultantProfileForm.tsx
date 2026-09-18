@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -216,7 +218,10 @@ const ConsultantProfileForm: React.FC<Props> = ({
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form
+      onSubmit={handleSubmit(onSubmit, () => scrollToFirstErrorSoon())}
+      className="space-y-6"
+    >
       {/* Professional Summary */}
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
@@ -234,11 +239,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
             rows={4}
             maxLength={LONG_FORM_TEXT_MAX}
           />
-          {errors.description && (
-            <p className="text-sm text-destructive">
-              {errors.description.message}
-            </p>
-          )}
+          <FieldError message={errors.description?.message} />
         </div>
 
         <div className="space-y-2">
@@ -248,11 +249,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
             {...register("headline")}
             placeholder="e.g., Senior Software Engineer | Career Coach | 10+ Years Experience"
           />
-          {errors.headline && (
-            <p className="text-sm text-destructive">
-              {errors.headline.message}
-            </p>
-          )}
+          <FieldError message={errors.headline?.message} />
           <p className="text-xs text-muted-foreground">
             A brief tagline that appears on your profile
           </p>
@@ -271,11 +268,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
             {...register("experience", { valueAsNumber: true })}
             placeholder="0"
           />
-          {errors.experience && (
-            <p className="text-sm text-destructive">
-              {errors.experience.message}
-            </p>
-          )}
+          <FieldError message={errors.experience?.message} />
         </div>
       </div>
 
@@ -313,9 +306,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
               </Select>
             )}
           />
-          {errors.domain && (
-            <p className="text-sm text-destructive">{errors.domain.message}</p>
-          )}
+          <FieldError message={errors.domain?.message} />
         </div>
 
         {selectedDomain?.id && (
@@ -369,11 +360,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
                   )}
                 />
               </div>
-              {errors.subDomains && (
-                <p className="text-sm text-destructive">
-                  {errors.subDomains.message}
-                </p>
-              )}
+              <FieldError message={errors.subDomains?.message} />
             </div>
 
             <Controller
@@ -488,11 +475,7 @@ const ConsultantProfileForm: React.FC<Props> = ({
                     </p>
                   )}
 
-                  {errors.tags && (
-                    <p className="text-sm text-destructive">
-                      {errors.tags.message}
-                    </p>
-                  )}
+                  <FieldError message={errors.tags?.message} />
                 </div>
               )}
             />

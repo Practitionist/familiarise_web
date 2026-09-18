@@ -1,6 +1,12 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
+import {
+  isLinkedinProfileUrl,
+  LINKEDIN_PROFILE_URL_HINT,
+} from "@/schemas/user";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -41,11 +47,7 @@ export default function ConsultantVerificationForm({
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validateLinkedIn = (url: string) => {
-    if (!url) return true; // Allow empty
-    const linkedinRegex = /^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
-    return linkedinRegex.test(url);
-  };
+  const validateLinkedIn = (url: string) => !url || isLinkedinProfileUrl(url);
 
   const handleUpload = useCallback(
     async (file: File): Promise<UploadedDocument> => {
@@ -94,13 +96,15 @@ export default function ConsultantVerificationForm({
 
     // Validate LinkedIn URL if provided
     if (linkedinUrl && !validateLinkedIn(linkedinUrl)) {
-      setError("Please enter a valid LinkedIn profile URL");
+      setError(LINKEDIN_PROFILE_URL_HINT);
+      scrollToFirstErrorSoon();
       return;
     }
 
     // LinkedIn URL is required
     if (!linkedinUrl) {
       setError("LinkedIn profile URL is required for verification");
+      scrollToFirstErrorSoon();
       return;
     }
 
@@ -127,7 +131,9 @@ export default function ConsultantVerificationForm({
       {/* Header Info */}
       <Alert className="border-border bg-muted">
         <Shield className="h-4 w-4 text-muted-foreground" />
-        <AlertTitle className="text-foreground">Profile Verification</AlertTitle>
+        <AlertTitle className="text-foreground">
+          Profile Verification
+        </AlertTitle>
         <AlertDescription className="text-muted-foreground">
           To maintain the quality of our platform, we verify all consultant
           profiles. Your LinkedIn profile and at least one supporting document
@@ -156,10 +162,7 @@ export default function ConsultantVerificationForm({
           We use your LinkedIn profile to verify your professional background.
         </p>
         {linkedinUrl && !validateLinkedIn(linkedinUrl) && (
-          <p className="text-xs text-red-500">
-            Please enter a valid LinkedIn URL (e.g.,
-            https://linkedin.com/in/username)
-          </p>
+          <FieldError message={LINKEDIN_PROFILE_URL_HINT} />
         )}
       </div>
 
@@ -192,7 +195,9 @@ export default function ConsultantVerificationForm({
       <div className="space-y-2">
         <Label htmlFor="notes" className="flex items-center gap-1">
           Additional Notes{" "}
-          <span className="text-muted-foreground/70 text-xs font-normal">(Optional)</span>
+          <span className="text-muted-foreground/70 text-xs font-normal">
+            (Optional)
+          </span>
         </Label>
         <Textarea
           id="notes"
@@ -209,7 +214,7 @@ export default function ConsultantVerificationForm({
 
       {/* Error Display */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" data-field-error="" tabIndex={-1}>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { authClient, useSession } from "@/lib/auth-client";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import Link from "next/link";
@@ -43,15 +44,16 @@ export default function ForgotPassword() {
         redirectTo: "/auth/reset-password",
       });
       if (error) {
-        setMessage(error.message || "An unexpected error occurred.");
+        const copy = humanizeAuthError("forgot", error);
+        setMessage(copy.description);
         toast({
-          title: "Error Sending Request",
-          description: error.message || "An unexpected error occurred.",
+          title: copy.title,
+          description: copy.description,
           variant: "destructive",
         });
       } else {
-        const successMessage =
-          "If an account with that email exists, a password reset link has been sent.";
+        // The server answers the same way whether or not the address exists.
+        const successMessage = `If an account exists for ${email}, we've sent a reset link. It works once and expires in 30 minutes.`;
         setMessage(successMessage);
         toast({ title: "Request Sent", description: successMessage });
       }
@@ -61,14 +63,11 @@ export default function ForgotPassword() {
         { tags: { subsystem: "auth" } },
       );
       console.error("Forgot password error:", error);
-      const errorMessage =
-        error instanceof Error
-          ? error.message
-          : "An unexpected error occurred.";
-      setMessage(errorMessage);
+      const copy = humanizeAuthError("forgot", { status: 0 });
+      setMessage(copy.description);
       toast({
-        title: "Error Sending Request",
-        description: errorMessage,
+        title: copy.title,
+        description: copy.description,
         variant: "destructive",
       });
     } finally {
