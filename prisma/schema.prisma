@@ -3044,6 +3044,14 @@ model ConsultantProfile {
   memberships   Membership[] @relation("ConsultantMembership")
   isIndependent Boolean      @default(true)
 
+  // #1703 D1 — INSTANT pays on a free slot; REQUEST routes every slot through
+  // approval. Rationale: docs/booking/21-schema-reference.md.
+  bookingMode       BookingMode @default(INSTANT)
+  // #1703 D4 — the pause toggle and the optional open-PENDING cap (null = off);
+  // the request route refuses with a typed 409 when either bites.
+  acceptingRequests Boolean     @default(true)
+  maxOpenRequests   Int?
+
   // India statutory (compliance stubs read these)
   panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
@@ -3086,6 +3094,12 @@ model ConsultantProfile {
   // its trailing column, so two single-column indexes.
   @@index([publishedRatingOneToOne])
   @@index([publishedRatingGroup])
+}
+
+// #1703 D1 — placed after ConsultantProfile, the one model it serves.
+enum BookingMode {
+  INSTANT
+  REQUEST
 }
 
 model Domain {
