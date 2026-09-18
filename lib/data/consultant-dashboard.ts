@@ -29,6 +29,7 @@ import {
 } from "@/lib/data/needs-you";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
@@ -810,6 +811,12 @@ export async function getConsultantDashboard(
     }),
   );
 
+  // #1703 D4 — read-only on the requests card; two indexed history reads.
+  const responseRate = await getConsultantResponseRate(
+    consultantProfileId,
+    now,
+  );
+
   const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
   const awaitingPayment = {
     count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
@@ -928,6 +935,7 @@ export async function getConsultantDashboard(
     pendingRequestsCount,
     awaitingPayment,
     orgSessions,
+    responseRate,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

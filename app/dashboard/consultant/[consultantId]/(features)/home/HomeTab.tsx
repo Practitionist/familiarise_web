@@ -91,6 +91,8 @@ interface HomeTabProps {
   pendingRequestsCount?: number;
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
+  /** Read-only metric on the requests card; absent on older payloads. #1703 */
+  responseRate?: TConsultantDashboardResponse["responseRate"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
   viewerZone: ViewerZone;
   performanceSnapshot?: TPerformanceSnapshot;
@@ -116,6 +118,7 @@ export function HomeTab({
   pendingRequestsCount = 0,
   awaitingPayment,
   orgSessions = [],
+  responseRate,
   viewerZone,
   performanceSnapshot,
   financialSummary,
@@ -611,6 +614,18 @@ export function HomeTab({
                 viewAllLink={`/dashboard/consultant/${consultantId}/requests`}
                 viewAllText="View all requests"
               >
+                {/* #1703 D4 — a consultant's own number, no ranking use yet. */}
+                {responseRate?.withinTargetPct !== null &&
+                  responseRate?.withinTargetPct !== undefined && (
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      You answer {responseRate.withinTargetPct}% of requests
+                      within a day
+                      <span className="text-muted-foreground/70">
+                        {" "}
+                        (last 30 days, {responseRate.total} answered)
+                      </span>
+                    </p>
+                  )}
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
                   <RequestSchedulingTabMini />
                 </div>
