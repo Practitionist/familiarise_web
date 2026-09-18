@@ -178,31 +178,40 @@ function fieldFromValidationMessage(message: string): AuthErrorField | null {
   return null;
 }
 
+const PASSWORD_REQUIRED: AuthErrorCopy = {
+  title: "Enter your password",
+  description: "The password field is required.",
+  field: "password",
+};
+
+function copyForCode(
+  flow: AuthFlow,
+  code: string,
+  message: string,
+): AuthErrorCopy | null {
+  const perFlow = BY_FLOW_AND_CODE[flow]?.[code];
+  if (perFlow) return perFlow;
+  const known = BY_CODE[code];
+  if (known) return known;
+  if (code !== "VALIDATION_ERROR" && code !== "MISSING_FIELD") return null;
+  const field = fieldFromValidationMessage(message);
+  if (field === "email") return BY_CODE.INVALID_EMAIL;
+  if (field === "password") return PASSWORD_REQUIRED;
+  return null;
+}
+
+function copyForStatus(flow: AuthFlow, status: number): AuthErrorCopy {
+  if (status === 429) return RATE_LIMITED;
+  if (status === 0 || status >= 500) return UNREACHABLE;
+  return GENERIC[flow];
+}
+
 export function humanizeAuthError(
   flow: AuthFlow,
   error: AuthClientError | null | undefined,
 ): AuthErrorCopy {
   if (!error) return GENERIC[flow];
   const code = error.code?.toUpperCase();
-  if (code) {
-    const perFlow = BY_FLOW_AND_CODE[flow]?.[code];
-    if (perFlow) return perFlow;
-    const known = BY_CODE[code];
-    if (known) return known;
-    if (code === "VALIDATION_ERROR" || code === "MISSING_FIELD") {
-      const field = fieldFromValidationMessage(error.message ?? "");
-      if (field === "email") return BY_CODE.INVALID_EMAIL;
-      if (field === "password") {
-        return {
-          title: "Enter your password",
-          description: "The password field is required.",
-          field: "password",
-        };
-      }
-    }
-  }
-  const status = error.status ?? 0;
-  if (status === 429) return RATE_LIMITED;
-  if (status === 0 || status >= 500) return UNREACHABLE;
-  return GENERIC[flow];
+  const byCode = code ? copyForCode(flow, code, error.message ?? "") : null;
+  return byCode ?? copyForStatus(flow, error.status ?? 0);
 }

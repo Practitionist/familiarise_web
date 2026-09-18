@@ -12,7 +12,11 @@ interface FieldErrorProps {
  * `scrollToFirstError` looks for, so a step that uses this component gets
  * "jump to the first problem" for free.
  */
-export function FieldError({ id, message, className }: FieldErrorProps) {
+export function FieldError({
+  id,
+  message,
+  className,
+}: Readonly<FieldErrorProps>) {
   if (!message) return null;
   return (
     <p

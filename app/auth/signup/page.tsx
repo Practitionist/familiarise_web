@@ -13,6 +13,10 @@ import {
 } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
+import {
+  referralCheckText,
+  useReferralCodeCheck,
+} from "./useReferralCodeCheck";
 import { FieldError } from "@/components/ui/field-error";
 import { cn } from "@/utils/tailwind";
 import {
@@ -60,14 +64,6 @@ function SignUpContent() {
   const [fieldError, setFieldError] = useState<
     Partial<Record<AuthErrorField, string>>
   >({});
-  // The referral code is checked as it is typed so a typo is caught here,
-  // not silently dropped at onboarding (where /api/referrals/apply refuses it).
-  const [referralCheck, setReferralCheck] = useState<
-    | { state: "idle" }
-    | { state: "checking" }
-    | { state: "valid"; referrerName: string | null }
-    | { state: "invalid" }
-  >({ state: "idle" });
 
   // Validate the callbackUrl once and reuse the safe value across onboarding,
   // verification, and social login. safeSameOriginPath rejects backslash /
@@ -139,42 +135,7 @@ function SignUpContent() {
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
-  useEffect(() => {
-    const code = refCode.trim();
-    if (!code || referralCode) {
-      setReferralCheck({ state: "idle" });
-      return;
-    }
-    let cancelled = false;
-    setReferralCheck({ state: "checking" });
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(
-          `/api/referrals/code/check/${encodeURIComponent(code)}`,
-        );
-        if (cancelled) return;
-        // A limiter or outage must not block sign-up: fall back to "unknown".
-        if (!res.ok) {
-          setReferralCheck({ state: "idle" });
-          return;
-        }
-        const body = (await res.json()) as {
-          data?: { valid: boolean; referrerName: string | null };
-        };
-        setReferralCheck(
-          body.data?.valid
-            ? { state: "valid", referrerName: body.data.referrerName }
-            : { state: "invalid" },
-        );
-      } catch {
-        if (!cancelled) setReferralCheck({ state: "idle" });
-      }
-    }, 500);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [refCode, referralCode]);
+  const referralCheck = useReferralCodeCheck(refCode, !referralCode);
 
   if (isPending) {
     return <AuthFormSkeleton />;
@@ -491,24 +452,18 @@ function SignUpContent() {
                   }
                   aria-describedby="referral-code-status"
                 />
-                <p
+                <output
                   id="referral-code-status"
-                  role="status"
+                  htmlFor="referral-code"
                   className={cn(
-                    "text-sm",
+                    "block text-sm",
                     referralCheck.state === "invalid"
                       ? "text-destructive"
                       : "text-zinc-400",
                   )}
                 >
-                  {referralCheck.state === "checking" && "Checking the code…"}
-                  {referralCheck.state === "valid" &&
-                    (referralCheck.referrerName
-                      ? `Referred by ${referralCheck.referrerName} — you'll get a welcome bonus after your first booking.`
-                      : "Valid code — you'll get a welcome bonus after your first booking.")}
-                  {referralCheck.state === "invalid" &&
-                    "We don't recognise this code. You can still sign up without it."}
-                </p>
+                  {referralCheckText(referralCheck)}
+                </output>
               </div>
             )}
             {referralCode && !ssoCheck?.enforceSSO && (
