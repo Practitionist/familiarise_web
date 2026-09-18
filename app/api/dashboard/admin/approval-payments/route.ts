@@ -163,9 +163,13 @@ export async function GET() {
     // Transform data into a consistent format
     const approvalPayments = [
       ...pendingConsultations.map((consultation) => {
-        const expiresAt = new Date(
-          consultation.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
-        ); // #1703 D2 — the pay-link window from approval
+        // #1703 D2 — the minted Payment carries the deadline (a re-mint moves
+        // only that row); the approval stamp is the pre-mint fallback.
+        const expiresAt =
+          consultation.appointment?.payment[0]?.expiresAt ??
+          new Date(
+            consultation.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+          );
         const now = Date.now();
         const timeUntilExpiry = expiresAt.getTime() - now;
         const isExpired = timeUntilExpiry < 0;
@@ -195,9 +199,12 @@ export async function GET() {
         };
       }),
       ...pendingSubscriptions.map((subscription) => {
-        const expiresAt = new Date(
-          subscription.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
-        ); // #1703 D2 — the pay-link window from approval
+        // #1703 D2 — same source as the consultation branch above.
+        const expiresAt =
+          subscription.appointment?.payment[0]?.expiresAt ??
+          new Date(
+            subscription.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+          );
         const now = Date.now();
         const timeUntilExpiry = expiresAt.getTime() - now;
         const isExpired = timeUntilExpiry < 0;

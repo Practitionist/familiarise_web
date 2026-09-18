@@ -17,11 +17,17 @@ interface BookingRequestsSectionProps {
 /** The cap's accepted range; blank means no limit (#1703 D4). */
 export const MAX_OPEN_REQUESTS_RANGE = { min: 1, max: 50 } as const;
 
-/** Blank clears the cap; anything else is clamped into the range. */
-export function parseMaxOpenRequests(raw: string): number | null {
+/**
+ * Blank clears the cap; a number is truncated and clamped into the range;
+ * anything unparseable keeps the current cap (only blank may clear it).
+ */
+export function parseMaxOpenRequests(
+  raw: string,
+  current: number | null,
+): number | null {
   if (raw.trim() === "") return null;
-  const n = Number(raw);
-  if (!Number.isInteger(n)) return null;
+  const n = Math.trunc(Number(raw));
+  if (!Number.isFinite(n)) return current;
   return Math.min(
     MAX_OPEN_REQUESTS_RANGE.max,
     Math.max(MAX_OPEN_REQUESTS_RANGE.min, n),
@@ -124,7 +130,10 @@ export function BookingRequestsSection({
           onChange={(e) =>
             setFormData((prev) => ({
               ...prev,
-              maxOpenRequests: parseMaxOpenRequests(e.target.value),
+              maxOpenRequests: parseMaxOpenRequests(
+                e.target.value,
+                prev.maxOpenRequests,
+              ),
             }))
           }
         />

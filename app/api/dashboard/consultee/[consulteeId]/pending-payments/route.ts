@@ -355,9 +355,16 @@ export async function GET(
       };
     });
 
+    // #1703 D2 — a lapsed link is not payable; the sweep voids the row on the
+    // same deadline, so drop it here rather than offer a dead paymentUrl.
+    const now = Date.now();
+    const payableApprovalItems = approvalPendingItems.filter(
+      (item) => new Date(item.expiresAt).getTime() > now,
+    );
+
     // Merge and sort: expiring soon first, then by date (newest first)
     const pendingPayments = [
-      ...approvalPendingItems,
+      ...payableApprovalItems,
       ...gatewayPendingItems,
     ].sort((a, b) => {
       if (a.isExpiringSoon && !b.isExpiringSoon) return -1;

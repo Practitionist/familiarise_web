@@ -78,6 +78,9 @@ export async function getConsultantResponseRate(
       toStatus: { in: ANSWER_STATUSES },
       createdAt: { gte: since },
       appointment: {
+        // #1345 — Home is a personal surface; org-funded history is the org
+        // dashboard's, so it must not move the number shown beside its rows.
+        organizationId: null,
         OR: [
           { consultation: { consultationPlan: { consultantProfileId } } },
           { subscription: { subscriptionPlan: { consultantProfileId } } },

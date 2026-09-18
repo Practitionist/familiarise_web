@@ -45,7 +45,9 @@ import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import {
   EMAIL_BUDGET_MS,
+  SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
   sendUnscheduledSubscriptionNudgeEmail,
+  unscheduledNudgeEntityRef,
 } from "@/lib/email";
 import { getAppUrl } from "@/lib/url";
 
@@ -696,16 +698,31 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
     });
     if (candidates.length === 0) return { nudged: 0, errors };
 
-    const staged = new Set(
-      (
-        await prisma.notificationOutbox.findMany({
+    // Two outboxes, two guards: the bell's NotificationOutbox row and the
+    // email's FailedEmail row, so one arm's lapse never silences the other.
+    const [bellStaged, emailStaged] = await Promise.all([
+      prisma.notificationOutbox
+        .findMany({
           where: {
             transactionId: { in: candidates.map((c) => c.transactionId) },
           },
           select: { transactionId: true },
         })
-      ).map((row) => row.transactionId),
-    );
+        .then((rows) => new Set(rows.map((row) => row.transactionId))),
+      prisma.failedEmail
+        .findMany({
+          where: {
+            emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+            entityRef: {
+              in: candidates.map((c) =>
+                unscheduledNudgeEntityRef(c.sub.id, c.stage),
+              ),
+            },
+          },
+          select: { entityRef: true },
+        })
+        .then((rows) => new Set(rows.map((row) => row.entityRef))),
+    ]);
 
     let nudged = 0;
     for (const {
@@ -715,36 +732,49 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
       dedupeKey,
       transactionId,
     } of candidates) {
-      if (staged.has(transactionId)) continue;
+      const bellDone = bellStaged.has(transactionId);
+      const emailDone = emailStaged.has(
+        unscheduledNudgeEntityRef(sub.id, stage),
+      );
+      if (bellDone && emailDone) continue;
       const appointment = sub.appointment;
       if (!appointment) continue;
       try {
         const consulteeName = sub.requestedBy.user.name ?? "A consultee";
         const planTitle = sub.subscriptionPlan.title;
         const timingsUrl = `${getAppUrl()}/dashboard/consultant/${sub.subscriptionPlan.consultantProfile.id}/appointments/${appointment.id}/timings`;
-        await notifyUnscheduledSubscriptionNudge(
-          consultantUserId,
-          {
-            ...notificationScope(appointment.organizationId),
-            consulteeName,
-            planTitle,
-            appointmentType: "SUBSCRIPTION",
-            dashboardUrl: timingsUrl,
-            nudgeDay: stage,
-          },
-          dedupeKey,
-        );
-        await sendUnscheduledSubscriptionNudgeEmail(
-          {
-            subscriptionId: sub.id,
+        if (!bellDone) {
+          await notifyUnscheduledSubscriptionNudge(
             consultantUserId,
-            consulteeName,
-            planTitle,
-            nudgeDays: stage,
-            timingsUrl,
-          },
-          EMAIL_BUDGET_MS.JOB,
-        );
+            {
+              ...notificationScope(appointment.organizationId),
+              consulteeName,
+              planTitle,
+              appointmentType: "SUBSCRIPTION",
+              dashboardUrl: timingsUrl,
+              nudgeDay: stage,
+            },
+            dedupeKey,
+          );
+        }
+        if (!emailDone) {
+          const mailed = await sendUnscheduledSubscriptionNudgeEmail(
+            {
+              subscriptionId: sub.id,
+              consultantUserId,
+              consulteeName,
+              planTitle,
+              nudgeDays: stage,
+              timingsUrl,
+            },
+            EMAIL_BUDGET_MS.JOB,
+          );
+          // Neither sent nor staged: no row guards it, so say so and let
+          // the next run retry the email arm alone.
+          if (mailed.failed > 0 && mailed.sent === 0) {
+            throw new Error("nudge email neither sent nor staged");
+          }
+        }
         nudged += 1;
       } catch (error) {
         const msg = `Nudge failed for subscription ${sub.id} (day ${stage}): ${error}`;

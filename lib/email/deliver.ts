@@ -26,7 +26,9 @@ export interface RenderedEmail {
 }
 
 export type DeliverResult =
-  | { success: true; data: CreateEmailResponse }
+  // #1703 — `staged` on success says the outbox row exists; a sweep whose
+  // once-guard is that row must not count a send that has none.
+  | { success: true; data: CreateEmailResponse; staged: boolean }
   // #1654 — `staged` tells a caller whether the message is durable in the
   // outbox despite the failed inline send (the contact form answers on it).
   | { success: false; error: unknown; staged?: boolean };
@@ -291,7 +293,7 @@ export async function attempt(
         lastError: null,
       });
     }
-    return { success: true, data };
+    return { success: true, data, staged: staged !== null };
   } catch (error) {
     if (isAbort(error)) {
       // Not a failure and not a page: the row is durable and the relay sends

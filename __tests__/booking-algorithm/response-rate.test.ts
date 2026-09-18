@@ -8,11 +8,20 @@
  * answer with no creation row is left out of both counts; nothing measured
  * means null, never 0 %.
  */
-jest.mock("../../lib/prisma", () => ({ __esModule: true, default: {} }));
+const mockHistoryFindMany = jest.fn();
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    bookingStatusHistory: {
+      findMany: (...a: unknown[]) => mockHistoryFindMany(...(a as [])),
+    },
+  },
+}));
 
 import {
   computeResponseRate,
   EMPTY_RESPONSE_RATE,
+  getConsultantResponseRate,
   RESPONSE_RATE_TARGET_MS,
 } from "@/lib/booking/response-rate";
 
@@ -44,5 +53,17 @@ describe("computeResponseRate", () => {
   it("is null, not zero, when nothing was answered", () => {
     expect(computeResponseRate([], new Map())).toEqual(EMPTY_RESPONSE_RATE);
     expect(EMPTY_RESPONSE_RATE.withinTargetPct).toBeNull();
+  });
+});
+
+describe("getConsultantResponseRate", () => {
+  it("reads personal history only (#1345): org-funded rows are pinned out", async () => {
+    mockHistoryFindMany.mockResolvedValueOnce([]);
+    expect(await getConsultantResponseRate("cp_1")).toEqual(
+      EMPTY_RESPONSE_RATE,
+    );
+    const where = mockHistoryFindMany.mock.calls[0][0].where;
+    expect(where.appointment.organizationId).toBeNull();
+    expect(where.fromStatus).toBe("PENDING");
   });
 });

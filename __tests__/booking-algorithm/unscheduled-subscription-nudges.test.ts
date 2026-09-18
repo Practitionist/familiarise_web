@@ -5,8 +5,8 @@
 /**
  * #1703 — consultant nudges for a paid subscription that still has no session
  * times: the stage is the latest of day 3 / 7 / 14 the row has reached, the
- * bell is keyed per stage through the outbox so a re-run sends nothing, and
- * the email twin follows the bell.
+ * bell is keyed per stage through the notification outbox and the email
+ * through its own FailedEmail row, so a re-run repeats neither.
  */
 
 jest.mock("../../lib/prisma", () => {
@@ -22,6 +22,7 @@ jest.mock("../../lib/prisma", () => {
     appointmentOccurrence: { findMany: jest.fn().mockResolvedValue([]) },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
     notificationOutbox: { findMany: jest.fn().mockResolvedValue([]) },
+    failedEmail: { findMany: jest.fn().mockResolvedValue([]) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(db)),
   };
   return { __esModule: true, default: db };
@@ -41,9 +42,16 @@ jest.mock("../../lib/novu/service", () => ({
   notifyUnscheduledSubscriptionNudge: (...a: unknown[]) =>
     mockNudgeBell(...(a as [])),
 }));
-const mockNudgeEmail = jest.fn(async () => ({ success: true }));
+const mockNudgeEmail = jest.fn(async () => ({
+  sent: 1,
+  skipped: 0,
+  failed: 0,
+}));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
+  SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE: "SUBSCRIPTION_UNSCHEDULED_NUDGE",
+  unscheduledNudgeEntityRef: (id: string, day: number) =>
+    `subscription:${id}:day${day}`,
   sendUnscheduledSubscriptionNudgeEmail: (...a: unknown[]) =>
     mockNudgeEmail(...(a as [])),
 }));
@@ -60,6 +68,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const db = prisma as unknown as {
   subscription: { findMany: jest.Mock };
   notificationOutbox: { findMany: jest.Mock };
+  failedEmail: { findMany: jest.Mock };
 };
 
 function waitingSubscription(ageDays: number) {
@@ -79,6 +88,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   jest.spyOn(console, "log").mockImplementation(() => {});
   db.notificationOutbox.findMany.mockResolvedValue([]);
+  db.failedEmail.findMany.mockResolvedValue([]);
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -118,7 +128,8 @@ describe("nudgeUnscheduledSubscriptions", () => {
       1,
     );
 
-    // The staged row is the claim: the next run finds it and sends nothing.
+    // Each arm's staged row is its own claim: with the bell's row but no
+    // email row, only the email is retried; with both, nothing is.
     db.notificationOutbox.findMany.mockResolvedValue([
       {
         transactionId: deriveTransactionId(
@@ -129,9 +140,17 @@ describe("nudgeUnscheduledSubscriptions", () => {
         ),
       },
     ]);
+    const emailOnly = await expireStaleRequests();
+    expect(emailOnly.subscriptionNudgesSent).toBe(1);
+    expect(mockNudgeBell).toHaveBeenCalledTimes(1);
+    expect(mockNudgeEmail).toHaveBeenCalledTimes(2);
+
+    db.failedEmail.findMany.mockResolvedValue([
+      { entityRef: "subscription:sub_1:day7" },
+    ]);
     const again = await expireStaleRequests();
     expect(again.subscriptionNudgesSent).toBe(0);
     expect(mockNudgeBell).toHaveBeenCalledTimes(1);
-    expect(mockNudgeEmail).toHaveBeenCalledTimes(1);
+    expect(mockNudgeEmail).toHaveBeenCalledTimes(2);
   });
 });

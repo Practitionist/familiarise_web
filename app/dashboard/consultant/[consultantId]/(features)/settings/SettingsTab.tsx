@@ -1,6 +1,7 @@
 "use client";
 
 import { ScheduleType } from "@prisma/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "components/ui/button";
 import { Card, CardContent } from "components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "components/ui/tabs";
@@ -73,6 +74,7 @@ const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -516,6 +518,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         setFormData(getInitialFormData(updatedConsultant));
         setScheduleType(updatedConsultant.scheduleType);
       }
+
+      // #1703 D4 — the Requests page reads the same query for its paused
+      // banner; remount refetching is off, so the save must invalidate it.
+      await queryClient.invalidateQueries({
+        queryKey: ["consultant-settings", consultant.id],
+      });
 
       // Shrink notice: a booking is a contract and keeps its time; the new
       // hours are an offer for future bookings. Say how many sit outside them

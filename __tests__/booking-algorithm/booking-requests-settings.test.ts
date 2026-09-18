@@ -16,12 +16,17 @@ import type { TConsultantProfile } from "@/types/consultant";
 
 describe("booking requests settings", () => {
   it("blank clears the cap; values clamp into the accepted range", () => {
-    expect(parseMaxOpenRequests("")).toBeNull();
-    expect(parseMaxOpenRequests("  ")).toBeNull();
-    expect(parseMaxOpenRequests("abc")).toBeNull();
-    expect(parseMaxOpenRequests("0")).toBe(MAX_OPEN_REQUESTS_RANGE.min);
-    expect(parseMaxOpenRequests("500")).toBe(MAX_OPEN_REQUESTS_RANGE.max);
-    expect(parseMaxOpenRequests("7")).toBe(7);
+    expect(parseMaxOpenRequests("", 5)).toBeNull();
+    expect(parseMaxOpenRequests("  ", 5)).toBeNull();
+    expect(parseMaxOpenRequests("0", null)).toBe(MAX_OPEN_REQUESTS_RANGE.min);
+    expect(parseMaxOpenRequests("500", null)).toBe(MAX_OPEN_REQUESTS_RANGE.max);
+    expect(parseMaxOpenRequests("7", null)).toBe(7);
+  });
+
+  it("only blank clears: unparseable keeps the cap, fractions truncate", () => {
+    expect(parseMaxOpenRequests("abc", 5)).toBe(5);
+    expect(parseMaxOpenRequests("abc", null)).toBeNull();
+    expect(parseMaxOpenRequests("1.5", 5)).toBe(1);
   });
 
   it("seeds the form from the profile, defaulting to INSTANT / accepting / no cap", () => {

@@ -29,7 +29,7 @@ This document explains the complete status lifecycle for all 4 event types, incl
 | `PENDING`                  | User submitted request, awaiting payment or consultant action |
 | `APPROVED_PENDING_PAYMENT` | Consultant approved (Pay Later flow), waiting for user to pay |
 | `APPROVED`                 | Payment received, booking confirmed                           |
-| `REJECTED`                 | Consultant rejected OR payment expired                        |
+| `REJECTED`                 | Consultant rejected the request                               |
 | `CANCELLED`                | User or consultant cancelled                                  |
 | `EXPIRED`                  | Request timed out without action                              |
 
@@ -393,9 +393,9 @@ flowchart TD
     end
 
     subgraph "Expired Approval Cleanup"
-        FIND_EXPIRED[Find APPROVED_PENDING_PAYMENT<br/>with Expired Payments] --> RESET[Reset to REJECTED]
-        RESET --> DELETE_TENT[Delete Tentative Slots]
-        DELETE_TENT --> MARK_FAILED[Mark Payments FAILED]
+        FIND_EXPIRED[Find APPROVED_PENDING_PAYMENT<br/>with Expired Payments] --> RESET[Request EXPIRED]
+        RESET --> DELETE_TENT[Release Tentative Slots]
+        DELETE_TENT --> MARK_FAILED[Mark Payments EXPIRED]
     end
 
     style CANCEL fill:#FF6B6B
@@ -413,11 +413,10 @@ flowchart TD
 
 ### Files Involved
 
-| File                                          | Purpose                         |
-| --------------------------------------------- | ------------------------------- |
-| `jobs/cleanup-abandoned-payments.ts`          | Main cleanup job                |
-| `app/api/cleanup/abandoned-payments/route.ts` | API endpoint for manual trigger |
-| `app/api/cleanup/approval-payments/route.ts`  | Revert APPROVED_PENDING_PAYMENT |
+| File                                          | Purpose                                                                            |
+| --------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `jobs/cleanup-abandoned-payments.ts`          | Main cleanup job                                                                   |
+| `app/api/cleanup/abandoned-payments/route.ts` | HTTP twin: abandoned checkouts, lapsed pay-links, and the 12 h reminder in one run |
 
 ---
 

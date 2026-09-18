@@ -90,15 +90,21 @@ const inSixHours = new Date(Date.now() + 6 * 60 * 60 * 1000);
 const consultee = { id: "u_consultee", name: "Sam", email: "sam@x.test" };
 const consultantUser = { user: { name: "Olivia" } };
 
-function reminderCandidate() {
+function reminderCandidate(id = "cons_1", ageMs = 0) {
   return {
-    id: "cons_1",
+    id,
+    updatedAt: new Date(Date.now() - ageMs),
     pendingPaymentUrl: "https://pay/1",
     requestedBy: { user: consultee },
     consultationPlan: { consultantProfile: consultantUser },
     appointment: {
       payment: [
-        { id: "pay_1", amount: 5000, currency: "INR", expiresAt: inSixHours },
+        {
+          id: `pay_${id}`,
+          amount: 5000,
+          currency: "INR",
+          expiresAt: inSixHours,
+        },
       ],
     },
   };
@@ -114,7 +120,7 @@ beforeEach(() => {
     paymentStatus: "PENDING",
     expiresAt: inSixHours,
   });
-  mockSendPaymentLinkEmail.mockResolvedValue({ success: true });
+  mockSendPaymentLinkEmail.mockResolvedValue({ success: true, staged: true });
 });
 afterEach(() => jest.restoreAllMocks());
 
@@ -132,17 +138,49 @@ describe("remindApprovalPaymentsDue", () => {
     expect(mockSendPaymentLinkEmail).toHaveBeenCalledWith(
       expect.objectContaining({
         email: "sam@x.test",
-        paymentId: "pay_1",
+        paymentId: "pay_cons_1",
         reminder: true,
         expiresAt: inSixHours,
       }),
     );
 
     // The staged row is the guard: the next run finds it and stays quiet.
-    db.failedEmail.findMany.mockResolvedValue([{ entityRef: "payment:pay_1" }]);
+    db.failedEmail.findMany.mockResolvedValue([
+      { entityRef: "payment:pay_cons_1" },
+    ]);
     const second = await remindApprovalPaymentsDue();
     expect(second.skippedCount).toBe(1);
     expect(mockSendPaymentLinkEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("a send with no guard row is an error, not a reminder", async () => {
+    db.consultation.findMany.mockResolvedValue([reminderCandidate()]);
+    mockSendPaymentLinkEmail.mockResolvedValueOnce({
+      success: true,
+      staged: false,
+    });
+    const result = await remindApprovalPaymentsDue();
+    expect(result.cleanedCount).toBe(0);
+    expect(result.errorCount).toBe(1);
+    expect(result.errors[0]).toMatch(/without its guard row/);
+  });
+
+  it("bounds the pass by one limit across both kinds, oldest first", async () => {
+    db.consultation.findMany.mockResolvedValue([
+      reminderCandidate("cons_new", 1000),
+      reminderCandidate("cons_old", 3000),
+    ]);
+    db.subscription.findMany.mockResolvedValue([
+      {
+        ...reminderCandidate("sub_mid", 2000),
+        subscriptionPlan: { consultantProfile: consultantUser },
+      },
+    ]);
+    const result = await remindApprovalPaymentsDue({ limit: 2 });
+    expect(result.totalProcessed).toBe(2);
+    expect(
+      mockSendPaymentLinkEmail.mock.calls.map((c) => c[0].paymentId),
+    ).toEqual(["pay_cons_old", "pay_sub_mid"]);
   });
 
   it("never reminds after payment or after expiry", async () => {

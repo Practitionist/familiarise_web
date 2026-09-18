@@ -217,8 +217,8 @@ export async function POST(req: NextRequest) {
           }),
         );
 
-        // #1703 D4 — counted under the consultant-keyed lock so a burst on
-        // one slot cannot overshoot the cap by more than the lock allows.
+        // #1703 D4 — counted under the slot lock (consultant + interval atoms)
+        // so a burst on one slot overshoots the cap by at most what it allows.
         const atCapacity = await capacityRefusal(
           prisma,
           consultationPlan.consultantProfile,

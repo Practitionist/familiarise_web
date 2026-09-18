@@ -993,6 +993,8 @@ const REMINDER_PARTY_SELECT = {
 type ReminderCandidate = {
   requestId: string;
   kind: "consultation" | "subscription";
+  /** The cohort order key, kept so the merged list keeps oldest-first. */
+  updatedAt: Date;
   pendingPaymentUrl: string;
   consultee: { id: string; name: string | null; email: string | null };
   consultantName: string;
@@ -1022,6 +1024,7 @@ async function findReminderCandidates(
       where: requestWhere,
       select: {
         id: true,
+        updatedAt: true,
         pendingPaymentUrl: true,
         ...REMINDER_PARTY_SELECT,
         consultationPlan: {
@@ -1038,6 +1041,7 @@ async function findReminderCandidates(
       where: requestWhere,
       select: {
         id: true,
+        updatedAt: true,
         pendingPaymentUrl: true,
         ...REMINDER_PARTY_SELECT,
         subscriptionPlan: {
@@ -1057,6 +1061,7 @@ async function findReminderCandidates(
     candidates.push({
       requestId: row.id,
       kind: "consultation",
+      updatedAt: row.updatedAt,
       pendingPaymentUrl: row.pendingPaymentUrl,
       consultee: row.requestedBy.user,
       consultantName:
@@ -1070,6 +1075,7 @@ async function findReminderCandidates(
     candidates.push({
       requestId: row.id,
       kind: "subscription",
+      updatedAt: row.updatedAt,
       pendingPaymentUrl: row.pendingPaymentUrl,
       consultee: row.requestedBy.user,
       consultantName:
@@ -1077,7 +1083,15 @@ async function findReminderCandidates(
       payment: { ...payment, expiresAt: payment.expiresAt },
     });
   }
-  return candidates;
+  // Each read took `limit`; the pass is bounded by one `limit`, so the merged
+  // oldest-first list is cut once more.
+  candidates.sort((a, b) => {
+    const byTime = a.updatedAt.getTime() - b.updatedAt.getTime();
+    if (byTime !== 0) return byTime;
+    if (a.requestId === b.requestId) return 0;
+    return a.requestId < b.requestId ? -1 : 1;
+  });
+  return limit === undefined ? candidates : candidates.slice(0, limit);
 }
 
 /** The outbox rows the earlier reminders staged, by payment id. */
@@ -1152,14 +1166,17 @@ async function remindApprovalPaymentsDueUnlocked(
           paymentId: candidate.payment.id,
           reminder: true,
         });
-        if (sent.success || sent.staged) {
-          // Sent, or durable in the outbox for the relay: either way the row
-          // exists and the once-guard holds.
+        if (sent.staged) {
+          // Sent or awaiting the relay: the row exists, so the once-guard
+          // holds. A send with no row would repeat next pass, so it is not
+          // counted as done.
           result.cleanedCount++;
         } else {
           result.errorCount++;
           result.errors.push(
-            `Reminder for ${candidate.kind} ${candidate.requestId} did not send`,
+            `Reminder for ${candidate.kind} ${candidate.requestId} ${
+              sent.success ? "sent without its guard row" : "did not send"
+            }`,
           );
         }
       } catch (error) {

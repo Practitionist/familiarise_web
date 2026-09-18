@@ -146,6 +146,10 @@ describe("consultant request gate", () => {
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("CONSULTANT_AT_CAPACITY");
     expect(mockLockSlotBooking).toHaveBeenCalledTimes(1);
+    // The consultant count (second count call) runs after the lock, not before.
+    expect(mockConsultationCount.mock.invocationCallOrder[1]).toBeGreaterThan(
+      mockLockSlotBooking.mock.invocationCallOrder[0],
+    );
   });
 
   it("below cap → 201", async () => {
