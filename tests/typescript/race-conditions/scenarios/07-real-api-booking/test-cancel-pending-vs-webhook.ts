@@ -322,6 +322,12 @@ async function run() {
       });
     }
 
+    // Leg 1's chaos payment stays on the wrapper (a cancel never deletes a
+    // Payment), and `Payment` is unique on (userId, appointmentId): retire it
+    // before leg 2 mints its twin. The final cleanup still covers both ids.
+    await prisma.payment.deleteMany({
+      where: { id: { in: createdPaymentIds } },
+    });
     const leg2 = await createPendingPayment(
       requester.id,
       appointment.id,
