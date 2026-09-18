@@ -33,6 +33,8 @@ export function describeConflict(
   let withWhom = "Another user";
   if (other?.userId === viewer.userId) withWhom = "You (as a consultee)";
   else if (other?.name) withWhom = other.name;
+  // A group event has no single other party; its plan title is the name.
+  else if (detail.title) withWhom = detail.title;
   return {
     slot,
     existingAppointment: {

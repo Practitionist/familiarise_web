@@ -142,6 +142,8 @@ function conflictDetailOf(
     subscription: {
       requestedBy: { user: { id: string; name: string | null } | null } | null;
     } | null;
+    webinar: { webinarPlan: { title: string } | null } | null;
+    class: { classPlan: { title: string } | null } | null;
   },
 ): ConflictDetail {
   const requester =
@@ -149,8 +151,16 @@ function conflictDetailOf(
     appointment.subscription?.requestedBy?.user ??
     null;
   let type: ConflictDetail["type"] = "Booking";
+  let title: string | null = null;
   if (appointment.consultation) type = "Consultation";
   else if (appointment.subscription) type = "Subscription";
+  else if (appointment.webinar) {
+    type = "Webinar";
+    title = appointment.webinar.webinarPlan?.title ?? null;
+  } else if (appointment.class) {
+    type = "Class";
+    title = appointment.class.classPlan?.title ?? null;
+  }
   return {
     slot: slot.toISOString().slice(0, 19),
     appointmentId: appointment.id,
@@ -158,6 +168,7 @@ function conflictDetailOf(
     otherParty: requester
       ? { userId: requester.id, name: requester.name }
       : null,
+    title,
   };
 }
 
@@ -546,6 +557,10 @@ export class ScheduleValidationService {
             },
           },
           payment: true, // Need payment data to check expiry
+          // #1721 QA — a group event names itself by plan title, so the
+          // consultant's own conflict view is never a nameless "Booking".
+          webinar: { select: { webinarPlan: { select: { title: true } } } },
+          class: { select: { classPlan: { select: { title: true } } } },
         },
       });
 

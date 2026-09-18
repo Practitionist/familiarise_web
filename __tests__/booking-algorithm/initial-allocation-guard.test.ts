@@ -58,6 +58,13 @@ jest.mock("../../utils/appointmentlock", () => ({
   unlockConsulteeBooking: jest.fn().mockResolvedValue(undefined),
 }));
 
+const reportSentryError = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  __esModule: true,
+  reportSentryError: (...a: unknown[]) => reportSentryError(...a),
+  reportSentryMessage: jest.fn(),
+}));
+
 import prisma from "@/lib/prisma";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 
@@ -453,5 +460,64 @@ describe("#1697 — pre-lock occupancy probe on manual allocation", () => {
       deletedAt: null,
       appointment: { NOT: { subscriptionId: "sub-1" } },
     });
+  });
+});
+
+/**
+ * #1721 QA (FAMILIARISE_WEB-4K) — a refusal the allocator answers with a 4xx
+ * is an expected outcome and reports at info; only a 5xx is a fault.
+ */
+describe("expected refusals report as expected", () => {
+  it("tags a manual allocation with an odd slot count expected:true, and a fault expected:false", async () => {
+    mockPrisma.appointmentOccurrence.findFirst.mockResolvedValue(null);
+    mockPrisma.subscription.findUnique.mockResolvedValue({
+      subscriptionPlan: {
+        consultantProfileId: "cp-1",
+        consultantProfile: {
+          user: { id: "consultant-user-1" },
+          scheduleType: "WEEKLY",
+          availabilityWindowsWeekly: [],
+          availabilityWindowsCustom: [],
+        },
+        durationInMonths: 1,
+        sessionsPerWeek: 1,
+        sessionDurationInHours: 1,
+        totalSessions: 1,
+      },
+      requestedBy: { user: { id: "user-1" } },
+      appointments: [],
+      schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
+      schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
+      schedulingTimezone: "Asia/Kolkata",
+    });
+
+    const odd = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: [FUTURE_SLOTS[0]],
+    });
+    expect(odd.httpStatus).toBe(400);
+    expect(reportSentryError).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        message: expect.stringContaining("Invalid slot count"),
+      }),
+      expect.objectContaining({ expected: true }),
+    );
+
+    mockPrisma.subscription.findUnique.mockRejectedValue(
+      new Error("connect ETIMEDOUT"),
+    );
+    const fault = await SchedulingService.allocate({
+      eventType: "subscription",
+      eventId: "sub-1",
+      mode: "manual",
+      slots: FUTURE_SLOTS,
+    });
+    expect(fault.httpStatus).toBe(500);
+    expect(reportSentryError).toHaveBeenLastCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ expected: false }),
+    );
   });
 });

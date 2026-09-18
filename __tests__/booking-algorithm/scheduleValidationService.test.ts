@@ -186,6 +186,7 @@ describe("checkSlotAvailability", () => {
         appointmentId: "existing-apt",
         type: "Consultation",
         otherParty: { userId: "user-9", name: "Existing User" },
+        title: null,
       },
     ]);
     // The event's consultant sees who; anyone else keeps "Another user".
@@ -210,6 +211,53 @@ describe("checkSlotAvailability", () => {
       with: "Another user",
       time: expect.any(String),
     });
+  });
+
+  it("names a conflicting class by its plan title for the event's consultant (#1721 QA)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "class-apt",
+        occurrences: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: null,
+        subscription: null,
+        webinar: null,
+        class: { status: "SCHEDULED", classPlan: { title: "Algebra I" } },
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    const detail = result.conflicts?.[0];
+    expect(detail).toMatchObject({
+      appointmentId: "class-apt",
+      type: "Class",
+      title: "Algebra I",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: true },
+        "Consultation",
+      ).existingAppointment,
+    ).toMatchObject({
+      type: "Class",
+      with: "Algebra I",
+      appointmentId: "class-apt",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: false },
+        "Consultation",
+      ).existingAppointment.with,
+    ).toBe("Another user");
   });
 
   // AE-5/RV-6 — the interval is no longer a parameter; it is the shared

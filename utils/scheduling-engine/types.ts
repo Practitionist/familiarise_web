@@ -155,9 +155,11 @@ export interface ConflictDetail {
   /** Seconds-precision UTC ISO of the proposed slot, as the routes report it. */
   slot: string;
   appointmentId: string;
-  type: "Consultation" | "Subscription" | "Booking";
+  type: "Consultation" | "Subscription" | "Webinar" | "Class" | "Booking";
   /** The consultee on the conflicting booking, when it has one. */
   otherParty: { userId: string; name: string | null } | null;
+  /** A group event's plan title — what a webinar or class is "with". */
+  title: string | null;
 }
 
 /**

@@ -184,7 +184,9 @@ export class SchedulingService {
       // info + expected:true so a dashboard scan can't mistake "no slots
       // available" for a database failure. Real faults keep the default
       // error level with no expected tag.
-      const modeled = this.isModeledOutcome(error);
+      // #1721 QA — every 4xx classification is an answer, including the
+      // untyped legacy throws classifyError maps by message; only a 5xx is a fault.
+      const modeled = this.isModeledOutcome(error) || httpStatus < 500;
       reportSentryError(error, {
         subsystem: "scheduling",
         op: "scheduling",
