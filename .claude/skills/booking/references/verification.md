@@ -164,7 +164,10 @@ same recipe, which is worth writing down once rather than re-deriving per PR.
 
 **Accounts.** Two seeded users carried the whole train: consultant
 `ethan.anderson@gmail.com` and consultee `olivia.anderson@gmail.com`, both at
-`SeedPass123!` (§5). A plain-`CONSULTEE`-role second account (Patrick) was
+the seed password (`SEED_PASSWORD`, defaulted in
+`prisma/seedFiles/1a-create-users.ts`; §5). These are faker-generated seed
+accounts, and the shared project is also production, so never reuse the recipe
+against a customer account. A plain-`CONSULTEE`-role second account (Patrick) was
 needed once, because Olivia is also dual-role and a pre-existing role gate
 hides her own request CTA from her.
 
@@ -176,10 +179,14 @@ guard and could assert something the app can never actually produce. Where a
 genuine slot conflict was needed, one occurrence's time was shifted by SQL
 _after_ the route created it, not instead of the route.
 
-**Cleanup order.** Delete children before parents: appointment participants
-and occurrences, then the booking-status-history rows, then the appointment
-wrapper, then the consultation/subscription/plan row, then any payment/leg/
-earnings rows a mock payment created. The mock booking fixture
+**Cleanup order.** This applies only to rows the QA run itself created — never
+to a seeded or customer row, and never to any row a real `Payment` points at
+(doctrine rule 2). Delete children before parents: appointment participants and
+occurrences, then the booking-status-history rows, then the appointment
+wrapper, then the consultation/subscription/plan row. A fixture that carried a
+mock payment deletes its own payment graph first (legs, and any
+`ConsultantEarnings` row the healer created against it), because
+`Payment.appointment` cascades on delete. The mock booking fixture
 (`aaaaaaaa-…-aa01`) is never touched by any QA cleanup — it is a fixed,
 permanently-present fixture other tests and demos rely on.
 

@@ -272,14 +272,14 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 ### h. Cleanup Abandoned Payments (Pay-Link Reminder and Lapsed-Link Expiry)
 
-| Field              | Value                                              |
-| ------------------ | -------------------------------------------------- |
-| **Schedule**       | `6-59/15 * * * *` -- every 15 minutes              |
-| **Source**         | `scripts/payments/cleanup-abandoned-payments.ts`   |
-| **API**            | `app/api/cleanup/abandoned-payments/route.ts`      |
-| **GitHub Actions** | `.github/workflows/cleanup-abandoned-payments.yml` |
+| Field              | Value                                                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Schedule**       | Netlify ticker every 15 minutes (`TARGET_EVERY_MINUTES`, #1686); GitHub Actions `6-59/15 * * * *` as the fallback twin |
+| **Source**         | `scripts/payments/cleanup-abandoned-payments.ts`                                                                       |
+| **API**            | `app/api/cleanup/abandoned-payments/route.ts`                                                                          |
+| **GitHub Actions** | `.github/workflows/cleanup-abandoned-payments.yml`                                                                     |
 
-**Purpose**: This is the job whose real cadence comes from the Netlify ticker rather than the GitHub Actions schedule (ADR 22, ADR 27); the 15-minute cron above is an upper bound, not the delivered frequency. It cancels an abandoned direct-checkout payment and cancels a lapsed approval pay-link.
+**Purpose**: The delivered cadence comes from the Netlify ticker (ADR 22, ADR 27), which since #1686 fires this target every third tick — every 15 minutes — because each row costs a gateway round trip; the GitHub Actions schedule is the fallback twin at the same cadence, not the primary invocation. It cancels an abandoned direct-checkout payment and cancels a lapsed approval pay-link.
 
 **The pay-link reminder (#1703 D2, added 2026-09-18).** `remindApprovalPaymentsDue` sends one reminder email when half the 24-hour pay-link window is left (`APPROVAL_PAYMENT_EXPIRATION_HOURS = 24`, so the reminder fires with 12 hours left on the link). It is the existing pay-link email re-sent with a different heading, staged as a `FailedEmail` row of type `PAYMENT_LINK_REMINDER` keyed by the payment id, which is the once-guard: a second run against the same payment finds the row and sends nothing. The reminder never fires after a capture or after the link itself has lapsed, because both of those move the row out of the reminder's `APPROVED_PENDING_PAYMENT`-with-a-live-pay-link cohort.
 

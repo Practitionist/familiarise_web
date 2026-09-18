@@ -139,9 +139,12 @@ is currently serialized, sent and re-parsed on a poll that changed nothing.
 
 ## The change marker
 
-The conditional GET added in this pull request answers "has anything this
-response depends on changed?" in a single statement before any of the work
-above happens, and returns `304 Not Modified` when the answer is no. The marker
+The conditional GET added in this pull request is designed to answer "has
+anything this response depends on changed?" in a single statement before any
+of the work above happens, and to return `304 Not Modified` when the answer is
+no; as the previous section records, the 304 arm does not fire on the deployed
+platform today (#1723), so the marker currently buys the stable tag but not the
+skipped read. The marker
 lives in `lib/scheduling/availabilityGridMarker.ts` and is deliberately one raw
 `SELECT` rather than ten Prisma aggregates: cost here is round trips, and ten
 aggregates would be ten round trips, which is slower than the query the marker
