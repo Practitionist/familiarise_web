@@ -88,21 +88,24 @@ export async function notifyReferralQualificationBestEffort(
 }
 
 /**
- * After `applyCreditsToPayment()` commits at checkout, bell the payer.
- * `remainingCredits` is read live so the copy matches the committed ledger.
- * No-op when nothing was applied. Never throws.
+ * After `applyCreditsToPayment()` commits at checkout, bell the payer with the
+ * balance the transaction saw (a later checkout must not change the figure
+ * before the bell reads it). No-op when nothing was applied. Never throws.
  */
 export async function notifyCreditsAppliedBestEffort(args: {
   userId: string;
   creditsUsedPaise: number;
+  /** Balance read inside the checkout transaction; re-read only when absent. */
+  remainingPaise?: number | null;
   appointmentType: string;
 }): Promise<void> {
   try {
     if (args.creditsUsedPaise <= 0) return;
-    const { totalAvailable } = await getUserCredits(args.userId);
+    const remaining =
+      args.remainingPaise ?? (await getUserCredits(args.userId)).totalAvailable;
     await notifyReferralCreditsApplied(args.userId, {
       creditsUsed: args.creditsUsedPaise,
-      remainingCredits: totalAvailable,
+      remainingCredits: remaining,
       currency: "INR",
       appointmentType: args.appointmentType,
       dashboardUrl: dashboardUrl(),

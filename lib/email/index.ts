@@ -114,7 +114,15 @@ export async function attemptStagedEmail(
   budgetMs: number,
 ): Promise<void> {
   if (!staged) return;
-  await attempt(staged.staged, staged.message, staged.emailType, { budgetMs });
+  try {
+    await attempt(staged.staged, staged.message, staged.emailType, {
+      budgetMs,
+    });
+  } catch (error) {
+    // `attempt` arms its AbortSignal before its own try; keep the caller's
+    // never-throws contract whatever the budget was.
+    console.error(`[email] ${staged.emailType} attempt failed:`, error);
+  }
 }
 
 // #1654 — the entity anchor a sender stamps on its outbox row.

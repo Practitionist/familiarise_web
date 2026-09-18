@@ -3956,6 +3956,7 @@ export async function handleCheckout(
             // creditsApplied was calculated in TX1 (calculateAmountAndValidate), but between
             // TX1 and TX2, concurrent checkouts may have consumed the credits.
             let actualCreditsApplied = 0;
+            let creditsRemainingAfter: number | null = null;
             if (creditsApplied > 0) {
               const { totalAvailable } = await getUserCredits(userId, tx);
               // Both creditsApplied and totalAvailable are in paise — direct comparison
@@ -3987,6 +3988,10 @@ export async function handleCheckout(
                 );
               }
               actualCreditsApplied = creditsApplied; // In paise
+              // The balance the credits-applied bell states, read inside the
+              // transaction so a later checkout cannot change it first.
+              creditsRemainingAfter = (await getUserCredits(userId, tx))
+                .totalAvailable;
             }
 
             // Invariant sweep: every Payment should have legs that sum to
@@ -4025,6 +4030,7 @@ export async function handleCheckout(
             return {
               appointmentId: createdAppointment?.id,
               creditsApplied: actualCreditsApplied,
+              creditsRemainingAfter,
               capNearBell,
               overageBell,
             };
@@ -4105,6 +4111,7 @@ export async function handleCheckout(
               notifyCreditsAppliedBestEffort({
                 userId,
                 creditsUsedPaise: result.creditsApplied,
+                remainingPaise: result.creditsRemainingAfter,
                 appointmentType: validatedData.appointmentType,
               }).catch((bellErr) =>
                 console.error("[credits-applied-bell] failed:", bellErr),
