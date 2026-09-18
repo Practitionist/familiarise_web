@@ -668,19 +668,7 @@ Then in persistence:
 
 ### Verification Flow
 
-Runs **after** the main transaction commits. If verification fails, the user profile is still saved.
-
-```
-1. Update User.linkedinUrl (if provided)
-2. Create ConsultantProfileVerification (status: "PENDING")
-3. Handle documents:
-   - Existing docs (have id, not onboarding upload): update verificationId
-   - New docs (isOnboardingUpload or no id): create ProfileVerificationDocument
-4. Update ConsultantProfile:
-   - verificationStatus → "UNDER_REVIEW"
-   - isVerified → false
-5. Fire-and-forget: notify all ADMIN users via Novu
-```
+Runs **after** the main transaction commits, through the one submission writer in `lib/verification/submit-request.ts` (the same one `POST /api/verification/submit` and `/resubmit` call). Uploads made from the wizard are already rows owned by the user (`uploadedByUserId`, `verificationId` null), so the writer links them by id under an ownership predicate, supersedes any open request, CASes the profile to `UNDER_REVIEW`, and refuses a request with no document. The admin bells are staged before the response and attempted in `after()`. If filing fails, the profile stays `PENDING_VERIFICATION`, the failure is captured in Sentry, and the response carries `verificationDeferred: true` plus a warning — the consultant finishes from Settings (#698 OB-3). The full lifecycle, the review side and the sweep are in [04-verification-lifecycle.md](04-verification-lifecycle.md).
 
 ---
 
@@ -888,14 +876,18 @@ fileName         String
 originalName     String
 fileSize         Int
 mimeType         String
-fileUrl          String
+fileUrl          String                  // the download route, never a signed URL
 storagePath      String
 description      String?
 isValid          Boolean?                // null=not reviewed, true/false
 staffFeedback    String?
-verificationId   String    (FK)
+issue            VerificationDocumentIssue?   // reason code when invalid
+verificationId   String?   (FK, null until a submission links the row)
+linkedAt         DateTime?
+uploadedByUserId String?   (FK → User; the owner, #1224)
 uploadedAt       DateTime  @default(now())
 ```
+Rationale for every column above is in [05-schema-reference.md](05-schema-reference.md).
 
 ---
 
@@ -914,6 +906,7 @@ uploadedAt       DateTime  @default(now())
 | `AchievementType` | `AWARD`, `PUBLICATION`, `PROJECT`, `TALK`, `OPEN_SOURCE`, `OTHER` |
 | `ConsultantVerificationStatus` | `PENDING_VERIFICATION`, `UNDER_REVIEW`, `VERIFIED`, `REJECTED` |
 | `ProfileVerificationStatus` | `PENDING`, `APPROVED`, `REJECTED`, `NEEDS_INFO`, `SUPERSEDED` |
+| `VerificationDocumentIssue` | `UNCLEAR_SCAN`, `EXPIRED`, `NAME_MISMATCH`, `MISSING_PAGE`, `WRONG_TYPE`, `OTHER` |
 
 ---
 

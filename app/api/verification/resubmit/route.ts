@@ -1,24 +1,31 @@
 /**
  * Verification Resubmission API
  * POST /api/verification/resubmit
- * Allows consultants to resubmit their profile for verification after rejection
+ * Re-files a REJECTED consultant's request with the previous request's
+ * unflagged documents carried forward. Same writer as /submit
+ * (lib/verification/submit-request.ts); kept as its own route because the
+ * dashboard's REJECTED gate links here with notes only.
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { UserRole, ConsultantVerificationStatus } from "@prisma/client";
-import { z } from "zod";
+import { getSession } from "@/lib/auth-server";
+import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
+import { getAppUrl } from "@/lib/url";
+import {
+  submitVerificationRequest,
+  SUBMIT_REFUSAL_STATUS,
+} from "@/lib/verification/submit-request";
+import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 
 const resubmitSchema = z.object({
-  notes: z.string().optional(),
+  notes: z.string().max(2000).optional(),
+  documentIds: z.array(z.string().min(1)).max(10).optional(),
 });
 
-import * as Sentry from "@sentry/nextjs";
-import { getSession } from "@/lib/auth-server";
-import {
-  applyRateLimit,
-  verificationSubmitLimiter,
-} from "@/lib/rate-limit";
 export async function POST(req: NextRequest) {
   try {
     // Force-fresh (see documents route): revocation must bite immediately.
@@ -34,35 +41,25 @@ export async function POST(req: NextRequest) {
     );
     if (rateLimited) return rateLimited;
 
-    // Check if user is a consultant
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
       select: {
         role: true,
-        consultantProfile: {
-          select: {
-            id: true,
-            verificationStatus: true,
-          },
-        },
+        consultantProfile: { select: { id: true, verificationStatus: true } },
       },
     });
-
     if (user?.role !== UserRole.CONSULTANT) {
       return NextResponse.json(
         { error: "Only consultants can resubmit verification" },
         { status: 403 },
       );
     }
-
     if (!user.consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
         { status: 404 },
       );
     }
-
-    // Only allow resubmission if status is REJECTED
     if (
       user.consultantProfile.verificationStatus !==
       ConsultantVerificationStatus.REJECTED
@@ -73,72 +70,46 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = await req.json();
-    const parseResult = resubmitSchema.safeParse(body);
+    const raw: unknown = await req.json().catch(() => undefined);
+    const parseResult = resubmitSchema.safeParse(raw);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: "Invalid request body", details: parseResult.error.format() },
+        { error: "Invalid request body" },
         { status: 400 },
       );
     }
-    const { notes } = parseResult.data;
+    const { notes, documentIds } = parseResult.data;
 
-    // Get the most recent verification to link existing documents
-    const previousVerification =
-      await prisma.consultantProfileVerification.findFirst({
-        where: {
-          consultantProfileId: user.consultantProfile.id,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-        include: {
-          documents: true,
-        },
-      });
-
-    // Create new verification request
-    const newVerification = await prisma.consultantProfileVerification.create({
-      data: {
-        consultantProfileId: user.consultantProfile.id,
-        status: "PENDING",
-        notes: notes || "Resubmission after addressing feedback",
-        // Copy existing documents to the new verification request if any
-        documents: previousVerification?.documents
-          ? {
-              create: previousVerification.documents.map((doc) => ({
-                fileName: doc.fileName,
-                originalName: doc.originalName,
-                fileSize: doc.fileSize,
-                mimeType: doc.mimeType,
-                fileUrl: doc.fileUrl,
-                storagePath: doc.storagePath,
-                description: doc.description,
-                // Reset review status for documents
-                isValid: null,
-                staffFeedback: null,
-              })),
-            }
-          : undefined,
-      },
+    const outcome = await submitVerificationRequest({
+      userId: session.user.id,
+      consultantProfileId: user.consultantProfile.id,
+      notes: notes || "Resubmission after addressing feedback",
+      documentIds: documentIds ?? [],
+      carryOver: true,
+      adminDashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
     });
+    if (!outcome.ok) {
+      return NextResponse.json(
+        { error: outcome.message, code: outcome.code },
+        { status: SUBMIT_REFUSAL_STATUS[outcome.code] },
+      );
+    }
 
-    // Update consultant profile verification status to UNDER_REVIEW
-    await prisma.consultantProfile.update({
-      where: { id: user.consultantProfile.id },
-      data: {
-        verificationStatus: ConsultantVerificationStatus.UNDER_REVIEW,
-      },
-    });
+    // Admin bells were staged inside the submission transaction.
+    attemptBellsAfterResponse(outcome.staged);
 
     return NextResponse.json({
       success: true,
       message: "Verification resubmitted successfully",
-      verificationId: newVerification.id,
+      verificationId: outcome.verificationId,
+      round: outcome.round,
     });
   } catch (error) {
     console.error("Error resubmitting verification:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "verification" } },
+    );
     return NextResponse.json(
       { error: "Failed to resubmit verification" },
       { status: 500 },

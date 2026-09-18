@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { VerificationDocumentIssue } from "@prisma/client";
 
 export const ReviewVerificationSchema = z.object({
   status: z.enum(["APPROVED", "REJECTED", "NEEDS_INFO"]),
@@ -7,11 +8,19 @@ export const ReviewVerificationSchema = z.object({
   feedbackDetails: z.string().optional(),
   documentFeedback: z
     .array(
-      z.object({
-        documentId: z.string(),
-        isValid: z.boolean(),
-        staffFeedback: z.string().optional(),
-      }),
+      z
+        .object({
+          documentId: z.string(),
+          isValid: z.boolean(),
+          staffFeedback: z.string().optional(),
+          // A flagged document carries a reason code so the applicant knows
+          // what to fix (docs/onboarding/04-verification-lifecycle.md).
+          issue: z.nativeEnum(VerificationDocumentIssue).optional(),
+        })
+        .refine((d) => d.isValid || Boolean(d.issue), {
+          message: "Pick a reason for every document marked invalid",
+          path: ["issue"],
+        }),
     )
     .optional(),
 });
