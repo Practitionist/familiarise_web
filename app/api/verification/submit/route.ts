@@ -32,7 +32,11 @@ export async function POST(request: NextRequest) {
     );
     if (rateLimited) return rateLimited;
 
-    const parsed = VerificationSubmitSchema.safeParse(await request.json());
+    // A malformed or empty body is the caller's fault: answer the same
+    // generic 400 as a shape failure instead of letting the parser throw
+    // into the 500 path (review comment on #1698).
+    const raw: unknown = await request.json().catch(() => undefined);
+    const parsed = VerificationSubmitSchema.safeParse(raw);
     if (!parsed.success) {
       return NextResponse.json(
         { success: false, error: "Invalid request body" },
@@ -206,14 +210,9 @@ export async function POST(request: NextRequest) {
       { tags: { subsystem: "auth" } },
     );
     console.error("Verification submit error:", error);
+    // Generic on purpose: the message is Sentry's, not the client's.
     return NextResponse.json(
-      {
-        success: false,
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to submit verification",
-      },
+      { success: false, error: "Failed to submit verification" },
       { status: 500 },
     );
   }
