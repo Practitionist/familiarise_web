@@ -29,6 +29,10 @@ import { toPlain } from "@/lib/data/serialize";
 import type { TAppointment } from "@/types/appointment";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import {
+  recentWindowStart,
+  type ConsultantAppointmentsWindow,
+} from "@/lib/appointments/window";
 
 export interface GetConsultantAppointmentsArgs {
   type?: AppointmentsType;
@@ -53,6 +57,11 @@ export interface GetConsultantAppointmentsArgs {
   /// read spans every tenant when unfiltered, so the caller has to say which
   /// slice it means rather than inheriting one.
   scope: Scope;
+  /** #1703 B12 — "recent" (default) keeps rows with a live occurrence ending
+   * inside the last 12 months or in the future, plus unscheduled rows; "all"
+   * is the unbounded read behind the "Load older" control. Ignored when a
+   * date range or an event id already bounds the read. */
+  window?: ConsultantAppointmentsWindow;
 }
 
 /**
@@ -85,11 +94,33 @@ export async function getConsultantAppointments(
     endDate,
     eventIds,
     scope,
+    window = "recent",
   } = args;
 
   const whereClause: Prisma.AppointmentWhereInput = {
     ...scopeToWhereOrgId(scope),
   };
+
+  const eventScoped = Boolean(
+    eventIds?.webinarId ||
+    eventIds?.classId ||
+    eventIds?.consultationId ||
+    eventIds?.subscriptionId,
+  );
+  // #1703 B12 — the list had no bound at all, so a busy consultant's page
+  // grew with every year of history. Unscheduled rows stay: they are the
+  // ones that still need a decision — including rows whose only occurrences
+  // were released (soft-deleted) for a reschedule.
+  if (window === "recent" && !(startDate && endDate) && !eventScoped) {
+    whereClause.OR = [
+      {
+        occurrences: {
+          some: { deletedAt: null, endsAt: { gte: recentWindowStart() } },
+        },
+      },
+      { occurrences: { none: { deletedAt: null } } },
+    ];
+  }
 
   // Date range filtering for appointments. This is the primary filter.
   // It looks for appointments where any of its slots overlap with the given date range.

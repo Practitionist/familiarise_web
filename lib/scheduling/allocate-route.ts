@@ -22,6 +22,7 @@ import {
   allocationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
+import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import {
   requireApiAuth,
   authorizeEventAccess,
@@ -55,6 +56,10 @@ export async function handleAllocate(
   try {
     const authResult = await requireApiAuth();
     if (authResult.error) return authResult.error;
+
+    // Id shape before the authz read: no lookup on an arbitrary string.
+    const malformed = refuseMalformedEventId(eventId);
+    if (malformed) return malformed;
 
     // Verify caller is a participant (consultant or consultee) or ADMIN/STAFF
     const authzError = await authorizeEventAccess(

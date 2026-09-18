@@ -8,11 +8,13 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { HomeTab } from "./HomeTab";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
 
 export default function HomePageClient({
   consultantId,
-}: Readonly<{ consultantId: string }>) {
+  viewerZone,
+}: Readonly<{ consultantId: string; viewerZone: ViewerZone }>) {
   // The factory's staleTime (2 min) is deliberately NOT overridden here. This
   // used to force `staleTime: 0` under a comment about showing stale data
   // immediately, which is not what staleTime does: it marks the server-prefetched
@@ -83,6 +85,9 @@ export default function HomePageClient({
         appointments={dashboardData.appointments}
         consultantId={consultantId}
         pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
+        awaitingPayment={dashboardData.awaitingPayment}
+        orgSessions={dashboardData.orgSessions}
+        viewerZone={viewerZone}
         performanceSnapshot={dashboardData.performanceSnapshot}
         financialSummary={dashboardData.financialSummary}
       />
