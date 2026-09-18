@@ -114,6 +114,8 @@ async function swap(): Promise<void> {
 // log names the target without echoing any part of the secret (Sonar S8689).
 const KNOWN_DATABASE_HOSTS: Record<string, string> = {
   "db.pzmbxqdgibfkhjwzeprf.supabase.co": "familiarise (SHARED dev + prod)",
+  "aws-0-ap-south-1.pooler.supabase.com:6543":
+    "familiarise via the transaction pooler (SHARED dev + prod)",
 };
 
 function describeTargetDatabase(databaseUrl: string): string {

@@ -1,3 +1,6 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import https from "node:https";
 /**
  * Real-API chaos harness (#837 — chaos categories 07-09).
  *
@@ -52,8 +55,7 @@ const SESSION_CACHE_FILE = require("node:path").join(
 
 function readSessionCache(): Record<string, string> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return JSON.parse(require("node:fs").readFileSync(SESSION_CACHE_FILE, "utf-8"));
+    return JSON.parse(readFileSync(SESSION_CACHE_FILE, "utf-8"));
   } catch {
     return {};
   }
@@ -61,14 +63,53 @@ function readSessionCache(): Record<string, string> {
 
 function writeSessionCache(cache: Record<string, string>): void {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    require("node:fs").writeFileSync(SESSION_CACHE_FILE, JSON.stringify(cache));
+    writeFileSync(SESSION_CACHE_FILE, JSON.stringify(cache));
   } catch {
     // best-effort — cache misses just cost a login
   }
 }
 
 /** Sign in as a seeded user and return the session cookie header value. */
+interface RawResponse {
+  status: number;
+  body: string;
+  setCookies: string[];
+}
+
+/** POST JSON with an `Origin` header that survives — `fetch` silently strips it. */
+function postWithOrigin(
+  url: string,
+  payload: Record<string, string>,
+): Promise<RawResponse> {
+  const target = new URL(url);
+  const transport = target.protocol === "https:" ? https : http;
+  return new Promise((resolve, reject) => {
+    const req = transport.request(
+      target,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Origin: BASE_URL },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        res.on("end", () => {
+          const raw = res.headers["set-cookie"];
+          resolve({
+            status: res.statusCode ?? 0,
+            body,
+            setCookies: Array.isArray(raw) ? raw : raw ? [raw] : [],
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end(JSON.stringify(payload));
+  });
+}
+
 export async function loginAs(email: string): Promise<Session> {
   const cache = readSessionCache();
   const cached = cache[email];
@@ -82,18 +123,16 @@ export async function loginAs(email: string): Promise<Session> {
     }
   }
 
-  const res = await fetch(`${BASE_URL}/api/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", origin: BASE_URL },
-    body: JSON.stringify({ email, password: SEED_PASSWORD }),
+  // Node's fetch drops `Origin` (a forbidden request header under the Fetch
+  // spec), so a deployed target answers 403 INVALID_ORIGIN; the raw client keeps it.
+  const res = await postWithOrigin(`${BASE_URL}/api/auth/sign-in/email`, {
+    email,
+    password: SEED_PASSWORD,
   });
-  if (!res.ok) {
-    throw new Error(`login ${email} failed: ${res.status} ${await res.text()}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`login ${email} failed: ${res.status} ${res.body}`);
   }
-  const cookie = res.headers
-    .getSetCookie()
-    .map((c) => c.split(";")[0])
-    .join("; ");
+  const cookie = res.setCookies.map((c) => c.split(";")[0]).join("; ");
   cache[email] = cookie;
   writeSessionCache(cache);
   return { cookie, email };
