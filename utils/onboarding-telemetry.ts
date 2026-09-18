@@ -24,6 +24,7 @@ export function trackOnboardingEvent(
     | "submit_error"
     | "verification_deferred"
     | "invite_bypassed"
+    | "invite_check_skipped"
     | "pending_invite_at_submit"
     | "identity_added",
   data?: Record<string, string | number | boolean | null>,
