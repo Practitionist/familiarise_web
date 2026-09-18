@@ -132,19 +132,6 @@ function eventTypeLabel(eventType: UnifiedCalendarProps["eventType"]): string {
   }
 }
 
-/**
- * A published interval that resolves to `unavailable` still says why: it is
- * either gone (past) or outside the scheduling period. An unpublished one
- * carries no word at all.
- */
-function unavailableLabel(
-  isPublished: boolean,
-  isOutsidePeriod: boolean,
-): string {
-  if (!isPublished) return "";
-  return isOutsidePeriod ? "Outside Period" : "Past";
-}
-
 /** "Unavailable · 00:00–09:00", the strip a folded band collapses to. */
 function bandLabel(segment: RowSegment): string {
   const at = (row: number) =>
@@ -1095,17 +1082,16 @@ export function UnifiedCalendar({
         isRescheduling: isCurrentEventTentative,
         isBookedForDisplay: status.isBookedForDisplay,
         isPartiallyBooked: status.isPartiallyBooked,
-        // Outside the scheduling period the interval is real but never
-        // bookable — muted like a past slot, not green (#1064).
-        isAvailable: status.isAvailable && !isOutsideAllowedRange,
+        isAvailable: status.isAvailable,
+        // Typed, not forced into `unavailable`: the token carries the hatch
+        // and the legend row (#1703 F4).
+        isOutsidePeriod: isOutsideAllowedRange,
         isInPast: status.isInPast,
       });
 
       let label = SLOT_STATUS_TOKENS[statusKey].label;
       if (statusKey === "thisEvent" && status.isInPast) label = "Past session";
-      if (statusKey === "unavailable") {
-        label = unavailableLabel(status.isAvailable, isOutsideAllowedRange);
-      }
+      if (statusKey === "unavailable") label = "";
 
       return {
         status,
@@ -1312,16 +1298,13 @@ export function UnifiedCalendar({
           cellClassName += " cursor-pointer";
           if (eventType === "consultation") cellClassName += " hover:shadow-md";
           break;
+        case "past":
+        case "outsidePeriod":
+          // Still clickable: the toast says why nothing happens.
+          cellClassName += " cursor-pointer";
+          break;
         case "unavailable":
-          // A published-but-dead interval (past, or outside the period) is
-          // still clickable because the toast explains why; an unpublished
-          // one is not.
-          if (status.isAvailable) {
-            cellClassName += " cursor-pointer";
-          } else {
-            cellClassName += " cursor-not-allowed";
-            cellClassName += status.isInPast ? " opacity-70" : "";
-          }
+          cellClassName += " cursor-not-allowed";
           break;
       }
 

@@ -8,6 +8,7 @@ import { SlotStatusLegend } from "./SlotStatusLegend";
 import {
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
+  type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
 
@@ -35,8 +36,12 @@ const UnifiedCalendar = dynamic(
 export function SafeUnifiedCalendar({
   className,
   legendPosition = "top",
+  legendKeys,
   ...props
 }: UnifiedCalendarProps & {
+  /** The rows the legend shows; defaults by mode. `consultantLegendKeys`
+   * trims the consultant set to what the surface can paint (#1703 F4). */
+  legendKeys?: SlotStatusKey[];
   /**
    * Where the legend renders. Above the grid by default: a key you can only
    * reach by scrolling past the thing it explains is backwards, and on a
@@ -50,9 +55,10 @@ export function SafeUnifiedCalendar({
   const legend = (
     <SlotStatusLegend
       keys={
-        (props.showConsultantLegend ?? props.mode === "allocate")
+        legendKeys ??
+        ((props.showConsultantLegend ?? props.mode === "allocate")
           ? CONSULTANT_LEGEND_KEYS
-          : BUYER_LEGEND_KEYS
+          : BUYER_LEGEND_KEYS)
       }
       className="shrink-0"
     />
@@ -74,9 +80,7 @@ export function SafeUnifiedCalendar({
         <UnifiedCalendar
           {...props}
           className="min-h-0 flex-1"
-          aboveActionsSlot={
-            legendPosition === "bottom" ? legend : undefined
-          }
+          aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
         />
       </div>
     </CalendarErrorBoundary>

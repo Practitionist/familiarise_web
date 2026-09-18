@@ -15,6 +15,7 @@ import {
   SLOT_STATUS_TOKENS,
   BUYER_LEGEND_KEYS,
   CONSULTANT_LEGEND_KEYS,
+  consultantLegendKeys,
   resolveSlotStatusKey,
   slotCellClassName,
   type SlotStatusKey,
@@ -24,10 +25,20 @@ const KEYS = Object.keys(SLOT_STATUS_TOKENS) as SlotStatusKey[];
 
 const classesOf = (value: string) => value.split(/\s+/).filter(Boolean);
 
+/** Border STYLE utilities are a pattern cue, not a colour (#1703 F4). */
+const BORDER_STYLES = new Set([
+  "border-dashed",
+  "border-solid",
+  "border-dotted",
+]);
+
 /** Every colour utility on an element, ignoring variants like `hover:`. */
 const colourUtilities = (value: string, prefix: string) =>
   classesOf(value).filter(
-    (name) => !name.includes(":") && name.startsWith(prefix),
+    (name) =>
+      !name.includes(":") &&
+      name.startsWith(prefix) &&
+      !BORDER_STYLES.has(name),
   );
 
 describe("slot palette — cells and legend render the same colours", () => {
@@ -155,6 +166,41 @@ describe("slot palette — unavailable is flat and off the legend", () => {
   });
 });
 
+describe("slot palette — the two amber states are told apart without a hue", () => {
+  it("rescheduling carries a dashed border on cell and swatch alike", () => {
+    expect(classesOf(slotCellClassName("rescheduling"))).toContain(
+      "border-dashed",
+    );
+    expect(
+      classesOf(SLOT_STATUS_TOKENS.rescheduling.swatchClassName),
+    ).toContain("border-dashed");
+    expect(classesOf(slotCellClassName("partiallyBooked"))).not.toContain(
+      "border-dashed",
+    );
+  });
+
+  it("past and outside-period are hatched at different angles, no new hue", () => {
+    expect(SLOT_STATUS_TOKENS.past.fill).toMatch(
+      /repeating-linear-gradient\(135deg/,
+    );
+    expect(SLOT_STATUS_TOKENS.outsidePeriod.fill).toMatch(
+      /repeating-linear-gradient\(45deg/,
+    );
+    expect(
+      consultantLegendKeys({ hasEventSlots: false, hasPeriod: false }),
+    ).toEqual([
+      "available",
+      "selected",
+      "partiallyBooked",
+      "fullyBooked",
+      "past",
+    ]);
+    expect(
+      consultantLegendKeys({ hasEventSlots: true, hasPeriod: true }).length,
+    ).toBe(8);
+  });
+});
+
 describe("slot palette — the grid resolves states through the tokens", () => {
   const flags = {
     isSelected: false,
@@ -173,7 +219,14 @@ describe("slot palette — the grid resolves states through the tokens", () => {
     ["fullyBooked" as const, { isBookedForDisplay: true }],
     ["partiallyBooked" as const, { isPartiallyBooked: true }],
     ["available" as const, { isAvailable: true }],
-    ["unavailable" as const, { isAvailable: true, isInPast: true }],
+    ["past" as const, { isAvailable: true, isInPast: true }],
+    ["outsidePeriod" as const, { isAvailable: true, isOutsidePeriod: true }],
+    // Gone is gone, whatever the window.
+    [
+      "past" as const,
+      { isAvailable: true, isOutsidePeriod: true, isInPast: true },
+    ],
+    ["unavailable" as const, { isOutsidePeriod: true }],
     ["unavailable" as const, {}],
   ])("resolves to %s", (expected, overrides) => {
     expect(resolveSlotStatusKey({ ...flags, ...overrides })).toBe(expected);

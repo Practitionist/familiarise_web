@@ -27,6 +27,7 @@ import {
   resolveFocusTarget,
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
+import { consultantLegendKeys } from "@/lib/scheduling/interval-status-tokens";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -199,6 +200,17 @@ export function TimePicker({
   };
 
   const isSelectMode = policy.calendarMode === "select";
+  const showConsultantLegend =
+    policy.kind === "RESCHEDULE_CONSULTANT" ||
+    policy.kind === "MANAGE_TIMINGS" ||
+    policy.kind === "ALLOCATE";
+  // Only the rows this surface can paint (#1703 F4).
+  const legendKeys = showConsultantLegend
+    ? consultantLegendKeys({
+        hasEventSlots: sessions.length > 0,
+        hasPeriod: Boolean(subject.allowedStart || subject.allowedEnd),
+      })
+    : undefined;
 
   return (
     <DesktopOnlyNotice className={cn("min-h-0 gap-4", className)}>
@@ -251,11 +263,8 @@ export function TimePicker({
         // Consultant surfaces (allocate / manage timings / propose) paint
         // Selected / Being moved / This booking. Consultee reschedule stays
         // on the buyer legend even when eventId is set for status-grid paint.
-        showConsultantLegend={
-          policy.kind === "RESCHEDULE_CONSULTANT" ||
-          policy.kind === "MANAGE_TIMINGS" ||
-          policy.kind === "ALLOCATE"
-        }
+        showConsultantLegend={showConsultantLegend}
+        legendKeys={legendKeys}
         sessionDurationInHours={subject.sessionDurationInHours}
         durationInHours={subject.durationInHours}
         sessionsPerWeek={subject.sessionsPerWeek}

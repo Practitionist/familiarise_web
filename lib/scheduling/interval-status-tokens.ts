@@ -27,7 +27,20 @@ export type SlotStatusKey =
   | "selected"
   | "thisEvent"
   | "rescheduling"
+  | "outsidePeriod"
+  | "past"
   | "unavailable";
+
+/**
+ * Hatched fills for the two "real but not bookable" states (#1703 F4). A
+ * texture, not a new hue: the palette is locked (#1064) and a stripe reads in
+ * grayscale and forced-colours where a fifth tint would not. Two angles so
+ * "gone" and "outside the period" stay apart from each other.
+ */
+const HATCH_45 =
+  "bg-[repeating-linear-gradient(45deg,theme(colors.slate.300)_0_2px,transparent_2px_7px)]";
+const HATCH_135 =
+  "bg-[repeating-linear-gradient(135deg,theme(colors.slate.300)_0_2px,transparent_2px_7px)]";
 
 /** The hand-authored half of a token: one colour per state, written once. */
 interface SlotStatusPaint {
@@ -42,6 +55,8 @@ interface SlotStatusPaint {
   text: string;
   /** Cells only, and only where the cell does something when clicked. */
   hover?: string;
+  /** A non-colour cue shared by cell and swatch, e.g. a dashed border. */
+  pattern?: string;
 }
 
 export interface SlotStatusToken {
@@ -57,6 +72,8 @@ export interface SlotStatusToken {
   className: string;
   /** Legend swatch — the cell's own fill and border at 12px. */
   swatchClassName: string;
+  /** The non-colour cue, if the state has one. */
+  pattern?: string;
 }
 
 const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
@@ -115,6 +132,22 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
     border: "border-amber-500",
     text: "text-amber-950",
     hover: "hover:bg-amber-500",
+    // Dashed so it no longer reads as `partiallyBooked`, which is amber too.
+    pattern: "border-dashed",
+  },
+  outsidePeriod: {
+    label: "Outside period",
+    hint: "Inside your hours but outside this booking's scheduling period.",
+    fill: HATCH_45,
+    border: "border-slate-300",
+    text: "text-slate-600",
+  },
+  past: {
+    label: "Past",
+    hint: "Already gone; shown so the day reads whole.",
+    fill: HATCH_135,
+    border: "border-transparent",
+    text: "text-slate-400",
   },
   unavailable: {
     label: "Unavailable",
@@ -138,12 +171,21 @@ export const SLOT_STATUS_TOKENS: Record<SlotStatusKey, SlotStatusToken> = (
       hint: paint.hint,
       fill: paint.fill,
       border: paint.border,
-      className: [paint.fill, paint.text, paint.border, paint.hover]
+      className: [
+        paint.fill,
+        paint.text,
+        paint.border,
+        paint.hover,
+        paint.pattern,
+      ]
         .filter(Boolean)
         .join(" "),
-      // Same fill, same border, no text colour and no hover: a swatch is a
-      // 12px block, not a control.
-      swatchClassName: `${paint.fill} ${paint.border}`,
+      // Same fill, same border, same pattern, no text colour and no hover: a
+      // swatch is a 12px block, not a control.
+      swatchClassName: [paint.fill, paint.border, paint.pattern]
+        .filter(Boolean)
+        .join(" "),
+      pattern: paint.pattern,
     };
     return tokens;
   },
@@ -205,6 +247,8 @@ export interface SlotVisualFlags {
   isBookedForDisplay: boolean;
   isPartiallyBooked: boolean;
   isAvailable: boolean;
+  /** Published, but outside the booking's scheduling period (#1703 F4). */
+  isOutsidePeriod?: boolean;
   isInPast: boolean;
 }
 
@@ -215,9 +259,10 @@ export interface SlotVisualFlags {
  * two different palettes in the first place (#1064; reverted attempt
  * 49973623/6b78274e).
  *
- * A past-but-available slot resolves to `unavailable`: it is a real interval,
- * just no longer bookable, and the muted palette says that without inventing
- * a fifth colour family.
+ * A published interval that is gone resolves to `past`, and one outside the
+ * scheduling period to `outsidePeriod` (#1703 F4) — both real intervals,
+ * neither bookable, and neither the flat `unavailable` an unpublished hour
+ * gets. Past wins over outside-period: gone is gone whatever the window.
  */
 export function resolveSlotStatusKey(flags: SlotVisualFlags): SlotStatusKey {
   if (flags.isSelected) return "selected";
@@ -225,8 +270,10 @@ export function resolveSlotStatusKey(flags: SlotVisualFlags): SlotStatusKey {
   if (flags.isRescheduling) return "rescheduling";
   if (flags.isBookedForDisplay) return "fullyBooked";
   if (flags.isPartiallyBooked) return "partiallyBooked";
-  if (flags.isAvailable) return flags.isInPast ? "unavailable" : "available";
-  return "unavailable";
+  if (!flags.isAvailable) return "unavailable";
+  if (flags.isInPast) return "past";
+  if (flags.isOutsidePeriod) return "outsidePeriod";
+  return "available";
 }
 
 /**
@@ -247,4 +294,29 @@ export const CONSULTANT_LEGEND_KEYS: SlotStatusKey[] = [
   "fullyBooked",
   "thisEvent",
   "rescheduling",
+  "outsidePeriod",
+  "past",
 ];
+
+/**
+ * The consultant legend trimmed to what THIS surface can paint (#1703 F4):
+ * `thisEvent`/`rescheduling` only exist once the booking has sessions, and
+ * `outsidePeriod` only when there is a scheduling period. A fresh allocation
+ * reads six rows; a subscription reschedule is the one case that reads eight.
+ */
+export function consultantLegendKeys(surface: {
+  hasEventSlots: boolean;
+  hasPeriod: boolean;
+}): SlotStatusKey[] {
+  return CONSULTANT_LEGEND_KEYS.filter((key) => {
+    switch (key) {
+      case "thisEvent":
+      case "rescheduling":
+        return surface.hasEventSlots;
+      case "outsidePeriod":
+        return surface.hasPeriod;
+      default:
+        return true;
+    }
+  });
+}
