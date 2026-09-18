@@ -93,6 +93,8 @@ describe("manual allocation with initialAllocation", () => {
 
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
+    // The one 409 that may close the dialog and drop the row.
+    expect(result.errorCode).toBe("ALREADY_ALLOCATED");
     expect(result.error).toContain("already allocated in another session");
     // The guard fires before any event data is fetched or written.
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();

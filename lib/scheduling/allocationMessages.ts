@@ -328,6 +328,18 @@ const ALLOCATION_ERROR_TOASTS: Record<
     title: "Request changed — please reload",
     variant: "destructive",
   },
+  RESCHEDULE_STATE_CHANGED: {
+    title: "Request changed — please reload",
+    variant: "destructive",
+  },
+  SLOT_TAKEN: {
+    title: "That time was just taken — pick another",
+    variant: "destructive",
+  },
+  LOCK_CONTENTION: {
+    title: "Another change is in progress — retry in a moment",
+    variant: "destructive",
+  },
 };
 
 /** Shared 429 copy: every limiter answers it, every surface renders it. */
@@ -374,11 +386,6 @@ export const invalidEventId = (): AllocationToast => ({
 export const preservedMessages: readonly RegExp[] = [
   /slot already booked/i,
   /slot taken during allocation/i,
-  // Audit gap #11 — a #1012 stale-tab reschedule precondition was being
-  // mislabeled "Already allocated" because it wasn't in this list. It means
-  // the tentative count changed (another tab finished/started the
-  // reschedule), NOT that the event was allocated elsewhere.
-  /reschedule state changed in another session/i,
 ];
 
 export const isPreservedAllocationMessage = (message: string): boolean =>

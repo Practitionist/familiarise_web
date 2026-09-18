@@ -615,25 +615,25 @@ export function useEventSlotAllocation(
       return "key-reset";
     }
     if (result.httpStatus !== 409) return "generic";
-    if (result.errorCode === "COLLABORATOR_UNAVAILABLE") {
-      return "stay-open-refresh";
+    // 409s branch on the server's code, never on its wording. Only a
+    // genuine ALREADY_ALLOCATED removes the row; any code this switch does
+    // not know keeps the dialog open with a refetch, because closing and
+    // dropping an allocatable request strands it (M5).
+    switch (result.errorCode) {
+      case "ALREADY_ALLOCATED":
+        return "allocated-elsewhere";
+      case "ILLEGAL_TRANSITION":
+      case "RESCHEDULE_STATE_CHANGED":
+        return "request-changed";
+      case "SLOT_TAKEN":
+        return "stay-open-raw-refresh";
+      case "COLLABORATOR_UNAVAILABLE":
+      case "LOCK_CONTENTION":
+      default:
+        return isPreservedAllocationMessage(errorMessage)
+          ? "stay-open-raw-refresh"
+          : "stay-open-refresh";
     }
-    if (
-      result.errorCode === "ILLEGAL_TRANSITION" ||
-      /reschedule state changed in another session/i.test(errorMessage)
-    ) {
-      return "request-changed";
-    }
-    if (isPreservedAllocationMessage(errorMessage)) {
-      return "stay-open-raw-refresh";
-    }
-    if (
-      result.errorCode === "LOCK_CONTENTION" &&
-      !/already allocated in another session/i.test(errorMessage)
-    ) {
-      return "stay-open-refresh";
-    }
-    return "allocated-elsewhere";
   }
 
   const handleAllocationFailure = useCallback(
@@ -662,10 +662,10 @@ export function useEventSlotAllocation(
           onStaleData?.();
           break;
         case "stay-open-raw-refresh":
-          // Slot conflict — the dialog stays open and refetches, so the
-          // retry is picked against the grid that now shows the taken
-          // slot (#1132).
-          toast(allocationFailed(errorMessage));
+          // Slot conflict — the server's wording names the taken time, so
+          // it rides as the description under the code's title; the dialog
+          // stays open and refetches so the retry sees the taken slot (#1132).
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
           onStaleData?.();
           break;
         case "key-reset":

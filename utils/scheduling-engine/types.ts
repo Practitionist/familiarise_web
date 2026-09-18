@@ -172,7 +172,10 @@ export type AllocationErrorCode =
   | "VALIDATION_ERROR" // bad input from caller — 400
   | "NOT_FOUND" // event/consultant missing — 400
   | "INVALID_MODE" // unknown allocation mode — 400
-  | "LOCK_CONTENTION" // Redis lock busy — 409
+  | "LOCK_CONTENTION" // Redis lock busy / replay in flight — 409
+  | "ALREADY_ALLOCATED" // confirmed slots already exist for this event — 409
+  | "RESCHEDULE_STATE_CHANGED" // #1012 stale-tab tentative count moved — 409
+  | "SLOT_TAKEN" // a chosen time went to someone else mid-allocation — 409
   | "IDEMPOTENCY_KEY_REUSE" // same Idempotency-Key, different payload — 422
   | "ILLEGAL_TRANSITION" // event left the approvable state mid-allocation (#836) — 409
   | "PROGRAM_CAP_EXHAUSTED" // org's per-cycle overage ceiling vetoed it — 402

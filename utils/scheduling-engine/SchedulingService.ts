@@ -826,6 +826,7 @@ export class SchedulingService {
       throw new AllocationConflictError(
         `This ${eventType} was already allocated in another session ` +
           `(${confirmed} confirmed slot(s) exist).`,
+        "ALREADY_ALLOCATED",
       );
     }
   }
@@ -846,6 +847,7 @@ export class SchedulingService {
         `Reschedule state changed in another session ` +
           `(expected ${expected} tentative slot(s), found ${actual}). ` +
           `Reload and try again.`,
+        "RESCHEDULE_STATE_CHANGED",
       );
     }
   }
@@ -1484,6 +1486,7 @@ export class SchedulingService {
           ) {
             throw new AllocationConflictError(
               `Event is already fully allocated with ${existingNonTentativeSlotCount} confirmed slot(s).`,
+              "ALREADY_ALLOCATED",
             );
           }
           // For in-progress: only block if future slots alone meet the future requirement
@@ -1494,6 +1497,7 @@ export class SchedulingService {
           ) {
             throw new AllocationConflictError(
               `Event's future slots are already fully allocated (${futureNonTentativeSlotCount} future slot(s), ${pastConfirmedSlotCount} past).`,
+              "ALREADY_ALLOCATED",
             );
           }
         }
@@ -1672,6 +1676,7 @@ export class SchedulingService {
           if (!recheck.isValid) {
             throw new AllocationConflictError(
               `Slot taken during allocation: ${recheck.errors.join("; ")}`,
+              "SLOT_TAKEN",
             );
           }
 
@@ -2177,6 +2182,7 @@ export class SchedulingService {
           if (!recheck.isValid) {
             throw new AllocationConflictError(
               `Slot taken during allocation: ${recheck.errors.join("; ")}`,
+              "SLOT_TAKEN",
             );
           }
 
@@ -3843,6 +3849,7 @@ export class SchedulingService {
         // "someone else got there first" race, not a fault.
         throw new AllocationConflictError(
           "This time slot was just booked by someone else. Please pick another time.",
+          "SLOT_TAKEN",
         );
       }
       throw error;

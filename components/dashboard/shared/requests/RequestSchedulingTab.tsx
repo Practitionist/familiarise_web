@@ -122,16 +122,16 @@ function classifyRequestedConflict(result: {
   errorCode?: string;
 }): "genuine-conflict" | "stale" | "stay-open" | null {
   if (result.success || result.httpStatus !== 409) return null;
-  if (/reschedule state changed in another session/i.test(result.error ?? "")) {
-    return "stale";
+  switch (result.errorCode) {
+    case "ALREADY_ALLOCATED":
+      return "genuine-conflict";
+    case "RESCHEDULE_STATE_CHANGED":
+      return "stale";
+    default:
+      // Co-host clash, illegal transition, slot taken, lock busy, or a code
+      // this switch does not know: the request is still allocatable.
+      return "stay-open";
   }
-  if (
-    result.errorCode === "COLLABORATOR_UNAVAILABLE" ||
-    result.errorCode === "ILLEGAL_TRANSITION"
-  ) {
-    return "stay-open";
-  }
-  return "genuine-conflict";
 }
 
 type RequestType = "all" | "consultation" | "subscription";
