@@ -119,16 +119,19 @@ parameters into a strong ETag:
    of those rows. The count is what catches a deletion: removing an older row
    leaves the maximum timestamp untouched, and without the count the grid
    would answer 304 for a calendar that just lost a window.
-3. The maximum `AppointmentOccurrence.updatedAt` over the appointments that reach
-   this consultant. Reachability is the union of the denormalized
-   `consultantProfileId` (#440), the `user` edge to the consultant, and — when
-   the request names one — the `user` edge to the consultee. The allocator
-   stamps both keys on every slot it writes, so this set is the same set the
-   occupancy query paints from.
+3. The maximum `AppointmentOccurrence.updatedAt` over the occurrence rows that
+   overlap the requested window and belong to an appointment that reaches this
+   consultant, together with the count of those rows. Reachability is the same
+   set the occupancy query paints from: the denormalized `consultantProfileId`
+   (#440), the consultant's own seat, the consultee's seat when the request
+   names one, ownership through one of the consultant's plans, and an ACCEPTED
+   co-host seat; every candidate must also own at least one occurrence that
+   overlaps the window. The count is what catches a reschedule that moves a run
+   out of the window in place, because the maximum over the survivors does not
+   move (#1697 item 1).
 4. The maximum `updatedAt` over the parent request rows of those same
-   appointments, plus the request rows belonging to the consultant's own plans.
-   This is what catches a status flip that starts or stops occupying a cell
-   without rewriting the slot.
+   appointments. This is what catches a status flip that starts or stops
+   occupying a cell without rewriting the slot.
 5. The maximum `Payment.updatedAt` over those same appointments, so a capture
    that flips a payment without rewriting the slot or the request still moves
    the tag.
@@ -150,10 +153,14 @@ subquery, the minimum moves to the next hold or to null, and the ETag changes.
 
 Two things, both deliberate, and both in the safe direction.
 
-The marker is conservative rather than exact. It is scoped to a consultant, not
-to the requested window, so an edit to a booking six months away invalidates
-this week's grid. That costs one unnecessary recompute; it can never serve a
-stale 304.
+The marker is conservative rather than exact. As of #1697 it is scoped to the
+requested window as well as to the consultant, because the consultant-only
+scope turned one booking into a simultaneous full-grid re-demand from every
+open calendar for that consultant, all serialised on a pool of one. An edit to
+a booking in another week now leaves this week's tag alone; an edit inside the
+window still recomputes even when the changed cell is not painted. The
+availability and co-host arms remain consultant-wide, because a weekly row or
+a seat can change what any window paints.
 
 Authorization is not in the marker at all, and does not need to be. The route
 computes the ETag **after** its permission gates, so a caller who has lost org

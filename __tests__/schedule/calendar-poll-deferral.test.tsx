@@ -21,6 +21,13 @@ jest.mock("../../lib/scheduling/allocationService", () => ({
   },
 }));
 
+// The hook jitters its cadence by ±10–15 s (#1697); these pins are about the
+// exact tick, so the offset is pinned to zero here.
+jest.mock("../../lib/scheduling/availabilityPolling", () => ({
+  ...jest.requireActual("../../lib/scheduling/availabilityPolling"),
+  availabilityPollJitterMs: () => 0,
+}));
+
 // ONE toast function for the life of the module — a fresh `jest.fn()` per call
 // would change `toast`'s identity every render, and `toast` is a dependency of
 // the fetch callback both effects key on (the React #185 loop, in a harness).

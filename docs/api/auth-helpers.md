@@ -19,6 +19,8 @@ export async function GET() {
 }
 ```
 
+The error it returns has three shapes, and the status is the contract (#1716). A `401` means Better Auth found no session: no cookie, an expired row, or a row that is gone. A `403` means the account is suspended. A `503` with `code: "SESSION_LOOKUP_FAILED"` and a `Retry-After` header means the lookup itself did not complete — a cold-instance stall or a database fault on a cookie that may well be valid — and the client should retry rather than send the user to sign-in. The distinction is made in `lib/auth-session-lookup.ts`, because the `customSession` plugin swallows the adapter's rejection into `null`; a null with a session cookie present is settled by one indexed read of the `Session` row. The page guards in `lib/auth-guard.ts` make the same distinction and throw `SessionLookupFailedError` to the nearest error boundary instead of clearing the cookie.
+
 ## `requireAdminAuth()`
 
 > **Strict ADMIN only.** STAFF gets 403.

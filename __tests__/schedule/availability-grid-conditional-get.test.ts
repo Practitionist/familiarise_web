@@ -50,6 +50,8 @@ function marker(overrides: Record<string, Date | number | null> = {}) {
       availabilityRowCount: 3,
       paymentsUpdatedAt: null,
       slotsUpdatedAt: new Date("2026-09-02T09:00:00.000Z"),
+      slotRowCount: 2,
+      collaboratorsUpdatedAt: null,
       requestsUpdatedAt: new Date("2026-09-02T08:00:00.000Z"),
       nextHoldExpiry: null,
       ...overrides,
@@ -120,6 +122,54 @@ describe("availability grid conditional GET", () => {
     expect(second.status).toBe(200);
     expect(second.headers.get("ETag")).not.toBe(etag);
     expect(mockedAppointments).toHaveBeenCalled();
+  });
+
+  it("answers 200 when a slot row left the window — count moved, timestamps equal (#1697)", async () => {
+    const first = await GET(request(), { params });
+    const etag = first.headers.get("ETag") as string;
+
+    // The marker is scoped to the requested window, so the window bounds
+    // reach the statement and a run rescheduled out of it only drops the count.
+    const [, ...args] = mockedMarker.mock.calls[0] as unknown[];
+    expect(args).toEqual(
+      expect.arrayContaining([
+        new Date("2026-09-07T00:00:00.000Z"),
+        new Date("2026-09-14T00:00:00.000Z"),
+      ]),
+    );
+    mockedMarker.mockResolvedValue(marker({ slotRowCount: 1 }));
+
+    const second = await GET(request(etag), { params });
+    expect(second.status).toBe(200);
+    expect(second.headers.get("ETag")).not.toBe(etag);
+  });
+
+  it("reads the session fresh for the privileged detail shape and cookie-cached for busy/free (#1697 item 4)", async () => {
+    const { getSession } = jest.requireMock("../../lib/auth-server");
+    await GET(
+      new NextRequest(`${URL_BASE}?${QUERY}&includeAppointmentDetails=true`),
+      { params },
+    );
+    expect(getSession).toHaveBeenLastCalledWith(true);
+    await GET(new NextRequest(`${URL_BASE}?${QUERY}&consulteeUserId=u-1`), {
+      params,
+    });
+    expect(getSession).toHaveBeenLastCalledWith();
+  });
+
+  it("refuses a window wider than 31 days with WINDOW_TOO_WIDE (supersedes #1577)", async () => {
+    const res = await GET(
+      new NextRequest(
+        `${URL_BASE}?startDateInUtc=2026-09-01T00:00:00.000Z&endDateInUtc=2026-10-31T00:00:00.000Z&timezone=UTC`,
+      ),
+      { params },
+    );
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "WINDOW_TOO_WIDE",
+      maxWindowDays: 31,
+    });
+    expect(mockedMarker).not.toHaveBeenCalled();
   });
 
   it("answers 200 when only the clock fold moved — a hold lapsed with no write", async () => {

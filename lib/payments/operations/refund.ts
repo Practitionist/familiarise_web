@@ -143,6 +143,12 @@ export class RefundGatewayError extends Error {
     message: string,
     public code: string,
     public refundRowId: string,
+    /**
+     * The gateway's own code when it answered with one (FAMILIARISE_WEB-3K:
+     * `NO_PAYMENT_FOUND` — the order never captured, so no retry will move
+     * money); undefined for a transport fault.
+     */
+    public gatewayCode?: string,
   ) {
     super(message);
     this.name = "RefundGatewayError";
@@ -444,6 +450,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       `Gateway refund failed for payment ${input.paymentId}: ${err instanceof Error ? err.message : String(err)}`,
       "GATEWAY_REFUND_FAILED",
       reserved.id,
+      err instanceof RefundError ? err.code : undefined,
     );
   }
 

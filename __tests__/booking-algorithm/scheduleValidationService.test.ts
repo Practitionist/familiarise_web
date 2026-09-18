@@ -15,6 +15,7 @@
  * - slotDurationMinutes fix verification
  */
 
+import { describeConflict } from "@/lib/booking/validate-conflict-view";
 import "./setup";
 
 jest.mock("../../lib/prisma", () => ({
@@ -118,8 +119,7 @@ const customConsultant = makeConsultantData({
 function reachOrOf(call: {
   where: Prisma.AppointmentWhereInput;
 }): Prisma.AppointmentWhereInput[] | undefined {
-  const andClauses = (call.where.AND ??
-    []) as Prisma.AppointmentWhereInput[];
+  const andClauses = (call.where.AND ?? []) as Prisma.AppointmentWhereInput[];
   const reach = andClauses
     .filter((clause) => Array.isArray(clause.OR))
     .find((clause) =>
@@ -160,6 +160,104 @@ describe("checkSlotAvailability", () => {
     const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("already booked");
+  });
+
+  it("carries the conflicting booking and its other party beside the string (#1721)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "existing-apt",
+        occurrences: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestedBy: { user: { id: "user-9", name: "Existing User" } },
+        },
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    expect(result.conflicts).toEqual([
+      {
+        slot: slots[0].toISOString().slice(0, 19),
+        appointmentId: "existing-apt",
+        type: "Consultation",
+        otherParty: { userId: "user-9", name: "Existing User" },
+        title: null,
+      },
+    ]);
+    // The event's consultant sees who; anyone else keeps "Another user".
+    const detail = result.conflicts?.[0];
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: true },
+        "Consultation",
+      ).existingAppointment,
+    ).toMatchObject({ with: "Existing User", appointmentId: "existing-apt" });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: false },
+        "Consultation",
+      ).existingAppointment,
+    ).toEqual({
+      type: "Consultation",
+      with: "Another user",
+      time: expect.any(String),
+    });
+  });
+
+  it("names a conflicting class by its plan title for the event's consultant (#1721 QA)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "class-apt",
+        occurrences: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: null,
+        subscription: null,
+        webinar: null,
+        class: { status: "SCHEDULED", classPlan: { title: "Algebra I" } },
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    const detail = result.conflicts?.[0];
+    expect(detail).toMatchObject({
+      appointmentId: "class-apt",
+      type: "Class",
+      title: "Algebra I",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: true },
+        "Consultation",
+      ).existingAppointment,
+    ).toMatchObject({
+      type: "Class",
+      with: "Algebra I",
+      appointmentId: "class-apt",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: false },
+        "Consultation",
+      ).existingAppointment.with,
+    ).toBe("Another user");
   });
 
   // AE-5/RV-6 — the interval is no longer a parameter; it is the shared
@@ -207,8 +305,9 @@ describe("checkSlotAvailability", () => {
     };
     const { where, include } = call;
     const andClauses = (where.AND ?? []) as Prisma.AppointmentWhereInput[];
-    const parentFilter = andClauses.find((clause) => clause.occurrences)
-      ?.occurrences;
+    const parentFilter = andClauses.find(
+      (clause) => clause.occurrences,
+    )?.occurrences;
     const slotFilter =
       parentFilter !== null &&
       typeof parentFilter === "object" &&

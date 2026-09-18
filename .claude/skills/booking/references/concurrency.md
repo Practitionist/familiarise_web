@@ -124,11 +124,17 @@ The final backstops are not in `schema.prisma`. They live in `prisma/sql/`
 applied after a schema push. The one that matters most here is
 `occurrence_no_confirmed_overlap` on `AppointmentOccurrence`: `EXCLUDE USING gist
 ("consultantProfileId" WITH =, tstzrange("startsAt", "endsAt") WITH &&) WHERE
-("consultantProfileId" IS NOT NULL AND NOT "isTentative")`. That predicate has
-two consequences — tentative rows and rows with a null `consultantProfileId`
-(webinar and class attendee slots) are deliberately outside its reach, and
-half-open `tstzrange` means back-to-back slots do not conflict. Never assume the
-sidecars are present on a database you did not push to with the full chain.
+("consultantProfileId" IS NOT NULL AND NOT "isTentative" AND "deletedAt" IS NULL)`.
+That predicate has three consequences — tentative rows and rows with a null
+`consultantProfileId` (webinar and class attendee slots) are deliberately
+outside its reach, a tombstoned row (a cancel or a hold release keeps the row
+as CANCELLED with `deletedAt` set) no longer blocks the time it used to hold
+(#1694), and half-open `tstzrange` means back-to-back slots do not conflict.
+On a live database the predicate is changed only through
+`scripts/db/swap-occurrence-overlap-constraint.ts`, which verifies, builds a
+shadow index concurrently and swaps under a lock timeout in one transaction.
+Never assume the sidecars are present on a database you did not push to with
+the full chain.
 The neighbouring sidecar `appointment_occurrence_live_ordinal_key` is a
 partial unique index, not an exclusion constraint — it guards
 `("appointmentId", "ordinal")` only over live rows
