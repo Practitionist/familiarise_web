@@ -19,12 +19,15 @@ jest.mock("../../lib/prisma", () => {
       updateManyAndReturn: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      count: jest.fn(),
     },
+    appointment: { updateMany: jest.fn() },
     consultation: { findUnique: jest.fn(), updateMany: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
   };
   const client = {
     ...tx,
+    appointment: { ...tx.appointment, findMany: jest.fn() },
     consultation: { ...tx.consultation, findMany: jest.fn() },
     subscription: { findMany: jest.fn() },
     failedEmail: { findMany: jest.fn() },
@@ -64,12 +67,14 @@ jest.mock("../../lib/booking/expiry-notices", () => ({
 
 import prisma from "../../lib/prisma";
 import {
+  cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
   remindApprovalPaymentsDue,
 } from "../../scripts/payments/cleanup-abandoned-payments";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "../../lib/payments/constants";
 
 const db = prisma as unknown as {
+  appointment: { findMany: jest.Mock };
   consultation: { findMany: jest.Mock };
   subscription: { findMany: jest.Mock };
   failedEmail: { findMany: jest.Mock };
@@ -79,7 +84,9 @@ const db = prisma as unknown as {
       updateManyAndReturn: jest.Mock;
       findMany: jest.Mock;
       update: jest.Mock;
+      count: jest.Mock;
     };
+    appointment: { updateMany: jest.Mock };
     consultation: { findUnique: jest.Mock; updateMany: jest.Mock };
     bookingStatusHistory: { create: jest.Mock };
   };
@@ -115,6 +122,7 @@ beforeEach(() => {
   jest.spyOn(console, "log").mockImplementation(() => {});
   jest.spyOn(console, "error").mockImplementation(() => {});
   db.subscription.findMany.mockResolvedValue([]);
+  db.appointment.findMany.mockResolvedValue([]);
   db.failedEmail.findMany.mockResolvedValue([]);
   tx.payment.findUnique.mockResolvedValue({
     paymentStatus: "PENDING",
@@ -226,6 +234,86 @@ describe("the 24 h expiry tells the consultee", () => {
 
     const result = await cleanupExpiredApprovalPendingPayments();
     expect(result.cleanedCount).toBe(1);
+    expect(mockNotifyExpired).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: "apt_1",
+        consulteeUserId: "u_consultee",
+        appointmentType: "CONSULTATION",
+        reason: "lapsed",
+      }),
+    );
+  });
+});
+
+describe("a lapsed pay-link notifies once whichever pass claims it (#1724 QA)", () => {
+  it("abandoned sweep wins the CAS first; the approval sweep then finds nothing", async () => {
+    // One row, one status, shared by both cohort reads and the CAS.
+    let status = "APPROVED_PENDING_PAYMENT";
+    const lapsed = new Date(Date.now() - 60 * 1000);
+    const payment = {
+      id: "pay_1",
+      paymentIntent: "order_1",
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "PENDING",
+      userId: "u_consultee",
+      expiresAt: lapsed,
+    };
+    const consultation = {
+      id: "cons_1",
+      status,
+      requestedBy: { user: consultee },
+      consultationPlan: { title: "Plan", consultantProfile: consultantUser },
+    };
+    const appointment = {
+      id: "apt_1",
+      organizationId: null,
+      payment: [payment],
+      consultation,
+      subscription: null,
+      webinar: null,
+      class: null,
+      occurrences: [{ startsAt: inSixHours, isTentative: true }],
+    };
+    // The abandoned cohort sees the held slot's lapsed payment; the approval
+    // cohort only sees a row still APPROVED_PENDING_PAYMENT.
+    db.appointment.findMany.mockImplementation(async () =>
+      status === "APPROVED_PENDING_PAYMENT" ? [appointment] : [],
+    );
+    db.consultation.findMany.mockImplementation(async () =>
+      status === "APPROVED_PENDING_PAYMENT"
+        ? [{ ...consultation, appointment }]
+        : [],
+    );
+    tx.payment.findUnique.mockResolvedValue(payment);
+    tx.payment.updateMany.mockResolvedValue({ count: 1 });
+    tx.appointmentOccurrence.count.mockResolvedValue(0);
+    tx.appointmentOccurrence.findMany.mockResolvedValue([]);
+    tx.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+    tx.appointment.updateMany.mockResolvedValue({ count: 1 });
+    tx.consultation.findUnique.mockImplementation(async () => ({
+      status,
+      appointment: { id: "apt_1", organizationId: null },
+    }));
+    // A real CAS: the write lands only while the row is still in the from-set.
+    tx.consultation.updateMany.mockImplementation(
+      async (args: {
+        where: { status: { in: string[] } };
+        data: { status: string };
+      }) => {
+        if (!args.where.status.in.includes(status)) return { count: 0 };
+        status = args.data.status;
+        return { count: 1 };
+      },
+    );
+    tx.bookingStatusHistory.create.mockResolvedValue({});
+
+    const abandoned = await cleanupAbandonedPayments();
+    const approval = await cleanupExpiredApprovalPendingPayments();
+
+    expect(abandoned.cleanedCount).toBe(1);
+    expect(approval.totalProcessed).toBe(0);
+    expect(status).toBe("EXPIRED");
+    expect(mockNotifyExpired).toHaveBeenCalledTimes(1);
     expect(mockNotifyExpired).toHaveBeenCalledWith(
       expect.objectContaining({
         appointmentId: "apt_1",

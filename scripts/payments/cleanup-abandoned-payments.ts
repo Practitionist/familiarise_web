@@ -37,6 +37,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   notifyConsulteeRequestExpired,
   PAY_LINK_LAPSED_REASON,
+  type RequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
 import {
   PAYMENT_LINK_REMINDER_EMAIL_TYPE,
@@ -245,6 +246,96 @@ function logCleanupSummary(
   }
 }
 
+/** #1703 D2 — what a lapsed-link notice names, read by both cohorts. */
+const LAPSED_LINK_PARTIES = {
+  requestedBy: { select: { user: { select: { id: true, name: true } } } },
+} as const;
+const LAPSED_LINK_PLAN_SELECT = {
+  select: {
+    title: true,
+    consultantProfile: { select: { user: { select: { name: true } } } },
+  },
+} as const;
+
+type LapsedLinkRequest = {
+  id: string;
+  requestedBy: { user: { id: string; name: string | null } } | null;
+};
+type LapsedLinkPlan = {
+  title: string;
+  consultantProfile: { user: { name: string | null } } | null;
+} | null;
+
+/**
+ * #1703 D2 — the one CAS a lapsed pay-link goes through, in whichever pass
+ * reads the row first (the abandoned sweep sees a held slot's expired PENDING
+ * payment before the approval sweep runs). `fromIn` is exactly
+ * APPROVED_PENDING_PAYMENT, so a win means "the link lapsed" and nothing else;
+ * the money predicate (no succeeded payment on the wrapper) rides in the WHERE.
+ *
+ * @returns true on the CAS win; false when the row was not a lapsed link
+ *   (already moved, or in another status), with nothing written.
+ */
+async function expireLapsedPayLink(
+  tx: Pick<Tx, "consultation" | "subscription" | "bookingStatusHistory">,
+  kind: "consultation" | "subscription",
+  id: string,
+): Promise<boolean> {
+  const unpaid = {
+    payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+  } as const;
+  try {
+    switch (kind) {
+      case "consultation":
+        await transitionConsultationRequest(tx, {
+          where: { id, appointment: unpaid },
+          to: AppointmentStatus.EXPIRED,
+          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+        });
+        break;
+      case "subscription":
+        await transitionSubscriptionRequest(tx, {
+          where: { id, appointment: unpaid },
+          to: AppointmentStatus.EXPIRED,
+          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+        });
+        break;
+    }
+    return true;
+  } catch (error) {
+    if (!(error instanceof IllegalTransitionError)) throw error;
+    return false;
+  }
+}
+
+/** The consultee's notice for a lapsed link; sent by the caller after commit. */
+function lapsedLinkNotice(
+  kind: "consultation" | "subscription",
+  request: LapsedLinkRequest,
+  plan: LapsedLinkPlan,
+  appointment: {
+    id: string;
+    organizationId: string | null;
+    occurrences: { startsAt: Date }[];
+  },
+): RequestExpiredNotice | null {
+  const consultee = request.requestedBy?.user;
+  if (!consultee) return null;
+  return {
+    appointmentId: appointment.id,
+    organizationId: appointment.organizationId,
+    consulteeUserId: consultee.id,
+    consulteeName: consultee.name ?? "Consultee",
+    consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
+    planTitle:
+      plan?.title ??
+      (kind === "consultation" ? "Consultation" : "Subscription"),
+    appointmentType: kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+    startsAt: appointment.occurrences[0]?.startsAt ?? null,
+    reason: PAY_LINK_LAPSED_REASON,
+  };
+}
+
 /**
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
@@ -293,8 +384,20 @@ function findAbandonedAppointments(limit?: number) {
       payment: {
         where: { paymentStatus: PaymentStatus.PENDING },
       },
-      consultation: true,
-      subscription: true,
+      // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
+      // it sends after commit names these parties.
+      consultation: {
+        include: {
+          ...LAPSED_LINK_PARTIES,
+          consultationPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      },
+      subscription: {
+        include: {
+          ...LAPSED_LINK_PARTIES,
+          subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      },
       webinar: true,
       class: true,
       occurrences: true,
@@ -544,7 +647,7 @@ async function expireRequestAndReleaseSlots(
     | "bookingStatusHistory"
   >,
   appointment: AbandonedAppointment,
-): Promise<void> {
+): Promise<RequestExpiredNotice | null> {
   const kind = appointment.consultation ? "consultation" : "subscription";
   const confirmedSlots = await tx.appointmentOccurrence.count({
     where: {
@@ -569,16 +672,29 @@ async function expireRequestAndReleaseSlots(
     console.log(
       `🗑️ Released ${released} tentative slot(s) for ${kind} appointment: ${appointment.id}`,
     );
-    return;
+    return null;
   }
 
-  // The cohort's money predicate is repeated in the CAS WHERE, like the
-  // approval and stale-pending arms. Status alone is not enough: the include
-  // above only carries PENDING rows, and `reconcile-payment-status` flips a
-  // recovered capture to SUCCEEDED without moving the request — so a sibling
-  // or freshly-succeeded payment is invisible to a read-then-write. Re-checked
-  // by the UPDATE itself, a paid booking matches zero rows and is skipped.
-  if (appointment.consultation) {
+  // #1703 D2 — a lapsed pay-link is claimed by the narrow CAS first, so the
+  // consultee's notice is tied to that win whichever pass got here.
+  const request = appointment.consultation ?? appointment.subscription;
+  let notice: RequestExpiredNotice | null = null;
+  if (request && (await expireLapsedPayLink(tx, kind, request.id))) {
+    notice = lapsedLinkNotice(
+      kind,
+      request,
+      appointment.consultation?.consultationPlan ??
+        appointment.subscription?.subscriptionPlan ??
+        null,
+      appointment,
+    );
+  } else if (appointment.consultation) {
+    // The cohort's money predicate is repeated in the CAS WHERE, like the
+    // approval and stale-pending arms. Status alone is not enough: the include
+    // above only carries PENDING rows, and `reconcile-payment-status` flips a
+    // recovered capture to SUCCEEDED without moving the request — so a sibling
+    // or freshly-succeeded payment is invisible to a read-then-write. Re-checked
+    // by the UPDATE itself, a paid booking matches zero rows and is skipped.
     await transitionConsultationRequest(tx, {
       where: {
         id: appointment.consultation.id,
@@ -616,6 +732,7 @@ async function expireRequestAndReleaseSlots(
   console.log(
     `🗑️ Expired abandoned ${kind} appointment (soft): ${appointment.id}`,
   );
+  return notice;
 }
 
 /**
@@ -632,22 +749,29 @@ async function expireRequestAndReleaseSlots(
 async function cleanupAbandonedAppointment(
   appointment: AbandonedAppointment,
   failures: FailureSink,
-): Promise<"cleaned" | "skipped"> {
+): Promise<{
+  outcome: "cleaned" | "skipped";
+  /** Set only when the lapsed-link CAS won inside the committed unit. */
+  notice: RequestExpiredNotice | null;
+}> {
   try {
     return await prisma.$transaction(async (tx) => {
-      if (await anyPaymentSucceeded(tx, appointment)) return "skipped" as const;
+      if (await anyPaymentSucceeded(tx, appointment)) {
+        return { outcome: "skipped" as const, notice: null };
+      }
 
       await expirePendingPayments(tx, appointment.payment, failures);
       await restoreReferralCredits(tx, appointment.payment);
 
       if (appointment.webinar || appointment.class) {
         await releaseGroupSeats(tx, appointment);
-        return "cleaned" as const;
+        return { outcome: "cleaned" as const, notice: null };
       }
+      let notice: RequestExpiredNotice | null = null;
       if (appointment.consultation || appointment.subscription) {
-        await expireRequestAndReleaseSlots(tx, appointment);
+        notice = await expireRequestAndReleaseSlots(tx, appointment);
       }
-      return "cleaned" as const;
+      return { outcome: "cleaned" as const, notice };
     });
   } catch (error) {
     // Raced a capture or an approval: the row moved out of the expirable set,
@@ -657,7 +781,7 @@ async function cleanupAbandonedAppointment(
     console.log(
       `⏭️ Skipped appointment ${appointment.id} — status changed, or the payment succeeded, since the sweep read`,
     );
-    return "skipped";
+    return { outcome: "skipped", notice: null };
   }
 }
 
@@ -710,7 +834,7 @@ async function cleanupAbandonedPaymentsUnlocked(
       // to this one and are not added again for the next.
       const failures: FailureSink = { messages: result.errors, count: 0 };
       try {
-        const outcome = await cleanupAbandonedAppointment(
+        const { outcome, notice } = await cleanupAbandonedAppointment(
           appointment,
           failures,
         );
@@ -727,6 +851,8 @@ async function cleanupAbandonedPaymentsUnlocked(
           console.log(
             `✅ Successfully cleaned up appointment: ${appointment.id}`,
           );
+          // #1703 D2 — after the commit, and only on the lapsed-link CAS win.
+          if (notice) await notifyConsulteeRequestExpired(notice);
         }
       } catch (error) {
         // Both: a gateway cancel that failed pushed its own line into
@@ -823,13 +949,8 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
           },
         },
         // #1703 D2 — what the consultee's expiry notice names.
-        requestedBy: { select: { user: { select: { id: true, name: true } } } },
-        consultationPlan: {
-          select: {
-            title: true,
-            consultantProfile: { select: { user: { select: { name: true } } } },
-          },
-        },
+        ...LAPSED_LINK_PARTIES,
+        consultationPlan: LAPSED_LINK_PLAN_SELECT,
       },
     });
 
@@ -845,23 +966,11 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
           // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
           // REJECTED reads as "the consultant declined" on every surface, and
           // the CAS keeps a capture that raced this sweep from being clobbered.
-          try {
-            // The cohort read's payment filter is repeated in the UPDATE's
-            // WHERE: a capture that landed since the read (Stripe reconcile
-            // flips the payment without touching the request) makes this
-            // match zero rows instead of expiring a paid booking.
-            await transitionConsultationRequest(tx, {
-              where: {
-                id: consultation.id,
-                appointment: {
-                  payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-                },
-              },
-              to: AppointmentStatus.EXPIRED,
-              fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-            });
-          } catch (error) {
-            if (!(error instanceof IllegalTransitionError)) throw error;
+          // The same narrow CAS the abandoned sweep uses, so a row either pass
+          // claims is claimed once.
+          if (
+            !(await expireLapsedPayLink(tx, "consultation", consultation.id))
+          ) {
             console.log(
               `⏭️ Skipped consultation ${consultation.id} — status changed since the sweep read`,
             );
@@ -908,22 +1017,15 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
         } else {
           result.cleanedCount++;
           // #1703 D2 — after the commit: the consultee learns the link lapsed.
-          if (consultation.appointment && consultation.requestedBy?.user) {
-            await notifyConsulteeRequestExpired({
-              appointmentId: consultation.appointment.id,
-              organizationId: consultation.appointment.organizationId,
-              consulteeUserId: consultation.requestedBy.user.id,
-              consulteeName: consultation.requestedBy.user.name ?? "Consultee",
-              consultantName:
-                consultation.consultationPlan?.consultantProfile?.user?.name ??
-                "Consultant",
-              planTitle: consultation.consultationPlan?.title ?? "Consultation",
-              appointmentType: "CONSULTATION",
-              startsAt:
-                consultation.appointment.occurrences[0]?.startsAt ?? null,
-              reason: PAY_LINK_LAPSED_REASON,
-            });
-          }
+          const notice = consultation.appointment
+            ? lapsedLinkNotice(
+                "consultation",
+                consultation,
+                consultation.consultationPlan,
+                consultation.appointment,
+              )
+            : null;
+          if (notice) await notifyConsulteeRequestExpired(notice);
         }
       } catch (error) {
         result.errorCount++;
