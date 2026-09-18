@@ -34,6 +34,12 @@ type FormInput = z.input<typeof PersonalInfoAndRoleFormSchema>;
 interface Props {
   onNext: (data: FormData) => void;
   initialData: Partial<FormData>;
+  /**
+   * Add mode (PR-6): an onboarded account adding a consultant identity. The
+   * role is fixed, the picker is hidden, and the pending-invite gate is
+   * skipped — the user is here BECAUSE of an invite.
+   */
+  lockedRole?: "CONSULTANT";
 }
 
 // User-facing copy avoids internal role jargon (#onboarding-ux): "CONSULTEE"
@@ -62,7 +68,11 @@ const GENDER_OPTIONS = [
   { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
 ];
 
-const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
+const PersonalInfoAndRoleForm: React.FC<Props> = ({
+  onNext,
+  initialData,
+  lockedRole,
+}) => {
   const { data: session } = useSession();
   const [optionalOpen, setOptionalOpen] = useState(false);
   // Reflects the parent's async role-flip (ORG_WORKSPACE path hits the
@@ -115,8 +125,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       });
   }, []);
   useEffect(() => {
+    if (lockedRole) {
+      setInviteCheckDone(true);
+      return;
+    }
     loadPendingInvites();
-  }, [loadPendingInvites]);
+  }, [loadPendingInvites, lockedRole]);
 
   const {
     register,
@@ -133,13 +147,14 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       email: session?.user?.email || "",
       onlineStatus: false,
       onboardingCompleted: false,
-      role: UserRole.CONSULTEE,
+      role: lockedRole ?? UserRole.CONSULTEE,
       gender: null,
       city: "",
       country: "",
       linkedinUrl: "",
       bio: "",
       ...initialData,
+      ...(lockedRole ? { role: lockedRole } : {}),
     },
   });
 
@@ -151,16 +166,17 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         email: session?.user?.email || "",
         onlineStatus: false,
         onboardingCompleted: false,
-        role: UserRole.CONSULTEE,
+        role: lockedRole ?? UserRole.CONSULTEE,
         gender: null,
         city: "",
         country: "",
         linkedinUrl: "",
         bio: "",
         ...initialData,
+        ...(lockedRole ? { role: lockedRole } : {}),
       });
     }
-  }, [initialData, reset, session?.user?.email]);
+  }, [initialData, reset, session?.user?.email, lockedRole]);
 
   // Sync email from session when it loads after form mount
   useEffect(() => {
@@ -195,15 +211,21 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
   if (!inviteCheckDone) {
     return (
       <div className="mx-auto max-w-md py-8 text-center">
-        <p className="text-sm text-zinc-500">Checking for pending invitations…</p>
+        <p className="text-sm text-zinc-500">
+          Checking for pending invitations…
+        </p>
       </div>
     );
   }
   if (inviteCheckError && !pendingInvite) {
     return (
       <div className="mx-auto max-w-md space-y-3 py-8 text-center">
-        <p className="text-sm text-red-600">Could not check for pending invitations.</p>
-        <Button size="sm" onClick={() => loadPendingInvites()}>Retry</Button>
+        <p className="text-sm text-red-600">
+          Could not check for pending invitations.
+        </p>
+        <Button size="sm" onClick={() => loadPendingInvites()}>
+          Retry
+        </Button>
       </div>
     );
   }
@@ -222,8 +244,8 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </p>
           ) : null}
           <p className="mt-2 text-sm text-zinc-600">
-            Check your email for the invitation link to accept and join
-            the organisation. Your profile will be set up as part of that flow.
+            Check your email for the invitation link to accept and join the
+            organisation. Your profile will be set up as part of that flow.
           </p>
         </div>
         <Button
@@ -459,8 +481,15 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Role Selection */}
-      <div className="space-y-4">
+      {/* Role Selection — hidden in add mode, where the role is fixed */}
+      {lockedRole ? (
+        <div className="rounded-lg border border-zinc-200 bg-muted/50 p-4 text-sm text-muted-foreground">
+          You are adding an <strong>expert profile</strong> to your existing
+          account. Confirm your details below, then set up your expertise,
+          availability and verification.
+        </div>
+      ) : null}
+      <div className={lockedRole ? "hidden" : "space-y-4"}>
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           I want to join as a... <span className="text-destructive">*</span>
         </h3>

@@ -23,6 +23,7 @@ import {
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
 import type { OnboardingData, ConsultantProfileCreateData } from "./onboarding";
 import {
+  canAddConsultantIdentity,
   buildUserUpdateData,
   buildConsultantScalarData,
   buildConsulteeScalarData,
@@ -261,6 +262,125 @@ async function upsertAdminProfile(
     update: scalarData,
   });
   return { adminProfileId: profile.id };
+}
+
+/**
+ * Add a consultant identity to an onboarded CONSULTEE / ORG_WORKSPACE account.
+ * Same validation, profile upsert, availability contract, professional
+ * background and verification path as first-time onboarding — but the user
+ * row is touched only to link the profile (and to flip a CONSULTEE to
+ * CONSULTANT; an ORG_WORKSPACE keeps its role and reaches the consultant
+ * dashboard through the switcher). Other profile links are never nulled.
+ */
+export async function addConsultantIdentity(
+  userId: string,
+  body: unknown,
+): Promise<OnboardingResult> {
+  const { validateOnboardingData } = await import("./onboarding");
+  try {
+    const validationResult = validateOnboardingData(body);
+    if (!validationResult.success) {
+      return { success: false, error: validationResult.error };
+    }
+    const validatedBody = validationResult.data;
+    if (validatedBody.role !== UserRole.CONSULTANT) {
+      return {
+        success: false,
+        error:
+          "Only a consultant identity can be added to an existing account.",
+      };
+    }
+
+    const current = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        role: true,
+        onboardingCompleted: true,
+        consultantProfileId: true,
+        timezone: true,
+      },
+    });
+    if (!current) throw new Error("User not found");
+    if (!canAddConsultantIdentity(current)) {
+      return {
+        success: false,
+        error:
+          "Your account cannot add an expert profile: finish onboarding first, or you already have one.",
+      };
+    }
+
+    const updatedUser = await prisma.$transaction(
+      async (tx) => {
+        const profileFkData = await upsertProfileByRole(
+          userId,
+          validatedBody,
+          tx,
+        );
+        await persistProfessionalBackground(
+          userId,
+          profileFkData.consultantProfileId,
+          body as Record<string, unknown>,
+          tx,
+        );
+        if (profileFkData.consultantProfileId) {
+          await recomputeProfileCompletion(
+            tx,
+            profileFkData.consultantProfileId,
+          );
+        }
+        // CAS on the empty link: two tabs adding at once cannot both win.
+        const linked = await tx.user.updateMany({
+          where: { id: userId, consultantProfileId: null },
+          data: {
+            consultantProfileId: profileFkData.consultantProfileId,
+            ...(current.role === UserRole.CONSULTEE
+              ? { role: UserRole.CONSULTANT }
+              : {}),
+            ...(current.timezone ? {} : { timezone: validatedBody.timezone }),
+            ...(validatedBody.linkedinUrl
+              ? { linkedinUrl: validatedBody.linkedinUrl }
+              : {}),
+          },
+        });
+        if (linked.count === 0) {
+          throw new Error(
+            "An expert profile was just added to this account elsewhere. Reload to continue.",
+          );
+        }
+        return tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          include: onboardingUserInclude,
+        });
+      },
+      { maxWait: 15000, timeout: 45000 },
+    );
+
+    trackOnboardingEvent("identity_added", {
+      previousRole: String(current.role),
+    });
+
+    const verification = await maybeSubmitConsultantVerification(
+      userId,
+      updatedUser,
+      body,
+      UserRole.CONSULTANT,
+    );
+    return {
+      success: true,
+      user: updatedUser,
+      verificationWarning: verification?.warning,
+      verificationDeferred: verification?.deferred,
+    };
+  } catch (error: unknown) {
+    console.error("Error in addConsultantIdentity:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "An unknown error occurred while adding the expert profile.",
+    };
+  }
 }
 
 async function upsertProfileByRole(
