@@ -413,8 +413,8 @@ export async function persistProfessionalBackground(
  * (`lib/verification/submit-request.ts`). Uploads made from the wizard are
  * rows already (unlinked, owned by this user), so the core links them by id
  * with the ownership predicate — the arbitrary-id linking #1224 described is
- * gone. A pre-PR-5 draft can still carry transient uploads (no id, a storage
- * URL); those are persisted here as owned rows first, then linked the same way.
+ * gone. An id-less entry from an older draft is not persistable: the wizard
+ * defers verification and the consultant re-uploads from Settings.
  */
 async function submitVerificationRequest(
   userId: string,
