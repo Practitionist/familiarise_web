@@ -7,6 +7,7 @@ import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { MemberRole, MemberStatus, UserRole } from "@prisma/client";
 import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
+import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 
 // Roles a user is allowed to self-select via this action. Privileged
 // roles (ADMIN, STAFF) MUST never be reachable from a client-driven
@@ -38,12 +39,7 @@ const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
 const RoleHandoffPersonalInfoSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(200).optional(),
-    phone: z
-      .string()
-      .trim()
-      .min(1, "Phone cannot be empty")
-      .max(50)
-      .optional(),
+    phone: z.string().trim().min(1, "Phone cannot be empty").max(50).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
@@ -54,7 +50,13 @@ const RoleHandoffRoleSchema = z.nativeEnum(UserRole);
 export async function updateOnboardingInformationAction(
   userId: string,
   body: unknown,
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string; verificationDeferred?: boolean }> {
+): Promise<{
+  success: boolean;
+  user?: Record<string, unknown>;
+  error?: string;
+  verificationWarning?: string;
+  verificationDeferred?: boolean;
+}> {
   console.log(
     "Server Action: updateOnboardingInformationAction - Delegating to central utils",
   );
@@ -87,9 +89,15 @@ export async function updateOnboardingInformationAction(
   // One submit runs a multi-table CAS transaction + slot fan-out, so cap
   // retry/double-click storms per user. Fail-open on Redis outage matches
   // applyRateLimit's deliberate #1125 semantics.
-  const limited = await applyRateLimit(onboardingSubmitLimiter, session.user.id);
+  const limited = await applyRateLimit(
+    onboardingSubmitLimiter,
+    session.user.id,
+  );
   if (limited) {
-    return { success: false, error: "Too many requests. Please try again later." };
+    return {
+      success: false,
+      error: "Too many requests. Please try again later.",
+    };
   }
 
   // Use the central processing function
@@ -168,16 +176,7 @@ export async function setOnboardingRoleAction(
   // state no guard could see (PROFILE_KEY_BY_ROLE has no ORG_WORKSPACE arm
   // without it). Create + link it now, mirroring the POST upsert: idempotent
   // on userId @unique, cheap no-op relink on re-entry.
-  const orgWorkspace = await prisma.orgWorkspaceProfile.upsert({
-    where: { userId },
-    create: { userId },
-    update: {},
-    select: { id: true },
-  });
-  await prisma.user.updateMany({
-    where: { id: userId, orgWorkspaceProfileId: null },
-    data: { orgWorkspaceProfileId: orgWorkspace.id },
-  });
+  await ensureOrgWorkspaceProfile(prisma, userId);
 
   return { success: true };
 }

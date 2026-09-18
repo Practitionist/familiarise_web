@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import prisma from "@/lib/prisma";
+import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import {
   hasBackofficePermission,
   type BackofficeSurface,
@@ -124,6 +126,19 @@ export async function requireOnboarded() {
     redirect(await onboardingRedirectTarget());
   }
   if (!hasRequiredProfile(session.user)) {
+    // A completed ORG_WORKSPACE row written before the handoff created the
+    // profile has no link to require; the wizard's handoff refuses an
+    // onboarded user, so heal here instead of bouncing (review on #1699).
+    if (
+      session.user.role === "ORG_WORKSPACE" &&
+      !session.user.orgWorkspaceProfileId
+    ) {
+      const id = await ensureOrgWorkspaceProfile(prisma, session.user.id);
+      return {
+        ...session,
+        user: { ...session.user, orgWorkspaceProfileId: id },
+      };
+    }
     redirect(await onboardingRedirectTarget({ error: "missing_profile" }));
   }
   return session;
