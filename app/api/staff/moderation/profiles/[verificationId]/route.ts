@@ -5,7 +5,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ConsultantVerificationStatus } from "@prisma/client";
-import { notifyVerificationStatusChanged } from "@/lib/novu";
+import { attemptTrigger, notifyVerificationStatusChanged } from "@/lib/novu";
+import {
+  attemptOnboardingEmail,
+  stageVerificationDecidedEmail,
+} from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -127,72 +132,87 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       NEEDS_INFO: "PENDING_VERIFICATION",
     };
 
-    // Prepare document feedback updates
-    const documentUpdates =
-      documentFeedback?.map((df) =>
-        prisma.profileVerificationDocument.update({
-          where: { id: df.documentId },
-          data: {
-            isValid: df.isValid,
-            staffFeedback: df.staffFeedback || null,
-          },
-        }),
-      ) || [];
+    const consultantUserId = verification.consultantProfile?.user?.id;
+    const profileStatus = profileStatusMap[status] || status;
+    const verificationPayload = {
+      status: profileStatus,
+      reason: rejectionReason || feedbackDetails || undefined,
+      dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
+    };
+    const emailStatus =
+      profileStatus === "VERIFIED" ||
+      profileStatus === "REJECTED" ||
+      profileStatus === "PENDING_VERIFICATION"
+        ? profileStatus
+        : null;
 
-    // Update verification, documents, and optionally update consultant profile
-    const [updatedVerification] = await prisma.$transaction([
-      prisma.consultantProfileVerification.update({
-        where: { id: verificationId },
-        data: {
-          status,
-          reviewedAt: new Date(),
-          reviewedById: session.user.id,
-          reviewNotes,
-          // Store rejection feedback (shown to consultant)
-          rejectionReason:
-            status === "REJECTED" || status === "NEEDS_INFO"
-              ? rejectionReason
-              : null,
-          feedbackDetails:
-            status === "REJECTED" || status === "NEEDS_INFO"
-              ? feedbackDetails
-              : null,
-        },
-      }),
-      // Update document feedback
-      ...documentUpdates,
-      // Update consultant profile isVerified and verificationStatus
-      ...(status === "APPROVED"
-        ? [
-            prisma.consultantProfile.update({
-              where: { id: verification.consultantProfileId },
-              data: {
-                isVerified: true,
-                verificationStatus: profileStatusMap[status],
-              },
-            }),
-          ]
-        : status === "REJECTED"
-          ? [
-              prisma.consultantProfile.update({
-                where: { id: verification.consultantProfileId },
-                data: {
-                  isVerified: false,
-                  verificationStatus: profileStatusMap[status],
+    // Update verification, documents and the consultant profile, and stage
+    // the consultant's bell + email in the SAME transaction (review round 2
+    // on #1700): the notice rows exist iff the decision does. Vendor
+    // attempts run in after() below.
+    const { updatedVerification, bell, stagedEmail } =
+      await prisma.$transaction(async (tx) => {
+        const updatedVerification =
+          await tx.consultantProfileVerification.update({
+            where: { id: verificationId },
+            data: {
+              status,
+              reviewedAt: new Date(),
+              reviewedById: session.user.id,
+              reviewNotes,
+              // Store rejection feedback (shown to consultant)
+              rejectionReason:
+                status === "REJECTED" || status === "NEEDS_INFO"
+                  ? rejectionReason
+                  : null,
+              feedbackDetails:
+                status === "REJECTED" || status === "NEEDS_INFO"
+                  ? feedbackDetails
+                  : null,
+            },
+          });
+        for (const df of documentFeedback ?? []) {
+          await tx.profileVerificationDocument.update({
+            where: { id: df.documentId },
+            data: {
+              isValid: df.isValid,
+              staffFeedback: df.staffFeedback || null,
+            },
+          });
+        }
+        await tx.consultantProfile.update({
+          where: { id: verification.consultantProfileId },
+          data: {
+            verificationStatus: profileStatusMap[status],
+            ...(status === "APPROVED"
+              ? { isVerified: true }
+              : status === "REJECTED"
+                ? { isVerified: false }
+                : {}),
+          },
+        });
+        const bell = consultantUserId
+          ? await notifyVerificationStatusChanged(
+              consultantUserId,
+              verificationPayload,
+              { tx },
+            )
+          : null;
+        const stagedEmail =
+          consultantUserId && emailStatus
+            ? await stageVerificationDecidedEmail(
+                {
+                  userId: consultantUserId,
+                  verificationId,
+                  status: emailStatus,
+                  reason: verificationPayload.reason,
+                  dashboardUrl: verificationPayload.dashboardUrl,
                 },
-              }),
-            ]
-          : status === "NEEDS_INFO"
-            ? [
-                prisma.consultantProfile.update({
-                  where: { id: verification.consultantProfileId },
-                  data: {
-                    verificationStatus: profileStatusMap[status],
-                  },
-                }),
-              ]
-            : []),
-    ]);
+                tx,
+              )
+            : null;
+        return { updatedVerification, bell, stagedEmail };
+      });
 
     // Same publish switch as the admin verification route: VERIFIED puts the
     // consultant on the public surfaces, anything else takes them off.
@@ -200,15 +220,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     // #698 OB-1 — the verified bit of the completion score flips here.
     await recomputeProfileCompletion(prisma, verification.consultantProfileId);
 
-    // Fire-and-forget: notify consultant of verification status change
-    const consultantUserId = verification.consultantProfile?.user?.id;
-    if (consultantUserId) {
-      await notifyVerificationStatusChanged(consultantUserId, {
-        status: profileStatusMap[status] || status,
-        reason: rejectionReason || feedbackDetails || undefined,
-        dashboardUrl: `/dashboard/consultant/${verification.consultantProfile?.id}/settings`,
-      });
-    }
+    scheduleAfter(async () => {
+      if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
+      if (stagedEmail) await attemptOnboardingEmail(stagedEmail);
+    });
 
     return NextResponse.json({
       verification: updatedVerification,

@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
   findUncoveredAtom,
@@ -71,6 +72,10 @@ import {
   processQualifyingAction,
   processConsultantBookingReferral,
 } from "@/lib/referrals/service";
+import {
+  notifyCreditsAppliedBestEffort,
+  notifyReferralQualificationBestEffort,
+} from "@/lib/referrals/referral-notify";
 import {
   deriveCheckoutAmount,
   type CheckoutDiscountInput,
@@ -3951,6 +3956,7 @@ export async function handleCheckout(
             // creditsApplied was calculated in TX1 (calculateAmountAndValidate), but between
             // TX1 and TX2, concurrent checkouts may have consumed the credits.
             let actualCreditsApplied = 0;
+            let creditsRemainingAfter: number | null = null;
             if (creditsApplied > 0) {
               const { totalAvailable } = await getUserCredits(userId, tx);
               // Both creditsApplied and totalAvailable are in paise — direct comparison
@@ -3982,6 +3988,10 @@ export async function handleCheckout(
                 );
               }
               actualCreditsApplied = creditsApplied; // In paise
+              // The balance the credits-applied bell states, read inside the
+              // transaction so a later checkout cannot change it first.
+              creditsRemainingAfter = (await getUserCredits(userId, tx))
+                .totalAvailable;
             }
 
             // Invariant sweep: every Payment should have legs that sum to
@@ -4020,6 +4030,7 @@ export async function handleCheckout(
             return {
               appointmentId: createdAppointment?.id,
               creditsApplied: actualCreditsApplied,
+              creditsRemainingAfter,
               capNearBell,
               overageBell,
             };
@@ -4084,6 +4095,29 @@ export async function handleCheckout(
         // Trigger referral reward if this is the user's first paid booking
         try {
           await processQualifyingAction(userId, "first_paid_booking");
+          // P3 referral bells, scheduled after the response (scheduleAfter
+          // degrades to a floating promise outside a request scope — jest
+          // and scripts reach this path). Bells, never money truth.
+          scheduleAfter(() =>
+            notifyReferralQualificationBestEffort(userId).catch((bellErr) =>
+              console.error("[referral-qualification-bell] failed:", bellErr),
+            ),
+          );
+          // P3 credits-applied bell: applyCreditsToPayment ran inside the
+          // committed tx above, so this post-commit read is the correct
+          // boundary (belling inside service.ts would fire in-tx).
+          if (result.creditsApplied > 0) {
+            scheduleAfter(() =>
+              notifyCreditsAppliedBestEffort({
+                userId,
+                creditsUsedPaise: result.creditsApplied,
+                remainingPaise: result.creditsRemainingAfter,
+                appointmentType: validatedData.appointmentType,
+              }).catch((bellErr) =>
+                console.error("[credits-applied-bell] failed:", bellErr),
+              ),
+            );
+          }
         } catch (referralError) {
           console.error(
             `⚠️ Failed to process referral qualifying action for user ${userId}:`,

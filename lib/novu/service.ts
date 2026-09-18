@@ -772,11 +772,14 @@ export async function notifyNewBookingRequest(
 export async function notifyVerificationStatusChanged(
   consultantUserId: string,
   payload: VerificationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerWorkflow(
     NOVU_WORKFLOWS.VERIFICATION_STATUS_CHANGED,
     consultantUserId,
     payload,
+    undefined,
+    opts,
   );
 }
 
@@ -865,11 +868,14 @@ export async function notifyGeneralAnnouncement(payload: AnnouncementPayload) {
 export async function notifyNewConsultantApplication(
   adminUserIds: string[],
   payload: ConsultantApplicationPayload,
+  opts?: TriggerOptions,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.NEW_CONSULTANT_APPLICATION,
     adminUserIds,
     payload,
+    undefined,
+    opts,
   );
 }
 

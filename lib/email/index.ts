@@ -14,10 +14,14 @@ import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 import { getAppUrl } from "@/lib/url";
 import { EMAIL_BUDGET_MS, SENDERS, contactInboxAddress } from "./config";
 import {
+  attempt,
   deliver,
+  stage,
   type DeliverOptions,
   type DeliverResult,
   type RenderedEmail,
+  type StagedEmail,
+  type StageOptions,
 } from "./deliver";
 import { renderEmail } from "./render";
 
@@ -37,6 +41,7 @@ export {
 } from "./deliver";
 export * from "./senders/booking";
 export * from "./senders/money";
+export * from "./senders/onboarding";
 export * from "./senders/people";
 
 type AppointmentType = "consultation" | "subscription" | "webinar" | "class";
@@ -67,6 +72,57 @@ async function send(
     return { success: false, error };
   }
   return deliver({ ...envelope, ...rendered }, emailType, opts);
+}
+
+/**
+ * The stage half of `send()` for a route that answers before the vendor
+ * call: the FailedEmail row is written now (`stage`), the send runs later
+ * through `attemptStagedEmail()` inside `after()`. A render failure is
+ * reported and yields null — nothing to attempt, nothing lost but the mail.
+ */
+export interface StagedSend {
+  emailType: string;
+  staged: StagedEmail | null;
+  message: RenderedEmail;
+}
+
+async function stageSend(
+  emailType: string,
+  element: ReactElement,
+  envelope: Omit<RenderedEmail, "html" | "text">,
+  opts: StageOptions,
+): Promise<StagedSend | null> {
+  let rendered: { html: string; text: string };
+  try {
+    rendered = await renderEmail(element);
+  } catch (error) {
+    console.error(`[email] ${emailType} render failed:`, error);
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "email", emailType }, level: "warning" },
+    );
+    return null;
+  }
+  const message = { ...envelope, ...rendered };
+  const staged = await stage(message, emailType, opts);
+  return { emailType, staged, message };
+}
+
+/** The `after()` half of `stageSend()`. Never throws. */
+export async function attemptStagedEmail(
+  staged: StagedSend | null,
+  budgetMs: number,
+): Promise<void> {
+  if (!staged) return;
+  try {
+    await attempt(staged.staged, staged.message, staged.emailType, {
+      budgetMs,
+    });
+  } catch (error) {
+    // `attempt` arms its AbortSignal before its own try; keep the caller's
+    // never-throws contract whatever the budget was.
+    console.error(`[email] ${staged.emailType} attempt failed:`, error);
+  }
 }
 
 // #1654 — the entity anchor a sender stamps on its outbox row.
@@ -415,6 +471,37 @@ export async function sendOrgInvitationEmail(
       subject: `You're invited to join ${orgName} on Familiarise`,
     },
     { budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
+  );
+}
+
+/** Stage-only twin of `sendOrgInvitationEmail()`; attempt after the response. */
+export async function stageOrgInvitationEmail(
+  {
+    email,
+    inviterName,
+    orgName,
+    role,
+    inviteUrl,
+    expiresAt,
+  }: {
+    email: string;
+    inviterName: string;
+    orgName: string;
+    role: string;
+    inviteUrl: string;
+    expiresAt?: string;
+  },
+  opts: StageOptions = {},
+): Promise<StagedSend | null> {
+  return stageSend(
+    "ORG_INVITATION",
+    OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
+    {
+      from: SENDERS.notifications,
+      to: email,
+      subject: `You're invited to join ${orgName} on Familiarise`,
+    },
+    opts,
   );
 }
 
