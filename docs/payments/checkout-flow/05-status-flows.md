@@ -22,7 +22,7 @@ This document explains the complete status lifecycle for all 4 event types, incl
 
 ### Appointment Status (Consultation & Subscription)
 
-> **Rename note:** The DB field was `status` (enum `AppointmentStatus`); after the terminology-unification refactor it is `status` (enum `AppointmentStatus`). The enum *values* are unchanged.
+> **Rename note:** The DB field was `status` (enum `AppointmentStatus`); after the terminology-unification refactor it is `status` (enum `AppointmentStatus`). The enum _values_ are unchanged.
 
 | Status                     | Description                                                   |
 | -------------------------- | ------------------------------------------------------------- |
@@ -92,9 +92,9 @@ flowchart TD
         REQ_PENDING --> CONSULTANT{Consultant<br/>Decision}
         CONSULTANT --> |"Reject"| REJECTED["Consultation: REJECTED"]
         CONSULTANT --> |"Approve"| APPROVED_PP["Consultation: APPROVED_PENDING_PAYMENT<br/>Payment Link Sent"]
-        APPROVED_PP --> USER_PAYS{User Pays<br/>within 48hrs?}
+        APPROVED_PP --> USER_PAYS{User Pays<br/>within 24 h? (reminder at 12 h)}
         USER_PAYS --> |"Yes"| DB_SUCCESS
-        USER_PAYS --> |"No"| CLEANUP_APP["Cleanup Job<br/>→ REJECTED"]
+        USER_PAYS --> |"No"| CLEANUP_APP["Cleanup Job<br/>→ EXPIRED"]
     end
 
     style DB_SUCCESS fill:#90EE90
@@ -408,7 +408,7 @@ flowchart TD
 | Scenario                     | Timeout                                | Cleanup Action               |
 | ---------------------------- | -------------------------------------- | ---------------------------- |
 | Direct payment abandoned     | 30 min (explicit) or 35 min (fallback) | Delete appointment + payment |
-| Pay Later payment expired    | 48 hours                               | Reset to REJECTED            |
+| Pay Later payment expired    | 24 hours, reminder at 12 hours (#1703) | Request and payment EXPIRED  |
 | Mock payment (never expires) | N/A                                    | Same cleanup if abandoned    |
 
 ### Files Involved

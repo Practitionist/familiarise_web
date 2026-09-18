@@ -13,6 +13,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards";
 import {
   AppointmentStatus,
@@ -91,8 +92,8 @@ export interface ApprovalPaymentResult {
  */
 const APPROVAL_PAYMENT_LOCK_TTL = 30_000; // 30 seconds
 
-/** How long an approval pay-link stays payable once minted. */
-const APPROVAL_PAYMENT_WINDOW_MS = 48 * 60 * 60 * 1000;
+/** How long an approval pay-link stays payable once minted (#1703 D2: 24 h). */
+const APPROVAL_PAYMENT_WINDOW_MS = APPROVAL_PAYMENT_EXPIRATION_MS;
 
 /**
  * #1319 review — the request behind a dead intent is already gone, so there is

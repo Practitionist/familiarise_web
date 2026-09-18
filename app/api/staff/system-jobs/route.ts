@@ -20,7 +20,7 @@ const SYSTEM_JOBS = [
   {
     id: "cleanup-approval-payments",
     name: "Cleanup Approval Payments",
-    description: "Expire 48h+ pending approval payments",
+    description: "Expire lapsed approval pay-links",
     schedule: "Hourly",
     category: "Payments",
   },

@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import {
+  APPROVAL_PAYMENT_EXPIRATION_MS,
+  APPROVAL_PAYMENT_REMINDER_MS,
+} from "@/lib/payments/constants";
 
 /**
  * GET /api/dashboard/admin/approval-payments
@@ -24,7 +28,7 @@ export async function GET() {
     //
     // take: 200 (newest first) caps these admin-wide scans: this endpoint is a
     // live monitoring table, not an audit export, and APPROVED_PENDING_PAYMENT
-    // rows are transient (48h expiry + sweeper). Without a bound the query
+    // rows are transient (pay-link window + sweeper). Without a bound the query
     // cost grows unboundedly with platform history.
     const TAKE_LIMIT = 200;
 
@@ -160,13 +164,13 @@ export async function GET() {
     const approvalPayments = [
       ...pendingConsultations.map((consultation) => {
         const expiresAt = new Date(
-          consultation.updatedAt.getTime() + 48 * 60 * 60 * 1000,
-        ); // 48 hours from approval
+          consultation.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+        ); // #1703 D2 — the pay-link window from approval
         const now = Date.now();
         const timeUntilExpiry = expiresAt.getTime() - now;
         const isExpired = timeUntilExpiry < 0;
         const isExpiringSoon =
-          !isExpired && timeUntilExpiry < 24 * 60 * 60 * 1000; // < 24 hours
+          !isExpired && timeUntilExpiry < APPROVAL_PAYMENT_REMINDER_MS;
 
         return {
           id: consultation.id,
@@ -192,13 +196,13 @@ export async function GET() {
       }),
       ...pendingSubscriptions.map((subscription) => {
         const expiresAt = new Date(
-          subscription.updatedAt.getTime() + 48 * 60 * 60 * 1000,
-        ); // 48 hours from approval
+          subscription.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+        ); // #1703 D2 — the pay-link window from approval
         const now = Date.now();
         const timeUntilExpiry = expiresAt.getTime() - now;
         const isExpired = timeUntilExpiry < 0;
         const isExpiringSoon =
-          !isExpired && timeUntilExpiry < 24 * 60 * 60 * 1000; // < 24 hours
+          !isExpired && timeUntilExpiry < APPROVAL_PAYMENT_REMINDER_MS;
 
         return {
           id: subscription.id,
@@ -223,7 +227,7 @@ export async function GET() {
         };
       }),
       ...pendingTrials.map((trial) => {
-        // Trials carry a real deadline instead of the 48h assumption above.
+        // Trials carry a real deadline instead of the window assumed above.
         const expiresAt = trial.paymentDueAt ?? trial.updatedAt;
         const timeUntilExpiry = expiresAt.getTime() - Date.now();
         const isExpired = timeUntilExpiry < 0;

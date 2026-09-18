@@ -10,6 +10,7 @@
 import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
+  remindApprovalPaymentsDue,
   disconnectDatabase,
   type CleanupResult,
 } from "../../scripts/payments/cleanup-abandoned-payments";
@@ -69,6 +70,9 @@ async function main(): Promise<void> {
     // Run expired consultation cleanup
     const consultationResult = await cleanupExpiredApprovalPendingPayments();
 
+    // #1703 D2 — the half-window pay-link reminder rides the same run.
+    const reminderResult = await remindApprovalPaymentsDue();
+
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
 
@@ -85,7 +89,15 @@ async function main(): Promise<void> {
     );
 
     // Determine overall success
-    const overallSuccess = paymentResult.success && consultationResult.success;
+    const overallSuccess =
+      paymentResult.success &&
+      consultationResult.success &&
+      reminderResult.success;
+    if (!reminderResult.success) {
+      console.error(
+        `::error::Pay-link reminders: ${reminderResult.errors.join("; ")}`,
+      );
+    }
 
     // Output to GitHub Actions
     outputToGitHubActions(paymentResult, consultationResult, overallSuccess);

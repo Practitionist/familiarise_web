@@ -36,6 +36,10 @@ import {
   SLOT_TRANSITION_TX_OPTIONS,
   transitionSlotsInChunks,
 } from "@/lib/booking/slot-release";
+import {
+  notifyConsulteeRequestExpired,
+  UNANSWERED_REQUEST_REASON,
+} from "@/lib/booking/expiry-notices";
 
 // The per-cohort WHERE guards below (PENDING by requestedAt,
 // APPROVED_PENDING_PAYMENT by updatedAt) are deliberate subsets of
@@ -170,7 +174,29 @@ async function expirePendingConsultations(): Promise<{
           },
         },
       },
-      select: { id: true, appointment: { select: { id: true } } },
+      select: {
+        id: true,
+        appointment: {
+          select: {
+            id: true,
+            organizationId: true,
+            occurrences: {
+              where: { deletedAt: null },
+              orderBy: { startsAt: "asc" as const },
+              take: 1,
+              select: { startsAt: true },
+            },
+          },
+        },
+        // #1703 D2 — what the consultee's expiry notice names.
+        requestedBy: { select: { user: { select: { id: true, name: true } } } },
+        consultationPlan: {
+          select: {
+            title: true,
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+      },
       orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
     });
@@ -220,6 +246,22 @@ async function expirePendingConsultations(): Promise<{
         }, SLOT_TRANSITION_TX_OPTIONS);
         expiredIds.push(stale.id);
         slotsReleased += releasedForOne;
+        // #1703 D2 — after the commit: the consultee learns nobody answered.
+        if (stale.appointment && stale.requestedBy?.user) {
+          await notifyConsulteeRequestExpired({
+            appointmentId: stale.appointment.id,
+            organizationId: stale.appointment.organizationId,
+            consulteeUserId: stale.requestedBy.user.id,
+            consulteeName: stale.requestedBy.user.name ?? "Consultee",
+            consultantName:
+              stale.consultationPlan?.consultantProfile?.user?.name ??
+              "Consultant",
+            planTitle: stale.consultationPlan?.title ?? "Consultation",
+            appointmentType: "CONSULTATION",
+            startsAt: stale.appointment.occurrences?.[0]?.startsAt ?? null,
+            reason: UNANSWERED_REQUEST_REASON,
+          });
+        }
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
         skipped++;

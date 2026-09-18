@@ -34,6 +34,15 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { releaseParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import {
+  notifyConsulteeRequestExpired,
+  PAY_LINK_LAPSED_REASON,
+} from "@/lib/booking/expiry-notices";
+import {
+  PAYMENT_LINK_REMINDER_EMAIL_TYPE,
+  sendPaymentLinkEmail,
+} from "@/lib/email";
+import { APPROVAL_PAYMENT_REMINDER_MS } from "@/lib/payments/constants";
 
 /**
  * Result structure for cleanup operations
@@ -813,6 +822,14 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
             occurrences: true,
           },
         },
+        // #1703 D2 — what the consultee's expiry notice names.
+        requestedBy: { select: { user: { select: { id: true, name: true } } } },
+        consultationPlan: {
+          select: {
+            title: true,
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
       },
     });
 
@@ -890,6 +907,23 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
           result.skippedCount++;
         } else {
           result.cleanedCount++;
+          // #1703 D2 — after the commit: the consultee learns the link lapsed.
+          if (consultation.appointment && consultation.requestedBy?.user) {
+            await notifyConsulteeRequestExpired({
+              appointmentId: consultation.appointment.id,
+              organizationId: consultation.appointment.organizationId,
+              consulteeUserId: consultation.requestedBy.user.id,
+              consulteeName: consultation.requestedBy.user.name ?? "Consultee",
+              consultantName:
+                consultation.consultationPlan?.consultantProfile?.user?.name ??
+                "Consultant",
+              planTitle: consultation.consultationPlan?.title ?? "Consultation",
+              appointmentType: "CONSULTATION",
+              startsAt:
+                consultation.appointment.occurrences[0]?.startsAt ?? null,
+              reason: PAY_LINK_LAPSED_REASON,
+            });
+          }
         }
       } catch (error) {
         result.errorCount++;
@@ -921,6 +955,235 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
 }
 
 /**
+ * #1703 D2 — the half-window reminder. A request approved but unpaid gets one
+ * nudge when half the pay-link window is left (12 h of 24). State-as-outbox
+ * (ADR 27): the guard is the FailedEmail row the first send staged, keyed on
+ * `payment:<id>` + the reminder email type, so a re-run finds it and skips.
+ * Never after payment (the cohort and a re-read require a PENDING payment on
+ * an APPROVED_PENDING_PAYMENT request) and never after expiry (`expiresAt`
+ * must still be ahead).
+ */
+export async function remindApprovalPaymentsDue(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
+  return withCronLock(
+    "cleanup-abandoned-payments",
+    { failMode: "closed" },
+    () => remindApprovalPaymentsDueUnlocked(opts),
+  );
+}
+
+/** The window read: PENDING, still payable, and inside the last half. */
+function reminderPaymentWindow(now: Date) {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    expiresAt: {
+      gt: now,
+      lte: new Date(now.getTime() + APPROVAL_PAYMENT_REMINDER_MS),
+    },
+  } as const;
+}
+
+const REMINDER_PARTY_SELECT = {
+  requestedBy: {
+    select: { user: { select: { id: true, name: true, email: true } } },
+  },
+} as const;
+
+type ReminderCandidate = {
+  requestId: string;
+  kind: "consultation" | "subscription";
+  pendingPaymentUrl: string;
+  consultee: { id: string; name: string | null; email: string | null };
+  consultantName: string;
+  payment: { id: string; amount: number; currency: string; expiresAt: Date };
+};
+
+async function findReminderCandidates(
+  now: Date,
+  limit: number | undefined,
+): Promise<ReminderCandidate[]> {
+  const paymentWhere = reminderPaymentWindow(now);
+  const paymentSelect = {
+    where: paymentWhere,
+    select: { id: true, amount: true, currency: true, expiresAt: true },
+    take: 1,
+  } as const;
+  const requestWhere = {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    deletedAt: null,
+    pendingPaymentUrl: { not: null },
+    appointment: { payment: { some: paymentWhere } },
+  } as const;
+  const [consultations, subscriptions] = await Promise.all([
+    prisma.consultation.findMany({
+      take: limit,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      where: requestWhere,
+      select: {
+        id: true,
+        pendingPaymentUrl: true,
+        ...REMINDER_PARTY_SELECT,
+        consultationPlan: {
+          select: {
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+        appointment: { select: { payment: paymentSelect } },
+      },
+    }),
+    prisma.subscription.findMany({
+      take: limit,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      where: requestWhere,
+      select: {
+        id: true,
+        pendingPaymentUrl: true,
+        ...REMINDER_PARTY_SELECT,
+        subscriptionPlan: {
+          select: {
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+        appointment: { select: { payment: paymentSelect } },
+      },
+    }),
+  ]);
+
+  const candidates: ReminderCandidate[] = [];
+  for (const row of consultations) {
+    const payment = row.appointment?.payment[0];
+    if (!payment?.expiresAt || !row.pendingPaymentUrl) continue;
+    candidates.push({
+      requestId: row.id,
+      kind: "consultation",
+      pendingPaymentUrl: row.pendingPaymentUrl,
+      consultee: row.requestedBy.user,
+      consultantName:
+        row.consultationPlan.consultantProfile.user.name ?? "Consultant",
+      payment: { ...payment, expiresAt: payment.expiresAt },
+    });
+  }
+  for (const row of subscriptions) {
+    const payment = row.appointment?.payment[0];
+    if (!payment?.expiresAt || !row.pendingPaymentUrl) continue;
+    candidates.push({
+      requestId: row.id,
+      kind: "subscription",
+      pendingPaymentUrl: row.pendingPaymentUrl,
+      consultee: row.requestedBy.user,
+      consultantName:
+        row.subscriptionPlan.consultantProfile.user.name ?? "Consultant",
+      payment: { ...payment, expiresAt: payment.expiresAt },
+    });
+  }
+  return candidates;
+}
+
+/** The outbox rows the earlier reminders staged, by payment id. */
+async function alreadyReminded(paymentIds: string[]): Promise<Set<string>> {
+  if (paymentIds.length === 0) return new Set();
+  const rows = await prisma.failedEmail.findMany({
+    where: {
+      emailType: PAYMENT_LINK_REMINDER_EMAIL_TYPE,
+      entityRef: { in: paymentIds.map((id) => `payment:${id}`) },
+    },
+    select: { entityRef: true },
+  });
+  return new Set(
+    rows.flatMap((r) =>
+      r.entityRef ? [r.entityRef.slice("payment:".length)] : [],
+    ),
+  );
+}
+
+async function remindApprovalPaymentsDueUnlocked(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
+  console.log("⏰ Starting approval pay-link reminders...");
+  const result: CleanupResult = {
+    success: false,
+    cleanedCount: 0,
+    skippedCount: 0,
+    errorCount: 0,
+    totalProcessed: 0,
+    errors: [],
+  };
+
+  try {
+    const now = new Date();
+    const candidates = await findReminderCandidates(now, opts.limit);
+    const reminded = await alreadyReminded(candidates.map((c) => c.payment.id));
+    result.totalProcessed = candidates.length;
+
+    for (const candidate of candidates) {
+      try {
+        if (reminded.has(candidate.payment.id)) {
+          result.skippedCount++;
+          continue;
+        }
+        // Re-read at send time: a capture or the sweep may have moved the row
+        // since the cohort read, and a reminder after either is wrong.
+        const fresh = await prisma.payment.findUnique({
+          where: { id: candidate.payment.id },
+          select: { paymentStatus: true, expiresAt: true },
+        });
+        if (
+          fresh?.paymentStatus !== PaymentStatus.PENDING ||
+          !fresh.expiresAt ||
+          fresh.expiresAt <= new Date()
+        ) {
+          result.skippedCount++;
+          continue;
+        }
+        if (!candidate.consultee.email) {
+          result.skippedCount++;
+          continue;
+        }
+        const sent = await sendPaymentLinkEmail({
+          email: candidate.consultee.email,
+          name: candidate.consultee.name ?? "User",
+          consultantName: candidate.consultantName,
+          appointmentType: candidate.kind,
+          amount: candidate.payment.amount,
+          currency: candidate.payment.currency,
+          paymentUrl: candidate.pendingPaymentUrl,
+          expiresAt: candidate.payment.expiresAt,
+          paymentId: candidate.payment.id,
+          reminder: true,
+        });
+        if (sent.success || sent.staged) {
+          // Sent, or durable in the outbox for the relay: either way the row
+          // exists and the once-guard holds.
+          result.cleanedCount++;
+        } else {
+          result.errorCount++;
+          result.errors.push(
+            `Reminder for ${candidate.kind} ${candidate.requestId} did not send`,
+          );
+        }
+      } catch (error) {
+        result.errorCount++;
+        const errorMessage = describeError(error);
+        result.errors.push(
+          `Reminder failed for ${candidate.kind} ${candidate.requestId}: ${errorMessage}`,
+        );
+      }
+    }
+
+    result.success = result.errorCount === 0;
+    logCleanupSummary("Pay-link Reminder Summary", "reminders", result);
+  } catch (error) {
+    const errorMessage = describeError(error);
+    console.error("❌ Pay-link reminder pass failed:", errorMessage);
+    result.errors.push(`Job failed: ${errorMessage}`);
+    result.success = false;
+  }
+
+  return result;
+}
+
+/**
  * Run all cleanup tasks
  *
  * Executes both abandoned payment cleanup and expired consultation cleanup.
@@ -943,6 +1206,9 @@ export async function runAllCleanupTasks(): Promise<{
     // Run expired consultation cleanup
     const consultationResult = await cleanupExpiredApprovalPendingPayments();
 
+    // #1703 D2 — the half-window reminder rides the same run.
+    const reminderResult = await remindApprovalPaymentsDue();
+
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
 
@@ -955,10 +1221,16 @@ export async function runAllCleanupTasks(): Promise<{
       `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
     );
     console.log(
-      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount}`,
+      `   ⏰ Pay-link reminders sent: ${reminderResult.cleanedCount}`,
+    );
+    console.log(
+      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount + reminderResult.errorCount}`,
     );
 
-    const overallSuccess = paymentResult.success && consultationResult.success;
+    const overallSuccess =
+      paymentResult.success &&
+      consultationResult.success &&
+      reminderResult.success;
 
     return {
       paymentResult,
