@@ -14,6 +14,16 @@ import {
   Pencil,
 } from "lucide-react";
 
+// Certificate dates are date-only values stored at UTC midnight; a local-zone
+// render west of UTC would show the previous month.
+function formatMonthYear(value: Date | string): string {
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 interface Props {
   onSubmit: (data: Partial<OnboardingFormData>) => void | Promise<void>;
   onBack: () => void;
@@ -333,13 +343,9 @@ const ConsultantReviewForm: React.FC<Props> = ({
                         {cert.issuingOrganization}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Issued{" "}
-                        {new Date(cert.issueDate).toLocaleDateString("en-US", {
-                          month: "short",
-                          year: "numeric",
-                        })}
+                        Issued {formatMonthYear(cert.issueDate)}
                         {cert.expiryDate &&
-                          ` • Expires ${new Date(cert.expiryDate).toLocaleDateString("en-US", { month: "short", year: "numeric" })}`}
+                          ` • Expires ${formatMonthYear(cert.expiryDate)}`}
                       </p>
                     </div>
                   ))}
