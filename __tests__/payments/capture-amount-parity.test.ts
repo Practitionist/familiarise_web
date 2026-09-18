@@ -40,9 +40,24 @@ const paymentUpdateMany = jest.fn(
 );
 const paymentFindUnique = jest.fn();
 const appointmentFindUnique = jest.fn();
+// #1695 — the trial CAS and the in-tx marker write; the occurrence read is
+// the first thing confirmExistingAppointment does, so "never called" proves
+// a released hold was not confirmed.
+const trialUpdateMany = jest.fn(
+  async (_args: { where: { id: string; status: string } }) => ({ count: 1 }),
+);
+const trialFindUnique = jest.fn();
+const txPaymentUpdate = jest.fn(async () => ({}));
+const occurrenceFindMany = jest.fn();
 const txStub = {
-  payment: { findUnique: paymentFindUnique, updateMany: paymentUpdateMany },
+  payment: {
+    findUnique: paymentFindUnique,
+    updateMany: paymentUpdateMany,
+    update: txPaymentUpdate,
+  },
   appointment: { findUnique: appointmentFindUnique },
+  trial: { updateMany: trialUpdateMany, findUnique: trialFindUnique },
+  appointmentOccurrence: { findMany: occurrenceFindMany },
 };
 // #990 — the Phase-2 clear-marker write runs on the base client (outside the
 // tx). Give it its own update mock so the auto-refund success path completes.
@@ -69,6 +84,10 @@ jest.mock("../../lib/payments/payouts", () => ({
 const refundPayment = jest.fn();
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => refundPayment(...a),
+}));
+const refundBookingPayment = jest.fn();
+jest.mock("../../lib/payments/operations/booking-refund", () => ({
+  refundBookingPayment: (...a: unknown[]) => refundBookingPayment(...a),
 }));
 jest.mock("../../lib/email", () => ({
   sendPaymentSuccessEmail: jest.fn(),
@@ -211,11 +230,11 @@ describe("#677 / #990 — handlePaymentSuccess capture-amount parity", () => {
   });
 });
 
-describe("#1439 — a capture landing on a terminal payment never restamps it", () => {
-  it("leaves an EXPIRED payment EXPIRED when the metadata fails validation", async () => {
-    // The abandoned-payments sweep expired the row and released its hold; a
-    // late capture then failed metadata validation. The old bare `update`
-    // flipped it to SUCCEEDED and the tentative hold leaked forever.
+describe("#1695 — a capture whose hold is already gone is claimed and refunded, never confirmed", () => {
+  it("claims an EXPIRED payment as SUCCEEDED by CAS and refunds through the front door", async () => {
+    // The abandoned-payments sweep expired the row and released its hold; the
+    // late capture is real money that funds nothing. #1439 used to report it
+    // and stop, leaving the buyer charged with no booking and no refund.
     paymentFindUnique.mockResolvedValue({
       id: "pay1",
       paymentIntent: "order1",
@@ -226,29 +245,48 @@ describe("#1439 — a capture landing on a terminal payment never restamps it", 
       appointmentId: "appt1",
       user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
     });
-    paymentUpdateMany.mockImplementation(async () => ({ count: 0 }));
-    validateWebhookMetadata.mockImplementation(() => {
-      throw new Error("userId: Required");
-    });
+    refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
 
     await handlePaymentSuccess("order1", { appointmentType: "CONSULTATION" });
 
-    // The stamp was attempted as a CAS on PENDING and matched nothing.
     expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
-    expect(paymentUpdateMany.mock.calls[0][0].where).toMatchObject({
-      paymentStatus: "PENDING",
+    expect(paymentUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { paymentStatus: "EXPIRED" },
+      data: { paymentStatus: "SUCCEEDED" },
     });
-    // The terminal race is recorded once, as a warning, naming the row.
-    expect(recordSystemError).toHaveBeenCalledTimes(1);
-    expect(recordSystemError.mock.calls[0][0].context).toMatchObject({
-      paymentId: "pay1",
-      orderId: "order1",
-      currentStatus: "EXPIRED",
-    });
-    expect(captureMessage).toHaveBeenCalledTimes(1);
-    // Nothing downstream ran: no ledger posting, no refund, no marker rewrite.
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ paymentId: "pay1", initiatedByUserId: null }),
+    );
+    expect(prismaPaymentUpdate.mock.calls[0][0].data.description).toContain(
+      "Auto-refunded",
+    );
+    // Nothing was confirmed and nobody was paged for hand-work.
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
-    expect(refundPayment).not.toHaveBeenCalled();
-    expect(prismaPaymentUpdate).not.toHaveBeenCalled();
+    expect(recordSystemError).not.toHaveBeenCalled();
+  });
+
+  it("refunds a capture on a trial the unpaid-trial sweep already cancelled, without confirming its slot", async () => {
+    appointmentFindUnique.mockResolvedValue({ id: "appt1" });
+    trialUpdateMany.mockResolvedValue({ count: 0 });
+    trialFindUnique.mockResolvedValue({ status: "CANCELLED" });
+    refundBookingPayment.mockResolvedValue({ rail: "GATEWAY" });
+
+    await handlePaymentSuccess("order1", {
+      appointmentType: "TRIAL",
+      trialId: "trial1",
+    });
+
+    expect(trialUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: { id: "trial1", status: "AWAITING_PAYMENT" },
+    });
+    expect(occurrenceFindMany).not.toHaveBeenCalled();
+    expect(refundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay1",
+        reason: expect.stringContaining("trial CANCELLED"),
+      }),
+    );
+    expect(createEarningsFromPayment).not.toHaveBeenCalled();
   });
 });
