@@ -32,6 +32,7 @@ import {
   subWeeks,
   addMonths,
   subMonths,
+  isSameMonth,
 } from "date-fns";
 import {
   ChevronLeft,
@@ -41,6 +42,7 @@ import {
   Users,
   Zap,
   RotateCcw,
+  CalendarCheck,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
@@ -53,7 +55,10 @@ import {
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
-import { useEventSlotAllocation } from "@/hooks/scheduling/useScheduling";
+import {
+  earliestSelectedSlot,
+  useEventSlotAllocation,
+} from "@/hooks/scheduling/useScheduling";
 import type { AllocationResponse } from "@/lib/scheduling/allocationService";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import {
@@ -75,12 +80,14 @@ import {
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
 import {
+  FOCUS_LEAD_ROWS,
   focusGridPosition,
   focusScrollRow,
   focusTargetRow,
   gridTimeZone,
   type TimePickerFocus,
 } from "@/lib/scheduling/time-picker-focus";
+import { cn } from "@/utils/tailwind";
 import {
   bandKey,
   foldDeadHourBands,
@@ -496,6 +503,13 @@ export function UnifiedCalendar({
   const [view, setView] = useState<"week" | "month">("week");
   const [browserTimezone, setBrowserTimezone] = useState("UTC");
   const [configWarning, setConfigWarning] = useState<string | null>(null);
+  // Wall clock for the Today button, the header highlight and the now-line;
+  // re-read once a minute so the line moves without a re-mount (#1703 F2).
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const tick = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(tick);
+  }, []);
 
   // Initialize timezone
   useEffect(() => {
@@ -1162,6 +1176,37 @@ export function UnifiedCalendar({
     return rows;
   }, [folded, openBands]);
 
+  // Where the now-line sits: the row holding the current minute, and how far
+  // down that row. Local clock, because the rows are drawn in the local zone.
+  const nowRow = now.getHours() * 2 + (now.getMinutes() >= 30 ? 1 : 0);
+  const nowFraction = (now.getMinutes() % 30) / 30;
+
+  // "Go to selection" (#1703 F2): the footer counter scrolls the earliest
+  // selected cell into view, changing week first when it is not on screen.
+  // The scroll itself waits for the week to render, hence the ref + effect.
+  const pendingSelectionScrollRef = useRef<string | null>(null);
+  const scrollToSelection = useCallback(() => {
+    const first = earliestSelectedSlot(selectedSlots);
+    if (!first) return;
+    pendingSelectionScrollRef.current = first.startTime.toISOString();
+    setView("week");
+    if (!weekDates.some((date) => isSameDay(date, first.startTime))) {
+      setCurrentDate(first.startTime);
+    }
+  }, [selectedSlots, weekDates]);
+  useEffect(() => {
+    const target = pendingSelectionScrollRef.current;
+    if (!target || !weekGridEl) return;
+    const cell = weekGridEl.querySelector(`[data-slot-start="${target}"]`);
+    const row = cell?.closest("[data-row]");
+    if (!(row instanceof HTMLElement)) return;
+    pendingSelectionScrollRef.current = null;
+    weekGridEl.scrollTop +=
+      row.getBoundingClientRect().top -
+      weekGridEl.getBoundingClientRect().top -
+      row.getBoundingClientRect().height * FOCUS_LEAD_ROWS;
+  }, [weekGridEl, weekDates, visibleRows, selectedSlots]);
+
   // Once per open; see focusAppliedRef above (#1073).
   useEffect(() => {
     if (!focus || focusAppliedRef.current || !weekGridEl) return;
@@ -1541,6 +1586,20 @@ export function UnifiedCalendar({
           >
             <ChevronRight className="h-4 w-4" />
           </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentDate(new Date())}
+            disabled={
+              view === "week"
+                ? weekDates.some((date) => isSameDay(date, now))
+                : isSameMonth(currentDate, now)
+            }
+            title="Jump to today"
+          >
+            <CalendarCheck className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">Today</span>
+          </Button>
         </div>
 
         {showAllocationButtons && mode === "allocate" ? (
@@ -1567,7 +1626,7 @@ export function UnifiedCalendar({
           >
             <div></div>
             {weekDates.map((date, index) => {
-              const isToday = isSameDay(date, new Date());
+              const isToday = isSameDay(date, now);
               const isInPeriod = isDateInSchedulingPeriod(
                 date,
                 allowedStart,
@@ -1576,9 +1635,12 @@ export function UnifiedCalendar({
               return (
                 <div
                   key={DAYS[index]}
-                  className={`text-center p-1 md:p-2 ${
-                    isInPeriod ? "bg-blue-50 border-x-2 border-blue-200" : ""
-                  }`}
+                  aria-current={isToday ? "date" : undefined}
+                  className={cn(
+                    "rounded-sm p-1 text-center md:p-2",
+                    isInPeriod && "border-x-2 border-blue-200 bg-blue-50",
+                    isToday && "bg-primary/10 ring-1 ring-primary/40",
+                  )}
                 >
                   <div
                     className={`font-bold text-xs md:text-base ${
@@ -1660,11 +1722,29 @@ export function UnifiedCalendar({
                         )}
                       </div>
                     </div>
-                    {weekDates.map((date) => (
-                      <div key={date.toISOString()} className="col-span-1">
-                        {renderTimeCell(interval, date)}
-                      </div>
-                    ))}
+                    {weekDates.map((date) => {
+                      const holdsNow =
+                        isSameDay(date, now) && nowRow === rowIndex;
+                      return (
+                        <div
+                          key={date.toISOString()}
+                          className="relative col-span-1"
+                        >
+                          {renderTimeCell(interval, date)}
+                          {holdsNow && (
+                            // The now-line: a 2px rule across today's column at
+                            // the minute, moved by the once-a-minute tick.
+                            <div
+                              aria-hidden
+                              className="pointer-events-none absolute inset-x-0 z-10 border-t-2 border-primary"
+                              style={{ top: `${nowFraction * 100}%` }}
+                            >
+                              <span className="absolute -left-1 -top-[5px] h-2 w-2 rounded-full bg-primary" />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>,
                 );
               }
@@ -1682,79 +1762,97 @@ export function UnifiedCalendar({
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           <div className="text-sm">
             {(() => {
-              try {
-                if (eventType === "subscription") {
-                  const slotsPerCall = getSlotsPerCall(sessionDurationInHours);
-                  const computed = computeSubscriptionFooter({
-                    selectedSlots,
-                    allowedStart,
-                    allowedEnd,
+              const text = (() => {
+                try {
+                  if (eventType === "subscription") {
+                    const slotsPerCall = getSlotsPerCall(
+                      sessionDurationInHours,
+                    );
+                    const computed = computeSubscriptionFooter({
+                      selectedSlots,
+                      allowedStart,
+                      allowedEnd,
+                      sessionsPerWeek,
+                      sessionDurationInHours,
+                      totalSessions,
+                      pastCompletedSessions:
+                        pastEventSlotCount > 0
+                          ? Math.floor(pastEventSlotCount / slotsPerCall)
+                          : 0,
+                    });
+                    if (computed) return computed;
+                    // Fallback to existing text if boundaries not provided
+                    return calculateCallProgress(
+                      selectedSlots,
+                      sessionDurationInHours,
+                      slotLimits.maxSlots,
+                      schedulingTimezone,
+                    );
+                  } else if (eventType === "class") {
+                    const slotsPerSession = Math.ceil(
+                      (sessionDurationInHours || 1) / 0.5,
+                    );
+                    return computeClassFooter({
+                      selectedSlots,
+                      sessionDurationInHours,
+                      totalSessions: slotLimits.totalSessions,
+                      pastCompletedSessions:
+                        pastEventSlotCount > 0
+                          ? Math.floor(pastEventSlotCount / slotsPerSession)
+                          : 0,
+                      schedulingTimezone,
+                    });
+                  }
+
+                  const duration =
+                    eventType === "consultation" || eventType === "webinar"
+                      ? durationInHours
+                      : sessionDurationInHours;
+
+                  const requiredSlotsForThisEvent = calculateRequiredSlots(
+                    eventType,
+                    durationInMonths,
                     sessionsPerWeek,
-                    sessionDurationInHours,
-                    totalSessions,
-                    pastCompletedSessions:
-                      pastEventSlotCount > 0
-                        ? Math.floor(pastEventSlotCount / slotsPerCall)
-                        : 0,
-                  });
-                  if (computed) return computed;
-                  // Fallback to existing text if boundaries not provided
-                  return calculateCallProgress(
-                    selectedSlots,
-                    sessionDurationInHours,
-                    slotLimits.maxSlots,
-                    schedulingTimezone,
+                    duration,
                   );
-                } else if (eventType === "class") {
-                  const slotsPerSession = Math.ceil(
-                    (sessionDurationInHours || 1) / 0.5,
+
+                  // Never "N slots": the 30-minute atom (ADR B1) is our
+                  // bookkeeping unit, not something a buyer should have to
+                  // translate. A one-hour consultation is ONE session, and
+                  // "2 required slots" reads as two appointments.
+                  const totalMinutes = requiredSlotsForThisEvent * 30;
+                  const chosenMinutes = selectedSlots.length * 30;
+                  if (chosenMinutes === 0)
+                    return `Select a ${formatDurationLabel(totalMinutes)} time`;
+                  if (chosenMinutes >= totalMinutes)
+                    return `${formatDurationLabel(totalMinutes)} selected`;
+                  // Says what is missing, not just what is there (#1703 F2).
+                  return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected · pick ${formatDurationLabel(totalMinutes - chosenMinutes)} more`;
+                } catch (error) {
+                  Sentry.captureException(
+                    error instanceof Error ? error : new Error(String(error)),
+                    { tags: { subsystem: "client" } },
                   );
-                  return computeClassFooter({
-                    selectedSlots,
-                    sessionDurationInHours,
-                    totalSessions: slotLimits.totalSessions,
-                    pastCompletedSessions:
-                      pastEventSlotCount > 0
-                        ? Math.floor(pastEventSlotCount / slotsPerSession)
-                        : 0,
-                    schedulingTimezone,
-                  });
+                  console.error("Error calculating footer stats:", error);
+                  if (error instanceof Error) {
+                    return error.message;
+                  }
+                  return `Selected: ${selectedSlots.length} slots`;
                 }
-
-                const duration =
-                  eventType === "consultation" || eventType === "webinar"
-                    ? durationInHours
-                    : sessionDurationInHours;
-
-                const requiredSlotsForThisEvent = calculateRequiredSlots(
-                  eventType,
-                  durationInMonths,
-                  sessionsPerWeek,
-                  duration,
-                );
-
-                // Never "N slots": the 30-minute atom (ADR B1) is our
-                // bookkeeping unit, not something a buyer should have to
-                // translate. A one-hour consultation is ONE session, and
-                // "2 required slots" reads as two appointments.
-                const totalMinutes = requiredSlotsForThisEvent * 30;
-                const chosenMinutes = selectedSlots.length * 30;
-                if (chosenMinutes === 0)
-                  return `Select a ${formatDurationLabel(totalMinutes)} time`;
-                if (chosenMinutes >= totalMinutes)
-                  return `${formatDurationLabel(totalMinutes)} selected`;
-                return `${formatDurationLabel(chosenMinutes)} of ${formatDurationLabel(totalMinutes)} selected`;
-              } catch (error) {
-                Sentry.captureException(
-                  error instanceof Error ? error : new Error(String(error)),
-                  { tags: { subsystem: "client" } },
-                );
-                console.error("Error calculating footer stats:", error);
-                if (error instanceof Error) {
-                  return error.message;
-                }
-                return `Selected: ${selectedSlots.length} slots`;
-              }
+              })();
+              // A counter you can act on: with a selection it scrolls the
+              // first selected cell into view (#1703 F2).
+              if (selectedSlots.length === 0) return text;
+              return (
+                <button
+                  type="button"
+                  onClick={scrollToSelection}
+                  className="text-left underline decoration-dotted underline-offset-4 hover:decoration-solid"
+                  title="Go to selection"
+                >
+                  {text}
+                </button>
+              );
             })()}
           </div>
           {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}

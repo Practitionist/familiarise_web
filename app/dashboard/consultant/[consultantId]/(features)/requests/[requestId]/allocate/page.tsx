@@ -25,7 +25,9 @@ type PageProps = {
   // `Appointment` row is downstream of it and does not exist at all for a
   // request that has never been scheduled — the ordinary case here.
   params: Promise<{ consultantId: string; requestId: string }>;
-  searchParams: Promise<{ type?: string }>;
+  // `at` pins the grid on one instant — the confirm dialog's "Pick another
+  // time" hand-off sends the consultee's requested slot here (#1703 F5).
+  searchParams: Promise<{ type?: string; at?: string }>;
 };
 
 // React.cache so generateMetadata() and the page body share one query per request.
@@ -50,6 +52,13 @@ function parseEventTypeParam(
     default:
       return null;
   }
+}
+
+/** The pinned instant, or null when `?at` is absent or not a date. */
+function parsePinnedAt(at: string | undefined): Date | null {
+  if (!at) return null;
+  const parsed = new Date(at);
+  return Number.isFinite(parsed.getTime()) ? parsed : null;
 }
 
 /**
@@ -83,7 +92,7 @@ export default async function AllocateSlotsPage({
   searchParams,
 }: Readonly<PageProps>) {
   const { consultantId, requestId } = await params;
-  const { type } = await searchParams;
+  const { type, at } = await searchParams;
   // Enforced here rather than in the layout: the layout is a client component,
   // so its check runs only after this server render has already streamed.
   await requirePersonalProfileAccess("consultant", consultantId);
@@ -101,7 +110,7 @@ export default async function AllocateSlotsPage({
   const canonicalPath = (eventType: AllocationPageEventType) =>
     `/dashboard/consultant/${encodeURIComponent(consultantId)}/requests/${encodeURIComponent(requestId)}/allocate?type=${eventType}`;
 
-  let request = requestedType
+  const request = requestedType
     ? await loadRequest(requestId, requestedType)
     : null;
   if (!request) {
@@ -154,6 +163,7 @@ export default async function AllocateSlotsPage({
       <AllocateClient
         backHref={backHref}
         title={request.title}
+        pinnedAt={parsePinnedAt(at)}
         subject={{
           consultantProfileId: consultantId,
           eventType: request.eventType,
