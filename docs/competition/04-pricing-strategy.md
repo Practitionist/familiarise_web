@@ -10,18 +10,18 @@
 
 Before setting our pricing, here's what every relevant player charges:
 
-| Platform         | Commission Model    | Effective Take Rate (India)           | Payment Gateway     | UPI Support |
-| ---------------- | ------------------- | ------------------------------------- | ------------------- | ----------- |
-| **Topmate**      | 10% commission      | 16-18% (Stripe 3% + forex 3-5% + 10%) | Stripe only         | No          |
-| **Preplaced**    | 20% commission      | ~23% (20% + gateway fees)             | Not disclosed       | Unknown     |
-| **SuperProfile** | ₹99/month flat      | ₹99/month + gateway fees (~2%)        | Multiple            | Yes         |
-| **GrowthSchool** | Platform-controlled | N/A (instructors paid fixed fee)      | Platform-controlled | N/A         |
-| **Clarity.fm**   | 15% commission      | ~18% (15% + gateway fees)             | Stripe              | No          |
-| **Superpeer**    | 15% commission      | ~18% (15% + gateway fees)             | Stripe              | No          |
-| **Maven**        | 10% commission      | ~13% (10% + gateway fees)             | Stripe              | No          |
-| **Familiarise**  | 10% commission      | **10% + 0% UPI gateway**              | Razorpay + Stripe   | **Yes**     |
+| Platform         | Commission Model                                               | Effective Take Rate (India)                                       | Payment Gateway                              | UPI Support |
+| ---------------- | -------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------- | ----------- |
+| **Topmate**      | 10% own-link / 20% marketplace commission                      | ~12-22% (10-20% + 2% INR fee, or Stripe + forex on international) | Own INR rails + Stripe (verified 2026-09-18) | Yes         |
+| **Preplaced**    | 20% commission                                                 | ~23% (20% + gateway fees)                                         | Not disclosed                                | Unknown     |
+| **SuperProfile** | ₹99/month flat                                                 | ₹99/month + gateway fees (~2%)                                    | Multiple                                     | Yes         |
+| **GrowthSchool** | Platform-controlled                                            | N/A (instructors paid fixed fee)                                  | Platform-controlled                          | N/A         |
+| **Clarity.fm**   | 15% commission                                                 | ~18% (15% + gateway fees)                                         | Stripe                                       | No          |
+| **Superpeer**    | 15% commission                                                 | ~18% (15% + gateway fees)                                         | Stripe                                       | No          |
+| **Maven**        | 10% commission                                                 | ~13% (10% + gateway fees)                                         | Stripe                                       | No          |
+| **Familiarise**  | 10% own-link / 20% marketplace (#1711; code today is flat 20%) | **10-20% + 0% UPI gateway**                                       | Razorpay + Stripe                            | **Yes**     |
 
-The critical insight: **For Indian transactions via UPI, our effective take rate is 10% total. Topmate's is 16-18%.** This is a 6-8% cost advantage per transaction, and it's structural — it cannot be closed unless Topmate switches to an Indian payment gateway.
+The critical insight has changed: **Topmate's payment rails are no longer a gap — they now run their own INR rails at the same dual 10%/20% take rate we are adopting (verified 2026-09-18).** Our remaining structural edge is UPI's 0% gateway fee on top of that rate, plus the delivery guarantee described in `00-executive-summary.md`, not the take rate itself. Everywhere below in this document, "10% commission" for Familiarise means the own-link case; the marketplace-sourced case is 20% until #1711 ships the attribution logic.
 
 ---
 

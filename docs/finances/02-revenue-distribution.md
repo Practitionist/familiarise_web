@@ -4,6 +4,10 @@
 
 This document details how revenue is distributed among all parties: Payment Gateway, Platform, and Consultants. It also covers employee compensation models.
 
+## Decision (2026-09-18)
+
+The live commission rule is a dual take rate: 10% when the buyer arrives via the expert's own link, and 20% when the marketplace sourced the buyer (see ADR 33 and #1711). The fixed-20% model worked through below is the marketplace-sourced case, and the 10% case is the own-link case; neither figure below should be read as a single flat platform commission. The code today still charges a flat 20% regardless of source, pending the attribution work tracked in #1711 item 0.
+
 ---
 
 ## Pre-Revenue Reality Check (February 2026)

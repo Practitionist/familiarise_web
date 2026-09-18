@@ -6,14 +6,14 @@
 
 ### Core Service Types
 
-| Feature                    | Familiarise | Topmate | SuperProfile |    Preplaced     | GrowthSchool  | Metvy | ProPeers |
-| -------------------------- | :---------: | :-----: | :----------: | :--------------: | :-----------: | :---: | :------: |
-| 1:1 Consultations          |   **Yes**   |   Yes   |     Yes      |       Yes        |      No       |  No   |    No    |
-| Recurring Subscriptions    |   **Yes**   |   No    |      No      | Yes (mentorship) |      No       |  No   |    No    |
-| Webinars (group live)      |   **Yes**   |  Basic  |     Yes      |        No        | Yes (cohorts) |  Yes  |    No    |
-| Multi-week Classes         |   **Yes**   |   No    |      No      |  Yes (programs)  | Yes (cohorts) |  No   |    No    |
-| Digital Products/Downloads |     No      |   Yes   |     Yes      |        No        |      No       |  No   |    No    |
-| **Service Type Count**     |    **4**    |    2    |     2-3      |       2-3        |      1-2      |   1   |    0     |
+| Feature                    | Familiarise |                 Topmate                 | SuperProfile |    Preplaced     | GrowthSchool  | Metvy | ProPeers |
+| -------------------------- | :---------: | :-------------------------------------: | :----------: | :--------------: | :-----------: | :---: | :------: |
+| 1:1 Consultations          |   **Yes**   |                   Yes                   |     Yes      |       Yes        |      No       |  No   |    No    |
+| Recurring Subscriptions    |   **Yes**   | via Packages (prepaid, validity window) |      No      | Yes (mentorship) |      No       |  No   |    No    |
+| Webinars (group live)      |   **Yes**   |                  Basic                  |     Yes      |        No        | Yes (cohorts) |  Yes  |    No    |
+| Multi-week Classes         |   **Yes**   |                   No                    |      No      |  Yes (programs)  | Yes (cohorts) |  No   |    No    |
+| Digital Products/Downloads |     No      |                   Yes                   |     Yes      |        No        |      No       |  No   |    No    |
+| **Service Type Count**     |    **4**    |                    2                    |     2-3      |       2-3        |      1-2      |   1   |    0     |
 
 ### Video & Communication
 
@@ -26,14 +26,14 @@
 
 ### Payments & Monetization
 
-| Feature                |   Familiarise    |      Topmate      | SuperProfile | Preplaced | GrowthSchool |  Metvy  | ProPeers |
-| ---------------------- | :--------------: | :---------------: | :----------: | :-------: | :----------: | :-----: | :------: |
-| Razorpay (UPI/India)   |     **Yes**      | No (Stripe only)  |     Yes      |  Unknown  |   Unknown    | Unknown |    No    |
-| Stripe (International) |     **Yes**      |        Yes        |      No      |  Unknown  |   Unknown    |   No    |    No    |
-| UPI Support            | **Yes (0% fee)** |        No         |     Yes      |  Unknown  |   Unknown    | Unknown |    No    |
-| Payment Gateways       |      **4**       |         1         |     1-2      |  Unknown  |   Unknown    | Unknown |    0     |
-| Commission Rate        |    10% launch    | 10% (eff. 16-18%) | ₹99/mo flat  |    20%    | Platform-set |  Free?  |   Free   |
-| Instant Payouts        |     Not yet      |   Yes (claims)    |   Unknown    |  Unknown  |   Unknown    | Unknown |    No    |
+| Feature                |              Familiarise               |                                                         Topmate                                                          |            SuperProfile            | Preplaced | GrowthSchool |  Metvy  | ProPeers |
+| ---------------------- | :------------------------------------: | :----------------------------------------------------------------------------------------------------------------------: | :--------------------------------: | :-------: | :----------: | :-----: | :------: |
+| Razorpay (UPI/India)   |                **Yes**                 |                                         Yes (own INR rails, verified 2026-09-18)                                         |                Yes                 |  Unknown  |   Unknown    | Unknown |    No    |
+| Stripe (International) |                **Yes**                 |                                                           Yes                                                            |                 No                 |  Unknown  |   Unknown    |   No    |    No    |
+| UPI Support            |            **Yes (0% fee)**            |                                         Yes (own INR rails, verified 2026-09-18)                                         |                Yes                 |  Unknown  |   Unknown    | Unknown |    No    |
+| Payment Gateways       |                 **4**                  |                                                            2                                                             |                1-2                 |  Unknown  |   Unknown    | Unknown |    0     |
+| Commission Rate        | 10-20% (#1711, code today is flat 20%) |                                       10% own-link / 20% marketplace + 2% INR fee                                        | Disputed (third-party, 2026-09-18) |    20%    | Platform-set |  Free?  |   Free   |
+| Instant Payouts        |                Not yet                 | Yes — INR withdrawals within about 1 hour after the first payout, international in 7 business days (verified 2026-09-18) |              Unknown               |  Unknown  |   Unknown    | Unknown |    No    |
 
 ### Booking & Scheduling
 
