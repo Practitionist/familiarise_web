@@ -1,6 +1,10 @@
 import { reportSentryError } from "@/lib/observability/report";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
-import { ApiResponseError, retryAfterMsFromHeaders } from "@/lib/fetch-helpers";
+import {
+  ApiResponseError,
+  OUTCOME_UNKNOWN_MESSAGE,
+  retryAfterMsFromHeaders,
+} from "@/lib/fetch-helpers";
 import { isEventIdFormat } from "@/schemas/slotAllocation/validationSchemas";
 import { CalendarInterval } from "./calendarUtils";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
@@ -202,9 +206,13 @@ export class AllocationService {
       }
 
       if (!response.ok) {
+        // A 5xx with no sentence is the edge giving up (504) or a crash: the
+        // allocation may have committed underneath, so say so (#1696).
+        const fallback =
+          response.status >= 500 ? OUTCOME_UNKNOWN_MESSAGE : fallbackError;
         return {
           success: false,
-          error: data.error || fallbackError,
+          error: data.error || fallback,
           errorCode: data.errorCode,
           httpStatus: response.status,
           // #1206 — a shortage the consultant can still act on.

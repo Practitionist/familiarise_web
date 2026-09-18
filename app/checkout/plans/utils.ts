@@ -7,6 +7,8 @@ import { getErrorToast } from "@/lib/errors/mapping/payment-error-toast-map";
 import { ErrorTypes } from "@/lib/errors/classification/payment-error-classification";
 import {
   ApiResponseError,
+  isOutcomeUnknown,
+  OUTCOME_UNKNOWN_MESSAGE,
   requireJsonResponse,
 } from "@/lib/fetch-helpers";
 import { CheckoutInput, checkoutResponseSchema } from "@/schemas/checkout";
@@ -287,15 +289,22 @@ export async function handleUnifiedCheckout(
 
   // Edge 504s/HTML error pages throw out of response.json(): never let a
   // SyntaxError reach the buyer as a "payment failed" decline — a timeout is
-  // not a decline, and the charge state is unknown, not failed.
+  // not a decline, and the charge state is unknown, not failed (#1696). A
+  // refusal the route wrote keeps its sentence, code and errorType.
   let rawData: unknown;
   try {
     rawData = await requireJsonResponse(response, "Checkout request failed");
   } catch (error) {
     if (error instanceof ApiResponseError) {
-      handleApiError({
-        error: `Timed out reaching the server (HTTP ${error.status}). No charge was made — check your connection and retry.`,
-      });
+      handleApiError(
+        isOutcomeUnknown(error)
+          ? { error: OUTCOME_UNKNOWN_MESSAGE }
+          : {
+              ...(isCheckoutApiError(error.body) ? error.body : {}),
+              error: error.message,
+              code: error.code,
+            },
+      );
       return; // Toast already shown — don't throw to avoid double toast + console overlay
     }
     throw error;
