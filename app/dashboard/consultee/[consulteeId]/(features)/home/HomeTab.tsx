@@ -37,6 +37,7 @@ import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
 import type { NeedsActionReason } from "@/lib/appointments/view-model";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
 import {
   type ProcessedEvent,
   processAllEvents,
@@ -80,6 +81,8 @@ interface HomeTabProps {
   eventsData: TConsulteeEventsResponse;
   isRefreshing?: boolean;
   consulteeId: string;
+  /** From the RSC page, so server and client format one wall clock. #1703 */
+  viewerZone: ViewerZone;
 }
 
 const staggerChildren = {
@@ -140,11 +143,13 @@ function getTimeAway(
 // off-token surface on the page); fixed 340x180 geometry for scroll rhythm.
 function UpcomingSessionCard({
   event,
+  viewerZone,
   onClick,
   onJoin,
   isJoining,
 }: {
   event: ProcessedEvent;
+  viewerZone: ViewerZone;
   onClick?: () => void;
   onJoin?: () => void;
   isJoining?: boolean;
@@ -267,10 +272,12 @@ function UpcomingSessionCard({
         {event.startsAt ? (
           <>
             <span className="truncate">
-              {format(event.startsAt, "EEE, d MMM yyyy")}
+              {formatForViewer(event.startsAt, viewerZone, "EEE, d MMM yyyy")}
             </span>
             <span className="text-muted-foreground/50 shrink-0">•</span>
-            <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
+            <span className="shrink-0">
+              {formatForViewer(event.startsAt, viewerZone, "h:mm a")}
+            </span>
           </>
         ) : (
           // Same words as the Appointments row's time slot for a slot-less
@@ -364,10 +371,12 @@ function UpcomingSessionCard({
 // Monthly event item - Elegant minimal design
 function MonthlyEventItem({
   event,
+  viewerZone,
   isExpanded,
   onToggle,
 }: {
   event: ProcessedEvent;
+  viewerZone: ViewerZone;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
@@ -559,11 +568,15 @@ function MonthlyEventItem({
                       )}
                     />
                     <span className="w-24 font-medium text-foreground">
-                      {format(session.startTime, "EEE d MMM")}
+                      {formatForViewer(
+                        session.startTime,
+                        viewerZone,
+                        "EEE d MMM",
+                      )}
                     </span>
                     <span className="text-muted-foreground">
-                      {format(session.startTime, "h:mm a")} -{" "}
-                      {format(session.endTime, "h:mm a")}
+                      {formatForViewer(session.startTime, viewerZone, "h:mm a")}{" "}
+                      - {formatForViewer(session.endTime, viewerZone, "h:mm a")}
                     </span>
                     <span
                       className={cn(
@@ -694,6 +707,7 @@ export default function HomeTab({
   eventsData,
   isRefreshing = false,
   consulteeId,
+  viewerZone,
 }: Readonly<HomeTabProps>) {
   const router = useRouter();
   const [currentMonth, setCurrentMonth] = useState(new Date());
@@ -928,6 +942,7 @@ export default function HomeTab({
                   <UpcomingSessionCard
                     key={event.id}
                     event={event}
+                    viewerZone={viewerZone}
                     onJoin={() => handleJoinMeeting(event)}
                     isJoining={joiningEventId === event.id}
                   />
@@ -1008,6 +1023,7 @@ export default function HomeTab({
                   <MonthlyEventItem
                     key={event.id}
                     event={event}
+                    viewerZone={viewerZone}
                     isExpanded={expandedEvents.has(event.id)}
                     onToggle={() => toggleExpanded(event.id)}
                   />

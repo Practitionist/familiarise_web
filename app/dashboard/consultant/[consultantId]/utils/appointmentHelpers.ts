@@ -1,4 +1,3 @@
-import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
 import {
   isDeadOccurrence,
@@ -301,15 +300,6 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
   });
 };
 
-// Format UTC time to local time
-export const formatAppointmentTime = (utcTime: string): string => {
-  // Create a date object in local time
-  const localDate = new Date(utcTime);
-
-  // Format the date in local time with browser's timezone
-  return format(localDate, "EEE, MMM d, h:mm a");
-};
-
 // Get appointment status
 export const getAppointmentStatus = (appointment: TAppointment): string => {
   const startTime = getStartTime(appointment);
@@ -565,4 +555,3 @@ export const groupRecurringAppointments = (
 
   return groups;
 };
-

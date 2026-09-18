@@ -32,7 +32,6 @@ import {
 } from "@/components/ui/tooltip";
 import {
   calculateSessionProgress,
-  formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
   getConsumeeImage,
@@ -68,12 +67,19 @@ import type {
   TFinancialSummary,
   TConsultantDashboardResponse,
 } from "@/types/consultant-events";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+
+/** One pattern for both Home lists; the zone label rides along when the
+ * viewer has no saved zone (docs/booking/19-dst-and-timezone-posture.md). */
+const HOME_TIME_PATTERN = "EEE, MMM d, h:mm a";
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   pendingRequestsCount?: number;
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
+  /** From the RSC page, so server and client format one wall clock. #1703 */
+  viewerZone: ViewerZone;
   performanceSnapshot?: TPerformanceSnapshot;
   financialSummary?: TFinancialSummary;
 }
@@ -96,6 +102,7 @@ export function HomeTab({
   consultantId,
   pendingRequestsCount = 0,
   awaitingPayment,
+  viewerZone,
   performanceSnapshot,
   financialSummary,
 }: Readonly<HomeTabProps>) {
@@ -306,7 +313,11 @@ export function HomeTab({
                             <Clock className="h-3.5 w-3.5" />
                             <span>
                               {startTime
-                                ? formatAppointmentTime(startTime.toISOString())
+                                ? formatForViewer(
+                                    startTime,
+                                    viewerZone,
+                                    HOME_TIME_PATTERN,
+                                  )
                                 : "TBD"}
                             </span>
                           </div>
@@ -509,7 +520,11 @@ export function HomeTab({
                             </div>
                             <p className="text-sm text-zinc-500">
                               {startTime
-                                ? formatAppointmentTime(startTime.toISOString())
+                                ? formatForViewer(
+                                    startTime,
+                                    viewerZone,
+                                    HOME_TIME_PATTERN,
+                                  )
                                 : "TBD"}
                             </p>
                             {isRecurring && (
