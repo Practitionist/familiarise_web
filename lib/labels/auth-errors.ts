@@ -50,10 +50,12 @@ const BY_CODE: Record<string, AuthErrorCopy> = {
     description: "Enter a valid email address.",
     field: "email",
   },
+  // The server answers a wrong password, an unknown address and a
+  // Google/SSO-only account the same way; the provider buttons on the page
+  // already cover the last case, so the sentence stays a plain password error.
   INVALID_EMAIL_OR_PASSWORD: {
     title: "That email and password don't match",
-    description:
-      "Check both and try again. If you signed up with Google or through your organisation's SSO, use that button instead.",
+    description: "Check both and try again, or use Forgot password?",
     field: "password",
   },
   EMAIL_NOT_VERIFIED: {
