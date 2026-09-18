@@ -3793,20 +3793,18 @@ export class SchedulingService {
             include: { occurrences: true },
           })
         : await tx.appointment.create({
+            // Unchecked (scalar-FK) shape throughout, as checkout writes it.
+            // A relation-style `connect` next to any scalar FK makes Prisma
+            // validate against the checked input, which has no *Id fields —
+            // "Unknown argument cancellationPolicyId" (FAMILIARISE_WEB-4F).
             data: {
               appointmentType: this.getAppointmentType(eventType),
-              [relationField]: { connect: { id: eventId } },
+              [`${relationField}Id`]: eventId,
               ...idempotencyData,
-              ...(organizationId ? { organizationId } : {}),
-              // B1/#1499 — inherit the terms the booking was sold under.
-              // Omit when there is nothing to inherit (no originating row,
-              // or a legacy/shared row with NULL): an explicit null fails
-              // Prisma validation on clients whose generated input predates
-              // the field, while omission reads as the platform ladder —
-              // exactly what the schema comment contracts NULL to mean.
-              ...(inheritedPolicyId
-                ? { cancellationPolicyId: inheritedPolicyId }
-                : {}),
+              organizationId: organizationId ?? null,
+              // B1/#1499 — inherit the terms the booking was sold under;
+              // NULL is the platform ladder.
+              cancellationPolicyId: inheritedPolicyId,
               occurrences: { create: occurrencesToCreate },
             },
             include: { occurrences: true },

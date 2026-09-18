@@ -545,9 +545,8 @@ describe("Manual allocation", () => {
     });
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
-    expect(createCall.data.consultation).toEqual({
-      connect: { id: "consult-1" },
-    });
+    expect(createCall.data.consultationId).toBe("consult-1");
+    expect("consultation" in createCall.data).toBe(false);
   });
 
   it("should update consultation status to APPROVED", async () => {
@@ -623,9 +622,7 @@ describe("Manual allocation", () => {
 
     const createCall = mockTx.appointment.create.mock.calls[0][0];
     expect(createCall.data.appointmentType).toBe(AppointmentsType.SUBSCRIPTION);
-    expect(createCall.data.subscription).toEqual({
-      connect: { id: "sub-1" },
-    });
+    expect(createCall.data.subscriptionId).toBe("sub-1");
   });
 
   it("creates ONE wrapper with one occurrence per call for a multi-call subscription", async () => {
@@ -2088,11 +2085,12 @@ describe("createAppointments - grouping and validation", () => {
     );
   });
 
-  // Explicit nulls fail Prisma validation on clients whose generated input
-  // predates the field (Unknown argument … Did you mean …?), while omission
-  // reads as the platform ladder. So the absence of the key — not a null
-  // value — is what these tests pin when there is nothing to inherit.
-  it("omits cancellationPolicyId when no originating wrapper exists", async () => {
+  // The create uses the UNCHECKED (scalar-FK) input throughout. Mixing a
+  // relation-style `connect` with any scalar FK makes Prisma validate against
+  // the checked input, which has no *Id fields at all — the shape, not the
+  // null, was what threw "Unknown argument cancellationPolicyId" on a live
+  // preview (FAMILIARISE_WEB-4F). NULL is the platform ladder and is legal.
+  it("writes cancellationPolicyId: null when no originating wrapper exists", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findFirst.mockResolvedValue(null);
 
@@ -2105,10 +2103,10 @@ describe("createAppointments - grouping and validation", () => {
 
     expect(result.success).toBe(true);
     const data = mockTx.appointment.create.mock.calls[0][0].data;
-    expect("cancellationPolicyId" in data).toBe(false);
+    expect(data.cancellationPolicyId).toBeNull();
   });
 
-  it("omits cancellationPolicyId when the wrapper cites none (legacy/shared row)", async () => {
+  it("writes cancellationPolicyId: null when the wrapper cites none (legacy/shared row)", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
     mockTx.appointment.findFirst.mockResolvedValue({
       cancellationPolicyId: null,
@@ -2123,12 +2121,14 @@ describe("createAppointments - grouping and validation", () => {
 
     expect(result.success).toBe(true);
     const data = mockTx.appointment.create.mock.calls[0][0].data;
-    expect("cancellationPolicyId" in data).toBe(false);
+    expect(data.cancellationPolicyId).toBeNull();
   });
 
-  it("never writes an explicit-null relation FK on appointment create", async () => {
+  it("never mixes a relation-style connect with scalar FKs on appointment create", async () => {
     mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
-    mockTx.appointment.findFirst.mockResolvedValue(null);
+    mockTx.appointment.findFirst.mockResolvedValue({
+      cancellationPolicyId: "policy-abc",
+    });
 
     await SchedulingService.allocate({
       eventType: "consultation",
@@ -2139,10 +2139,35 @@ describe("createAppointments - grouping and validation", () => {
 
     const data: Record<string, unknown> =
       mockTx.appointment.create.mock.calls[0][0].data;
-    const explicitNullFks = Object.entries(data).filter(
-      ([key, value]) => key.endsWith("Id") && value === null,
+    const relationKeys = Object.entries(data).filter(
+      ([, value]) =>
+        typeof value === "object" && value !== null && "connect" in value,
     );
-    expect(explicitNullFks).toEqual([]);
+    expect(relationKeys).toEqual([]);
+    expect(data.consultationId).toBe("consult-1");
+    expect(data.cancellationPolicyId).toBe("policy-abc");
+  });
+
+  it("writes organizationId as a scalar on an org-funded allocation", async () => {
+    // #768 — the org tag rides on the originating appointment for a consultation.
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        appointment: { organizationId: "org-1", occurrences: [] },
+      }),
+    );
+    mockTx.appointment.findFirst.mockResolvedValue(null);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    expect(result.success).toBe(true);
+    const data = mockTx.appointment.create.mock.calls[0][0].data;
+    expect(data.organizationId).toBe("org-1");
+    expect("organization" in data).toBe(false);
   });
 
   it("should only connect consultant when no consultee (webinar)", async () => {
@@ -2885,7 +2910,7 @@ describe("Edge cases", () => {
     expect(result.success).toBe(true);
     const createCall = mockTx.appointment.create.mock.calls[0][0];
     expect(createCall.data.appointmentType).toBe(AppointmentsType.CLASS);
-    expect(createCall.data.class).toEqual({ connect: { id: "class-1" } });
+    expect(createCall.data.classId).toBe("class-1");
   });
 
   it("should handle custom schedule consultant", async () => {
