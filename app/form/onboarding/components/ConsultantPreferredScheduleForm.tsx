@@ -31,7 +31,6 @@ import {
   buildCustomSlotsForSave,
   buildWeeklySlotsForSave,
 } from "@/utils/schedule/formatting";
-import { useToast } from "@/hooks/use-toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -48,7 +47,6 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   initialData,
 }) => {
   const { timezone, isLoading: timezoneLoading } = useTimezone();
-  const { toast } = useToast();
   const { handleSubmit, watch, setValue, control, reset } = useForm({
     resolver: zodResolver(PreferredScheduleFormSchema),
     defaultValues: {
@@ -310,33 +308,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const allSlotsValid =
     validationFeedback.isValid && validationFeedback.hasSlots;
 
+  // Continue is disabled until the grid is valid, so the inline feedback
+  // (not a toast) is what tells the user why; this guard is only defensive.
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
-      if (!validationFeedback.hasSlots) {
-        toast({
-          title: "No hours added",
-          description: "Please add at least one time slot before proceeding.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      if (!validationFeedback.isValid) {
-        console.error("[Schedule Validation] Submission blocked:", {
-          errorCount: validationFeedback.errors.length,
-          errors: validationFeedback.errors,
-        });
-        toast({
-          title: "Schedule Has Errors",
-          description: "Please fix the highlighted issues before proceeding.",
-          variant: "destructive",
-        });
-        return;
-      }
-
+      if (!allSlotsValid) return;
       onNext(data);
     },
-    [validationFeedback, onNext, toast],
+    [allSlotsValid, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -611,7 +590,13 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
       />
 
       {/* Validation Feedback - using shared component */}
-      <SlotValidationFeedback slots={currentSlots} />
+      {validationFeedback.hasSlots ? (
+        <SlotValidationFeedback slots={currentSlots} />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Add at least one window of 30 minutes to 12 hours to continue.
+        </p>
+      )}
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">
