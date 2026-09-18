@@ -23,6 +23,7 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { refusePlanNotOwned } from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
@@ -238,25 +239,16 @@ export async function PUT(
 
     // #1704 — a planId is only accepted from the same consultant as the
     // request; connecting any plan let a request migrate to another seller.
-    if (validatedBody.planId) {
-      const targetPlan = await prisma.consultationPlan.findUnique({
-        where: { id: validatedBody.planId },
-        select: { consultantProfileId: true },
-      });
-      if (
-        !targetPlan ||
-        targetPlan.consultantProfileId !==
-          existingConsultation.consultationPlan?.consultantProfileId
-      ) {
-        return NextResponse.json(
-          {
-            error: "The plan belongs to a different consultant",
-            code: "PLAN_NOT_OWNED",
-          },
-          { status: 403 },
-        );
-      }
-    }
+    const planRefusal = await refusePlanNotOwned(
+      validatedBody.planId,
+      existingConsultation.consultationPlan?.consultantProfileId,
+      () =>
+        prisma.consultationPlan.findUnique({
+          where: { id: validatedBody.planId },
+          select: { consultantProfileId: true },
+        }),
+    );
+    if (planRefusal) return planRefusal;
 
     const consultationData = await prisma.consultation.update({
       where: { id: consultationId },

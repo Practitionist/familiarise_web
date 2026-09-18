@@ -8,12 +8,11 @@ import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import { requestListOrderBy } from "@/lib/booking/list-query";
 import {
-  APPROVAL_STATUSES_DETAIL_ONLY,
-  USE_DETAIL_APPROVAL_MESSAGE,
-  parseRequestListQuery,
-  requestListOrderBy,
-} from "@/lib/booking/list-query";
+  parseRequestListQueryOrRespond,
+  refuseApprovalOnListRoute,
+} from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -42,13 +41,8 @@ export async function GET(request: NextRequest) {
     const consultantProfileId = searchParams.get("consultantProfileId");
     const consulteeProfileId = searchParams.get("consulteeProfileId");
     // #1704 — validated, clamped paging; a bad value is a 400, not a 500.
-    const listQuery = parseRequestListQuery(searchParams);
-    if (!listQuery.ok) {
-      return NextResponse.json(
-        { error: listQuery.error, code: listQuery.code },
-        { status: 400 },
-      );
-    }
+    const listQuery = parseRequestListQueryOrRespond(searchParams);
+    if (listQuery.response) return listQuery.response;
     const { page, limit, status, sortOrder } = listQuery.query;
 
     const whereClause: Prisma.ConsultationWhereInput = {};
@@ -275,14 +269,9 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    // #1704 — approval lives on the [consultationId] route only; see
-    // APPROVAL_STATUSES_DETAIL_ONLY. Refused for everyone, privileged included.
-    if (APPROVAL_STATUSES_DETAIL_ONLY.has(status)) {
-      return NextResponse.json(
-        { error: USE_DETAIL_APPROVAL_MESSAGE, code: "USE_DETAIL_APPROVAL" },
-        { status: 409 },
-      );
-    }
+    // #1704 — approval lives on the [id] route only, for everyone.
+    const approvalRefusal = refuseApprovalOnListRoute(status);
+    if (approvalRefusal) return approvalRefusal;
 
     // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
     // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee

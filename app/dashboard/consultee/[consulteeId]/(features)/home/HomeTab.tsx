@@ -368,6 +368,44 @@ function UpcomingSessionCard({
   );
 }
 
+/** The badge row of a monthly item, shared by its desktop and mobile layouts. */
+function MonthlyEventBadges({
+  event,
+  typeLabel,
+  sponsoringOrgName,
+}: {
+  event: ProcessedEvent;
+  typeLabel: string;
+  sponsoringOrgName: string | null;
+}) {
+  const registered =
+    (event.type === "webinar" || event.type === "class") && event.bookingStatus;
+  return (
+    <>
+      {sponsoringOrgName && (
+        <Badge
+          className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
+          title={`Sponsored by ${sponsoringOrgName}`}
+        >
+          <Building2 className="h-3 w-3 shrink-0" />
+          <span className="truncate">Sponsored · {sponsoringOrgName}</span>
+        </Badge>
+      )}
+      <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
+        {typeLabel}
+      </Badge>
+      {/* A seat on a group event shows as Registered instead of the status. */}
+      {registered ? (
+        <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
+          Registered
+        </Badge>
+      ) : (
+        <StatusBadge {...processedEventBadge(event)} size="sm" />
+      )}
+    </>
+  );
+}
+
 // Monthly event item - Elegant minimal design
 function MonthlyEventItem({
   event,
@@ -453,32 +491,11 @@ function MonthlyEventItem({
               </p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              {sponsoringOrgName && (
-                <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
-                  title={`Sponsored by ${sponsoringOrgName}`}
-                >
-                  <Building2 className="h-3 w-3 shrink-0" />
-                  <span className="truncate">
-                    Sponsored · {sponsoringOrgName}
-                  </span>
-                </Badge>
-              )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
-                {typeLabel}
-              </Badge>
-              {/* Show booking status badge for webinars and classes */}
-              {(event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus && (
-                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-                    Registered
-                  </Badge>
-                )}
-              {/* Only show event status if not showing booking status */}
-              {!(
-                (event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus
-              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
+              <MonthlyEventBadges
+                event={event}
+                typeLabel={typeLabel}
+                sponsoringOrgName={sponsoringOrgName}
+              />
               <ChevronRight
                 className={cn(
                   "h-4 w-4 text-muted-foreground/70 transition-transform duration-200",
@@ -510,32 +527,11 @@ function MonthlyEventItem({
               />
             </div>
             <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
-              {sponsoringOrgName && (
-                <Badge
-                  className="text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-[200px]"
-                  title={`Sponsored by ${sponsoringOrgName}`}
-                >
-                  <Building2 className="h-3 w-3 shrink-0" />
-                  <span className="truncate">
-                    Sponsored · {sponsoringOrgName}
-                  </span>
-                </Badge>
-              )}
-              <Badge className="text-[10px] font-medium bg-transparent border border-border text-muted-foreground rounded-md">
-                {typeLabel}
-              </Badge>
-              {/* Show booking status badge for webinars and classes (mobile) */}
-              {(event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus && (
-                  <Badge className="text-[10px] font-medium px-2 py-0.5 shrink-0 rounded-md bg-green-100 text-green-800 border border-green-200">
-                    Registered
-                  </Badge>
-                )}
-              {/* Only show event status if not showing booking status (mobile) */}
-              {!(
-                (event.type === "webinar" || event.type === "class") &&
-                event.bookingStatus
-              ) && <StatusBadge {...processedEventBadge(event)} size="sm" />}
+              <MonthlyEventBadges
+                event={event}
+                typeLabel={typeLabel}
+                sponsoringOrgName={sponsoringOrgName}
+              />
             </div>
           </div>
         </div>
