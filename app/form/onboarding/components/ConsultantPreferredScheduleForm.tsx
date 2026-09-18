@@ -3,7 +3,7 @@ import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { RadioGroup } from "@/components/ui/radio-group";
 import { PreferredSchedule } from "@/schemas/user";
 import {
   DAYS_OF_WEEK,
@@ -31,7 +31,6 @@ import {
   buildCustomSlotsForSave,
   buildWeeklySlotsForSave,
 } from "@/utils/schedule/formatting";
-import { useToast } from "@/hooks/use-toast";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useCallback, useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -48,7 +47,6 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   initialData,
 }) => {
   const { timezone, isLoading: timezoneLoading } = useTimezone();
-  const { toast } = useToast();
   const { handleSubmit, watch, setValue, control, reset } = useForm({
     resolver: zodResolver(PreferredScheduleFormSchema),
     defaultValues: {
@@ -296,7 +294,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
             onClick={() => handleAddSlot(dayKey, slots, setSlots)}
             className="h-10 font-medium"
           >
-            + Add Slot
+            + Add hours
           </Button>
         </div>
       );
@@ -310,33 +308,14 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   const allSlotsValid =
     validationFeedback.isValid && validationFeedback.hasSlots;
 
+  // Continue is disabled until the grid is valid, so the inline feedback
+  // (not a toast) is what tells the user why; this guard is only defensive.
   const onSubmitForm = useCallback(
     (data: PreferredSchedule) => {
-      if (!validationFeedback.hasSlots) {
-        toast({
-          title: "No Time Slots",
-          description: "Please add at least one time slot before proceeding.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      if (!validationFeedback.isValid) {
-        console.error("[Schedule Validation] Submission blocked:", {
-          errorCount: validationFeedback.errors.length,
-          errors: validationFeedback.errors,
-        });
-        toast({
-          title: "Schedule Has Errors",
-          description: "Please fix the highlighted issues before proceeding.",
-          variant: "destructive",
-        });
-        return;
-      }
-
+      if (!allSlotsValid) return;
       onNext(data);
     },
-    [validationFeedback, onNext, toast],
+    [allSlotsValid, onNext],
   );
 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -483,7 +462,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
           onClick={() => handleAddSlot(dateString, customSlots, setCustomSlots)}
           className="mt-3 h-10 font-medium"
         >
-          + Add Slot
+          + Add hours
         </Button>
       </div>
     );
@@ -555,90 +534,69 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
               </div>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-2">
-              {/* Weekly Schedule */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
-                  <Label htmlFor="WEEKLY" className="font-medium">
-                    Weekly Recurring
-                  </Label>
-                  <RadioGroupItem id="WEEKLY" value="WEEKLY" />
-                </div>
-                <div
-                  className={`grid gap-4 ${
-                    scheduleType !== "WEEKLY"
-                      ? "opacity-30 pointer-events-none"
-                      : ""
-                  }`}
-                >
-                  {DAYS_OF_WEEK.map((day) =>
-                    renderSlots(day, weeklySlots, setWeeklySlots),
-                  )}
-                </div>
+            {/* One grid at a time (#494 §2.2): the toggle above is the only
+                control, so the inactive type is not rendered at all instead of
+                sitting beside the active one at 30% opacity. */}
+            {scheduleType === "WEEKLY" ? (
+              <div className="grid gap-4">
+                {DAYS_OF_WEEK.map((day) =>
+                  renderSlots(day, weeklySlots, setWeeklySlots),
+                )}
               </div>
-
-              {/* Custom Schedule */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
-                  <Label htmlFor="CUSTOM" className="font-medium">
-                    Custom Schedule
-                  </Label>
-                  <RadioGroupItem id="CUSTOM" value="CUSTOM" />
-                </div>
-                <div
-                  className={`grid gap-4 ${
-                    scheduleType !== "CUSTOM"
-                      ? "opacity-30 pointer-events-none"
-                      : ""
-                  }`}
-                >
-                  <div className="calendar-container bg-muted/50 border p-4 rounded-lg">
-                    <div className="flex justify-between items-center mb-4">
-                      <button
-                        type="button"
-                        className="hover:text-primary transition-colors p-2 rounded-lg hover:bg-muted"
-                        onClick={handlePrevMonth}
-                      >
-                        &larr;
-                      </button>
-                      <span className="font-semibold">
-                        {currentDate.toLocaleString("default", {
-                          month: "long",
-                          year: "numeric",
-                        })}
-                      </span>
-                      <button
-                        type="button"
-                        className="hover:text-primary transition-colors p-2 rounded-lg hover:bg-muted"
-                        onClick={handleNextMonth}
-                      >
-                        &rarr;
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center">
-                      {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
-                        <div
-                          key={`header-${day}`}
-                          className="text-sm font-medium text-muted-foreground p-2"
-                        >
-                          {day}
-                        </div>
-                      ))}
-                      {renderCalendar()}
-                    </div>
+            ) : (
+              <div className="grid gap-4">
+                <div className="calendar-container bg-muted/50 border p-4 rounded-lg">
+                  <div className="flex justify-between items-center mb-4">
+                    <button
+                      type="button"
+                      className="hover:text-primary transition-colors p-2 rounded-lg hover:bg-muted"
+                      onClick={handlePrevMonth}
+                    >
+                      &larr;
+                    </button>
+                    <span className="font-semibold">
+                      {currentDate.toLocaleString("default", {
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      className="hover:text-primary transition-colors p-2 rounded-lg hover:bg-muted"
+                      onClick={handleNextMonth}
+                    >
+                      &rarr;
+                    </button>
                   </div>
-                  {Object.keys(customSlots)
-                    .sort((a, b) => a.localeCompare(b))
-                    .map((dateString) => renderSlotsForDate(dateString))}
+                  <div className="grid grid-cols-7 gap-1 text-center">
+                    {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
+                      <div
+                        key={`header-${day}`}
+                        className="text-sm font-medium text-muted-foreground p-2"
+                      >
+                        {day}
+                      </div>
+                    ))}
+                    {renderCalendar()}
+                  </div>
                 </div>
+                {Object.keys(customSlots)
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((dateString) => renderSlotsForDate(dateString))}
               </div>
-            </div>
+            )}
           </RadioGroup>
         )}
       />
 
       {/* Validation Feedback - using shared component */}
-      <SlotValidationFeedback slots={currentSlots} />
+      {validationFeedback.hasSlots ? (
+        <SlotValidationFeedback slots={currentSlots} />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Add at least one window of 30 minutes to 12 hours to continue.
+        </p>
+      )}
 
       {/* Navigation */}
       <div className="flex gap-4 pt-4">
