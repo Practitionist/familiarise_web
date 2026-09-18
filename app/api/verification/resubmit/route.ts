@@ -19,10 +19,7 @@ import {
   submitVerificationRequest,
   SUBMIT_REFUSAL_STATUS,
 } from "@/lib/verification/submit-request";
-import {
-  attemptBellsAfterResponse,
-  stageNewApplicationBells,
-} from "@/lib/verification/notify-admins";
+import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 
 const resubmitSchema = z.object({
   notes: z.string().max(2000).optional(),
@@ -48,8 +45,6 @@ export async function POST(req: NextRequest) {
       where: { id: session.user.id },
       select: {
         role: true,
-        name: true,
-        email: true,
         consultantProfile: { select: { id: true, verificationStatus: true } },
       },
     });
@@ -91,6 +86,7 @@ export async function POST(req: NextRequest) {
       notes: notes || "Resubmission after addressing feedback",
       documentIds: documentIds ?? [],
       carryOver: true,
+      adminDashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
     });
     if (!outcome.ok) {
       return NextResponse.json(
@@ -99,12 +95,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const staged = await stageNewApplicationBells({
-      name: user.name,
-      email: user.email,
-      dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
-    });
-    attemptBellsAfterResponse(staged);
+    // Admin bells were staged inside the submission transaction.
+    attemptBellsAfterResponse(outcome.staged);
 
     return NextResponse.json({
       success: true,

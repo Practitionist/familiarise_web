@@ -1,19 +1,16 @@
 /**
  * The PATCH body both review routes share (`/api/staff/moderation/profiles/[id]`
  * and `/api/admin/verification/[id]`): validate, decide through
- * `reviewVerification`, purge the public surfaces, stage the consultant's bell
- * and email before the response and attempt them in `after()`.
+ * `reviewVerification` (which stages the consultant's bell and email in its
+ * transaction), purge the public surfaces, and attempt the notices in `after()`.
  */
 
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ReviewVerificationSchema } from "@/schemas/verifications";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
-import { attemptTrigger, notifyVerificationStatusChanged } from "@/lib/novu";
-import {
-  attemptOnboardingEmail,
-  stageVerificationDecidedEmail,
-} from "@/lib/email";
+import { attemptTrigger } from "@/lib/novu";
+import { attemptOnboardingEmail } from "@/lib/email";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reviewVerification, REVIEW_REFUSAL_STATUS } from "./review";
 import { documentDownloadPath } from "./documents";
@@ -65,37 +62,13 @@ export async function handleReviewPatch(
   // them off. Purge now rather than leave the ISR window to expire.
   purgeExpertSurfaces(outcome.consultantProfileId);
 
-  if (outcome.consultantUserId) {
-    const payload = {
-      status: outcome.profileStatus,
-      reason: rejectionReason || feedbackDetails || undefined,
-      dashboardUrl: `/dashboard/consultant/${outcome.consultantProfileId}/settings`,
-    };
-    const bell = await notifyVerificationStatusChanged(
-      outcome.consultantUserId,
-      payload,
-      { tx: prisma },
-    ).catch((err) => {
-      console.error("[verification-decided-bell] stage failed:", err);
-      return null;
-    });
-    // A decision never yields UNDER_REVIEW; the email type excludes it.
-    const emailStatus =
-      outcome.profileStatus === "UNDER_REVIEW"
-        ? "PENDING_VERIFICATION"
-        : outcome.profileStatus;
-    const stagedEmail = await stageVerificationDecidedEmail({
-      userId: outcome.consultantUserId,
-      verificationId,
-      status: emailStatus,
-      reason: payload.reason,
-      dashboardUrl: payload.dashboardUrl,
-    });
-    scheduleAfter(async () => {
-      if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
-      await attemptOnboardingEmail(stagedEmail);
-    });
-  }
+  // The notice rows were staged inside the decision's transaction; only
+  // the vendor attempts run after the response.
+  const { bell, email } = outcome.staged;
+  scheduleAfter(async () => {
+    if (bell?.success && bell.staged) await attemptTrigger(bell.staged);
+    if (email) await attemptOnboardingEmail(email);
+  });
 
   const verification = await prisma.consultantProfileVerification.findUnique({
     where: { id: verificationId },

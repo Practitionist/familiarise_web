@@ -10,10 +10,7 @@ import {
   submitVerificationRequest,
   SUBMIT_REFUSAL_STATUS,
 } from "@/lib/verification/submit-request";
-import {
-  attemptBellsAfterResponse,
-  stageNewApplicationBells,
-} from "@/lib/verification/notify-admins";
+import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 
 /**
  * POST /api/verification/submit
@@ -59,7 +56,7 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         verificationStatus: true,
-        user: { select: { role: true, name: true, email: true } },
+        user: { select: { role: true } },
       },
     });
     if (!consultantProfile) {
@@ -89,6 +86,7 @@ export async function POST(request: NextRequest) {
       linkedinUrl: linkedinUrl ?? null,
       documentIds: documentIds ?? [],
       carryOver: consultantProfile.verificationStatus !== "UNDER_REVIEW",
+      adminDashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
     });
     if (!outcome.ok) {
       return NextResponse.json(
@@ -97,13 +95,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Admin bells: staged before the response, attempted in after().
-    const staged = await stageNewApplicationBells({
-      name: consultantProfile.user.name,
-      email: consultantProfile.user.email,
-      dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
-    });
-    attemptBellsAfterResponse(staged);
+    // Admin bells were staged inside the submission transaction; only the
+    // vendor attempts run after the response.
+    attemptBellsAfterResponse(outcome.staged);
 
     const verification = await prisma.consultantProfileVerification.findUnique({
       where: { id: outcome.verificationId },

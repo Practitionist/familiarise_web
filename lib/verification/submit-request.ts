@@ -15,13 +15,16 @@
  *   4. Carry over the previous request's documents that were not flagged, so
  *      the consultant re-uploads only what staff marked invalid.
  *   5. Refuse a request that would end up with no document at all.
- * Notifications are the caller's job, after commit.
+ *   6. Stage the admin "new application" bells in the same transaction.
+ * The vendor attempts are the caller's job, after commit.
  * See docs/onboarding/04-verification-lifecycle.md.
  */
 
 import { Prisma } from "@prisma/client";
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import type { StagedTrigger } from "@/lib/novu";
+import { stageNewApplicationBells } from "./notify-admins";
 
 export interface SubmitVerificationInput {
   userId: string;
@@ -32,6 +35,8 @@ export interface SubmitVerificationInput {
   documentIds: string[];
   /** Move the previous request's unflagged documents onto the new one. */
   carryOver: boolean;
+  /** Where the admin bell points; the bells are staged inside the transaction. */
+  adminDashboardUrl: string;
 }
 
 export type SubmitRefusalCode =
@@ -48,6 +53,8 @@ export type SubmitVerificationOutcome =
       round: number;
       documentCount: number;
       supersededId: string | null;
+      /** Admin "new application" bells, staged in the transaction; attempt after commit. */
+      staged: StagedTrigger[];
     }
   | { ok: false; code: SubmitRefusalCode; message: string };
 
@@ -226,12 +233,19 @@ export async function submitVerificationRequest(
             });
           }
 
+          // The queue item and its notice exist together or not at all.
+          const staged = await stageNewApplicationBells(
+            { userId: input.userId, dashboardUrl: input.adminDashboardUrl },
+            tx,
+          );
+
           return {
             ok: true as const,
             verificationId: created.id,
             round,
             documentCount,
             supersededId: previous?.id ?? null,
+            staged,
           };
         },
         {

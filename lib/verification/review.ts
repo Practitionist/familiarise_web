@@ -3,8 +3,9 @@
  * admin routes carried two copies of the same PATCH and neither guarded the
  * transition: an APPROVED or REJECTED row could be decided again, flipping
  * `isVerified` at will. This CASes the row from an open state, bounds the
- * NEEDS_INFO loop, requires a reason code on every flagged document, and
- * recomputes the completion score. Notifications are the caller's job,
+ * NEEDS_INFO loop, requires a reason code on every flagged document,
+ * recomputes the completion score, and stages the consultant's bell and
+ * email in the same transaction. The vendor attempts are the caller's job,
  * after commit. See docs/onboarding/04-verification-lifecycle.md.
  */
 
@@ -16,6 +17,14 @@ import {
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { recomputeProfileCompletion } from "@/lib/profiles/profile-completion";
+import {
+  notifyVerificationStatusChanged,
+  type TriggerResult,
+} from "@/lib/novu";
+import {
+  stageVerificationDecidedEmail,
+  type StagedOnboardingEmail,
+} from "@/lib/email";
 import { countAnsweredRounds } from "./submit-request";
 
 /** After this many answered NEEDS_INFO rounds the next decision must be final. */
@@ -54,6 +63,11 @@ export type ReviewVerificationOutcome =
       consultantUserId: string | null;
       profileStatus: ConsultantVerificationStatus;
       round: number;
+      /** The consultant's bell + email, staged in the transaction; attempt after commit. */
+      staged: {
+        bell: TriggerResult | null;
+        email: StagedOnboardingEmail | null;
+      };
     }
   | { ok: false; code: ReviewRefusalCode; message: string };
 
@@ -201,12 +215,42 @@ export async function reviewVerification(
             verification.consultantProfileId,
           );
 
+          // The decision and its notice exist together or not at all: bell
+          // + email rows are staged here; the caller attempts them after
+          // commit. profileStatus is never UNDER_REVIEW for a decision.
+          const consultantUserId =
+            verification.consultantProfile.userId ?? null;
+          const payload = {
+            status: profileStatus,
+            reason: input.rejectionReason || input.feedbackDetails || undefined,
+            dashboardUrl: `/dashboard/consultant/${verification.consultantProfileId}/settings`,
+          };
+          const bell = consultantUserId
+            ? await notifyVerificationStatusChanged(consultantUserId, payload, {
+                tx,
+              })
+            : null;
+          const email =
+            consultantUserId && profileStatus !== "UNDER_REVIEW"
+              ? await stageVerificationDecidedEmail(
+                  {
+                    userId: consultantUserId,
+                    verificationId: input.verificationId,
+                    status: profileStatus,
+                    reason: payload.reason,
+                    dashboardUrl: payload.dashboardUrl,
+                  },
+                  tx,
+                )
+              : null;
+
           return {
             ok: true as const,
             consultantProfileId: verification.consultantProfileId,
-            consultantUserId: verification.consultantProfile.userId ?? null,
+            consultantUserId,
             profileStatus,
             round,
+            staged: { bell, email },
           };
         },
         {

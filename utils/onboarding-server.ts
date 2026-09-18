@@ -13,10 +13,7 @@ import {
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import type { StagedTrigger } from "@/lib/novu";
-import {
-  attemptBellsAfterResponse,
-  stageNewApplicationBells,
-} from "@/lib/verification/notify-admins";
+import { attemptBellsAfterResponse } from "@/lib/verification/notify-admins";
 import { submitVerificationRequest as submitVerificationRequestCore } from "@/lib/verification/submit-request";
 import { documentDownloadPath } from "@/lib/verification/documents";
 import { trackOnboardingEvent } from "./onboarding-telemetry";
@@ -424,8 +421,6 @@ async function submitVerificationRequest(
   userId: string,
   consultantProfileId: string,
   body: VerificationBody,
-  userName: string,
-  userEmail: string,
 ): Promise<{ staged: StagedTrigger[] }> {
   const { verificationLinkedinUrl, verificationNotes, verificationDocuments } =
     body;
@@ -483,20 +478,14 @@ async function submitVerificationRequest(
     linkedinUrl: verificationLinkedinUrl,
     documentIds,
     carryOver: false,
+    adminDashboardUrl: "/dashboard/admin/verification",
   });
   if (!outcome.ok) {
     throw new Error(`${outcome.code}: ${outcome.message}`);
   }
-
-  // Stage the admin bells before the response; the caller attempts them in
-  // after(). Failure to stage is reported inside the helper, never thrown —
-  // the profile and the request are already committed.
-  const staged = await stageNewApplicationBells({
-    name: userName || null,
-    email: userEmail || null,
-    dashboardUrl: "/dashboard/admin/verification",
-  });
-  return { staged };
+  // The admin bells were staged inside the submission transaction; the
+  // caller attempts them after the response.
+  return { staged: outcome.staged };
 }
 
 // ============================================================================
@@ -657,8 +646,6 @@ async function maybeSubmitConsultantVerification(
       userId,
       updatedUser.consultantProfileId,
       verificationBody,
-      updatedUser.name || "",
-      updatedUser.email || "",
     );
     attemptBellsAfterResponse(staged);
     return undefined;

@@ -27,6 +27,24 @@ jest.mock("../../lib/profiles/profile-completion", () => ({
   __esModule: true,
   recomputeProfileCompletion: jest.fn(async () => 50),
 }));
+const mockNotify: jest.Mock = jest.fn(async () => ({
+  success: true,
+  staged: { id: "o1" },
+}));
+const mockStageEmail: jest.Mock = jest.fn(async () => ({
+  emailType: "VERIFICATION_DECIDED",
+  budgetMs: 5000,
+  list: [],
+}));
+jest.mock("../../lib/novu", () => ({
+  __esModule: true,
+  notifyVerificationStatusChanged: (...args: unknown[]) => mockNotify(...args),
+}));
+jest.mock("../../lib/email", () => ({
+  __esModule: true,
+  stageVerificationDecidedEmail: (...args: unknown[]) =>
+    mockStageEmail(...args),
+}));
 
 import {
   findFeedbackWithoutIssue,
@@ -72,10 +90,19 @@ describe("findFeedbackWithoutIssue", () => {
 });
 
 describe("reviewVerification", () => {
-  it("approves: CAS from an open state, profile VERIFIED + isVerified", async () => {
+  it("approves: CAS from an open state, profile VERIFIED + isVerified, notices staged in the tx", async () => {
     primeOpenRequest();
     const outcome = await reviewVerification({ ...base, status: "APPROVED" });
     expect(outcome).toMatchObject({ ok: true, profileStatus: "VERIFIED" });
+    expect(mockNotify).toHaveBeenCalledWith(
+      "u1",
+      expect.objectContaining({ status: "VERIFIED" }),
+      { tx },
+    );
+    expect(mockStageEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "u1", status: "VERIFIED" }),
+      tx,
+    );
     expect(tx.consultantProfileVerification.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: "v1", status: { in: ["PENDING", "NEEDS_INFO"] } },

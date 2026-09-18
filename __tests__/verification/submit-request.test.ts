@@ -25,6 +25,12 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
+jest.mock("../../lib/verification/notify-admins", () => ({
+  __esModule: true,
+  stageNewApplicationBells: jest.fn(async () => []),
+  attemptBellsAfterResponse: jest.fn(),
+}));
+
 import { submitVerificationRequest } from "../../lib/verification/submit-request";
 
 const base = {
@@ -32,6 +38,7 @@ const base = {
   consultantProfileId: "cp1",
   documentIds: ["d1", "d2"],
   carryOver: false,
+  adminDashboardUrl: "/dashboard/admin/verification",
 };
 
 function primeHappyPath() {

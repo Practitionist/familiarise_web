@@ -135,6 +135,13 @@ async function closeStale(now: Date, errors: string[]): Promise<number> {
   let closed = 0;
   for (const row of rows) {
     try {
+      const payload = {
+        status: "REJECTED" as const,
+        reason: NO_RESPONSE_REASON,
+        dashboardUrl: `/dashboard/consultant/${row.consultantProfile.id}/settings`,
+      };
+      // The close and its notices commit together (revised D1): bell +
+      // email rows are staged inside the row's transaction; attempts follow.
       const done = await prisma.$transaction(async (tx) => {
         const flipped = await tx.consultantProfileVerification.updateMany({
           where: { id: row.id, status: "NEEDS_INFO" },
@@ -144,34 +151,34 @@ async function closeStale(now: Date, errors: string[]): Promise<number> {
             // reviewedAt keeps the staff decision time; the close is the sweep's.
           },
         });
-        if (flipped.count === 0) return false;
+        if (flipped.count === 0) return null;
         await tx.consultantProfile.update({
           where: { id: row.consultantProfile.id },
           data: { verificationStatus: "REJECTED", isVerified: false },
         });
-        return true;
+        const bell = await notifyVerificationStatusChanged(
+          row.consultantProfile.userId,
+          payload,
+          { tx },
+        );
+        const email = await stageVerificationDecidedEmail(
+          {
+            userId: row.consultantProfile.userId,
+            verificationId: row.id,
+            status: "REJECTED",
+            reason: NO_RESPONSE_REASON,
+            dashboardUrl: payload.dashboardUrl,
+          },
+          tx,
+        );
+        return { bell, email };
       });
       if (!done) continue;
       // No public-surface purge: a NEEDS_INFO consultant was never listed.
-      const payload = {
-        status: "REJECTED" as const,
-        reason: NO_RESPONSE_REASON,
-        dashboardUrl: `/dashboard/consultant/${row.consultantProfile.id}/settings`,
-      };
-      const bell = await notifyVerificationStatusChanged(
-        row.consultantProfile.userId,
-        payload,
-        { tx: prisma },
-      );
-      if (bell.success && bell.staged) await attemptTrigger(bell.staged);
-      const staged = await stageVerificationDecidedEmail({
-        userId: row.consultantProfile.userId,
-        verificationId: row.id,
-        status: "REJECTED",
-        reason: NO_RESPONSE_REASON,
-        dashboardUrl: payload.dashboardUrl,
-      });
-      await attemptOnboardingEmail(staged);
+      if (done.bell.success && done.bell.staged) {
+        await attemptTrigger(done.bell.staged);
+      }
+      await attemptOnboardingEmail(done.email);
       closed += 1;
     } catch (error) {
       errors.push(`close ${row.id}: ${String(error)}`);
