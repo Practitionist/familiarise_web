@@ -27,6 +27,10 @@ const mockRecordSystemError = jest.fn();
 const mockGetSession = jest.fn();
 const mockMembershipFindUnique = jest.fn();
 
+const globalAppointmentFindFirst = jest.fn(
+  async (...a: unknown[]) => (await mockAppointmentFindMany(...a))[0] ?? null,
+);
+
 /** Flipped by the $transaction stub, mirroring the slot terminalisation. */
 let txCommitted = false;
 
@@ -65,6 +69,13 @@ const txStub = {
     findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
   },
+  // #1695 — the refund context is read on the TRANSACTION client, under the
+  // appointment lock and before the CAS, so it still sees live slots.
+  appointment: {
+    findFirst: jest.fn(
+      async (...a: unknown[]) => (await mockAppointmentFindMany(...a))[0] ?? null,
+    ),
+  },
 };
 
 jest.mock("../../lib/prisma", () => ({
@@ -80,9 +91,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
-      // #1554 — the refund context reads the ONE wrapper.
-      findFirst: async (...a: unknown[]) =>
-        (await mockAppointmentFindMany(...a))[0] ?? null,
+      // #1554 — the refund context reads the ONE wrapper; #1695 moved that
+      // read onto the tx client, so this one must stay silent.
+      findFirst: (...a: unknown[]) => globalAppointmentFindFirst(...a),
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -764,6 +775,25 @@ describe("failure modes leave the cancellation standing", () => {
 
     expect(body.refund).toBeNull();
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("quotes from a read taken inside the lock, on the transaction client (#1695)", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    // The tx client served the read; the global client never did, so a
+    // reschedule or capture landing before the lock is seen by the quote.
+    expect(txStub.appointment.findFirst).toHaveBeenCalledTimes(1);
+    expect(globalAppointmentFindFirst).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: GROSS }),
+    );
   });
 
   it("does not refund when the cancel loses its CAS race", async () => {

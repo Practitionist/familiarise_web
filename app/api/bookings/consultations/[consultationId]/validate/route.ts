@@ -21,6 +21,10 @@ import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
+import {
+  conflictDetailsBySlot,
+  describeConflict,
+} from "@/lib/booking/validate-conflict-view";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 
 const consultationInclude = {
@@ -152,6 +156,12 @@ export async function POST(
         excludeIds,
         { consulteeUserId },
       );
+      const viewer = {
+        userId: authResult.session.user.id,
+        isEventConsultant:
+          authResult.session.user.id === consultantProfile.user.id,
+      };
+      const conflictDetails = conflictDetailsBySlot(validationResult.conflicts);
 
       // If validation passed, all slots are valid
       if (validationResult.isValid) {
@@ -179,17 +189,18 @@ export async function POST(
             /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
           );
           if (slotMatch) {
-            const slot = slotMatch[1];
-            result.conflicts.push({
-              slot,
-              existingAppointment: {
-                type: message.includes("subscription")
+            // #1721 — the event's consultant gets the booking id
+            // and the other party by name; everyone else keeps "Another user".
+            result.conflicts.push(
+              describeConflict(
+                slotMatch[1],
+                conflictDetails.get(slotMatch[1]),
+                viewer,
+                message.includes("subscription")
                   ? "Subscription"
                   : "Consultation",
-                with: "Another user",
-                time: new Date(slot).toLocaleString(),
-              },
-            });
+              ),
+            );
           }
         } else if (error.startsWith("[OUTSIDE_AVAILABILITY]")) {
           const message = error.replace("[OUTSIDE_AVAILABILITY] ", "");

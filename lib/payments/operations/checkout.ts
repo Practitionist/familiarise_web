@@ -572,6 +572,46 @@ async function releaseSupersededHolds(params: {
 /**
  * Manages payment intent creation and cleanup with proper error handling
  */
+/**
+ * #1695 — record a gateway order that was minted and then abandoned by an
+ * in-transaction abort, so a late capture on it has a row to be refunded
+ * against. EXPIRED with `expiresAt` now: no sweep re-drives it (they cohort on
+ * PENDING) and no checkout resumes it. A failure here must not mask the abort
+ * the buyer is about to hear about, so it only reports.
+ */
+export async function tombstoneAbortedGatewayOrder(input: {
+  paymentIntent: string;
+  userId: string;
+  amount: number;
+  originalAmount: number;
+  taxAmount: number;
+  currency: Currency;
+  reason: string;
+}): Promise<void> {
+  try {
+    await prisma.payment.create({
+      data: {
+        amount: input.amount,
+        originalAmount: input.originalAmount,
+        taxAmount: input.taxAmount,
+        currency: input.currency,
+        paymentMethod: "CARD",
+        paymentIntent: input.paymentIntent,
+        paymentGateway: PaymentGateway.RAZORPAY,
+        paymentStatus: PaymentStatus.EXPIRED,
+        expiresAt: new Date(),
+        userId: input.userId,
+        description: `Checkout aborted after the gateway order was minted (${input.reason.slice(0, 160)}). A late capture on this order is auto-refunded.`,
+      },
+    });
+  } catch (tombstoneError) {
+    reportSentryError(tombstoneError, {
+      subsystem: "payments",
+      extra: { paymentIntent: input.paymentIntent },
+    });
+  }
+}
+
 export class PaymentIntentManager {
   // intentId -> userId. Bounded FIFO: this Map lives on module scope of a
   // warm serverless instance, and an entry that never reaches cancelIntent
@@ -4283,6 +4323,31 @@ export async function handleCheckout(
           paymentResponse.id,
           "Database operation failed - preventing orphaned payment intent",
         );
+      }
+
+      // #1695 — Razorpay cannot void a minted order, so a buyer who completes
+      // it after this abort (a CREDIT_SHORTFALL retry, say) captures money
+      // with no Payment row to land on, and the webhook re-drives "Payment
+      // record not found" forever. An EXPIRED tombstone gives that capture a
+      // row: the capture handler claims it and auto-refunds. Best-effort, and
+      // never on mock, org-funded or zero-amount intents, which the gateway
+      // never sees.
+      if (
+        paymentResponse &&
+        !isZeroAmountPayment &&
+        !isOrgSponsoredPayment &&
+        !isMockPayment &&
+        validatedData.paymentGateway === PaymentGateway.RAZORPAY
+      ) {
+        await tombstoneAbortedGatewayOrder({
+          paymentIntent: paymentResponse.id,
+          userId,
+          amount,
+          originalAmount,
+          taxAmount,
+          currency,
+          reason: dbError instanceof Error ? dbError.message : String(dbError),
+        });
       }
 
       // #837 — WalletFrozenError carries httpStatus=409 + an actionable reason;

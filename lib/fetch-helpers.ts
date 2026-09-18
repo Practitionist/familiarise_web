@@ -57,17 +57,87 @@ export class ApiResponseError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly detail?: unknown;
+  /** Parsed `Retry-After` on a 429/503, so pollers can back off by it (#1697). */
+  readonly retryAfterMs?: number;
+  /**
+   * True when `message` is the sentence the route wrote; false when it was
+   * synthesised from the status because the body carried none (#1696).
+   */
+  readonly fromServerBody: boolean;
+  /** The parsed error body, for routes whose envelope carries extra fields. */
+  readonly body?: unknown;
 
   constructor(
     message: string,
-    init: { status: number; code?: string; detail?: unknown },
+    init: {
+      status: number;
+      code?: string;
+      detail?: unknown;
+      retryAfterMs?: number;
+      fromServerBody?: boolean;
+      body?: unknown;
+    },
   ) {
     super(message);
     this.name = "ApiResponseError";
     this.status = init.status;
     this.code = init.code;
     this.detail = init.detail;
+    this.retryAfterMs = init.retryAfterMs;
+    this.fromServerBody = init.fromServerBody ?? false;
+    this.body = init.body;
   }
+}
+
+/**
+ * #1696 — a 504 means UNKNOWN, not failed. The edge gives up at ~26 s while
+ * the route keeps running, so an allocate, checkout or cancel that timed out
+ * may well have committed. Copy for that case must send the user to look
+ * before they retry; "no charge was made" is a promise nobody can keep.
+ */
+export const OUTCOME_UNKNOWN_MESSAGE =
+  "The server didn't answer in time, so this may still have gone through. Check your dashboard before retrying.";
+
+/**
+ * A 5xx with no sentence from the route: an edge 502/504 page or a function
+ * crash, either of which can land before or after the commit. A 5xx that
+ * carries the route's own sentence is the route's answer and stays as is.
+ */
+export function isOutcomeUnknown(error: ApiResponseError): boolean {
+  return error.status >= 500 && !error.fromServerBody;
+}
+
+/** #1716 — 401 is reserved for a session that really ended; say so. */
+export const SESSION_ENDED_MESSAGE = "Your session has ended — sign in again.";
+
+/**
+ * The sentence a failed action toasts, with the timeout case answered
+ * honestly and a 401 named for what it now means. A 503 keeps the route's
+ * own "try again" sentence (a failed session lookup, a lock outage).
+ */
+export function actionFailureMessage(error: unknown, fallback: string): string {
+  if (error instanceof ApiResponseError) {
+    if (isOutcomeUnknown(error)) return OUTCOME_UNKNOWN_MESSAGE;
+    if (error.status === 401) return SESSION_ENDED_MESSAGE;
+  }
+  if (error instanceof Error) return error.message;
+  return fallback;
+}
+
+/**
+ * `Retry-After` as milliseconds, or undefined when absent or unparseable.
+ * Accepts the delta-seconds form the limiter sends and the HTTP-date form.
+ */
+export function retryAfterMsFromHeaders(
+  headers: Headers,
+  nowMs = Date.now(),
+): number | undefined {
+  const raw = headers.get("retry-after");
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(raw);
+  return Number.isNaN(at) ? undefined : Math.max(0, at - nowMs);
 }
 
 /** Does this response actually claim to be JSON? */
@@ -114,7 +184,14 @@ export async function requireJsonResponse(
     // failed", so it goes in the message the user reads.
     throw new ApiResponseError(
       envelope.error ?? `${fallbackError} (HTTP ${res.status})`,
-      { status: res.status, code: envelope.code, detail: envelope.detail },
+      {
+        status: res.status,
+        code: envelope.code,
+        detail: envelope.detail,
+        retryAfterMs: retryAfterMsFromHeaders(res.headers),
+        fromServerBody: envelope.error !== undefined,
+        body: raw === JSON_PARSE_FAILED ? undefined : raw,
+      },
     );
   }
 

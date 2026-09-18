@@ -1,7 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  ApiResponseError,
+  actionFailureMessage,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
 import { isExpectedRefusal } from "@/lib/errors/client-refusal";
 import { reportSentryError } from "@/lib/observability/report";
 import { useToast } from "@/hooks/use-toast";
@@ -336,10 +340,10 @@ export function useEventActions({
       console.error("Error cancelling appointment:", error);
       toast({
         title: "Couldn't cancel appointment",
-        description:
-          error instanceof Error
-            ? error.message
-            : "Failed to cancel appointment",
+        description: actionFailureMessage(
+          error,
+          "Failed to cancel appointment",
+        ),
         variant: "destructive",
       });
     } finally {

@@ -23,6 +23,7 @@
  */
 
 import type { Prisma } from "@prisma/client";
+import { RefundError } from "@/lib/payments/core/types";
 
 // ---------------------------------------------------------------------------
 // In-memory prisma stub
@@ -930,6 +931,24 @@ describe("refundPayment — M1 gateway wiring", () => {
     expect(state.consultantEarnings.get("ce-1")?.refundedShareAmount).toBe(0);
     expect(state.billingAccounts.get("ba-1")?.walletBalance).toBe(50000);
     expect(state.paymentLegs).toHaveLength(1);
+  });
+
+  it("carries the gateway's own code when the order never captured (FAMILIARISE_WEB-3K)", async () => {
+    seedSinglePartyWalletPayment({});
+    mockCreateGatewayRefund.mockRejectedValueOnce(
+      new RefundError(
+        "No payment found for this order",
+        "NO_PAYMENT_FOUND",
+        "RAZORPAY",
+      ),
+    );
+
+    await expect(
+      refundPayment({ paymentId: "pay-1", reason: "mock intent" }),
+    ).rejects.toMatchObject({
+      code: "GATEWAY_REFUND_FAILED",
+      gatewayCode: "NO_PAYMENT_FOUND",
+    });
   });
 
   it("gateway-PENDING refund defers the cascade to the webhook path (no double-post)", async () => {

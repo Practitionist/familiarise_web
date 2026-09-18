@@ -15,7 +15,7 @@
  */
 
 import type { CancellationReason, SupportTicketStatus } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Db } from "@/lib/prisma";
 import { ZONE_ABBREVIATION } from "@/lib/time/viewer-zone";
 import {
   formatCurrencyAmount,
@@ -282,6 +282,8 @@ const TIMEZONE_LOOKUP_TIMEOUT_MS = 2_000;
  */
 export async function resolveRecipientTimezones(
   userIds: string[],
+  /** The caller's transaction when the trigger is staged inside one (#1697). */
+  db: Pick<Db, "user"> = prisma,
 ): Promise<Map<string, string>> {
   const zones = new Map<string, string>();
   const unique = Array.from(new Set(userIds));
@@ -291,7 +293,7 @@ export async function resolveRecipientTimezones(
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const users = await Promise.race([
-      prisma.user.findMany({
+      db.user.findMany({
         where: { id: { in: unique } },
         select: { id: true, timezone: true },
       }),

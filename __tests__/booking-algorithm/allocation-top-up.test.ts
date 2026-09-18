@@ -57,7 +57,7 @@ jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
 }));
 
 import prisma from "@/lib/prisma";
-import { notifyAppointmentBooked } from "@/lib/novu";
+import { attemptTrigger, notifyAppointmentBooked } from "@/lib/novu";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
@@ -78,6 +78,7 @@ const mockPrisma = prisma as unknown as {
 };
 
 const notifyBooked = notifyAppointmentBooked as jest.Mock;
+const STAGED_ROW = { id: "outbox-1" };
 
 /** One 1-hour session = one confirmed occurrence row (#1554). */
 function confirmedOccurrence(ordinal: number, startISO: string) {
@@ -228,6 +229,7 @@ beforeEach(() => {
   mockPrisma.$transaction.mockImplementation(
     (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
   );
+  notifyBooked.mockResolvedValue([{ success: true, staged: STAGED_ROW }]);
   mockTx.subscription.findUnique.mockResolvedValue(
     makeSubscription([WEEK_1, WEEK_2]),
   );
@@ -283,6 +285,12 @@ describe("#1206 top-up allocation", () => {
     ]);
     // The plan is whole again, so no partial notice is owed.
     expect(result.partial).toBeUndefined();
+    // #1697 item 5 — the booked notice is staged INSIDE the write transaction
+    // (the `tx` option), attempted after commit, and never leaks to the caller.
+    expect(notifyBooked).toHaveBeenCalledTimes(1);
+    expect(notifyBooked.mock.calls[0][2]).toEqual({ tx: mockTx });
+    expect(result).not.toHaveProperty("stagedNotices");
+    expect(attemptTrigger).toHaveBeenCalledWith(STAGED_ROW);
   });
 
   it("returns noChange and notifies nobody once the plan is complete", async () => {

@@ -26,7 +26,7 @@
 
 import type { Prisma } from "@prisma/client";
 
-import prisma from "@/lib/prisma";
+import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import type { CancellationPolicyTerms } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -116,8 +116,16 @@ export async function resolveBookingRefundContext(
    * bookings, which have exactly one payer.
    */
   payerUserId?: string,
+  /**
+   * #1695 — the cancel route reads this INSIDE its appointment lock and
+   * transaction, so a reschedule or capture landing between the quote and the
+   * cancel cannot change the tier underneath it. A global-client read inside a
+   * transaction deadlocks on the single-connection pool (#1435), so the
+   * caller's client is threaded through.
+   */
+  db: Db | Tx = prisma,
 ): Promise<BookingRefundContext> {
-  const row = await prisma.appointment.findFirst({
+  const row = await db.appointment.findFirst({
     // #1554 — one wrapper per booking: this is the row checkout created, so
     // it carries the payment and the frozen terms.
     where: { ...bookingAppointmentFilter(ref), deletedAt: null },

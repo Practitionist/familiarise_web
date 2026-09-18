@@ -1,5 +1,6 @@
-import { getSession } from "@/lib/auth-server";
+import { lookupSession } from "@/lib/auth-session-lookup";
 import { NextResponse } from "next/server";
+import { reportSentryError } from "@/lib/observability/report";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import type {
@@ -29,12 +30,25 @@ import {
 export async function requireApiAuth(): Promise<
   { session: Session; error?: never } | { session?: never; error: NextResponse }
 > {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
+  const lookup = await lookupSession(true);
+  // #1716 — a lookup that did not complete is not "no session". 401 is
+  // reserved for no cookie / expired / not found; a stalled or failed read
+  // answers 503 with Retry-After so the client retries instead of signing out.
+  if (lookup.kind === "failed") {
+    reportSentryError(lookup.cause, {
+      subsystem: "auth",
+      op: "requireApiAuth",
+      expected: true,
+      level: "warning",
+    });
+    return { error: sessionLookupFailedResponse() };
+  }
+  if (lookup.kind === "none") {
     return {
       error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
     };
   }
+  const { session } = lookup;
   // #693 defense-in-depth — ban-time session deletion + the sign-in gate
   // cover the normal paths; this catches a session minted in the race window.
   if (session.user.banned === true) {
@@ -43,6 +57,23 @@ export async function requireApiAuth(): Promise<
     };
   }
   return { session };
+}
+
+/** Seconds a client waits before retrying a failed session lookup (#1716). */
+export const SESSION_LOOKUP_RETRY_AFTER_SECONDS = 2;
+
+export function sessionLookupFailedResponse(): NextResponse {
+  return NextResponse.json(
+    {
+      error:
+        "We couldn't confirm your session just now. Try again in a moment.",
+      code: "SESSION_LOOKUP_FAILED",
+    },
+    {
+      status: 503,
+      headers: { "Retry-After": String(SESSION_LOOKUP_RETRY_AFTER_SECONDS) },
+    },
+  );
 }
 
 /**
