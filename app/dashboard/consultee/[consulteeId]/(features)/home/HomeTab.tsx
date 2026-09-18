@@ -36,6 +36,7 @@ import { failureToast } from "@/components/ui/failure-toast";
 import { useInFlightGuard } from "@/hooks/scheduling/useInFlightGuard";
 import { useToast } from "@/hooks/use-toast";
 import type { TConsulteeEventsResponse } from "@/types/consultee-events";
+import type { NeedsActionReason } from "@/lib/appointments/view-model";
 import {
   type ProcessedEvent,
   processAllEvents,
@@ -94,8 +95,29 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4, ease: "easeOut" } },
 };
 
+/**
+ * The card's corner badge. The Appointments row calls a slot-less booking
+ * "Not scheduled" and the "Pay now" step "Payment required"; the same words
+ * here so a request reads identically on both surfaces (#1703).
+ */
+function awaitingLabel(reason: NeedsActionReason | null): string {
+  switch (reason) {
+    case "PAY_NOW":
+      return "Payment required";
+    case "PENDING_APPROVAL":
+      return "Pending";
+    default:
+      return "Not scheduled";
+  }
+}
+
 // Get time away text
-function getTimeAway(date: Date): { text: string; urgent: boolean } {
+function getTimeAway(
+  date: Date | null,
+  reason: NeedsActionReason | null,
+): { text: string; urgent: boolean } {
+  if (!date)
+    return { text: awaitingLabel(reason), urgent: reason === "PAY_NOW" };
   const now = new Date();
   const hoursAway = differenceInHours(date, now);
   const daysAway = differenceInDays(date, now);
@@ -127,7 +149,7 @@ function UpcomingSessionCard({
   onJoin?: () => void;
   isJoining?: boolean;
 }) {
-  const timeAway = getTimeAway(event.startsAt);
+  const timeAway = getTimeAway(event.startsAt, event.needsActionReason);
   const { data: session } = useSession();
   const sponsoringOrgName = resolveSponsoringOrgName(
     event.organizationId,
@@ -242,11 +264,19 @@ function UpcomingSessionCard({
       {/* Row 2: Date and time - Fixed height with top margin */}
       <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-3 h-5 shrink-0 overflow-hidden">
         <Calendar className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">
-          {format(event.startsAt, "EEE, d MMM yyyy")}
-        </span>
-        <span className="text-muted-foreground/50 shrink-0">•</span>
-        <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
+        {event.startsAt ? (
+          <>
+            <span className="truncate">
+              {format(event.startsAt, "EEE, d MMM yyyy")}
+            </span>
+            <span className="text-muted-foreground/50 shrink-0">•</span>
+            <span className="shrink-0">{format(event.startsAt, "h:mm a")}</span>
+          </>
+        ) : (
+          // Same words as the Appointments row's time slot for a slot-less
+          // booking; the state itself sits in the corner badge.
+          <span className="truncate">Not scheduled</span>
+        )}
       </div>
 
       {/* Row 2.5: Sponsor pill — only when org-funded. Placed on its own
@@ -287,6 +317,25 @@ function UpcomingSessionCard({
             <StatusBadge {...processedEventBadge(event)} withDot size="sm" />
           )}
         </div>
+        {/* The Appointments row's primary action for PAY_NOW, verbatim. */}
+        {event.needsActionReason === "PAY_NOW" &&
+          event.pendingPaymentUrl &&
+          /^https?:\/\//.test(event.pendingPaymentUrl) && (
+            <Button
+              asChild
+              size="sm"
+              className="h-7 px-3 text-xs font-semibold rounded-md shrink-0 bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
+            >
+              <a
+                href={event.pendingPaymentUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Pay now
+              </a>
+            </Button>
+          )}
         {canShowJoin && (
           <Button
             size="sm"
@@ -765,13 +814,19 @@ export default function HomeTab({
         ),
         // startsAt/endsAt already describe the whole run here (#1061), so the
         // end goes over too — it is what tells "in progress" from "over".
-        upcomingSessions: upcomingEvents.map((e) => ({
-          id: e.id,
-          appointmentId: e.appointmentId ?? null,
-          startsAt: e.startsAt,
-          endsAt: e.endsAt,
-          title: e.title,
-        })),
+        upcomingSessions: upcomingEvents.flatMap((e) =>
+          e.startsAt && e.endsAt
+            ? [
+                {
+                  id: e.id,
+                  appointmentId: e.appointmentId ?? null,
+                  startsAt: e.startsAt,
+                  endsAt: e.endsAt,
+                  title: e.title,
+                },
+              ]
+            : [],
+        ),
         basePath: `/dashboard/consultee/${consulteeId}`,
       }),
     [pendingPayments, upcomingEvents, consulteeId],
