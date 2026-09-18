@@ -29,3 +29,11 @@ export function FieldError({
     </p>
   );
 }
+
+/** The two aria attributes an input carries while its FieldError shows. */
+export function invalidProps(
+  message: string | null | undefined,
+  errorId: string,
+): { "aria-invalid"?: true; "aria-describedby"?: string } {
+  return message ? { "aria-invalid": true, "aria-describedby": errorId } : {};
+}

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { FieldError } from "@/components/ui/field-error";
+import { FieldError, invalidProps } from "@/components/ui/field-error";
 import {
   humanizeAuthError,
   type AuthErrorField,
@@ -466,8 +466,7 @@ function SignInContent() {
                 onBlur={handleEmailBlur}
                 required
                 disabled={isLoading || ssoChecking}
-                aria-invalid={fieldError.email ? true : undefined}
-                aria-describedby={fieldError.email ? "email-error" : undefined}
+                {...invalidProps(fieldError.email, "email-error")}
               />
               <FieldError id="email-error" message={fieldError.email} />
             </div>
@@ -492,10 +491,7 @@ function SignInContent() {
                   }}
                   required
                   disabled={isLoading}
-                  aria-invalid={fieldError.password ? true : undefined}
-                  aria-describedby={
-                    fieldError.password ? "password-error" : undefined
-                  }
+                  {...invalidProps(fieldError.password, "password-error")}
                 />
                 <FieldError id="password-error" message={fieldError.password} />
               </div>

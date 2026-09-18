@@ -13,12 +13,8 @@ import {
 } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
-import {
-  referralCheckText,
-  useReferralCodeCheck,
-} from "./useReferralCodeCheck";
-import { FieldError } from "@/components/ui/field-error";
-import { cn } from "@/utils/tailwind";
+import { ReferralCodeField } from "./ReferralCodeField";
+import { FieldError, invalidProps } from "@/components/ui/field-error";
 import {
   humanizeAuthError,
   type AuthErrorField,
@@ -135,7 +131,6 @@ function SignUpContent() {
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
-  const referralCheck = useReferralCodeCheck(refCode, !referralCode);
 
   if (isPending) {
     return <AuthFormSkeleton />;
@@ -390,8 +385,7 @@ function SignUpContent() {
                 onBlur={handleEmailBlur}
                 required
                 disabled={isLoading || ssoChecking}
-                aria-invalid={fieldError.email ? true : undefined}
-                aria-describedby={fieldError.email ? "email-error" : undefined}
+                {...invalidProps(fieldError.email, "email-error")}
               />
               <FieldError id="email-error" message={fieldError.email} />
             </div>
@@ -412,10 +406,7 @@ function SignUpContent() {
                     minLength={8}
                     maxLength={128}
                     disabled={isLoading}
-                    aria-invalid={fieldError.password ? true : undefined}
-                    aria-describedby={
-                      fieldError.password ? "password-error" : undefined
-                    }
+                    {...invalidProps(fieldError.password, "password-error")}
                   />
                   <FieldError
                     id="password-error"
@@ -438,33 +429,11 @@ function SignUpContent() {
               </>
             )}
             {!referralCode && !ssoCheck?.enforceSSO && (
-              <div className="grid gap-2 mt-4">
-                <Label htmlFor="referral-code">Referral Code (optional)</Label>
-                <Input
-                  id="referral-code"
-                  placeholder="Enter referral code"
-                  type="text"
-                  value={refCode}
-                  onChange={(e) => setRefCode(e.target.value)}
-                  disabled={isLoading}
-                  aria-invalid={
-                    referralCheck.state === "invalid" ? true : undefined
-                  }
-                  aria-describedby="referral-code-status"
-                />
-                <output
-                  id="referral-code-status"
-                  htmlFor="referral-code"
-                  className={cn(
-                    "block text-sm",
-                    referralCheck.state === "invalid"
-                      ? "text-destructive"
-                      : "text-zinc-400",
-                  )}
-                >
-                  {referralCheckText(referralCheck)}
-                </output>
-              </div>
+              <ReferralCodeField
+                value={refCode}
+                onChange={setRefCode}
+                disabled={isLoading}
+              />
             )}
             {referralCode && !ssoCheck?.enforceSSO && (
               <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">
