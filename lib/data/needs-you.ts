@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
+import type { AppointmentStatus, Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 
@@ -49,9 +49,19 @@ export function pendingConsultationWhere(
   consultantProfileId: string,
   scope: Scope,
 ): Prisma.ConsultationWhereInput {
+  return consultationRequestWhere(consultantProfileId, scope, "PENDING");
+}
+
+/** The pending predicate at any status; Home's "Awaiting payment" row reads
+ * it at APPROVED_PENDING_PAYMENT so the two cohorts share one scope. #1703 */
+export function consultationRequestWhere(
+  consultantProfileId: string,
+  scope: Scope,
+  status: AppointmentStatus,
+): Prisma.ConsultationWhereInput {
   const orgWhere = scopeToWhereOrgId(scope);
   return {
-    status: "PENDING",
+    status,
     consultationPlan: { consultantProfileId },
     ...(scope.kind === "personal"
       ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
@@ -65,9 +75,17 @@ export function pendingSubscriptionWhere(
   consultantProfileId: string,
   scope: Scope,
 ): Prisma.SubscriptionWhereInput {
+  return subscriptionRequestWhere(consultantProfileId, scope, "PENDING");
+}
+
+export function subscriptionRequestWhere(
+  consultantProfileId: string,
+  scope: Scope,
+  status: AppointmentStatus,
+): Prisma.SubscriptionWhereInput {
   const orgWhere = scopeToWhereOrgId(scope);
   return {
-    status: "PENDING",
+    status,
     subscriptionPlan: { consultantProfileId },
     ...(scope.kind === "personal"
       ? { OR: [{ appointment: null }, { appointment: orgWhere }] }

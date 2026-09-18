@@ -63,6 +63,8 @@ export interface TConsultantDashboardResponse {
   approvals: TConsultantApproval[];
   /** Total pending requests — `approvals` is a capped preview, so don't count it. */
   pendingRequestsCount: number;
+  /** Approved-but-unpaid requests: total plus the newest three. #1703 */
+  awaitingPayment: { count: number; items: TConsultantApproval[] };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
 }

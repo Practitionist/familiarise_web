@@ -22,8 +22,10 @@ import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
 import {
+  consultationRequestWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
+  subscriptionRequestWhere,
 } from "@/lib/data/needs-you";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
@@ -53,6 +55,10 @@ const pendingUserSelect = {
 /** Home surfaces a handful of cards — history lives on /appointments. */
 const HOME_APPOINTMENTS_TAKE = 20;
 const HOME_PENDING_TAKE = 20;
+/** The "Awaiting payment" pipeline row shows a count and the first three. */
+const HOME_AWAITING_PAYMENT_TAKE = 3;
+/** Home is a personal (B2C) surface; every request read below pins it. */
+const PERSONAL_SCOPE = { kind: "personal" } as const;
 
 /**
  * #1166 ORG-1 — personal Home is B2C only (ADR 19), matching the sibling
@@ -332,6 +338,38 @@ function getRelativeTime(date: Date): string {
   }
 }
 
+/** Request rows in the Home widget's display shape, newest first. */
+function toRequestRows(
+  consultations: DashboardConsultation[],
+  subscriptions: DashboardSubscription[],
+) {
+  return [
+    ...consultations.map((consultation) => ({
+      id: consultation.id,
+      type: "Consultation",
+      name: consultation.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: consultation.requestedAt,
+    })),
+    ...subscriptions.map((subscription) => ({
+      id: subscription.id,
+      type: "Subscription",
+      name: subscription.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: subscription.requestedAt,
+    })),
+  ]
+    .sort(
+      (a, b) =>
+        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
+    )
+    .map((row) => ({
+      id: row.id,
+      type: row.type,
+      name: row.name,
+      date: formatDate(row.requestedAt),
+      time: formatTime(row.requestedAt),
+    }));
+}
+
 // =============================================================================
 // Shared Read
 // =============================================================================
@@ -397,6 +435,10 @@ export async function getConsultantDashboard(
     pendingSubscriptions,
     pendingConsultationCount,
     pendingSubscriptionCount,
+    awaitingPaymentConsultations,
+    awaitingPaymentSubscriptions,
+    awaitingPaymentConsultationCount,
+    awaitingPaymentSubscriptionCount,
     recentActivities,
     earningsThisMonth,
     earningsLastMonth,
@@ -448,40 +490,20 @@ export async function getConsultantDashboard(
         class: { select: { id: true } },
       },
     }),
-    // Fetch pending consultations
+    // Pending previews. #1703 — the list reads the SAME predicate and window
+    // as the badge count below (no 90-day floor: the badge never had one, and
+    // the expiry sweep bounds PENDING at 48 h anyway), so the preview can no
+    // longer disagree with the number beside it.
     prisma.consultation.findMany({
-      where: {
-        consultationPlan: {
-          consultantProfile: {
-            id: consultantProfileId,
-          },
-        },
-        status: "PENDING",
-        // TTFB bound: approvals widget surfaces actionable recent requests;
-        // a 90-day-old PENDING request is stale.
-        requestedAt: { gte: ninetyDaysAgo },
-      },
+      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingConsultationInclude,
-      orderBy: {
-        requestedAt: "desc",
-      },
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
     }),
-    // Fetch pending subscriptions
     prisma.subscription.findMany({
-      where: {
-        subscriptionPlan: {
-          consultantProfileId,
-        },
-        status: "PENDING",
-        // TTFB bound: approvals widget surfaces actionable recent requests;
-        // a 90-day-old PENDING request is stale.
-        requestedAt: { gte: ninetyDaysAgo },
-      },
+      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingSubscriptionInclude,
-      orderBy: {
-        requestedAt: "desc",
-      },
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
     }),
     // The approvals badge is a total, not a list length. Counting the capped
@@ -498,14 +520,47 @@ export async function getConsultantDashboard(
     // pending request belongs to that org's dashboard and must not inflate this
     // badge while the card underneath it excludes the same row.
     prisma.consultation.count({
-      where: pendingConsultationWhere(consultantProfileId, {
-        kind: "personal",
-      }),
+      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
     }),
     prisma.subscription.count({
-      where: pendingSubscriptionWhere(consultantProfileId, {
-        kind: "personal",
-      }),
+      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
+    }),
+    // #1703 — approved-but-unpaid rows are neither pending nor bookable, so
+    // consultantAppointmentScope (APPROVED only) never showed them anywhere on
+    // Home. A small pipeline row keeps them out of Today/Upcoming.
+    prisma.consultation.findMany({
+      where: consultationRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+      include: pendingConsultationInclude,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      take: HOME_AWAITING_PAYMENT_TAKE,
+    }),
+    prisma.subscription.findMany({
+      where: subscriptionRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+      include: pendingSubscriptionInclude,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      take: HOME_AWAITING_PAYMENT_TAKE,
+    }),
+    prisma.consultation.count({
+      where: consultationRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+    }),
+    prisma.subscription.count({
+      where: subscriptionRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
     }),
     // Fetch recent activities
     prisma.activityLog.findMany({
@@ -697,42 +752,14 @@ export async function getConsultantDashboard(
     }),
   );
 
-  // Transform approvals (same logic as fetchHelpers.ts)
-  const consultationApprovals = pendingConsultations.map(
-    (consultation: DashboardConsultation) => ({
-      id: consultation.id,
-      type: "Consultation",
-      name: consultation.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: consultation.requestedAt,
-    }),
-  );
-
-  const subscriptionApprovals = pendingSubscriptions.map(
-    (subscription: DashboardSubscription) => ({
-      id: subscription.id,
-      type: "Subscription",
-      name: subscription.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: subscription.requestedAt,
-    }),
-  );
-
-  // Sort by requestedAt (ISO string) for type safety
-  const sortedApprovals = [
-    ...consultationApprovals,
-    ...subscriptionApprovals,
-  ].sort(
-    (a, b) =>
-      new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
-  );
-
-  // Map to display format for response
-  const approvals = sortedApprovals.map((approval) => ({
-    id: approval.id,
-    type: approval.type,
-    name: approval.name,
-    date: formatDate(approval.requestedAt),
-    time: formatTime(approval.requestedAt),
-  }));
+  const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
+  const awaitingPayment = {
+    count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
+    items: toRequestRows(
+      awaitingPaymentConsultations,
+      awaitingPaymentSubscriptions,
+    ).slice(0, HOME_AWAITING_PAYMENT_TAKE),
+  };
 
   // Total pending requests, independent of how many the widget lists.
   const pendingRequestsCount =
@@ -841,6 +868,7 @@ export async function getConsultantDashboard(
     activities,
     approvals,
     pendingRequestsCount,
+    awaitingPayment,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

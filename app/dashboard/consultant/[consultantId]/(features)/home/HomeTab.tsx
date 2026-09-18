@@ -12,9 +12,7 @@ import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import {
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
+import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   Calendar,
@@ -68,12 +66,14 @@ import { FinancialSummary } from "./FinancialSummary";
 import type {
   TPerformanceSnapshot,
   TFinancialSummary,
+  TConsultantDashboardResponse,
 } from "@/types/consultant-events";
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   pendingRequestsCount?: number;
+  awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   performanceSnapshot?: TPerformanceSnapshot;
   financialSummary?: TFinancialSummary;
 }
@@ -95,6 +95,7 @@ export function HomeTab({
   appointments,
   consultantId,
   pendingRequestsCount = 0,
+  awaitingPayment,
   performanceSnapshot,
   financialSummary,
 }: Readonly<HomeTabProps>) {
@@ -117,7 +118,10 @@ export function HomeTab({
     joinableSlot?: TAppointment["occurrences"][number],
   ) => void joinMeeting(appointment, joinableSlot);
 
-  const expandedAppointments = useMemo(() => appointments || [], [appointments]);
+  const expandedAppointments = useMemo(
+    () => appointments || [],
+    [appointments],
+  );
 
   const APPOINTMENT_DISPLAY_LIMIT = 8;
 
@@ -163,7 +167,6 @@ export function HomeTab({
       })
       .slice(0, 5);
   }, [allUpcomingAppointments]);
-
 
   // "Needs you now" — derived from data already on the page, so no extra
   // fetch. The rows go over whole, ids and ends included: these are raw
@@ -378,7 +381,8 @@ export function HomeTab({
                         </div>
                       );
                     })}
-                    {allTodayAppointments.length > APPOINTMENT_DISPLAY_LIMIT && (
+                    {allTodayAppointments.length >
+                      APPOINTMENT_DISPLAY_LIMIT && (
                       <div className="pt-3 text-center">
                         <Link
                           href={`/dashboard/consultant/${consultantId}/appointments`}
@@ -397,12 +401,16 @@ export function HomeTab({
                     action={
                       <div className="flex gap-2">
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                          <Link
+                            href={`/dashboard/consultant/${consultantId}/planner`}
+                          >
                             Set up availability
                           </Link>
                         </Button>
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/dashboard/consultant/${consultantId}/appointments`}>
+                          <Link
+                            href={`/dashboard/consultant/${consultantId}/appointments`}
+                          >
                             View all appointments
                           </Link>
                         </Button>
@@ -546,7 +554,9 @@ export function HomeTab({
                     description="Your schedule is clear for now"
                     action={
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                        <Link
+                          href={`/dashboard/consultant/${consultantId}/planner`}
+                        >
                           Set up availability
                         </Link>
                       </Button>
@@ -577,10 +587,46 @@ export function HomeTab({
                 </div>
               </DataCard>
 
-              {/* Financial Summary */}
-              {financialSummary && (
-                <FinancialSummary {...financialSummary} />
+              {/* #1703 — approved but unpaid: not pending, not bookable, so
+                  neither list above shows them. A pipeline row, not a mix
+                  into Today/Upcoming. */}
+              {awaitingPayment && awaitingPayment.count > 0 && (
+                <DataCard
+                  title="Awaiting payment"
+                  icon={Clock}
+                  headerAction={
+                    <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
+                      {awaitingPayment.count}
+                    </Badge>
+                  }
+                  viewAllLink={`/dashboard/consultant/${consultantId}/appointments?tab=needsAction`}
+                  viewAllText="View all"
+                >
+                  <ul className="divide-y divide-border text-sm">
+                    {awaitingPayment.items.map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.type} &middot; requested {item.date}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          Payment required
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </DataCard>
               )}
+
+              {/* Financial Summary */}
+              {financialSummary && <FinancialSummary {...financialSummary} />}
             </motion.div>
           </div>
         </motion.div>
