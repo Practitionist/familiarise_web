@@ -107,6 +107,25 @@ export const REQUEST_INDETERMINATE_ERROR =
   "Couldn't reach the server — check your connection, then look for the times before retrying.";
 
 /**
+ * True when a fetch died because the PAGE moved on — an explicit abort, or
+ * the browser's "Failed to fetch" / "Load failed" / "NetworkError" TypeError
+ * a navigation tears an in-flight request into. Nothing to fix and nothing
+ * to alert on (FAMILIARISE_WEB-4J, #1703 QA-4).
+ */
+export function isAbortedFetch(
+  error: unknown,
+  signal?: AbortSignal | null,
+): boolean {
+  if (signal?.aborted) return true;
+  if (!(error instanceof Error)) return false;
+  if (error.name === "AbortError") return true;
+  return (
+    error instanceof TypeError &&
+    /^(Failed to fetch|Load failed|NetworkError)/.test(error.message)
+  );
+}
+
+/**
  * AllocationService - Pure API Client for Event Slot Management
  *
  * Handles all HTTP communication for slot allocation, validation,
@@ -639,6 +658,8 @@ export class AllocationService {
     eventId: string,
     consultantProfileId: string,
     slotsPerCall?: number,
+    /** Lets the caller cancel on unmount; an aborted read is not a fault. */
+    signal?: AbortSignal,
   ) {
     try {
       const params = new URLSearchParams({
@@ -660,7 +681,9 @@ export class AllocationService {
         params.append("consultationId", eventId);
       }
 
-      const response = await fetch(`/api/scheduling/appointments?${params}`);
+      const response = await fetch(`/api/scheduling/appointments?${params}`, {
+        signal,
+      });
 
       if (!response.ok) {
         // See fetchConsultantData: httpStatus lets the catch distinguish a
@@ -679,6 +702,11 @@ export class AllocationService {
           {},
       };
     } catch (error) {
+      if (isAbortedFetch(error, signal)) {
+        // The page moved on mid-read: the same quiet "nothing known" the
+        // hook degrades to, minus the Sentry event (FAMILIARISE_WEB-4J).
+        return { data: [], weeklyConfirmedCallCounts: {} };
+      }
       console.error("Error fetching event slots:", error);
       const httpStatus =
         error && typeof error === "object" && "httpStatus" in error
