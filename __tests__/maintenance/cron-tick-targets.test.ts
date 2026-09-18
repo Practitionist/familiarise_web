@@ -67,6 +67,15 @@ describe("cron-tick targetRequest", () => {
       timeoutMs: 6_000,
     });
   });
+
+  // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
+  // 20 s budget, where fifty under 6 s was aborted on every tick.
+  it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {
+    expect(targetRequest(base, "reconcile-orphaned-confirmations")).toEqual({
+      url: "https://site.test/api/cleanup/reconcile-orphaned-confirmations?limit=10",
+      timeoutMs: 20_000,
+    });
+  });
 });
 
 // #1686 — six sweeps run on the 15-minute slots only; the customer-visible

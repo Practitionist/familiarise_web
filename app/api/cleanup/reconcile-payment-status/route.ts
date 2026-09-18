@@ -22,11 +22,11 @@ export const { GET, POST } = cleanupRoute({
     reconciledCount: r.reconciledCount,
     succeededCount: r.succeededCount,
     failedCount: r.failedCount,
-    // #1686 — references the gateway will never know, moved to EXPIRED.
-    deadLetteredCount: r.deadLetteredCount,
-    errors: r.errors.length,
+    unresolvableCount: r.unresolvableCount,
   }),
-  // 207 when succeeded payments were reconciled and the run itself was clean.
-  status: (r) => statusFor(r, r.succeededCount > 0),
+  // 207 when succeeded payments were reconciled, or when a pending row carries
+  // an id the gateway does not know (#1708) — attention, not failure; 500 stays
+  // reserved for a gateway outage.
+  status: (r) => statusFor(r, r.succeededCount > 0 || r.unresolvableCount > 0),
   failureMessage: "Failed to reconcile payment status",
 });

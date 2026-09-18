@@ -37,8 +37,7 @@ export const { GET, POST } = cleanupRoute({
     stillBlocked: r.stillBlocked,
     channelsEnsured: r.channelsEnsured,
     channelsFailed: r.channelsFailed,
-    // #1686 — pairs the DM gate refuses, stamped out of the queue.
-    channelsDeadLettered: r.channelsDeadLettered,
+    channelsSkipped: r.channelsSkipped,
     channelBuyerOps: r.channelBuyerOps,
     channelsDeferred: r.channelsDeferred,
   }),
