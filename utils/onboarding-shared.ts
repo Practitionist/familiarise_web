@@ -34,7 +34,9 @@ export function buildUserUpdateData(data: OnboardingData) {
     linkedinUrl: data.linkedinUrl || null,
     bio: data.bio ?? null,
     ...(data.termsAcceptedAt ? { termsAcceptedAt: data.termsAcceptedAt } : {}),
-    ...(data.privacyAcceptedAt ? { privacyAcceptedAt: data.privacyAcceptedAt } : {}),
+    ...(data.privacyAcceptedAt
+      ? { privacyAcceptedAt: data.privacyAcceptedAt }
+      : {}),
   };
 }
 
@@ -119,8 +121,8 @@ export function isPersistableVerificationDoc(doc: unknown): boolean {
   const d = doc as Record<string, unknown>;
   return Boolean(
     (d.id && !d.isOnboardingUpload) ||
-      d.isOnboardingUpload ||
-      (!d.id && d.fileUrl),
+    d.isOnboardingUpload ||
+    (!d.id && d.fileUrl),
   );
 }
 
@@ -195,6 +197,19 @@ export function canUploadVerificationDoc(args: {
   return args.draftRole === "CONSULTANT";
 }
 
+/**
+ * Who may write to the verification review queue (`/api/verification/submit`
+ * + `/resubmit`). A `ConsultantProfile` row can outlive a role change, so the
+ * live `User.role` must be CONSULTANT as well — otherwise an account that lost
+ * the role could keep filing applications and paging admins.
+ */
+export function canSubmitVerification(args: {
+  role: string | null | undefined;
+  hasConsultantProfile: boolean;
+}): boolean {
+  return args.hasConsultantProfile && args.role === "CONSULTANT";
+}
+
 // ============================================================================
 // PROFESSIONAL BACKGROUND VALIDATION
 // ============================================================================
@@ -219,12 +234,11 @@ export function validateProfessionalBackground(body: Record<string, unknown>) {
     : null;
 
   return {
-    workExperiences:
-      workExperiences?.success ? workExperiences.data : null,
-    educationHistory:
-      educationHistory?.success ? educationHistory.data : null,
-    certificationsList:
-      certificationsList?.success ? certificationsList.data : null,
+    workExperiences: workExperiences?.success ? workExperiences.data : null,
+    educationHistory: educationHistory?.success ? educationHistory.data : null,
+    certificationsList: certificationsList?.success
+      ? certificationsList.data
+      : null,
     achievements: achievements?.success ? achievements.data : null,
   };
 }

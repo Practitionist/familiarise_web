@@ -18,6 +18,7 @@
  */
 
 import {
+  canSubmitVerification,
   canUploadVerificationDoc,
   resolveOnboardingEmailUpdate,
 } from "../../utils/onboarding-shared";
@@ -128,6 +129,26 @@ describe("canUploadVerificationDoc", () => {
   });
 });
 
+describe("canSubmitVerification (review comment on #1698)", () => {
+  it("requires both a consultant profile and the live CONSULTANT role", () => {
+    expect(
+      canSubmitVerification({ role: "CONSULTANT", hasConsultantProfile: true }),
+    ).toBe(true);
+    expect(
+      canSubmitVerification({ role: "CONSULTEE", hasConsultantProfile: true }),
+    ).toBe(false);
+    expect(
+      canSubmitVerification({
+        role: "CONSULTANT",
+        hasConsultantProfile: false,
+      }),
+    ).toBe(false);
+    expect(
+      canSubmitVerification({ role: null, hasConsultantProfile: true }),
+    ).toBe(false);
+  });
+});
+
 describe("DEGRADED write-block for the onboarding wizard route", () => {
   it("blocks server-action POSTs to /form/onboarding", () => {
     expect(isWriteBlockedInDegraded("/form/onboarding", "POST")).toBe(true);
@@ -163,8 +184,6 @@ describe("VerificationSubmitSchema (review-comment fix)", () => {
     expect(
       VerificationSubmitSchema.safeParse({ documentIds: [42] }).success,
     ).toBe(false);
-    expect(VerificationSubmitSchema.safeParse({ nope: 1 }).success).toBe(
-      false,
-    );
+    expect(VerificationSubmitSchema.safeParse({ nope: 1 }).success).toBe(false);
   });
 });

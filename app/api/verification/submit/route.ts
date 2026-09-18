@@ -4,10 +4,8 @@ import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { VerificationSubmitSchema } from "@/schemas/verifications";
-import {
-  applyRateLimit,
-  verificationSubmitLimiter,
-} from "@/lib/rate-limit";
+import { canSubmitVerification } from "@/utils/onboarding-shared";
+import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
 import { notifyNewConsultantApplication } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 /**
@@ -43,10 +41,13 @@ export async function POST(request: NextRequest) {
     }
     const { linkedinUrl, notes, documentIds } = parsed.data;
 
-    // Get the consultant profile
+    // Get the consultant profile, with the live role: a profile row can
+    // outlive a role change, so existence alone must not authorize a
+    // review-queue write (mirrors resubmit; review comment on #1698).
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId: session.user.id },
       include: {
+        user: { select: { role: true } },
         verificationRequests: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -58,6 +59,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
         { status: 404 },
+      );
+    }
+
+    if (
+      !canSubmitVerification({
+        role: consultantProfile.user.role,
+        hasConsultantProfile: true,
+      })
+    ) {
+      return NextResponse.json(
+        { success: false, error: "Only consultants can submit verification" },
+        { status: 403 },
       );
     }
 
@@ -188,7 +201,10 @@ export async function POST(request: NextRequest) {
       data: verification,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Verification submit error:", error);
     return NextResponse.json(
       {
