@@ -3,12 +3,14 @@
  */
 
 /**
- * #1704 items 1, 4 — the request lists parse their query through one
- * validated schema (bad input is a 400, never a NaN reaching Prisma) and
- * page with an id tiebreaker.
+ * #1704 items 1, 3, 4 — the request lists parse their query through one
+ * validated schema (bad input is a 400, never a NaN reaching Prisma), page
+ * with an id tiebreaker, and refuse the approval statuses on the list PATCH.
  */
 
+import { AppointmentStatus } from "@prisma/client";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
   parseRequestListQuery,
   requestListOrderBy,
 } from "../../lib/booking/list-query";
@@ -49,5 +51,22 @@ describe("parseRequestListQuery", () => {
       { requestedAt: "asc" },
       { id: "asc" },
     ]);
+  });
+
+  it("keeps every approval status off the list PATCH", () => {
+    expect(APPROVAL_STATUSES_DETAIL_ONLY.has(AppointmentStatus.APPROVED)).toBe(
+      true,
+    );
+    expect(
+      APPROVAL_STATUSES_DETAIL_ONLY.has(
+        AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      ),
+    ).toBe(true);
+    expect(APPROVAL_STATUSES_DETAIL_ONLY.has(AppointmentStatus.SCHEDULED)).toBe(
+      true,
+    );
+    expect(APPROVAL_STATUSES_DETAIL_ONLY.has(AppointmentStatus.REJECTED)).toBe(
+      false,
+    );
   });
 });

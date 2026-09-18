@@ -60,3 +60,18 @@ export function requestListOrderBy(
 ): Array<{ requestedAt: Prisma.SortOrder } | { id: Prisma.SortOrder }> {
   return [{ requestedAt: sortOrder }, { id: sortOrder }];
 }
+
+/**
+ * Statuses only the `[id]` PATCH may write. The list PATCH has no approval
+ * lock, no payment-link step and no self-approval check, so a consultee could
+ * flip their own PENDING row to APPROVED through it (#1704).
+ */
+export const APPROVAL_STATUSES_DETAIL_ONLY: ReadonlySet<AppointmentStatus> =
+  new Set([
+    AppointmentStatus.APPROVED,
+    AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    AppointmentStatus.SCHEDULED,
+  ]);
+
+export const USE_DETAIL_APPROVAL_MESSAGE =
+  "Approval is not available on the list route. Use the request's own endpoint.";

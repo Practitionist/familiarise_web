@@ -20,6 +20,8 @@ import {
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
+  USE_DETAIL_APPROVAL_MESSAGE,
   parseRequestListQuery,
   requestListOrderBy,
 } from "@/lib/booking/list-query";
@@ -315,6 +317,15 @@ export async function PATCH(request: NextRequest) {
     if (!isPrivileged(session.user.role) && !isConsultant && !isConsultee) {
       return forbiddenResponse(
         "You can only modify subscriptions you are a participant in",
+      );
+    }
+
+    // #1704 — approval lives on the [subscriptionId] route only; see
+    // APPROVAL_STATUSES_DETAIL_ONLY. Refused for everyone, privileged included.
+    if (APPROVAL_STATUSES_DETAIL_ONLY.has(status)) {
+      return NextResponse.json(
+        { error: USE_DETAIL_APPROVAL_MESSAGE, code: "USE_DETAIL_APPROVAL" },
+        { status: 409 },
       );
     }
 

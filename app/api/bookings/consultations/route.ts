@@ -6,8 +6,11 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import {
+  APPROVAL_STATUSES_DETAIL_ONLY,
+  USE_DETAIL_APPROVAL_MESSAGE,
   parseRequestListQuery,
   requestListOrderBy,
 } from "@/lib/booking/list-query";
@@ -20,6 +23,13 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+
+// Typed instead of cast: the old `status as AppointmentStatus` let any string
+// reach the transition helper (#1704).
+const ListStatusPatchSchema = z.object({
+  id: z.string().min(1),
+  status: z.nativeEnum(AppointmentStatus),
+});
 
 export async function GET(request: NextRequest) {
   try {
@@ -221,20 +231,14 @@ export async function PATCH(request: NextRequest) {
     if (rl) return rl;
 
     const body = await request.json();
-    const { id, status } = body;
-
-    if (!id || !status) {
+    const parsedBody = ListStatusPatchSchema.safeParse(body);
+    if (!parsedBody.success) {
       return NextResponse.json(
-        { error: "ID and status are required" },
+        { error: "ID and a valid status are required" },
         { status: 400 },
       );
     }
-
-    if (
-      !Object.values(AppointmentStatus).includes(status as AppointmentStatus)
-    ) {
-      return NextResponse.json({ error: "Invalid status" }, { status: 400 });
-    }
+    const { id, status } = parsedBody.data;
 
     // Verify ownership before allowing status change
     const existingConsultation = await prisma.consultation.findUnique({
@@ -268,6 +272,15 @@ export async function PATCH(request: NextRequest) {
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
         "You can only update consultations you are a participant in",
+      );
+    }
+
+    // #1704 — approval lives on the [consultationId] route only; see
+    // APPROVAL_STATUSES_DETAIL_ONLY. Refused for everyone, privileged included.
+    if (APPROVAL_STATUSES_DETAIL_ONLY.has(status)) {
+      return NextResponse.json(
+        { error: USE_DETAIL_APPROVAL_MESSAGE, code: "USE_DETAIL_APPROVAL" },
+        { status: 409 },
       );
     }
 
