@@ -68,6 +68,68 @@ export type { ValidationResult, EventConstraints, SlotLimits };
 /**
  * Configuration options for the useEventSlotAllocation hook
  */
+/**
+ * Classifies a failed allocation into the one action the UI takes. Pure
+ * (no toasts, no callbacks) so the branching lives outside the hook
+ * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
+ * illegal transition, transient lock) and must neither close the dialog
+ * nor say that they did.
+ */
+type AllocationFailureAction =
+  | "rate-limited"
+  | "allocated-elsewhere"
+  | "request-changed"
+  | "stay-open-refresh"
+  | "stay-open-raw-refresh"
+  | "key-reset"
+  | "generic";
+
+function classifyAllocationFailure(
+  result: AllocationResult,
+  errorMessage: string,
+): AllocationFailureAction {
+  if (result.httpStatus === 429) return "rate-limited";
+  if (
+    result.httpStatus === 422 &&
+    result.errorCode === "IDEMPOTENCY_KEY_REUSE"
+  ) {
+    return "key-reset";
+  }
+  if (result.httpStatus !== 409) return "generic";
+  // 409s branch on the server's code, never on its wording. Only a
+  // genuine ALREADY_ALLOCATED removes the row; any code this switch does
+  // not know keeps the dialog open with a refetch, because closing and
+  // dropping an allocatable request strands it (M5).
+  switch (result.errorCode) {
+    case "ALREADY_ALLOCATED":
+      return "allocated-elsewhere";
+    case "ILLEGAL_TRANSITION":
+    case "RESCHEDULE_STATE_CHANGED":
+      return "request-changed";
+    case "SLOT_TAKEN":
+      return "stay-open-raw-refresh";
+    case "COLLABORATOR_UNAVAILABLE":
+    case "LOCK_CONTENTION":
+    default:
+      return isPreservedAllocationMessage(errorMessage)
+        ? "stay-open-raw-refresh"
+        : "stay-open-refresh";
+  }
+}
+
+/** The first selected cell by start time — what "Go to selection" scrolls to (#1703 F2). */
+export function earliestSelectedSlot(
+  selectedSlots: readonly CalendarInterval[],
+): CalendarInterval | null {
+  let earliest: CalendarInterval | null = null;
+  for (const slot of selectedSlots) {
+    if (!earliest || slot.startTime.getTime() < earliest.startTime.getTime()) {
+      earliest = slot;
+    }
+  }
+  return earliest;
+}
+
 export interface UseEventSlotAllocationOptions {
   /** Event type - determines validation rules and constraints */
   eventType: "subscription" | "class" | "webinar" | "consultation";
@@ -586,55 +648,6 @@ export function useEventSlotAllocation(
   // ==========================================
   // ALLOCATION FAILURE HANDLING
   // ==========================================
-
-  /**
-   * Classifies a failed allocation into the one action the UI takes. Pure
-   * (no toasts, no callbacks) so the branching lives outside the hook
-   * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
-   * illegal transition, transient lock) and must neither close the dialog
-   * nor say that they did.
-   */
-  type AllocationFailureAction =
-    | "rate-limited"
-    | "allocated-elsewhere"
-    | "request-changed"
-    | "stay-open-refresh"
-    | "stay-open-raw-refresh"
-    | "key-reset"
-    | "generic";
-
-  function classifyAllocationFailure(
-    result: AllocationResult,
-    errorMessage: string,
-  ): AllocationFailureAction {
-    if (result.httpStatus === 429) return "rate-limited";
-    if (
-      result.httpStatus === 422 &&
-      result.errorCode === "IDEMPOTENCY_KEY_REUSE"
-    ) {
-      return "key-reset";
-    }
-    if (result.httpStatus !== 409) return "generic";
-    // 409s branch on the server's code, never on its wording. Only a
-    // genuine ALREADY_ALLOCATED removes the row; any code this switch does
-    // not know keeps the dialog open with a refetch, because closing and
-    // dropping an allocatable request strands it (M5).
-    switch (result.errorCode) {
-      case "ALREADY_ALLOCATED":
-        return "allocated-elsewhere";
-      case "ILLEGAL_TRANSITION":
-      case "RESCHEDULE_STATE_CHANGED":
-        return "request-changed";
-      case "SLOT_TAKEN":
-        return "stay-open-raw-refresh";
-      case "COLLABORATOR_UNAVAILABLE":
-      case "LOCK_CONTENTION":
-      default:
-        return isPreservedAllocationMessage(errorMessage)
-          ? "stay-open-raw-refresh"
-          : "stay-open-refresh";
-    }
-  }
 
   const handleAllocationFailure = useCallback(
     (result: AllocationResult, fallback: string) => {
