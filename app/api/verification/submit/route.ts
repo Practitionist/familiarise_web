@@ -7,6 +7,8 @@ import { VerificationSubmitSchema } from "@/schemas/verifications";
 import { canSubmitVerification } from "@/utils/onboarding-shared";
 import { applyRateLimit, verificationSubmitLimiter } from "@/lib/rate-limit";
 import { notifyNewConsultantApplication } from "@/lib/novu/service";
+import { attemptTrigger } from "@/lib/novu";
+import { scheduleAfter } from "@/lib/api/after-safe";
 import { getAppUrl } from "@/lib/url";
 /**
  * POST /api/verification/submit
@@ -78,14 +80,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update user's LinkedIn URL if provided
-    if (linkedinUrl) {
-      await prisma.user.update({
-        where: { id: session.user.id },
-        data: { linkedinUrl },
-      });
-    }
-
     // Check for the latest verification request
     const latestVerification = consultantProfile.verificationRequests[0];
 
@@ -121,84 +115,79 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let verification;
-
-    if (shouldUpdate) {
-      // Update the existing request
-      verification = await prisma.consultantProfileVerification.update({
-        where: { id: latestVerification.id },
-        data: {
-          status: "PENDING", // Reset to PENDING for review
-          notes,
-          reviewedAt: null, // Reset review details
-          reviewedById: null,
-          reviewNotes: null,
-          rejectionReason: null,
-          feedbackDetails: null,
-          // Connect new documents if provided (using deduplicated + validated IDs)
-          ...(uniqueDocumentIds.length && {
-            documents: {
-              connect: uniqueDocumentIds.map((id) => ({ id })),
+    // Every write and the admin bells' outbox rows in ONE transaction
+    // (review round 2 on #1700): the queue item and its notice exist
+    // together or not at all. Vendor attempts run in after() below.
+    const { verification, staged } = await prisma.$transaction(async (tx) => {
+      if (linkedinUrl) {
+        await tx.user.update({
+          where: { id: session.user.id },
+          data: { linkedinUrl },
+        });
+      }
+      const documentsConnect = uniqueDocumentIds.length
+        ? { documents: { connect: uniqueDocumentIds.map((id) => ({ id })) } }
+        : {};
+      const verification = shouldUpdate
+        ? await tx.consultantProfileVerification.update({
+            where: { id: latestVerification.id },
+            data: {
+              status: "PENDING", // Reset to PENDING for review
+              notes,
+              reviewedAt: null, // Reset review details
+              reviewedById: null,
+              reviewNotes: null,
+              rejectionReason: null,
+              feedbackDetails: null,
+              ...documentsConnect,
             },
-          }),
-        },
-        include: {
-          documents: true,
-        },
-      });
-    } else {
-      // Create a new verification request (for initial or after REJECTED/APPROVED)
-      verification = await prisma.consultantProfileVerification.create({
-        data: {
-          consultantProfileId: consultantProfile.id,
-          notes,
-          status: "PENDING",
-          // Connect existing documents if provided (using deduplicated + validated IDs)
-          ...(uniqueDocumentIds.length && {
-            documents: {
-              connect: uniqueDocumentIds.map((id) => ({ id })),
+            include: { documents: true },
+          })
+        : await tx.consultantProfileVerification.create({
+            data: {
+              consultantProfileId: consultantProfile.id,
+              notes,
+              status: "PENDING",
+              ...documentsConnect,
             },
-          }),
-        },
-        include: {
-          documents: true,
-        },
+            include: { documents: true },
+          });
+      await tx.consultantProfile.update({
+        where: { id: consultantProfile.id },
+        data: { verificationStatus: "UNDER_REVIEW", isVerified: false },
       });
-    }
 
-    // Update consultant profile verification status
-    await prisma.consultantProfile.update({
-      where: { id: consultantProfile.id },
-      data: {
-        verificationStatus: "UNDER_REVIEW",
-        isVerified: false,
-      },
-    });
-
-    // Notify admin/staff about new verification request
-    try {
-      const admins = await prisma.user.findMany({
+      const admins = await tx.user.findMany({
         where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
         select: { id: true },
       });
-      const adminIds = admins.map((a) => a.id);
-      if (adminIds.length > 0) {
-        const user = await prisma.user.findUnique({
-          where: { id: session.user.id },
-          select: { name: true, email: true },
-        });
-        await notifyNewConsultantApplication(adminIds, {
-          applicantName: user?.name ?? "Unknown",
-          applicantEmail: user?.email ?? "",
-          dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
-        });
-      }
-    } catch (error) {
-      console.error(
-        "[verification/submit] Failed to send notification:",
-        error,
+      const applicant = await tx.user.findUnique({
+        where: { id: session.user.id },
+        select: { name: true, email: true },
+      });
+      const results =
+        admins.length > 0
+          ? await notifyNewConsultantApplication(
+              admins.map((a) => a.id),
+              {
+                applicantName: applicant?.name ?? "Unknown",
+                applicantEmail: applicant?.email ?? "",
+                dashboardUrl: `${getAppUrl()}/dashboard/admin/verification`,
+              },
+              { tx },
+            )
+          : [];
+      const staged = new Map(
+        results.flatMap((r) =>
+          r.success && r.staged ? [[r.staged.id, r.staged] as const] : [],
+        ),
       );
-    }
+      return { verification, staged: Array.from(staged.values()) };
+    });
+
+    scheduleAfter(async () => {
+      for (const row of staged) await attemptTrigger(row);
+    });
 
     return NextResponse.json({
       success: true,

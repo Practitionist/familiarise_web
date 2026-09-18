@@ -27,6 +27,9 @@ import {
   bumpUserSessionGeneration,
 } from "@/lib/api/organizations/membership-transitions";
 import { notifyOrgInviteAccepted } from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { attemptOnboardingEmail, stageOrgWelcomeEmail } from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 const AcceptBodySchema = z.object({
   invitationId: z.string().min(1),
@@ -62,7 +65,10 @@ export async function POST(req: NextRequest) {
     },
   });
   if (!invitation) {
-    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invitation not found" },
+      { status: 404 },
+    );
   }
   // Closure-friendly non-null alias. TS doesn't carry the
   // null-narrowed flow type into the inner `runAcceptTx` function
@@ -94,6 +100,9 @@ export async function POST(req: NextRequest) {
   const normalizedRole = roleResult.data;
 
   const userId = auth.session.user.id;
+  // Same closure-friendly aliasing as `inv` above, for the staging inside runAcceptTx.
+  const accepteeEmail = auth.session.user.email;
+  const accepteeName = auth.session.user.name ?? accepteeEmail;
 
   // #701 — DPDP: the invitee must hold live core-processing consent before we
   // provision membership (which processes their PII on the org's behalf).
@@ -123,9 +132,7 @@ export async function POST(req: NextRequest) {
   // bugs.
   const MAX_ATTEMPTS = 2;
   let lastErr: unknown;
-  let result:
-    | Awaited<ReturnType<typeof runAcceptTx>>
-    | undefined;
+  let result: Awaited<ReturnType<typeof runAcceptTx>> | undefined;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       result = await runAcceptTx();
@@ -153,20 +160,15 @@ export async function POST(req: NextRequest) {
     throw lastErr ?? new Error("Invitation accept failed for unknown reason");
   }
 
-  // Side-effect: notify the org's operator roster that someone new
-  // joined. Skip when the caller was already a member — the "accept"
-  // button was just idempotent, nothing newsworthy happened.
+  // The roster bell and the joiner's welcome were staged inside the accept
+  // transaction (skipped when the accept was idempotent — nothing
+  // newsworthy happened); only the vendor attempts run after the response.
   if (!result.alreadyMember) {
-    const origin = new URL(req.url).origin;
-    notifyOrgInviteAccepted(result.organization.id, {
-      accepteeName: auth.session.user.name ?? auth.session.user.email,
-      accepteeEmail: auth.session.user.email,
-      orgName: result.organization.name,
-      role: result.membership.role,
-      dashboardUrl: `${origin}/dashboard/organization/${result.organization.id}/members`,
-    }).catch((err) =>
-      console.error("[notifyOrgInviteAccepted] failed:", err),
-    );
+    const { stagedBells, stagedWelcome } = result;
+    scheduleAfter(async () => {
+      for (const row of stagedBells) await attemptTrigger(row);
+      if (stagedWelcome) await attemptOnboardingEmail(stagedWelcome);
+    });
   }
 
   // Client contract (app/organizations/invite/[token]/page.tsx): expects
@@ -192,10 +194,9 @@ export async function POST(req: NextRequest) {
         data: { status: "accepted", userId },
       });
       if (claim.count === 0) {
-        throw Object.assign(
-          new Error("Invitation is no longer pending"),
-          { httpStatus: 409 },
-        );
+        throw Object.assign(new Error("Invitation is no longer pending"), {
+          httpStatus: 409,
+        });
       }
 
       // Re-fetch org status inside the tx so a SUSPENDED/DEACTIVATED org
@@ -207,10 +208,9 @@ export async function POST(req: NextRequest) {
         select: { id: true, name: true, status: true },
       });
       if (!org) {
-        throw Object.assign(
-          new Error("Organization no longer exists"),
-          { httpStatus: 404 },
-        );
+        throw Object.assign(new Error("Organization no longer exists"), {
+          httpStatus: 404,
+        });
       }
       if (isOnboardingBlocked(org.status)) {
         throw Object.assign(
@@ -233,7 +233,13 @@ export async function POST(req: NextRequest) {
         },
       });
       if (existing) {
-        return { membership: existing, organization: org, alreadyMember: true };
+        return {
+          membership: existing,
+          organization: org,
+          alreadyMember: true,
+          stagedBells: [] as StagedTrigger[],
+          stagedWelcome: null,
+        };
       }
 
       // #729 §AC4/AC5 + #819 — who-is-acting identity rule. Accepting an
@@ -322,7 +328,39 @@ export async function POST(req: NextRequest) {
       // next page load instead of after a manual logout. Audit B.5.
       await bumpUserSessionGeneration(tx, userId);
 
-      return { membership: created, organization: org, alreadyMember: false };
+      // Staged HERE so the roster bell and the joiner's welcome commit with
+      // the membership or roll back with it (review round 2 on #1700); the
+      // roster is read through `tx` too. Attempted in after() by the caller.
+      const origin = new URL(req.url).origin;
+      const stagedBells = await notifyOrgInviteAccepted(
+        inv.organizationId,
+        {
+          accepteeName,
+          accepteeEmail,
+          orgName: org.name,
+          role: normalizedRole,
+          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/members`,
+        },
+        { tx },
+      );
+      const stagedWelcome = await stageOrgWelcomeEmail(
+        {
+          userId,
+          membershipId: created.id,
+          orgName: org.name,
+          role: normalizedRole,
+          dashboardUrl: `${origin}/dashboard/organization/${inv.organizationId}/home`,
+        },
+        tx,
+      );
+
+      return {
+        membership: created,
+        organization: org,
+        alreadyMember: false,
+        stagedBells,
+        stagedWelcome,
+      };
     });
   }
 }
