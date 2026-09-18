@@ -252,10 +252,12 @@ export async function GET(
     // lost access is refused up there, so a 304 can never serve stale
     // permission. The resolved (not requested) detail flag and the consultee id
     // are hashed into the tag, so the two payload shapes cannot collide.
+    // Window-scoped (#1697): a booking in another week leaves this tag alone.
     const marker = await readAvailabilityGridMarker(
       prisma,
       consultantId,
       consulteeUserId,
+      { startsAt: startDate, endsAt: endDate },
     );
     // No marker = no such consultant; fall through so the 404 below still answers.
     const etag = marker
