@@ -218,6 +218,28 @@ export async function PUT(
       );
     }
 
+    // #1704 — a planId is only accepted from the same consultant as the
+    // request; connecting any plan let a request migrate to another seller.
+    if (validatedData.planId) {
+      const targetPlan = await prisma.subscriptionPlan.findUnique({
+        where: { id: validatedData.planId },
+        select: { consultantProfileId: true },
+      });
+      if (
+        !targetPlan ||
+        targetPlan.consultantProfileId !==
+          existingSubscription.subscriptionPlan?.consultantProfileId
+      ) {
+        return NextResponse.json(
+          {
+            error: "The plan belongs to a different consultant",
+            code: "PLAN_NOT_OWNED",
+          },
+          { status: 403 },
+        );
+      }
+    }
+
     const subscriptionData = await prisma.subscription.update({
       where: { id: subscriptionId },
       data: {
