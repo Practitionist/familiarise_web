@@ -22,7 +22,9 @@ export function trackOnboardingEvent(
     | "draft_quarantined"
     | "submit_success"
     | "submit_error"
-    | "verification_deferred",
+    | "verification_deferred"
+    | "invite_bypassed"
+    | "pending_invite_at_submit",
   data?: Record<string, string | number | boolean | null>,
 ): void {
   try {

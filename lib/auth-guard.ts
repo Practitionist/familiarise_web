@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import type { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
+import prisma from "@/lib/prisma";
+import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import {
   hasBackofficePermission,
   type BackofficeSurface,
@@ -13,6 +15,10 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
   CONSULTANT: "consultantProfileId",
   CONSULTEE: "consulteeProfileId",
   STAFF: "staffProfileId",
+  // ORG_WORKSPACE is required since the handoff creates + links the profile
+  // (setOnboardingRoleAction), closing the half-onboarded window where the
+  // role was committed but no profile existed. ADMIN remains flag-only.
+  ORG_WORKSPACE: "orgWorkspaceProfileId",
 };
 
 /**
@@ -96,23 +102,43 @@ async function onboardingRedirectTarget(
  * Redirects to sign-in if no session, to onboarding if not completed or
  * profile is missing. Uses disableCookieCache to avoid stale values.
  *
- * Do NOT switch this to the cookie cache. This guard has no `banned` check of
- * its own — it catches bans, DPDP erasure and revoked sessions only because the
- * forced read finds no session row. A 5-minute cookie cache would keep those
- * users inside /dashboard/admin, /checkout and /settings. The cache would also
- * buy almost nothing: customSession re-runs its Prisma enrichment on every
- * getSession call regardless, so the cache skips one query out of ~4. The
- * per-render dedupe that actually helps is getSession's React.cache.
+ * Do NOT switch this to the cookie cache. The forced read is what catches
+ * revoked sessions and DPDP erasure (no session row to find). A 5-minute
+ * cookie cache would keep those users inside /dashboard/admin, /checkout
+ * and /settings. The cache would also buy almost nothing: customSession
+ * re-runs its Prisma enrichment on every getSession call regardless, so the
+ * cache skips one query out of ~4. The per-render dedupe that actually helps
+ * is getSession's React.cache.
  */
 export async function requireOnboarded() {
   const session = await getSession(true);
   if (!session?.user?.id) {
     redirectWithCookieCleanup();
   }
+  // Explicit ban check, mirroring requireAuth/requireApiAuth (#693): a
+  // session minted inside the ban race window still resolves a `banned: true`
+  // payload before row deletion lands, and this guard must not admit it to
+  // the dashboard on payload alone.
+  if (session.user.banned === true) {
+    redirectWithCookieCleanup();
+  }
   if (!session.user.onboardingCompleted) {
     redirect(await onboardingRedirectTarget());
   }
   if (!hasRequiredProfile(session.user)) {
+    // A completed ORG_WORKSPACE row written before the handoff created the
+    // profile has no link to require; the wizard's handoff refuses an
+    // onboarded user, so heal here instead of bouncing (review on #1699).
+    if (
+      session.user.role === "ORG_WORKSPACE" &&
+      !session.user.orgWorkspaceProfileId
+    ) {
+      const id = await ensureOrgWorkspaceProfile(prisma, session.user.id);
+      return {
+        ...session,
+        user: { ...session.user, orgWorkspaceProfileId: id },
+      };
+    }
     redirect(await onboardingRedirectTarget({ error: "missing_profile" }));
   }
   return session;

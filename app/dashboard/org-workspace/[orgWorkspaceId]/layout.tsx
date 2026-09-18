@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { requireAuth } from "@/lib/auth-guard";
+import { requireOnboarded } from "@/lib/auth-guard";
 import NovuProvider from "@/providers/NovuProvider";
 import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
 
@@ -10,6 +10,11 @@ import { OrgWorkspaceShell } from "./OrgWorkspaceShell";
  * user's orgWorkspaceProfileId. We refuse to even hint that another user's
  * profile exists — URL-guessing returns the same 404 as a truly absent
  * id.
+ *
+ * requireOnboarded (not just requireAuth): the operator surface assumes a
+ * finished onboarding (role + linked OrgWorkspaceProfile, created at the
+ * ORG_WORKSPACE handoff). A mid-wizard user who guesses this URL bounces to
+ * /form/onboarding instead of seeing an empty operator shell.
  *
  * Chrome: full CollapsibleSidebar (mirrors /dashboard/admin and
  * /dashboard/staff), with a top context bar carrying the
@@ -31,7 +36,7 @@ export default async function OrgWorkspaceLayout({
   params: Promise<{ orgWorkspaceId: string }>;
 }) {
   const { orgWorkspaceId } = await params;
-  const session = await requireAuth();
+  const session = await requireOnboarded();
 
   // `orgWorkspaceProfileId` lives on the inferred Session["user"] via the
   // customSession callback (lib/auth.ts). Direct access is type-safe.

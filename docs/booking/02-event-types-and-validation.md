@@ -11,7 +11,7 @@
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
 | **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | `sessionsPerWeek`                                           | N/A                              |
-| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)    |
+| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
 | **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
@@ -305,3 +305,5 @@ Specific date/time ranges stored in `AvailabilityWindowCustom`:
 - Validated using overlap detection: `proposedStart < availEnd AND availStart < proposedEnd`
 
 The `scheduleType` field on `ConsultantProfile` determines which availability set is used.
+
+Every write to either table — the onboarding wizard, the settings page, and the per-row `/api/scheduling/availability/*` routes — validates through the one contract in `lib/scheduling/availability-contract.ts` (window length, order, overlap, no already-ended custom window, at least one window for the chosen type). The WEEKLY↔CUSTOM switch is blocked while anything is booked; shrinking hours within a type is allowed and reported. The rules and the switch guard are documented in [docs/onboarding/03-availability-contract.md](../onboarding/03-availability-contract.md).

@@ -17,6 +17,9 @@
  * - currencyLimiter:        30/min per IP    — GET /api/currency (protects the FX provider quota)
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
  * - streamRecordingSyncLimiter: 3/5min per user — POST /api/stream/recordings/sync (Stream fan-out)
+ * - onboardingSubmitLimiter: 10/min per user  — updateOnboardingInformationAction + PATCH /api/form/onboarding/[id] (heavy multi-table tx)
+ * - onboardingDraftLimiter:  30/min per user  — saveOnboardingDraftAction (800ms-debounced autosave + pagehide flush)
+ * - verificationSubmitLimiter: 10/hr per user — POST /api/verification/submit + /resubmit (review-queue writes + admin notify)
  */
 
 import { Ratelimit } from "@upstash/ratelimit";
@@ -199,6 +202,46 @@ export const documentReviewLimiter = makeLimiter(
   30,
   "1 m",
   "rl:document-review",
+);
+
+/**
+ * 10 per minute per user — onboarding terminal submit
+ * (`updateOnboardingInformationAction` + `PATCH /api/form/onboarding/[id]`).
+ * One submit runs a multi-table CAS transaction plus slot fan-out and a
+ * post-commit verification side effect, so a double-click loop or a retry
+ * storm is real DB + notify load. Ten covers impatient double-submits and
+ * maintenance-window retries; a loop trips it immediately. Keyed by user id
+ * (server actions have no request IP helper — reuse `applyRateLimit`, which
+ * only needs the limiter + identifier).
+ */
+export const onboardingSubmitLimiter = makeLimiter(
+  10,
+  "1 m",
+  "rl:onboarding-submit",
+);
+
+/**
+ * 30 per minute per user — `saveOnboardingDraftAction` (draft autosave).
+ * The wizard debounces saves at 800ms + flushes on pagehide, so legitimate
+ * traffic is a handful of 64KB upserts per step. Thirty caps a stuck
+ * autosave loop without ever touching a human.
+ */
+export const onboardingDraftLimiter = makeLimiter(
+  30,
+  "1 m",
+  "rl:onboarding-draft",
+);
+
+/**
+ * 10 per hour per user — `POST /api/verification/submit` + `/resubmit`.
+ * Each call mints or mutates a review-queue row and notifies admins; an
+ * hour bucket fits the human cadence (submit → fix docs → resubmit) while
+ * stopping queue-flooding scripts. Status reads are intentionally unthrottled.
+ */
+export const verificationSubmitLimiter = makeLimiter(
+  10,
+  "1 h",
+  "rl:verification-submit",
 );
 
 // ============================================================================

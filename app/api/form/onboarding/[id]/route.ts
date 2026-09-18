@@ -1,7 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { processOnboardingData } from "@/utils/onboarding-server";
+import { resolveOnboardingEmailUpdate } from "@/utils/onboarding-shared";
 import { getSession } from "@/lib/auth-server";
+import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
 
 export async function PATCH(
   req: NextRequest,
@@ -21,6 +23,26 @@ export async function PATCH(
     if (!isPrivileged && session.user.id !== id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+
+    // Same email-ownership rule as the server action twin: the session email
+    // is verified at signup, so a self-service write must not move the row
+    // onto a different address without re-verification.
+    const bodyEmail =
+      typeof body === "object" && body !== null
+        ? (body as Record<string, unknown>).email
+        : undefined;
+    const emailCheck = resolveOnboardingEmailUpdate({
+      bodyEmail,
+      sessionEmail: session.user.email,
+      isPrivileged,
+    });
+    if (!emailCheck.ok) {
+      return NextResponse.json({ error: emailCheck.error }, { status: 403 });
+    }
+
+    // Same bucket as the server-action twin so both paths share one quota.
+    const limited = await applyRateLimit(onboardingSubmitLimiter, session.user.id);
+    if (limited) return limited;
 
     // Use central utility function directly
     const result = await processOnboardingData(id, body);

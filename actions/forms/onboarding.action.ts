@@ -2,9 +2,12 @@
 
 import { z } from "zod";
 import { processOnboardingData } from "@/utils/onboarding-server";
+import { resolveOnboardingEmailUpdate } from "@/utils/onboarding-shared";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
-import { UserRole } from "@prisma/client";
+import { MemberRole, MemberStatus, UserRole } from "@prisma/client";
+import { applyRateLimit, onboardingSubmitLimiter } from "@/lib/rate-limit";
+import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 
 // Roles a user is allowed to self-select via this action. Privileged
 // roles (ADMIN, STAFF) MUST never be reachable from a client-driven
@@ -36,12 +39,7 @@ const SELF_SELECTABLE_ONBOARDING_ROLES: ReadonlySet<UserRole> = new Set([
 const RoleHandoffPersonalInfoSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(200).optional(),
-    phone: z
-      .string()
-      .trim()
-      .min(1, "Phone cannot be empty")
-      .max(50)
-      .optional(),
+    phone: z.string().trim().min(1, "Phone cannot be empty").max(50).optional(),
     timezone: z.string().trim().min(1).max(64).optional(),
   })
   .strict();
@@ -52,7 +50,13 @@ const RoleHandoffRoleSchema = z.nativeEnum(UserRole);
 export async function updateOnboardingInformationAction(
   userId: string,
   body: unknown,
-): Promise<{ success: boolean; user?: Record<string, unknown>; error?: string; verificationWarning?: string; verificationDeferred?: boolean }> {
+): Promise<{
+  success: boolean;
+  user?: Record<string, unknown>;
+  error?: string;
+  verificationWarning?: string;
+  verificationDeferred?: boolean;
+}> {
   console.log(
     "Server Action: updateOnboardingInformationAction - Delegating to central utils",
   );
@@ -65,6 +69,35 @@ export async function updateOnboardingInformationAction(
     session.user.role === "ADMIN" || session.user.role === "STAFF";
   if (!isPrivileged && session.user.id !== userId) {
     return { success: false, error: "Forbidden" };
+  }
+
+  // The session email is verified at signup; the onboarding body must not
+  // move the row onto a different address without re-verification.
+  const bodyEmail =
+    typeof body === "object" && body !== null
+      ? (body as Record<string, unknown>).email
+      : undefined;
+  const emailCheck = resolveOnboardingEmailUpdate({
+    bodyEmail,
+    sessionEmail: session.user.email,
+    isPrivileged,
+  });
+  if (!emailCheck.ok) {
+    return { success: false, error: emailCheck.error };
+  }
+
+  // One submit runs a multi-table CAS transaction + slot fan-out, so cap
+  // retry/double-click storms per user. Fail-open on Redis outage matches
+  // applyRateLimit's deliberate #1125 semantics.
+  const limited = await applyRateLimit(
+    onboardingSubmitLimiter,
+    session.user.id,
+  );
+  if (limited) {
+    return {
+      success: false,
+      error: "Too many requests. Please try again later.",
+    };
   }
 
   // Use the central processing function
@@ -137,6 +170,14 @@ export async function setOnboardingRoleAction(
     },
   });
 
+  // Close the half-onboarded window: the profile used to be lazy-created by
+  // POST /api/organizations, so bouncing out of the wizard between the role
+  // commit (here) and the org create left ORG_WORKSPACE + no profile — a
+  // state no guard could see (PROFILE_KEY_BY_ROLE has no ORG_WORKSPACE arm
+  // without it). Create + link it now, mirroring the POST upsert: idempotent
+  // on userId @unique, cheap no-op relink on re-entry.
+  await ensureOrgWorkspaceProfile(prisma, userId);
+
   return { success: true };
 }
 
@@ -157,6 +198,10 @@ export async function setOnboardingRoleAction(
  * still un-onboarded, and holds no membership is provisional. A real org owner
  * (who has at least the owner Membership created with their org) is never
  * touched.
+ *
+ * The revert also unlinks the OrgWorkspaceProfile created at handoff (set
+ * null, row kept): the profile is keyed by userId @unique, so re-picking the
+ * org path reuses + relinks it instead of orphaning a second row.
  */
 export async function resetOnboardingRoleAction(
   userId: string,
@@ -177,7 +222,7 @@ export async function resetOnboardingRoleAction(
       onboardingCompleted: { not: true },
       memberships: { none: {} },
     },
-    data: { role: UserRole.CONSULTEE },
+    data: { role: UserRole.CONSULTEE, orgWorkspaceProfileId: null },
   });
 
   return { success: true, reverted: count > 0 };
@@ -189,6 +234,10 @@ export async function resetOnboardingRoleAction(
  * committed by `setOnboardingRoleAction`; the owner Membership was
  * created atomically by `POST /api/organizations`. All that's left is
  * the onboarding flag so the session no longer redirects to /form/onboarding.
+ *
+ * Gated on a live OWNER membership: without it the flag flip is either a
+ * crafted call or a replay from before the org existed, and either would
+ * mark onboarding complete for a user with no organization.
  */
 export async function completeOrgWorkspaceOnboardingAction(
   userId: string,
@@ -199,6 +248,21 @@ export async function completeOrgWorkspaceOnboardingAction(
   }
   if (session.user.id !== userId) {
     return { success: false, error: "Forbidden" };
+  }
+
+  const ownerMembership = await prisma.membership.findFirst({
+    where: {
+      userId,
+      role: MemberRole.OWNER,
+      status: MemberStatus.ACTIVE,
+    },
+    select: { id: true },
+  });
+  if (!ownerMembership) {
+    return {
+      success: false,
+      error: "No organization found. Create your organization first.",
+    };
   }
 
   await prisma.user.update({

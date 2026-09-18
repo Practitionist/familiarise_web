@@ -16,6 +16,11 @@ import {
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { getSession } from "@/lib/auth-server";
+import {
+  validateWeeklyWindow,
+  AVAILABILITY_REFUSAL_STATUS,
+} from "@/lib/scheduling/availability-contract";
+import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 
 export async function GET(req: NextRequest) {
   try {
@@ -172,6 +177,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
+    // Contract (lib/scheduling/availability-contract): the 30 min–12 h bound
+    // the wizard enforces, now on this path too.
+    const refusal = validateWeeklyWindow({
+      startDay: startDay,
+      endDay: endDay,
+      startTimeUtc,
+      endTimeUtc,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // #1326 — the consultant's profile timezone decides the offset, and a
     // caller who sends one of their own may only agree with it. Resolved once,
     // before the transaction, so a contradiction costs no write.
@@ -248,7 +268,14 @@ export async function POST(req: NextRequest) {
             startTimeUtc,
             endTimeUtc,
           });
-          return NextResponse.json({ data: covering }, { status: 201 });
+          const { uncoveredUpcoming } = await settleAvailabilityWrite(
+            tx,
+            consultantProfileId,
+          );
+          return NextResponse.json(
+            { data: covering, uncoveredUpcoming },
+            { status: 201 },
+          );
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

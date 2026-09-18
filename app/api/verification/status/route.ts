@@ -9,7 +9,9 @@ import { getSession } from "@/lib/auth-server";
  */
 export async function GET() {
   try {
-    const session = await getSession();
+    // Read-only status check, but force-fresh so a revoked/erased session
+    // stops seeing verification state the moment the row is gone.
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(

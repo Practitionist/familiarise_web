@@ -15,12 +15,24 @@ const resubmitSchema = z.object({
 
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
+import {
+  applyRateLimit,
+  verificationSubmitLimiter,
+} from "@/lib/rate-limit";
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession();
+    // Force-fresh (see documents route): revocation must bite immediately.
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // Shares the submit bucket: resubmit is the same review-queue write.
+    const rateLimited = await applyRateLimit(
+      verificationSubmitLimiter,
+      `verification-submit:${session.user.id}`,
+    );
+    if (rateLimited) return rateLimited;
 
     // Check if user is a consultant
     const user = await prisma.user.findUnique({
