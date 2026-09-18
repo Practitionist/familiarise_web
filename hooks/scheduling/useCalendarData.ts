@@ -278,6 +278,10 @@ export function useCalendarData(
   // the window and the viewer, so a tag from another week simply misses and
   // the route answers 200.
   const availabilityEtagRef = useRef<string | null>(null);
+  // The event-slots read in flight; a re-issue or unmount aborts it so a torn
+  // read is a quiet cancel, not a Sentry fault (#1703 QA-4).
+  const eventSlotsAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => eventSlotsAbortRef.current?.abort(), []);
 
   // PERFORMANCE: Computed available slots from raw data using useMemo
   const availableSlots = useMemo((): BookableInterval[] => {
@@ -500,13 +504,19 @@ export function useCalendarData(
         eventType === "subscription"
           ? Math.ceil((sessionDurationInHours || 1) / 0.5)
           : undefined;
+      eventSlotsAbortRef.current?.abort();
+      const controller = new AbortController();
+      eventSlotsAbortRef.current = controller;
       const { data, weeklyConfirmedCallCounts: weeklyCounts } =
         await AllocationService.fetchEventSlots(
           eventType,
           eventId,
           consultantId,
           slotsPerCall,
+          controller.signal,
         );
+      // Superseded by a newer read: its answer, not this empty one, commits.
+      if (controller.signal.aborted) return;
       setWeeklyConfirmedCallCounts(weeklyCounts);
 
       if (data && Array.isArray(data) && data.length > 0) {

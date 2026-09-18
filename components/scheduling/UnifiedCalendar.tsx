@@ -153,14 +153,19 @@ function bandLabel(segment: RowSegment): string {
 const GRID_COLS =
   "grid grid-cols-[3.5rem_repeat(7,minmax(0,1fr))] md:grid-cols-[5rem_repeat(7,minmax(0,1fr))]";
 
-/** Returns true if a UTC date is outside the [allowedStart, allowedEnd] bounds. */
+/**
+ * ONE period predicate for paint, click and auto-expand: the cell must sit
+ * inside [allowedStart, allowedEnd] whole, the same rule
+ * ScheduleValidationService.validateSchedulingPeriod applies server-side.
+ */
 function isOutsideAllowedRange(
-  dateUtc: Date,
+  intervalStart: Date,
+  intervalEnd: Date,
   allowedStart?: Date,
   allowedEnd?: Date,
 ): boolean {
-  if (allowedStart && dateUtc < allowedStart) return true;
-  if (allowedEnd && dateUtc > allowedEnd) return true;
+  if (allowedStart && intervalStart < allowedStart) return true;
+  if (allowedEnd && intervalEnd > allowedEnd) return true;
   return false;
 }
 
@@ -198,10 +203,71 @@ function isDateInSchedulingPeriod(
   return true;
 }
 
-/** Formats the allowed [start, end] range for user-facing messages. */
-function formatAllowedRange(allowedStart?: Date, allowedEnd?: Date): string {
+/** Footer text for a subscription; the legacy progress line when no window. */
+function subscriptionFooterText(
+  params: Readonly<{
+    selectedSlots: CalendarInterval[];
+    allowedStart?: Date;
+    allowedEnd?: Date;
+    sessionsPerWeek?: number;
+    sessionDurationInHours?: number;
+    totalSessions?: number;
+    pastEventSlotCount: number;
+    maxSlots: number;
+    schedulingTimezone?: string;
+  }>,
+): string {
+  const slotsPerCall = getSlotsPerCall(params.sessionDurationInHours);
+  const computed = computeSubscriptionFooter({
+    selectedSlots: params.selectedSlots,
+    allowedStart: params.allowedStart,
+    allowedEnd: params.allowedEnd,
+    sessionsPerWeek: params.sessionsPerWeek,
+    sessionDurationInHours: params.sessionDurationInHours,
+    totalSessions: params.totalSessions,
+    pastCompletedSessions: Math.floor(params.pastEventSlotCount / slotsPerCall),
+  });
+  if (computed) return computed;
+  return calculateCallProgress(
+    params.selectedSlots,
+    params.sessionDurationInHours,
+    params.maxSlots,
+    params.schedulingTimezone,
+  );
+}
+
+/** Footer text for a class: sessions scheduled against the plan's total. */
+function classFooterText(
+  params: Readonly<{
+    selectedSlots: CalendarInterval[];
+    sessionDurationInHours?: number;
+    totalSessions?: number;
+    pastEventSlotCount: number;
+    schedulingTimezone?: string;
+  }>,
+): string {
+  const slotsPerSession = Math.ceil((params.sessionDurationInHours || 1) / 0.5);
+  return computeClassFooter({
+    selectedSlots: params.selectedSlots,
+    sessionDurationInHours: params.sessionDurationInHours,
+    totalSessions: params.totalSessions,
+    pastCompletedSessions: Math.floor(
+      params.pastEventSlotCount / slotsPerSession,
+    ),
+    schedulingTimezone: params.schedulingTimezone,
+  });
+}
+
+/** Formats the allowed [start, end] range in the grid's zone. */
+function formatAllowedRange(
+  zone: string,
+  allowedStart?: Date,
+  allowedEnd?: Date,
+): string {
   const at = (date?: Date) =>
-    date ? `${formatDateLabel(date)} at ${formatClockTime(date)}` : "-";
+    date
+      ? `${formatDateLabel(date, { zone })} at ${formatClockTime(date, { zone })}`
+      : "-";
   return `${at(allowedStart)} – ${at(allowedEnd)}`;
 }
 
@@ -809,11 +875,15 @@ export function UnifiedCalendar({
           return null;
 
         // Must be within allowed range
-        if (allowedStart || allowedEnd) {
-          const intervalStart = new Date(status.intervalStartUTCString);
-          if (allowedStart && intervalStart < allowedStart) return null;
-          if (allowedEnd && intervalStart >= allowedEnd) return null;
-        }
+        if (
+          isOutsideAllowedRange(
+            new Date(status.intervalStartUTCString),
+            new Date(status.intervalEndUTCString),
+            allowedStart,
+            allowedEnd,
+          )
+        )
+          return null;
 
         return {
           startTime: new Date(status.intervalStartUTCString),
@@ -890,16 +960,20 @@ export function UnifiedCalendar({
       );
 
       // First-line guard: allow click but block selection with feedback if outside allowed range
-      if (allowedStart || allowedEnd) {
-        const intervalStart = new Date(status.intervalStartUTCString);
-        if (isOutsideAllowedRange(intervalStart, allowedStart, allowedEnd)) {
-          toast(
-            outsideSchedulingWindow(
-              formatAllowedRange(allowedStart, allowedEnd),
-            ),
-          );
-          return;
-        }
+      if (
+        isOutsideAllowedRange(
+          new Date(status.intervalStartUTCString),
+          new Date(status.intervalEndUTCString),
+          allowedStart,
+          allowedEnd,
+        )
+      ) {
+        toast(
+          outsideSchedulingWindow(
+            formatAllowedRange(gridZone, allowedStart, allowedEnd),
+          ),
+        );
+        return;
       }
       // Weekly limit guard for subscriptions: fire on FIRST slot of a new day.
       // Bucketed by the event's scheduling-timezone week (ADR B9) — the SAME
@@ -1048,6 +1122,7 @@ export function UnifiedCalendar({
       eventSlotsSet,
       eventTentativeSlotsSet,
       toast,
+      gridZone,
     ],
   );
 
@@ -1080,9 +1155,11 @@ export function UnifiedCalendar({
 
       const intervalStart = new Date(status.intervalStartUTCString);
       const intervalEnd = new Date(status.intervalEndUTCString);
-      const isOutsideAllowedRange = Boolean(
-        (allowedStart && intervalEnd <= allowedStart) ||
-        (allowedEnd && intervalStart >= allowedEnd),
+      const outsideAllowedRange = isOutsideAllowedRange(
+        intervalStart,
+        intervalEnd,
+        allowedStart,
+        allowedEnd,
       );
 
       const statusKey = resolveSlotStatusKey({
@@ -1099,7 +1176,7 @@ export function UnifiedCalendar({
         isAvailable: status.isAvailable,
         // Typed, not forced into `unavailable`: the token carries the hatch
         // and the legend row (#1703 F4).
-        isOutsidePeriod: isOutsideAllowedRange,
+        isOutsidePeriod: outsideAllowedRange,
         isInPast: status.isInPast,
       });
 
@@ -1113,7 +1190,7 @@ export function UnifiedCalendar({
         label,
         isCurrentEventSlot,
         isCurrentEventTentative,
-        isOutsideAllowedRange,
+        isOutsideAllowedRange: outsideAllowedRange,
         isLive:
           status.isAvailable ||
           status.isBooked ||
@@ -1271,7 +1348,7 @@ export function UnifiedCalendar({
       const token = SLOT_STATUS_TOKENS[statusKey];
       // Full state on every cell, so the visible word can leave the cell
       // without the screen reader or the hover losing it (#1703 F1).
-      const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart)}`;
+      const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart, { zone: gridZone })}`;
 
       // Fast-exit: a cell with nothing published, nothing booked and already
       // past is never interactive, so it renders as a plain block instead of a
@@ -1286,6 +1363,9 @@ export function UnifiedCalendar({
             title={accessibleLabel}
             aria-label={accessibleLabel}
             role="img"
+            // A selection that ages into this branch must stay findable by
+            // "Go to selection" (#1703 F2).
+            data-slot-start={status.intervalStartUTCString}
           />
         );
       }
@@ -1416,7 +1496,7 @@ export function UnifiedCalendar({
 
       return buttonElement;
     },
-    [describeCell, handleSlotClick, mode, eventType],
+    [describeCell, handleSlotClick, mode, eventType, gridZone],
   );
 
   // Render month view
@@ -1550,7 +1630,7 @@ export function UnifiedCalendar({
                 Scheduling Period
               </p>
               <p className="text-sm text-blue-700">
-                {formatAllowedRange(allowedStart, allowedEnd)}
+                {formatAllowedRange(gridZone, allowedStart, allowedEnd)}
               </p>
             </div>
           </div>
@@ -1796,42 +1876,26 @@ export function UnifiedCalendar({
             {(() => {
               const text = (() => {
                 try {
+                  // Per-type arms live in helpers so this stays under S3776.
                   if (eventType === "subscription") {
-                    const slotsPerCall = getSlotsPerCall(
-                      sessionDurationInHours,
-                    );
-                    const computed = computeSubscriptionFooter({
+                    return subscriptionFooterText({
                       selectedSlots,
                       allowedStart,
                       allowedEnd,
                       sessionsPerWeek,
                       sessionDurationInHours,
                       totalSessions,
-                      pastCompletedSessions:
-                        pastEventSlotCount > 0
-                          ? Math.floor(pastEventSlotCount / slotsPerCall)
-                          : 0,
-                    });
-                    if (computed) return computed;
-                    // Fallback to existing text if boundaries not provided
-                    return calculateCallProgress(
-                      selectedSlots,
-                      sessionDurationInHours,
-                      slotLimits.maxSlots,
+                      pastEventSlotCount,
+                      maxSlots: slotLimits.maxSlots,
                       schedulingTimezone,
-                    );
-                  } else if (eventType === "class") {
-                    const slotsPerSession = Math.ceil(
-                      (sessionDurationInHours || 1) / 0.5,
-                    );
-                    return computeClassFooter({
+                    });
+                  }
+                  if (eventType === "class") {
+                    return classFooterText({
                       selectedSlots,
                       sessionDurationInHours,
                       totalSessions: slotLimits.totalSessions,
-                      pastCompletedSessions:
-                        pastEventSlotCount > 0
-                          ? Math.floor(pastEventSlotCount / slotsPerSession)
-                          : 0,
+                      pastEventSlotCount,
                       schedulingTimezone,
                     });
                   }

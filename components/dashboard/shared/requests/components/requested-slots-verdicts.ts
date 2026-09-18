@@ -72,6 +72,7 @@ export function summarizeVerdicts(verdicts: readonly SlotVerdict[]): string {
   const outsideHours = count("outsideAvailability");
   const outsidePeriod = count("outsidePeriod");
   if (conflicts > 0) {
+    // "conflicts" is the verb: "1 conflicts with…" / "2 conflict with…".
     parts.push(
       `${conflicts} conflict${conflicts === 1 ? "s" : ""} with an existing booking`,
     );

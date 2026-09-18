@@ -107,18 +107,21 @@ export const REQUEST_INDETERMINATE_ERROR =
   "Couldn't reach the server — check your connection, then look for the times before retrying.";
 
 /**
- * True when a fetch died because the PAGE moved on — an explicit abort, or
- * the browser's "Failed to fetch" / "Load failed" / "NetworkError" TypeError
- * a navigation tears an in-flight request into. Nothing to fix and nothing
- * to alert on (FAMILIARISE_WEB-4J, #1703 QA-4).
+ * True when a fetch died because the CALLER cancelled it — an aborted signal
+ * or the AbortError it raises. Nothing to fix and nothing to alert on
+ * (FAMILIARISE_WEB-4J, #1703 QA-4). A bare "Failed to fetch" is NOT read as
+ * an abort: offline looks the same, and that must still reach Sentry.
  */
 export function isAbortedFetch(
   error: unknown,
   signal?: AbortSignal | null,
 ): boolean {
   if (signal?.aborted) return true;
-  if (!(error instanceof Error)) return false;
-  if (error.name === "AbortError") return true;
+  return error instanceof Error && error.name === "AbortError";
+}
+
+/** The browser's TypeError for a request that never got an answer. */
+export function isNetworkFailure(error: unknown): boolean {
   return (
     error instanceof TypeError &&
     /^(Failed to fetch|Load failed|NetworkError)/.test(error.message)
@@ -712,8 +715,12 @@ export class AllocationService {
         error && typeof error === "object" && "httpStatus" in error
           ? (error as { httpStatus?: number }).httpStatus
           : undefined;
+      // Offline is expected (info), not an alert; a 5xx or a parse fault is.
       const expected =
-        typeof httpStatus === "number" && httpStatus >= 400 && httpStatus < 500;
+        (typeof httpStatus === "number" &&
+          httpStatus >= 400 &&
+          httpStatus < 500) ||
+        isNetworkFailure(error);
       reportSentryError(error, {
         subsystem: "client",
         op: "scheduling",

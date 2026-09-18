@@ -175,12 +175,36 @@ describe("allocateSlots with a non-UUID event id (fail-closed guard)", () => {
 });
 
 /**
- * #1703 QA-4 (FAMILIARISE_WEB-4J) — a navigation that tears an in-flight
- * event-slots read into "TypeError: Failed to fetch" is not a fault: no
- * Sentry event, and the same empty answer the hook degrades to.
+ * #1703 QA-4 (FAMILIARISE_WEB-4J) — a read the caller aborted (the page
+ * moved on) is not a fault: no Sentry event, and the same empty answer the
+ * hook degrades to. The same TypeError WITHOUT an abort is offline, which
+ * still reports, as expected rather than as an alert.
  */
 describe("fetchEventSlots when the page moves on mid-read", () => {
   it("returns the quiet empty result without reporting", async () => {
+    const { reportSentryError } = jest.requireMock(
+      "../../lib/observability/report",
+    ) as { reportSentryError: jest.Mock };
+    reportSentryError.mockClear();
+    const controller = new AbortController();
+    global.fetch = jest.fn().mockImplementation(() => {
+      controller.abort();
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }) as unknown as typeof fetch;
+
+    const result = await AllocationService.fetchEventSlots(
+      "consultation",
+      EVENT_ID,
+      "consultant-1",
+      undefined,
+      controller.signal,
+    );
+
+    expect(result).toEqual({ data: [], weeklyConfirmedCallCounts: {} });
+    expect(reportSentryError).not.toHaveBeenCalled();
+  });
+
+  it("reports an un-aborted network failure as expected, then throws", async () => {
     const { reportSentryError } = jest.requireMock(
       "../../lib/observability/report",
     ) as { reportSentryError: jest.Mock };
@@ -191,14 +215,13 @@ describe("fetchEventSlots when the page moves on mid-read", () => {
         new TypeError("Failed to fetch"),
       ) as unknown as typeof fetch;
 
-    const result = await AllocationService.fetchEventSlots(
-      "consultation",
-      EVENT_ID,
-      "consultant-1",
-    );
-
-    expect(result).toEqual({ data: [], weeklyConfirmedCallCounts: {} });
-    expect(reportSentryError).not.toHaveBeenCalled();
+    await expect(
+      AllocationService.fetchEventSlots("consultation", EVENT_ID, "c1"),
+    ).rejects.toThrow("Failed to fetch");
+    expect(reportSentryError).toHaveBeenCalledTimes(1);
+    expect(reportSentryError.mock.calls[0][1]).toMatchObject({
+      expected: true,
+    });
   });
 
   it("still reports a real fault", async () => {

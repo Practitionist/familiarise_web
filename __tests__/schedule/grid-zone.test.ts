@@ -43,7 +43,8 @@ describe("grid zone", () => {
 
   it("labels the footer from the zone it is handed, not Intl", () => {
     const line = footerZoneLine(at, "America/Bahia", "Asia/Kolkata");
-    expect(line.label).toBe("Times in GMT-3 (UTC-03:00)");
+    // The abbreviation is ICU's ("GMT-3" today); only the offset is pinned.
+    expect(line.label).toMatch(/^Times in \S+ \(UTC-03:00\)$/);
     expect(line.title).toBe("America/Bahia");
     expect(line.limits).toEqual({
       label: "Limits counted in IST (UTC+05:30)",

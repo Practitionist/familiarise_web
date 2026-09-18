@@ -147,7 +147,8 @@ const SLOT_STATUS_PAINT: Record<SlotStatusKey, SlotStatusPaint> = {
     hint: "Already gone; shown so the day reads whole.",
     fill: HATCH_135,
     border: "border-transparent",
-    text: "text-slate-400",
+    // slate-400 on the white gaps is ~2.6:1; 600 clears 4.5:1 at 10px.
+    text: "text-slate-600",
   },
   unavailable: {
     label: "Unavailable",
