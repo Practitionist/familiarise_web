@@ -141,9 +141,9 @@ The onboarding system is a **multi-step wizard** that collects role-specific dat
 | Step | Component | What It Collects |
 |------|-----------|-----------------|
 | 0 | `PersonalInfoAndRoleForm` | Name, email, phone, role=CONSULTANT, gender, city, country, bio, linkedinUrl |
-| 1 | `ConsultantProfessionalStep` | **Tab 1:** Domain, subDomains, tags, description, headline, experience, scheduleType. **Tab 2:** Work experiences, education, certifications, achievements |
-| 2 | `ConsultantPreferredScheduleForm` | Weekly slots (day + UTC minutes) or custom slots (datetime range). Timezone-aware display |
-| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
+| 1 | `ConsultantProfessionalStep` | **Tab "Expertise":** field of expertise (`domain`), specialties (`subDomains`), skills (`tags`), description, headline, experience. **Tab "Experience & credentials (optional)":** work experiences, education, certifications, achievements — marked optional at the point of use, with a "Skip for now" exit |
+| 2 | `ConsultantPreferredScheduleForm` | The one place the schedule type is chosen (a Weekly / Custom toggle), then weekly windows (day + UTC minutes) or custom windows (datetime range); only the active grid renders. Timezone-aware display |
+| 3 | `ConsultantAgreementAndVerificationStep` | LinkedIn URL (pre-filled from step 0; optional at submit), verification documents (optional at submit), notes, terms + privacy checkboxes. Both are required to get LISTED; skipping defers verification to the dashboard (see decision #12) |
 | 4 | `ConsultantReviewForm` | Read-only review of all data → Submit |
 
 ### Consultee (2 steps)
@@ -233,21 +233,18 @@ Layout:
 
 Two-tab layout:
 
-**Tab 1 — Expertise & Domain** (via `ConsultantProfileForm`):
+**Tab "Expertise"** (via `ConsultantProfileForm`). On screen the three taxonomy levels are called *field of expertise*, *specialties* and *skills*; the model names (`Domain`, `SubDomain`, `Tag`) stay until the reset window:
 
 | Field | Type | Required | Validation |
 |-------|------|----------|------------|
 | `description` | textarea | Yes | min 1 char |
 | `headline` | text | No | max 120 chars |
 | `experience` | number | No | 0–100 years, step 0.5 |
-| `domain` | select | Yes | Fetched from `/api/user/consultants/meta` |
-| `subDomains` | multi-checkbox | No | Filtered by selected domain |
-| `tags` | multi-checkbox | No | Filtered by selected domain |
-| `scheduleType` | radio | Yes | WEEKLY or CUSTOM |
+| `domain` ("Field of expertise") | select | Yes | Fetched from `/api/user/consultants/meta` |
+| `subDomains` ("Specialties") | multi-checkbox | No | Filtered by the selected field |
+| `tags` ("Skills") | multi-checkbox | No | Filtered by the selected field |
 
-**Tab 2 — Experience & Credentials** (4 card sections):
-
-Each section uses a list + modal pattern (Add/Edit/Delete):
+**Tab "Experience & credentials (optional)"** (4 card sections). Every section is optional and says so in its own title; one inline line repeats that it can be added later from the dashboard, and the footer offers "Skip for now" beside "Continue" (NN/g: mark optional at the point of use, never with a warning banner, and keep the asterisk for required fields only). Each section uses a list + modal pattern (Add/Edit/Delete):
 
 - **WorkExperienceSection**: company, companyDomain, title, location, startDate, endDate, isCurrent, description
 - **EducationSection**: institution, degree, fieldOfStudy, startYear, endYear, grade, activities, description
@@ -256,11 +253,13 @@ Each section uses a list + modal pattern (Add/Edit/Delete):
 
 ### 3.4 Step 2 Consultant: `ConsultantPreferredScheduleForm`
 
+The Weekly / Custom toggle at the top of this step is the only place the schedule type is chosen (it used to be asked on the Professional step as well, with the later answer silently winning), and only the active type's grid renders — the earlier layout showed both side by side with the inactive one dimmed (#494 §2.2).
+
 **WEEKLY mode:**
 - Day-by-day grid (7 days)
 - Time inputs per day (start/end, 15-minute steps)
 - Timezone display and conversion
-- Overlap validation between slots
+- Overlap validation between windows
 
 **CUSTOM mode:**
 - Calendar month view (click to select dates)
