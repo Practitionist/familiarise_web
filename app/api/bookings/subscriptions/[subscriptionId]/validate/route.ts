@@ -19,6 +19,7 @@ import {
   validationRequestSchema,
   eventIdSchema,
 } from "@/schemas/slotAllocation/validationSchemas";
+import { refuseMalformedEventId } from "@/lib/booking/request-route-guards";
 import { ZodError } from "zod";
 import type { SlotConflictResult } from "@/utils/scheduling-engine/types";
 import { requireApiAuth, authorizeEventAccess } from "@/lib/auth-helpers";
@@ -75,6 +76,10 @@ export async function POST(
     if (authResult.error) return authResult.error;
 
     const { subscriptionId } = await params;
+
+    // Id shape before the authz read: no lookup on an arbitrary string.
+    const malformed = refuseMalformedEventId(subscriptionId);
+    if (malformed) return malformed;
 
     const authzError = await authorizeEventAccess(
       authResult.session,
@@ -226,7 +231,10 @@ export async function POST(
     }
   } catch (error) {
     // Catch-all for unexpected errors (database errors, network issues, etc.)
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Validation error:", error);
     return NextResponse.json(
       {

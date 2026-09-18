@@ -1,5 +1,5 @@
-import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   isDeadOccurrence,
   isOccurrenceOver,
@@ -301,15 +301,6 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
   });
 };
 
-// Format UTC time to local time
-export const formatAppointmentTime = (utcTime: string): string => {
-  // Create a date object in local time
-  const localDate = new Date(utcTime);
-
-  // Format the date in local time with browser's timezone
-  return format(localDate, "EEE, MMM d, h:mm a");
-};
-
 // Get appointment status
 export const getAppointmentStatus = (appointment: TAppointment): string => {
   const startTime = getStartTime(appointment);
@@ -423,21 +414,13 @@ export const sortAppointmentsByStartTime = (
   });
 };
 
-// Filter today's appointments
+// Filter today's appointments. "Today" is the viewer's calendar day, the
+// same zone the times are printed in (#1703 B7).
 export const getTodayAppointments = (
   appointments: TAppointment[],
+  zone: string,
 ): TAppointment[] => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
+  const todayKey = formatInViewerZone(new Date(), zone, "yyyy-MM-dd");
 
   // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {
@@ -468,10 +451,7 @@ export const getTodayAppointments = (
     const slotTime = getStartTime(appointment);
     if (!slotTime) return false;
 
-    const slotDate = new Date(slotTime);
-    const isToday = slotDate >= todayStart && slotDate <= todayEnd;
-
-    return isToday;
+    return formatInViewerZone(slotTime, zone, "yyyy-MM-dd") === todayKey;
   });
 };
 
@@ -565,4 +545,3 @@ export const groupRecurringAppointments = (
 
   return groups;
 };
-

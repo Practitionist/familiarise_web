@@ -6,6 +6,7 @@ import {
 import HomePageClient from "./HomePageClient";
 import { readConsulteeEvents } from "@/lib/data/consultee-events-read";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
 
 type PageProps = {
   params: Promise<{ consulteeId: string }>;
@@ -18,6 +19,9 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
   await requirePersonalProfileAccess("consultee", consulteeId);
+  // Read here and passed down exactly as the Appointments page does, so Home
+  // and Appointments show one clock time for one session (#1703).
+  const viewerZone = await getViewerZone();
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch. Home is personal-pinned (ADR 19, #1166 ORG-3), so
@@ -34,7 +38,7 @@ export default async function HomePage({ params }: Readonly<PageProps>) {
 
   return (
     <HydrationBoundary state={dehydrate(queryClient)}>
-      <HomePageClient consulteeId={consulteeId} />
+      <HomePageClient consulteeId={consulteeId} viewerZone={viewerZone} />
     </HydrationBoundary>
   );
 }

@@ -94,6 +94,8 @@ export interface ValidationResponse {
   success: boolean;
   data?: SlotConflictResult;
   error?: string;
+  /** HTTP status of a failed answer; absent when the fetch itself threw. #1705 */
+  httpStatus?: number;
 }
 
 /**
@@ -265,6 +267,7 @@ export class AllocationService {
         return {
           success: false,
           error: `Could not read the validation response (HTTP ${response.status}). Please try again.`,
+          httpStatus: response.status,
         };
       }
 
@@ -272,6 +275,7 @@ export class AllocationService {
         return {
           success: false,
           error: data.error || fallbackError,
+          httpStatus: response.status,
         };
       }
 

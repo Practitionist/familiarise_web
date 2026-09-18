@@ -1,6 +1,15 @@
 import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
+
+/** The page envelope both list routes return beside `data` (#1704). */
+export interface ListMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 interface UserInfo {
   id: string;
   name: string;
@@ -71,7 +80,8 @@ export interface SubscriptionApiResponse {
   subscriptionPlan?: SubscriptionPlanInfo;
   requestedBy: RequestedBy;
   requestedAt: string;
-  appointments?: AppointmentInfo[];
+  /** The one wrapper (#1554); the list select is singular. */
+  appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
