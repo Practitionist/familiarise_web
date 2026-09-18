@@ -109,7 +109,8 @@ export async function getConsultantAppointments(
   );
   // #1703 B12 — the list had no bound at all, so a busy consultant's page
   // grew with every year of history. Unscheduled rows stay: they are the
-  // ones that still need a decision.
+  // ones that still need a decision — including rows whose only occurrences
+  // were released (soft-deleted) for a reschedule.
   if (window === "recent" && !(startDate && endDate) && !eventScoped) {
     whereClause.OR = [
       {
@@ -117,7 +118,7 @@ export async function getConsultantAppointments(
           some: { deletedAt: null, endsAt: { gte: recentWindowStart() } },
         },
       },
-      { occurrences: { none: {} } },
+      { occurrences: { none: { deletedAt: null } } },
     ];
   }
 

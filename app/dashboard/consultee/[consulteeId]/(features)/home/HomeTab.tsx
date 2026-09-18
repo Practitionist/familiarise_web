@@ -844,8 +844,8 @@ export default function HomeTab({
 
   // Get events for current month
   const monthlyEvents = useMemo(
-    () => getMonthlyEvents(processedEvents, currentMonth),
-    [processedEvents, currentMonth],
+    () => getMonthlyEvents(processedEvents, currentMonth, viewerZone.zone),
+    [processedEvents, currentMonth, viewerZone.zone],
   );
 
   // Scroll handlers

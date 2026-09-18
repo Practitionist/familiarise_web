@@ -21,8 +21,9 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
         night: "bg-black text-white hover:bg-black/90",
         // An override the user must notice but that destroys nothing (#1705).
+        // Dark text: white on amber-500 is ~2.2:1, below AA for normal text.
         warning:
-          "bg-amber-500 text-white shadow-sm hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500",
+          "bg-amber-500 text-amber-950 shadow-sm hover:bg-amber-400 dark:bg-amber-500 dark:text-amber-950 dark:hover:bg-amber-400",
       },
       size: {
         default: "h-9 px-4 py-2",

@@ -4,7 +4,9 @@
  * pulling prisma into the browser bundle.
  */
 
-export type ConsultantAppointmentsWindow = "recent" | "all";
+export const CONSULTANT_APPOINTMENTS_WINDOWS = ["recent", "all"] as const;
+export type ConsultantAppointmentsWindow =
+  (typeof CONSULTANT_APPOINTMENTS_WINDOWS)[number];
 
 export const CONSULTANT_APPOINTMENTS_WINDOW_MONTHS = 12;
 

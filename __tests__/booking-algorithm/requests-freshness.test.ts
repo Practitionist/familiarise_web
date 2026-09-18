@@ -17,6 +17,9 @@ describe("requestsFreshnessBadge", () => {
     expect(requestsFreshnessBadge(4, 4)).toBeNull();
     expect(requestsFreshnessBadge(4, 7)).toBe("3 new");
     expect(requestsFreshnessBadge(4, 2)).toBe("List changed");
+    // Equal totals hide a swap (one allocated, one new); the top row tells.
+    expect(requestsFreshnessBadge(4, 4, true)).toBe("List changed");
+    expect(requestsFreshnessBadge(4, 7, true)).toBe("3 new");
   });
 });
 
@@ -27,7 +30,7 @@ describe("count poll cadence", () => {
     jest.useRealTimers();
   });
 
-  it("ticks at the 45 s interval, not the poller's 60 s default, and never while hidden", () => {
+  it("ticks at the 45 s interval, not the poller's 60 s default, and never while hidden", async () => {
     let visibility: DocumentVisibilityState = "visible";
     const fetch = jest.fn(() => Promise.resolve());
     const poller = createAvailabilityPoller({
@@ -39,15 +42,19 @@ describe("count poll cadence", () => {
       intervalMs: REQUESTS_COUNT_POLL_INTERVAL_MS,
     });
 
+    // Async advances flush the fetch continuation that re-arms the next
+    // tick, so the hidden branch below cancels a real pending poll.
     poller.arm();
-    jest.advanceTimersByTime(REQUESTS_COUNT_POLL_INTERVAL_MS - 1);
+    await jest.advanceTimersByTimeAsync(REQUESTS_COUNT_POLL_INTERVAL_MS - 1);
     expect(fetch).not.toHaveBeenCalled();
-    jest.advanceTimersByTime(1);
+    await jest.advanceTimersByTimeAsync(1);
     expect(fetch).toHaveBeenCalledTimes(1);
+    expect(jest.getTimerCount()).toBe(1);
 
     visibility = "hidden";
     poller.onVisibilityChange();
-    jest.advanceTimersByTime(REQUESTS_COUNT_POLL_INTERVAL_MS * 3);
+    expect(jest.getTimerCount()).toBe(0);
+    await jest.advanceTimersByTimeAsync(REQUESTS_COUNT_POLL_INTERVAL_MS * 3);
     expect(fetch).toHaveBeenCalledTimes(1);
 
     poller.dispose();

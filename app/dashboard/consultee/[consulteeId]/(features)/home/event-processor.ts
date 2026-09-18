@@ -20,6 +20,7 @@ import {
   liveOccurrencesOf,
 } from "@/lib/appointments/occurrences";
 import { deriveBucket } from "@/lib/appointments/bucket";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   isPendingPaymentStatus,
   isPendingStatus,
@@ -594,20 +595,22 @@ export function getUpcomingEvents(events: ProcessedEvent[]): ProcessedEvent[] {
 }
 
 /**
- * Filter events for a specific month
+ * Filter events for a calendar month. `month` is the picker's local calendar
+ * value; each slot is placed in the viewer's zone, the one the cards print
+ * (#1703 B7), so a near-midnight slot lands in the month it displays under.
  */
 export function getMonthlyEvents(
   events: ProcessedEvent[],
   month: Date,
+  zone: string,
 ): ProcessedEvent[] {
   const inactive = ["cancelled", "rejected", "completed", "expired"];
+  const monthKey = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
 
   return events
     .filter((e) =>
       e.slots.some(
-        (s) =>
-          s.startsAt.getMonth() === month.getMonth() &&
-          s.startsAt.getFullYear() === month.getFullYear(),
+        (s) => formatInViewerZone(s.startsAt, zone, "yyyy-MM") === monthKey,
       ),
     )
     .sort((a, b) => {

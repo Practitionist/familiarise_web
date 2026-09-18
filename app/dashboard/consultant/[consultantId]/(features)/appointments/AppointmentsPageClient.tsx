@@ -79,11 +79,23 @@ export default function AppointmentsPageClient({
     data: allAppointments,
     isFetching: olderLoading,
     isError: olderError,
+    refetch: refetchOlder,
   } = useQuery({
     ...consultantQueries.appointmentsAll,
     enabled: showOlder,
     placeholderData: keepPreviousData,
   });
+  // A second click after a failed read must start a new request; flipping
+  // an already-true flag starts nothing.
+  const olderButtonLabel = (loading: boolean, failed: boolean): string => {
+    if (loading) return "Loading…";
+    if (failed) return "Retry";
+    return "Load older";
+  };
+  const loadOlder = () => {
+    if (showOlder) void refetchOlder();
+    else setShowOlder(true);
+  };
   const appointments =
     showOlder && allAppointments ? allAppointments : recentAppointments;
 
@@ -236,9 +248,9 @@ export default function AppointmentsPageClient({
                       variant="outline"
                       size="sm"
                       disabled={olderLoading}
-                      onClick={() => setShowOlder(true)}
+                      onClick={loadOlder}
                     >
-                      {olderLoading ? "Loading…" : "Load older"}
+                      {olderButtonLabel(olderLoading, olderError)}
                     </Button>
                     {olderError && (
                       <span className="text-destructive">

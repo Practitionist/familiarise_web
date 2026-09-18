@@ -742,7 +742,15 @@ export function RequestSchedulingTab({
   const [freshnessBadge, setFreshnessBadge] = useState<string | null>(null);
   /** Totals the rows on screen were read at, and when a count last landed. */
   const knownTotalsRef = useRef<Record<PagedKind, number> | null>(null);
+  /** Page-1 top row per kind (requestedAt desc, id desc), so an equal-total
+   * swap still raises the badge. Kept across later pages; null = unknown. */
+  const knownTopIdsRef = useRef<Record<PagedKind, string | null>>({
+    consultation: null,
+    subscription: null,
+  });
   const lastCountAtRef = useRef<number>(Number.NaN);
+  /** Latest list read; an older one that lands later must not overwrite it. */
+  const fetchRunRef = useRef(0);
   const [requestedSlotsDialogOpen, setRequestedSlotsDialogOpen] =
     useState(false);
   const [selectedRequestForDialog, setSelectedRequestForDialog] =
@@ -756,6 +764,8 @@ export function RequestSchedulingTab({
 
   // Fetch requests, available slots, and existing appointments
   const fetchData = useCallback(async () => {
+    const run = ++fetchRunRef.current;
+    const isCurrent = () => run === fetchRunRef.current;
     setLoading(true);
     setError(null);
     // Local, not the `error` state: reading that in `finally` sees the value
@@ -773,6 +783,10 @@ export function RequestSchedulingTab({
           `/api/bookings/subscriptions?consultantProfileId=${consultantId}&status=PENDING&orgScope=${orgScope}&page=${pages.subscription}&limit=${REQUEST_LIST_DEFAULT_LIMIT}`,
         ),
       ]);
+
+      // A page/type/scope change started a newer read while this one was in
+      // flight; its rows and pager belong to the newer read.
+      if (!isCurrent()) return;
 
       // Check results for the first error
       const results = [consultationsResult, subscriptionsResult];
@@ -952,6 +966,14 @@ export function RequestSchedulingTab({
         consultation: consultationsResult.meta?.total ?? 0,
         subscription: subscriptionsResult.meta?.total ?? 0,
       };
+      if (pages.consultation === 1) {
+        knownTopIdsRef.current.consultation =
+          consultationsResult.data?.[0]?.id ?? null;
+      }
+      if (pages.subscription === 1) {
+        knownTopIdsRef.current.subscription =
+          subscriptionsResult.data?.[0]?.id ?? null;
+      }
       lastCountAtRef.current = Date.now();
       setFreshnessBadge(null);
       succeeded = true;
@@ -962,6 +984,7 @@ export function RequestSchedulingTab({
         { tags: { subsystem: "client" } },
       );
       console.error("Error processing fetched data:", err);
+      if (!isCurrent()) return;
       setError({
         message:
           err instanceof Error
@@ -970,8 +993,10 @@ export function RequestSchedulingTab({
       });
     } finally {
       // Loading always clears; the timestamp only moves on a real success.
-      setLoading(false);
-      if (succeeded) setLastUpdated(new Date());
+      if (isCurrent()) {
+        setLoading(false);
+        if (succeeded) setLastUpdated(new Date());
+      }
     }
     // orgScope belongs here: fetchData builds both URLs from it, so without it
     // a scope change without a remount keeps refetching the previous org's rows.
@@ -1025,7 +1050,17 @@ export function RequestSchedulingTab({
     const polledTotal =
       (counts("consultation") ? consultations.meta.total : 0) +
       (counts("subscription") ? subscriptions.meta.total : 0);
-    setFreshnessBadge(requestsFreshnessBadge(knownTotal, polledTotal));
+    const knownTop = knownTopIdsRef.current;
+    const topRowChanged =
+      (counts("consultation") &&
+        knownTop.consultation !== null &&
+        consultations.data?.[0]?.id !== knownTop.consultation) ||
+      (counts("subscription") &&
+        knownTop.subscription !== null &&
+        subscriptions.data?.[0]?.id !== knownTop.subscription);
+    setFreshnessBadge(
+      requestsFreshnessBadge(knownTotal, polledTotal, topRowChanged),
+    );
   }, [consultantId, orgScope, type]);
 
   useEffect(() => {

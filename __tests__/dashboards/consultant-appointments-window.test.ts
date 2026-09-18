@@ -30,7 +30,7 @@ describe("consultant appointments window", () => {
     findMany.mockResolvedValue([]);
   });
 
-  it("bounds the default read to the recent window plus unscheduled rows", async () => {
+  it("bounds the default read to the recent window plus rows with no live occurrence", async () => {
     await getConsultantAppointments(base);
     const where = findMany.mock.calls[0][0].where;
     expect(where.OR).toEqual([
@@ -39,7 +39,8 @@ describe("consultant appointments window", () => {
           some: { deletedAt: null, endsAt: { gte: expect.any(Date) } },
         },
       },
-      { occurrences: { none: {} } },
+      // `none: {}` dropped a row whose only occurrences were soft-deleted.
+      { occurrences: { none: { deletedAt: null } } },
     ]);
     const gte: Date = where.OR[0].occurrences.some.endsAt.gte;
     expect(

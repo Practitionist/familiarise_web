@@ -4,7 +4,8 @@ import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
-import type { ConsultantAppointmentsWindow } from "@/lib/appointments/window";
+import { z } from "zod";
+import { CONSULTANT_APPOINTMENTS_WINDOWS } from "@/lib/appointments/window";
 import { computeWeeklyConfirmedCallCounts } from "@/lib/booking/weekly-call-counts";
 import { canReadEventSlots } from "@/lib/booking/event-slots-access";
 
@@ -149,9 +150,18 @@ export async function GET(request: NextRequest) {
   try {
     const startDate = searchParams.get("startDate");
     const endDate = searchParams.get("endDate");
-    // #1703 B12 — ?window=all is the "Load older" read; anything else is recent.
-    const window: ConsultantAppointmentsWindow =
-      searchParams.get("window") === "all" ? "all" : "recent";
+    // #1703 B12 — ?window=all is the "Load older" read; absent means recent.
+    const windowParse = z
+      .enum(CONSULTANT_APPOINTMENTS_WINDOWS)
+      .default("recent")
+      .safeParse(searchParams.get("window") ?? undefined);
+    if (!windowParse.success) {
+      return NextResponse.json(
+        { error: "window must be 'recent' or 'all'", code: "INVALID_WINDOW" },
+        { status: 400 },
+      );
+    }
+    const window = windowParse.data;
 
     const appointments = await getConsultantAppointments({
       type: type as AppointmentsType | undefined,

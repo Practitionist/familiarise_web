@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AllocationService } from "@/lib/scheduling/allocationService";
 import {
   classifyValidationFailure,
@@ -109,9 +109,14 @@ export function RequestedSlotsDialog({
   const [validationResult, setValidationResult] =
     useState<ValidationResult | null>(null);
   const [error, setError] = useState<ValidationFailure | null>(null);
+  // The dialog stays mounted across requests, so a slow validation for one
+  // request can land after the next request's; only the latest run writes.
+  const validationRunRef = useRef(0);
 
   // Validate slots when dialog opens
   const validateSlots = useCallback(async () => {
+    const run = ++validationRunRef.current;
+    const isCurrent = () => run === validationRunRef.current;
     try {
       setLoading(true);
       setError(null);
@@ -140,6 +145,7 @@ export function RequestedSlotsDialog({
         timeSlots,
       );
 
+      if (!isCurrent()) return;
       if (!validationResponse.success) {
         // Mapped, not thrown: a 401 (#1716 cold-instance read of a valid
         // cookie) or 403 is an answer, not an exception, and the copy has to
@@ -183,13 +189,14 @@ export function RequestedSlotsDialog({
         err instanceof Error ? err : new Error(String(err)),
         { tags: { subsystem: "client" } },
       );
+      if (!isCurrent()) return;
       setError({
         kind: "indeterminate",
         message: validationFailureCopy("indeterminate", ""),
       });
       setValidationResult(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [requestType, requestedSlots, requestId, schedulingPeriod]);
 
@@ -238,7 +245,7 @@ export function RequestedSlotsDialog({
           aria-live="polite"
           className="flex items-center justify-center p-8"
         >
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+          <div className="motion-safe:animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
           <span className="sr-only">Checking the requested times</span>
         </div>
       );
@@ -617,7 +624,10 @@ export function RequestedSlotsDialog({
                 >
                   {confirming ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                      <Loader2
+                        className="h-4 w-4 motion-safe:animate-spin"
+                        aria-hidden
+                      />
                       Allocating...
                     </>
                   ) : hasOutsideSlots ? (
