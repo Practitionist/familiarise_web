@@ -76,11 +76,9 @@ async function main(): Promise<void> {
       criticalCount: result.criticalCount,
     });
 
-    // Exit with error if critical disputes found (to trigger notifications)
-    if (result.criticalCount > 0) {
-      console.log("\n🚨 Exiting with error status due to critical disputes");
-      process.exitCode = 1;
-    }
+    // #1757 — a critical dispute is paged by the core's Sentry warning and the
+    // ::error:: annotation above; it is not a job failure, so the run stays
+    // green and exit 1 is reserved for a job that could not run at all.
   } finally {
     await disconnectDatabase();
   }
