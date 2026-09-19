@@ -22,6 +22,40 @@ import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
+import { reportSentryMessage } from "@/lib/observability/report";
+
+// #1757 — `unknown_id` (the gateway has no record of the id; terminal per row)
+// is kept apart from `gateway_error` (unreachable, down, bad auth; retried).
+type PayoutLookup =
+  | {
+      kind: "status";
+      status: string;
+      failureMessage?: string;
+      failureReason?: string;
+      utr?: string;
+    }
+  | { kind: "unknown_id"; detail: string }
+  | { kind: "gateway_error"; detail: string };
+
+/** Stripe answers `resource_missing` / 404 for a payout or transfer id it never issued. */
+function isStripeUnknownId(error: unknown): boolean {
+  const e = error as { code?: unknown; statusCode?: unknown } | null;
+  return e?.code === "resource_missing" || e?.statusCode === 404;
+}
+
+/** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
+async function razorpayErrorDescription(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as {
+      error?: { code?: unknown; description?: unknown };
+    };
+    return [body?.error?.code, body?.error?.description]
+      .filter((v): v is string => typeof v === "string")
+      .join(": ");
+  } catch {
+    return "";
+  }
+}
 
 // #677 PM-15 — narrow PayoutStatus to the status union handlePayoutWebhook
 // accepts. mapGatewayStatus only ever returns these four, so the rest map to
@@ -51,6 +85,9 @@ export interface PayoutReconciliationResult {
   completedCount: number;
   failedCount: number;
   skippedCount: number;
+  /** #1757 — rows retired FAILED because the gateway does not know their id. */
+  retiredCount: number;
+  retired: string[];
   discrepancies: string[];
   errors: string[];
   timestamp: string;
@@ -61,11 +98,14 @@ export interface PayoutReconciliationResult {
  */
 async function getStripePayoutStatus(
   providerPayoutId: string,
-): Promise<{ status: string; failureMessage?: string } | null> {
+): Promise<PayoutLookup> {
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeSecretKey) {
     console.warn("Stripe credentials not configured");
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: "Stripe credentials not configured",
+    };
   }
 
   try {
@@ -76,20 +116,24 @@ async function getStripePayoutStatus(
     if (providerPayoutId.startsWith("tr_")) {
       const transfer = await stripe.transfers.retrieve(providerPayoutId);
       return {
+        kind: "status",
         status: transfer.reversed ? "reversed" : "paid",
       };
     } else if (providerPayoutId.startsWith("po_")) {
       const payout = await stripe.payouts.retrieve(providerPayoutId);
       return {
+        kind: "status",
         status: payout.status,
         failureMessage: payout.failure_message || undefined,
       };
     }
 
-    return null;
+    return { kind: "gateway_error", detail: "unrecognised Stripe id prefix" };
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (isStripeUnknownId(error)) return { kind: "unknown_id", detail };
     console.error(`Failed to get Stripe payout status: ${error}`);
-    return null;
+    return { kind: "gateway_error", detail };
   }
 }
 
@@ -98,7 +142,7 @@ async function getStripePayoutStatus(
  */
 async function getRazorpayPayoutStatus(
   providerPayoutId: string,
-): Promise<{ status: string; failureReason?: string; utr?: string } | null> {
+): Promise<PayoutLookup> {
   // #1407 — the same resolver the disbursement path uses. Reading
   // RAZORPAY_KEY_ID/RAZORPAY_SECRET here authenticated as the checkout
   // merchant, not the RazorpayX one, so on an account with distinct X keys
@@ -109,7 +153,10 @@ async function getRazorpayPayoutStatus(
 
   if (!keyId || !keySecret) {
     console.warn("RazorpayX credentials not configured");
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: "RazorpayX credentials not configured",
+    };
   }
 
   try {
@@ -124,12 +171,20 @@ async function getRazorpayPayoutStatus(
     );
 
     if (!response.ok) {
-      console.error(`RazorpayX API error: ${response.status}`);
-      return null;
+      // RazorpayX answers 400 BAD_REQUEST_ERROR ("does not exist"), not 404,
+      // for an id it never issued; 401/403 is our key, anything else is theirs.
+      const { status } = response;
+      const description = await razorpayErrorDescription(response);
+      if (status === 400 || status === 404) {
+        return { kind: "unknown_id", detail: `${status} ${description}` };
+      }
+      console.error(`RazorpayX API error: ${status} ${description}`);
+      return { kind: "gateway_error", detail: `${status} ${description}` };
     }
 
     const payout = await response.json();
     return {
+      kind: "status",
       status: payout.status,
       failureReason: payout.failure_reason,
       // #677 PM-15 — RazorpayX returns the bank UTR on a processed payout;
@@ -138,7 +193,10 @@ async function getRazorpayPayoutStatus(
     };
   } catch (error) {
     console.error(`Failed to get RazorpayX payout status: ${error}`);
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
@@ -210,8 +268,10 @@ function mapGatewayStatus(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResult> {
-  return withCronLock("reconcile-payout-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcilePayoutStatusUnlocked(),
+  return withCronLock(
+    "reconcile-payout-status",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcilePayoutStatusUnlocked(),
   );
 }
 
@@ -222,6 +282,8 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
   let completedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  let retiredCount = 0;
+  const retired: string[] = [];
 
   const minAge = new Date(Date.now() - MIN_AGE_HOURS * 60 * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
@@ -284,34 +346,50 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     }
 
     // Query gateway for actual status
-    let gatewayStatus: {
-      status: string;
-      failureMessage?: string;
-      failureReason?: string;
-      utr?: string;
-    } | null = null;
+    let lookup: PayoutLookup | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
-      gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
+      lookup = await getStripePayoutStatus(payout.providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
         continue;
       }
-      gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
+      lookup = await getRazorpayPayoutStatus(payout.providerPayoutId);
     } else {
       console.log(`   Skipping - unsupported gateway: ${payout.provider}`);
       skippedCount++;
       continue;
     }
 
-    if (!gatewayStatus) {
+    // #1757 — an id the gateway has no record of is terminal for this row, not
+    // a run failure: FAILED via the canonical handler (releases earnings, TDS).
+    if (lookup?.kind === "unknown_id") {
+      console.warn(
+        `   Gateway does not know ${payout.providerPayoutId} (${lookup.detail}) - retiring as FAILED/GATEWAY_UNKNOWN_ID`,
+      );
+      await handlePayoutWebhook(
+        payout.provider,
+        payout.providerPayoutId,
+        "FAILED",
+        "GATEWAY_UNKNOWN_ID",
+      );
+      retiredCount++;
+      retired.push(payout.id);
+      continue;
+    }
+
+    if (!lookup || lookup.kind === "gateway_error") {
       console.log(`   Could not get status from gateway - skipping`);
-      errors.push(`Payout ${payout.id}: Could not query gateway status`);
+      errors.push(
+        `Payout ${payout.id}: Could not query gateway status${lookup ? ` (${lookup.detail})` : ""}`,
+      );
       skippedCount++;
       continue;
     }
+
+    const gatewayStatus = lookup;
 
     console.log(`   Gateway status: ${gatewayStatus.status}`);
 
@@ -396,6 +474,22 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     discrepancies.forEach((d) => console.log(`   - ${d}`));
   }
 
+  console.log(`   Retired (gateway does not know the id): ${retiredCount}`);
+
+  // One expected warning per run, never one per row per tick (#1757).
+  if (retiredCount > 0) {
+    reportSentryMessage(
+      `reconcile-payout-status: retired ${retiredCount} payout(s) whose gateway id the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "reconcile-payout-status",
+        expected: true,
+        level: "warning",
+        extra: { retired },
+      },
+    );
+  }
+
   return {
     success: errors.length === 0,
     totalProcessed: stalePayouts.length,
@@ -404,6 +498,8 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     failedCount,
     skippedCount,
     discrepancies,
+    retiredCount,
+    retired,
     errors,
     timestamp: new Date().toISOString(),
   };
