@@ -539,13 +539,14 @@ export {
   logWebhookEvent,
   markWebhookEventProcessed,
 } from "@/lib/webhooks/event-log";
+import { readBodyWithinCap } from "@/lib/webhooks/read-body";
 
 // Generic webhook verification
 export async function verifyWebhookSignature(
   req: Request,
   secret: string,
   gateway: "stripe" | "razorpay",
-): Promise<{ isValid: boolean; body: string }> {
+): Promise<{ isValid: boolean; body: string; oversized?: true }> {
   const signature =
     req.headers.get("stripe-signature") ||
     req.headers.get("x-razorpay-signature");
@@ -554,7 +555,12 @@ export async function verifyWebhookSignature(
     return { isValid: false, body: "" };
   }
 
-  const body = await req.text();
+  // #1582 F-P1-01a — bounded like the Razorpay route: an oversized body is
+  // refused before any signature work, never buffered to verify it.
+  const body = await readBodyWithinCap(req);
+  if (body === null) {
+    return { isValid: false, body: "", oversized: true };
+  }
 
   try {
     if (gateway === "stripe") {
