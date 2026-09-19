@@ -231,6 +231,30 @@ describe("the success paths are unchanged", () => {
     expect((await res.json()).kind).toBe("class");
   });
 
+  // #1583 C-P0-03 — a repeat whole-event refund is a clamp-made no-op, never
+  // a 500 and never a second cascade.
+  it("answers 200 with alreadyRefunded when the event was already refunded", async () => {
+    refundWholeEventPayments.mockResolvedValue({
+      refundsIssued: 0,
+      refundedPaise: 0,
+      childRefundIds: [],
+      failures: [],
+      skippedAlreadyRefunded: 2,
+      alreadyRefunded: true,
+    });
+
+    const res = await POST(
+      refundRequest({ classId: "class_1", reason: "cancelled again" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      kind: "class",
+      alreadyRefunded: true,
+      refunded: 0,
+    });
+  });
+
   it("rejects a payload naming more than one target", async () => {
     const res = await POST(
       refundRequest({ paymentId: "p1", classId: "c1", reason: "both" }),

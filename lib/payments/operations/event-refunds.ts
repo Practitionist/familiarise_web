@@ -11,7 +11,7 @@ import { getAppUrl } from "@/lib/url";
 import { notifyRefundProcessed } from "@/lib/novu";
 import { notificationScope } from "@/lib/novu/workflows";
 import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
-import { applyReversal } from "./reversal-engine";
+import { applyReversal, readRefundableBalances } from "./reversal-engine";
 import { refundPayment, RefundValidationError } from "./refund";
 import {
   isFreeCreditIntent,
@@ -59,6 +59,11 @@ export type WholeEventRefundSummary = {
   failures: { paymentId: string; error: string }[];
   /** Seats whose balance was already fully refunded — a re-run, not an error. */
   skippedAlreadyRefunded: number;
+  /**
+   * #1583 C-P0-03 — the internal batch had no refundable balance left, so the
+   * CLASS_MULTI reversal was skipped rather than thrown. A re-run, not an error.
+   */
+  alreadyRefunded: boolean;
 };
 
 function errMsg(e: unknown): string {
@@ -77,6 +82,7 @@ export async function refundWholeEventPayments(
     childRefundIds: [],
     failures: [],
     skippedAlreadyRefunded: 0,
+    alreadyRefunded: false,
   };
 
   const payments = await prisma.payment.findMany({
@@ -163,15 +169,23 @@ export async function refundWholeEventPayments(
   }
 
   // Internal org-funded seats — one CLASS_MULTI reversal (ledger-only). Full
-  // reversal: amountPaise == Σ child amounts, so each child reverses in full.
+  // reversal of what is LEFT: amountPaise == Σ child refundable balances, read
+  // in the same tx as the reversal, so a partly-refunded seat no longer makes
+  // the whole batch throw and a fully-refunded batch is a no-op (#1583 C-P0-03).
   const memberOverageFollowUps: string[] = [];
   if (internal.length > 0) {
-    const internalTotal = internal.reduce((s, p) => s + p.amount, 0);
+    let internalTotal = 0;
     try {
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
-          (tx) =>
-            applyReversal(tx, {
+          async (tx) => {
+            const balances = await readRefundableBalances(
+              tx,
+              internal.map((p) => p.id),
+            );
+            internalTotal = balances.reduce((s, p) => s + p.refundablePaise, 0);
+            if (internalTotal === 0) return null;
+            return applyReversal(tx, {
               source: {
                 kind: "CLASS_MULTI",
                 paymentIds: internal.map((p) => p.id),
@@ -182,7 +196,8 @@ export async function refundWholeEventPayments(
               // Refund rows and keys idempotency off those, not this string.
               refundId: `event:${kind}:${eventId}`,
               initiatedByUserId,
-            }),
+            });
+          },
           {
             isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
             maxWait: 10_000,
@@ -190,14 +205,19 @@ export async function refundWholeEventPayments(
           },
         ),
       );
-      summary.refundsIssued += result.childRefundIds.length;
-      summary.refundedPaise += internalTotal;
-      summary.childRefundIds.push(...result.childRefundIds);
-      for (const c of result.cascades) {
-        if (c.memberOverageRefundDue) {
-          memberOverageFollowUps.push(
-            c.memberOverageRefundDue.overagePaymentId,
-          );
+      if (result === null) {
+        summary.skippedAlreadyRefunded += internal.length;
+        summary.alreadyRefunded = true;
+      } else {
+        summary.refundsIssued += result.childRefundIds.length;
+        summary.refundedPaise += internalTotal;
+        summary.childRefundIds.push(...result.childRefundIds);
+        for (const c of result.cascades) {
+          if (c.memberOverageRefundDue) {
+            memberOverageFollowUps.push(
+              c.memberOverageRefundDue.overagePaymentId,
+            );
+          }
         }
       }
     } catch (err) {
