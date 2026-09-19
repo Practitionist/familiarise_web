@@ -41,7 +41,10 @@ import {
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 
 /**
  * Type for consultation with all related details needed for payment processing.
@@ -770,8 +773,15 @@ export async function PATCH(
         };
 
         try {
-          await prisma.consultation.update({
-            where: { id: consultationId },
+          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
+          // mint landing after the lapse sweep EXPIRED the request must not
+          // re-arm a link; zero rows is reported, never thrown.
+          const persisted = await prisma.consultation.updateMany({
+            where: {
+              id: consultationId,
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+              pendingPaymentUrl: null,
+            },
             data: {
               pendingPaymentUrl: paymentResult.checkoutUrl,
               requestNotes: result.data.requestNotes
@@ -779,6 +789,17 @@ export async function PATCH(
                 : `[System] Payment link generated and sent to user.`,
             },
           });
+          if (persisted.count === 0) {
+            reportSentryMessage("PAY_LINK_ORPHANED", {
+              subsystem: "bookings",
+              op: "consultation-pay-link-persist",
+              expected: true,
+              extra: {
+                consultationId,
+                paymentIntentId: paymentResult.paymentIntentId,
+              },
+            });
+          }
         } catch (persistError) {
           // The link is live and rides the response + email; only the
           // dashboard copy is missing.

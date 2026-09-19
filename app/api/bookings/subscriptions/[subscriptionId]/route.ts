@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
+import { reportSentryMessage } from "@/lib/observability/report";
 import {
   PaymentGateway,
   PaymentStatus,
@@ -731,8 +732,15 @@ export async function PATCH(
         };
 
         try {
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
+          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
+          // mint landing after the lapse sweep EXPIRED the request must not
+          // re-arm a link; zero rows is reported, never thrown.
+          const persisted = await prisma.subscription.updateMany({
+            where: {
+              id: subscriptionId,
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+              pendingPaymentUrl: null,
+            },
             data: {
               pendingPaymentUrl: paymentResult.checkoutUrl,
               requestNotes: result.data.requestNotes
@@ -740,6 +748,17 @@ export async function PATCH(
                 : `[System] Payment link generated and sent to user.`,
             },
           });
+          if (persisted.count === 0) {
+            reportSentryMessage("PAY_LINK_ORPHANED", {
+              subsystem: "bookings",
+              op: "subscription-pay-link-persist",
+              expected: true,
+              extra: {
+                subscriptionId,
+                paymentIntentId: paymentResult.paymentIntentId,
+              },
+            });
+          }
         } catch (persistError) {
           Sentry.captureException(
             persistError instanceof Error

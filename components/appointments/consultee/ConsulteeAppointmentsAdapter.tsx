@@ -41,6 +41,7 @@ import { useEventActions } from "@/components/appointments/consultee/useEventAct
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
+import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
 
 type DialogKind = "cancel" | "leave" | "report" | "documents";
 
@@ -155,7 +156,8 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
     appointmentId: activeVm?.appointmentId ?? undefined,
-    rawOccurrences: (activeVm?.raw.rawOccurrences ?? []) as AppointmentOccurrence[],
+    rawOccurrences: (activeVm?.raw.rawOccurrences ??
+      []) as AppointmentOccurrence[],
     title: activeVm?.title ?? "",
     consultant: activeVm?.counterpart.name ?? "",
     type: typeLabel,
@@ -219,12 +221,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
         busy: joiningId === vm.id,
       };
     }
-    if (
-      vm.needsActionReason === "PAY_NOW" &&
-      vm.pendingPaymentUrl &&
-      /^https?:\/\//.test(vm.pendingPaymentUrl)
-    ) {
-      return { kind: "pay", label: "Pay now", href: vm.pendingPaymentUrl };
+    if (vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl) {
+      // #1167/#1429 — a trial pays on our branded checkout page, never the
+      // raw gateway link; the shared helper answers for every surface.
+      const trialHref = trialCheckoutHref(vm);
+      if (trialHref) return { kind: "pay", label: "Pay now", href: trialHref };
+      if (/^https?:\/\//.test(vm.pendingPaymentUrl)) {
+        return { kind: "pay", label: "Pay now", href: vm.pendingPaymentUrl };
+      }
     }
     return { kind: "view", label: "View" };
   };
