@@ -460,15 +460,19 @@ export async function POST(
                 slotIds && slotIds.length > 0,
               );
               if (isPartialSubscriptionReschedule) {
-                const live = await tx.subscription.count({
+                // #1583 A-P0-03 — a locking touch, not a count: the UPDATE
+                // holds the parent row lock until commit, so a lockless sweep
+                // cannot terminalise it between this check and the commit.
+                const live = await tx.subscription.updateMany({
                   where: {
                     id: appointment.subscription.id,
                     status: { in: [...RESCHEDULABLE_FROM] },
                   },
+                  data: { updatedAt: new Date() },
                 });
-                // No status moves on this path, so there is nothing to CAS and
-                // nothing to record; the throw only reuses the 409 below.
-                if (live === 0) {
+                // No status moves on this path, so nothing to record; the
+                // throw only reuses the 409 below.
+                if (live.count === 0) {
                   throw new IllegalTransitionError("Subscription", "PENDING");
                 }
               } else {
