@@ -19,11 +19,12 @@
  */
 
 import prisma from "../../lib/prisma";
-import { PaymentStatus, AppointmentsType } from "@prisma/client";
+import { PaymentStatus, AppointmentsType, type Prisma } from "@prisma/client";
 import { AppointmentType } from "../../lib/payments/payouts/constants";
 import { createEarningsFromPayment } from "../../lib/payments/payouts/earnings-service";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Batch size for processing payments to prevent memory issues
 const BATCH_SIZE = 100;
@@ -40,8 +41,25 @@ const BATCH_SIZE = 100;
  * ceiling bounds the runtime instead, and the ordering is oldest-first because
  * the payments that have gone unaccrued longest are the ones somebody has been
  * waiting on.
+ *
+ * Refunded and charged-back money is out of the cohort (#1583 C-P0-05): the
+ * money already left, and the refund cascade ran before any earning existed,
+ * so healing such a payment would mint an earning nothing will ever claw back.
  */
 const MAX_PAYMENTS_PER_RUN = 500;
+
+/** Refund rows that have taken money out, or are about to (refund.ts:237). */
+const RETURNED_REFUND_STATUSES = ["PENDING", "SUCCEEDED"] as const;
+/** Dispute verdicts where the bank has already pulled the funds (refund.ts:248). */
+const RETURNED_DISPUTE_STATUSES = ["LOST", "CHARGE_REFUNDED"] as const;
+
+/** #1583 C-P0-05 — the money that left, so the cohort must never re-accrue it. */
+const REFUNDED_OR_DISPUTED: Prisma.PaymentWhereInput = {
+  OR: [
+    { refunds: { some: { status: { in: [...RETURNED_REFUND_STATUSES] } } } },
+    { disputes: { some: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } } },
+  ],
+};
 
 /**
  * How long a SUCCEEDED payment may sit without earnings before the sweep pages
@@ -228,6 +246,8 @@ async function syncPaymentEarningsUnlocked(
       where: {
         paymentStatus: PaymentStatus.SUCCEEDED,
         earnings: { none: {} }, // No linked earnings
+        refunds: { none: { status: { in: [...RETURNED_REFUND_STATUSES] } } },
+        disputes: { none: { status: { in: [...RETURNED_DISPUTE_STATUSES] } } },
       },
       take,
       ...(cursor
@@ -376,6 +396,27 @@ async function syncPaymentEarningsUnlocked(
   }
 
   const pagedCount = await pageUnaccruablePayments(unaccruable, now);
+
+  // One message per run, not per row: the excluded volume is what an operator
+  // needs to see when a cascade starts running ahead of the accrual (#1583 C-P0-05).
+  const skippedRefunded = await prisma.payment.count({
+    where: {
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      earnings: { none: {} },
+      ...REFUNDED_OR_DISPUTED,
+    },
+  });
+  if (skippedRefunded > 0) {
+    reportSentryMessage(
+      `EARNINGS_SKIPPED_REFUNDED: ${skippedRefunded} SUCCEEDED payment(s) without earnings were left unaccrued because a refund or lost dispute already returned the money`,
+      {
+        subsystem: "payments",
+        op: "sync-payment-earnings",
+        expected: true,
+        extra: { skippedRefunded },
+      },
+    );
+  }
 
   console.log(
     `Sync complete: ${totalProcessed} total, ${createdCount} created, ${skippedCount} skipped, ${errorCount} errors, ${pagedCount} paged`,

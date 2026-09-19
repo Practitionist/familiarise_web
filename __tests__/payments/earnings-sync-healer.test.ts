@@ -20,6 +20,8 @@
  */
 
 const mockPaymentFindMany = jest.fn();
+const mockPaymentCount = jest.fn();
+const mockReportSentryMessage = jest.fn();
 const mockConsultantEarningsFindMany = jest.fn();
 const mockSystemEventFindMany = jest.fn();
 const mockCreateEarningsFromPayment = jest.fn();
@@ -28,7 +30,10 @@ const mockRecordSystemError = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
+    payment: {
+      findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
+      count: (...a: unknown[]) => mockPaymentCount(...a),
+    },
     consultantEarnings: {
       findMany: (...a: unknown[]) => mockConsultantEarningsFindMany(...a),
     },
@@ -46,6 +51,11 @@ jest.mock("../../lib/payments/payouts/earnings-service", () => ({
 
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemError: (...a: unknown[]) => mockRecordSystemError(...a),
+}));
+
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+  reportSentryMessage: (...a: unknown[]) => mockReportSentryMessage(...a),
 }));
 
 // The lock is mutual exclusion, not correctness (#476/ADR 13); the sweep's
@@ -109,6 +119,7 @@ function servePayments(rows: unknown[]) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockPaymentCount.mockResolvedValue(0);
   mockConsultantEarningsFindMany.mockResolvedValue([]);
   mockSystemEventFindMany.mockResolvedValue([]);
   mockRecordSystemError.mockResolvedValue(undefined);
@@ -130,9 +141,42 @@ describe("the cohort has no age window", () => {
     expect(where).toEqual({
       paymentStatus: "SUCCEEDED",
       earnings: { none: {} },
+      // #1583 C-P0-05 — money that already left is not owed to anyone.
+      refunds: { none: { status: { in: ["PENDING", "SUCCEEDED"] } } },
+      disputes: { none: { status: { in: ["LOST", "CHARGE_REFUNDED"] } } },
     });
     // The thirty-day floor is the bug; its absence is the fix.
     expect(where.createdAt).toBeUndefined();
+  });
+
+  // #1583 C-P0-05 — a SUCCEEDED payment whose refund already cascaded has no
+  // earning to reverse against, so healing it would mint one nothing claws
+  // back. The cohort excludes it and the run reports the excluded volume once.
+  it("never passes a refunded payment to createEarningsFromPayment, and reports the excluded count once per run", async () => {
+    // The cohort query is what excludes the row; the mock honours the
+    // predicate the way the database would.
+    const refunded = {
+      ...healablePayment("pay-refunded", 3),
+      refunds: [{ status: "SUCCEEDED", amountPaise: 500_000 }],
+    };
+    mockPaymentFindMany.mockImplementation(
+      async (args: { where: { refunds?: { none: unknown } } }) =>
+        args.where.refunds?.none ? [] : [refunded],
+    );
+    mockPaymentCount.mockResolvedValue(1);
+
+    const result = await syncPaymentEarnings();
+
+    expect(mockCreateEarningsFromPayment).not.toHaveBeenCalled();
+    expect(result.createdCount).toBe(0);
+    expect(mockReportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(mockReportSentryMessage.mock.calls[0][0]).toContain(
+      "EARNINGS_SKIPPED_REFUNDED: 1",
+    );
+    expect(mockReportSentryMessage.mock.calls[0][1]).toMatchObject({
+      expected: true,
+      extra: { skippedRefunded: 1 },
+    });
   });
 
   it("heals a payment nine months past the old boundary", async () => {
