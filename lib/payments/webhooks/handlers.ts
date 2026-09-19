@@ -1454,7 +1454,8 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}/dashboard`,
       },
-      { tx, entityRef: `payment:${payment.id}` },
+      // Payment failure is urgent: bypass quiet-hours deferral.
+      { tx, entityRef: `payment:${payment.id}`, deferrable: false },
     );
 
     console.log(

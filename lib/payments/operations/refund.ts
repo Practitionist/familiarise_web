@@ -48,7 +48,11 @@ import {
   PaymentStatus,
   Prisma,
   RefundStatus,
+  UserRole,
 } from "@prisma/client";
+import { notifyRefundRequested } from "@/lib/novu/service";
+import { notificationScope } from "@/lib/novu/workflows";
+import { getAppUrl } from "@/lib/url";
 
 // Type-only on purpose: the gateway barrel loads lib/payments/core/razorpay,
 // whose #1219 guard throws at module load on a TEST key in production. A
@@ -195,6 +199,7 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       paymentIntent: true,
       displayCurrencyAtCheckout: true,
       exchangeRateAtCheckout: true,
+      organizationId: true,
       refunds: { select: { amountPaise: true, status: true } },
     },
   });
@@ -402,6 +407,36 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
       },
     ),
   );
+
+  // The raise notice: ops (ADMIN/STAFF) learn a refund was raised, before the
+  // gateway outcome is known (SUCCEEDED → processed, FAILED → failed follow).
+  // Outside the reservation tx and warn-only — never fail the refund itself.
+  try {
+    const ops = await prisma.user.findMany({
+      where: { role: { in: [UserRole.ADMIN, UserRole.STAFF] } },
+      select: { id: true },
+    });
+    if (ops.length > 0) {
+      await notifyRefundRequested(
+        ops.map((o) => o.id),
+        {
+          // A refund inherits the org-ness of the payment it reverses.
+          ...notificationScope(payment.organizationId),
+          amount: requested,
+          currency: payment.currency,
+          ...(input.reason ? { reason: input.reason } : {}),
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        },
+      );
+    }
+  } catch (notifyError) {
+    reportSentryError(notifyError, {
+      subsystem: "payments",
+      op: "RefundRequestedNotice",
+      level: "warning",
+      extra: { paymentId: input.paymentId, refundRowId: reserved.id },
+    });
+  }
 
   // PHASE 2 — the actual gateway refund (M1: this call was previously
   // missing entirely — refunds were marked SUCCEEDED without the customer's

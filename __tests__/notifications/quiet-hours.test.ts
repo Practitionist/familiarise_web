@@ -92,6 +92,18 @@ describe("computeQuietHoursNotBefore (Q3 deferral)", () => {
     ).toBeNull();
     expect(
       computeQuietHoursNotBefore(
+        { ...overnight, quietHoursStart: "08:00invalid" },
+        insideWindow,
+      ),
+    ).toBeNull();
+    expect(
+      computeQuietHoursNotBefore(
+        { ...overnight, quietHoursEnd: "08:00 " },
+        insideWindow,
+      ),
+    ).not.toBeNull();
+    expect(
+      computeQuietHoursNotBefore(
         { ...overnight, quietHoursStart: "08:00", quietHoursEnd: "08:00" },
         insideWindow,
       ),

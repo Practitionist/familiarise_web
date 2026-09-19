@@ -58,6 +58,7 @@ export {
   notifyNewBookingRequest,
   notifyVerificationStatusChanged,
   notifyPayoutProcessed,
+  notifyPayoutFailed,
   // Moderation (#693)
   notifyModerationWarning,
   notifyAccountSuspended,

@@ -49,7 +49,10 @@ import {
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
-import { notifyPayoutProcessed } from "@/lib/novu/service";
+import {
+  notifyPayoutFailed,
+  notifyPayoutProcessed,
+} from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -500,6 +503,31 @@ export async function rejectPayout(
       },
     });
   });
+
+  // Fire-and-forget: the consultant learns the payout was rejected (and why
+  // it is back in their balance) instead of discovering a silent CANCELLED.
+  try {
+    const rejected = await prisma.consultantPayout.findUnique({
+      where: { id: payoutId },
+      select: {
+        amount: true,
+        currency: true,
+        consultantProfile: { select: { userId: true } },
+      },
+    });
+    const userId = rejected?.consultantProfile?.userId;
+    if (rejected && userId) {
+      await notifyPayoutFailed(userId, {
+        amount: Number(rejected.amount),
+        currency: rejected.currency,
+        payoutId,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      });
+    }
+  } catch (error) {
+    console.error("[payouts] Failed to send payout-rejected notice:", error);
+    reportSentryError(error, { subsystem: "payments", level: "warning" });
+  }
 }
 
 /**
@@ -1341,6 +1369,29 @@ export async function handlePayoutWebhook(
         dashboardUrl: `${getAppUrl()}/dashboard`,
       }).catch((error) => {
         console.error("[payouts] Failed to send payout notification:", error);
+        reportSentryError(error, { subsystem: "payments", level: "warning" });
+      });
+    }
+  }
+
+  // Fire-and-forget: a FAILED/CANCELLED payout never disbursed (earnings are
+  // back to READY above) — the consultant must hear it from us, not silence.
+  if (
+    payoutStatus === PayoutStatus.FAILED ||
+    payoutStatus === PayoutStatus.CANCELLED
+  ) {
+    const profile = await prisma.consultantProfile.findUnique({
+      where: { id: payout.consultantProfileId },
+      select: { userId: true },
+    });
+    if (profile?.userId) {
+      await notifyPayoutFailed(profile.userId, {
+        amount: Number(payout.amount),
+        currency: payout.currency,
+        payoutId: payout.id,
+        dashboardUrl: `${getAppUrl()}/dashboard`,
+      }).catch((error) => {
+        console.error("[payouts] Failed to send payout-failed notice:", error);
         reportSentryError(error, { subsystem: "payments", level: "warning" });
       });
     }

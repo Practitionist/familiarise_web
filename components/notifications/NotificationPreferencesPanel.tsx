@@ -253,6 +253,14 @@ export function NotificationPreferencesPanel() {
     quietHoursTimezone: null,
   };
 
+  // Single source for "which zone the UI shows": saved preference, else the
+  // browser zone, else the platform default. Used by the select value, the
+  // "(current)" fallback option, and the enable mutation so display and
+  // enforcement can never diverge.
+  const browserTimezone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Asia/Kolkata";
+  const effectiveTimezone = prefs.quietHoursTimezone ?? browserTimezone;
+
   return (
     <div className="space-y-6">
       {/* Master Toggle */}
@@ -401,7 +409,15 @@ export function NotificationPreferencesPanel() {
               <Switch
                 checked={prefs.quietHoursEnabled}
                 onCheckedChange={(checked) =>
-                  handleToggle("quietHoursEnabled", checked)
+                  // Persist the effective timezone alongside the enable so
+                  // the displayed schedule and the enforced one cannot
+                  // diverge when nothing was stored yet.
+                  checked && !prefs.quietHoursTimezone
+                    ? mutation.mutate({
+                        quietHoursEnabled: true,
+                        quietHoursTimezone: browserTimezone,
+                      })
+                    : handleToggle("quietHoursEnabled", checked)
                 }
               />
             </div>
@@ -433,26 +449,24 @@ export function NotificationPreferencesPanel() {
                   </div>
                 </div>
                 <div>
-                  <Label className="text-sm">Timezone</Label>
+                  <Label htmlFor="quiet-hours-timezone" className="text-sm">
+                    Timezone
+                  </Label>
                   <select
-                    value={
-                      prefs.quietHoursTimezone ??
-                      Intl.DateTimeFormat().resolvedOptions().timeZone ??
-                      "Asia/Kolkata"
-                    }
+                    id="quiet-hours-timezone"
+                    value={effectiveTimezone}
                     onChange={(e) =>
                       mutation.mutate({ quietHoursTimezone: e.target.value })
                     }
                     className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
                   >
                     {!QUIET_HOURS_TIMEZONES.includes(
-                      (prefs.quietHoursTimezone ?? "") as (typeof QUIET_HOURS_TIMEZONES)[number],
-                    ) &&
-                      prefs.quietHoursTimezone && (
-                        <option value={prefs.quietHoursTimezone}>
-                          {prefs.quietHoursTimezone} (current)
-                        </option>
-                      )}
+                      effectiveTimezone as (typeof QUIET_HOURS_TIMEZONES)[number],
+                    ) && (
+                      <option value={effectiveTimezone}>
+                        {effectiveTimezone} (current)
+                      </option>
+                    )}
                     {QUIET_HOURS_TIMEZONES.map((zone) => (
                       <option key={zone} value={zone}>
                         {zone}

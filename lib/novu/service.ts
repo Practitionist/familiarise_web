@@ -104,12 +104,16 @@ export interface TriggerOptions {
   // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
   // #1697 item 5 — "user" too: the recipient-timezone read must ride the
   // caller's transaction for the same single-connection reason.
-  // Quiet-hours reads ride it too ("notificationPreference" below).
-  tx?: Pick<
-    Tx,
-    "notificationOutbox" | "membership" | "user" | "notificationPreference"
-  >;
+  // Quiet-hours reads ride it too (via the `user` → `notificationPreferences`
+  // include in resolveQuietHoursNotBefore, so no extra delegate is needed).
+  tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
+  /**
+   * Urgent workflows (payment failure) bypass quiet-hours deferral entirely:
+   * no `notBefore` is stamped, so every path — inline, post-commit, drain —
+   * sends immediately. Defaults true (routine product notices defer).
+   */
+  deferrable?: boolean;
 }
 
 /**
@@ -182,11 +186,13 @@ async function stageAndAttempt(
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
   // Q3: stamp quiet-hours deferral before staging. An explicit notBefore from
-  // the caller wins; otherwise defer to the latest recipient window-end. The
-  // drain already skips rows with a future notBefore.
+  // the caller wins; otherwise defer to the latest recipient window-end
+  // (one row carries one floor, so a group notice waits until every
+  // recipient is out of quiet hours rather than waking some of them).
+  // Non-deferrable (urgent) workflows skip the computation entirely.
   const notBefore =
     args.notBefore ??
-    (args.kind === "BROADCAST"
+    (opts?.deferrable === false || args.kind === "BROADCAST"
       ? undefined
       : await resolveQuietHoursNotBefore(args.recipients, opts));
   const staged = await stageTrigger({
@@ -204,6 +210,8 @@ async function stageAndAttempt(
     return sendUnstaged(args);
   }
   if (opts?.tx) return { success: true, staged };
+  // attemptTrigger holds future-notBefore rows for the drain (single
+  // enforcement point — covers inline and post-commit attempts alike).
   return attemptTrigger(staged);
 }
 
@@ -932,6 +940,28 @@ export async function notifyPayoutProcessed(
     NOVU_WORKFLOWS.PAYOUT_PROCESSED,
     consultantUserId,
     wire,
+  );
+}
+
+/**
+ * The consultant, when a payout FAILS or is CANCELLED (earnings released
+ * back to READY). Urgent money news — never deferred by quiet hours.
+ */
+export async function notifyPayoutFailed(
+  consultantUserId: string,
+  payload: PayoutInput,
+) {
+  const wire: PayoutPayload = {
+    ...payload,
+    amount: formatNotificationMoney(payload.amount, payload.currency),
+    amountPaise: payload.amount,
+  };
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.PAYOUT_FAILED,
+    consultantUserId,
+    wire,
+    undefined,
+    { deferrable: false },
   );
 }
 

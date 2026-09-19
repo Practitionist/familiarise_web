@@ -42,6 +42,8 @@ export interface StagedTrigger {
   transactionId: string;
   attempts: number;
   status: string;
+  /** Quiet-hours floor; attempts before it leave the row for the drain. */
+  notBefore: Date | null;
 }
 
 export interface StageTriggerArgs {
@@ -98,6 +100,7 @@ const STAGED_SELECT = {
   transactionId: true,
   attempts: true,
   status: true,
+  notBefore: true,
 } as const;
 
 /**
@@ -325,6 +328,17 @@ export async function attemptTrigger(
     return { success: false, error: "Novu not configured", outcome: "PENDING" };
   }
   const now = new Date(opts.now?.() ?? Date.now());
+  // Quiet-hours floor: the relay only collects due rows, but inline and
+  // post-commit attempts bypass that query — hold them for the drain instead
+  // of sending early. Deferrable by construction: urgent workflows never
+  // stamp notBefore (see TriggerOptions.deferrable).
+  if (
+    !opts.relay &&
+    row.notBefore &&
+    new Date(row.notBefore).getTime() > now.getTime()
+  ) {
+    return { success: true, staged: row, outcome: "PENDING" };
+  }
   const recipientCount = row.kind === "BROADCAST" ? 0 : row.recipients.length;
   const attempts = opts.relay ? row.attempts + 1 : row.attempts;
   try {

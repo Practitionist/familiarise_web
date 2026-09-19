@@ -56,6 +56,10 @@ const SETTINGS_TABS = [
 
 type SettingsTabKey = (typeof SETTINGS_TABS)[number]["key"];
 
+// Tabs whose content needs the domain/expertise payload; the rest
+// (verification, notifications, security) render without it.
+const CONTENT_DEPENDENT_TABS = ["profile", "availability", "booking"] as const;
+
 const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
   !!v && SETTINGS_TABS.some((t) => t.key === v);
 
@@ -567,7 +571,14 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
     return <SettingsSkeleton />;
   }
 
-  if (contentError && domains.length === 0) {
+  // Tabs that do not depend on the domain/expertise content payload
+  // (verification, notifications, security) stay reachable when it fails to
+  // load; only the content-driven tabs are blocked by the error state.
+  if (
+    contentError &&
+    domains.length === 0 &&
+    (CONTENT_DEPENDENT_TABS as readonly string[]).includes(activeTab)
+  ) {
     return (
       <Card>
         <CardContent className="py-6">
