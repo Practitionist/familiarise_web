@@ -155,6 +155,28 @@ describe("consultant rail — live-dispute disbursement block (#1020)", () => {
   });
 });
 
+// #1582 (owner decision Q4) — 194-O is the default engine; LEGACY (the ₹50K
+// gate) applies only when TDS_ENGINE is set to it explicitly.
+describe("consultant rail — TDS_ENGINE defaults to 194O", () => {
+  it("an unset TDS_ENGINE withholds 194-O on the full payout instead of the LEGACY gate", async () => {
+    delete process.env.TDS_ENGINE;
+    mocks.consultantPayout.findMany.mockResolvedValue([APPROVED]);
+    mocks.consultantEarnings.findFirst.mockResolvedValue(null);
+
+    await processApprovedPayouts();
+
+    // ₹5,000 payout under the ₹50K LEGACY gate would withhold nothing; pure
+    // 194-O taxes the full amount — at the 5 % no-PAN rate here, since the
+    // fixture has no ConsultantTaxInfo on file.
+    const processingWrite = mocks.consultantPayout.update.mock.calls.find(
+      ([arg]: [{ data: { tdsDeducted?: number } }]) =>
+        arg.data.tdsDeducted !== undefined && arg.data.tdsDeducted > 0,
+    );
+    expect(processingWrite).toBeDefined();
+    expect(processingWrite![0].data.tdsDeducted).toBe(25_000);
+  });
+});
+
 describe("payment-legs sum trigger — sidecar wiring (source contract)", () => {
   const sqlPath = path.join(
     process.cwd(),

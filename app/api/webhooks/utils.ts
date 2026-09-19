@@ -44,7 +44,6 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
-import { reportSentryError } from "@/lib/observability/report";
 import {
   EMAIL_BUDGET_MS,
   MONEY_EMAIL_TYPES,
@@ -924,82 +923,58 @@ export async function handleRefundCreated(
           // (Dr CASH / Cr ORG_RECEIVABLE) with the credit side routed to
           // wherever the value went: back to CASH when the gateway returns
           // the money, or to the org's WALLET when the refund is granted as
-          // in-app credit (fundingSource WALLET). Before this posting the
-          // wallet credit was a bare cache increment with NO journal entry —
-          // guaranteed WALLET_BALANCE_DRIFT at reconcile (auto-freezing the
-          // wallet) while the platform books never recorded the refund.
+          // in-app credit (fundingSource WALLET).
           //
-          // Still not rethrown on failure, and that is deliberate: the
-          // dispatcher stamps error=true on a throw and the stuck-event
-          // sweeper only re-drives error=null, so rethrowing would roll back
-          // the whole refund booking AND retire the event permanently. On
-          // failure NEITHER the journal NOR the cache credit is written, so
-          // cache and journal stay consistent (refund unbooked, paged
-          // loudly). #1128 tracks making this durable.
-          try {
-            const ba = await tx.billingAccount.findFirst({
-              where: { ownerOrgId: invoice.organizationId },
-              select: { id: true, fundingSource: true },
-            });
-            const creditAsWallet =
-              !!ba && ba.fundingSource === "WALLET" && !!invoice.organizationId;
-            await postLedgerTxn(tx, {
-              idempotencyKey: `invoice-refund:${refundId}`,
-              kind: "INVOICE_REFUND",
-              invoiceId: invoice.id,
-              description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
-              postings: [
-                {
-                  account: {
-                    kind: "ORG_RECEIVABLE",
-                    organizationId: invoice.organizationId,
-                  },
-                  direction: "DEBIT",
-                  amountPaise: amount,
+          // #1128 (doctrine §1) — no swallow: a failed journal or wallet
+          // credit propagates, the tx rolls back and the CN is never minted
+          // without its money truth. The stuck-event sweeper re-drives the
+          // errored row and the `invoice-refund:<refundId>` key keeps that safe.
+          const ba = await tx.billingAccount.findFirst({
+            where: { ownerOrgId: invoice.organizationId },
+            select: { id: true, fundingSource: true },
+          });
+          const creditAsWallet =
+            !!ba && ba.fundingSource === "WALLET" && !!invoice.organizationId;
+          await postLedgerTxn(tx, {
+            idempotencyKey: `invoice-refund:${refundId}`,
+            kind: "INVOICE_REFUND",
+            invoiceId: invoice.id,
+            description: `Refund of invoice ${invoice.invoiceNumber} (gateway refund ${refundId})`,
+            postings: [
+              {
+                account: {
+                  kind: "ORG_RECEIVABLE",
+                  organizationId: invoice.organizationId,
                 },
-                creditAsWallet
-                  ? {
-                      account: {
-                        kind: "WALLET",
-                        organizationId: invoice.organizationId,
-                      },
-                      direction: "CREDIT",
-                      amountPaise: amount,
-                    }
-                  : {
-                      account: { kind: "CASH" },
-                      direction: "CREDIT",
-                      amountPaise: amount,
-                    },
-              ],
-            });
-            if (creditAsWallet && ba) {
-              // Cache mirror of the Cr WALLET leg above — written only after
-              // the journal succeeded so the two can never diverge here.
-              await walletCredit(tx, {
-                billingAccountId: ba.id,
+                direction: "DEBIT",
                 amountPaise: amount,
-                reason: "REFUND",
-                providerPaymentId,
-                notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
-              });
-            }
-          } catch (err) {
-            reportSentryError(err, {
-              subsystem: "enterprise",
-              op: "handleRefundCreated.walletCredit",
-              extra: {
-                refundId,
-                invoiceId: invoice.id,
-                organizationId: invoice.organizationId,
-                amountPaise: amount,
-                providerPaymentId,
               },
+              creditAsWallet
+                ? {
+                    account: {
+                      kind: "WALLET",
+                      organizationId: invoice.organizationId,
+                    },
+                    direction: "CREDIT",
+                    amountPaise: amount,
+                  }
+                : {
+                    account: { kind: "CASH" },
+                    direction: "CREDIT",
+                    amountPaise: amount,
+                  },
+            ],
+          });
+          if (creditAsWallet && ba) {
+            // Cache mirror of the Cr WALLET leg above — written only after
+            // the journal succeeded so the two can never diverge here.
+            await walletCredit(tx, {
+              billingAccountId: ba.id,
+              amountPaise: amount,
+              reason: "REFUND",
+              providerPaymentId,
+              notes: `Invoice ${invoice.invoiceNumber} refund (${refundId})`,
             });
-            console.warn(
-              `⚠️ Wallet credit for invoice refund ${refundId} FAILED — org not credited:`,
-              err,
-            );
           }
           console.log(
             `💸 Invoice refund ${refundId} booked for invoice ${invoice.id}`,

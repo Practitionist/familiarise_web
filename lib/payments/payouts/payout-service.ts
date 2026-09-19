@@ -725,12 +725,13 @@ async function processSinglePayout(payout: {
     // from the first rupee. The rate engine (computeTdsForPayout) then applies
     // the section/PAN/DTAA rate to the taxable portion.
     //
-    // #778 §E — TDS_ENGINE flag (default LEGACY): LEGACY keeps the ₹50K gate
-    // (the conservative pre-CA-sign-off behavior); 194O drops it and taxes
-    // the full payout under pure Section 194-O semantics (per-FY entity
-    // thresholds move to the TdsRate lookup when the CA confirms in writing).
-    // One env flip at launch, no money-logic redeploy.
-    const pure194O = process.env.TDS_ENGINE === "194O";
+    // #778 §E — TDS_ENGINE flag: 194O taxes the full payout under pure
+    // Section 194-O semantics (per-FY entity thresholds move to the TdsRate
+    // lookup when the CA confirms in writing); LEGACY keeps the ₹50K gate.
+    // #1582 (owner decision Q4) — 194O is the default; LEGACY is deprecated
+    // and applies only when set explicitly.
+    const engine = process.env.TDS_ENGINE ?? "194O";
+    const pure194O = engine !== "LEGACY";
     const cumulativeBeforePayout = await getCurrentFYCumulativePayments(
       payout.consultantProfileId,
       financialYear,
@@ -846,7 +847,9 @@ async function processSinglePayout(payout: {
     tdsDeductedPaise = tds.tdsAmountPaise;
     netAmountPaise = payoutAmountAfterTDS;
     tdsRateAppliedBps =
-      tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null;
+      tds.tdsRate !== null && tds.tdsRate !== undefined
+        ? Math.round(tds.tdsRate * 10_000)
+        : null;
 
     if (tds.tdsAmountPaise > 0) {
       console.log(
@@ -892,7 +895,9 @@ async function processSinglePayout(payout: {
         // Review fix: != null so a legitimate 0% (Sec 197 zero-rate cert)
         // persists as 0 bps instead of vanishing to null.
         tdsRateAppliedBps:
-          tds.tdsRate != null ? Math.round(tds.tdsRate * 10_000) : null,
+          tds.tdsRate !== null && tds.tdsRate !== undefined
+            ? Math.round(tds.tdsRate * 10_000)
+            : null,
         tdsFinancialYear: financialYear,
         status: PayoutStatus.PROCESSING, // Will be updated via webhook
       },

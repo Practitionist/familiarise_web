@@ -1104,6 +1104,25 @@ async function stepEarningsLedger(
   return pageResult(bookingTxns, done, take, cursor);
 }
 
+/**
+ * #1582 (owner decision Q2) — Phase 2 of confirmation is post-commit by
+ * design (ADR 21; the addendum lands in PR-G): earnings commit in Phase 1 and
+ * the BOOKING journal follows, so a payment younger than this is in flight,
+ * not a finding. Two ticker intervals by default.
+ */
+export const RECONCILE_UNJOURNALED_GRACE_MS = Number(
+  process.env.RECONCILE_UNJOURNALED_GRACE_MS ?? 30 * 60 * 1000,
+);
+
+/** Q2 — an unjournaled payment is a finding only once the grace has lapsed. */
+export function isPastUnjournaledGrace(
+  paymentUpdatedAt: Date,
+  now: Date = new Date(),
+  graceMs: number = RECONCILE_UNJOURNALED_GRACE_MS,
+): boolean {
+  return now.getTime() - paymentUpdatedAt.getTime() >= graceMs;
+}
+
 // #773/#778 §G — earnings-bearing payments with no booking journal txn.
 // Now that the multi-collaborator path posts its own balanced booking txn,
 // this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
@@ -1121,9 +1140,21 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
     select: { paymentId: true },
     distinct: ["paymentId"],
   });
-  const unjournaled = earningsPaymentRows.filter(
+  const candidates = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   );
+  // Q2 — skip payments still inside the post-commit grace window.
+  const candidateRows = await prisma.payment.findMany({
+    where: { id: { in: candidates.map((e) => e.paymentId!) } },
+    select: { id: true, updatedAt: true },
+  });
+  const now = new Date();
+  const settledIds = new Set(
+    candidateRows
+      .filter((p) => isPastUnjournaledGrace(p.updatedAt, now))
+      .map((p) => p.id),
+  );
+  const unjournaled = candidates.filter((e) => settledIds.has(e.paymentId!));
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
   const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
   if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
@@ -1135,7 +1166,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
       details: {
         unit: "payments",
         samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold (#773).",
+        note: "Earnings-bearing payments older than the post-commit grace window missing a BOOKING ledger transaction exceed the allowed threshold (#773; Q2 grace via RECONCILE_UNJOURNALED_GRACE_MS).",
       },
     });
   }

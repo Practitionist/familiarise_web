@@ -13,7 +13,10 @@
  * up a whole reconciler run.
  */
 
-import { clawbackDualWriteGapFindings } from "../../scripts/reconcile/reconcile-ledgers";
+import {
+  clawbackDualWriteGapFindings,
+  isPastUnjournaledGrace,
+} from "../../scripts/reconcile/reconcile-ledgers";
 
 const PAYOUT = {
   id: "orgpo_1",
@@ -71,5 +74,17 @@ describe("#1408 — cumulative clawback postings vs the stamped counter", () => 
       actualPaise: 0,
       deltaPaise: 50_000,
     });
+  });
+});
+
+// #1582 (owner decision Q2) — Phase 2 posts the BOOKING journal after Phase 1
+// commits the earnings, so a fresh gap is in flight, not a finding.
+describe("EARNINGS_WITHOUT_BOOKING_TXN honours the post-commit grace window", () => {
+  const now = new Date("2026-09-19T12:00:00.000Z");
+  const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000);
+
+  it("a 10-minute-old gap is not a finding; a 40-minute-old one is", () => {
+    expect(isPastUnjournaledGrace(minutesAgo(10), now)).toBe(false);
+    expect(isPastUnjournaledGrace(minutesAgo(40), now)).toBe(true);
   });
 });

@@ -74,6 +74,10 @@ import {
   recordSystemEvent,
 } from "@/lib/enterprise/system-events";
 import { sumPaise } from "@/lib/payments/utils/money";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
@@ -771,8 +775,9 @@ export type ApplyRefundCascadeResult = {
  */
 export async function applyRefundCascade(
   tx: Tx,
-  input: ApplyRefundCascadeInput,
+  rawInput: ApplyRefundCascadeInput,
 ): Promise<ApplyRefundCascadeResult> {
+  let input = rawInput;
   // #776 — atomic idempotency claim. Exactly one caller flips `cascadedAt`
   // null→now; an overlapping gateway-webhook + backstop-cron (or a redelivery)
   // sees count===0 and no-ops. The row lock on this conditional update serializes
@@ -812,8 +817,47 @@ export async function applyRefundCascade(
       earnings: true,
       organizationEarnings: { include: { orgPayout: true } },
       bookingUtilization: true,
+      // #1582 C-P0-03 — the cumulative cap at cascade time (owner decision Q3).
+      refunds: { select: { id: true, amountPaise: true, status: true } },
+      disputes: REFUNDABLE_BALANCE_SELECT.disputes,
     },
   });
+
+  // #1582 C-P0-03 — cumulative cap at cascade time closes the PENDING-then-LOST
+  // window: every other returned refund and every LOST/CHARGE_REFUNDED dispute
+  // bounds what this cascade may still reverse. Wallet credit, the *_REVERSAL
+  // legs, the `refund:<id>` journal and the org CN all consume the clamped figure.
+  const remaining = refundableBalancePaise(payment.amount, {
+    refunds: payment.refunds.filter((r) => r.id !== rawInput.refundId),
+    disputes: payment.disputes,
+  });
+  if (rawInput.amountPaise > remaining) {
+    input = { ...rawInput, amountPaise: remaining };
+    await recordSystemEvent({
+      db: tx,
+      organizationId: payment.organizationId ?? null,
+      category: "PAYMENT",
+      severity: "WARN",
+      message: `REFUND_CASCADE_CLAMPED: refund ${rawInput.refundId} asked ${rawInput.amountPaise}p, cascade reversed ${remaining}p`,
+      context: {
+        paymentId: payment.id,
+        refundId: rawInput.refundId,
+        requestedPaise: rawInput.amountPaise,
+        reversedPaise: remaining,
+      },
+    }).catch(() => {});
+    reportSentryMessage("REFUND_CASCADE_CLAMPED", {
+      subsystem: "payments",
+      expected: true,
+      level: "warning",
+      extra: {
+        paymentId: payment.id,
+        refundId: rawInput.refundId,
+        requestedPaise: rawInput.amountPaise,
+        reversedPaise: remaining,
+      },
+    });
+  }
 
   if (payment.amount <= 0) {
     // Zero-amount payments (LICENSE-only) have no money to refund.
