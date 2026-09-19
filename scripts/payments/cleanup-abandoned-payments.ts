@@ -810,10 +810,20 @@ export async function retireOrphanPendingPayment(
         some: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
       },
     },
-    include: ABANDONED_INCLUDE,
+    include: { ...ABANDONED_INCLUDE, _count: { select: { payment: true } } },
   });
 
   if (appointment) {
+    // #1761 CodeRabbit — a sibling SUCCEEDED/PENDING payment means this
+    // appointment isn't the orphan's alone to tear down; leave it be.
+    if (appointment._count.payment > 1) {
+      return {
+        outcome: "skipped",
+        errors: [
+          `Appointment ${appointment.id} has ${appointment._count.payment} payments; not retiring orphan ${paymentId}`,
+        ],
+      };
+    }
     // Only the orphan row is expired; a sibling PENDING checkout is left alone.
     const scoped: AbandonedAppointment = {
       ...appointment,

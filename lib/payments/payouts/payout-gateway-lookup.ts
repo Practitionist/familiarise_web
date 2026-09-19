@@ -137,11 +137,14 @@ export async function getRazorpayPayoutStatus(
     );
 
     if (!response.ok) {
-      // RazorpayX answers 400 BAD_REQUEST_ERROR ("does not exist"), not 404,
-      // for an id it never issued; 401/403 is our key, anything else is theirs.
+      // #1761 CodeRabbit — 404 is always unknown_id; a 400 is only unknown_id
+      // when the description names a missing/invalid id, else it's a real error.
       const { status } = response;
       const description = await razorpayErrorDescription(response);
-      if (status === 400 || status === 404) {
+      const isMissingIdReason = /does not exist|not found|invalid id/i.test(
+        description,
+      );
+      if (status === 404 || (status === 400 && isMissingIdReason)) {
         return { kind: "unknown_id", detail: `${status} ${description}` };
       }
       console.error(`RazorpayX API error: ${status} ${description}`);

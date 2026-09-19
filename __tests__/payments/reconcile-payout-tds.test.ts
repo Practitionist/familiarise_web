@@ -90,10 +90,12 @@ beforeEach(() => {
   payoutRow = { ...STALE_PAYOUT };
   process.env.RAZORPAY_KEY_ID = "k";
   process.env.RAZORPAY_SECRET = "s";
-  (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-    ok: true,
-    json: async () => ({ status: "processed", utr: "UTR1234567890" }),
-  });
+  (global as unknown as { fetch: jest.Mock }).fetch = jest
+    .fn()
+    .mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "processed", utr: "UTR1234567890" }),
+    });
 });
 
 describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
@@ -117,21 +119,25 @@ describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
 
     // The OLD inline money flip must be gone: no direct COMPLETED status write
     // and no direct earnings→PAID write on the reconciler.
-    const directCompletedFlip = prismaStub.consultantPayout.update.mock.calls.some(
-      ([arg]: [{ data?: Row }]) => arg?.data?.status === "COMPLETED",
-    );
+    const directCompletedFlip =
+      prismaStub.consultantPayout.update.mock.calls.some(
+        ([arg]: [{ data?: Row }]) => arg?.data?.status === "COMPLETED",
+      );
     expect(directCompletedFlip).toBe(false);
-    const directEarningsPaid = prismaStub.consultantEarnings.updateMany.mock.calls.some(
-      ([arg]: [{ data?: Row }]) => arg?.data?.status === "PAID",
-    );
+    const directEarningsPaid =
+      prismaStub.consultantEarnings.updateMany.mock.calls.some(
+        ([arg]: [{ data?: Row }]) => arg?.data?.status === "PAID",
+      );
     expect(directEarningsPaid).toBe(false);
   });
 
   it("reversed payout → delegates FAILED with the net-zero failure reason", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "reversed", failure_reason: "bounced" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "reversed", failure_reason: "bounced" }),
+      });
 
     await reconcilePayoutStatus();
 
@@ -139,8 +145,7 @@ describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
     // delegates the unlink + TDS-reversal to the canonical handler with the
     // net-zero round-trip note rather than leaving earnings linked.
     expect(handlePayoutWebhook).toHaveBeenCalledTimes(1);
-    const [provider, id, status, reason] =
-      handlePayoutWebhook.mock.calls[0];
+    const [provider, id, status, reason] = handlePayoutWebhook.mock.calls[0];
     expect(provider).toBe("RAZORPAY");
     expect(id).toBe("pout_live_1");
     expect(status).toBe("FAILED");
@@ -155,10 +160,15 @@ describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
   // here while Stripe's did, so the payout fell through as an unknown status
   // and was skipped — which is the exact cohort this sweep exists for.
   it("gateway `failed` → delegates FAILED, not skipped as an unknown status", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "failed", failure_reason: "account closed" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          status: "failed",
+          failure_reason: "account closed",
+        }),
+      });
 
     const result = await reconcilePayoutStatus();
 
@@ -178,10 +188,12 @@ describe("PM-15 — payout reconcile delegates to handlePayoutWebhook", () => {
   });
 
   it("still-processing payout → no delegation (status unchanged)", async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: "processing" }),
-    });
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: "processing" }),
+      });
 
     await reconcilePayoutStatus();
 
@@ -250,6 +262,30 @@ describe("#1757 — unknown gateway id is retired once, not a run failure", () =
         ok: false,
         status: 503,
         json: async () => ({ error: { code: "SERVER_ERROR" } }),
+      });
+
+    const result = await reconcilePayoutStatus();
+
+    expect(handlePayoutWebhook).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.retiredCount).toBe(0);
+    expect(reportSentryMessage).not.toHaveBeenCalled();
+  });
+
+  // #1761 CodeRabbit — a 400 with an unrelated description is a real gateway
+  // fault, not a missing id; it must not be retired.
+  it("a 400 with an unrelated description → gateway_error, not retired", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            code: "BAD_REQUEST_ERROR",
+            description: "Amount must be a positive integer",
+          },
+        }),
       });
 
     const result = await reconcilePayoutStatus();
