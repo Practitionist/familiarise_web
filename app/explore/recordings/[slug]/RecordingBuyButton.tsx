@@ -12,13 +12,14 @@ import { loadScript } from "@/app/checkout/plans/utils";
 
 interface BuyButtonProps {
   recordingId: string;
+  // Kept for the caller's contract; the checkout amount always comes from
+  // the minted order (body.data.amount), never from this ISR-cacheable prop.
   listPricePaise: number;
   formattedPrice: string;
 }
 
 export function RecordingBuyButton({
   recordingId,
-  listPricePaise,
   formattedPrice,
 }: Readonly<BuyButtonProps>) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
@@ -28,10 +29,9 @@ export function RecordingBuyButton({
     setStatus("loading");
     setMessage(null);
     try {
-      const res = await fetch(
-        `/api/recordings/${recordingId}/purchase`,
-        { method: "POST" },
-      );
+      const res = await fetch(`/api/recordings/${recordingId}/purchase`, {
+        method: "POST",
+      });
       const body = await res.json();
       if (!res.ok) {
         setMessage(body.error ?? "Could not start checkout");
@@ -39,7 +39,9 @@ export function RecordingBuyButton({
         return;
       }
 
-      const ok = await loadScript("https://checkout.razorpay.com/v1/checkout.js");
+      const ok = await loadScript(
+        "https://checkout.razorpay.com/v1/checkout.js",
+      );
       if (!ok || !window.Razorpay || !process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID) {
         setMessage("Payment gateway unavailable. Please retry shortly.");
         setStatus("error");
@@ -48,7 +50,11 @@ export function RecordingBuyButton({
 
       const rzp = new window.Razorpay({
         key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: listPricePaise,
+        // Gateway-authoritative: the order was just minted (or resumed) for
+        // body.data.amount. The page's listPricePaise can lag behind a
+        // listing-price update inside the 120s ISR window, and Razorpay
+        // rejects checkout when amount ≠ order amount.
+        amount: body.data.amount,
         currency: body.data.currency,
         name: "Familiarise Recordings",
         description: body.data.description ?? "Recording purchase",
@@ -85,7 +91,9 @@ export function RecordingBuyButton({
         disabled={status === "loading"}
         className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
       >
-        {status === "loading" ? "Opening checkout…" : `Buy for ${formattedPrice}`}
+        {status === "loading"
+          ? "Opening checkout…"
+          : `Buy for ${formattedPrice}`}
       </button>
       {message && (
         <p

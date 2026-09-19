@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { ArrowUpRight, CreditCard } from "lucide-react";
 import {
@@ -52,6 +53,7 @@ export function AppointmentSheet({
   sponsoredLabel,
   joinWindowMs,
 }: AppointmentSheetProps) {
+  const router = useRouter();
   if (!vm) return null;
 
   const action = adapter.primaryAction(vm);
@@ -206,7 +208,9 @@ export function AppointmentSheet({
                     // shared helper so every Pay Now surface answers alike.
                     const trialHref = trialCheckoutHref(vm);
                     if (trialHref) {
-                      window.location.href = trialHref;
+                      // Internal checkout page — SPA navigation keeps the
+                      // sheet state and client bundle warm (was full reload).
+                      router.push(trialHref);
                       return;
                     }
                     if (/^https?:\/\//.test(vm.pendingPaymentUrl!)) {

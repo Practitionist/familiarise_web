@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -413,12 +414,12 @@ function CheckoutSuccessContent() {
         <div className="mt-8 text-center text-sm text-muted-foreground">
           <p>
             Need help? Contact our{" "}
-            <a
+            <Link
               href="/dashboard"
               className="text-foreground font-medium hover:underline"
             >
               support team
-            </a>
+            </Link>
           </p>
         </div>
       </div>

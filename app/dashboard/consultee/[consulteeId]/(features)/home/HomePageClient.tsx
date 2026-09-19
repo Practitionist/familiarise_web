@@ -47,7 +47,7 @@ export default function HomePageClient({
     );
   }
 
-  if (!eventsData || !userDetails) {
+  if (!eventsData) {
     return <HomeSkeleton />;
   }
 
@@ -62,12 +62,18 @@ export default function HomePageClient({
       <HomeTab
         eventsData={eventsData}
         viewerZone={viewerZone}
-        userDetails={{
-          id: userDetails.id,
-          name: userDetails.name ?? "User",
-          email: userDetails.email ?? "",
-          image: userDetails.image ?? undefined,
-        }}
+        // Nullable by design: events paint first, the greeting fills in when
+        // the layout user fetch lands (was: full-page skeleton until both).
+        userDetails={
+          userDetails
+            ? {
+                id: userDetails.id,
+                name: userDetails.name ?? "User",
+                email: userDetails.email ?? "",
+                image: userDetails.image ?? undefined,
+              }
+            : null
+        }
         isRefreshing={isLoading && !!eventsData}
         consulteeId={consulteeId}
       />

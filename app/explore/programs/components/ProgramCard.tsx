@@ -2,10 +2,9 @@
 
 import { memo } from "react";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
-import { Button } from "@/components/ui/button";
 import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useCurrency } from "@/hooks/useCurrency";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { isClassProgram, Program } from "@/lib/explore/programs";
@@ -121,6 +120,18 @@ function getInstructorWorkExperiences(program: Program): Array<{
   return merged;
 }
 
+/**
+ * Detail URL for a program card. Single source so every variant links the
+ * same destination — and, as a plain `href`, every card is hover-prefetched
+ * by Next instead of cold-loading on click (was: div[role=button] +
+ * router.push, which defeats prefetch entirely).
+ */
+function planHref(program: Program): string {
+  return isClassProgram(program)
+    ? `/explore/programs/plans/classes/${program.id}`
+    : `/explore/programs/plans/webinars/${program.id}`;
+}
+
 function GridCard({
   program,
   badge,
@@ -128,32 +139,15 @@ function GridCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const router = useRouter();
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const instructor = getProgramInstructor(program);
   const workExperiences = getInstructorWorkExperiences(program);
 
-  const handleClick = () => {
-    if (isClassProgram(program)) {
-      router.push(`/explore/programs/plans/classes/${program.id}`);
-    } else {
-      router.push(`/explore/programs/plans/webinars/${program.id}`);
-    }
-  };
-
   return (
-    <div
+    <Link
+      href={planHref(program)}
       className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer h-full flex flex-col"
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      tabIndex={0}
-      role="button"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -240,7 +234,7 @@ function GridCard({
           </span>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -251,32 +245,15 @@ function ListCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const router = useRouter();
   const { formatPrice } = useCurrency();
   const rating = getProgramRating(program);
   const instructor = getProgramInstructor(program);
   const workExperiences = getInstructorWorkExperiences(program);
 
-  const handleClick = () => {
-    if (isClassProgram(program)) {
-      router.push(`/explore/programs/plans/classes/${program.id}`);
-    } else {
-      router.push(`/explore/programs/plans/webinars/${program.id}`);
-    }
-  };
-
   return (
-    <div
+    <Link
+      href={planHref(program)}
       className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex"
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      tabIndex={0}
-      role="button"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative w-48 md:w-64 flex-shrink-0">
@@ -345,17 +322,12 @@ function ListCard({
                 </div>
               )}
             </div>
-            <Button
-              variant="outline"
-              className="rounded-xl border-border hover:bg-muted"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleClick();
-              }}
-            >
+            {/* Not a <Button>: this sits inside the card <Link>, and a
+                <button> inside an <a> is invalid HTML. Same outline look. */}
+            <span className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl border border-border bg-background px-4 py-2 text-sm font-medium transition-colors hover:bg-muted">
               View Details
               <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+            </span>
           </div>
           <div className="flex items-center gap-1 mt-2">
             <Image
@@ -370,7 +342,7 @@ function ListCard({
           </div>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 
@@ -381,30 +353,13 @@ function CarouselCard({
   program: Program;
   badge?: ProgramBadge;
 }) {
-  const router = useRouter();
   const { formatPrice } = useCurrency();
   const workExperiences = getInstructorWorkExperiences(program);
 
-  const handleClick = () => {
-    if (isClassProgram(program)) {
-      router.push(`/explore/programs/plans/classes/${program.id}`);
-    } else {
-      router.push(`/explore/programs/plans/webinars/${program.id}`);
-    }
-  };
-
   return (
-    <div
+    <Link
+      href={planHref(program)}
       className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer flex-shrink-0 w-[320px] md:w-[360px]"
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
-      tabIndex={0}
-      role="button"
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
@@ -457,7 +412,7 @@ function CarouselCard({
           </div>
         </div>
       </div>
-    </div>
+    </Link>
   );
 }
 

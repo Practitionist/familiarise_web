@@ -9,6 +9,22 @@ import React, {
   useState,
 } from "react";
 import { usePathname } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+
+interface HealthResponse {
+  maintenance?: {
+    phase: string;
+    reason?: string | null;
+    estimatedEnd?: string | null;
+  } | null;
+}
+
+// Cached under ["health"] (stale 5min) so every mount doesn't hit /api/health;
+// the poll below only runs while maintenance is actually ON.
+async function fetchHealth(): Promise<HealthResponse> {
+  const res = await fetch("/api/health");
+  return res.json();
+}
 
 interface MaintenanceContextType {
   phase: string | null;
@@ -34,44 +50,48 @@ export function MaintenanceProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [phase, setPhase] = useState<string | null>(null);
-  const [reason, setReason] = useState<string | null>(null);
-  const [eta, setEta] = useState<string | null>(null);
   const [isDismissed, setIsDismissed] = useState(false);
   const pathname = usePathname();
+  const queryClient = useQueryClient();
+
+  // Single cached health read: stale 5min, and the 60s poll only runs while
+  // maintenance is ON. A failed poll keeps the last good data and never
+  // disrupts the user — same as the old swallowed catch.
+  const { data } = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+    staleTime: 5 * 60_000,
+    // In v5 the function form receives the Query, not the data — read the
+    // phase off query.state.data.
+    refetchInterval: (query) => {
+      const current = query.state.data?.maintenance?.phase;
+      return current && current !== "OFF" ? 60_000 : false;
+    },
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  const maintenance = data?.maintenance ?? null;
+  const phase =
+    maintenance && maintenance.phase !== "OFF" ? maintenance.phase : null;
+  const reason = maintenance?.reason ?? null;
+  const eta = maintenance?.estimatedEnd ?? null;
 
   // Re-show banner on navigation
   useEffect(() => {
     setIsDismissed(false);
   }, [pathname]);
 
-  // Fetch maintenance state from health endpoint
-  const checkMaintenance = useCallback(async () => {
-    try {
-      const res = await fetch("/api/health");
-      const data = await res.json();
-      const m = data.maintenance;
-      if (m) {
-        setPhase(m.phase === "OFF" ? null : m.phase);
-        setReason(m.reason ?? null);
-        setEta(m.estimatedEnd ?? null);
-        // Re-show banner when state changes
-        if (m.phase !== "OFF") setIsDismissed(false);
-      }
-    } catch {
-      // Health check failed — don't disrupt the user
-    }
-  }, []);
-
-  // Adaptive polling: 60s when maintenance is active, 5min when OFF
+  // Re-show banner when maintenance turns on
   useEffect(() => {
-    checkMaintenance();
-    const intervalMs = phase ? 60_000 : 300_000;
-    const interval = setInterval(checkMaintenance, intervalMs);
-    return () => clearInterval(interval);
-  }, [checkMaintenance, phase]);
+    if (phase) setIsDismissed(false);
+  }, [phase]);
 
   const dismiss = useCallback(() => setIsDismissed(true), []);
+
+  const refresh = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: ["health"] });
+  }, [queryClient]);
 
   const value = useMemo(
     () => ({
@@ -80,9 +100,9 @@ export function MaintenanceProvider({
       eta,
       isDismissed,
       dismiss,
-      refresh: checkMaintenance,
+      refresh,
     }),
-    [phase, reason, eta, isDismissed, dismiss, checkMaintenance],
+    [phase, reason, eta, isDismissed, dismiss, refresh],
   );
 
   return (

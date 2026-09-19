@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { MoreVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,22 +28,44 @@ export function RowOverflowMenu({ items }: { items: OverflowItem[] }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-        {items.map((item) => (
-          <DropdownMenuItem
-            key={item.key}
-            disabled={item.disabled}
-            onClick={(e) => {
-              e.stopPropagation();
-              item.onClick();
-            }}
-            className={cn(
-              item.destructive &&
-                "text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400",
-            )}
-          >
-            {item.label}
-          </DropdownMenuItem>
-        ))}
+        {items.map((item) => {
+          // Prefetchable page navigations render as a real link so the
+          // destination prefetches on hover; the row click must still not
+          // fire (card-vs-menu), hence the preserved stopPropagation.
+          // Button-only surfaces (Sheet/detail) keep using item.onClick.
+          if (item.href && !item.disabled) {
+            return (
+              <DropdownMenuItem key={item.key} asChild>
+                <Link
+                  href={item.href}
+                  onClick={(e) => e.stopPropagation()}
+                  className={cn(
+                    item.destructive &&
+                      "text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400",
+                  )}
+                >
+                  {item.label}
+                </Link>
+              </DropdownMenuItem>
+            );
+          }
+          return (
+            <DropdownMenuItem
+              key={item.key}
+              disabled={item.disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                item.onClick();
+              }}
+              className={cn(
+                item.destructive &&
+                  "text-red-600 focus:text-red-600 dark:text-red-400 dark:focus:text-red-400",
+              )}
+            >
+              {item.label}
+            </DropdownMenuItem>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   );

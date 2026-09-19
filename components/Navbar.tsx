@@ -26,7 +26,7 @@ import { disconnectStreamClients } from "@/lib/stream/disconnect";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -511,7 +511,6 @@ function DesktopNavItem({
 // ─── Main Navbar ─────────────────────────────────────────────────────────────
 
 const Navbar = () => {
-  const router = useRouter();
   const pathname = usePathname();
   // The root layout is static (#932), so the session hydrates client-side here,
   // which makes the whole gap between FCP and this bar settling the /api/auth
@@ -543,11 +542,6 @@ const Navbar = () => {
     window.addEventListener("scroll", checkScroll);
     return () => window.removeEventListener("scroll", checkScroll);
   }, []);
-
-  const handleNavigation = (path: string) => {
-    router.push(path);
-    closeMenu();
-  };
 
   if (isChromeHidden(pathname)) return null;
 
@@ -722,11 +716,13 @@ const Navbar = () => {
                 </div>
               ) : (
                 <Button
+                  asChild
                   variant="ghost"
-                  onClick={() => handleNavigation("/auth/signin")}
                   className={`font-medium ${showDarkStyle ? "text-white hover:bg-white/10" : "text-foreground hover:bg-muted"}`}
                 >
-                  Sign in
+                  <Link href="/auth/signin" onClick={closeMenu}>
+                    Sign in
+                  </Link>
                 </Button>
               )}
             </div>
@@ -953,10 +949,12 @@ const Navbar = () => {
               ) : (
                 /* Mirrors the desktop bar: no marketing CTAs, sign in only. */
                 <Button
-                  onClick={() => handleNavigation("/auth/signin")}
+                  asChild
                   className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
                 >
-                  Sign in
+                  <Link href="/auth/signin" onClick={closeMenu}>
+                    Sign in
+                  </Link>
                 </Button>
               )}
             </div>
