@@ -30,6 +30,10 @@ const tx = {
     findUnique: jest.fn(async () => ({ consultantProfileId: "cp-1" })),
   },
   consultantProfile: { updateMany: jest.fn(async () => ({ count: 1 })) },
+  // #1598 P4-P0-05 — the consultee free-text scrub runs in the same tx.
+  consulteeProfile: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  trial: { updateMany: jest.fn(async () => ({ count: 0 })) },
+  consultation: { updateMany: jest.fn(async () => ({ count: 0 })) },
   collaborator: {
     updateManyAndReturn: jest.fn(async () => [
       { collaboratorType: "WEBINAR", webinarPlanId: "wp-1", classPlanId: null },

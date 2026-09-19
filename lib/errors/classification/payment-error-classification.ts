@@ -334,6 +334,16 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.LOCK_CONTENTION,
     httpStatus: 409,
   },
+  // #1598 P4-P0-05 — erasure refused while payouts, earnings, invoices or
+  // disputes are still moving for the user; the route answers the code with
+  // the counts, registered for parity.
+  {
+    code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
+    errorType: ErrorTypes.REFUND_BLOCKED,
+    httpStatus: 409,
+    userMessage:
+      "Erasure is blocked while money is in flight for this user; settle the listed items first.",
+  },
   // #1440 — the admin recovery route lost the link-write CAS (or the row was
   // already linked): an answer, not a fault.
   {

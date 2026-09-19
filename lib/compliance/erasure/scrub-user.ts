@@ -11,8 +11,9 @@
  *
  *   Membership[].status   → ERASED (every active row across every org)
  *   Collaborator.status   → REMOVED (every PENDING/ACCEPTED row, #1580)
- *   ConsultantProfile / ConsulteeProfile free-text PII (when present) → NULL
- *   Appointment.notes (when authored by this user) → NULL
+ *   ConsultantProfile.headline / videoIntroUrl → NULL, deletedAt → now()
+ *   ConsulteeProfile.goals → NULL (#1598 P4-P0-05)
+ *   Trial.notes and Consultation.requestNotes the consultee wrote → NULL
  *
  *   BetterAuth Session + Account rows → hard-deleted (forces sign-out
  *   across every device immediately; SSO accounts are dropped too).
@@ -55,6 +56,7 @@ import {
 } from "@/lib/collaborators/standing";
 import { reportSentryError } from "@/lib/observability/report";
 import { nextRetryAt } from "@/lib/retry/backoff";
+import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 
 export interface ScrubResult {
   /// True iff this call performed the scrub. False means the user was
@@ -71,8 +73,94 @@ export interface ScrubResult {
  * locked in at scrub time and stored on the User row).
  */
 function derivePseudonym(userId: string): string {
-  const salt = process.env.ERASURE_SALT ?? "familiarise-erasure-fallback";
-  return createHash("sha256").update(`${userId}.${salt}`).digest("hex");
+  const salt = process.env.ERASURE_SALT;
+  // #1584 P1-ER01 — in production a pseudonym keyed on the public fallback is
+  // reversible by anyone with the source; refuse rather than scrub with it.
+  if (!salt && process.env.NODE_ENV === "production") {
+    throw Object.assign(new Error("ERASURE_SALT is not configured"), {
+      httpStatus: 500,
+      code: "ERASURE_SALT_MISSING",
+    });
+  }
+  return createHash("sha256")
+    .update(`${userId}.${salt ?? "familiarise-erasure-fallback"}`)
+    .digest("hex");
+}
+
+export interface MoneyInFlight {
+  /** ConsultantPayout rows in PENDING/APPROVED/PROCESSING for the user's profile. */
+  consultantPayouts: number;
+  /** ConsultantEarnings in READY/BATCHED — money owed but not yet paid out. */
+  unsettledEarnings: number;
+  /** ISSUED/OVERDUE OrganizationInvoice rows on orgs where the user is the only OWNER. */
+  orgInvoicesAsSoleOwner: number;
+  /** Disputes still contested on the user's payments. */
+  liveDisputes: number;
+}
+
+/**
+ * #1598 P4-P0-05 — money that cannot be settled once the identity behind it
+ * is gone. The predicate shape mirrors the org wind-down gate
+ * (app/api/organizations/[orgId]/route.ts); the process route refuses with
+ * ERASURE_BLOCKED_MONEY_IN_FLIGHT while any count is non-zero.
+ */
+export async function moneyInFlightForUser(
+  db: Db,
+  userId: string,
+): Promise<MoneyInFlight> {
+  const [consultantPayouts, unsettledEarnings, liveDisputes, ownerRows] =
+    await Promise.all([
+      db.consultantPayout.count({
+        where: {
+          consultantProfile: { userId },
+          status: { in: ["PENDING", "APPROVED", "PROCESSING"] },
+        },
+      }),
+      db.consultantEarnings.count({
+        where: {
+          consultantProfile: { userId },
+          status: { in: ["READY", "BATCHED"] },
+        },
+      }),
+      db.dispute.count({
+        where: {
+          payment: { userId },
+          status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+        },
+      }),
+      db.membership.findMany({
+        where: { userId, role: "OWNER", status: "ACTIVE" },
+        select: { organizationId: true },
+      }),
+    ]);
+
+  let orgInvoicesAsSoleOwner = 0;
+  for (const { organizationId } of ownerRows) {
+    const otherOwners = await db.membership.count({
+      where: {
+        organizationId,
+        role: "OWNER",
+        status: "ACTIVE",
+        userId: { not: userId },
+      },
+    });
+    if (otherOwners > 0) continue;
+    orgInvoicesAsSoleOwner += await db.organizationInvoice.count({
+      where: { organizationId, status: { in: ["ISSUED", "OVERDUE"] } },
+    });
+  }
+
+  return {
+    consultantPayouts,
+    unsettledEarnings,
+    orgInvoicesAsSoleOwner,
+    liveDisputes,
+  };
+}
+
+/** True when any money-in-flight count is non-zero. */
+export function hasMoneyInFlight(counts: MoneyInFlight): boolean {
+  return Object.values(counts).some((n) => n > 0);
 }
 
 // #780 — extended client, not bare PrismaClient, so the itx client passed to
@@ -184,9 +272,20 @@ export async function scrubUser(
         deletedAt: new Date(),
       },
     });
-    // ConsulteeProfile carries only FK pointers at present — no
-    // free-text PII columns. If new PII fields are added, mirror the
-    // ConsultantProfile scrub above.
+    // #1598 P4-P0-05 — the consultee's own free text: profile goals, trial
+    // notes and consultation request notes are what they wrote about themselves.
+    await tx.consulteeProfile.updateMany({
+      where: { userId },
+      data: { goals: null },
+    });
+    await tx.trial.updateMany({
+      where: { consulteeProfile: { userId } },
+      data: { notes: null },
+    });
+    await tx.consultation.updateMany({
+      where: { requestedBy: { userId } },
+      data: { requestNotes: null },
+    });
 
     // #1580 — an erased consultant otherwise stays an ACCEPTED collaborator in
     // every split and roster; the same flip the moderation ban runs.
