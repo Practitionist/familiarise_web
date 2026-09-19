@@ -276,7 +276,16 @@ export function EarningsSummaryPanel({
       key: "status",
       header: "Status",
       cell: (earning) => (
-        <StatusBadge {...earningStatusBadge(earning.status)} />
+        <span className="flex flex-col gap-0.5">
+          <StatusBadge {...earningStatusBadge(earning.status)} />
+          {/* #1675 item 4 — the hold date was fetched but never shown. */}
+          {earning.holdUntil &&
+            (earning.status === "PENDING" || earning.status === "HELD") && (
+              <span className="text-xs text-zinc-500">
+                available on {formatDate(earning.holdUntil, viewerZone)}
+              </span>
+            )}
+        </span>
       ),
     },
     {
