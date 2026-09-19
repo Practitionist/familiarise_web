@@ -1,4 +1,4 @@
-import { Sparkles } from "lucide-react";
+import { Building2, Layers } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
@@ -8,6 +8,7 @@ import {
   getOrganisationsPage,
 } from "@/lib/data/explore-organisations";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
+import ExploreHero from "@/app/explore/components/ExploreHero";
 
 import OrganisationsInteractiveContent, {
   OrganisationsGridSkeleton,
@@ -46,45 +47,52 @@ async function OrganisationsDirectory() {
     withBuildTimeRetry(() => getOrganisationsPage(DEFAULT_ORGANISATION_FILTERS)),
   ]);
 
+  // Hero stats are real metadata figures, not marketing copy: the directory
+  // total plus its industry breadth. Empty renders the honest fallback line.
+  const heroStats =
+    meta.total > 0
+      ? [
+          {
+            key: "organisations",
+            icon: Building2,
+            display: String(meta.total),
+            label: meta.total === 1 ? "organisation" : "organisations",
+          },
+          {
+            key: "industries",
+            icon: Layers,
+            display: String(meta.industries.length),
+            label:
+              meta.industries.length === 1 ? "industry" : "industries",
+          },
+        ]
+      : [];
+
   return (
-    <OrganisationsInteractiveContent
-      metadata={meta}
-      initialItems={firstPage.items}
-      initialTotal={firstPage.total}
-    />
+    <>
+      <ExploreHero
+        eyebrow="Expert Networks & Agencies"
+        title={
+          <>
+            Explore <span className="silver-text">Organisations</span>
+          </>
+        }
+        description="Discover expert networks, consulting agencies, and learning institutions on Familiarise. Book their curated experts directly."
+        stats={heroStats}
+        emptyStatsCopy="Check back for newly listed organisations."
+      />
+      <OrganisationsInteractiveContent
+        metadata={meta}
+        initialItems={firstPage.items}
+        initialTotal={firstPage.total}
+      />
+    </>
   );
 }
 
 export default function ExploreOrganisationsPage() {
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero */}
-      <section className="relative overflow-hidden bg-zinc-950 pt-32 pb-16">
-        <div className="absolute inset-0">
-          <div className="animate-blob absolute left-1/4 top-1/4 h-[500px] w-[500px] rounded-full bg-zinc-800/30 blur-[120px]" />
-          <div className="animate-blob animation-delay-2000 absolute bottom-1/4 right-1/4 h-[400px] w-[400px] rounded-full bg-zinc-700/20 blur-[100px]" />
-        </div>
-        <div className="grid-pattern absolute inset-0 opacity-20" />
-
-        <div className="relative z-10 mx-auto max-w-[1400px] px-4 md:px-8">
-          <div className="mx-auto max-w-3xl text-center">
-            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-zinc-700/50 bg-zinc-800/50 px-4 py-2 backdrop-blur-sm">
-              <Sparkles className="h-4 w-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Expert Networks &amp; Agencies
-              </span>
-            </div>
-            <h1 className="text-fluid-4xl mb-6 font-bold tracking-tight text-white">
-              Explore <span className="silver-text">Organisations</span>
-            </h1>
-            <p className="mx-auto max-w-xl text-lg text-zinc-300">
-              Discover expert networks, consulting agencies, and learning
-              institutions on Familiarise. Book their curated experts directly.
-            </p>
-          </div>
-        </div>
-      </section>
-
       <Suspense
         fallback={
           <section className="py-10 md:py-16">

@@ -19,7 +19,12 @@ type ChipKey =
   | { kind: "company"; value: string }
   | { kind: "language" }
   | { kind: "search" }
-  | { kind: "sort" };
+  | { kind: "sort" }
+  // The All / Independent / Agency-Org segmented control writes
+  // `filters.affiliationType`, so it is a filter and gets a chip like
+  // every other active filter (previously it was invisible here, which
+  // also kept it out of the FacetRail active count).
+  | { kind: "affiliation" };
 
 /**
  * Encode a structured chip key as a string for the shared `FilterChips`
@@ -66,16 +71,23 @@ function decodeChipKey(encoded: string): ChipKey | null {
     case "language":
     case "search":
     case "sort":
+    case "affiliation":
       return { kind: encoded };
     default:
       return null;
   }
 }
 
+const AFFILIATION_LABEL: Record<string, string> = {
+  independent: "Independent",
+  agency: "Agency / Org",
+};
+
 const SORT_LABELS: Record<string, string> = {
+  nameAsc: "Name (A-Z)",
   nameDesc: "Name (Z-A)",
   reviewCount: "Most Reviews",
-  rating: "Highest Rating",
+  rating: "Recommended",
   trending: "Trending",
   newest: "Newest",
 };
@@ -184,7 +196,15 @@ export function useExpertFilterChips(
       });
     }
 
-    if (filters.sort !== "nameAsc") {
+    if (filters.affiliationType) {
+      out.push({
+        key: encodeChipKey({ kind: "affiliation" }),
+        label: "Type",
+        value: AFFILIATION_LABEL[filters.affiliationType] ?? filters.affiliationType,
+      });
+    }
+
+    if (filters.sort !== "rating") {
       out.push({
         key: encodeChipKey({ kind: "sort" }),
         label: "Sort",
@@ -233,7 +253,10 @@ export function useExpertFilterChips(
           updateFilters({ search: "" });
           return;
         case "sort":
-          updateFilters({ sort: "nameAsc" });
+          updateFilters({ sort: "rating" });
+          return;
+        case "affiliation":
+          updateFilters({ affiliationType: null });
           return;
       }
     },

@@ -39,7 +39,7 @@ async function getViewerOrgs(): Promise<Record<string, string>> {
 export const dynamic = "force-dynamic";
 
 /**
- * Server-fetch the trending / newest curated rows, the topic list, and the
+ * Server-fetch the trending curated rows, the topic list, and the
  * stats counts in parallel. The interactive client component receives them
  * as props and uses them as `initialData` for its React Query hooks, so the
  * first paint after navigation doesn't wait on a client fetch.
@@ -51,23 +51,16 @@ export const dynamic = "force-dynamic";
 export default async function ExplorePrograms() {
   // Degrade gracefully: a heavy curated read that times out (cold query brushing
   // the pg query budget) renders an empty row instead of erroring the whole page.
-  const [
-    trendingPrograms,
-    newestPrograms,
-    topicsWithCount,
-    stats,
-    viewerOrgs,
-    levels,
-  ] = await Promise.all([
-    getCuratedPrograms("all", "trending", 8).catch(
-      emptyOnTransientDbError("trending programs", { perRequest: true }),
-    ),
-    getCuratedPrograms("all", "newest", 8).catch(
-      emptyOnTransientDbError("newest programs", { perRequest: true }),
-    ),
-    getTopicsWithCount("all").catch(
-      emptyOnTransientDbError("topics", { perRequest: true }),
-    ),
+  // No "newest" read: the Newly Added rail was removed (Newest lives on as a
+  // Sort option), so one curated query per page load is saved.
+  const [trendingPrograms, topicsWithCount, stats, viewerOrgs, levels] =
+    await Promise.all([
+      getCuratedPrograms("all", "trending", 8).catch(
+        emptyOnTransientDbError("trending programs", { perRequest: true }),
+      ),
+      getTopicsWithCount("all").catch(
+        emptyOnTransientDbError("topics", { perRequest: true }),
+      ),
     // #1490 — `null` now means "show no numbers", not "show the marketing
     // numbers": there are no placeholder figures left to fall back to. Routed
     // through the helper rather than a local catch so a real defect surfaces.
@@ -91,7 +84,6 @@ export default async function ExplorePrograms() {
   return (
     <ProgramsInteractiveContent
       initialTrending={trendingPrograms}
-      initialNewest={newestPrograms}
       initialTopics={topicsWithCount}
       initialStats={stats}
       viewerOrgs={viewerOrgs}

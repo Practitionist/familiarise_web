@@ -124,12 +124,23 @@ export default function ExpertsInteractiveContent({
             viewport={{ once: true }}
             transition={{ duration: 0.5, delay: 0.05 }}
           >
-            <div className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border">
+            {/* Affiliation filter: All | Independent | Agency/Org. This
+                segmented control writes `filters.affiliationType`, so it is
+                part of the filter system — the active value also surfaces
+                as a removable "Type" chip via useExpertFilterChips and
+                counts toward the FacetRail active count. */}
+            <div
+              className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border"
+              role="group"
+              aria-label="Filter by affiliation"
+            >
               {AFFILIATION_TABS.map(({ value, label, icon: Icon }) => {
                 const isActive = filters.affiliationType === value;
                 return (
                   <button
                     key={String(value)}
+                    type="button"
+                    aria-pressed={isActive}
                     onClick={() => updateFilters({ affiliationType: value })}
                     className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
                       isActive

@@ -99,12 +99,12 @@ function SearchBarImpl({
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="nameAsc">Name (A-Z)</SelectItem>
-            <SelectItem value="nameDesc">Name (Z-A)</SelectItem>
+            <SelectItem value="rating">Recommended</SelectItem>
             <SelectItem value="reviewCount">Most Reviews</SelectItem>
-            <SelectItem value="rating">Highest Rating</SelectItem>
             <SelectItem value="trending">Trending</SelectItem>
             <SelectItem value="newest">Newest</SelectItem>
+            <SelectItem value="nameAsc">Name (A-Z)</SelectItem>
+            <SelectItem value="nameDesc">Name (Z-A)</SelectItem>
           </SelectContent>
         </Select>
       </div>

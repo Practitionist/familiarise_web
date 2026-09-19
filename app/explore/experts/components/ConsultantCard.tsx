@@ -202,9 +202,28 @@ export const ConsultantCard = memo(function ConsultantCard({
     return base;
   });
 
+  // List headline price: the cheapest plan across durations. The card keeps
+  // the full tabbed breakdown, but scanners get a single "From ₹X" anchor
+  // plus the trial signal without opening every tab.
+  const fromPrice =
+    sortedPlans.length > 0
+      ? Math.min(...sortedPlans.map((plan) => plan.price))
+      : null;
+  // Primary booking action prefers the trial when one exists (free or
+  // priced) — it is the lowest-friction conversion. Falls back to booking.
+  const primaryBookHref = trialOffer
+    ? `${profileHref}?action=trial`
+    : `${profileHref}?action=book`;
+  const primaryBookLabel =
+    trialOffer && trialOffer.priceInPaise === 0
+      ? "Book Free Intro"
+      : trialOffer
+        ? "Book Trial"
+        : "Book Session";
+
   return (
     <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
-      <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
+      <div className="p-5 md:p-6 flex flex-col lg:flex-row gap-6 lg:gap-8">
         {/* Left Section: Consultant Info. Uses a stretched overlay <Link>
             (absolute inset-0) instead of wrapping the whole section, so the
             nested org-badge link stays valid HTML (no <a> inside <a>) while
@@ -386,6 +405,19 @@ export const ConsultantCard = memo(function ConsultantCard({
 
         {/* Right Section: Subscription Plans & Actions */}
         <div className="flex-shrink-0 lg:w-[380px] xl:w-[420px] space-y-4">
+          {fromPrice !== null && (
+            <p className="text-sm text-muted-foreground" aria-live="polite">
+              <span className="font-semibold text-foreground">
+                From {formatPrice(fromPrice)}
+              </span>{" "}
+              / month
+              {trialOffer
+                ? trialOffer.priceInPaise > 0
+                  ? ` · Trial ${formatPrice(trialOffer.priceInPaise)}`
+                  : " · Free intro"
+                : null}
+            </p>
+          )}
           <div className="bg-muted rounded-xl p-4">
             {sortedPlans.length > 0 ? (
               <Tabs defaultValue={sortedPlans[0].id} className="w-full">
@@ -419,42 +451,26 @@ export const ConsultantCard = memo(function ConsultantCard({
             )}
           </div>
 
-          {/* Action Buttons — wrapped in <Link> via Button asChild so the
+          {/* Action Buttons — booking is primary (trial preferred), profile
+              is secondary. Wrapped in <Link> via Button asChild so the
               browser context menu offers "Open in new tab" / "Copy link". */}
           <div className="flex flex-col gap-2">
             <Button
               asChild
               className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
             >
-              <Link href={profileHref}>
-                <span>View Profile</span>
+              <Link href={primaryBookHref}>
+                <span>{primaryBookLabel}</span>
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Button>
-            <div
-              className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
+            <Button
+              asChild
+              variant="outline"
+              className="w-full h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
             >
-              {trialOffer && (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
-                >
-                  <Link href={`${profileHref}?action=trial`}>
-                    {trialOffer.priceInPaise > 0
-                      ? `Trial · ${formatPrice(trialOffer.priceInPaise)}`
-                      : "Free intro call"}
-                  </Link>
-                </Button>
-              )}
-              <Button
-                asChild
-                variant="outline"
-                className="h-10 border-border hover:bg-muted text-muted-foreground rounded-xl text-sm font-medium"
-              >
-                <Link href={`${profileHref}?action=book`}>Book Session</Link>
-              </Button>
-            </div>
+              <Link href={profileHref}>View Profile</Link>
+            </Button>
           </div>
         </div>
       </div>

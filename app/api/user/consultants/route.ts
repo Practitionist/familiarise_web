@@ -28,7 +28,9 @@ export async function GET(request: NextRequest) {
     Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
     100,
   );
-  const sort = searchParams.get("sort") || "nameAsc";
+  // Default matches the explore UI default ("Recommended" = rating): an
+  // absent sort must not silently revert the landing to Name A-Z.
+  const sort = searchParams.get("sort") || "rating";
 
   try {
     const domain = searchParams.get("domain");

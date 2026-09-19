@@ -7,7 +7,6 @@ import {
   GraduationCap,
   Video,
   Users,
-  Sparkles,
   type LucideIcon,
 } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
@@ -27,6 +26,7 @@ import {
 } from "./hooks";
 import ProgramTabs from "./components/ProgramTabs";
 import SectionHeader from "./components/SectionHeader";
+import ExploreHero from "@/app/explore/components/ExploreHero";
 import AdvancedFilters from "./components/AdvancedFilters";
 import FilterChips from "./components/FilterChips";
 import StaticTopRows from "./components/StaticTopRows";
@@ -40,7 +40,6 @@ interface ProgramStats {
 
 interface ProgramsInteractiveContentProps {
   initialTrending: Program[];
-  initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
   /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
@@ -62,7 +61,6 @@ const PROGRAM_STAT_ICONS: Record<ProgramStatKey, LucideIcon> = {
 
 export default function ProgramsInteractiveContent({
   initialTrending,
-  initialNewest,
   initialTopics,
   initialStats,
   viewerOrgs = {},
@@ -111,12 +109,9 @@ export default function ProgramsInteractiveContent({
       programType === "all" ? initialTrending : undefined,
     );
 
-  const { programs: newPrograms, isLoading: newLoading } = useCuratedPrograms(
-    programType,
-    "newest",
-    8,
-    programType === "all" ? initialNewest : undefined,
-  );
+  // No "newest" curated row: the Newly Added rail was removed (Newest lives
+  // on as a Sort option in the All Programs filter bar), so this query —
+  // and the RSC read behind its initialData — no longer runs.
 
   const { topics: topicsWithCount, isLoading: topicsLoading } =
     useTopicsWithCount(
@@ -182,68 +177,21 @@ export default function ProgramsInteractiveContent({
 
   return (
     <main className="min-h-screen bg-background">
-      {/* Hero Section */}
-      <section className="relative pt-32 pb-20 bg-zinc-950 overflow-hidden">
-        <div className="absolute inset-0">
-          <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] bg-zinc-800/30 rounded-full blur-[120px] animate-blob" />
-          <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] bg-zinc-700/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
-        </div>
-        <div className="absolute inset-0 grid-pattern opacity-20" />
-
-        <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 relative z-10">
-          <motion.div
-            className="max-w-4xl mx-auto text-center"
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-          >
-            <div className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800/50 backdrop-blur-sm border border-zinc-700/50 rounded-full mb-8">
-              <Sparkles className="w-4 h-4 text-white" />
-              <span className="text-sm font-medium text-zinc-300">
-                Learn from the Best
-              </span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6">
-              Classes & <span className="silver-text">Webinars</span>
-            </h1>
-
-            <p className="text-lg md:text-xl text-zinc-400 mb-12 max-w-2xl mx-auto">
-              Expand your knowledge with expert-led classes and live webinars.
-              Learn at your own pace or join interactive sessions.
-            </p>
-
-            {stats.length > 0 ? (
-              <div className="flex flex-wrap justify-center gap-8 md:gap-16">
-                {stats.map((stat, index) => {
-                  const Icon = PROGRAM_STAT_ICONS[stat.key];
-                  return (
-                    <motion.div
-                      key={stat.key}
-                      className="text-center"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: 0.2 + index * 0.1 }}
-                    >
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl bg-zinc-800/50 border border-zinc-700/50 flex items-center justify-center">
-                        <Icon className="w-6 h-6 text-white" />
-                      </div>
-                      <div className="text-2xl md:text-3xl font-bold text-white">
-                        {stat.display}
-                      </div>
-                      <div className="text-sm text-zinc-500">{stat.label}</div>
-                    </motion.div>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-sm text-zinc-500">
-                Check back for new classes and webinars.
-              </p>
-            )}
-          </motion.div>
-        </div>
-      </section>
+      {/* Shared explore hero: same geometry as experts / organisations. */}
+      <ExploreHero
+        eyebrow="Learn from the Best"
+        title={
+          <>
+            Classes & <span className="silver-text">Webinars</span>
+          </>
+        }
+        description="Expand your knowledge with expert-led classes and live webinars. Learn at your own pace or join interactive sessions."
+        stats={stats.map((stat) => ({
+          ...stat,
+          icon: PROGRAM_STAT_ICONS[stat.key],
+        }))}
+        emptyStatsCopy="Check back for new classes and webinars."
+      />
 
       {/* Content Section */}
       <section className="py-10 md:py-16">
@@ -258,11 +206,8 @@ export default function ProgramsInteractiveContent({
 
           <StaticTopRows
             featuredPrograms={featuredPrograms}
-            trendingPrograms={trendingPrograms}
-            newPrograms={newPrograms}
             topics={topicsWithCount}
             trendingLoading={trendingLoading}
-            newLoading={newLoading}
             topicsLoading={topicsLoading}
             onTopicSelect={handleTopicSelect}
           />

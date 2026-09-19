@@ -28,8 +28,13 @@ export default function OrgCard({
       href={`/explore/enterprise/organisations/${org.slug}`}
       className="group flex flex-col overflow-hidden rounded-2xl border border-border bg-card transition-all duration-300 hover:shadow-lg"
     >
-      <div className="relative h-24 overflow-hidden bg-gradient-to-br from-muted to-muted">
-        {org.bannerImage && (
+      {/* Bannerless by default: the old always-rendered h-24 gradient read
+          as a broken/unbranded slot for every org without a cover. Only
+          render the cover slot when a real banner image exists; otherwise
+          a hairline keeps the card edge clean and the logo row sits inline
+          (no -mt-10 overlap). */}
+      {org.bannerImage ? (
+        <div className="relative h-24 overflow-hidden bg-muted">
           <Image
             src={org.bannerImage}
             alt=""
@@ -37,12 +42,16 @@ export default function OrgCard({
             sizes="(min-width: 1280px) 33vw, (min-width: 640px) 50vw, 100vw"
             className="object-cover opacity-60"
           />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20" />
-      </div>
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/20" />
+        </div>
+      ) : (
+        <div className="h-1.5 bg-muted" aria-hidden />
+      )}
 
       <div className="flex flex-1 flex-col gap-3 p-5">
-        <div className="relative -mt-10 flex items-center gap-3">
+        <div
+          className={`flex items-center gap-3 ${org.bannerImage ? "relative -mt-10" : ""}`}
+        >
           <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center overflow-hidden rounded-xl border-2 border-card bg-card shadow-md">
             {org.logo ? (
               <Image
@@ -56,9 +65,12 @@ export default function OrgCard({
               <Building2 className="h-7 w-7 text-muted-foreground/70" />
             )}
           </div>
-          <div className="min-w-0 pt-8">
+          {/* pt-8 only clears the -mt-10 logo overlap when a banner exists. */}
+          <div className={`min-w-0 ${org.bannerImage ? "pt-8" : ""}`}>
             <h3 className="flex items-center gap-1 truncate font-bold text-foreground transition-colors group-hover:text-muted-foreground">
-              <span className="truncate">{org.name}</span>
+              <span className="truncate" title={org.name}>
+                {org.name}
+              </span>
               {org.isVerified && (
                 <BadgeCheck
                   className="h-4 w-4 flex-shrink-0 text-foreground"
@@ -124,11 +136,11 @@ export default function OrgCard({
 export function OrgCardSkeleton() {
   return (
     <div className="flex animate-pulse flex-col overflow-hidden rounded-2xl border border-border bg-card">
-      <div className="h-24 bg-muted" />
+      <div className="h-1.5 bg-muted" />
       <div className="flex flex-col gap-3 p-5">
-        <div className="-mt-10 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <div className="h-14 w-14 rounded-xl bg-muted" />
-          <div className="flex flex-col gap-1 pt-8">
+          <div className="flex flex-col gap-1">
             <div className="h-4 w-28 rounded bg-muted" />
             <div className="h-3 w-20 rounded bg-muted" />
           </div>
