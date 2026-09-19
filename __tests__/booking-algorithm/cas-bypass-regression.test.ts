@@ -64,6 +64,10 @@ describe("sweeps cancel only from a cancellable state", () => {
     for (const file of [
       "scripts/appointments/cleanup-stale-pending-consultations.ts",
       "app/api/cleanup/stale-pending-consultations/route.ts",
+      // The scheduled entry points too: a reintroduced wrapper or workflow
+      // would re-arm the retired sweep without either file above.
+      "jobs/appointments/cleanup-stale-pending-consultations.ts",
+      ".github/workflows/cleanup-stale-pending-consultations.yml",
     ]) {
       expect(fs.existsSync(path.join(process.cwd(), file))).toBe(false);
     }
