@@ -12,12 +12,14 @@ import {
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { readLapsedPayLinks } from "@/lib/data/lapsed-pay-links";
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
  * Fetch pending payments for this consultee from two sources:
  * 1. Consultations/subscriptions with APPROVED_PENDING_PAYMENT status (awaiting checkout)
  * 2. Payment records with paymentStatus PENDING (checkout initiated, awaiting gateway confirmation)
+ * Alongside, `lapsedPayLinks`: requests whose pay-link lapsed in the last 7 d (#1675).
  */
 export async function GET(
   request: Request,
@@ -93,6 +95,7 @@ export async function GET(
       pendingSubscriptions,
       pendingGatewayPayments,
       pendingTrials,
+      lapsedPayLinks,
     ] = await Promise.all([
       // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
       prisma.consultation.findMany({
@@ -212,6 +215,10 @@ export async function GET(
         },
         orderBy: { updatedAt: "desc" },
       }),
+
+      // #1675 — the rows the D2 filter below drops once the link lapses,
+      // shown as "expired, request again" instead of vanishing.
+      readLapsedPayLinks(consulteeId),
     ]);
 
     // Transform approval-pending consultations
@@ -377,6 +384,7 @@ export async function GET(
     return NextResponse.json({
       pendingPayments,
       count: pendingPayments.length,
+      lapsedPayLinks,
     });
   } catch (error) {
     Sentry.captureException(
@@ -389,6 +397,7 @@ export async function GET(
         error: "An error occurred while fetching pending payments",
         pendingPayments: [],
         count: 0,
+        lapsedPayLinks: [],
       },
       { status: 500 },
     );

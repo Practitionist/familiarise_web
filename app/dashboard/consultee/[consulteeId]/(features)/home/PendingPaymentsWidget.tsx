@@ -29,6 +29,8 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
+import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 
 interface PendingPayment {
   id: string;
@@ -49,6 +51,31 @@ interface PendingPayment {
    * not the consultation/subscription row that `id` refers to.
    */
   appointmentId?: string | null;
+}
+
+/**
+ * The route's whole payload. HomeTab shares this query key, so both readers
+ * must return the same shape (#1675 added the lapsed rows next to the list).
+ */
+export interface PendingPaymentsPayload {
+  pendingPayments: PendingPayment[];
+  lapsedPayLinks: LapsedPayLink[];
+}
+
+export async function fetchPendingPayments(
+  consulteeId: string,
+): Promise<PendingPaymentsPayload> {
+  const response = await fetch(
+    `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch pending payments");
+  }
+  const data = await response.json();
+  return {
+    pendingPayments: data.pendingPayments || [],
+    lapsedPayLinks: data.lapsedPayLinks || [],
+  };
 }
 
 type PendingCancelTarget =
@@ -81,26 +108,19 @@ export function PendingPaymentsWidget({
   // when the refetch should fire. The global refetchOnWindowFocus is false, so
   // this query opts back in explicitly.
   const {
-    data: pendingPayments = [],
+    data: payload,
     isLoading: loading,
     error: queryError,
   } = useQuery({
     queryKey: ["pending-payments", consulteeId],
-    queryFn: async (): Promise<PendingPayment[]> => {
-      const response = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch pending payments");
-      }
-      const data = await response.json();
-      return data.pendingPayments || [];
-    },
+    queryFn: () => fetchPendingPayments(consulteeId),
     // No interval: focus alone covers this. Someone waiting on a payment
     // comes back to the tab, which is exactly when the refetch fires.
     refetchOnWindowFocus: true,
     staleTime: 30 * 1000,
   });
+  const pendingPayments = payload?.pendingPayments ?? [];
+  const lapsedPayLinks = payload?.lapsedPayLinks ?? [];
   const error = queryError
     ? queryError instanceof Error
       ? queryError.message
@@ -155,9 +175,7 @@ export function PendingPaymentsWidget({
           { method: "POST", headers: { "Content-Type": "application/json" } },
         );
         if (response.status === 409) {
-          setCancelNotice(
-            "This booking already changed state — refreshing.",
-          );
+          setCancelNotice("This booking already changed state — refreshing.");
         } else if (!response.ok) {
           const data = await response.json().catch(() => null);
           // A 5xx with no sentence is a timeout or crash: the cancel may
@@ -236,6 +254,16 @@ export function PendingPaymentsWidget({
     );
   }
 
+  // #1675 — a lapsed link is not a pending payment, so it never turns the
+  // card amber or joins the count; it sits under the list as a muted row.
+  const lapsedSection = lapsedPayLinks.length > 0 && (
+    <div className="divide-y divide-border">
+      {lapsedPayLinks.map((link) => (
+        <LapsedPayLinkRow key={link.id} link={link} />
+      ))}
+    </div>
+  );
+
   // Empty state
   if (pendingPayments.length === 0) {
     return (
@@ -246,15 +274,17 @@ export function PendingPaymentsWidget({
             Pending Payments
           </h3>
         </div>
-        <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
-          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
-            <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+        {lapsedSection || (
+          <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
+            <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+              <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+            </div>
+            <p className="text-sm text-muted-foreground">No pending payments</p>
+            <p className="text-xs text-muted-foreground/70 mt-0.5">
+              You&apos;re all caught up!
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">No pending payments</p>
-          <p className="text-xs text-muted-foreground/70 mt-0.5">
-            You&apos;re all caught up!
-          </p>
-        </div>
+        )}
       </div>
     );
   }
@@ -431,6 +461,9 @@ export function PendingPaymentsWidget({
           );
         })}
       </div>
+      {lapsedSection && (
+        <div className="border-t border-amber-100">{lapsedSection}</div>
+      )}
       {pendingPayments.length > 1 && (
         <div className="px-5 py-3 border-t border-amber-100">
           <Button
