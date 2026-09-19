@@ -54,10 +54,13 @@ const paymentEventPayloadSchema = z.object({
   }),
 });
 
+// #1582 F-P0-01 — `order.paid` ships `payload.payment.entity` too; declaring
+// it stops Zod stripping the `pay_*` id the org branch needs to mark PAID.
 const orderEventPayloadSchema = z.object({
   order: z.object({
     entity: razorpayOrderEntitySchema,
   }),
+  payment: z.object({ entity: razorpayPaymentEntitySchema }).optional(),
 });
 
 // Combined event schemas
