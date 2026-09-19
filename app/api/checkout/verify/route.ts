@@ -95,7 +95,20 @@ async function deriveBookingState(
     },
     "CONSULTEE",
   );
-  if (!presentation.settled) return null;
+  // #1763 — a terminal outcome (refund underway/done, or the booking itself
+  // died) must answer even while unsettled, or the success page polls forever.
+  const moneyTerminal: MoneyStateKind[] = ["REFUND_PENDING", "REFUNDED"];
+  const bookingTerminal: BookingStateKind[] = [
+    "CANCELLED",
+    "DECLINED",
+    "PAYMENT_LAPSED",
+  ];
+  if (
+    !presentation.settled &&
+    !moneyTerminal.includes(presentation.moneyState.state) &&
+    !bookingTerminal.includes(presentation.bookingState.state)
+  )
+    return null;
   return {
     bookingState: presentation.bookingState.state,
     moneyState: presentation.moneyState.state,

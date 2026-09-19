@@ -155,6 +155,29 @@ describe("checkout-success terminal states", () => {
     expect(container.textContent).not.toContain("on its way");
   });
 
+  // #1763 — REFUND_PENDING is terminal even while the pipeline is unsettled;
+  // the verify route now answers it, so this must not sit on "confirming".
+  it("renders the refund copy for an unsettled REFUND_PENDING answer", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      verifyAnswer(200, {
+        appointmentType: "CONSULTATION",
+        status: "SUCCEEDED",
+        bookingState: "CANCELLED",
+        moneyState: "REFUND_PENDING",
+      }),
+    ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+
+    expect(container.textContent).toContain("refund on its way");
+    expect(
+      container.querySelector('[data-testid="checkout-still-confirming"]'),
+    ).toBeNull();
+  });
+
   // qa-1752 — the session lookup's replica-lag 503 (Retry-After) must be
   // waited out like a 429, never routed to the failure page.
   it("keeps polling on a 503 with Retry-After instead of routing to failure", async () => {

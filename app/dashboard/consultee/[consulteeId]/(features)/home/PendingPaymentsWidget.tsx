@@ -361,8 +361,16 @@ export function PendingPaymentsWidget({
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
           const { bookingState, nextAction } = rowPresentation(payment);
+          // #1763 — `nextAction.label` runs its own `money()` helper, so an
+          // INR row diverged from the row's own `formatPrice` amount above.
+          const isNonInr =
+            payment.currency && payment.currency.toUpperCase() !== "INR";
           const payLabel =
-            nextAction.kind === "PAY" ? nextAction.label : "Pay now";
+            nextAction.kind !== "PAY"
+              ? "Pay now"
+              : isNonInr
+                ? nextAction.label
+                : formatPrice(payment.amount);
 
           return (
             <div key={payment.id} className="px-5 py-3.5">
