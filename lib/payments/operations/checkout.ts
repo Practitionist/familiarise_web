@@ -3877,7 +3877,8 @@ export async function handleCheckout(
                   ? after - amount
                   : after - utilizationResult.engagementsConsumedDelta;
                 if (
-                  capAfter != null &&
+                  capAfter !== null &&
+                  capAfter !== undefined &&
                   capAfter > 0 &&
                   before * 5 < capAfter * 4 &&
                   after * 5 >= capAfter * 4
@@ -4291,7 +4292,14 @@ export async function handleCheckout(
       // code: "PROGRAM_CAP_EXHAUSTED" on its 402, which this used to miss
       // entirely and report as a fault.
       const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
+      // #1583 C-P1-04 — the loser of two same-key checkouts; the route
+      // replays the winner, so this is a modelled race and must not be rewrapped.
+      const isIdempotencyKeyCollision =
+        dbError instanceof Prisma.PrismaClientKnownRequestError &&
+        dbError.code === "P2002" &&
+        String(dbError.meta?.target ?? "").includes("clientIdempotencyKey");
       const isModelledOutcome =
+        isIdempotencyKeyCollision ||
         dbError instanceof WalletFrozenError ||
         dbError instanceof ProgramAssignmentLimitError ||
         dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
@@ -4354,6 +4362,12 @@ export async function handleCheckout(
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
       if (dbError instanceof WalletFrozenError) {
+        throw dbError;
+      }
+
+      // #1583 C-P1-04 — the route's P2002 replay branch needs the Prisma error
+      // itself; wrapped, the loser answered 500 instead of the winner's response.
+      if (isIdempotencyKeyCollision) {
         throw dbError;
       }
 
@@ -4434,9 +4448,18 @@ export async function handleCheckout(
     const isBusinessRefusal = isBusinessErrorCode(
       (error as { code?: unknown } | null)?.code,
     );
+    // #1583 C-P1-04 — the same-key collision the inner catch let through.
+    const isKeyCollision =
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      String(error.meta?.target ?? "").includes("clientIdempotencyKey");
     reportSentryError(error, {
       subsystem: "payments",
-      expected: isModeledLockRace || isConsulteeDoubleBook || isBusinessRefusal,
+      expected:
+        isModeledLockRace ||
+        isConsulteeDoubleBook ||
+        isBusinessRefusal ||
+        isKeyCollision,
     });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {
