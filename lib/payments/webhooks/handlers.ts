@@ -1425,10 +1425,20 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
-    await tx.payment.update({
-      where: { id: payment.id },
+    // ADR 21 / #1582 B-P0-01 — CAS in WHERE: a `payment.failed` for attempt 1
+    // racing the capture of attempt 2 must not overwrite SUCCEEDED.
+    const { count } = await tx.payment.updateMany({
+      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
+    if (count === 0) {
+      reportSentryMessage("payment.failed lost the race to a capture", {
+        subsystem: "payments",
+        expected: true,
+        extra: { paymentIntentId },
+      });
+      return;
+    }
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
