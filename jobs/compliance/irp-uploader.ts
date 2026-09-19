@@ -37,6 +37,7 @@ import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "@/lib/observability/job-sentry";
 import { isValidGstin } from "@/lib/compliance/gst";
+import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
 
 // #703 — platform-side seller constants. GSTIN mirrors the invoice-PDF
 // route (PLATFORM_GSTIN); the rest are env-overridable for a future
@@ -56,9 +57,11 @@ const SELLER = (() => {
     address1: process.env.SUPPLIER_ADDR1 ?? "Koramangala 1st Block",
     location: process.env.SUPPLIER_LOCATION ?? "Bangalore",
     pincode: process.env.SUPPLIER_PINCODE ?? "560034",
-    stateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
   };
 })();
+
+/** The per-run seller identity: the validated GSTIN plus the state resolved from it (#1447). */
+type SellerIdentity = { gstin: string; stateCode: string };
 
 // #476 — entry-level cron lock, fail-closed: an IRN is a statutory object
 // registered with the government and cancellable only inside a 24-hour window,
@@ -81,7 +84,7 @@ export async function runIrpUploader(): Promise<{
  */
 function buildPayloadFor(
   candidate: Awaited<ReturnType<typeof fetchIrpCandidates>>[number],
-  sellerGstin: string,
+  seller: SellerIdentity,
 ) {
   return buildIrpPayload({
     invoice: {
@@ -104,7 +107,7 @@ function buildPayloadFor(
       stateCode: candidate.organization.taxInfo?.gstStateCode ?? null,
       hsnDefault: candidate.organization.taxInfo?.hsnDefault ?? "999293",
     },
-    seller: { ...SELLER, gstin: sellerGstin },
+    seller: { ...SELLER, ...seller },
   });
 }
 
@@ -164,9 +167,9 @@ async function fetchIrpCandidates(thirtyDaysAgo: Date) {
  */
 async function processIrpCandidate(
   candidate: Awaited<ReturnType<typeof fetchIrpCandidates>>[number],
-  sellerGstin: string,
+  seller: SellerIdentity,
 ): Promise<"processed" | "failed" | "skipped"> {
-  const mapped = buildPayloadFor(candidate, sellerGstin);
+  const mapped = buildPayloadFor(candidate, seller);
 
   if (!mapped.ok) {
     await prisma.organizationInvoice.update({
@@ -243,6 +246,15 @@ async function runIrpUploaderUnlocked(): Promise<{
     );
     return { processed: 0, failed: 0, skipped: 0 };
   }
+  // #1447 — GSTIN-first seller state; a GSTIN/env mismatch is the same ENV
+  // outage as a missing GSTIN, so the run is skipped and every row stays PENDING.
+  let seller: SellerIdentity;
+  try {
+    seller = { gstin: sellerGstin, stateCode: supplierStateCode() };
+  } catch (err) {
+    console.error(`[cron][irp-uploader] ${String(err)} — skipping run`);
+    return { processed: 0, failed: 0, skipped: 0 };
+  }
   // CR #1234 r5 — preflight the FULL provider configuration. generateIrn
   // marks rows FAILED on a missing CLEARTAX_* credential, so an auth outage
   // would burn all twelve retries per pending invoice and permanently fail
@@ -272,7 +284,7 @@ async function runIrpUploaderUnlocked(): Promise<{
   for (const candidate of candidates) {
     // CR #1234 r5 — per-candidate mapping/submission/state-update lives in
     // processIrpCandidate; this loop keeps only the aggregate counters.
-    const outcome = await processIrpCandidate(candidate, sellerGstin);
+    const outcome = await processIrpCandidate(candidate, seller);
     if (outcome === "processed") processed++;
     else if (outcome === "failed") failed++;
     else skipped++;

@@ -185,6 +185,29 @@ export function resolveSupplierStateCode(
   return { stateCode: fromGstin ?? fromEnv, mismatch: null };
 }
 
+/** #1447 — GSTIN and SUPPLIER_STATE_CODE disagree; the caller refuses, it never picks one. */
+export class SupplierStateMismatchError extends Error {
+  constructor(readonly mismatch: { fromGstin: string; fromEnv: string }) {
+    super(
+      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
+    );
+    this.name = "SupplierStateMismatchError";
+  }
+}
+
+/**
+ * #1447 — the platform's own numeric state for the org rails, GSTIN-first
+ * like the B2C mint; "29" is the historical default when neither source is set.
+ */
+export function supplierStateCode(): string {
+  const { stateCode, mismatch } = resolveSupplierStateCode(
+    getPlatformSupplier()?.gstin,
+    process.env.SUPPLIER_STATE_CODE,
+  );
+  if (mismatch) throw new SupplierStateMismatchError(mismatch);
+  return stateCode ?? "29";
+}
+
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
  *  to the organization on its own series and must never get a second document
  *  on the consumer series. */

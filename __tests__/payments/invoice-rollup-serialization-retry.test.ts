@@ -40,6 +40,16 @@ jest.mock("../../lib/maintenance-cron", () => ({
   abortIfMaintenance: jest.fn(),
 }));
 
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+}));
+
+jest.mock("../../lib/payments/billing/invoice-numbering", () => ({
+  generateOrgInvoiceNumber: jest
+    .fn()
+    .mockResolvedValue({ invoiceNumber: "ACME/26-27/1", fiscalYear: "26-27" }),
+}));
+
 import { Prisma } from "@prisma/client";
 import { rollupOrgInvoiceAccruals } from "@/lib/payments/billing/invoice-rollup";
 import { settleInvoiceAccruals } from "@/jobs/billing/settle-invoice-accruals";
@@ -114,5 +124,37 @@ describe("settleInvoiceAccruals — exhausted retries", () => {
     });
     // The contended org is skipped, not fatal: the next org is still invoiced.
     expect(r.invoicesCreated).toBe(1);
+  });
+});
+
+// #1447 — the rollup read SUPPLIER_STATE_CODE ?? "KA" while the B2C mint was
+// GSTIN-first; with only PLATFORM_GSTIN set the invoice must carry its state.
+describe("rollupOrgInvoiceAccruals — supplier state", () => {
+  const OLD_ENV = process.env;
+  afterAll(() => {
+    process.env = OLD_ENV;
+  });
+
+  it("writes the GSTIN's state when SUPPLIER_STATE_CODE is unset", async () => {
+    process.env = { ...OLD_ENV, PLATFORM_GSTIN: "29AAFCF1234Q1ZN" };
+    delete process.env.SUPPLIER_STATE_CODE;
+    const invoiceCreate = jest.fn().mockResolvedValue({ id: "inv_9" });
+    mockTransaction.mockImplementation(async (fn) =>
+      fn({
+        payment: {
+          findMany: async () => [
+            { id: "pay_1", legs: [{ amountPaise: 1000 }] },
+          ],
+          updateMany: async () => ({ count: 1 }),
+        },
+        organizationInvoice: { create: invoiceCreate },
+        invoiceLineItem: { findMany: async () => [] },
+        overageEvent: { findMany: async () => [] },
+      }),
+    );
+
+    await rollupOrgInvoiceAccruals({ organizationId: "org_1" });
+
+    expect(invoiceCreate.mock.calls[0][0].data.placeOfSupply).toBe("29");
   });
 });

@@ -19,6 +19,7 @@ import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
+import { supplierStateCode } from "./consumer-invoice";
 import { transitionOverage } from "./overage-transitions";
 
 export interface RollupResult {
@@ -64,6 +65,9 @@ export async function rollupOrgInvoiceAccruals(params: {
     },
   });
   if (!org?.billingAccountId) return EMPTY;
+
+  // #1447 — GSTIN-first supplier state; a mismatch throws before any tx opens.
+  const supplierState = supplierStateCode();
 
   // #1357 7.4 — orphaned overage events are collected in the tx and written
   // AFTER it commits. `recordSystemError` goes through the global client, so a
@@ -150,7 +154,7 @@ export async function rollupOrgInvoiceAccruals(params: {
 
         const gst = deriveGstBreakdown({
           subtotalPaise: subtotal,
-          supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
+          supplierStateCode: supplierState,
           buyerStateCode: org.taxInfo?.gstStateCode ?? null,
           buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
           hsnCode: org.taxInfo?.hsnDefault,
