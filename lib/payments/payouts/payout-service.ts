@@ -44,6 +44,7 @@ import {
   getCurrentFYCumulativePayments,
   getFYDateRange,
   getIndianFinancialYear,
+  getIndianFYQuarter,
   recordTDSDeduction,
   resolve194OTaxablePaise,
   TDS_THRESHOLD_PAISE,
@@ -1207,7 +1208,12 @@ export async function handlePayoutWebhook(
 
     // If completed, update earnings and consultant stats
     if (payoutStatus === PayoutStatus.COMPLETED) {
-      const financialYear = payout.tdsFinancialYear || getIndianFinancialYear();
+      // #1582 E-P0-02 — mirrors #1354 on the org rail: TDS is dated at PAYMENT,
+      // so year and quarter both come from the completion instant, never from
+      // the batch-time stamp (a March batch settling in April would file
+      // FY 2025-26 Q1). `tdsFinancialYear` stays the audit stamp of the batch.
+      const financialYear = getIndianFinancialYear();
+      const quarter = getIndianFYQuarter();
       const { start, end } = getFYDateRange(financialYear);
       const previousCompletedPayouts = await tx.consultantPayout.aggregate({
         where: {
@@ -1276,13 +1282,16 @@ export async function handlePayoutWebhook(
       }
 
       if (payout.tdsDeducted > 0 && payout.tdsRateAppliedBps) {
+        // Reversal rows (isReversal=true) belong to the refund cascade and must
+        // survive a FAILED → re-batched → COMPLETED rewrite (#1582 E-P0-02).
         await tx.tDSRecord.deleteMany({
-          where: { payoutId: payout.id },
+          where: { payoutId: payout.id, isReversal: false },
         });
 
         await recordTDSDeduction({
           consultantProfileId: payout.consultantProfileId,
           financialYear,
+          quarter,
           tdsDeducted: payout.tdsDeducted,
           tdsRateBps: payout.tdsRateAppliedBps,
           cumulativeAmountCredited: cumulativeCreditedPayments,

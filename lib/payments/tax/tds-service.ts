@@ -274,9 +274,11 @@ export async function recordTDSDeduction(params: {
   earningsId?: string;
   /** #776 — statutory section ("194O" for ECO consultant payouts) for 26Q audit. */
   tdsSection?: string;
+  /** #1582 E-P0-02 — quarter of the payment instant; defaults to "now". */
+  quarter?: number;
   db?: Tx | typeof prisma;
 }) {
-  const quarter = getIndianFYQuarter();
+  const quarter = params.quarter ?? getIndianFYQuarter();
 
   const db = params.db || prisma;
 
