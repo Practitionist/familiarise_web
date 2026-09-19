@@ -331,6 +331,19 @@ describe("withdrawRescheduleRequest", () => {
     expect(state.consultation?.status).toBe("APPROVED_PENDING_PAYMENT");
   });
 
+  it("treats a literal UNKNOWN pre-image as no origin", async () => {
+    // appendHistory writes "UNKNOWN" when its pre-read lost a race (A12).
+    seed({ origin: "UNKNOWN" });
+
+    await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(state.consultation?.status).toBe("APPROVED");
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the APPROVED restore and reports once when no origin row exists", async () => {
     seed({ origin: undefined });
     state.origin = undefined;

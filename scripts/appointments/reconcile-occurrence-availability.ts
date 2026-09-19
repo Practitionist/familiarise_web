@@ -429,18 +429,28 @@ async function detectDoubleBookings(): Promise<{
           doubleBookings.push(doubleBooking);
           // #1583 E-P0-06 — a durable row per finding, not a log line and a
           // 207 nobody reads; the run-level Sentry message follows below.
-          await recordSystemErrorSafe({
-            category: "BOOKING",
-            summary: `double-booking detected for consultant ${current.consultantProfileId}`,
-            err: new Error(
-              `Overlapping occurrences ${current.slot.id} / ${next.slot.id}`,
-            ),
-            context: {
-              consultantProfileId: current.consultantProfileId,
-              occurrenceIds: [current.slot.id, next.slot.id],
-              appointmentIds: doubleBooking.appointments,
-            },
+          // Keyed on the unordered occurrence pair (correlationId) so hourly
+          // re-runs do not pile up a row per run for the same conflict.
+          const pairKey = `double-booking:${[current.slot.id, next.slot.id].sort().join(":")}`;
+          const alreadyRecorded = await prisma.systemEvent.findFirst({
+            where: { correlationId: pairKey },
+            select: { id: true },
           });
+          if (!alreadyRecorded) {
+            await recordSystemErrorSafe({
+              category: "BOOKING",
+              summary: `double-booking detected for consultant ${current.consultantProfileId}`,
+              err: new Error(
+                `Overlapping occurrences ${current.slot.id} / ${next.slot.id}`,
+              ),
+              context: {
+                consultantProfileId: current.consultantProfileId,
+                occurrenceIds: [current.slot.id, next.slot.id],
+                appointmentIds: doubleBooking.appointments,
+              },
+              correlationId: pairKey,
+            });
+          }
 
           console.log(`\n🚨 DOUBLE BOOKING DETECTED:`);
           console.log(`   Consultant: ${current.consultantName}`);

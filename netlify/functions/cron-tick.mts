@@ -7,8 +7,8 @@
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
  * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
  * outbox relay every tick and the email outbox relay on every third tick,
- * and since #1583/#1589 five booking sweeps on every third tick) instead of
- * waiting on Actions. It never writes money state itself: every
+ * and since #1583/#1589 five booking sweeps on every third tick, two of them
+ * on the 20 s tier) instead of waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -130,6 +130,11 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "drain-notification-outbox": 20_000,
   // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
   "reconcile-orphaned-confirmations": 20_000,
+  // #1583 E-P0-04 — per-row outbox staging (reminders) and gateway refunds
+  // (stale requests) do not fit 6 s on a cold instance; the cron lock makes
+  // an overlap with the Actions run a 409, not a double run.
+  "appointment-reminders": 20_000,
+  "expire-stale-requests": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */

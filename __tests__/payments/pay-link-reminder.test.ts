@@ -294,6 +294,34 @@ describe("the 24 h expiry tells the consultee", () => {
       }),
     );
   });
+
+  it("skips a subscription whose CAS lost (paid or moved on) without a notice", async () => {
+    db.consultation.findMany.mockResolvedValue([]);
+    db.subscription.findMany.mockResolvedValue([
+      {
+        id: "sub_2",
+        requestedBy: { user: consultee },
+        subscriptionPlan: { title: "Plan", consultantProfile: consultantUser },
+        appointment: {
+          id: "apt_s2",
+          organizationId: null,
+          payment: [{ id: "pay_s2" }],
+          occurrences: [],
+        },
+      },
+    ]);
+    tx.subscription.findUnique.mockResolvedValue({
+      status: "APPROVED",
+      appointment: { id: "apt_s2", deletedAt: null },
+    });
+    tx.subscription.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await cleanupExpiredApprovalPendingPayments();
+    expect(result.cleanedCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(tx.payment.updateMany).not.toHaveBeenCalled();
+    expect(mockNotifyExpired).not.toHaveBeenCalled();
+  });
 });
 
 describe("a lapsed pay-link notifies once whichever pass claims it (#1724 QA)", () => {

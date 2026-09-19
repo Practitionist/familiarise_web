@@ -60,7 +60,10 @@ async function readRescheduleOrigin(
     orderBy: { createdAt: "desc" },
     select: { fromStatus: true },
   });
-  return origin?.fromStatus;
+  // appendHistory renders a lost pre-read as the literal "UNKNOWN" (A12); that
+  // is no origin either, so the fallback and its report fire for it too.
+  if (!origin || origin.fromStatus === "UNKNOWN") return undefined;
+  return origin.fromStatus;
 }
 
 /**

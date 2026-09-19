@@ -15,24 +15,28 @@
 import { PaymentGateway, PaymentStatus, TrialStatus } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import {
-  reportSentryError,
-  reportSentryMessage,
-} from "@/lib/observability/report";
+import { reportSentryError } from "@/lib/observability/report";
+import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+  withAppointmentLock,
+} from "@/utils/appointmentlock";
 
 /**
  * Persist a freshly minted pay-link only onto the trial that is still waiting
  * for one. Zero rows means the trial moved (cancelled by the sweep, paid, or a
- * concurrent mint won) between the mint and this write; the row is left alone
- * and the orphaned intent is reported so the sweep or a later re-mint
- * reconciles it. Never throws on the lost race.
+ * concurrent mint won) between the mint and this write; the orphaned order is
+ * then tombstoned and reported (reconcileOrphanedPayLink). Returns the link
+ * the consultee may use now, or null when the trial is no longer payable.
+ * Never throws on the lost race.
  */
 export async function persistTrialPayLink(args: {
   trialId: string;
   paymentIntentId: string;
   checkoutUrl: string;
-}): Promise<boolean> {
+}): Promise<string | null> {
   const res = await prisma.trial.updateMany({
     where: {
       id: args.trialId,
@@ -41,16 +45,14 @@ export async function persistTrialPayLink(args: {
     },
     data: { pendingPaymentUrl: args.checkoutUrl },
   });
-  if (res.count === 0) {
-    reportSentryMessage("PAY_LINK_ORPHANED", {
-      subsystem: "trials",
-      op: "trial-pay-link-persist",
-      expected: true,
-      extra: { trialId: args.trialId, paymentIntentId: args.paymentIntentId },
-    });
-    return false;
-  }
-  return true;
+  if (res.count === 1) return args.checkoutUrl;
+  const outcome = await reconcileOrphanedPayLink({
+    kind: "trial",
+    id: args.trialId,
+    paymentIntentId: args.paymentIntentId,
+    checkoutUrl: args.checkoutUrl,
+  });
+  return outcome.url;
 }
 
 export interface TrialPayLinkSubject {
@@ -98,47 +100,71 @@ export async function remintTrialPayLink(
   if (!needsTrialPayLinkRemint(trial)) return trial.pendingPaymentUrl;
   const slot = trial.appointment?.occurrences[0];
   if (!trial.appointment || !slot) return null;
+  const appointmentId = trial.appointment.id;
 
   try {
-    const now = new Date();
-    // The trial arm of createApprovalPaymentIntent resolves an existing row
-    // through Trial.paymentId, which is only set at capture (#1591 J4-P1-06),
-    // so the reuse read happens here, off the held appointment.
-    const live = await prisma.payment.findFirst({
-      where: {
-        appointmentId: trial.appointment.id,
-        userId: trial.consulteeProfile.userId,
-        paymentStatus: PaymentStatus.PENDING,
-        deletedAt: null,
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, paymentIntent: true },
-    });
+    // The appointment atom serialises two consultee reads racing here; it is
+    // ordered before the mint atom createApprovalPaymentIntent takes itself,
+    // so the mint is nested underneath exactly as on the accept path.
+    return await withAppointmentLock(appointmentId, async () => {
+      // Re-read inside the lock: the read that decided to re-mint may be stale.
+      const fresh = await prisma.trial.findUnique({
+        where: { id: trial.id },
+        select: { status: true, pendingPaymentUrl: true, paymentDueAt: true },
+      });
+      if (!fresh) return null;
+      if (!needsTrialPayLinkRemint(fresh)) return fresh.pendingPaymentUrl;
 
-    const intent = live
-      ? { paymentIntentId: live.paymentIntent, checkoutUrl: live.paymentIntent }
-      : await createApprovalPaymentIntent({
+      const now = new Date();
+      // The trial arm of createApprovalPaymentIntent resolves an existing row
+      // through Trial.paymentId, which is only set at capture (#1591 J4-P1-06),
+      // so the reuse read happens here, off the held appointment. Razorpay
+      // only: every trial mint in this codebase pins that gateway (#1165).
+      const live = await prisma.payment.findFirst({
+        where: {
+          appointmentId,
           userId: trial.consulteeProfile.userId,
-          appointmentType: "TRIAL",
-          trialId: trial.id,
-          appointmentId: trial.appointment.id,
-          planId: trial.subscriptionPlanId,
           paymentGateway: PaymentGateway.RAZORPAY,
-          startsAt: slot.startsAt.toISOString(),
-          endsAt: slot.endsAt.toISOString(),
-        });
+          paymentStatus: PaymentStatus.PENDING,
+          deletedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, paymentIntent: true },
+      });
 
-    const persisted = await persistTrialPayLink({
-      trialId: trial.id,
-      paymentIntentId: intent.paymentIntentId,
-      checkoutUrl: intent.checkoutUrl,
+      const intent = live
+        ? {
+            paymentIntentId: live.paymentIntent,
+            checkoutUrl: live.paymentIntent,
+          }
+        : await createApprovalPaymentIntent({
+            userId: trial.consulteeProfile.userId,
+            appointmentType: "TRIAL",
+            trialId: trial.id,
+            appointmentId,
+            planId: trial.subscriptionPlanId,
+            paymentGateway: PaymentGateway.RAZORPAY,
+            startsAt: slot.startsAt.toISOString(),
+            endsAt: slot.endsAt.toISOString(),
+          });
+
+      return persistTrialPayLink({
+        trialId: trial.id,
+        paymentIntentId: intent.paymentIntentId,
+        checkoutUrl: intent.checkoutUrl,
+      });
     });
-    return persisted ? intent.checkoutUrl : null;
   } catch (error) {
+    // Another mutation holds the appointment, or the lock service is down:
+    // the next read tries again; both are modelled, not faults.
+    const expected =
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError;
     reportSentryError(error, {
       subsystem: "trials",
       op: "trial-pay-link-remint",
+      expected,
       extra: { trialId: trial.id },
     });
     return null;

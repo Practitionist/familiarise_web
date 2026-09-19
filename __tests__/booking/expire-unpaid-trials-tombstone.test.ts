@@ -91,6 +91,31 @@ describe("expire-unpaid-trials tombstones the held call", () => {
     );
   });
 
+  it("isolates a failed tombstone and re-tombstones it from the repair cohort next run", async () => {
+    db.__tx.trial.updateMany.mockResolvedValue({ count: 1 });
+    softCancelTrialAppointment.mockRejectedValueOnce(new Error("pool busy"));
+
+    const first = await expireUnpaidTrials();
+    expect(first.success).toBe(true);
+    expect(first.trialsExpired).toBe(1);
+
+    // Next run: the AWAITING_PAYMENT cohort is empty, the repair cohort sees
+    // the CANCELLED trial whose appointment still has deletedAt null.
+    db.trial.findMany
+      .mockReset()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ id: "trial-1", appointmentId: "appt-1" }]);
+    softCancelTrialAppointment.mockResolvedValueOnce(undefined);
+
+    await expireUnpaidTrials();
+    expect(softCancelTrialAppointment).toHaveBeenLastCalledWith("appt-1");
+    expect(db.trial.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: { status: "CANCELLED", appointment: { deletedAt: null } },
+      }),
+    );
+  });
+
   it("touches nothing when the trial was paid or scheduled in between", async () => {
     db.__tx.trial.updateMany.mockResolvedValue({ count: 0 });
 

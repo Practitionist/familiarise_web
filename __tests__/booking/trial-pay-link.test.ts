@@ -27,9 +27,17 @@ jest.mock("../../lib/payments/operations/approval-payment", () => ({
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
-    trial: { updateMany: jest.fn() },
-    payment: { findFirst: jest.fn() },
+    trial: { updateMany: jest.fn(), findUnique: jest.fn() },
+    payment: { findFirst: jest.fn(), updateMany: jest.fn() },
   },
+}));
+
+// The re-mint serialises on the appointment atom; a pass-through here.
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
+  AppointmentBusyError: class extends Error {},
+  BookingLockUnavailableError: class extends Error {},
 }));
 
 import prisma from "../../lib/prisma";
@@ -39,8 +47,8 @@ import {
 } from "../../lib/trials/pay-link";
 
 const db = prisma as unknown as {
-  trial: { updateMany: jest.Mock };
-  payment: { findFirst: jest.Mock };
+  trial: { updateMany: jest.Mock; findUnique: jest.Mock };
+  payment: { findFirst: jest.Mock; updateMany: jest.Mock };
 };
 
 const IN_AN_HOUR = new Date(Date.now() + 60 * 60 * 1000);
@@ -63,20 +71,25 @@ function awaitingTrial() {
 beforeEach(() => {
   jest.clearAllMocks();
   db.trial.updateMany.mockResolvedValue({ count: 1 });
+  // The in-lock re-read: still waiting, no link, window open.
+  db.trial.findUnique.mockResolvedValue({
+    status: "AWAITING_PAYMENT",
+    pendingPaymentUrl: null,
+    paymentDueAt: IN_AN_HOUR,
+  });
   db.payment.findFirst.mockResolvedValue(null);
+  db.payment.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("persistTrialPayLink", () => {
-  it("writes only onto an AWAITING_PAYMENT trial with no link, and reports a lost race", async () => {
-    db.trial.updateMany.mockResolvedValueOnce({ count: 0 });
-
+  it("writes only onto an AWAITING_PAYMENT trial with no link", async () => {
     await expect(
       persistTrialPayLink({
         trialId: "trial-1",
         paymentIntentId: "order_1",
         checkoutUrl: "order_1",
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBe("order_1");
 
     expect(db.trial.updateMany).toHaveBeenCalledWith({
       where: {
@@ -86,13 +99,58 @@ describe("persistTrialPayLink", () => {
       },
       data: { pendingPaymentUrl: "order_1" },
     });
+    expect(db.payment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("on a lost race against the sweep: tombstones the order, reports, and returns null", async () => {
+    db.trial.updateMany.mockResolvedValueOnce({ count: 0 });
+    db.trial.findUnique.mockResolvedValueOnce({
+      status: "CANCELLED",
+      pendingPaymentUrl: null,
+    });
+
+    await expect(
+      persistTrialPayLink({
+        trialId: "trial-1",
+        paymentIntentId: "order_1",
+        checkoutUrl: "order_1",
+      }),
+    ).resolves.toBeNull();
+
+    // #1695 shape: the mint's own PENDING row flips to EXPIRED, expiresAt now.
+    expect(db.payment.updateMany).toHaveBeenCalledWith({
+      where: { paymentIntent: "order_1", paymentStatus: "PENDING" },
+      data: { paymentStatus: "EXPIRED", expiresAt: expect.any(Date) },
+    });
     expect(reportSentryMessage).toHaveBeenCalledWith(
       "PAY_LINK_ORPHANED",
       expect.objectContaining({
         expected: true,
-        extra: { trialId: "trial-1", paymentIntentId: "order_1" },
+        extra: expect.objectContaining({
+          trialId: "trial-1",
+          paymentIntentId: "order_1",
+        }),
       }),
     );
+  });
+
+  it("on a lost race against a sibling mint of the same order: nothing is orphaned", async () => {
+    db.trial.updateMany.mockResolvedValueOnce({ count: 0 });
+    db.trial.findUnique.mockResolvedValueOnce({
+      status: "AWAITING_PAYMENT",
+      pendingPaymentUrl: "order_1",
+    });
+
+    await expect(
+      persistTrialPayLink({
+        trialId: "trial-1",
+        paymentIntentId: "order_1",
+        checkoutUrl: "order_1",
+      }),
+    ).resolves.toBe("order_1");
+
+    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(reportSentryMessage).not.toHaveBeenCalled();
   });
 });
 
@@ -108,9 +166,29 @@ describe("remintTrialPayLink", () => {
     );
 
     expect(createApprovalPaymentIntent).not.toHaveBeenCalled();
+    expect(db.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ paymentGateway: "RAZORPAY" }),
+      }),
+    );
     expect(db.trial.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { pendingPaymentUrl: "order_live" } }),
     );
+  });
+
+  it("returns the link a sibling read minted moments earlier instead of minting again", async () => {
+    db.trial.findUnique.mockResolvedValueOnce({
+      status: "AWAITING_PAYMENT",
+      pendingPaymentUrl: "order_sibling",
+      paymentDueAt: IN_AN_HOUR,
+    });
+
+    await expect(remintTrialPayLink(awaitingTrial())).resolves.toBe(
+      "order_sibling",
+    );
+
+    expect(db.payment.findFirst).not.toHaveBeenCalled();
+    expect(createApprovalPaymentIntent).not.toHaveBeenCalled();
   });
 
   it("mints a new intent only when no live one exists", async () => {

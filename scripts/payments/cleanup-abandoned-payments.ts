@@ -946,9 +946,13 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
         occurrences: true,
       },
     } as const;
+    // One `limit` bounds the run, split across the two kinds; undefined
+    // (the Actions run) stays unbounded on both.
+    const perKind =
+      opts.limit === undefined ? undefined : Math.ceil(opts.limit / 2);
     const [expiredConsultations, expiredSubscriptions] = await Promise.all([
       prisma.consultation.findMany({
-        take: opts.limit,
+        take: perKind,
         // Oldest-first with an id tie-break: see findAbandonedAppointments above.
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         where: lapsedWhere,
@@ -960,7 +964,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
         },
       }),
       prisma.subscription.findMany({
-        take: opts.limit,
+        take: perKind,
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         where: lapsedWhere,
         include: {

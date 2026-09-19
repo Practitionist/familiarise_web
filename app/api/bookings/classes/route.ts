@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
+import { listDateFilterSchema } from "@/schemas/list-date-filter";
 import type { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -55,14 +56,11 @@ export async function GET(request: NextRequest) {
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
     // #1592 A-P1-04 — an unparsable date used to reach Prisma as Invalid Date
-    // and 500; refuse it as the caller's fault.
-    if (
-      (startDateStr && isNaN(new Date(startDateStr).getTime())) ||
-      (endDateStr && isNaN(new Date(endDateStr).getTime()))
-    ) {
+    // and 500; the ISO schema also refuses a real-looking 2026-02-30.
+    if (!listDateFilterSchema.safeParse({ startDateStr, endDateStr }).success) {
       return NextResponse.json(
         {
-          error: "startDate and endDate must be valid dates",
+          error: "startDate and endDate must be valid ISO 8601 date-times",
           code: "INVALID_DATE",
         },
         { status: 400 },

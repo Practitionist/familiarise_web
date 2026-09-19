@@ -121,9 +121,11 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
 
   // #1591 J4-P0-03 / #1583 A-P1-05 — the CAS win owns the held call: the
   // appointment/occurrence tombstone and the participants' CANCELLED ride
-  // it, in a second transaction AFTER this one commits (PG_POOL_MAX=1).
+  // it, in a second transaction AFTER this one commits (PG_POOL_MAX=1). A
+  // failure here is isolated: the trial is CANCELLED already, and the repair
+  // cohort below re-tombstones it on the next run.
   if (trial.appointmentId) {
-    await softCancelTrialAppointment(trial.appointmentId);
+    await tombstoneHeldCall(trial.id, trial.appointmentId);
   }
   // The same notice the interactive cancel path sends; never fatal.
   try {
@@ -145,6 +147,47 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
     });
   }
   return true;
+}
+
+async function tombstoneHeldCall(
+  trialId: string,
+  appointmentId: string,
+): Promise<boolean> {
+  try {
+    await softCancelTrialAppointment(appointmentId);
+    return true;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "expire-unpaid-trials-tombstone",
+      extra: { trialId, appointmentId },
+    });
+    return false;
+  }
+}
+
+/**
+ * A CANCELLED trial whose held call is still live: the tombstone step failed
+ * after the CAS committed, or the row predates #1591 J4-P0-03. The
+ * AWAITING_PAYMENT cohort never revisits it, so this bounded pass does.
+ */
+const REPAIR_BATCH_SIZE = 50;
+async function repairUntombstonedCancelledTrials(): Promise<number> {
+  const stale = await prisma.trial.findMany({
+    where: {
+      status: TrialStatus.CANCELLED,
+      appointment: { deletedAt: null },
+    },
+    orderBy: { updatedAt: "asc" },
+    take: REPAIR_BATCH_SIZE,
+    select: { id: true, appointmentId: true },
+  });
+  let repaired = 0;
+  for (const row of stale) {
+    if (!row.appointmentId) continue;
+    if (await tombstoneHeldCall(row.id, row.appointmentId)) repaired += 1;
+  }
+  return repaired;
 }
 
 async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
@@ -193,6 +236,9 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     }
 
     console.log(`   Trials expired: ${trialsExpired}`);
+
+    const repaired = await repairUntombstonedCancelledTrials();
+    if (repaired > 0) console.log(`   Held calls re-tombstoned: ${repaired}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);

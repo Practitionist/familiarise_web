@@ -682,10 +682,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 startsAt: startTime.toISOString(),
                 endsAt: endTime.toISOString(),
               });
-              paymentUrl = intent.checkoutUrl;
               // #1583 A-P0-06 — a CAS, not a bare update: a mint landing after
-              // the expiry sweep cancelled the trial must not re-arm the link.
-              await persistTrialPayLink({
+              // the expiry sweep cancelled the trial must not re-arm the link,
+              // and a link that did not land is never mailed (null = not payable).
+              paymentUrl = await persistTrialPayLink({
                 trialId,
                 paymentIntentId: intent.paymentIntentId,
                 checkoutUrl: intent.checkoutUrl,
