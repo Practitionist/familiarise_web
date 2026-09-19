@@ -149,17 +149,25 @@ export function useConsultantAppointmentsAdapter(
    * prefix for an offering with no `Appointment` row yet; a scheduled one
    * routes on the real appointment id. The timings page resolves either
    * shape itself (lib/data/manage-timings-target.ts).
+   *
+   * Pure href builder so the primary "Set schedule" action can render as a
+   * prefetching Link (PrimaryAction.href); the overflow menu items below
+   * still go through `openTimings` because OverflowItem only carries onClick.
    */
-  const openTimings = (vm: AppointmentVM) => {
+  const timingsHref = (vm: AppointmentVM): string | null => {
     const targetId =
       vm.id.startsWith("unscheduled-class-") ||
       vm.id.startsWith("unscheduled-webinar-")
         ? vm.id
         : vm.appointmentId;
-    if (!targetId) return;
-    router.push(
-      `/dashboard/consultant/${consultantId}/appointments/${targetId}/timings`,
-    );
+    if (!targetId) return null;
+    return `/dashboard/consultant/${consultantId}/appointments/${targetId}/timings`;
+  };
+
+  const openTimings = (vm: AppointmentVM) => {
+    const href = timingsHref(vm);
+    if (!href) return;
+    router.push(href);
   };
 
   const trialJoinable = (vm: AppointmentVM) => {
@@ -204,11 +212,14 @@ export function useConsultantAppointmentsAdapter(
 
   const primaryAction = (vm: AppointmentVM): PrimaryAction => {
     if (vm.needsActionReason === "UNSCHEDULED") {
-      return {
-        kind: "schedule",
-        label: "Set schedule",
-        onClick: () => openTimings(vm),
-      };
+      const href = timingsHref(vm);
+      if (href) {
+        return {
+          kind: "schedule",
+          label: "Set schedule",
+          href,
+        };
+      }
     }
     if (canJoinNow(vm)) {
       return {

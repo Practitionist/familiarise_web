@@ -40,6 +40,7 @@ import {
 } from "@/lib/pending-referral";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import React, {
   Suspense,
@@ -1205,9 +1206,9 @@ const MultiStepForm: React.FC = () => {
         {/* Help Text */}
         <p className="text-center text-sm text-muted-foreground mt-6">
           Need help?{" "}
-          <a href="/support" className="text-primary hover:underline">
+          <Link href="/support" className="text-primary hover:underline">
             Contact support
-          </a>
+          </Link>
         </p>
       </main>
     </div>

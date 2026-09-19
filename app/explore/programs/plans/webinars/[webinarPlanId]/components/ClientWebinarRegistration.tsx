@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useMemo } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
   Card,
@@ -46,6 +48,9 @@ export function ClientWebinarRegistration({
   consultantUserId,
 }: ClientWebinarRegistrationProps) {
   const { data: session } = useSession();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { formatPrice } = useCurrency();
 
   // Defer auth + timezone until after hydration to avoid mismatch
@@ -70,25 +75,35 @@ export function ClientWebinarRegistration({
   });
   const isFull = capacity.isFull;
 
-  const handleRegistration = () => {
-    // Only checkout-able when the session is upcoming, a webinar instance
-    // exists, and there's still room — a sold-out webinar falls back to the
-    // page so the visitor sees the sold-out state rather than a dead checkout.
-    const checkoutUrl =
+  // Only checkout-able when the session is upcoming, a webinar instance
+  // exists, and there's still room — a sold-out webinar falls back to the
+  // page so the visitor sees the sold-out state rather than a dead checkout.
+  // Hoisted so the register CTA can render as a prefetchable <Link> when
+  // truthy; the handler below stays as the router.push fallback.
+  const checkoutUrl = useMemo(
+    () =>
       sessionStatus === "Upcoming" && webinarId && !isFull
         ? `/checkout/plans/webinar/${webinarPlanId}?eventId=${webinarId}`
-        : null;
+        : null,
+    [sessionStatus, webinarId, isFull, webinarPlanId],
+  );
+
+  // Preserve the next step as a RELATIVE callbackUrl (the sign-in page drops
+  // absolute URLs) — checkout when registerable, else this page — so a
+  // first-timer lands there after auth + onboarding.
+  const signInHref = useMemo(() => {
+    const search = searchParams?.toString();
+    const returnTo = checkoutUrl ?? `${pathname}${search ? `?${search}` : ""}`;
+    return `/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`;
+  }, [checkoutUrl, pathname, searchParams]);
+
+  const handleRegistration = () => {
     if (!isLoggedIn) {
-      // Preserve the next step as a RELATIVE callbackUrl (the sign-in page drops
-      // absolute URLs) — checkout when registerable, else this page — so a
-      // first-timer lands there after auth + onboarding.
-      const returnTo =
-        checkoutUrl ?? window.location.pathname + window.location.search;
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`;
+      router.push(signInHref);
       return;
     }
     if (checkoutUrl) {
-      window.location.href = checkoutUrl;
+      router.push(checkoutUrl);
     }
   };
 
@@ -256,13 +271,24 @@ export function ClientWebinarRegistration({
         <p className="text-sm text-muted-foreground mb-4">{sessionInfoText}</p>
       </CardContent>
       <CardFooter>
-        <Button
-          onClick={handleRegistration}
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-          disabled={buttonDisabled}
-        >
-          {buttonText}
-        </Button>
+        {checkoutUrl && !buttonDisabled ? (
+          <Button
+            asChild
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+          >
+            <Link href={checkoutUrl} prefetch>
+              {buttonText}
+            </Link>
+          </Button>
+        ) : (
+          <Button
+            onClick={handleRegistration}
+            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            disabled={buttonDisabled}
+          >
+            {buttonText}
+          </Button>
+        )}
       </CardFooter>
     </Card>
   );

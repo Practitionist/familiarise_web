@@ -33,6 +33,8 @@ import { FormConfirmationDialog } from "./form-fields/FormConfirmationDialog";
 interface WebinarCarouselProps {
   events: PlannerWebinarEvent[];
   onEdit: (event: PlannerWebinarEvent) => void;
+  /** Prefetchable editor href resolver — null when the row has no id. */
+  getEditHref?: (id: string | undefined) => string | null;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "webinar";
   participantCounts: Record<string, number>;
@@ -46,6 +48,8 @@ interface WebinarCarouselProps {
 interface ClassCarouselProps {
   events: PlannerClassEvent[];
   onEdit: (event: PlannerClassEvent) => void;
+  /** Prefetchable editor href resolver — null when the row has no id. */
+  getEditHref?: (id: string | undefined) => string | null;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "class";
   participantCounts: Record<string, number>;
@@ -59,6 +63,8 @@ interface ClassCarouselProps {
 interface ConsultationCarouselProps {
   events: ConsultationPlanEvent[];
   onEdit: (event: ConsultationPlanEvent) => void;
+  /** Prefetchable editor href resolver — null when the row has no id. */
+  getEditHref?: (id: string | undefined) => string | null;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "consultation";
   participantCounts: Record<string, number>;
@@ -69,11 +75,15 @@ interface ConsultationCarouselProps {
 interface SubscriptionCarouselProps {
   events: SubscriptionPlanEvent[];
   onEdit: (event: SubscriptionPlanEvent) => void;
+  /** Prefetchable editor href resolver — null when the row has no id. */
+  getEditHref?: (id: string | undefined) => string | null;
   onDelete: (eventId: string) => Promise<void>;
   eventType: "subscription";
   participantCounts: Record<string, number>;
   pendingTrialCounts?: Record<string, number>;
   onTrialsClick?: () => void;
+  /** Prefetchable trials-tab href; falls back to onTrialsClick when absent. */
+  trialsHref?: string;
   onArchiveToggle?: (planId: string, archived: boolean) => void;
   archivingPlanId?: string | null;
 }
@@ -160,6 +170,13 @@ export function EventCarousel({
     eventType === "subscription"
       ? (props as SubscriptionCarouselProps).onTrialsClick
       : undefined;
+  const trialsHref =
+    eventType === "subscription"
+      ? (props as SubscriptionCarouselProps).trialsHref
+      : undefined;
+  const getEditHref = (
+    props as { getEditHref?: (id: string | undefined) => string | null }
+  ).getEditHref;
 
   // Extract join meeting props for webinar/class
   const onJoinMeeting =
@@ -180,8 +197,9 @@ export function EventCarousel({
       : eventType === "class"
         ? (props as ClassCarouselProps).joiningEventId
         : undefined;
-  const onArchiveToggle = (props as { onArchiveToggle?: (planId: string, archived: boolean) => void })
-    .onArchiveToggle;
+  const onArchiveToggle = (
+    props as { onArchiveToggle?: (planId: string, archived: boolean) => void }
+  ).onArchiveToggle;
   const archivingPlanId = (props as { archivingPlanId?: string | null })
     .archivingPlanId;
   const [currentPage, setCurrentPage] = React.useState(1);
@@ -244,7 +262,10 @@ export function EventCarousel({
       setShowDeleteDialog(false);
       setEventToDelete(null);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error(`Error deleting ${eventType}:`, error);
     } finally {
       setIsDeleting(false);
@@ -317,6 +338,8 @@ export function EventCarousel({
                   : undefined
               }
               onEdit={() => handleEdit(event)}
+              editHref={getEditHref ? getEditHref(event.id) : undefined}
+              trialsHref={trialsHref}
               onDelete={() => handleDeleteClick(event)}
               canManage={Boolean(event.id)}
               onTrialsClick={

@@ -19,7 +19,6 @@
  */
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   CreditCard,
@@ -68,7 +67,6 @@ interface FinanceLeadViewProps {
 }
 
 export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
-  const router = useRouter();
   const currency = data.capabilities.currency ?? "INR";
 
   const billingHref = `/dashboard/organization/${orgId}/billing`;
@@ -171,21 +169,33 @@ export function FinanceLeadViewCard({ orgId, data }: FinanceLeadViewProps) {
             stat.label === "Outstanding invoices" ||
             stat.label === "Wallet balance";
           const isOutstanding = stat.label === "Outstanding invoices";
+          // StatCard takes no href, so the prefetching Link wraps it instead
+          // of an onClick SPA-push. The past-due Link below stays a sibling,
+          // never nested inside this anchor.
+          const card = (
+            <StatCard
+              // StatCard names its primary text `title` (not `label`);
+              // we keep the local stat object's `.label` for symmetry
+              // with the CTA buttons below and just remap at render.
+              title={stat.label}
+              value={stat.value}
+              subtitle={stat.subtitle}
+              icon={stat.icon}
+              variant={isOutstanding && pastDueCount > 0 ? "danger" : "default"}
+            />
+          );
           return (
             <div key={stat.label}>
-              <StatCard
-                // StatCard names its primary text `title` (not `label`);
-                // we keep the local stat object's `.label` for symmetry
-                // with the CTA buttons below and just remap at render.
-                title={stat.label}
-                value={stat.value}
-                subtitle={stat.subtitle}
-                icon={stat.icon}
-                variant={
-                  isOutstanding && pastDueCount > 0 ? "danger" : "default"
-                }
-                onClick={deepLinks ? () => router.push(stat.href) : undefined}
-              />
+              {deepLinks ? (
+                <Link
+                  href={stat.href}
+                  className="block rounded-xl cursor-pointer"
+                >
+                  {card}
+                </Link>
+              ) : (
+                card
+              )}
               {/* Past-due needs more than a number — give the finance lead a
                   one-click jump to the invoices they have to chase. */}
               {isOutstanding && pastDueCount > 0 && (

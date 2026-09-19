@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -258,6 +259,7 @@ export function AppointmentDetailClient({
   joinWindowMs,
 }: AppointmentDetailClientProps) {
   const { data: session } = useSession();
+  const router = useRouter();
   const {
     data: detail,
     isLoading,
@@ -425,7 +427,8 @@ export function AppointmentDetailClient({
   const trialHref = trialCheckoutHref(vm);
   const openPendingPayment = () => {
     if (trialHref) {
-      window.location.href = trialHref;
+      // Internal checkout page — SPA navigation (was full reload).
+      router.push(trialHref);
       return;
     }
     if (vm.pendingPaymentUrl && /^https?:\/\//.test(vm.pendingPaymentUrl)) {

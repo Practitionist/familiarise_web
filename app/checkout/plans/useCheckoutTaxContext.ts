@@ -9,6 +9,14 @@ type CheckoutTaxContext = {
   exportZeroRated: boolean;
   /** #1365 — remembered GST billing state, used to pre-fill the picker. */
   billingStateCode: string | null;
+  /**
+   * Referral balance in paise, resolved server-side alongside the tax
+   * profile so pages don't fire a second round trip. `null` while loading
+   * AND when the credits read failed — the hook's `referralCreditsLoaded`
+   * flag disambiguates the two.
+   */
+  referralCreditsPaise: number | null;
+  referralCreditsLoaded: boolean;
 };
 
 const DEFAULT_CONTEXT: CheckoutTaxContext = {
@@ -16,6 +24,8 @@ const DEFAULT_CONTEXT: CheckoutTaxContext = {
   isInternational: false,
   exportZeroRated: false,
   billingStateCode: null,
+  referralCreditsPaise: null,
+  referralCreditsLoaded: false,
 };
 
 export function useCheckoutTaxContext() {
@@ -37,7 +47,10 @@ export function useCheckoutTaxContext() {
 
         const data = (await response.json()) as CheckoutTaxContext;
         if (!cancelled) {
-          setTaxContext(data);
+          setTaxContext({
+            ...data,
+            referralCreditsLoaded: true,
+          });
         }
       } catch {
         if (!cancelled) {

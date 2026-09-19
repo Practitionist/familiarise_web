@@ -107,6 +107,8 @@ export default function AppointmentsPageClient({
     refetch: refetchTrials,
   } = useQuery({
     placeholderData: keepPreviousData,
+    // Side lists change slowly; a short stale window dedupes remount refetches.
+    staleTime: 2 * 60_000,
     queryKey: ["trials", consultantId, "SCHEDULED"] as const,
     queryFn: async () => {
       const res = await fetch(
@@ -124,6 +126,7 @@ export default function AppointmentsPageClient({
     refetch: refetchClasses,
   } = useQuery({
     placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
     queryKey: ["consultant-classes", consultantId] as const,
     queryFn: async () => {
       const res = await fetch(
@@ -143,6 +146,7 @@ export default function AppointmentsPageClient({
     refetch: refetchWebinars,
   } = useQuery({
     placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
     queryKey: ["consultant-webinars-unscheduled", consultantId] as const,
     queryFn: async () => {
       const res = await fetch(
