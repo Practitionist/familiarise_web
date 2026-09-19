@@ -23,13 +23,15 @@ jest.mock("../../lib/prisma", () => {
     },
     appointment: { updateMany: jest.fn() },
     consultation: { findUnique: jest.fn(), updateMany: jest.fn() },
+    // #1732 — the lapsed-link cohort now reads subscriptions too.
+    subscription: { findUnique: jest.fn(), updateMany: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
   };
   const client = {
     ...tx,
     appointment: { ...tx.appointment, findMany: jest.fn() },
     consultation: { ...tx.consultation, findMany: jest.fn() },
-    subscription: { findMany: jest.fn() },
+    subscription: { ...tx.subscription, findMany: jest.fn() },
     failedEmail: { findMany: jest.fn() },
     $transaction: jest.fn((fn: (t: unknown) => Promise<unknown>) => fn(tx)),
     __tx: tx,
@@ -88,6 +90,7 @@ const db = prisma as unknown as {
     };
     appointment: { updateMany: jest.Mock };
     consultation: { findUnique: jest.Mock; updateMany: jest.Mock };
+    subscription: { findUnique: jest.Mock; updateMany: jest.Mock };
     bookingStatusHistory: { create: jest.Mock };
   };
 };
@@ -239,6 +242,54 @@ describe("the 24 h expiry tells the consultee", () => {
         appointmentId: "apt_1",
         consulteeUserId: "u_consultee",
         appointmentType: "CONSULTATION",
+        reason: "lapsed",
+      }),
+    );
+  });
+
+  // #1732 — a subscription's placeholder appointment has no tentative
+  // occurrence, so only this cohort can see its lapsed link; it now EXPIREs
+  // through the same CAS and notifies on the win.
+  it("expires a subscription's lapsed link through the shared CAS and notifies", async () => {
+    db.consultation.findMany.mockResolvedValue([]);
+    db.subscription.findMany.mockResolvedValue([
+      {
+        id: "sub_1",
+        requestedBy: { user: consultee },
+        subscriptionPlan: { title: "Plan", consultantProfile: consultantUser },
+        appointment: {
+          id: "apt_s1",
+          organizationId: null,
+          payment: [{ id: "pay_s1" }],
+          occurrences: [],
+        },
+      },
+    ]);
+    tx.subscription.findUnique.mockResolvedValue({
+      status: "APPROVED_PENDING_PAYMENT",
+      appointment: { id: "apt_s1", deletedAt: null },
+    });
+    tx.subscription.updateMany.mockResolvedValue({ count: 1 });
+    tx.bookingStatusHistory.create.mockResolvedValue({});
+    tx.appointmentOccurrence.findMany.mockResolvedValue([]);
+    tx.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+    tx.payment.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await cleanupExpiredApprovalPendingPayments();
+    expect(result.cleanedCount).toBe(1);
+    expect(tx.subscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "sub_1",
+          status: { in: ["APPROVED_PENDING_PAYMENT"] },
+        }),
+        data: expect.objectContaining({ status: "EXPIRED" }),
+      }),
+    );
+    expect(mockNotifyExpired).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: "apt_s1",
+        appointmentType: "SUBSCRIPTION",
         reason: "lapsed",
       }),
     );

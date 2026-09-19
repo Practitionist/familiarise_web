@@ -38,7 +38,10 @@ import {
 } from "@/lib/booking/slot-release";
 import {
   notifyConsulteeRequestExpired,
+  PAY_LINK_LAPSED_REASON,
   UNANSWERED_REQUEST_REASON,
+  UNSCHEDULED_SUBSCRIPTION_REASON,
+  type RequestExpiredNotice,
 } from "@/lib/booking/expiry-notices";
 import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
@@ -501,6 +504,67 @@ async function releaseStaleRescheduledSlots(): Promise<{
   }
 }
 
+// #1589 N-P0-03 — what a consultee notice names, read with the cohort so the
+// notice can be staged after the CAS commits, as the PENDING arms already do.
+const EXPIRY_NOTICE_SELECT = {
+  id: true,
+  appointment: {
+    select: {
+      id: true,
+      organizationId: true,
+      occurrences: {
+        where: { deletedAt: null },
+        orderBy: { startsAt: "asc" as const },
+        take: 1,
+        select: { startsAt: true },
+      },
+    },
+  },
+  requestedBy: { select: { user: { select: { id: true, name: true } } } },
+} as const;
+const EXPIRY_NOTICE_PLAN_SELECT = {
+  select: {
+    title: true,
+    consultantProfile: { select: { user: { select: { name: true } } } },
+  },
+} as const;
+
+type ExpiryNoticeRow = {
+  appointment: {
+    id: string;
+    organizationId: string | null;
+    occurrences: { startsAt: Date }[];
+  } | null;
+  requestedBy: { user: { id: string; name: string | null } } | null;
+};
+type ExpiryNoticePlan = {
+  title: string;
+  consultantProfile: { user: { name: string | null } } | null;
+} | null;
+
+function expiryNoticeFor(
+  kind: "consultation" | "subscription",
+  row: ExpiryNoticeRow,
+  plan: ExpiryNoticePlan,
+  reason: string,
+): RequestExpiredNotice | null {
+  const consultee = row.requestedBy?.user;
+  if (!row.appointment || !consultee) return null;
+  return {
+    appointmentId: row.appointment.id,
+    organizationId: row.appointment.organizationId,
+    consulteeUserId: consultee.id,
+    consulteeName: consultee.name ?? "Consultee",
+    consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
+    planTitle:
+      plan?.title ??
+      (kind === "consultation" ? "Consultation" : "Subscription"),
+    appointmentType: kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+    startsAt: row.appointment.occurrences[0]?.startsAt ?? null,
+    reason,
+  };
+}
+
 async function expireApprovedUnallocatedSubscriptions(): Promise<{
   expired: number;
   issued: number;
@@ -532,7 +596,10 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
         updatedAt: { lt: cutoff },
         ...NO_LIVE_SESSION,
       },
-      select: { id: true },
+      select: {
+        ...EXPIRY_NOTICE_SELECT,
+        subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
+      },
       // Same per-run cap and oldest-first drain as the cohorts above, now that
       // this arm expires one subscription per transaction (#1423).
       orderBy: { updatedAt: "asc" },
@@ -573,6 +640,15 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
           }),
         );
         expiredIds.push(subscription.id);
+        // #1589 N-P0-03 — after the commit: the consultee learns why, and
+        // that the refund below follows.
+        const notice = expiryNoticeFor(
+          "subscription",
+          subscription,
+          subscription.subscriptionPlan,
+          UNSCHEDULED_SUBSCRIPTION_REASON,
+        );
+        if (notice) await notifyConsulteeRequestExpired(notice);
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
         skipped++;
@@ -855,7 +931,10 @@ async function expirePaymentPendingRequests(): Promise<{
         updatedAt: { lt: expirationDate },
         ...UNPAID_CONSULTATION,
       },
-      select: { id: true },
+      select: {
+        ...EXPIRY_NOTICE_SELECT,
+        consultationPlan: EXPIRY_NOTICE_PLAN_SELECT,
+      },
     });
     warnIfCapped("consultation", staleConsultations.length);
 
@@ -872,6 +951,14 @@ async function expirePaymentPendingRequests(): Promise<{
           }),
         );
         consultationsExpired += 1;
+        // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
+        const notice = expiryNoticeFor(
+          "consultation",
+          consultation,
+          consultation.consultationPlan,
+          PAY_LINK_LAPSED_REASON,
+        );
+        if (notice) await notifyConsulteeRequestExpired(notice);
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
         consultationsSkipped += 1;
@@ -893,7 +980,10 @@ async function expirePaymentPendingRequests(): Promise<{
         updatedAt: { lt: expirationDate },
         ...UNPAID_SUBSCRIPTION,
       },
-      select: { id: true },
+      select: {
+        ...EXPIRY_NOTICE_SELECT,
+        subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
+      },
     });
     warnIfCapped("subscription", staleSubscriptions.length);
 
@@ -910,6 +1000,13 @@ async function expirePaymentPendingRequests(): Promise<{
           }),
         );
         subscriptionsExpired += 1;
+        const notice = expiryNoticeFor(
+          "subscription",
+          subscription,
+          subscription.subscriptionPlan,
+          PAY_LINK_LAPSED_REASON,
+        );
+        if (notice) await notifyConsulteeRequestExpired(notice);
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
         subscriptionsSkipped += 1;

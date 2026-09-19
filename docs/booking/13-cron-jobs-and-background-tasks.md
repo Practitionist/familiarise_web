@@ -25,16 +25,15 @@ Both paths call the same core function exported from `scripts/appointments/`. Th
 
 ## Schedule Overview
 
-| Job                                 | Cron Expression   | Human-Readable          | Source Script                                                 | API Route                                        |
-| ----------------------------------- | ----------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| Auto-complete appointments          | `7 * * * *`       | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`        |
-| Cleanup tentative slots             | `0 */2 * * *`     | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`       | `/api/cleanup/tentative-occurrences`             |
-| Cleanup stale pending consultations | `30 * * * *`      | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations`       |
-| Cleanup invalid appointments        | `0 * * * *`       | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`              |
-| Expire stale requests               | `10 * * * *`      | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`             |
-| Cleanup abandoned payments          | `6-59/15 * * * *` | Every 15 minutes        | `scripts/payments/cleanup-abandoned-payments.ts`              | `/api/cleanup/abandoned-payments`                |
-| Reconcile slot availability         | `15 * * * *`      | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts`   | `/api/cleanup/reconcile-occurrence-availability` |
-| Detect consultant no-shows          | `57 * * * *`      | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                        |
+| Job                          | Cron Expression   | Human-Readable          | Source Script                                               | API Route                                        |
+| ---------------------------- | ----------------- | ----------------------- | ----------------------------------------------------------- | ------------------------------------------------ |
+| Auto-complete appointments   | `7 * * * *`       | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`        | `/api/cleanup/auto-complete-appointments`        |
+| Cleanup tentative slots      | `0 */2 * * *`     | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
+| Cleanup invalid appointments | `0 * * * *`       | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`      | `/api/cleanup/invalid-appointments`              |
+| Expire stale requests        | `10 * * * *`      | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
+| Cleanup abandoned payments   | `6-59/15 * * * *` | Every 15 minutes        | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
+| Reconcile slot availability  | `15 * * * *`      | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
+| Detect consultant no-shows   | `57 * * * *`      | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`        | N/A (GitHub Actions only)                        |
 
 ---
 
@@ -137,28 +136,9 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 ---
 
-### c. Cleanup Stale Pending Consultations
+### c. Cleanup Stale Pending Consultations (retired)
 
-| Field              | Value                                                         |
-| ------------------ | ------------------------------------------------------------- |
-| **Schedule**       | `30 * * * *` -- every hour, at :30                            |
-| **Source**         | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
-| **API**            | `app/api/cleanup/stale-pending-consultations/route.ts`        |
-| **GitHub Actions** | `.github/workflows/cleanup-stale-pending-consultations.yml`   |
-| **HTTP Methods**   | `GET`, `POST`                                                 |
-
-**Purpose**: Cancels consultations stuck in `APPROVED` or `APPROVED_PENDING_PAYMENT` where the user never completed payment within the threshold period. Differs from the expire-stale-requests job, which targets `PENDING` requests awaiting consultant response.
-
-**Threshold**: 7 days since last `updatedAt` timestamp (`STALE_THRESHOLD_DAYS = 7`).
-
-**Criteria**: Consultation in `APPROVED` or `APPROVED_PENDING_PAYMENT` status, `updatedAt` older than 7 days, AND either no payment records or all payments in a non-`SUCCEEDED` state.
-
-**Action**: Within a Prisma `$transaction`:
-
-1. Updates consultation to `status = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
-2. Deletes tentative `AppointmentOccurrence` records tied to the appointment.
-
-**Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
+This job was retired on 2026-09-19 (#1732, #1589 P-P1-01). It cancelled `APPROVED` / `APPROVED_PENDING_PAYMENT` consultations with no successful payment after seven days, while `expire-stale-requests` and the pay-link sweep in `cleanup-abandoned-payments` expire that same cohort, so one event had two sweeps and two terminal words. Doctrine rule 5 keeps one outcome, `EXPIRED`, and the two remaining sweeps share it.
 
 ---
 

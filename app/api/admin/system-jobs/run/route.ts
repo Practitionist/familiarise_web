@@ -35,7 +35,6 @@ import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 // Appointments
 import { runAllCleanupTasks as cleanupInvalidAppointments } from "@/scripts/appointments/cleanup-invalid-appointments";
 import { autoCompleteAppointments } from "@/scripts/appointments/auto-complete-appointments";
-import { cleanupStalePendingConsultations } from "@/scripts/appointments/cleanup-stale-pending-consultations";
 import { expireStaleRequests } from "@/scripts/appointments/expire-stale-requests";
 import { cleanupTentativeOccurrences } from "@/scripts/appointments/cleanup-tentative-occurrences";
 import { reconcileOccurrenceAvailability } from "@/scripts/appointments/reconcile-occurrence-availability";
@@ -288,16 +287,6 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       slotsReleased: result.slotsReleased,
       appointmentsAffected: result.appointmentsAffected,
       cleanedCount: result.slotsReleased,
-      errorCount: result.errors.length,
-    };
-  },
-  "stale-pending-consultations": async () => {
-    const result = await cleanupStalePendingConsultations();
-    return {
-      success: result.success,
-      consultationsCancelled: result.consultationsCancelled,
-      slotsReleased: result.slotsReleased,
-      cleanedCount: result.consultationsCancelled,
       errorCount: result.errors.length,
     };
   },

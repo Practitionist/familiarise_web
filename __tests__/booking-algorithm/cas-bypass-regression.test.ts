@@ -57,15 +57,16 @@ describe("sweeps cancel only from a cancellable state", () => {
     expect(src).not.toMatch(/transitionOccurrenceCompletion\(prisma,/);
   });
 
-  it("cleanup-stale-pending-consultations' from-set is its own cohort (APPROVED*)", () => {
-    const src = read(
+  // #1589 P-P1-01 / #1732 — cleanup-stale-pending-consultations is retired:
+  // it CANCELLED the approved-but-unpaid cohort that expire-stale-requests
+  // and the pay-link sweep EXPIRE (doctrine rule 5, one terminal word).
+  it("the retired stale-pending-consultations sweep does not come back", () => {
+    for (const file of [
       "scripts/appointments/cleanup-stale-pending-consultations.ts",
-    );
-    expect(src).toContain("transitionConsultationRequest(tx, {");
-    expect(src).toMatch(
-      /fromIn: \[\s*AppointmentStatus\.APPROVED,\s*AppointmentStatus\.APPROVED_PENDING_PAYMENT,?\s*\]/,
-    );
-    expect(src).not.toContain("fromIn: [AppointmentStatus.PENDING]");
+      "app/api/cleanup/stale-pending-consultations/route.ts",
+    ]) {
+      expect(fs.existsSync(path.join(process.cwd(), file))).toBe(false);
+    }
   });
 });
 
