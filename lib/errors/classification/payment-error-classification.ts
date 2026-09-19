@@ -21,6 +21,9 @@ export const ErrorTypes = {
   // Business-logic rejections (expected — user can fix or retry differently)
   EVENT_EXPIRED: "EVENT_EXPIRED_ERROR",
   AVAILABILITY: "AVAILABILITY_ERROR",
+  // #1757 — a webinar or class at capacity. Coded so the checkout catches
+  // report it expected; the "full" prose pattern below still classifies old callers.
+  EVENT_FULL: "EVENT_FULL_ERROR",
   DUPLICATE_REGISTRATION: "DUPLICATE_REGISTRATION_ERROR",
   NOT_FOUND: "NOT_FOUND_ERROR",
   REFUND_BLOCKED: "REFUND_BLOCKED_ERROR",
@@ -229,6 +232,15 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
   {
     code: "WALLET_FROZEN",
     errorType: ErrorTypes.WALLET_FROZEN,
+    httpStatus: 409,
+  },
+  // #1757 — "Webinar is full" / "Class is full" were bare Errors: the prose
+  // classifier answered 409-ish AVAILABILITY to the buyer, but checkout's outer
+  // catch only recognises registered codes and paged every one as a fault
+  // (FAMILIARISE_WEB-2J).
+  {
+    code: "EVENT_FULL",
+    errorType: ErrorTypes.EVENT_FULL,
     httpStatus: 409,
   },
   {

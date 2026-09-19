@@ -956,7 +956,12 @@ export async function calculateAmountAndValidate(
         });
 
         if (webinarCapacity.isFull) {
-          throw new Error("Webinar is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Webinar is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
 
         amount = plan.price;
@@ -1007,7 +1012,12 @@ export async function calculateAmountAndValidate(
         });
 
         if (classCapacity.isFull) {
-          throw new Error("Class is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Class is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
 
         amount = plan.price;
@@ -2296,7 +2306,12 @@ async function revalidateInsideLock(
         });
 
         if (capacity.isFull) {
-          throw new Error("Webinar is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Webinar is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
         break;
       }
@@ -2332,7 +2347,12 @@ async function revalidateInsideLock(
         });
 
         if (capacity.isFull) {
-          throw new Error("Class is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Class is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
         break;
       }
@@ -2668,7 +2688,11 @@ export async function handleWebinarCheckout(
   });
 
   if (capacity.isFull) {
-    throw new Error("Webinar is full");
+    // #1757 — a coded refusal (EVENT_FULL, 409), not a fault.
+    throw Object.assign(new Error("Webinar is full"), {
+      httpStatus: 409,
+      code: "EVENT_FULL",
+    });
   }
 
   // FIX Issue #5: Validate webinar is scheduled before allowing booking
@@ -2802,7 +2826,11 @@ export async function handleClassCheckout(
   });
 
   if (capacity.isFull) {
-    throw new Error("Class is full");
+    // #1757 — a coded refusal (EVENT_FULL, 409), not a fault.
+    throw Object.assign(new Error("Class is full"), {
+      httpStatus: 409,
+      code: "EVENT_FULL",
+    });
   }
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).

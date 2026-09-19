@@ -53,6 +53,12 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "No Longer Available",
     description: null, // Use the server's specific message
   },
+  // #1757 — capacity is a modelled refusal; the copy points at the two ways out.
+  [ErrorTypes.EVENT_FULL]: {
+    title: "This Session Is Full",
+    description:
+      "This session is full — pick another time or join the waitlist.",
+  },
   [ErrorTypes.DUPLICATE_REGISTRATION]: {
     title: "Already Registered",
     description:
