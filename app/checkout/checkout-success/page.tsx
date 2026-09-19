@@ -47,16 +47,34 @@ function CheckoutSuccessContent() {
       // runs), and a short bounded poll covers the case where the webhook wins
       // the race a moment later. Only after the poll is exhausted do we say
       // anything, and then it is "still confirming", never "failed".
-      const MAX_ATTEMPTS = 6;
-      const RETRY_DELAY_MS = 1500;
+      // #1591 J1-P1-02 — six 1.5 s tries was nine seconds, and a cold
+      // instance can spend longer than that on the pipeline; back off to
+      // roughly a minute, and honour a 429's retryAfter from the verify route.
+      const RETRY_DELAYS_MS = [
+        1500, 1500, 3000, 3000, 5000, 5000, 10000, 10000, 20000,
+      ];
+      const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1;
 
       for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         if (cancelled) return;
+        let waitMs = RETRY_DELAYS_MS[attempt] ?? 0;
         try {
           const response = await fetch(
             `/api/checkout/verify?payment_intent=${encodeURIComponent(paymentIntent)}&sync=true`,
           );
           const data = await response.json();
+          if (response.status === 429) {
+            const retryAfter = Number(
+              data?.retryAfter ?? response.headers.get("Retry-After"),
+            );
+            if (Number.isFinite(retryAfter) && retryAfter > 0) {
+              waitMs = Math.min(retryAfter * 1000, 30000);
+            }
+            if (attempt < MAX_ATTEMPTS - 1) {
+              await new Promise((r) => setTimeout(r, waitMs));
+            }
+            continue;
+          }
 
           if (response.ok) {
             if (cancelled) return;
@@ -82,7 +100,7 @@ function CheckoutSuccessContent() {
         }
 
         if (attempt < MAX_ATTEMPTS - 1) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+          await new Promise((r) => setTimeout(r, waitMs));
         }
       }
 
