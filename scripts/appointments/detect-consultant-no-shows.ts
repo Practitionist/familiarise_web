@@ -51,6 +51,7 @@ import {
 } from "../../lib/email";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportSentryMessage } from "@/lib/observability/report";
 import {
   CANCELLABLE_FROM,
   transitionConsultationRequest,
@@ -453,15 +454,26 @@ async function claimConsultantNoShow(
           OccurrenceCompletionStatus.UNVERIFIED,
         ],
         data: { deletedAt: new Date() },
-        allowZero: true,
+        // Zero live occurrences means a concurrent writer took the booking's
+        // sessions first; the parent cancel above rolls back with this throw
+        // rather than committing a no-show that claimed no session.
+        allowZero: false,
         actorUserId: null,
         reason: "consultant no-show",
       });
     });
   } catch (error) {
-    // Zero rows matched means someone else moved it between the scan and this
-    // claim — the existing skip branch at the call site, unchanged.
-    if (error instanceof IllegalTransitionError) return false;
+    // Zero rows matched (parent or occurrences) means someone else moved it
+    // between the scan and this claim — the skip branch at the call site.
+    if (error instanceof IllegalTransitionError) {
+      reportSentryMessage("No-show claim lost its CAS; row skipped", {
+        subsystem: "bookings",
+        op: "detect-consultant-no-shows",
+        expected: true,
+        extra: { consultationId, appointmentId },
+      });
+      return false;
+    }
     throw error;
   }
   return true;

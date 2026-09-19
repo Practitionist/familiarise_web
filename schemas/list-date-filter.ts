@@ -6,7 +6,20 @@ import { z } from "zod";
  * both garbage and a calendar-impossible day such as 2026-02-30, which
  * `new Date()` would silently roll into March.
  */
-export const listDateFilterSchema = z.object({
-  startDateStr: z.string().datetime().nullable(),
-  endDateStr: z.string().datetime().nullable(),
-});
+export const listDateFilterSchema = z
+  .object({
+    startDateStr: z.string().datetime().nullable(),
+    endDateStr: z.string().datetime().nullable(),
+  })
+  // Both or neither, and in order: a half-open range used to fall through to
+  // an unfiltered list that answered 200 as if the filter had applied.
+  .refine(({ startDateStr, endDateStr }) => !!startDateStr === !!endDateStr, {
+    message: "startDate and endDate must be provided together",
+  })
+  .refine(
+    ({ startDateStr, endDateStr }) =>
+      !startDateStr ||
+      !endDateStr ||
+      new Date(startDateStr).getTime() <= new Date(endDateStr).getTime(),
+    { message: "startDate must not be after endDate" },
+  );

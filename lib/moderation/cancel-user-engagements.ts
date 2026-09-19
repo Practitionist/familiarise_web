@@ -459,6 +459,12 @@ async function releaseEngagementOccurrences(
     data: { deletedAt: now },
     allowZero: true,
   });
+  // Rows the pre-#1583 raw release already left CANCELLED are still armed
+  // without a tombstone; no status moves here, so no helper is involved.
+  await tx.appointmentOccurrence.updateMany({
+    where: { ...scope, completionStatus: "CANCELLED", deletedAt: null },
+    data: { deletedAt: now },
+  });
 }
 
 /**

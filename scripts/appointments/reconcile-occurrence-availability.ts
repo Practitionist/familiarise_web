@@ -348,9 +348,18 @@ async function detectDoubleBookings(): Promise<{
       page += 1;
       if (rows.length < DOUBLE_BOOKING_PAGE) break;
       if (page >= DOUBLE_BOOKING_MAX_PAGES) {
+        // Every run restarts at page 0, so a tail past the cap stays unseen
+        // until the earlier rows age out of the window; say so once per run.
         console.warn(
-          `⚠️ Double-booking scan capped at ${page * DOUBLE_BOOKING_PAGE} slots; the next run continues`,
+          `⚠️ Double-booking scan capped at ${page * DOUBLE_BOOKING_PAGE} slots`,
         );
+        reportSentryMessage("Double-booking scan hit its page cap", {
+          subsystem: "bookings",
+          op: "reconcile-occurrence-availability",
+          expected: true,
+          level: "warning",
+          extra: { scanned: page * DOUBLE_BOOKING_PAGE, windowEnd },
+        });
         break;
       }
       slotCursor = nextCursor(rows);

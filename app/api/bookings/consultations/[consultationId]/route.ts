@@ -802,8 +802,10 @@ export async function PATCH(
               : null;
           }
         } catch (persistError) {
-          // The link is live and rides the response + email; only the
-          // dashboard copy is missing.
+          // The row's state is unproven, so the link is not delivered; the
+          // consultant re-approves and the retry reuses the same PENDING
+          // intent (#1181), so nothing is minted twice.
+          mintedLink = null;
           console.error(
             `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
             persistError instanceof Error

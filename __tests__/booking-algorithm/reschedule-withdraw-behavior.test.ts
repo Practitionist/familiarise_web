@@ -383,6 +383,29 @@ describe("withdrawRescheduleRequest", () => {
     );
   });
 
+  it("never promotes a PENDING subscription when no origin row exists", async () => {
+    // A partial proposal on a never-approved subscription leaves the parent
+    // PENDING and writes no origin row; the request row cannot tell it from a
+    // whole-booking flip, so the safe direction is no write (reported once).
+    seed({
+      consultationId: null,
+      subscriptionId: "sub-1",
+      subscriptionStatus: "PENDING",
+      origin: undefined,
+    });
+    state.origin = undefined;
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(state.subscription?.status).toBe("PENDING");
+    expect(tx.subscription.updateMany).not.toHaveBeenCalled();
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("leaves a PARTIAL subscription proposal's parent alone (#448)", async () => {
     // #448's guarantee survives: a partial (per-session) proposal never
     // flipped the parent, so it sits at APPROVED and the restore must not

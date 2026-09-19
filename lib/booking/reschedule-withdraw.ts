@@ -74,7 +74,7 @@ async function readRescheduleOrigin(
  */
 function restoreTargetFor(
   origin: string | undefined,
-  fallback: AppointmentStatus,
+  fallback: AppointmentStatus | null,
 ): AppointmentStatus | null {
   switch (origin) {
     case "PENDING":
@@ -231,7 +231,12 @@ export async function withdrawRescheduleRequest(args: {
               request.createdAt,
             );
             if (origin === undefined) reportMissingOrigin("SUBSCRIPTION");
-            const to = restoreTargetFor(origin, "APPROVED");
+            // No origin row and the parent sits in PENDING: the request row
+            // cannot tell a whole-booking flip from a PARTIAL proposal on a
+            // never-approved subscription (#448 leaves that parent untouched),
+            // so the safe direction is no write — promoting it would be the
+            // consultant-gate bypass this restore exists to prevent.
+            const to = restoreTargetFor(origin, null);
             if (to) {
               await transitionSubscriptionRequest(tx, {
                 ...auditMeta,

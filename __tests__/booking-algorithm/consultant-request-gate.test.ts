@@ -176,12 +176,16 @@ describe("request-for-approval slot edge (#1583)", () => {
   });
 
   it("two minutes ahead → 400 SLOT_TOO_SOON", async () => {
-    const soon = new Date(Date.now() + 2 * 60 * 1000);
-    soon.setUTCSeconds(0, 0);
-    soon.setUTCMinutes(soon.getUTCMinutes() < 30 ? 0 : 30);
-    const res = await POST(request(soon.toISOString()));
-    expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("SLOT_TOO_SOON");
+    // A frozen clock: 09:58Z against a 10:00Z grid start is two minutes
+    // ahead — inside the 15-minute lead — and never in the past.
+    jest.useFakeTimers({ now: new Date("2030-01-01T09:58:00.000Z") });
+    try {
+      const res = await POST(request("2030-01-01T10:00:00.000Z"));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("SLOT_TOO_SOON");
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("passes the consultee to the conflict check and types their own overlap as 409 SLOT_TAKEN", async () => {

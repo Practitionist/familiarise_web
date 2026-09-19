@@ -763,6 +763,9 @@ export async function PATCH(
               : null;
           }
         } catch (persistError) {
+          // Unproven row state: the link is not delivered (see the
+          // consultation twin); a re-approval reuses the same intent.
+          mintedLink = null;
           Sentry.captureException(
             persistError instanceof Error
               ? persistError

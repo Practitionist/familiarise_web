@@ -30,40 +30,41 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 ### API Routes by Category
 
-| Route Category                                                                                     | DEGRADED                                | OFFLINE                    | Risk Level |
-| -------------------------------------------------------------------------------------------------- | --------------------------------------- | -------------------------- | ---------- |
-| **Webhooks** (`/api/webhooks/*`)                                                                   | Exempt -- always processed              | Exempt -- always processed | Low        |
-| **Health** (`/api/health`)                                                                         | Exempt -- always responds               | Exempt -- always responds  | None       |
-| **Auth** (`/api/auth/*`)                                                                           | Exempt -- always works                  | Exempt -- always works     | None       |
-| **Maintenance API** (`/api/admin/maintenance`)                                                     | Exempt                                  | Exempt                     | None       |
-| **Checkout** (`/api/checkout`, `/api/checkout/verify`, `DELETE /api/checkout/pending/[paymentId]`) | Allowed (gap)                           | Blocked (503)              | HIGH       |
-| **Cancel appointment** (`/api/appointments/[id]/cancel`)                                           | Allowed (gap)                           | Blocked                    | MEDIUM     |
-| **Reschedule** (`/api/appointments/[id]/reschedule`)                                               | Allowed (gap)                           | Blocked                    | MEDIUM     |
-| **Documents** (`/api/appointments/[id]/documents`)                                                 | Allowed                                 | Blocked                    | LOW        |
-| **Consultations** (`/api/bookings/consultations`)                                                  | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | HIGH       |
-| **Subscriptions** (`/api/bookings/subscriptions`)                                                  | GET: Allowed, POST: Allowed (gap)       | Blocked                    | HIGH       |
-| **Webinars** (`/api/bookings/webinars`)                                                            | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
-| **Classes** (`/api/bookings/classes`)                                                              | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
-| **Allocate slots** (`/api/bookings/*/allocate`)                                                    | Allowed (gap)                           | Blocked                    | HIGH       |
-| **Validate** (`/api/bookings/*/validate`)                                                          | Allowed (read-only)                     | Blocked                    | LOW        |
-| **Trials** (`/api/trials`, `/api/trials/[id]`)                                                     | Allowed (gap)                           | Blocked                    | MEDIUM     |
-| **Plans** (`/api/plans/*`)                                                                         | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
-| **Slot appointments** (`/api/scheduling/appointments`)                                             | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
-| **Waitlist / newsletter** (`/api/waitlist`)                                                        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | LOW        |
-| **Referrals** (`/api/referrals`)                                                                   | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
-| **Collaborations** (`/api/collaborations`)                                                         | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
-| **Refunds** (`/api/payments/refunds`)                                                              | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
-| **Disputes** (`/api/payments/disputes`)                                                            | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
-| **Admin payouts** (`/api/admin/payouts`)                                                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
-| **Payment recovery** (`/api/payments/*/recover`)                                                   | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
-| **Recording purchase** (`/api/recordings/*/purchase`)                                              | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
-| **Overage order** (`/api/overage/*/order`)                                                         | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
-| **Participants** (`/api/participants`)                                                             | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
-| **Meetings join/end** (`/api/meetings/*/join`, `/api/meetings/*/end`)                              | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
-| **Checkout verify sync** (`GET /api/checkout/verify?sync=true`)                                    | **Blocked (503)** (#1741)               | Blocked                    | HIGH       |
-| **User routes** (`/api/user/*`)                                                                    | Allowed                                 | Blocked                    | LOW        |
-| **Admin routes** (`/api/admin/*`)                                                                  | Allowed                                 | Blocked                    | LOW        |
-| **Staff routes** (`/api/staff/*`)                                                                  | Allowed                                 | Blocked                    | LOW        |
+| Route Category                                                                  | DEGRADED                                | OFFLINE                    | Risk Level |
+| ------------------------------------------------------------------------------- | --------------------------------------- | -------------------------- | ---------- |
+| **Webhooks** (`/api/webhooks/*`)                                                | Exempt -- always processed              | Exempt -- always processed | Low        |
+| **Health** (`/api/health`)                                                      | Exempt -- always responds               | Exempt -- always responds  | None       |
+| **Auth** (`/api/auth/*`)                                                        | Exempt -- always works                  | Exempt -- always works     | None       |
+| **Maintenance API** (`/api/admin/maintenance`)                                  | Exempt                                  | Exempt                     | None       |
+| **Checkout** (`POST /api/checkout`, `DELETE /api/checkout/pending/[paymentId]`) | **Writes blocked (503)**                | Blocked (503)              | HIGH       |
+| **Checkout verify** (`GET /api/checkout/verify` without `sync`)                 | Allowed (read-only status poll)         | Blocked (503)              | LOW        |
+| **Cancel appointment** (`/api/appointments/[id]/cancel`)                        | Allowed (gap)                           | Blocked                    | MEDIUM     |
+| **Reschedule** (`/api/appointments/[id]/reschedule`)                            | Allowed (gap)                           | Blocked                    | MEDIUM     |
+| **Documents** (`/api/appointments/[id]/documents`)                              | Allowed                                 | Blocked                    | LOW        |
+| **Consultations** (`/api/bookings/consultations`)                               | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | HIGH       |
+| **Subscriptions** (`/api/bookings/subscriptions`)                               | GET: Allowed, POST: Allowed (gap)       | Blocked                    | HIGH       |
+| **Webinars** (`/api/bookings/webinars`)                                         | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
+| **Classes** (`/api/bookings/classes`)                                           | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
+| **Allocate slots** (`/api/bookings/*/allocate`)                                 | Allowed (gap)                           | Blocked                    | HIGH       |
+| **Validate** (`/api/bookings/*/validate`)                                       | Allowed (read-only)                     | Blocked                    | LOW        |
+| **Trials** (`/api/trials`, `/api/trials/[id]`)                                  | Allowed (gap)                           | Blocked                    | MEDIUM     |
+| **Plans** (`/api/plans/*`)                                                      | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
+| **Slot appointments** (`/api/scheduling/appointments`)                          | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Waitlist / newsletter** (`/api/waitlist`)                                     | **Writes blocked (503)** (Mar 2026)     | Blocked                    | LOW        |
+| **Referrals** (`/api/referrals`)                                                | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Collaborations** (`/api/collaborations`)                                      | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Refunds** (`/api/payments/refunds`)                                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Disputes** (`/api/payments/disputes`)                                         | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Admin payouts** (`/api/admin/payouts`)                                        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Payment recovery** (`/api/payments/*/recover`)                                | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Recording purchase** (`/api/recordings/*/purchase`)                           | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Overage order** (`/api/overage/*/order`)                                      | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Participants** (`/api/participants`)                                          | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
+| **Meetings join/end** (`/api/meetings/*/join`, `/api/meetings/*/end`)           | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
+| **Checkout verify sync** (`GET /api/checkout/verify?sync=true`)                 | **Blocked (503)** (#1741)               | Blocked                    | HIGH       |
+| **User routes** (`/api/user/*`)                                                 | Allowed                                 | Blocked                    | LOW        |
+| **Admin routes** (`/api/admin/*`)                                               | Allowed                                 | Blocked                    | LOW        |
+| **Staff routes** (`/api/staff/*`)                                               | Allowed                                 | Blocked                    | LOW        |
 
 ### Infrastructure Components
 
@@ -101,7 +102,7 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | `/api/meetings/*/join`, `/api/meetings/*/end` | Agree with the provision-side refusal a call join/end already has (#1741)                                                |
 | `GET /api/checkout/verify?sync=true`          | This GET drives a capture and therefore writes money; special-cased ahead of the read-only-methods short-circuit (#1741) |
 
-**Status**: checkout, appointment cancel/reschedule, event CRUD (webinars, classes), and trial routes are all now write-blocked in DEGRADED mode too — see `lib/maintenance-edge.ts`'s `WRITE_BLOCKED_IN_DEGRADED` list for the current, complete set of doors.
+**Status**: checkout (the POST and the `sync=true` verify GET; the plain verify GET stays a read), appointment cancel/reschedule, event CRUD (webinars, classes), and trial routes are all now write-blocked in DEGRADED mode too — see `lib/maintenance-edge.ts`'s `WRITE_BLOCKED_IN_DEGRADED` list for the current, complete set of doors.
 
 ### Gap 2: Cron Jobs Bypass Middleware — Resolved via `abortIfMaintenance()`
 

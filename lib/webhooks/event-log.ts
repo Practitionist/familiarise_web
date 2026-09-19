@@ -10,7 +10,10 @@
 import { Prisma } from "@prisma/client";
 
 import prisma from "@/lib/prisma";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 
 /**
  * Lightweight DB health check for webhook handlers.
@@ -45,13 +48,22 @@ export async function isDbHealthy(): Promise<boolean> {
  * If a previous attempt exists but failed (has error and processed=true),
  * it is eligible for retry — returns isNew: true so the handler re-runs.
  */
+/**
+ * The claim a worker holds on a row while it processes it (#1589 M-P0-03):
+ * the `claimedAt` value the row carried when this worker took it (null on a
+ * fresh row). `markWebhookEventProcessed` fences its completion on it, so a
+ * worker whose claim was taken over by the staleness escape cannot finalise
+ * the newer worker's row.
+ */
+export type WebhookClaim = { claimedAt: Date | null };
+
 export async function logWebhookEvent(
   provider: string,
   eventId: string,
   eventType: string,
   payload: unknown,
   signature?: string,
-): Promise<{ isNew: boolean; eventRecordId?: string }> {
+): Promise<{ isNew: boolean; eventRecordId?: string; claim?: WebhookClaim }> {
   try {
     // Check if event already exists
     const existing = await prisma.webhookEvent.findUnique({
@@ -89,13 +101,14 @@ export async function logWebhookEvent(
       // sees `count === 1`, and the loser is told the row is not new. A bare
       // `update` cannot express that — it succeeds for both.
       if (existing.error) {
+        const claimedAt = new Date();
         const claimed = await prisma.webhookEvent.updateMany({
           where: { eventId, error: { not: null } },
           data: {
             processed: false,
             processedAt: null,
             error: null,
-            claimedAt: new Date(),
+            claimedAt,
             payload: payload as Prisma.InputJsonValue,
           },
         });
@@ -108,7 +121,11 @@ export async function logWebhookEvent(
         console.log(
           `🔄 Webhook event ${eventId} previously failed, allowing retry`,
         );
-        return { isNew: true, eventRecordId: existing.id };
+        return {
+          isNew: true,
+          eventRecordId: existing.id,
+          claim: { claimedAt },
+        };
       }
 
       // Currently being processed (processed=false, no error).
@@ -124,13 +141,14 @@ export async function logWebhookEvent(
         // two workers both see the row as stale, both write, and both believe
         // they own it — so the same event gets processed twice. Scoping the
         // update to the stamp we read means exactly one write can land.
+        const claimedAt = new Date();
         const claimed = await prisma.webhookEvent.updateMany({
           where: { eventId, claimedAt: existing.claimedAt },
           data: {
             processed: false,
             processedAt: null,
             error: null,
-            claimedAt: new Date(),
+            claimedAt,
             payload: payload as Prisma.InputJsonValue,
           },
         });
@@ -143,7 +161,11 @@ export async function logWebhookEvent(
         console.log(
           `🔄 Webhook event ${eventId} stale (in-progress for ${Math.round(age / 1000)}s), allowing retry`,
         );
-        return { isNew: true, eventRecordId: existing.id };
+        return {
+          isNew: true,
+          eventRecordId: existing.id,
+          claim: { claimedAt },
+        };
       }
 
       console.log(
@@ -164,7 +186,8 @@ export async function logWebhookEvent(
       },
     });
 
-    return { isNew: true, eventRecordId: event.id };
+    // A fresh row has never been claimed; its worker's fence is `claimedAt: null`.
+    return { isNew: true, eventRecordId: event.id, claim: { claimedAt: null } };
   } catch (error) {
     // Handle unique constraint violation (race condition)
     if (
@@ -230,13 +253,32 @@ export function isTerminalWebhookError(error: string | null): boolean {
 export async function markWebhookEventProcessed(
   eventId: string,
   error?: string,
+  /**
+   * The claim this worker holds; when given, the completion is fenced on it so
+   * a worker the staleness escape already superseded writes nothing. The
+   * sweeper re-drive (which stamps its own claim) passes none and stays as-is.
+   */
+  claim?: WebhookClaim,
 ): Promise<void> {
-  await prisma.webhookEvent.update({
-    where: { eventId },
-    data: {
-      processed: true,
-      processedAt: new Date(),
-      error: error === undefined ? null : error || "unknown handler error",
-    },
+  const data = {
+    processed: true,
+    processedAt: new Date(),
+    error: error === undefined ? null : error || "unknown handler error",
+  };
+  if (!claim) {
+    await prisma.webhookEvent.update({ where: { eventId }, data });
+    return;
+  }
+  const res = await prisma.webhookEvent.updateMany({
+    where: { eventId, claimedAt: claim.claimedAt },
+    data,
   });
+  if (res.count === 0) {
+    reportSentryMessage("Webhook completion fenced: claim was superseded", {
+      subsystem: "webhooks",
+      op: "markWebhookEventProcessed",
+      expected: true,
+      extra: { eventId, error: error ?? null },
+    });
+  }
 }

@@ -88,7 +88,12 @@ import { TERMINAL_ERROR_PREFIXES } from "../../lib/webhooks/event-log";
 beforeEach(() => {
   jest.clearAllMocks();
   sequence = [];
-  mockLogWebhookEvent.mockResolvedValue({ isNew: true, eventRecordId: "r1" });
+  // The claim the log hands back is threaded to the completion write (#1741).
+  mockLogWebhookEvent.mockResolvedValue({
+    isNew: true,
+    eventRecordId: "r1",
+    claim: { claimedAt: null },
+  });
   mockMarkProcessed.mockResolvedValue(undefined);
   mockIsDbHealthy.mockResolvedValue(true);
   mockHandleRecordingReady.mockResolvedValue(undefined);
@@ -183,7 +188,9 @@ describe("processStreamEvent — safe to defer, now that the receipt exists", ()
   it("stops on an unhandled type without pretending to process it", async () => {
     await processStreamEvent({}, "call.not_a_real_event", "id", undefined, {});
 
-    expect(mockMarkProcessed).toHaveBeenCalledWith("id", undefined);
+    expect(mockMarkProcessed).toHaveBeenCalledWith("id", undefined, {
+      claimedAt: null,
+    });
   });
 });
 
@@ -274,7 +281,13 @@ describe("a payload that cannot match its schema is terminal, not retryable", ()
     );
 
     expect(mockHandleRecordingReady).toHaveBeenCalledTimes(1);
-    expect(mockMarkProcessed).toHaveBeenCalledWith("stream_good", undefined);
+    // The sweeper re-drive (claimAlreadyHeld) holds its own claim and passes
+    // none, so its completion stays unfenced.
+    expect(mockMarkProcessed).toHaveBeenCalledWith(
+      "stream_good",
+      undefined,
+      undefined,
+    );
   });
 });
 

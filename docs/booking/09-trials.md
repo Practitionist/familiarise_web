@@ -109,7 +109,7 @@ Both `PATCH` (with `status: CANCELLED`) and `DELETE` now exhibit identical clean
 
 - **Appointment/slot cleanup**: If the trial has a linked appointment, `softCancelTrialAppointment` (`lib/trials/cancellation.ts`) soft-cancels it inside a transaction — the `AppointmentOccurrence` rows move to `CANCELLED` with `deletedAt` set, the `Appointment` itself gets `deletedAt`, and its participants move to `CANCELLED`. Doctrine rule 2 forbids deleting anything a `Payment` points at; a hard delete here used to cascade-destroy a paid trial's Payment row with no refund and nothing left to reconcile (#1009).
 - **Notifications**: Both paths send cancellation notifications to both parties via Novu (`trial-session-cancelled`).
-- **Transaction wrapping**: All database operations (status update, appointment tombstone, occurrence tombstone) are wrapped in a Prisma `$transaction` to ensure atomicity.
+- **Transaction boundaries**: The trial's status transition commits in its own transaction first; `softCancelTrialAppointment` then opens a second transaction of its own for the appointment tombstone, the occurrence tombstone and the participant release, because a global-client read inside an open transaction deadlocks under `PG_POOL_MAX=1`. A failure between the two leaves a `CANCELLED` trial whose appointment still has `deletedAt: null`; the expire-unpaid-trials sweep repairs that shape on its next run (a bounded cohort of `CANCELLED` trials with a live appointment), so no manual reconciliation is needed.
 
 Previously, PATCH CANCELLED did not clean up appointments/slots, and DELETE did not send cancellation notifications. Both paths now handle both concerns.
 

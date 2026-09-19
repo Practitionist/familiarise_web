@@ -91,7 +91,11 @@ describe("slot completion writers use transitionOccurrenceCompletion", () => {
 describe("moderation and the two sweeps write status through the helpers", () => {
   it("cancel-user-engagements cancels parents and tombstones occurrences through the helpers", () => {
     const src = read("lib/moderation/cancel-user-engagements.ts");
-    expect(src).not.toMatch(/appointmentOccurrence\.updateMany\(/);
+    // The one remaining updateMany is the tombstone of rows already
+    // CANCELLED (no status moves), never a completionStatus write.
+    expect(src).not.toMatch(
+      /appointmentOccurrence\.updateMany\(\{[\s\S]*?data:\s*\{[^}]*completionStatus/,
+    );
     expect(src).not.toMatch(
       /tx\.(consultation|subscription|webinar|class)\.updateMany\(/,
     );

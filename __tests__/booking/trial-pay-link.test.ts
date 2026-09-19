@@ -33,9 +33,13 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 // The re-mint serialises on the appointment atom; a pass-through here.
+const withAppointmentLock = jest.fn(
+  async (_id: string, fn: () => Promise<unknown>) => fn(),
+);
 jest.mock("../../utils/appointmentlock", () => ({
   __esModule: true,
-  withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
+  withAppointmentLock: (...a: [string, () => Promise<unknown>]) =>
+    withAppointmentLock(...a),
   AppointmentBusyError: class extends Error {},
   BookingLockUnavailableError: class extends Error {},
 }));
@@ -70,7 +74,11 @@ function awaitingTrial() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  db.trial.updateMany.mockResolvedValue({ count: 1 });
+  withAppointmentLock.mockImplementation(
+    async (_id: string, fn: () => Promise<unknown>) => fn(),
+  );
+  db.trial.updateMany.mockReset().mockResolvedValue({ count: 1 });
+  db.trial.findUnique.mockReset();
   // The in-lock re-read: still waiting, no link, window open.
   db.trial.findUnique.mockResolvedValue({
     status: "AWAITING_PAYMENT",
@@ -208,6 +216,71 @@ describe("remintTrialPayLink", () => {
         appointmentId: "appt-1",
       }),
     );
+  });
+
+  it("does not reuse an expired PENDING intent: it mints one replacement", async () => {
+    // The lookup itself excludes expired rows (expiresAt <= now), so an
+    // expired intent is invisible here and exactly one new order is minted.
+    db.payment.findFirst.mockResolvedValueOnce(null);
+    createApprovalPaymentIntent.mockResolvedValueOnce({
+      paymentIntentId: "order_fresh",
+      checkoutUrl: "order_fresh",
+    });
+
+    await expect(remintTrialPayLink(awaitingTrial())).resolves.toBe(
+      "order_fresh",
+    );
+
+    expect(db.payment.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          paymentStatus: "PENDING",
+          OR: [{ expiresAt: null }, { expiresAt: { gt: expect.any(Date) } }],
+        }),
+      }),
+    );
+    expect(createApprovalPaymentIntent).toHaveBeenCalledTimes(1);
+  });
+
+  it("two concurrent reads mint once and both receive the same link", async () => {
+    // The appointment atom serialises the two callers; the second one's
+    // in-lock re-read sees the link the first persisted.
+    let inFlight: Promise<unknown> | null = null;
+    withAppointmentLock.mockImplementation(
+      async (_id: string, fn: () => Promise<unknown>) => {
+        while (inFlight) await inFlight;
+        inFlight = fn();
+        try {
+          return await inFlight;
+        } finally {
+          inFlight = null;
+        }
+      },
+    );
+    let stored: string | null = null;
+    db.trial.findUnique.mockImplementation(async () => ({
+      status: "AWAITING_PAYMENT",
+      pendingPaymentUrl: stored,
+      paymentDueAt: IN_AN_HOUR,
+    }));
+    db.trial.updateMany.mockImplementation(async ({ data }) => {
+      if (stored) return { count: 0 };
+      stored = data.pendingPaymentUrl;
+      return { count: 1 };
+    });
+    createApprovalPaymentIntent.mockResolvedValue({
+      paymentIntentId: "order_once",
+      checkoutUrl: "order_once",
+    });
+
+    const [a, b] = await Promise.all([
+      remintTrialPayLink(awaitingTrial()),
+      remintTrialPayLink(awaitingTrial()),
+    ]);
+
+    expect(a).toBe("order_once");
+    expect(b).toBe("order_once");
+    expect(createApprovalPaymentIntent).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a trial past its pay window alone", async () => {
