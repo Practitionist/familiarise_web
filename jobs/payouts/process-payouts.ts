@@ -20,6 +20,7 @@ import {
 } from "../../lib/payments/payouts";
 
 import fs from "fs";
+import { ENABLE_LIVE_PAYOUTS } from "../../lib/feature-flags";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
@@ -54,6 +55,30 @@ function summarize(results: PayoutResult[]): JobSummary {
     errors: counted
       .filter((r) => !r.success && r.error)
       .map((r) => `Payout ${r.payoutId}: ${r.error}`),
+  };
+}
+
+/**
+ * #1757 — the service returns [] both when ENABLE_LIVE_PAYOUTS is off (ADR 11
+ * freeze, by design) and when the Redis lock is held; only the latter is a fault.
+ */
+export function classifyEmptyRun(input: {
+  waiting: number;
+  livePayoutsEnabled: boolean;
+}):
+  | { kind: "ok" }
+  | { kind: "parked"; notice: string }
+  | { kind: "failed"; error: string } {
+  if (input.waiting === 0) return { kind: "ok" };
+  if (!input.livePayoutsEnabled) {
+    return {
+      kind: "parked",
+      notice: `live payouts disabled (ENABLE_LIVE_PAYOUTS); ${input.waiting} APPROVED payout(s) parked by design`,
+    };
+  }
+  return {
+    kind: "failed",
+    error: `${input.waiting} APPROVED payouts waiting; processing lock unavailable`,
   };
 }
 
@@ -103,7 +128,8 @@ async function main(): Promise<void> {
     // Silent-skip guard: the service returns [] when the Redis lock is held
     // OR Redis is down (acquireLock → null). A green run that disbursed
     // nothing while APPROVED payouts are waiting is how a money job dies
-    // quietly — surface it as a failure instead.
+    // quietly — surface it as a failure instead. The flag-off case is not a
+    // fault (#1757): the freeze parks APPROVED rows on purpose.
     if (results.length === 0) {
       const waiting = await prisma.consultantPayout.count({
         where: {
@@ -111,14 +137,18 @@ async function main(): Promise<void> {
           retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
         },
       });
-      if (waiting > 0) {
+      const verdict = classifyEmptyRun({
+        waiting,
+        livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+      });
+      if (verdict.kind === "parked") {
+        console.log(`::notice::${verdict.notice}`);
+      } else if (verdict.kind === "failed") {
         console.log(
           `::error::Payout run processed nothing but ${waiting} APPROVED payout(s) are waiting — Redis lock held or Redis down. Investigate before the next weekly run.`,
         );
         result.success = false;
-        result.errors.push(
-          `${waiting} APPROVED payouts waiting; processing lock unavailable`,
-        );
+        result.errors.push(verdict.error);
       }
     }
 
@@ -149,7 +179,12 @@ async function main(): Promise<void> {
     outputToGitHubActions(result);
 
     if (result.success) {
-      Sentry.logger.info("job:process-payouts finished", { processed: result.processed, succeeded: result.succeeded, failed: result.failed, orgErrors: result.orgErrors });
+      Sentry.logger.info("job:process-payouts finished", {
+        processed: result.processed,
+        succeeded: result.succeeded,
+        failed: result.failed,
+        orgErrors: result.orgErrors,
+      });
       console.log("🎉 Payout processing job completed successfully");
     } else {
       console.error("❌ Payout processing job completed with errors");
@@ -160,5 +195,7 @@ async function main(): Promise<void> {
   }
 }
 
-// Run the job
-runJob("process-payouts", main);
+// Only run when invoked directly, so the verdict helper can be unit-tested.
+if (require.main === module) {
+  runJob("process-payouts", main);
+}
