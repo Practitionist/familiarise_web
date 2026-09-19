@@ -450,14 +450,19 @@ function deriveMoney(
       );
     }
     // Refunds: the same rule the seat roster and the Payments API use (#1627).
+    // REFUND_PENDING means the WHOLE charge is coming back (the booking is
+    // gone, #1752); a partial one, settled or in flight, leaves it standing.
     const shown = paymentDisplayStatus({
       paymentStatus: "SUCCEEDED",
       amount: paid.amount,
       refunds: input.refunds,
     });
-    const pendingRefund = input.refunds
-      .filter((r) => normalizeStatus(r.status) === "PENDING")
-      .reduce((s, r) => s + Number(r.amountPaise), 0);
+    const sum = (status: string) =>
+      input.refunds
+        .filter((r) => normalizeStatus(r.status) === status)
+        .reduce((s, r) => s + Number(r.amountPaise), 0);
+    const back = sum("SUCCEEDED");
+    const pendingRefund = sum("PENDING");
     if (shown === "REFUNDED") {
       return build(
         "REFUNDED",
@@ -465,22 +470,19 @@ function deriveMoney(
         `${money(paid.amount, paid.currency)} refunded${rail ? ` · ${rail}` : ""}`,
       );
     }
-    if (pendingRefund > 0) {
+    if (pendingRefund > 0 && back + pendingRefund >= Number(paid.amount)) {
       return build(
         "REFUND_PENDING",
         "Refund pending",
         `${money(pendingRefund, paid.currency)} refund on its way${rail ? ` · ${rail}` : ""}`,
       );
     }
-    if (shown === "PARTIALLY_REFUNDED") {
-      const back = input.refunds
-        .filter((r) => normalizeStatus(r.status) === "SUCCEEDED")
-        .reduce((s, r) => s + Number(r.amountPaise), 0);
-      return build(
-        "PARTIALLY_REFUNDED",
-        "Partly refunded",
-        `${money(paid.amount, paid.currency)} paid · ${money(back, paid.currency)} refunded`,
-      );
+    if (shown === "PARTIALLY_REFUNDED" || pendingRefund > 0) {
+      const parts = [`${money(paid.amount, paid.currency)} paid`];
+      if (back > 0) parts.push(`${money(back, paid.currency)} refunded`);
+      if (pendingRefund > 0)
+        parts.push(`${money(pendingRefund, paid.currency)} refund on its way`);
+      return build("PARTIALLY_REFUNDED", "Partly refunded", parts.join(" · "));
     }
     // Locked 2026-09-13: the member did not pay a sponsored booking, so no amount.
     if (isSponsoredPayment(paid)) {
@@ -736,10 +738,13 @@ export function deriveBookingPresentation(
     paidRow ? toDate(paidRow.createdAt) : null,
     holdExpiresAt,
   );
+  // Money in but nothing confirmed: rows still tentative, or a single-sitting
+  // kind with no live row at all (a subscription/class allocates lazily).
+  const lazy = ["SUBSCRIPTION", "CLASS"].includes(
+    normalizeStatus(input.appointmentType),
+  );
   const settled = !(
-    paidRow &&
-    live.length > 0 &&
-    live.every((o) => o.isTentative)
+    paidRow && (live.length > 0 ? live.every((o) => o.isTentative) : !lazy)
   );
 
   return {
