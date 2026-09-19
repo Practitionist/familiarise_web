@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+} from "@/utils/appointmentlock";
 
 /**
  * POST /api/appointments/[appointmentId]/reschedule/withdraw
@@ -19,10 +23,10 @@ export async function POST(
 ) {
   try {
     const { appointmentId } = await params;
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     // Found via the appointment rather than by request id: the caller is acting
     // on a booking they can see, and openForAppointmentId already guarantees at
@@ -80,6 +84,17 @@ export async function POST(
       message: "Your reschedule request has been withdrawn.",
     });
   } catch (error) {
+    // #1583 A-P0-04 — the withdraw now serialises on the appointment atom;
+    // lock outcomes are structured answers (423 / 503), as in respond.
+    if (
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     return apiError({ tag: "[Reschedule.Withdraw]", error });
   }
 }

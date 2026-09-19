@@ -7,7 +7,7 @@ import { Card, CardContent } from "components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "components/ui/tabs";
 import { useToast } from "components/ui/use-toast";
 import { Loader2, SettingsIcon } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -79,7 +79,6 @@ const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
  */
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -105,14 +104,32 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
     useState<string | null>(null);
 
-  // Active tab from the URL (default: profile; invalid values fall back)
+  // Active tab from the URL (default: profile; invalid values fall back).
+  // URL writes go through window.history.replaceState rather than
+  // router.replace: the panels are client state and the parent page reads no
+  // search params server-side, so a router navigation would re-render the
+  // tree via useSearchParams reactivity for no benefit (same discipline as
+  // components/dashboard/UrlTabs.tsx). Local state flips the panel
+  // immediately since replaceState does not update useSearchParams; an
+  // external URL change (e.g. the verification banner's ?tab=verification
+  // deep link) wins back over a stale local pick.
   const tabParam = searchParams.get("tab");
-  const activeTab: SettingsTabKey = isSettingsTabKey(tabParam)
+  const urlTab: SettingsTabKey = isSettingsTabKey(tabParam)
     ? tabParam
     : "profile";
+  const [localTab, setLocalTab] = useState<SettingsTabKey | null>(null);
+  const activeTab: SettingsTabKey = localTab ?? urlTab;
+  useEffect(() => {
+    setLocalTab(null);
+  }, [tabParam]);
   const handleTabChange = (value: string) => {
     const next = isSettingsTabKey(value) ? value : "profile";
-    router.replace(`${pathname}?tab=${next}`, { scroll: false });
+    setLocalTab(next);
+    const target = `${pathname}?tab=${next}`;
+    const current = window.location.pathname + window.location.search;
+    if (target !== current) {
+      window.history.replaceState(window.history.state, "", target);
+    }
   };
 
   // Initialize slots data when timezone is available

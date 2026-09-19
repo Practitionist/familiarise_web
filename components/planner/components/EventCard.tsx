@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +43,17 @@ interface EventCardProps {
   isCollaborated?: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  /**
+   * Prefetchable editor href. When present the Edit affordance renders as a
+   * link (Button asChild + Link); when null the row has no editor to open
+   * and Edit stays a disabled button — never a link to nowhere.
+   */
+  editHref?: string | null;
+  /**
+   * Prefetchable trials-tab href (subscription cards). Same link discipline
+   * as editHref; falls back to onTrialsClick when absent.
+   */
+  trialsHref?: string | null;
   /**
    * False for a row carrying no id — both actions address the offering by id,
    * so neither has anything to act on. Defaults to true.
@@ -262,6 +274,8 @@ export function EventCard({
   isCollaborated,
   onEdit,
   onDelete,
+  editHref,
+  trialsHref,
   onTrialsClick,
   onJoinMeeting,
   canJoinNow,
@@ -348,20 +362,35 @@ export function EventCard({
 
           {!isCollaborated && (
             <div className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={!canManage}
-                className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-                aria-label={`Edit ${title}`}
-                title={canManage ? `Edit ${title}` : "Not saved yet"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onEdit();
-                }}
-              >
-                <Edit className="h-3.5 w-3.5" />
-              </Button>
+              {editHref ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                  aria-label={`Edit ${title}`}
+                  title={`Edit ${title}`}
+                  asChild
+                >
+                  <Link href={editHref} onClick={(e) => e.stopPropagation()}>
+                    <Edit className="h-3.5 w-3.5" />
+                  </Link>
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  disabled={!canManage}
+                  className="h-8 w-8 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                  aria-label={`Edit ${title}`}
+                  title={canManage ? `Edit ${title}` : "Not saved yet"}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit();
+                  }}
+                >
+                  <Edit className="h-3.5 w-3.5" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -470,22 +499,38 @@ export function EventCard({
           </div>
         )}
 
-        {hasTrialEnabled && onTrialsClick && (
+        {hasTrialEnabled && (trialsHref || onTrialsClick) && (
           <div className="mt-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onTrialsClick();
-              }}
-              className="w-full gap-2 border-teal-200 text-teal-800 hover:border-teal-300 hover:bg-teal-50"
-            >
-              <Gift className="h-4 w-4" />
-              {pendingTrialCount && pendingTrialCount > 0
-                ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
-                : "Trials"}
-            </Button>
+            {trialsHref ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-2 border-teal-200 text-teal-800 hover:border-teal-300 hover:bg-teal-50"
+                asChild
+              >
+                <Link href={trialsHref} onClick={(e) => e.stopPropagation()}>
+                  <Gift className="h-4 w-4" />
+                  {pendingTrialCount && pendingTrialCount > 0
+                    ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
+                    : "Trials"}
+                </Link>
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTrialsClick!();
+                }}
+                className="w-full gap-2 border-teal-200 text-teal-800 hover:border-teal-300 hover:bg-teal-50"
+              >
+                <Gift className="h-4 w-4" />
+                {pendingTrialCount && pendingTrialCount > 0
+                  ? `${pendingTrialCount} Trial Request${pendingTrialCount > 1 ? "s" : ""}`
+                  : "Trials"}
+              </Button>
+            )}
           </div>
         )}
 

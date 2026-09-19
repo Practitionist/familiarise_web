@@ -20,8 +20,14 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/db/serializable-retry", () => ({
   withSerializableRetry: (fn: () => unknown) => fn(),
 }));
+// #1583 C-P0-03 — the batch total is the seats' refundable balance read in
+// the reversal tx; the mock answers from `balances`, keyed by payment id.
+let balances: Record<string, number> = {};
 jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   applyReversal: jest.fn(),
+  readRefundableBalances: jest.fn(async (_tx: unknown, ids: string[]) =>
+    ids.map((id) => ({ id, refundablePaise: balances[id] ?? 0 })),
+  ),
 }));
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: jest.fn(),
@@ -49,6 +55,7 @@ const applyReversalMock = applyReversal as jest.Mock;
 const refundPayment_ = refundPayment as jest.Mock;
 
 beforeEach(() => {
+  balances = {};
   findMany.mockReset();
   applyReversalMock.mockReset();
   refundPayment_.mockReset();
@@ -72,8 +79,14 @@ describe("refundWholeEventPayments — funding partition", () => {
       { id: "p_org1", amount: 3000, paymentIntent: "org_wallet_1" },
       { id: "p_org2", amount: 4000, paymentIntent: "org_invoice_2" },
     ]);
+    balances = { p_org1: 3000, p_org2: 4000 };
 
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "admin1");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "admin1",
+    );
 
     // Two gateway seats → two refundPayment calls; NEVER the org seats.
     const refundedIds = refundPayment_.mock.calls.map((c) => c[0].paymentId);
@@ -96,6 +109,7 @@ describe("refundWholeEventPayments — funding partition", () => {
     findMany.mockResolvedValue([
       { id: "p_org1", amount: 3000, paymentIntent: "org_license_1" },
     ]);
+    balances = { p_org1: 3000 };
     applyReversalMock.mockResolvedValue({
       kind: "CLASS_MULTI",
       cascades: [{ memberOverageRefundDue: null }],
@@ -103,7 +117,12 @@ describe("refundWholeEventPayments — funding partition", () => {
       clawbackPosted: false,
     });
 
-    const summary = await refundWholeEventPayments("webinar", "web1", "cancel", null);
+    const summary = await refundWholeEventPayments(
+      "webinar",
+      "web1",
+      "cancel",
+      null,
+    );
 
     expect(refundPayment_).not.toHaveBeenCalled();
     expect(applyReversalMock).toHaveBeenCalledTimes(1);
@@ -115,6 +134,7 @@ describe("refundWholeEventPayments — funding partition", () => {
     findMany.mockResolvedValue([
       { id: "p_org1", amount: 3000, paymentIntent: "org_wallet_1" },
     ]);
+    balances = { p_org1: 3000 };
     applyReversalMock.mockResolvedValue({
       kind: "CLASS_MULTI",
       cascades: [{ memberOverageRefundDue: { overagePaymentId: "pay_side" } }],
@@ -136,16 +156,138 @@ describe("refundWholeEventPayments — funding partition", () => {
     ]);
     refundPayment_.mockRejectedValueOnce(new Error("gateway down"));
 
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "a");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
     expect(summary.failures).toEqual([
       { paymentId: "pay_card", error: "gateway down" },
     ]);
     expect(summary.refundsIssued).toBe(0);
   });
 
+  // #1583 C-P0-03 / C-P0-04 — the internal batch asks for what is LEFT, not
+  // the gross, so a partly-refunded seat no longer throws for the whole batch
+  // and a fully-refunded batch is reported, not reversed again.
+  it("asks CLASS_MULTI for the seats' refundable balance, not their gross amount", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+      { id: "p_org2", amount: 100_000, paymentIntent: "org_wallet_2" },
+    ]);
+    balances = { p_org1: 0, p_org2: 100_000 }; // seat 1 already refunded
+    applyReversalMock.mockResolvedValue({
+      kind: "CLASS_MULTI",
+      cascades: [],
+      childRefundIds: ["child2"],
+      clawbackPosted: false,
+    });
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(applyReversalMock.mock.calls[0][1].amountPaise).toBe(100_000);
+    expect(summary).toMatchObject({
+      refundsIssued: 1,
+      refundedPaise: 100_000,
+      // CodeRabbit r1 — the settled seat is a skip even in a mixed batch.
+      skippedAlreadyRefunded: 1,
+      alreadyRefunded: false,
+      failures: [],
+    });
+  });
+
+  it("a second identical call reverses nothing and reports alreadyRefunded", async () => {
+    findMany.mockResolvedValue([
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+      { id: "p_org2", amount: 100_000, paymentIntent: "org_wallet_2" },
+    ]);
+    balances = { p_org1: 0, p_org2: 0 };
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(applyReversalMock).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      refundsIssued: 0,
+      refundedPaise: 0,
+      skippedAlreadyRefunded: 2,
+      alreadyRefunded: true,
+      failures: [],
+    });
+  });
+
+  // CodeRabbit r2 — `alreadyRefunded` is derived after EVERY rail: an internal
+  // no-op beside a failed gateway seat is a failure, not idempotent success.
+  it("does not report alreadyRefunded when the internal batch was settled but a gateway seat failed", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_card", amount: 1000, paymentIntent: "pay_abc" },
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+    ]);
+    balances = { p_org1: 0 };
+    refundPayment_.mockRejectedValueOnce(new Error("gateway down"));
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(applyReversalMock).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      refundsIssued: 0,
+      skippedAlreadyRefunded: 1,
+      alreadyRefunded: false,
+      failures: [{ paymentId: "pay_card", error: "gateway down" }],
+    });
+  });
+
+  it("reports alreadyRefunded when every gateway seat was already settled too", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_card", amount: 1000, paymentIntent: "pay_abc" },
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+    ]);
+    balances = { p_org1: 0 };
+    const { RefundValidationError } = jest.requireMock(
+      "../../lib/payments/operations/refund",
+    ) as { RefundValidationError: new (m: string, c: string) => Error };
+    refundPayment_.mockRejectedValueOnce(
+      new RefundValidationError("settled", "ALREADY_FULLY_REFUNDED"),
+    );
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(summary).toMatchObject({
+      refundsIssued: 0,
+      skippedAlreadyRefunded: 2,
+      alreadyRefunded: true,
+      failures: [],
+    });
+  });
+
   it("no-ops on an event with no paid seats", async () => {
     findMany.mockResolvedValue([]);
-    const summary = await refundWholeEventPayments("class", "cls1", "cancel", "a");
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
     expect(refundPayment_).not.toHaveBeenCalled();
     expect(applyReversalMock).not.toHaveBeenCalled();
     expect(summary.refundsIssued).toBe(0);

@@ -1,5 +1,3 @@
-import type { NextRequest } from "next/server";
-
 /**
  * #1459 — a webhook payload is a few kilobytes; the largest we have seen is
  * well under a hundredth of this. Anything bigger is not a delivery we have to
@@ -19,9 +17,7 @@ export const MAX_WEBHOOK_BODY_BYTES = 256 * 1024;
  *
  * @returns The raw body, or `null` when the request exceeded the cap.
  */
-export async function readBodyWithinCap(
-  req: NextRequest,
-): Promise<string | null> {
+export async function readBodyWithinCap(req: Request): Promise<string | null> {
   const stream = req.body;
   // No stream means there is no body to bound; `text()` yields "" and the
   // caller's signature check rejects it.

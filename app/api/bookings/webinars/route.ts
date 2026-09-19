@@ -2,14 +2,14 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma, WebinarStatus } from "@prisma/client";
+import { listDateFilterSchema } from "@/schemas/list-date-filter";
+import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 
@@ -57,6 +57,23 @@ export async function GET(request: NextRequest) {
     }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
+    // #1592 A-P1-04 — an unparsable date used to reach Prisma as Invalid Date
+    // and 500; the ISO schema also refuses a real-looking 2026-02-30.
+    const dateRange = listDateFilterSchema.safeParse({
+      startDateStr,
+      endDateStr,
+    });
+    if (!dateRange.success) {
+      return NextResponse.json(
+        {
+          error:
+            dateRange.error.issues[0]?.message ??
+            "startDate and endDate must be valid ISO 8601 date-times",
+          code: "INVALID_DATE",
+        },
+        { status: 400 },
+      );
+    }
 
     // Org-scope filter — Webinar rows don't carry organizationId directly;
     // attribution lives on the parent WebinarPlan (per
@@ -235,76 +252,20 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: Request) {
+  // Anonymous callers get the same 401 as every other booking route.
   const authResult = await requireApiAuth();
   if (authResult.error) return authResult.error;
-  const { session } = authResult;
-
-  // #831 — event mutations previously had no limiter
-  const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
-  if (rl) return rl;
-
-  try {
-    const body = await request.json();
-
-    // Validate required fields
-    if (!body.scheduledAt || !body.endAt || !body.webinarPlanId) {
-      return NextResponse.json(
-        {
-          error:
-            "Missing required fields: scheduledAt, endAt, and webinarPlanId are required",
-        },
-        { status: 400 },
-      );
-    }
-
-    // Ownership check: only the owning consultant or privileged users can schedule a webinar
-    if (!isPrivileged(session.user.role)) {
-      const plan = await prisma.webinarPlan.findUnique({
-        where: { id: body.webinarPlanId },
-        select: { consultantProfileId: true },
-      });
-      if (
-        !plan ||
-        plan.consultantProfileId !== session.user.consultantProfileId
-      ) {
-        return forbiddenResponse(
-          "You can only create webinars for your own plans",
-        );
-      }
-    }
-
-    const webinar = await prisma.webinar.create({
-      data: {
-        status: body.status || WebinarStatus.SCHEDULED,
-        webinarPlan: {
-          connect: { id: body.webinarPlanId },
-        },
-      },
-      include: {
-        webinarPlan: {
-          include: {
-            consultantProfile: true,
-            topics: true,
-          },
-        },
-        appointment: {
-          include: {
-            occurrences: true,
-          },
-        },
-      },
-    });
-
-    return NextResponse.json({ data: webinar }, { status: 201 });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "bookings" } },
-    );
-    console.error("Error creating webinar:", error);
-    return NextResponse.json(
-      { error: "An error occurred while creating the webinar" },
-      { status: 500 },
-    );
-  }
+  // #1583 B-P0-05: the legacy create required scheduledAt/endAt, wrote neither,
+  // and trusted body.status. Webinars are created through the offering editor.
+  void request;
+  return NextResponse.json(
+    {
+      error:
+        "Creating a webinar here is not supported. Use the offering editor " +
+        "(POST /api/bookings/webinars/crud-with-plan), which schedules and " +
+        "validates the event in one step.",
+      code: "LEGACY_CREATE_NOT_SUPPORTED",
+    },
+    { status: 405 },
+  );
 }

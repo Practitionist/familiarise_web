@@ -282,3 +282,83 @@ describe("cron lock registry (#1169)", () => {
     expect(missing).toEqual([]);
   });
 });
+
+// #1599 F-P1-03 — `assertNotInMaintenance(job)` is a stringly gate: a money
+// twin under app/api/cleanup/* whose `job:` literal is not spelled exactly as
+// its FINANCIAL_JOB_NAMES entry runs straight through DEGRADED. Walk the twins
+// from source and check each money twin's literal against the set.
+describe("cleanup twins and the DEGRADED money gate (#1599)", () => {
+  const CLEANUP_DIR = path.join(ROOT, "app", "api", "cleanup");
+  const MONEY_CORE_DIRS = [
+    "scripts/payments/",
+    "scripts/refunds/",
+    "scripts/earnings/",
+    "scripts/payouts/",
+    "lib/payments/",
+  ];
+  const REFUND_FRONT_DOORS = [
+    "refundBookingPayment(",
+    "refundWholeEventPayments(",
+    "refundRemovedAttendeeSeat(",
+    "refundPaymentsForExpired(",
+  ];
+  /** Money-adjacent twins that deliberately keep running in DEGRADED. */
+  const NOT_FINANCIAL: Record<string, string> = {
+    // Re-drives a booking confirmation from an already-settled capture and
+    // moves no money; #1686 keeps it on every ticker slot for the buyer.
+    "reconcile-orphaned-confirmations": "booking re-drive from settled money",
+  };
+
+  interface Twin {
+    dir: string;
+    job: string | null;
+    money: boolean;
+  }
+
+  function buildTwins(): Twin[] {
+    return fs
+      .readdirSync(CLEANUP_DIR)
+      .sort()
+      .map((dir) => {
+        const file = path.join(CLEANUP_DIR, dir, "route.ts");
+        const src = read(file);
+        if (!src) return null;
+        const job = src.match(/job:\s*["'`]([^"'`]+)["'`]/)?.[1] ?? null;
+        const money = [
+          ...src.matchAll(/from\s+["'](@\/[^"']+|\.\.?\/[^"']+)["']/g),
+        ].some((imp) => {
+          const resolved = resolveImport(file, imp[1]);
+          if (!resolved) return false;
+          const rel = path.relative(ROOT, resolved);
+          if (MONEY_CORE_DIRS.some((d) => rel.startsWith(d))) return true;
+          const core = read(resolved);
+          return !!core && REFUND_FRONT_DOORS.some((fn) => core.includes(fn));
+        });
+        return { dir, job, money };
+      })
+      .filter((t): t is Twin => t !== null);
+  }
+
+  const twins = buildTwins();
+
+  it("extracts a job literal from every twin", () => {
+    expect(twins.length).toBeGreaterThanOrEqual(40);
+    expect(twins.filter((t) => !t.job).map((t) => t.dir)).toEqual([]);
+  });
+
+  it("names every money twin in FINANCIAL_JOB_NAMES, or says why not", () => {
+    const ungated = twins
+      .filter((t) => t.money && !(t.job && FINANCIAL_JOB_NAMES.has(t.job)))
+      .filter((t) => !(t.job && NOT_FINANCIAL[t.job]))
+      .map((t) => `${t.dir} → job: "${t.job}"`);
+    expect(ungated).toEqual([]);
+  });
+
+  it("keeps every exemption pointing at a twin that is still money-adjacent", () => {
+    for (const job of Object.keys(NOT_FINANCIAL)) {
+      const twin = twins.find((t) => t.job === job);
+      expect(twin?.money).toBe(true);
+      expect(FINANCIAL_JOB_NAMES.has(job)).toBe(false);
+    }
+  });
+});

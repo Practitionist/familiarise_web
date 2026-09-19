@@ -147,6 +147,9 @@ export default function EventParticipantsPage() {
     queryKey: ["event-participants", eventType, eventId],
     queryFn: () => fetchParticipants(kind.apiSegment, eventId),
     enabled: !!eventId && !!kind,
+    // Roster reads are invalidated on remove; a short stale window dedupes
+    // remount refetches in between.
+    staleTime: 2 * 60_000,
   });
 
   const removeParticipantMutation = useMutation({

@@ -41,6 +41,7 @@ import { useEventActions } from "@/components/appointments/consultee/useEventAct
 import { CancelConfirmationDialog } from "@/components/appointments/consultee/CancelConfirmationDialog";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { DocumentUpload } from "@/components/appointments/DocumentUpload";
+import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
 
 type DialogKind = "cancel" | "leave" | "report" | "documents";
 
@@ -155,7 +156,8 @@ export function useConsulteeAppointmentsAdapter(options?: {
   const typeLabel = activeVm ? KIND_TO_TYPE[activeVm.kind] : "Consultation";
   const actions = useEventActions({
     appointmentId: activeVm?.appointmentId ?? undefined,
-    rawOccurrences: (activeVm?.raw.rawOccurrences ?? []) as AppointmentOccurrence[],
+    rawOccurrences: (activeVm?.raw.rawOccurrences ??
+      []) as AppointmentOccurrence[],
     title: activeVm?.title ?? "",
     consultant: activeVm?.counterpart.name ?? "",
     type: typeLabel,
@@ -219,12 +221,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
         busy: joiningId === vm.id,
       };
     }
-    if (
-      vm.needsActionReason === "PAY_NOW" &&
-      vm.pendingPaymentUrl &&
-      /^https?:\/\//.test(vm.pendingPaymentUrl)
-    ) {
-      return { kind: "pay", label: "Pay now", href: vm.pendingPaymentUrl };
+    if (vm.needsActionReason === "PAY_NOW" && vm.pendingPaymentUrl) {
+      // #1167/#1429 — a trial pays on our branded checkout page, never the
+      // raw gateway link; the shared helper answers for every surface.
+      const trialHref = trialCheckoutHref(vm);
+      if (trialHref) return { kind: "pay", label: "Pay now", href: trialHref };
+      if (/^https?:\/\//.test(vm.pendingPaymentUrl)) {
+        return { kind: "pay", label: "Pay now", href: vm.pendingPaymentUrl };
+      }
     }
     return { kind: "view", label: "View" };
   };
@@ -238,13 +242,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
     // dialog — the detail page hosts the card with accept/decline/withdraw.
     const proposalTarget = rowProposalTarget(vm);
     if (proposalTarget && consulteeId && !inactive) {
+      const proposalHref = `/dashboard/consultee/${consulteeId}/appointments/${proposalTarget.appointmentId}`;
       items.push({
         key: "reschedule-proposal",
         label: "Review reschedule request",
-        onClick: () =>
-          router.push(
-            `/dashboard/consultee/${consulteeId}/appointments/${proposalTarget.appointmentId}`,
-          ),
+        // href is the prefetchable path; onClick stays as the fallback for
+        // button-only renderers (Sheet/detail) that cannot host a link.
+        href: proposalHref,
+        onClick: () => router.push(proposalHref),
       });
     }
     // #1005 — kind-gate: only offer actions the server will honour.
@@ -258,19 +263,19 @@ export function useConsulteeAppointmentsAdapter(options?: {
       isApprovedStatus(vm.status) &&
       occurrencesAllowReschedule(slots)
     ) {
+      // A page, not a dialog: choosing a time is a full-width task, and a
+      // URL means a half-finished choice survives a refresh. The returnTo
+      // query rides along literally; only the base path prefetches.
+      const rescheduleHref = `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule${
+        options?.rescheduleReturnTo
+          ? `?returnTo=${encodeURIComponent(options.rescheduleReturnTo)}`
+          : ""
+      }`;
       items.push({
         key: "reschedule",
         label: "Reschedule",
-        // A page, not a dialog: choosing a time is a full-width task, and a
-        // URL means a half-finished choice survives a refresh.
-        onClick: () =>
-          router.push(
-            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule${
-              options?.rescheduleReturnTo
-                ? `?returnTo=${encodeURIComponent(options.rescheduleReturnTo)}`
-                : ""
-            }`,
-          ),
+        href: rescheduleHref,
+        onClick: () => router.push(rescheduleHref),
       });
     }
     const destructive = consulteeDestructiveAction(vm.kind);

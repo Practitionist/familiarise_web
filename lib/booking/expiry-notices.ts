@@ -27,6 +27,11 @@ export const PAY_LINK_LAPSED_REASON =
 export const UNANSWERED_REQUEST_REASON =
   "The expert did not respond within 48 hours, so the request expired. No payment was taken.";
 
+// #1589 N-P0-03 — the paid-but-never-scheduled subscription; the refund rides
+// the same sweep through the booking refund front door.
+export const UNSCHEDULED_SUBSCRIPTION_REASON =
+  "The expert did not schedule any sessions within 30 days, so the subscription expired. Your payment is being refunded.";
+
 /** Never throws: an expiry that already committed must not fail on a notice. */
 export async function notifyConsulteeRequestExpired(
   notice: RequestExpiredNotice,

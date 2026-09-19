@@ -38,7 +38,7 @@ import {
 } from "@/schemas/webhooks/razorpay";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
-import { permanentFailure } from "@/lib/webhooks/event-log";
+import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
 
@@ -101,9 +101,9 @@ export async function routeCapturedPayment(params: {
   /** Captured amount in paise, for the parity check. */
   amountPaise?: number;
   /**
-   * Razorpay `pay_*` id. Present on `payment.captured` and on the client
-   * return; absent on `order.paid`, where `handleOrgPaymentSuccess` degrades
-   * to trusting notes and refuses to mark an invoice PAID.
+   * Razorpay `pay_*` id. Present on `payment.captured`, on the client return
+   * and on `order.paid` when its payment entity is shipped (#1582 F-P0-01);
+   * absent, `handleOrgPaymentSuccess` refuses to mark an invoice PAID.
    */
   gatewayPaymentId?: string;
 }): Promise<void> {
@@ -147,6 +147,8 @@ export async function processRazorpayWebhookEvent(
   event: RazorpayWebhookEnvelope,
   eventType: string,
   eventId: string,
+  /** The live route's claim on the row; the sweeper re-drive passes none. */
+  claim?: WebhookClaim,
 ): Promise<void> {
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
@@ -184,12 +186,15 @@ export async function processRazorpayWebhookEvent(
 
       case "order.paid": {
         const paidEvent = razorpayOrderPaidEventSchema.parse(event);
-        // No `pay_*` id on this event shape, so the org branch degrades to
-        // trusting notes and refuses to mark an invoice PAID.
+        // #1582 F-P0-01 — the `pay_*` id rides along when Razorpay ships the
+        // payment entity; without it the org branch still refuses to mark PAID.
+        const paidEntity = paidEvent.payload.payment?.entity;
         await routeCapturedPayment({
           orderId: paidEvent.payload.order.entity.id,
           notes: paidEvent.payload.order.entity.notes ?? {},
-          amountPaise: paidEvent.payload.order.entity.amount,
+          amountPaise:
+            paidEntity?.amount ?? paidEvent.payload.order.entity.amount,
+          gatewayPaymentId: paidEntity?.id,
         });
         break;
       }
@@ -511,7 +516,7 @@ export async function processRazorpayWebhookEvent(
         })
         .catch(() => {});
     } else {
-      await markWebhookEventProcessed(eventId, processingError);
+      await markWebhookEventProcessed(eventId, processingError, claim);
     }
   }
 }

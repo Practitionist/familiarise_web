@@ -70,6 +70,26 @@ export const FINANCIAL_JOB_NAMES = new Set([
   "gst-outward-register-export",
 ]);
 
+/**
+ * #1599 F-P1-03 — the admin console (`/api/admin/system-jobs/run`) keys a few
+ * jobs by an id spelled differently from the cron job name. Map those here so
+ * the DEGRADED gate has one list, `FINANCIAL_JOB_NAMES`, and no second copy.
+ */
+const CRON_JOB_NAME_BY_ADMIN_ID: Record<string, string> = {
+  "reconcile-refunds": "reconcile-pending-refunds",
+  // Rides inside the abandoned-payments run since #1321.
+  "cleanup-approval-payments": "cleanup-abandoned-payments",
+  "tentative-occurrences": "cleanup-tentative-occurrences",
+  "auth-tokens": "cleanup-auth-tokens",
+};
+
+/** True when a cron job name, or an admin console job id, is a money job. */
+export function isFinancialJob(jobIdOrName: string): boolean {
+  return FINANCIAL_JOB_NAMES.has(
+    CRON_JOB_NAME_BY_ADMIN_ID[jobIdOrName] ?? jobIdOrName,
+  );
+}
+
 /** The maintenance phases that can stop a job. */
 export type BlockingMaintenancePhase = "OFFLINE" | "DEGRADED";
 

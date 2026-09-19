@@ -1,8 +1,9 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,6 +51,7 @@ export function TrialBookingModal({
     : "Free trial";
   const { data: session } = useSession();
   const router = useRouter();
+  const pathname = usePathname();
   const { toast } = useToast();
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -58,9 +60,15 @@ export function TrialBookingModal({
   // Send an unauthenticated visitor to sign-in, preserving the trial intent so
   // that after auth + onboarding they land back on this expert with the trial
   // modal auto-opened (the expert page honours ?action=trial).
+  // Memoized so the guest CTA can render as a prefetchable <Link>; the
+  // programmatic redirect below pushes the identical URL.
+  const signInHref = useMemo(() => {
+    const returnTo = `${pathname}?action=trial`;
+    return `/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`;
+  }, [pathname]);
+
   const redirectToSignIn = () => {
-    const returnTo = `${window.location.pathname}?action=trial`;
-    router.push(`/auth/signin?callbackUrl=${encodeURIComponent(returnTo)}`);
+    router.push(signInHref);
   };
 
   const handleSubmit = async () => {
@@ -137,7 +145,10 @@ export function TrialBookingModal({
         setNotes("");
       }, 2000);
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Error requesting trial:", error);
       toast({
         title: "Error",
@@ -167,8 +178,10 @@ export function TrialBookingModal({
             <p className="text-muted-foreground mb-4">
               Please sign in to request a trial with {consultantName}
             </p>
-            <Button onClick={redirectToSignIn}>
-              Sign In to Continue
+            <Button asChild>
+              <Link href={signInHref} prefetch>
+                Sign In to Continue
+              </Link>
             </Button>
           </div>
         </DialogContent>
@@ -206,8 +219,7 @@ export function TrialBookingModal({
             Book Trial Session
           </DialogTitle>
           <DialogDescription>
-            Request a {trialDurationMinutes}-minute trial with{" "}
-            {consultantName}
+            Request a {trialDurationMinutes}-minute trial with {consultantName}
           </DialogDescription>
         </DialogHeader>
 

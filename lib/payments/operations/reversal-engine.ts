@@ -1,4 +1,7 @@
-import { reportSentryError, reportSentryMessage } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import type { Tx } from "@/lib/prisma";
 /**
  * Unified reversal engine (#776 §C / ARCH #4).
@@ -34,9 +37,19 @@ import type { Tx } from "@/lib/prisma";
  *                         calls applyReversal for those from a route.
  */
 
-import { Prisma, RefundStatus } from "@prisma/client";
+import {
+  Prisma,
+  RefundStatus,
+  type Currency,
+  type PaymentGateway,
+} from "@prisma/client";
 import { applyRefundCascade, type ApplyRefundCascadeResult } from "./refund";
 import { postLedgerTxn } from "@/lib/payments/ledger/post";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -151,13 +164,62 @@ export async function applyReversal(
   }
 }
 
+/** One child payment of a CLASS_MULTI batch with what is still refundable on it. */
+export interface RefundableBalance {
+  id: string;
+  amount: number;
+  currency: Currency;
+  paymentGateway: PaymentGateway;
+  displayCurrencyAtCheckout: string | null;
+  exchangeRateAtCheckout: number | null;
+  /** `amount` net of PENDING/SUCCEEDED refunds and LOST/CHARGE_REFUNDED disputes, floored at 0. */
+  refundablePaise: number;
+}
+
+/**
+ * The per-payment refundable balance, read through the caller's transaction so
+ * the clamp and the write share one snapshot (#1583 C-P0-03). Shared by
+ * `reverseClassMulti` and `refundWholeEventPayments` so the batch total and the
+ * per-child headroom can never be computed from two different readings.
+ */
+export async function readRefundableBalances(
+  tx: Pick<Tx, "payment">,
+  paymentIds: string[],
+): Promise<RefundableBalance[]> {
+  if (paymentIds.length === 0) return [];
+  const payments = await tx.payment.findMany({
+    where: { id: { in: paymentIds } },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      paymentGateway: true,
+      // #781 §C — carry the FX snapshot onto each child refund (mirrors refund.ts).
+      displayCurrencyAtCheckout: true,
+      exchangeRateAtCheckout: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
+  });
+  return payments.map(({ refunds, disputes, ...payment }) => ({
+    ...payment,
+    refundablePaise: refundableBalancePaise(payment.amount, {
+      refunds,
+      disputes,
+    }),
+  }));
+}
+
 /**
  * Fan a single logical refund across the child payments of a consolidated
  * CLASS purchase. The caller resolves the group → `paymentIds`; we distribute
- * `amountPaise` proportionally by each payment's own amount, create one Refund
- * row per child (so each carries its own gateway/ledger trail), and run the
- * proven cascade on each. Last child absorbs the rounding remainder so the
- * children sum exactly to `amountPaise`.
+ * `amountPaise` proportionally by each payment's REFUNDABLE balance, create one
+ * Refund row per child (so each carries its own gateway/ledger trail), and run
+ * the proven cascade on each. The rounding remainder is walked across children
+ * that still have headroom so the children sum exactly to `amountPaise`.
+ *
+ * Clamps per child to the refundable balance, so a second whole-event call is
+ * a no-op rather than a second cascade (#1583 C-P0-03): a seat that was already
+ * refunded contributes no share and gets no Refund row.
  */
 async function reverseClassMulti(
   tx: Tx,
@@ -169,44 +231,47 @@ async function reverseClassMulti(
 }> {
   if (paymentIds.length === 0) return { cascades: [], childRefundIds: [] };
 
-  const payments = await tx.payment.findMany({
-    where: { id: { in: paymentIds } },
-    select: {
-      id: true,
-      amount: true,
-      currency: true,
-      paymentGateway: true,
-      // #781 §C — carry the FX snapshot onto each child refund (mirrors refund.ts).
-      displayCurrencyAtCheckout: true,
-      exchangeRateAtCheckout: true,
-    },
-  });
-  const totalAmount = payments.reduce((s, p) => s + p.amount, 0);
-  if (totalAmount <= 0) return { cascades: [], childRefundIds: [] };
+  const payments = (await readRefundableBalances(tx, paymentIds)).filter(
+    (p) => p.refundablePaise > 0,
+  );
+  const totalRefundable = payments.reduce((s, p) => s + p.refundablePaise, 0);
+  if (totalRefundable <= 0) return { cascades: [], childRefundIds: [] };
 
   // Fail fast on an over-refund. Without this the per-child floor shares would
-  // exceed their own amounts and crash deep inside a child cascade (after some
+  // exceed their own headroom and crash deep inside a child cascade (after some
   // children already processed) — a clear upfront error is far easier to debug.
-  if (input.amountPaise > totalAmount) {
+  if (input.amountPaise > totalRefundable) {
     throw new Error(
-      `CLASS_MULTI reversal amount ${input.amountPaise} exceeds class total ${totalAmount}`,
+      `CLASS_MULTI reversal amount ${input.amountPaise} exceeds the batch's refundable balance ${totalRefundable}`,
     );
   }
 
-  // Proportional split by payment amount. The floor() per child loses up to
-  // <1 paise each, so distribute the rounding remainder one paise at a time to
-  // children that still have headroom (share < amount) — never dump it all on
-  // the last child, which could be tiny/zero and overflow its own amount,
+  // Proportional split by refundable balance. The floor() per child loses up
+  // to <1 paise each, so distribute the rounding remainder one paise at a time
+  // to children that still have headroom (share < refundable) — never dump it
+  // all on the last child, which could be tiny and overflow its own balance,
   // tripping applyRefundCascade's `requested > refundable` guard and crashing
-  // the whole reversal. Total headroom (totalAmount − assigned) always covers
-  // the remainder for any amountPaise <= totalAmount, so one pass suffices.
+  // the whole reversal. Total headroom (totalRefundable − assigned) always
+  // covers the remainder for any amountPaise <= totalRefundable, so one pass
+  // suffices.
+  // The product of two paise figures can leave the safe-integer range long
+  // before either figure does, so the share is computed in BigInt and every
+  // boundary value is asserted back into the safe range (#780 posture).
+  for (const v of [input.amountPaise, totalRefundable]) {
+    if (!Number.isSafeInteger(v)) {
+      throw new Error(`CLASS_MULTI reversal figure outside safe range: ${v}`);
+    }
+  }
   const shares = payments.map((p) => ({
     payment: p,
-    share: Math.floor((input.amountPaise * p.amount) / totalAmount),
+    share: sumPaise(
+      (BigInt(input.amountPaise) * BigInt(p.refundablePaise)) /
+        BigInt(totalRefundable),
+    ),
   }));
   let remainder = input.amountPaise - shares.reduce((s, x) => s + x.share, 0);
   for (let i = 0; remainder > 0 && i < shares.length; i++) {
-    const headroom = shares[i].payment.amount - shares[i].share;
+    const headroom = shares[i].payment.refundablePaise - shares[i].share;
     const add = Math.min(headroom, remainder);
     shares[i].share += add;
     remainder -= add;
@@ -273,11 +338,14 @@ async function reversePayoutClawback(
     select: { id: true, clawbackInitiatedAt: true },
   });
   if (!payout) {
-    reportSentryMessage("reversePayoutClawback: target OrganizationPayout not found", {
-      subsystem: "payments",
-      level: "warning",
-      extra: { orgPayoutId, refundId: input.refundId },
-    });
+    reportSentryMessage(
+      "reversePayoutClawback: target OrganizationPayout not found",
+      {
+        subsystem: "payments",
+        level: "warning",
+        extra: { orgPayoutId, refundId: input.refundId },
+      },
+    );
     return false;
   }
 
@@ -305,39 +373,67 @@ async function reversePayoutClawback(
     },
   });
 
-  // Best-effort ledger counter-post (mirrors refund.ts dual-write safety).
+  await postPayoutClawback(tx, {
+    refundId: input.refundId,
+    payoutId: orgPayoutId,
+    amountPaise: input.amountPaise,
+    organizationId,
+  });
+
+  return true;
+}
+
+/**
+ * The clawback journal: `Dr CASH / Cr ORG_PAYABLE`, idempotent on
+ * `clawback:<refundId>:<payoutId>`. #1582 C-P1-02c — shared by the dispute
+ * path and both refund paths so the counter the reconciler compares against
+ * (`stepClawbackGap`) always has a matching posting. INR-only, so the ledger
+ * account currency is left unset as post.ts documents.
+ */
+export async function postPayoutClawback(
+  tx: Tx,
+  input: {
+    refundId: string;
+    payoutId: string;
+    amountPaise: number;
+    organizationId: string;
+  },
+): Promise<void> {
+  const { refundId, payoutId, amountPaise, organizationId } = input;
+  // The counter-post is part of the reversal, not a side effect: report, then
+  // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `clawback:${input.refundId}:${orgPayoutId}`,
+      idempotencyKey: `clawback:${refundId}:${payoutId}`,
       kind: "ORG_PAYOUT",
-      payoutId: orgPayoutId,
+      payoutId,
       postings: [
         {
           account: { kind: "CASH" },
           direction: "DEBIT",
-          amountPaise: input.amountPaise,
+          amountPaise,
         },
         {
           account: { kind: "ORG_PAYABLE", organizationId },
           direction: "CREDIT",
-          amountPaise: input.amountPaise,
+          amountPaise,
         },
       ],
     });
   } catch (err) {
     reportSentryError(err, { subsystem: "payments", level: "fatal" });
     console.error(
-      `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
+      `[ledger] payout clawback posting FAILED for payout ${payoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
     );
-    // #776 — page immediately on dual-write drift; fire-and-forget.
+    // #776 — page immediately on dual-write drift; fire-and-forget. #1582
+    // B-P1-02 — global client on purpose: the rethrow rolls the tx back.
     void recordSystemError({
       organizationId,
       category: "LEDGER",
-      summary: `Payout clawback ledger posting failed for payout ${orgPayoutId}`,
+      summary: `Payout clawback ledger posting failed for payout ${payoutId}`,
       err,
-      context: { orgPayoutId, refundId: input.refundId },
+      context: { orgPayoutId: payoutId, refundId },
     }).catch(() => {});
+    throw err;
   }
-
-  return true;
 }

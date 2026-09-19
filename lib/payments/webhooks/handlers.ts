@@ -29,8 +29,12 @@ import {
   REQUEST_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
   CLASS_EVENT_ALLOWED_FROM,
+  appendCreationHistory,
+  transitionConsultationRequest,
   transitionOccurrenceCompletion,
+  transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { isExclusionViolation } from "@/lib/db/pg-errors";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { resolveSchedulingTimezone } from "@/lib/scheduling/schedulingTimezone";
@@ -277,7 +281,9 @@ async function reportTerminalCaptureRace(params: {
     select: { paymentStatus: true },
   });
   const currentStatus = fresh?.paymentStatus ?? params.observedStatus;
-  void recordSystemError({
+  // #1582 B-P1-02 — written through the caller's client (PG_POOL_MAX=1): a
+  // global-client insert inside the tx would queue and die at the connect timeout.
+  await recordSystemError({
     organizationId: null,
     category: "PAYMENT",
     summary: `Capture for order ${params.orderId} landed on a ${currentStatus} payment — status left alone, refund by hand`,
@@ -288,6 +294,7 @@ async function reportTerminalCaptureRace(params: {
       currentStatus,
       reason: params.reason,
     },
+    db: params.db,
   }).catch(() => {});
   reportSentryMessage(
     "Capture landed on a terminal payment — status not restamped",
@@ -304,12 +311,35 @@ async function reportTerminalCaptureRace(params: {
   );
 }
 
+/**
+ * #1440 — thrown when a recovery's link write matches no row: another
+ * recovery (or the webhook itself) linked the appointment first. Rolls the
+ * tx back so the appointment built here never commits unlinked.
+ */
+export class RecoveryAlreadyDoneError extends Error {
+  readonly code = "ALREADY_RECOVERED" as const;
+  readonly httpStatus = 409 as const;
+  constructor(paymentId: string) {
+    super(`Payment ${paymentId} already has an appointment linked`);
+    this.name = "RecoveryAlreadyDoneError";
+  }
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-): Promise<void> {
+  /**
+   * #1440 — `recover: true` (admin recovery route only) lets a SUCCEEDED row
+   * with NO appointment skip the idempotency short-circuit and run the
+   * LEGACY appointment build with the supplied metadata. Every other state
+   * keeps the webhook behaviour exactly; the link write's CAS predicate is
+   * the single-writer guard (ADR 21).
+   */
+  options?: { recover?: boolean },
+): Promise<PaymentSuccessTxResult["outcome"] | null> {
+  const recovering = options?.recover === true;
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
   // keys; normalize ONCE here so validation AND the legacy create flow
@@ -357,7 +387,14 @@ export async function handlePaymentSuccess(
             throw err;
           }
 
-          if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+          const recoverable =
+            recovering &&
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            payment.appointmentId === null;
+          if (
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            !recoverable
+          ) {
             console.log(
               `Payment ${paymentIntentId} has already been processed.`,
             );
@@ -395,7 +432,8 @@ export async function handlePaymentSuccess(
                 paymentId: payment.id,
                 orderId: paymentIntentId,
                 observedStatus: payment.paymentStatus,
-                reason: "capture arrived after the payment reached a terminal state",
+                reason:
+                  "capture arrived after the payment reached a terminal state",
               });
               return null;
             }
@@ -488,6 +526,9 @@ export async function handlePaymentSuccess(
           try {
             validateWebhookMetadata(metadata);
           } catch (validationError) {
+            // #1440 — a recovery with bad metadata is the operator's error;
+            // the row is already SUCCEEDED, so there is nothing to restamp.
+            if (recoverable) throw validationError;
             const errorMessage =
               validationError instanceof ZodError
                 ? validationError.errors
@@ -584,13 +625,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // (the dev replay route used to fail metadata validation). Confirming
           // an EXPIRED payment would flip a hold the abandoned-payments sweep
           // has already released, so a terminal row is reported, not booked.
-          const confirmed = await tx.payment.updateMany({
-            where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-            data: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              ...capturedGatewayId,
-            },
-          });
+          // #1440 — a recovery starts from SUCCEEDED; its guard is the link
+          // write's CAS in createAppointmentFromWebhook, not this stamp.
+          const confirmed = recoverable
+            ? { count: 1 }
+            : await tx.payment.updateMany({
+                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+                data: {
+                  paymentStatus: PaymentStatus.SUCCEEDED,
+                  ...capturedGatewayId,
+                },
+              });
           if (confirmed.count === 0) {
             await reportTerminalCaptureRace({
               db: tx,
@@ -807,7 +852,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason:
           "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
       });
-      return;
+      return null;
     }
     void recordSystemError({
       organizationId: null,
@@ -836,11 +881,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return null;
   }
 
   // If transaction returned null, the payment was already processed or had a metadata error
-  if (!txResult) return;
+  if (!txResult) return null;
 
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
@@ -879,7 +924,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #1695 — the hold was released before the money landed. Nothing to
@@ -913,7 +958,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         context: { paymentId: txResult.paymentId },
       }).catch(() => {});
     }
-    return;
+    return txResult.outcome;
   }
 
   // #855 — the capture landed after the booking was cancelled. The payment is
@@ -934,7 +979,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #837 — the #827 first-confirmed-wins guard blocked this booking: the payment
@@ -979,7 +1024,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, notifications)
@@ -1318,6 +1363,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   })();
+  return txResult.outcome;
 }
 
 /**
@@ -1420,10 +1466,20 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
-    await tx.payment.update({
-      where: { id: payment.id },
+    // ADR 21 / #1582 B-P0-01 — CAS in WHERE: a `payment.failed` for attempt 1
+    // racing the capture of attempt 2 must not overwrite SUCCEEDED.
+    const { count } = await tx.payment.updateMany({
+      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
+    if (count === 0) {
+      reportSentryMessage("payment.failed lost the race to a capture", {
+        subsystem: "payments",
+        expected: true,
+        extra: { paymentIntentId },
+      });
+      return;
+    }
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
@@ -1554,10 +1610,17 @@ async function createAppointmentFromWebhook(
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
 
-  await tx.payment.update({
-    where: { id: payment.id },
+  // #1440 / ADR 21 — the link is a CAS: SUCCEEDED (this tx stamped it, or the
+  // recovery read it) and still unlinked. A miss means another writer won.
+  const linked = await tx.payment.updateMany({
+    where: {
+      id: payment.id,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+    },
     data: { appointmentId: appointment.id },
   });
+  if (linked.count === 0) throw new RecoveryAlreadyDoneError(payment.id);
 
   return appointment;
 }
@@ -1633,6 +1696,18 @@ async function createConsultation(tx: Tx, data: ConsultationData) {
     },
   });
 
+  // #1583 A-P1-06 — the legacy creator was the one request birth with no
+  // opening timeline row (SKILL.md rule 1); same tx as the create.
+  await appendCreationHistory(
+    tx,
+    "CONSULTATION",
+    consultation.id,
+    consultation.status,
+    {
+      appointmentId: appointment.id,
+    },
+  );
+
   return appointment;
 }
 
@@ -1682,7 +1757,7 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   // has always produced: a subscription's calls are allocated later by the
   // consultant from the Requests tab and land on this row as occurrences, so
   // there is no time here to write.
-  return await tx.appointment.create({
+  const wrapper = await tx.appointment.create({
     data: {
       appointmentType: AppointmentsType.SUBSCRIPTION,
       subscriptionId: subscription.id,
@@ -1691,6 +1766,19 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       occurrences: true,
     },
   });
+
+  // #1583 A-P1-06 — same opening row the checkout creator writes.
+  await appendCreationHistory(
+    tx,
+    "SUBSCRIPTION",
+    subscription.id,
+    subscription.status,
+    {
+      appointmentId: wrapper.id,
+    },
+  );
+
+  return wrapper;
 }
 
 async function createWebinar(tx: Tx, data: EventData) {
@@ -1782,10 +1870,20 @@ async function createClass(tx: Tx, data: EventData) {
  * Confirm consultation or subscription status after successful payment
  * Transitions APPROVED_PENDING_PAYMENT → APPROVED
  */
+/** The request states a capture may legitimately land on (#1583 A-P0-01). */
+const LIVE_REQUEST_STATUSES: ReadonlySet<AppointmentStatus> = new Set([
+  AppointmentStatus.PENDING,
+  AppointmentStatus.APPROVED_PENDING_PAYMENT,
+  AppointmentStatus.APPROVED,
+  AppointmentStatus.SCHEDULED,
+  AppointmentStatus.COMPLETED,
+]);
+
 async function confirmApprovalStatus(
   tx: Tx,
   entityType: "consultation" | "subscription",
   entityId: string,
+  appointmentId?: string,
 ): Promise<{ capturedAfterTerminal: boolean }> {
   // #855 — signals Phase 2 to auto-refund a capture that landed after the
   // booking was cancelled (money collected for a now-dead booking).
@@ -1832,52 +1930,80 @@ async function confirmApprovalStatus(
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps a
+        // telemetry failure from aborting money.
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "consultation", entityId },
+          db: tx,
         }).catch(() => {});
       }
     }
   } else {
+    // Read through the tx, so this is the snapshot the CAS below runs in.
     const subscription = await tx.subscription.findUnique({
       where: { id: entityId },
+      select: { status: true },
     });
 
     if (!subscription) {
       throw new Error(`Subscription ${entityId} not found`);
     }
 
+    const flagTerminal = async (status: AppointmentStatus) => {
+      capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
+      // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+      await recordSystemError({
+        organizationId: null,
+        category: "PAYMENT",
+        summary: `Payment captured for subscription ${entityId} in terminal state ${status} — refund needed`,
+        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
+        context: { entityType: "subscription", entityId },
+        db: tx,
+      }).catch(() => {});
+    };
+
     // For subscriptions: Only transition APPROVED_PENDING_PAYMENT → APPROVED
     // Do NOT change PENDING → APPROVED here!
     // Subscription stays PENDING until consultant allocates slots via Requests tab
     // SchedulingService.allocate() will set status to APPROVED when slots are allocated
     if (subscription.status === AppointmentStatus.APPROVED_PENDING_PAYMENT) {
-      // CAS — the pre-read can race a cancel; the guard decides (B2).
-      await tx.subscription.updateMany({
-        where: {
-          id: entityId,
-          status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        },
-        data: { status: AppointmentStatus.APPROVED },
-      });
-      console.log(
-        `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
-      );
-    } else if (subscription.status === AppointmentStatus.CANCELLED) {
-      // #855 — capture landed after the subscription was cancelled: money for a
-      // dead booking. PENDING here is normal (slots are allocated later), so
-      // only CANCELLED is the terminal-capture case.
-      capturedAfterTerminal = true;
-      void recordSystemError({
-        organizationId: null,
-        category: "PAYMENT",
-        summary: `Payment captured for subscription ${entityId} in terminal state CANCELLED — refund needed`,
-        err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
-        context: { entityType: "subscription", entityId },
-      }).catch(() => {});
+      try {
+        // #1583 A-P1-04 — the guarded helper: same CAS, plus the history row.
+        await transitionSubscriptionRequest(tx, {
+          where: { id: entityId },
+          to: AppointmentStatus.APPROVED,
+          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+          reason: "payment captured",
+          appointmentId,
+        });
+        console.log(
+          `✅ Subscription ${entityId} payment completed - moving from APPROVED_PENDING_PAYMENT to APPROVED`,
+        );
+      } catch (err) {
+        if (!(err instanceof IllegalTransitionError)) throw err;
+        // A racing writer moved the row between the read and the CAS; the
+        // fresh status decides benign (still live) or money-for-nothing.
+        const fresh = await tx.subscription.findUnique({
+          where: { id: entityId },
+          select: { status: true },
+        });
+        const freshStatus = fresh?.status ?? subscription.status;
+        if (LIVE_REQUEST_STATUSES.has(freshStatus)) {
+          console.log(
+            `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
+          );
+        } else {
+          await flagTerminal(freshStatus);
+        }
+      }
+    } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
+      // #1583 A-P0-01 — REJECTED and EXPIRED are as dead as CANCELLED: a
+      // capture on any of them is money for a booking nobody will deliver.
+      await flagTerminal(subscription.status);
     } else {
       console.log(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
@@ -1994,7 +2120,9 @@ export async function confirmExistingAppointment(
           select: { id: true },
         });
         if (!alreadyRecorded) {
-          void recordSystemError({
+          // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); also keeps the
+          // once-per-appointment probe above in the same snapshot.
+          await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
             summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
@@ -2005,6 +2133,7 @@ export async function confirmExistingAppointment(
               slotId: slot.id,
             },
             correlationId,
+            db: tx,
           }).catch(() => {});
         }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
@@ -2044,12 +2173,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "class", entityId: classId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }
@@ -2096,12 +2227,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for webinar ${webinarId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "webinar", entityId: webinarId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }
@@ -2155,6 +2288,7 @@ export async function confirmExistingAppointment(
       tx,
       "subscription",
       appointment.subscription.id,
+      appointmentId,
     );
     capturedAfterTerminal = capturedAfterTerminal || r.capturedAfterTerminal;
   }
@@ -2208,25 +2342,41 @@ async function cleanupFailedPaymentAppointment(tx: Tx, appointmentId: string) {
       if (remainingSlots === 0) {
         // Soft-delete: transition to EXPIRED status instead of hard-deleting
         // to preserve audit trails for support/disputes/refunds.
-        // #836 — guard rides the WHERE: never expire an APPROVED or terminal
-        // booking from this cleanup path; zero rows means it already moved on.
+        // #836 — the guard rides the WHERE with the map's own from-set
+        // (PENDING, APPROVED_PENDING_PAYMENT, APPROVED): a terminal booking is
+        // never expired from here, and a zero-row CAS means it already moved
+        // on, which #1583 A-P1-04 logs rather than swallows.
+        const expireArgs = {
+          to: AppointmentStatus.EXPIRED,
+          fromIn: REQUEST_ALLOWED_FROM.EXPIRED,
+          reason: "payment failed",
+          appointmentId,
+        };
+        const alreadyMovedOn = (entity: string, id: string) =>
+          console.warn(
+            `ℹ️ ${entity} ${id} already left the expirable set before the failed-payment cleanup; nothing to expire`,
+          );
         if (appointment.consultation) {
-          await tx.consultation.updateMany({
-            where: {
-              id: appointment.consultation.id,
-              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
-            },
-            data: { status: AppointmentStatus.EXPIRED },
-          });
+          try {
+            await transitionConsultationRequest(tx, {
+              where: { id: appointment.consultation.id },
+              ...expireArgs,
+            });
+          } catch (err) {
+            if (!(err instanceof IllegalTransitionError)) throw err;
+            alreadyMovedOn("Consultation", appointment.consultation.id);
+          }
         }
         if (appointment.subscription) {
-          await tx.subscription.updateMany({
-            where: {
-              id: appointment.subscription.id,
-              status: { in: REQUEST_ALLOWED_FROM.EXPIRED },
-            },
-            data: { status: AppointmentStatus.EXPIRED },
-          });
+          try {
+            await transitionSubscriptionRequest(tx, {
+              where: { id: appointment.subscription.id },
+              ...expireArgs,
+            });
+          } catch (err) {
+            if (!(err instanceof IllegalTransitionError)) throw err;
+            alreadyMovedOn("Subscription", appointment.subscription.id);
+          }
         }
       }
     }

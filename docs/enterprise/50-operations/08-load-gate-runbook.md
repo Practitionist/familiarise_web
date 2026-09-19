@@ -366,7 +366,10 @@ listed in `LOAD_GATE_EVENT_EXCLUDE_USER_IDS` or the event will read as one seat
 over-booked.
 
 **The public availability route reports only free slots.** A booked minute
-simply vanishes from `GET /api/scheduling/availability/[consultantId]`; there is no
+simply vanishes from `GET /api/scheduling/availability-with-allocation/[consultantId]`
+(the bespoke `GET /api/scheduling/availability/[consultantId]` route it replaced
+was deleted in #1583 B-P0-05/E-P0-01 for painting weekly rows with `getUTCDay()`/`Date.UTC`
+instead of the frozen-offset projection); there is no
 field distinguishing free from tentative from confirmed, and the response is
 CDN-cached for fifteen seconds. It is useless as a double-booking oracle. The
 verifier uses `GET /api/scheduling/appointments` instead, which returns full slot

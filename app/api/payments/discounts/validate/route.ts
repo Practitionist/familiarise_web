@@ -1,14 +1,21 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { DiscountType } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { discountLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { computeDiscountPaise } from "@/lib/payments/pricing/derive-checkout-amount";
+import { validateDiscountCurrency } from "@/lib/payments/validation/currency-guards";
 
-interface ValidateDiscountRequest {
-  code: string;
-  amount?: number; // Optional: base amount to calculate discount
-}
+// CodeRabbit on #1753 — the preview shares checkout's arithmetic, so it also
+// refuses the inputs checkout would: a non-integer or negative amount, a
+// non-string currency. Zero is allowed (a free plan previews a zero discount).
+const validateDiscountRequestSchema = z.object({
+  code: z.string().min(1, "Discount code is required"),
+  amount: z.number().int().nonnegative().safe().optional(),
+  currency: z.string().trim().toUpperCase().optional().default("INR"),
+});
 
 interface DiscountCodeResponse {
   valid: boolean;
@@ -39,15 +46,20 @@ export async function POST(request: NextRequest) {
     const rl = await applyRateLimit(discountLimiter, session.user.id);
     if (rl) return rl;
 
-    const body: ValidateDiscountRequest = await request.json();
-    const { code, amount } = body;
-
-    if (!code || typeof code !== "string") {
+    const parsed = validateDiscountRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
       return NextResponse.json<DiscountCodeResponse>(
-        { valid: false, message: "Discount code is required" },
+        {
+          valid: false,
+          message:
+            parsed.error.issues[0]?.message ?? "Invalid discount request",
+        },
         { status: 400 },
       );
     }
+    const { code, amount, currency: planCurrency } = parsed.data;
 
     const discountCode = await prisma.discountCode.findUnique({
       where: { code: code.toUpperCase().trim() },
@@ -96,28 +108,42 @@ export async function POST(request: NextRequest) {
       (discountCode.discountValue < 1 || discountCode.discountValue > 100)
     ) {
       return NextResponse.json<DiscountCodeResponse>(
-        { valid: false, message: "This discount code has an invalid configuration" },
+        {
+          valid: false,
+          message: "This discount code has an invalid configuration",
+        },
         { status: 400 },
       );
     }
 
-    // Calculate discount amount if base amount provided
+    // #1584 P1-FX04c — the same guard checkout applies: a FIXED_AMOUNT code in
+    // another currency previews as invalid here instead of failing at charge.
+    if (
+      !validateDiscountCurrency(
+        {
+          discountType: discountCode.discountType,
+          currency: discountCode.currency,
+        },
+        planCurrency,
+      )
+    ) {
+      return NextResponse.json<DiscountCodeResponse>(
+        {
+          valid: false,
+          message: "This discount code is for a different currency",
+        },
+        { status: 400 },
+      );
+    }
+
+    // #1584 P1-FX04c — one discount arithmetic, shared with checkout.
     let discountAmount: number | undefined;
     if (amount && amount > 0) {
-      if (discountCode.discountType === DiscountType.PERCENTAGE) {
-        discountAmount = Math.round(
-          (amount * discountCode.discountValue) / 100,
-        );
-        // Apply max discount cap if set
-        if (
-          discountCode.maxDiscount !== null &&
-          discountAmount > discountCode.maxDiscount
-        ) {
-          discountAmount = discountCode.maxDiscount;
-        }
-      } else if (discountCode.discountType === DiscountType.FIXED_AMOUNT) {
-        discountAmount = Math.min(discountCode.discountValue, amount);
-      }
+      discountAmount = computeDiscountPaise(amount, {
+        discountType: discountCode.discountType,
+        discountValue: discountCode.discountValue,
+        maxDiscount: discountCode.maxDiscount,
+      });
     }
 
     return NextResponse.json<DiscountCodeResponse>({
@@ -130,7 +156,10 @@ export async function POST(request: NextRequest) {
       message: "Discount code applied successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error validating discount code:", error);
     return NextResponse.json<DiscountCodeResponse>(
       { valid: false, message: "Failed to validate discount code" },

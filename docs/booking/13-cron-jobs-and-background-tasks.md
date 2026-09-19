@@ -14,27 +14,26 @@ The booking system relies on several cron jobs to maintain data integrity, expir
 
 Each job follows a dual-invocation pattern:
 
-1. **GitHub Actions** (primary) -- Workflows in `.github/workflows/` run on a `schedule` trigger and execute the core script directly via `npx tsx`.
-2. **API endpoints** (secondary) -- Thin wrapper routes in `app/api/cleanup/` allow Vercel Cron, external cron services, or manual `curl` invocations.
+1. **GitHub Actions** (unbounded backstop) -- Workflows in `.github/workflows/` run on a `schedule` trigger and execute the core script directly via `npx tsx`. ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule roughly once every hundred minutes rather than on its declared cadence, so Actions is the fleet's daily/weekly and unbounded fallback scheduler, not the primary invocation for a latency-sensitive job.
+2. **API endpoints** -- Thin wrapper routes in `app/api/cleanup/` exist for every job. Five of the booking jobs are also Netlify ticker targets: `netlify/functions/cron-tick.mts` (ADR 27) POSTs them on every third five-minute tick, a 15-minute cadence, and the ticker is their primary invocation while the hourly (or, for `tentative-occurrences`, two-hourly) GitHub Actions workflow is the unbounded backstop. The remaining routes — `detect-consultant-no-shows`, `auto-complete-appointments`, `reconcile-occurrence-availability` and the rest of this page — are not ticker targets; their Actions schedule is the only automatic invocation and the route serves manual `curl` runs. See "The Netlify ticker" below for the five and their cadences.
 
 Both paths call the same core function exported from `scripts/appointments/`. The API route adds HTTP authentication; the GitHub Actions workflow uses repository secrets for database access.
 
-> **Cross-reference**: See `docs/guides/cron-setup.md` for deployment-specific setup instructions (Vercel Cron, external services, environment variables).
+> **Cross-reference**: See `docs/guides/cron-setup.md` for how to run the Netlify ticker locally.
 
 ---
 
 ## Schedule Overview
 
-| Job                                 | Cron Expression   | Human-Readable          | Source Script                                                 | API Route                                        |
-| ----------------------------------- | ----------------- | ----------------------- | ------------------------------------------------------------- | ------------------------------------------------ |
-| Auto-complete appointments          | `7 * * * *`       | Every hour, at :07      | `scripts/appointments/auto-complete-appointments.ts`          | `/api/cleanup/auto-complete-appointments`        |
-| Cleanup tentative slots             | `0 */2 * * *`     | Every 2 hours           | `scripts/appointments/cleanup-tentative-occurrences.ts`       | `/api/cleanup/tentative-occurrences`             |
-| Cleanup stale pending consultations | `30 * * * *`      | Every hour, at :30      | `scripts/appointments/cleanup-stale-pending-consultations.ts` | `/api/cleanup/stale-pending-consultations`       |
-| Cleanup invalid appointments        | `0 * * * *`       | Every hour, on the hour | `scripts/appointments/cleanup-invalid-appointments.ts`        | `/api/cleanup/invalid-appointments`              |
-| Expire stale requests               | `10 * * * *`      | Every hour, at :10      | `scripts/appointments/expire-stale-requests.ts`               | `/api/cleanup/expire-stale-requests`             |
-| Cleanup abandoned payments          | `6-59/15 * * * *` | Every 15 minutes        | `scripts/payments/cleanup-abandoned-payments.ts`              | `/api/cleanup/abandoned-payments`                |
-| Reconcile slot availability         | `15 * * * *`      | Every hour, at :15      | `scripts/appointments/reconcile-occurrence-availability.ts`   | `/api/cleanup/reconcile-occurrence-availability` |
-| Detect consultant no-shows          | `57 * * * *`      | Every hour, at :57      | `scripts/appointments/detect-consultant-no-shows.ts`          | N/A (GitHub Actions only)                        |
+| Job                          | Cron Expression   | Human-Readable        | Source Script                                               | API Route                                        |
+| ---------------------------- | ----------------- | --------------------- | ----------------------------------------------------------- | ------------------------------------------------ |
+| Auto-complete appointments   | `7 * * * *`       | Every hour, at :07    | `scripts/appointments/auto-complete-appointments.ts`        | `/api/cleanup/auto-complete-appointments`        |
+| Cleanup tentative slots      | `38 */2 * * *`    | Every 2 hours, at :38 | `scripts/appointments/cleanup-tentative-occurrences.ts`     | `/api/cleanup/tentative-occurrences`             |
+| Cleanup invalid appointments | `12 * * * *`      | Every hour, at :12    | `scripts/appointments/cleanup-invalid-appointments.ts`      | `/api/cleanup/invalid-appointments`              |
+| Expire stale requests        | `10 * * * *`      | Every hour, at :10    | `scripts/appointments/expire-stale-requests.ts`             | `/api/cleanup/expire-stale-requests`             |
+| Cleanup abandoned payments   | `6-59/15 * * * *` | Every 15 minutes      | `scripts/payments/cleanup-abandoned-payments.ts`            | `/api/cleanup/abandoned-payments`                |
+| Reconcile slot availability  | `32 * * * *`      | Every hour, at :32    | `scripts/appointments/reconcile-occurrence-availability.ts` | `/api/cleanup/reconcile-occurrence-availability` |
+| Detect consultant no-shows   | `57 * * * *`      | Every hour, at :57    | `scripts/appointments/detect-consultant-no-shows.ts`        | N/A (GitHub Actions only)                        |
 
 ---
 
@@ -119,7 +118,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 | Field              | Value                                                   |
 | ------------------ | ------------------------------------------------------- |
-| **Schedule**       | `0 */2 * * *` -- every 2 hours                          |
+| **Schedule**       | `38 */2 * * *` -- every 2 hours, at :38                 |
 | **Source**         | `scripts/appointments/cleanup-tentative-occurrences.ts` |
 | **API**            | `app/api/cleanup/tentative-occurrences/route.ts`        |
 | **GitHub Actions** | `.github/workflows/cleanup-tentative-occurrences.yml`   |
@@ -137,28 +136,9 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 ---
 
-### c. Cleanup Stale Pending Consultations
+### c. Cleanup Stale Pending Consultations (retired)
 
-| Field              | Value                                                         |
-| ------------------ | ------------------------------------------------------------- |
-| **Schedule**       | `30 * * * *` -- every hour, at :30                            |
-| **Source**         | `scripts/appointments/cleanup-stale-pending-consultations.ts` |
-| **API**            | `app/api/cleanup/stale-pending-consultations/route.ts`        |
-| **GitHub Actions** | `.github/workflows/cleanup-stale-pending-consultations.yml`   |
-| **HTTP Methods**   | `GET`, `POST`                                                 |
-
-**Purpose**: Cancels consultations stuck in `APPROVED` or `APPROVED_PENDING_PAYMENT` where the user never completed payment within the threshold period. Differs from the expire-stale-requests job, which targets `PENDING` requests awaiting consultant response.
-
-**Threshold**: 7 days since last `updatedAt` timestamp (`STALE_THRESHOLD_DAYS = 7`).
-
-**Criteria**: Consultation in `APPROVED` or `APPROVED_PENDING_PAYMENT` status, `updatedAt` older than 7 days, AND either no payment records or all payments in a non-`SUCCEEDED` state.
-
-**Action**: Within a Prisma `$transaction`:
-
-1. Updates consultation to `status = CANCELLED` with `cancellationNotes` indicating auto-cancellation and `cancelledAt` timestamp.
-2. Deletes tentative `AppointmentOccurrence` records tied to the appointment.
-
-**Safety**: Per-record `try/catch` wrapping the transaction. Each consultation is processed independently. The transaction ensures the status update and slot release are atomic -- if either fails, neither is committed.
+This job was retired on 2026-09-19 (#1732, #1589 P-P1-01). It cancelled `APPROVED` / `APPROVED_PENDING_PAYMENT` consultations with no successful payment after seven days, while `expire-stale-requests` and the pay-link sweep in `cleanup-abandoned-payments` expire that same cohort, so one event had two sweeps and two terminal words. Doctrine rule 5 keeps one outcome, `EXPIRED`, and the two remaining sweeps share it.
 
 ---
 
@@ -166,7 +146,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 | Field              | Value                                                  |
 | ------------------ | ------------------------------------------------------ |
-| **Schedule**       | `0 * * * *` -- every hour, on the hour                 |
+| **Schedule**       | `12 * * * *` -- every hour, at :12                     |
 | **Source**         | `scripts/appointments/cleanup-invalid-appointments.ts` |
 | **API**            | `app/api/cleanup/invalid-appointments/route.ts`        |
 | **GitHub Actions** | `.github/workflows/cleanup-invalid-appointments.yml`   |
@@ -227,7 +207,7 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 | Field              | Value                                                        |
 | ------------------ | ------------------------------------------------------------ |
-| **Schedule**       | `15 * * * *` -- every hour, at :15                           |
+| **Schedule**       | `32 * * * *` -- every hour, at :32                           |
 | **Source**         | `scripts/appointments/reconcile-occurrence-availability.ts`  |
 | **API**            | `app/api/cleanup/reconcile-occurrence-availability/route.ts` |
 | **GitHub Actions** | `.github/workflows/reconcile-occurrence-availability.yml`    |
@@ -289,6 +269,24 @@ The deferral is bounded. The detector declines candidates it cannot decide — S
 
 ---
 
+## The Netlify ticker
+
+`netlify/functions/cron-tick.mts` (ADR 27) is a Netlify scheduled function that runs every five minutes and POSTs a fixed list of `/api/cleanup/*` targets, because ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule roughly once every hundred minutes instead of on its declared cadence. As of 2026-09-19 (#1583 E-P0-04, #1589 P-P0-01 and N-P1-03, #1591 J1-P1-05, #1599 C-P1-06) it carries five booking targets, each due on every third tick — a 15-minute cadence — through the ticker's `TARGET_EVERY_MINUTES` map:
+
+| Target directory (`app/api/cleanup/<name>`) | Job                               | Cadence on the ticker | Per-tick timeout |
+| ------------------------------------------- | --------------------------------- | --------------------- | ---------------- |
+| `expire-unpaid-trials`                      | Expire unpaid trials              | Every 15 minutes      | 6s (default)     |
+| `reschedule-proposals`                      | Expire reschedule proposals       | Every 15 minutes      | 6s (default)     |
+| `appointment-reminders`                     | Send appointment reminders        | Every 15 minutes      | 20s              |
+| `tentative-occurrences`                     | Cleanup tentative slots           | Every 15 minutes      | 6s (default)     |
+| `expire-stale-requests`                     | Expire stale requests (section e) | Every 15 minutes      | 20s              |
+
+`appointment-reminders` and `expire-stale-requests` get the 20-second tier because their per-row cost does not fit the 6-second default on a cold instance: the reminder job stages an outbox row per matching booking, and the stale-request sweep routes SUCCEEDED payments through the refund front door. Both twins already wrap their core in `withCronLock` and answer 409 on overlap with a concurrent GitHub Actions run, so the ticker's tick and the hourly Actions run can never double-execute the same cohort — the loser's 409 is counted as `lockHeld`, not `failed`. None of the five reads a `limit` query parameter, so none of them gets an entry in the ticker's `TARGET_LIMITS` map; each twin bounds its own cohort. The hourly GitHub Actions schedules in the table above stay as the unbounded backstop for all five, exactly as they do for the ten pre-existing ticker targets (webhook sweeps, refund reconciliation, earnings sync).
+
+`send-appointment-reminders.ts`, the core script behind the `appointment-reminders` target, also gained a TRIAL branch on 2026-09-19: a `SCHEDULED` trial with a live occurrence in the 24-hour or 1-hour reminder windows now gets the same reminder pair a consultation or subscription session gets, deduplicated by the same `${appointmentId}:${window}` outbox key. The ticker's 15-minute cadence is what actually closes the gap the trial branch fixes — the underlying hourly Actions schedule was already wide enough to miss a reminder window entirely.
+
+---
+
 ## Job Architecture
 
 All booking cron jobs follow the same three-layer pattern:
@@ -308,8 +306,8 @@ The core script has no HTTP or framework dependencies. The API route is a thin w
 ```mermaid
 flowchart TD
     subgraph Triggers
-        GHA["GitHub Actions<br/>(schedule cron)"]
-        VCRON["Vercel Cron<br/>(vercel.json)"]
+        GHA["GitHub Actions<br/>(schedule cron, unbounded backstop)"]
+        TICK["Netlify ticker<br/>(cron-tick.mts, every 5 min)"]
         MANUAL["Manual curl<br/>(POST/GET)"]
     end
 
@@ -326,7 +324,7 @@ flowchart TD
     end
 
     GHA --> JOB
-    VCRON --> ROUTE
+    TICK --> ROUTE
     MANUAL --> ROUTE
     JOB --> SCRIPT
     ROUTE --> SCRIPT

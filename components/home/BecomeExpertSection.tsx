@@ -73,11 +73,12 @@ export function BecomeExpertSection() {
               </Button>
             </Link>
             <Button
+              asChild
               size="lg"
               variant="outline"
               className="px-8 h-14 text-base rounded-xl border-border hover:bg-muted"
             >
-              Learn More
+              <Link href="#how-it-works">Learn More</Link>
             </Button>
           </div>
         </motion.div>

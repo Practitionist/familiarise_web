@@ -2304,8 +2304,18 @@ describe("deleteExistingAppointments", () => {
     const tentativeAppointment = {
       id: "rescheduled-apt",
       occurrences: [
-        { id: "s1", isTentative: true },
-        { id: "s2", isTentative: true },
+        {
+          id: "s1",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        {
+          id: "s2",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
       ],
       participants: [],
       _count: { payment: 0 },
@@ -2326,10 +2336,62 @@ describe("deleteExistingAppointments", () => {
     expect(result.success).toBe(true);
     // The freed ids must be threaded up to the AllocationResult.
     expect(result.deletedAppointmentIds).toEqual(["rescheduled-apt"]);
-    // And only tentative slots were removed (partial reschedule path).
+    // And only RELEASED slots were removed (partial reschedule path): the
+    // WHERE mirrors isReleasedForReschedule, never bare tentativeness.
     expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
-      where: { appointmentId: "rescheduled-apt", isTentative: true },
+      where: {
+        appointmentId: "rescheduled-apt",
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+        deletedAt: null,
+      },
     });
+  });
+
+  it("AE-4b: a fresh tentative hold coexisting with a release survives the reschedule", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+
+    const mixedAppointment = {
+      id: "mixed-apt",
+      occurrences: [
+        {
+          id: "released-1",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        {
+          id: "fresh-1",
+          isTentative: true,
+          completionStatus: "SCHEDULED",
+          deletedAt: null,
+        },
+      ],
+      participants: [],
+      _count: { payment: 0 },
+    };
+    mockTx.appointment.findMany.mockResolvedValue([mixedAppointment]);
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
+    });
+
+    // One released session = 2 slots for a 1h consultation: accepted.
+    expect(result.success).toBe(true);
+    // The delete targets released rows only; the fresh hold is untouched.
+    expect(mockTx.appointmentOccurrence.deleteMany).toHaveBeenCalledWith({
+      where: {
+        appointmentId: "mixed-apt",
+        isTentative: true,
+        completionStatus: "RESCHEDULED",
+        deletedAt: null,
+      },
+    });
+    // The wrapper survives: the fresh hold still lives on it.
+    expect(mockTx.appointment.deleteMany).not.toHaveBeenCalled();
   });
 
   // ── Enrolled learners must survive a tentative-path reschedule ─────────────
@@ -2769,6 +2831,9 @@ describe("partial reschedule slot count", () => {
         consultantProfile: makeConsultantProfile(),
       },
     });
+  // Genuine reschedule releases: tentative + RESCHEDULED + live. Bare
+  // tentative holds (fresh request-for-approval / unpaid checkout) are NOT
+  // releases and no longer count toward the reschedule total.
   const twoTentativeAppointments = [
     {
       id: "resched-1",
@@ -2776,6 +2841,8 @@ describe("partial reschedule slot count", () => {
         {
           id: "ts1",
           isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
           startsAt: new Date(),
           endsAt: new Date(),
         },
@@ -2789,6 +2856,8 @@ describe("partial reschedule slot count", () => {
         {
           id: "ts2",
           isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
           startsAt: new Date(),
           endsAt: new Date(),
         },

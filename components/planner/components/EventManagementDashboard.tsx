@@ -1,6 +1,7 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import Link from "next/link";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -359,10 +360,10 @@ export function EventManagementDashboard({
 
   // Trials live on Appointments now (ADR 19 — a trial IS an appointment), so
   // this deep-links to the tab rather than the retired standalone route.
+  // Prefetchable: threaded to the subscription card as a real link.
+  const trialsHref = `/dashboard/consultant/${consultantId}/appointments?tab=trials`;
   const handleTrialsClick = () => {
-    router.push(
-      `/dashboard/consultant/${consultantId}/appointments?tab=trials`,
-    );
+    router.push(trialsHref);
   };
 
   // Handle webinar saved event
@@ -376,18 +377,23 @@ export function EventManagementDashboard({
   // URL that could only land on the error boundary: `id ?? ""` collapsed to a
   // double slash, while a bare `id` stringified undefined into the path. The
   // card's Edit control is disabled for such a row; this is the backstop.
-  const goToEdit = (type: string, id: string | undefined) => {
+  // Prefetchable: cards render this href as a real link; the push below is
+  // only the fallback for surfaces that cannot host one.
+  const getEditHref = (type: string, id: string | undefined): string | null => {
     if (!id) {
       reportSentryMessage("Edit requested for an offering with no id", {
         subsystem: "offerings",
         op: "edit-navigate",
         extra: { type, consultantId },
       });
-      return;
+      return null;
     }
-    router.push(
-      `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`,
-    );
+    return `/dashboard/consultant/${consultantId}/offerings/${type}/${id}/edit`;
+  };
+
+  const goToEdit = (type: string, id: string | undefined) => {
+    const href = getEditHref(type, id);
+    if (href) router.push(href);
   };
 
   const handleEditWebinar = (webinar: PlannerWebinarEvent) => {
@@ -527,16 +533,16 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/consultant/${consultantId}/offerings/consultation/new`,
-                  )
-                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
+                asChild
               >
-                <Plus className="h-4 w-4" />
-                New Plan
+                <Link
+                  href={`/dashboard/consultant/${consultantId}/offerings/consultation/new`}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Plan
+                </Link>
               </Button>
             </div>
             {consultationPlansLoading ? (
@@ -560,6 +566,7 @@ export function EventManagementDashboard({
                   ) || []
                 }
                 onEdit={handleEditConsultationPlan}
+                getEditHref={(id) => getEditHref("consultation", id)}
                 onDelete={handleConsultationPlanDelete}
                 eventType="consultation"
                 participantCounts={{}}
@@ -590,16 +597,16 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/consultant/${consultantId}/offerings/subscription/new`,
-                  )
-                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
+                asChild
               >
-                <Plus className="h-4 w-4" />
-                New Plan
+                <Link
+                  href={`/dashboard/consultant/${consultantId}/offerings/subscription/new`}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Plan
+                </Link>
               </Button>
             </div>
             {subscriptionPlansLoading ? (
@@ -623,10 +630,12 @@ export function EventManagementDashboard({
                   ) || []
                 }
                 onEdit={handleEditSubscriptionPlan}
+                getEditHref={(id) => getEditHref("subscription", id)}
                 onDelete={handleSubscriptionPlanDelete}
                 eventType="subscription"
                 participantCounts={{}}
                 pendingTrialCounts={pendingTrialCounts}
+                trialsHref={trialsHref}
                 onTrialsClick={handleTrialsClick}
                 onArchiveToggle={handleSubscriptionPlanArchiveToggle}
                 archivingPlanId={
@@ -672,21 +681,22 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/consultant/${consultantId}/offerings/webinar/new`,
-                  )
-                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
+                asChild
               >
-                <Plus className="h-4 w-4" />
-                New Webinar
+                <Link
+                  href={`/dashboard/consultant/${consultantId}/offerings/webinar/new`}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Webinar
+                </Link>
               </Button>
             </div>
             <EventCarousel
               events={webinars}
               onEdit={handleEditWebinar}
+              getEditHref={(id) => getEditHref("webinar", id)}
               onDelete={handleWebinarDelete}
               eventType="webinar"
               participantCounts={data.participantCounts ?? {}}
@@ -719,21 +729,22 @@ export function EventManagementDashboard({
                 </div>
               </div>
               <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/consultant/${consultantId}/offerings/class/new`,
-                  )
-                }
                 variant="outline"
                 className="w-full gap-2 border-zinc-200 bg-white font-medium text-zinc-900 hover:bg-zinc-50 sm:w-auto"
+                asChild
               >
-                <Plus className="h-4 w-4" />
-                New Class
+                <Link
+                  href={`/dashboard/consultant/${consultantId}/offerings/class/new`}
+                >
+                  <Plus className="h-4 w-4" />
+                  New Class
+                </Link>
               </Button>
             </div>
             <EventCarousel
               events={classes}
               onEdit={handleEditClass}
+              getEditHref={(id) => getEditHref("class", id)}
               onDelete={handleClassDelete}
               eventType="class"
               participantCounts={data.participantCounts ?? {}}

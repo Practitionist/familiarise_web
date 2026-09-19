@@ -17,6 +17,7 @@
  */
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
   LifeBuoy,
@@ -481,18 +482,20 @@ function PlatformTab({
           <div className="mt-3 flex flex-wrap gap-2">
             {feedbackHref && (
               <Button variant="ghost" size="sm" asChild>
-                <a href={feedbackHref}>
+                {/* Internal dashboard route (all callers pass relative
+                    dashboard hrefs) — Link so it prefetches. */}
+                <Link href={feedbackHref}>
                   <MessageSquareText className="mr-1.5 h-4 w-4" />
                   Share feedback
-                </a>
+                </Link>
               </Button>
             )}
             {helpHref && (
               <Button variant="ghost" size="sm" asChild>
-                <a href={helpHref}>
+                <Link href={helpHref}>
                   <HelpCircle className="mr-1.5 h-4 w-4" />
                   Browse FAQs
-                </a>
+                </Link>
               </Button>
             )}
           </div>
