@@ -67,7 +67,10 @@ import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
@@ -1543,6 +1546,59 @@ export async function applyRefundCascade(
 // Credit-note minting (#776 / #778 §D) — shared by the cascade + webhook
 // ============================================================================
 
+export type OrgCreditNoteMintResult = {
+  creditNoteId: string | null;
+  /** #1582 C-P0-01 — set when the cumulative cap refused a further note. */
+  outcome?: "FULLY_CREDITED";
+};
+
+/**
+ * #1582 C-P0-01 — how much of an org invoice is still creditable once every
+ * note already issued against it is summed, mirroring the consumer minter.
+ * Aggregations bypass the money extension, hence `sumPaise`.
+ */
+async function remainingOrgInvoiceCreditPaise(
+  tx: Tx,
+  invoice: { id: string; totalPaise: number },
+): Promise<number> {
+  const issued = await tx.creditNote.aggregate({
+    where: { invoiceId: invoice.id },
+    _sum: { totalPaise: true },
+  });
+  return invoice.totalPaise - sumPaise(issued._sum.totalPaise);
+}
+
+/** Records the refused over-credit for ops; no money moved, so it is expected. */
+function reportOrgCreditNoteFullyCredited(params: {
+  organizationId: string;
+  invoiceId: string;
+  requestedPaise: number;
+  refundId?: string;
+  disputeId?: string;
+}): void {
+  void recordSystemEvent({
+    organizationId: params.organizationId,
+    category: "BILLING",
+    severity: "WARN",
+    message: `CREDIT_NOTE_FULLY_CREDITED: invoice ${params.invoiceId} is credited in full; ${params.requestedPaise}p not reversed`,
+    context: {
+      invoiceId: params.invoiceId,
+      requestedPaise: params.requestedPaise,
+      refundId: params.refundId ?? null,
+      disputeId: params.disputeId ?? null,
+    },
+  }).catch(() => {});
+  reportSentryMessage("CREDIT_NOTE_FULLY_CREDITED", {
+    subsystem: "payments",
+    expected: true,
+    level: "warning",
+    extra: {
+      invoiceId: params.invoiceId,
+      requestedPaise: params.requestedPaise,
+    },
+  });
+}
+
 /**
  * Mint a GST credit note (CGST Sec 34 / Rule 53) for the invoiced portion of a
  * refund. Self-contained (loads its own data) and **idempotent on refundId**,
@@ -1570,7 +1626,7 @@ export async function mintRefundCreditNote(
     refundId?: string;
     disputeId?: string;
   },
-): Promise<{ creditNoteId: string | null }> {
+): Promise<OrgCreditNoteMintResult> {
   if (!params.refundId === !params.disputeId) {
     throw new Error(
       "mintRefundCreditNote: exactly one of refundId/disputeId must be set",
@@ -1659,9 +1715,29 @@ export async function mintRefundCreditNote(
   const invoiceTax = invoice.igstPaise + invoice.cgstPaise + invoice.sgstPaise;
   const taxFraction =
     invoice.subtotalPaise > 0 ? invoiceTax / invoice.subtotalPaise : 0;
-  const cnSubtotal = invoicedReverse;
-  const cnTax = Math.round(invoicedReverse * taxFraction);
-  const cnTotal = cnSubtotal + cnTax;
+  let cnSubtotal = invoicedReverse;
+  let cnTax = Math.round(invoicedReverse * taxFraction);
+  let cnTotal = cnSubtotal + cnTax;
+
+  // #1582 C-P0-01 — the cap is cumulative across every note on this invoice,
+  // not per note, mirroring the consumer minter: two partial refunds plus a
+  // LOST dispute must never reverse more than the invoice.
+  const remaining = await remainingOrgInvoiceCreditPaise(tx, invoice);
+  if (remaining <= 0) {
+    reportOrgCreditNoteFullyCredited({
+      organizationId: org.id,
+      invoiceId: invoice.id,
+      requestedPaise: cnTotal,
+      refundId: params.refundId,
+      disputeId: params.disputeId,
+    });
+    return { creditNoteId: null, outcome: "FULLY_CREDITED" };
+  }
+  if (cnTotal > remaining) {
+    cnTotal = remaining;
+    cnTax = Math.round((cnTotal * invoiceTax) / invoice.totalPaise);
+    cnSubtotal = cnTotal - cnTax;
+  }
   const interState = invoice.igstPaise > 0;
   const cnIgst = interState ? cnTax : 0;
   const cnSgst = interState ? 0 : Math.floor(cnTax / 2);
@@ -1712,7 +1788,7 @@ export async function mintInvoiceRefundCreditNote(
     amountPaise: number;
     reason: string;
   },
-): Promise<{ creditNoteId: string | null }> {
+): Promise<OrgCreditNoteMintResult> {
   const existing = await tx.creditNote.findUnique({
     where: { refundId: params.refundId },
     select: { id: true },
@@ -1743,7 +1819,19 @@ export async function mintInvoiceRefundCreditNote(
   });
   if (!org) return { creditNoteId: null };
 
-  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise);
+  // #1582 C-P0-01 — cumulative rather than per-note cap, mirroring the
+  // consumer minter; the clamp re-derives the tax heads from the clamped total.
+  const remaining = await remainingOrgInvoiceCreditPaise(tx, invoice);
+  if (remaining <= 0) {
+    reportOrgCreditNoteFullyCredited({
+      organizationId: org.id,
+      invoiceId: invoice.id,
+      requestedPaise: params.amountPaise,
+      refundId: params.refundId,
+    });
+    return { creditNoteId: null, outcome: "FULLY_CREDITED" };
+  }
+  const cnTotal = Math.min(params.amountPaise, invoice.totalPaise, remaining);
   if (cnTotal <= 0) return { creditNoteId: null };
 
   // Same proportional-tax shape as mintRefundCreditNote.
