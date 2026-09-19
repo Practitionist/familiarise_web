@@ -180,12 +180,31 @@ export async function POST(
     }
 
     // Import handlePaymentSuccess dynamically to avoid circular dependencies
-    const { handlePaymentSuccess } =
+    const { handlePaymentSuccess, RecoveryAlreadyDoneError } =
       await import("@/lib/payments/webhooks/handlers");
 
     // Retry appointment creation with corrected metadata
     try {
-      await handlePaymentSuccess(payment.paymentIntent, body.metadata);
+      // #1440 — `recover: true` is what lets a SUCCEEDED, unlinked row past the
+      // idempotency short-circuit; without it this call was a no-op. The link
+      // write's CAS (ADR 21) is the single-writer guard, so two concurrent
+      // recoveries build one appointment: the loser answers 409 below.
+      const outcome = await handlePaymentSuccess(
+        payment.paymentIntent,
+        body.metadata,
+        undefined,
+        undefined,
+        { recover: true },
+      );
+      if (outcome === null) {
+        return NextResponse.json(
+          {
+            error: "Payment already has an appointment linked",
+            code: "ALREADY_RECOVERED",
+          },
+          { status: 409 },
+        );
+      }
 
       // Fetch updated payment
       const updatedPayment = await prisma.payment.findUnique({
@@ -213,6 +232,12 @@ export async function POST(
         appointment: updatedPayment?.appointment,
       });
     } catch (recoveryError) {
+      if (recoveryError instanceof RecoveryAlreadyDoneError) {
+        return NextResponse.json(
+          { error: recoveryError.message, code: recoveryError.code },
+          { status: recoveryError.httpStatus },
+        );
+      }
       Sentry.captureException(recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError)), { tags: { subsystem: "payments" } });
       console.error("Error during payment recovery:", recoveryError);
       return NextResponse.json(

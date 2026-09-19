@@ -334,6 +334,14 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.LOCK_CONTENTION,
     httpStatus: 409,
   },
+  // #1440 — the admin recovery route lost the link-write CAS (or the row was
+  // already linked): an answer, not a fault.
+  {
+    code: "ALREADY_RECOVERED",
+    errorType: ErrorTypes.LOCK_CONTENTION,
+    httpStatus: 409,
+    userMessage: "This payment already has an appointment linked.",
+  },
   // #1584 P1-GW01c — an org payout batch asked for a gateway that cannot
   // disburse it; the route answers the code directly, registered for parity.
   {

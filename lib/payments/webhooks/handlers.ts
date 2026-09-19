@@ -311,12 +311,35 @@ async function reportTerminalCaptureRace(params: {
   );
 }
 
+/**
+ * #1440 — thrown when a recovery's link write matches no row: another
+ * recovery (or the webhook itself) linked the appointment first. Rolls the
+ * tx back so the appointment built here never commits unlinked.
+ */
+export class RecoveryAlreadyDoneError extends Error {
+  readonly code = "ALREADY_RECOVERED" as const;
+  readonly httpStatus = 409 as const;
+  constructor(paymentId: string) {
+    super(`Payment ${paymentId} already has an appointment linked`);
+    this.name = "RecoveryAlreadyDoneError";
+  }
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-): Promise<void> {
+  /**
+   * #1440 — `recover: true` (admin recovery route only) lets a SUCCEEDED row
+   * with NO appointment skip the idempotency short-circuit and run the
+   * LEGACY appointment build with the supplied metadata. Every other state
+   * keeps the webhook behaviour exactly; the link write's CAS predicate is
+   * the single-writer guard (ADR 21).
+   */
+  options?: { recover?: boolean },
+): Promise<PaymentSuccessTxResult["outcome"] | null> {
+  const recovering = options?.recover === true;
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
   // keys; normalize ONCE here so validation AND the legacy create flow
@@ -364,7 +387,14 @@ export async function handlePaymentSuccess(
             throw err;
           }
 
-          if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+          const recoverable =
+            recovering &&
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            payment.appointmentId === null;
+          if (
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            !recoverable
+          ) {
             console.log(
               `Payment ${paymentIntentId} has already been processed.`,
             );
@@ -496,6 +526,9 @@ export async function handlePaymentSuccess(
           try {
             validateWebhookMetadata(metadata);
           } catch (validationError) {
+            // #1440 — a recovery with bad metadata is the operator's error;
+            // the row is already SUCCEEDED, so there is nothing to restamp.
+            if (recoverable) throw validationError;
             const errorMessage =
               validationError instanceof ZodError
                 ? validationError.errors
@@ -592,13 +625,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // (the dev replay route used to fail metadata validation). Confirming
           // an EXPIRED payment would flip a hold the abandoned-payments sweep
           // has already released, so a terminal row is reported, not booked.
-          const confirmed = await tx.payment.updateMany({
-            where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-            data: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              ...capturedGatewayId,
-            },
-          });
+          // #1440 — a recovery starts from SUCCEEDED; its guard is the link
+          // write's CAS in createAppointmentFromWebhook, not this stamp.
+          const confirmed = recoverable
+            ? { count: 1 }
+            : await tx.payment.updateMany({
+                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+                data: {
+                  paymentStatus: PaymentStatus.SUCCEEDED,
+                  ...capturedGatewayId,
+                },
+              });
           if (confirmed.count === 0) {
             await reportTerminalCaptureRace({
               db: tx,
@@ -815,7 +852,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason:
           "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
       });
-      return;
+      return null;
     }
     void recordSystemError({
       organizationId: null,
@@ -844,11 +881,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return null;
   }
 
   // If transaction returned null, the payment was already processed or had a metadata error
-  if (!txResult) return;
+  if (!txResult) return null;
 
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
@@ -887,7 +924,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #1695 — the hold was released before the money landed. Nothing to
@@ -921,7 +958,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         context: { paymentId: txResult.paymentId },
       }).catch(() => {});
     }
-    return;
+    return txResult.outcome;
   }
 
   // #855 — the capture landed after the booking was cancelled. The payment is
@@ -942,7 +979,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #837 — the #827 first-confirmed-wins guard blocked this booking: the payment
@@ -987,7 +1024,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, notifications)
@@ -1326,6 +1363,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   })();
+  return txResult.outcome;
 }
 
 /**
@@ -1571,10 +1609,17 @@ async function createAppointmentFromWebhook(
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
 
-  await tx.payment.update({
-    where: { id: payment.id },
+  // #1440 / ADR 21 — the link is a CAS: SUCCEEDED (this tx stamped it, or the
+  // recovery read it) and still unlinked. A miss means another writer won.
+  const linked = await tx.payment.updateMany({
+    where: {
+      id: payment.id,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+    },
     data: { appointmentId: appointment.id },
   });
+  if (linked.count === 0) throw new RecoveryAlreadyDoneError(payment.id);
 
   return appointment;
 }

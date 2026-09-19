@@ -154,7 +154,10 @@ jest.mock("../../lib/events/capacity", () => ({
   getClassCapacity: jest.fn(),
 }));
 
-import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import {
+  handlePaymentSuccess,
+  RecoveryAlreadyDoneError,
+} from "../../lib/payments/webhooks/handlers";
 import { validateWebhookMetadata } from "../../schemas/webhooks/metadata";
 
 const VALID_METADATA = {
@@ -475,5 +478,109 @@ describe("#1583 A-P0-01 — capture after a terminal subscription state", () => 
       }),
     );
     expect(refundPayment).not.toHaveBeenCalled();
+  });
+});
+
+// #1440 — the admin recovery route calls the confirmation pipeline with
+// `recover: true`: a SUCCEEDED row with no appointment skips the idempotency
+// short-circuit and builds the booking; the link write's CAS is the guard.
+describe("#1440 — recovery of a SUCCEEDED, unlinked payment", () => {
+  function liveClass() {
+    classFindUnique.mockImplementation(async (args: unknown) => {
+      const where = (args ?? {}) as { id?: string };
+      return {
+        ...makeCancelledClass(),
+        status: "SCHEDULED",
+        id: where.id ?? "class-1",
+      };
+    });
+    classUpdateMany.mockResolvedValue({ count: 1 });
+    appointmentFindUniqueResult = {
+      id: "session-appt-1",
+      class: { id: "class-1", status: "SCHEDULED" },
+      consultation: null,
+      subscription: null,
+      webinar: null,
+      occurrences: [],
+    };
+  }
+
+  it("builds one appointment across two recover calls: the second loses the link CAS", async () => {
+    liveClass();
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "SUCCEEDED",
+      userId: "user-1",
+      currency: "INR",
+      appointmentId: null,
+      user: {
+        id: "user-1",
+        email: "b@x.com",
+        name: "Buyer",
+        consulteeProfile: { id: "consultee-profile-1" },
+      },
+    });
+    // The only Payment write a recovery makes is the link CAS: the first
+    // matches, the second finds the row already linked.
+    paymentUpdateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+    const metadata = VALID_METADATA as unknown as Record<string, string>;
+
+    const first = await handlePaymentSuccess(
+      "order1",
+      metadata,
+      undefined,
+      undefined,
+      { recover: true },
+    );
+    await expect(
+      handlePaymentSuccess("order1", metadata, undefined, undefined, {
+        recover: true,
+      }),
+    ).rejects.toBeInstanceOf(RecoveryAlreadyDoneError);
+
+    expect(first).toBe("confirmed");
+    expect(paymentUpdateMany).toHaveBeenCalledTimes(2);
+    expect(paymentUpdateMany.mock.calls[0][0].where).toEqual({
+      id: "pay1",
+      paymentStatus: "SUCCEEDED",
+      appointmentId: null,
+    });
+    // One confirm flip: the loser threw before its seat could be confirmed,
+    // and its transaction rolls back with it.
+    const confirmFlips = participantUpdateMany.mock.calls.filter(
+      ([arg]: [{ data?: { status?: string } }]) =>
+        arg.data?.status === "CONFIRMED",
+    );
+    expect(confirmFlips).toHaveLength(1);
+  });
+
+  it("leaves a SUCCEEDED row that already has an appointment untouched", async () => {
+    liveClass();
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "SUCCEEDED",
+      userId: "user-1",
+      currency: "INR",
+      appointmentId: "appt-linked",
+      user: { id: "user-1", email: "b@x.com", name: "Buyer" },
+    });
+
+    const outcome = await handlePaymentSuccess(
+      "order1",
+      VALID_METADATA as unknown as Record<string, string>,
+      undefined,
+      undefined,
+      { recover: true },
+    );
+
+    expect(outcome).toBeNull();
+    expect(paymentUpdateMany).not.toHaveBeenCalled();
+    expect(participantCreateMany).not.toHaveBeenCalled();
   });
 });
