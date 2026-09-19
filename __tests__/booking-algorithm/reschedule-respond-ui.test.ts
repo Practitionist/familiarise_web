@@ -25,6 +25,10 @@ const eventActions = read(
 const allocationTab = read(
   "components/dashboard/shared/requests/RequestSchedulingTab.tsx",
 );
+// #1675 — the decline call moved into the module both surfaces share.
+const requestDecision = read(
+  "components/dashboard/shared/requests/request-decision.ts",
+);
 const reschedulePage = read(
   "app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page.tsx",
 );
@@ -77,7 +81,9 @@ describe("#1163 — cancel/reschedule invalidation reaches the detail hub", () =
   it("the adapter threads its resolved consulteeId instead of trusting useParams", () => {
     expect(eventActions).toContain("consulteeIdOverride");
     // The adapter passes the id it resolved (options → params → session).
-    expect(adapter).toMatch(/useEventActions\(\{[\s\S]*?consulteeId,[\s\S]*?\}\)/);
+    expect(adapter).toMatch(
+      /useEventActions\(\{[\s\S]*?consulteeId,[\s\S]*?\}\)/,
+    );
   });
 });
 
@@ -98,8 +104,9 @@ describe("#1163 — the consultant inbox answers proposals", () => {
 
   it("decline is confirmed, covers subscriptions, and disables in flight", () => {
     expect(allocationTab).toContain("handleDeclineConfirm");
-    expect(allocationTab).toContain("/api/bookings/subscriptions/");
-    expect(allocationTab).toContain('JSON.stringify({ status: "REJECTED" })');
+    expect(allocationTab).toContain("declineRequest(request)");
+    expect(requestDecision).toContain("/api/bookings/subscriptions/");
+    expect(requestDecision).toContain('JSON.stringify({ status: "REJECTED" })');
     expect(allocationTab).toContain("declining");
     expect(allocationTab).toContain("AlertDialog");
   });

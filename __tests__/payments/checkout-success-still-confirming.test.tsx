@@ -114,12 +114,14 @@ describe("checkout-success terminal states", () => {
 
   // #1586 P1-J08 — the SUBSCRIPTION card headlined "Activated!" over a
   // request the consultant had not approved.
-  it("never says Activated for a PENDING_APPROVAL subscription", async () => {
+  it("never says Activated for a REQUESTED subscription", async () => {
     global.fetch = jest.fn().mockResolvedValue(
       verifyAnswer(200, {
         appointmentType: "SUBSCRIPTION",
         status: "SUCCEEDED",
-        bookingState: "PENDING_APPROVAL",
+        // #1675 — the dashboard's state names; a paid request is REQUESTED.
+        bookingState: "REQUESTED",
+        moneyState: "PAID",
       }),
     ) as unknown as typeof fetch;
 
@@ -134,12 +136,13 @@ describe("checkout-success terminal states", () => {
 
   // CodeRabbit on #1752 — an instant (wallet/credit) refund is already back;
   // the page must not promise it is "on its way".
-  it("says refunded, not on its way, for a REFUNDED state", async () => {
+  it("says refunded, not on its way, for a REFUNDED money state", async () => {
     global.fetch = jest.fn().mockResolvedValue(
       verifyAnswer(200, {
         appointmentType: "CONSULTATION",
         status: "SUCCEEDED",
-        bookingState: "REFUNDED",
+        bookingState: "CANCELLED",
+        moneyState: "REFUNDED",
       }),
     ) as unknown as typeof fetch;
 
@@ -150,6 +153,29 @@ describe("checkout-success terminal states", () => {
 
     expect(container.textContent).toContain("refunded in full");
     expect(container.textContent).not.toContain("on its way");
+  });
+
+  // #1763 — REFUND_PENDING is terminal even while the pipeline is unsettled;
+  // the verify route now answers it, so this must not sit on "confirming".
+  it("renders the refund copy for an unsettled REFUND_PENDING answer", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      verifyAnswer(200, {
+        appointmentType: "CONSULTATION",
+        status: "SUCCEEDED",
+        bookingState: "CANCELLED",
+        moneyState: "REFUND_PENDING",
+      }),
+    ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+
+    expect(container.textContent).toContain("refund on its way");
+    expect(
+      container.querySelector('[data-testid="checkout-still-confirming"]'),
+    ).toBeNull();
   });
 
   // qa-1752 — the session lookup's replica-lag 503 (Retry-After) must be

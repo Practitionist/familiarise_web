@@ -62,6 +62,12 @@ interface SessionTimelineProps {
   holdDeadline?: Date | null;
   /** Absent ⇒ held rows show "awaiting payment" with no action (consultant view). */
   onCompletePayment?: () => void;
+  /**
+   * #1675 — schedule words for a held row ("Held · 4d", "Held · link sent").
+   * When given, the row carries this label and nothing else: the money verb
+   * lives in the page's needs-you slot, never on a session row.
+   */
+  heldRowLabel?: (session: OccurrenceVM) => string;
 }
 
 interface SessionGroup {
@@ -163,6 +169,7 @@ export function SessionTimeline({
   showHeld = false,
   holdDeadline = null,
   onCompletePayment,
+  heldRowLabel,
 }: SessionTimelineProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   useEffect(() => {
@@ -258,8 +265,14 @@ export function SessionTimeline({
           </div>
 
           <div className="flex shrink-0 flex-col items-end gap-0.5">
-            <HeldSlotBadge deadline={holdDeadline} />
-            {onCompletePayment ? (
+            {heldRowLabel ? (
+              <span className="text-[10px] font-medium uppercase text-amber-700 dark:text-amber-400">
+                {heldRowLabel(group.slots[0])}
+              </span>
+            ) : (
+              <HeldSlotBadge deadline={holdDeadline} />
+            )}
+            {heldRowLabel ? null : onCompletePayment ? (
               <button
                 onClick={(e) => {
                   e.stopPropagation();
