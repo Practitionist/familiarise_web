@@ -1291,7 +1291,8 @@ export async function handleDisputeCreated(
     }
   }
 
-  // Serializable + bounded retry, matching handleDisputeUpdated. The earnings
+  // Serializable + bounded retry (handleDisputeUpdated ran raw until #1582
+  // C-P1-01d; both are wrapped now). The earnings
   // HELD writes are CAS'd, but this tx also reads Payment and Dispute before
   // deciding, and a concurrent refund reservation (refundPayment Phase 1, also
   // Serializable) reads the same dispute rows. Under READ COMMITTED both could
@@ -1464,8 +1465,10 @@ export async function handleDisputeUpdated(
   // a Refund row while applyOrgChargeback below reads refunds + writes the
   // dispute, so an interleaving forms a dangerous rw-structure and one tx aborts
   // (retried by the gateway webhook redelivery) instead of both reversing the
-  // org for the same money.
-  const result = await prisma.$transaction(
+  // org for the same money. #1582 C-P1-01d — a first-attempt P2034 is retried
+  // in-process like handleDisputeCreated, not left to the redelivery.
+  const result = await withSerializableRetry(() =>
+    prisma.$transaction(
     async (tx) => {
       const dispute = await tx.dispute.findUnique({
         where: { disputeId },
@@ -1825,6 +1828,7 @@ export async function handleDisputeUpdated(
       }
     },
     { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 15_000 },
+    ),
   );
 
   // #1654 — post-commit inline attempt; a timeout leaves the row for the drain.
