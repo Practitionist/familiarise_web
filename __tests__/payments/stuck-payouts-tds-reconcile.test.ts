@@ -32,6 +32,14 @@ jest.mock("../../lib/payments/payouts", () => ({
   handlePayoutWebhook: (...a: unknown[]) => handlePayoutWebhook(...a),
 }));
 
+// #1757 — the retire path reports ONE expected warning per run; count it.
+const reportSentryMessage = jest.fn();
+jest.mock("../../lib/observability/report", () => ({
+  __esModule: true,
+  reportSentryMessage: (...a: unknown[]) => reportSentryMessage(...a),
+  reportSentryError: jest.fn(),
+}));
+
 type Row = Record<string, unknown>;
 
 const STUCK_PAYOUT: Row = {
@@ -219,5 +227,77 @@ describe("#1407 — retry reset loses the CAS", () => {
     expect(result.retriedCount).toBe(1);
     expect(result.skippedCount).toBe(0);
     expect(prismaStub.consultantPayout.update).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1757 — a PROCESSING row whose gateway id the gateway has no record of (a
+ * seed `po_…`, or a real orphan) used to fail the whole run on every tick.
+ * It is now retired once through the canonical FAILED handler and reported
+ * as an expected warning; a FAILED row leaves the cohort, so run two is silent.
+ */
+describe("#1757 — unknown gateway id is retired once, not a run failure", () => {
+  it("RazorpayX 'does not exist' → FAILED/GATEWAY_UNKNOWN_ID via the handler, success:true, retired:1", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({
+          error: {
+            code: "BAD_REQUEST_ERROR",
+            description: "The id provided does not exist",
+          },
+        }),
+      });
+    // The real handler CASes PROCESSING → FAILED; mirror that on the row.
+    handlePayoutWebhook.mockImplementationOnce(async () => {
+      payoutRow.status = "FAILED";
+    });
+    // The cohort query only walks PENDING/PROCESSING, so a FAILED row is gone.
+    prismaStub.consultantPayout.findMany.mockImplementation(async () =>
+      payoutRow.status === "PROCESSING" ? [payoutRow] : [],
+    );
+
+    const first = await handleStuckPayouts();
+
+    expect(handlePayoutWebhook).toHaveBeenCalledTimes(1);
+    expect(handlePayoutWebhook).toHaveBeenCalledWith(
+      "RAZORPAY",
+      "pout_live_1",
+      "FAILED",
+      "GATEWAY_UNKNOWN_ID",
+    );
+    expect(first.success).toBe(true);
+    expect(first.errors).toEqual([]);
+    expect(first.retiredCount).toBe(1);
+    expect(first.retired).toEqual(["po_stuck_1"]);
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(reportSentryMessage.mock.calls[0][1]).toMatchObject({
+      expected: true,
+      extra: { retired: ["po_stuck_1"] },
+    });
+
+    const second = await handleStuckPayouts();
+    expect(handlePayoutWebhook).toHaveBeenCalledTimes(1);
+    expect(second.retiredCount).toBe(0);
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a 5xx from the gateway keeps today's behaviour: run error, not retired", async () => {
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ error: { code: "SERVER_ERROR" } }),
+      });
+
+    const result = await handleStuckPayouts();
+
+    expect(handlePayoutWebhook).not.toHaveBeenCalled();
+    expect(result.success).toBe(false);
+    expect(result.retiredCount).toBe(0);
+    expect(reportSentryMessage).not.toHaveBeenCalled();
   });
 });
