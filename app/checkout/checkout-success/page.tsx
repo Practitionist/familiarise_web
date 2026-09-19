@@ -7,11 +7,14 @@ import { Button } from "@/components/ui/button";
 import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
+import type { BookingState } from "@/app/api/checkout/verify/route";
 interface PaymentDetails {
   paymentIntent: string;
   appointmentType: string;
   status: string;
   message: string;
+  /** #1586 — absent while the pipeline has not landed; the page keeps polling. */
+  bookingState?: BookingState;
 }
 
 /**
@@ -94,14 +97,21 @@ function CheckoutSuccessContent() {
           if (response.ok) {
             if (cancelled) return;
             setPaymentDetails(data);
-            // `UNKNOWN` = settled but no appointment linked yet, which the
-            // getStatusMessage default branch renders as "confirming". Stop
-            // polling once a real type arrives.
-            if (data.appointmentType && data.appointmentType !== "UNKNOWN") {
+            // #1586 P1-J07 — SUCCEEDED alone is not "confirmed" (the #827
+            // loser and the amount-mismatch case are SUCCEEDED with no
+            // booking). Stop polling only once the route names the state.
+            if (data.bookingState) {
               setPhase("confirmed");
               return;
             }
             setPhase("confirming");
+          } else if (
+            response.status === 500 &&
+            data?.errorType === "VERIFICATION_FAILED"
+          ) {
+            // #1586 P1-J32 — the route itself failed, not the payment; a
+            // charged buyer must not be told the payment failed. Keep polling.
+            console.error(data.error ?? "Payment verification failed");
           } else if (response.status === 400) {
             // 400 is "payment not completed": PENDING keeps waiting, while an
             // explicit FAILED/EXPIRED is the one answer that earns "failed".
@@ -140,27 +150,69 @@ function CheckoutSuccessContent() {
     };
   }, [paymentIntent, router, pollRun]);
 
+  const pendingIcon = <Clock className="h-6 w-6 text-yellow-500" />;
+  const confirmedIcon = <CheckCircle className="h-6 w-6 text-green-500" />;
+
+  // #1586 P1-J07/J08 — headline and status follow the booking state the
+  // verify route derived, never the appointment type alone.
+  const getBookingStateMessage = (state: BookingState | undefined) => {
+    switch (state) {
+      case "PENDING_APPROVAL":
+        return {
+          title: "Request sent — awaiting consultant approval",
+          description:
+            "Your payment has been processed successfully. Your request is now with the consultant.",
+          nextSteps:
+            "You'll receive an email notification once the consultant approves your booking.",
+          statusIcon: pendingIcon,
+          statusText: "Pending Consultant Approval",
+        };
+      case "AWAITING_ALLOCATION":
+        return {
+          title: "Paid — your sessions will be scheduled",
+          description:
+            "Your payment has been processed successfully. Your sessions have not been placed on the calendar yet.",
+          nextSteps:
+            "You'll receive an email as each session is scheduled; you can follow along from your dashboard.",
+          statusIcon: pendingIcon,
+          statusText: "Awaiting scheduling",
+        };
+      case "REFUND_PENDING":
+        return {
+          title: "Payment received but the slot was taken — refund on its way",
+          description:
+            "Someone else confirmed this time first, so your booking could not be placed. Your payment is being refunded in full.",
+          nextSteps:
+            "The refund lands on the original payment method; you'll get an email when it does. Pick another time whenever you're ready.",
+          statusIcon: pendingIcon,
+          statusText: "Refund pending",
+        };
+      default:
+        return null;
+    }
+  };
+
   const getStatusMessage = (appointmentType: string) => {
     switch (appointmentType) {
       case "CONSULTATION":
         return {
           title: "Consultation Booking Confirmed!",
           description:
-            "Your payment has been processed successfully. Your consultation request is now pending approval from the consultant.",
+            "Your payment has been processed successfully and your consultation is confirmed.",
           nextSteps:
-            "You'll receive an email notification once the consultant approves your booking.",
-          statusIcon: <Clock className="h-6 w-6 text-yellow-500" />,
-          statusText: "Pending Consultant Approval",
+            "You'll receive a confirmation email with the session details and join link.",
+          statusIcon: confirmedIcon,
+          statusText: "Confirmed",
         };
       case "SUBSCRIPTION":
         return {
           title: "Subscription Activated!",
           description:
-            "Your payment has been processed successfully. Your subscription request is now pending approval from the consultant.",
+            "Your payment has been processed successfully and your subscription is active.",
           nextSteps:
-            "You'll receive an email notification once the consultant activates your subscription.",
-          statusIcon: <Clock className="h-6 w-6 text-yellow-500" />,
-          statusText: "Pending Consultant Approval",
+            "You'll receive a confirmation email with your session schedule.",
+          statusIcon: confirmedIcon,
+          statusText: "Confirmed",
         };
       case "WEBINAR":
         return {
@@ -169,7 +221,7 @@ function CheckoutSuccessContent() {
             "Your payment has been processed successfully. You're now registered for the webinar.",
           nextSteps:
             "You'll receive a confirmation email with the webinar join link and details.",
-          statusIcon: <CheckCircle className="h-6 w-6 text-green-500" />,
+          statusIcon: confirmedIcon,
           statusText: "Confirmed",
         };
       case "CLASS":
@@ -179,7 +231,7 @@ function CheckoutSuccessContent() {
             "Your payment has been processed successfully. You're now enrolled in the class.",
           nextSteps:
             "You'll receive a confirmation email with class details and access information.",
-          statusIcon: <CheckCircle className="h-6 w-6 text-green-500" />,
+          statusIcon: confirmedIcon,
           statusText: "Confirmed",
         };
       default:
@@ -193,7 +245,7 @@ function CheckoutSuccessContent() {
             "We have your payment. Your booking is being confirmed — this usually takes a few seconds.",
           nextSteps:
             "You'll get a confirmation email as soon as it's done. If you don't see it within a few minutes, contact support with your payment reference and we'll finish it manually — your payment is safe either way.",
-          statusIcon: <Clock className="h-6 w-6 text-yellow-500" />,
+          statusIcon: pendingIcon,
           statusText: "Confirming your booking",
         };
     }
@@ -269,15 +321,27 @@ function CheckoutSuccessContent() {
     );
   }
 
-  const statusInfo = getStatusMessage(paymentDetails.appointmentType);
+  const statusInfo =
+    getBookingStateMessage(paymentDetails.bookingState) ??
+    getStatusMessage(
+      paymentDetails.bookingState === "CONFIRMED"
+        ? paymentDetails.appointmentType
+        : "UNKNOWN",
+    );
 
   return (
     <div className="min-h-screen bg-muted py-12">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-8">
-          <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-emerald-100 flex items-center justify-center">
-            <CheckCircle className="h-10 w-10 text-emerald-600" />
-          </div>
+          {paymentDetails.bookingState === "CONFIRMED" ? (
+            <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-emerald-100 flex items-center justify-center">
+              <CheckCircle className="h-10 w-10 text-emerald-600" />
+            </div>
+          ) : (
+            <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
+              <Clock className="h-10 w-10 text-amber-600" />
+            </div>
+          )}
           <h1 className="text-fluid-3xl font-bold tracking-tight text-foreground">
             {statusInfo.title}
           </h1>

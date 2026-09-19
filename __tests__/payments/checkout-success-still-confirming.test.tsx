@@ -111,4 +111,44 @@ describe("checkout-success terminal states", () => {
 
     expect(container.textContent).toContain("Payment Verification Failed");
   });
+
+  // #1586 P1-J08 — the SUBSCRIPTION card headlined "Activated!" over a
+  // request the consultant had not approved.
+  it("never says Activated for a PENDING_APPROVAL subscription", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      verifyAnswer(200, {
+        appointmentType: "SUBSCRIPTION",
+        status: "SUCCEEDED",
+        bookingState: "PENDING_APPROVAL",
+      }),
+    ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+
+    expect(container.textContent).toContain("awaiting consultant approval");
+    expect(container.textContent).not.toContain("Activated");
+  });
+
+  // #1586 P1-J32 — a typed 500 is the route failing, not the payment.
+  it("keeps the confirming card on a VERIFICATION_FAILED 500", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      verifyAnswer(500, {
+        error: "Internal server error",
+        errorType: "VERIFICATION_FAILED",
+      }),
+    ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    for (let i = 0; i < 10; i++) await step(20_000);
+
+    expect(push).not.toHaveBeenCalledWith("/checkout/checkout-failure");
+    expect(
+      container.querySelector('[data-testid="checkout-still-confirming"]'),
+    ).not.toBeNull();
+  });
 });
