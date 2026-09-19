@@ -304,6 +304,50 @@ function slotRunWindow(
   };
 }
 
+/**
+ * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
+ * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
+ * plus invoices already issued and unpaid. Both credit-limit gates read this.
+ */
+export async function readInvoiceExposurePaise(
+  db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
+  organizationId: string,
+): Promise<number> {
+  const [accrualAgg, outstandingAgg] = await Promise.all([
+    db.paymentLeg.aggregate({
+      where: {
+        source: {
+          in: [
+            "INVOICE_ACCRUAL",
+            "OVERAGE_INVOICE_ACCRUAL",
+            // Refunds append negative *_REVERSAL siblings (#786); without them
+            // a refunded seat kept counting against the limit.
+            "INVOICE_ACCRUAL_REVERSAL",
+            "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+          ],
+        },
+        payment: {
+          organizationId,
+          paymentStatus: "SUCCEEDED",
+          billableToOrgInvoiceId: null,
+        },
+      },
+      _sum: { amountPaise: true },
+    }),
+    db.organizationInvoice.aggregate({
+      where: {
+        organizationId,
+        status: { in: ["ISSUED", "OVERDUE"] },
+      },
+      _sum: { totalPaise: true },
+    }),
+  ]);
+  return (
+    sumPaise(accrualAgg._sum.amountPaise) +
+    sumPaise(outstandingAgg._sum.totalPaise)
+  );
+}
+
 export async function findReusablePendingOrderPayment(
   db: Pick<typeof prisma, "payment">,
   params: {
@@ -577,7 +621,8 @@ async function releaseSupersededHolds(params: {
  * in-transaction abort, so a late capture on it has a row to be refunded
  * against. EXPIRED with `expiresAt` now: no sweep re-drives it (they cohort on
  * PENDING) and no checkout resumes it. A failure here must not mask the abort
- * the buyer is about to hear about, so it only reports.
+ * the buyer is about to hear about, so it only reports — and returns whether
+ * the row landed, for a caller whose next answer depends on it.
  */
 export async function tombstoneAbortedGatewayOrder(input: {
   paymentIntent: string;
@@ -587,7 +632,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
   taxAmount: number;
   currency: Currency;
   reason: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     await prisma.payment.create({
       data: {
@@ -604,11 +649,13 @@ export async function tombstoneAbortedGatewayOrder(input: {
         description: `Checkout aborted after the gateway order was minted (${input.reason.slice(0, 160)}). A late capture on this order is auto-refunded.`,
       },
     });
+    return true;
   } catch (tombstoneError) {
     reportSentryError(tombstoneError, {
       subsystem: "payments",
       extra: { paymentIntent: input.paymentIntent },
     });
+    return false;
   }
 }
 
@@ -1022,6 +1069,13 @@ export async function calculateAmountAndValidate(
 
         // NOTE: currentUses increment is done in the payment transaction
         // to ensure count only increases when payment is successfully created
+      } else {
+        // #1592 A-P1-05 — an unknown code used to fall through to full price
+        // with no word to the buyer. A coded 400 the classifier answers.
+        throw Object.assign(
+          new Error("That discount code is not valid for this purchase"),
+          { httpStatus: 400, code: "DISCOUNT_CODE_INVALID" },
+        );
       }
     }
 
@@ -3071,29 +3125,7 @@ export async function handleCheckout(
       creditEffectiveLimit = effectiveLimit;
 
       if (effectiveLimit !== null) {
-        const [accrualAgg, outstandingAgg] = await Promise.all([
-          prisma.paymentLeg.aggregate({
-            where: {
-              source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
-              payment: {
-                organizationId: org.id,
-                paymentStatus: "SUCCEEDED",
-                billableToOrgInvoiceId: null,
-              },
-            },
-            _sum: { amountPaise: true },
-          }),
-          prisma.organizationInvoice.aggregate({
-            where: {
-              organizationId: org.id,
-              status: { in: ["ISSUED", "OVERDUE"] },
-            },
-            _sum: { totalPaise: true },
-          }),
-        ]);
-        const exposure =
-          sumPaise(accrualAgg._sum.amountPaise) +
-          sumPaise(outstandingAgg._sum.totalPaise);
+        const exposure = await readInvoiceExposurePaise(prisma, org.id);
         if (exposure >= effectiveLimit) {
           throw new Error(
             `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
@@ -3506,31 +3538,10 @@ export async function handleCheckout(
               creditEffectiveLimit !== null &&
               organizationId
             ) {
-              const [accrualAgg, outstandingAgg] = await Promise.all([
-                tx.paymentLeg.aggregate({
-                  where: {
-                    source: {
-                      in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"],
-                    },
-                    payment: {
-                      organizationId,
-                      paymentStatus: "SUCCEEDED",
-                      billableToOrgInvoiceId: null,
-                    },
-                  },
-                  _sum: { amountPaise: true },
-                }),
-                tx.organizationInvoice.aggregate({
-                  where: {
-                    organizationId,
-                    status: { in: ["ISSUED", "OVERDUE"] },
-                  },
-                  _sum: { totalPaise: true },
-                }),
-              ]);
-              const exposure =
-                sumPaise(accrualAgg._sum.amountPaise) +
-                sumPaise(outstandingAgg._sum.totalPaise);
+              const exposure = await readInvoiceExposurePaise(
+                tx,
+                organizationId,
+              );
               // Same gate as the pre-lock check (>= limit), re-run inside the tx so
               // a concurrent sibling's just-committed accrual is visible — SSI then
               // aborts the loser of a racing pair instead of both straddling the cap.
@@ -3877,7 +3888,8 @@ export async function handleCheckout(
                   ? after - amount
                   : after - utilizationResult.engagementsConsumedDelta;
                 if (
-                  capAfter != null &&
+                  capAfter !== null &&
+                  capAfter !== undefined &&
                   capAfter > 0 &&
                   before * 5 < capAfter * 4 &&
                   after * 5 >= capAfter * 4
@@ -4291,7 +4303,14 @@ export async function handleCheckout(
       // code: "PROGRAM_CAP_EXHAUSTED" on its 402, which this used to miss
       // entirely and report as a fault.
       const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
+      // #1583 C-P1-04 — the loser of two same-key checkouts; the route
+      // replays the winner, so this is a modelled race and must not be rewrapped.
+      const isIdempotencyKeyCollision =
+        dbError instanceof Prisma.PrismaClientKnownRequestError &&
+        dbError.code === "P2002" &&
+        String(dbError.meta?.target ?? "").includes("clientIdempotencyKey");
       const isModelledOutcome =
+        isIdempotencyKeyCollision ||
         dbError instanceof WalletFrozenError ||
         dbError instanceof ProgramAssignmentLimitError ||
         dbErrorCode === "PROGRAM_CAP_EXHAUSTED" ||
@@ -4354,6 +4373,12 @@ export async function handleCheckout(
       // don't let it collapse into the generic "Failed to record payment
       // information" below. Rethrow so the route surfaces the 409.
       if (dbError instanceof WalletFrozenError) {
+        throw dbError;
+      }
+
+      // #1583 C-P1-04 — the route's P2002 replay branch needs the Prisma error
+      // itself; wrapped, the loser answered 500 instead of the winner's response.
+      if (isIdempotencyKeyCollision) {
         throw dbError;
       }
 
@@ -4434,9 +4459,18 @@ export async function handleCheckout(
     const isBusinessRefusal = isBusinessErrorCode(
       (error as { code?: unknown } | null)?.code,
     );
+    // #1583 C-P1-04 — the same-key collision the inner catch let through.
+    const isKeyCollision =
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002" &&
+      String(error.meta?.target ?? "").includes("clientIdempotencyKey");
     reportSentryError(error, {
       subsystem: "payments",
-      expected: isModeledLockRace || isConsulteeDoubleBook || isBusinessRefusal,
+      expected:
+        isModeledLockRace ||
+        isConsulteeDoubleBook ||
+        isBusinessRefusal ||
+        isKeyCollision,
     });
     // Enhanced error handling with lock-specific errors
     if (isLockContention) {

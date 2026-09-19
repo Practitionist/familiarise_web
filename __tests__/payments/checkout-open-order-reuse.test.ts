@@ -174,7 +174,10 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
-import { handleCheckout } from "../../lib/payments/operations/checkout";
+import {
+  handleCheckout,
+  readInvoiceExposurePaise,
+} from "../../lib/payments/operations/checkout";
 
 // ---------------------------------------------------------------------------
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
@@ -413,6 +416,66 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
       }),
     );
     expect(res.paymentIntent?.id).toBe("order_NEW");
+  });
+});
+
+// #1592 A-P1-05 — an unknown discount code used to be ignored: the buyer was
+// charged full price with no word about the code they typed. It is now a
+// coded 400 refusal raised before any Payment row or gateway order exists.
+describe("an unknown discount code is refused, not silently ignored", () => {
+  it("throws DISCOUNT_CODE_INVALID and mints nothing", async () => {
+    txClient.discountCode = { findUnique: jest.fn(async () => null) };
+
+    await expect(
+      handleCheckout(checkoutInput({ discountCode: "NOPE10" }), "user-1"),
+    ).rejects.toMatchObject({
+      code: "DISCOUNT_CODE_INVALID",
+      httpStatus: 400,
+      message: "That discount code is not valid for this purchase",
+    });
+
+    expect(txClient.discountCode.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { code: "NOPE10" } }),
+    );
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(txClient.payment.create).not.toHaveBeenCalled();
+  });
+});
+
+// #1591 J3-P1-01 — both credit-limit gates summed INVOICE_ACCRUAL legs without
+// their negative *_REVERSAL siblings, so a refunded seat kept counting against
+// the org's limit. The one helper nets them the way the monthly rollup does.
+describe("readInvoiceExposurePaise nets accrual reversals", () => {
+  it("an accrual with a matching reversal contributes 0", async () => {
+    const legs = [
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+      { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -100_000 },
+      { source: "OVERAGE_INVOICE_ACCRUAL", amountPaise: 25_000 },
+    ];
+    const db = {
+      paymentLeg: {
+        aggregate: jest.fn(
+          async ({ where }: { where: { source: { in: string[] } } }) => ({
+            _sum: {
+              amountPaise: legs
+                .filter((l) => where.source.in.includes(l.source))
+                .reduce((s, l) => s + l.amountPaise, 0),
+            },
+          }),
+        ),
+      },
+      organizationInvoice: {
+        aggregate: jest.fn(async () => ({ _sum: { totalPaise: 10_000 } })),
+      },
+    };
+
+    const exposure = await readInvoiceExposurePaise(
+      db as unknown as Parameters<typeof readInvoiceExposurePaise>[0],
+      "org-1",
+    );
+
+    // Only the un-reversed overage accrual and the unpaid invoice remain.
+    expect(exposure).toBe(35_000);
   });
 });
 

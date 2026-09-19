@@ -178,6 +178,17 @@ export async function POST(req: NextRequest) {
           `admin whole-event refund: ${body.reason}`,
           initiatedByUserId,
         );
+        // #1583 C-P0-03 — a repeat is idempotent because every rail clamps to
+        // the refundable balance, so no parent CAS is needed: answer 200, never
+        // a 500 and never a second cascade.
+        if (summary.alreadyRefunded && summary.refundsIssued === 0) {
+          return NextResponse.json({
+            kind: eventKind,
+            summary,
+            alreadyRefunded: true,
+            refunded: 0,
+          });
+        }
         return NextResponse.json({ kind: eventKind, summary });
       },
     );

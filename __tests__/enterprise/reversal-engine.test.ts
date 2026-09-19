@@ -21,6 +21,18 @@ jest.mock("../../lib/payments/operations/refund", () => ({
     clawbackInitiated: false,
   }),
 }));
+// #1583 C-P1-09 — the clawback's ledger posting, rejectable per test.
+const mockPostLedgerTxn = jest.fn();
+jest.mock("../../lib/payments/ledger/post", () => ({
+  postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
+}));
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: jest.fn().mockResolvedValue(undefined),
+}));
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryError: jest.fn(),
+  reportSentryMessage: jest.fn(),
+}));
 
 const mockedCascade = applyRefundCascade as jest.MockedFunction<
   typeof applyRefundCascade
@@ -48,7 +60,14 @@ describe("applyReversal — BOOKING", () => {
 });
 
 describe("applyReversal — CLASS_MULTI", () => {
-  function mockTx(payments: Array<{ id: string; amount: number }>) {
+  function mockTx(
+    payments: Array<{
+      id: string;
+      amount: number;
+      // #1583 C-P0-03 — prior money on the seat, which the clamp nets out.
+      refunds?: Array<{ amountPaise: number; status: string }>;
+    }>,
+  ) {
     return {
       payment: {
         findMany: jest.fn().mockResolvedValue(
@@ -60,13 +79,15 @@ describe("applyReversal — CLASS_MULTI", () => {
             // #781 §C — the reversal must copy these onto each child refund.
             displayCurrencyAtCheckout: "USD",
             exchangeRateAtCheckout: 83,
+            refunds: p.refunds ?? [],
+            disputes: [],
           })),
         ),
       },
       refund: {
-        create: jest
-          .fn()
-          .mockImplementation(async ({ data }) => ({ id: `cn-${data.paymentId}` })),
+        create: jest.fn().mockImplementation(async ({ data }) => ({
+          id: `cn-${data.paymentId}`,
+        })),
         update: jest.fn().mockResolvedValue({}),
       },
     };
@@ -138,7 +159,7 @@ describe("applyReversal — CLASS_MULTI", () => {
         reason: "r",
         refundId: "ref",
       }),
-    ).rejects.toThrow(/exceeds class total/);
+    ).rejects.toThrow(/exceeds the batch's refundable balance/);
     expect(mockedCascade).not.toHaveBeenCalled();
     expect(tx.refund.create).not.toHaveBeenCalled();
   });
@@ -157,5 +178,85 @@ describe("applyReversal — CLASS_MULTI", () => {
     // p2 (amount 0) gets share 0 → no cascade for it.
     expect(mockedCascade).toHaveBeenCalledTimes(1);
     expect(mockedCascade.mock.calls[0][1].amountPaise).toBe(100);
+  });
+
+  // #1583 C-P0-03 / C-P0-04 — the share base and the headroom cap are the
+  // seat's REFUNDABLE balance, so a seat already refunded on its own gets no
+  // second Refund row and no second cascade.
+  it("clamps each child to its refundable balance and skips a fully-refunded seat", async () => {
+    const tx = mockTx([
+      {
+        id: "p1",
+        amount: 100,
+        refunds: [{ amountPaise: 100, status: "SUCCEEDED" }],
+      },
+      { id: "p2", amount: 100 },
+    ]);
+    await applyReversal(tx as never, {
+      source: { kind: "CLASS_MULTI", paymentIds: ["p1", "p2"] },
+      amountPaise: 100,
+      reason: "r",
+      refundId: "ref",
+    });
+    expect(tx.refund.create).toHaveBeenCalledTimes(1);
+    expect(tx.refund.create.mock.calls[0][0].data).toMatchObject({
+      paymentId: "p2",
+      amountPaise: 100,
+    });
+    expect(mockedCascade).toHaveBeenCalledTimes(1);
+    expect(mockedCascade.mock.calls[0][1]).toMatchObject({
+      paymentId: "p2",
+      amountPaise: 100,
+    });
+  });
+
+  it("is a no-op when every seat is already refunded", async () => {
+    const tx = mockTx([
+      {
+        id: "p1",
+        amount: 100,
+        refunds: [{ amountPaise: 100, status: "SUCCEEDED" }],
+      },
+    ]);
+    const res = await applyReversal(tx as never, {
+      source: { kind: "CLASS_MULTI", paymentIds: ["p1"] },
+      amountPaise: 0,
+      reason: "r",
+      refundId: "ref",
+    });
+    expect(res.childRefundIds).toEqual([]);
+    expect(tx.refund.create).not.toHaveBeenCalled();
+    expect(mockedCascade).not.toHaveBeenCalled();
+  });
+});
+
+// #1583 C-P1-09 — the clawback's counter-post was reported and swallowed, so a
+// payout could be stamped clawed-back with no journal behind it. The failure
+// now propagates and the enclosing refund transaction rolls back with it.
+describe("applyReversal — PAYOUT_CLAWBACK", () => {
+  it("propagates a rejected ledger posting instead of committing an unbalanced journal", async () => {
+    const tx = {
+      organizationPayout: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: "payout-1", clawbackInitiatedAt: null }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    };
+    mockPostLedgerTxn.mockRejectedValueOnce(new Error("journal unbalanced"));
+
+    await expect(
+      applyReversal(tx as never, {
+        source: {
+          kind: "PAYOUT_CLAWBACK",
+          orgPayoutId: "payout-1",
+          organizationId: "org-1",
+        },
+        amountPaise: 50_000,
+        reason: "dispute lost",
+        refundId: "refund-1",
+      }),
+    ).rejects.toThrow("journal unbalanced");
   });
 });
