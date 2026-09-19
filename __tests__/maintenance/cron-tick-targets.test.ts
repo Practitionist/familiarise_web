@@ -26,6 +26,10 @@ function loadTicker(): {
   targetRequest: TargetRequest;
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
+  bucketFor: (
+    status: number,
+    maintenance?: boolean,
+  ) => "ok" | "held" | "failed";
 } {
   const file = path.join(
     __dirname,
@@ -144,5 +148,21 @@ describe("cron-tick statusFor", () => {
         { name: "reconcile-orphaned-confirmations", status: 0 },
       ]),
     ).toBe(200);
+  });
+});
+
+// #1598 P1-W03 — a twin refusing inside a maintenance hold answers 503 with
+// a `phase` in the body; that is a healthy hold and joins the 409 bucket. A
+// bare 503 (dead route, platform, dependency) stays a failure.
+describe("cron-tick bucketFor", () => {
+  const { bucketFor } = loadTicker();
+
+  it("sorts a maintenance 503 with the lock-held 409, a bare 503 as failed", () => {
+    expect(bucketFor(503, true)).toBe("held");
+    expect(bucketFor(503)).toBe("failed");
+    expect(bucketFor(409)).toBe("held");
+    expect(bucketFor(200)).toBe("ok");
+    expect(bucketFor(500)).toBe("failed");
+    expect(bucketFor(0)).toBe("failed");
   });
 });

@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import { CronLockHeldError } from "@/lib/cron/with-cron-lock";
+import { reportSentryError } from "@/lib/observability/report";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
@@ -163,7 +164,9 @@ export function cleanupRoute<T extends object>(opts: {
       // Prisma query fragments, table and column names, gateway payloads and
       // payout identifiers — an internal leak the `app/api/**` contract
       // forbids, and one the cron caller has no use for anyway.
-      Sentry.captureException(error, { tags: { subsystem: "cron", job } });
+      // #1441 — a script that rethrows a plain object reached Sentry as
+      // "Error: [object Object]"; the report helper keeps its message/code.
+      reportSentryError(error, { subsystem: "cron", tags: { job } });
       console.error(`Error in ${job}:`, error);
       return NextResponse.json(
         { error: failureMessage ?? `Failed to run ${job}` },
