@@ -27,6 +27,7 @@ interface RequestRow {
   releasedOccurrenceIds: string[];
   appointmentId: string;
   openForAppointmentId: string | null;
+  createdAt: Date;
   appointment: {
     consultationId: string | null;
     subscriptionId: string | null;
@@ -38,6 +39,8 @@ interface Store {
   slots: SlotRow[];
   consultation: { id: string; status: string } | null;
   subscription: { id: string; status: string } | null;
+  /** The from-status on the reschedule's PENDING re-stamp; undefined = no row. */
+  origin?: string;
 }
 
 let state: Store;
@@ -64,7 +67,13 @@ function matchSlots(where: SlotCas["where"]): SlotRow[] {
 
 function makeTx() {
   return {
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1589 R-P1-01 — the origin read: the row the reschedule route wrote.
+      findFirst: jest.fn(async () =>
+        state.origin === undefined ? null : { fromStatus: state.origin },
+      ),
+    },
     rescheduleRequest: {
       findUnique: jest.fn(async () => state.request),
       updateMany: jest.fn(async ({ where, data }: StatusCas) => {
@@ -137,9 +146,22 @@ jest.mock("../../lib/prisma", () => ({
 }));
 
 const reportSentryError = jest.fn();
+const reportSentryMessage = jest.fn();
 jest.mock("../../lib/observability/report", () => ({
   __esModule: true,
   reportSentryError: (...args: unknown[]) => reportSentryError(...args),
+  reportSentryMessage: (...args: unknown[]) => reportSentryMessage(...args),
+}));
+
+// #1583 A-P0-04 — the withdraw runs under the appointment atom; the lock is
+// Redis-backed, so it is a pass-through here and pinned by the call below.
+const withAppointmentLock = jest.fn(
+  (_appointmentId: string, fn: () => unknown) => fn(),
+);
+jest.mock("../../utils/appointmentlock", () => ({
+  __esModule: true,
+  withAppointmentLock: (...args: [string, () => unknown]) =>
+    withAppointmentLock(...args),
 }));
 
 import { withdrawRescheduleRequest } from "../../lib/booking/reschedule-withdraw";
@@ -155,6 +177,7 @@ function seed(
     subscriptionId: string | null;
     consultationStatus: string;
     subscriptionStatus: string;
+    origin: string;
   }> = {},
 ) {
   const slots = overrides.slots ?? [
@@ -174,12 +197,15 @@ function seed(
       releasedOccurrenceIds: slots.map((s) => s.id),
       appointmentId: "appt-1",
       openForAppointmentId: "appt-1",
+      createdAt: new Date("2026-09-19T10:00:00Z"),
       appointment: {
         consultationId,
         subscriptionId: overrides.subscriptionId ?? null,
       },
     },
     slots,
+    // The common case: the request was APPROVED when the reschedule opened.
+    origin: overrides.origin === undefined ? "APPROVED" : overrides.origin,
     consultation: consultationId
       ? {
           id: consultationId,
@@ -195,6 +221,8 @@ function seed(
   };
   tx = makeTx();
   reportSentryError.mockClear();
+  reportSentryMessage.mockClear();
+  withAppointmentLock.mockClear();
 }
 
 describe("withdrawRescheduleRequest", () => {
@@ -271,6 +299,49 @@ describe("withdrawRescheduleRequest", () => {
     });
 
     expect(state.consultation?.status).toBe("APPROVED");
+    expect(withAppointmentLock).toHaveBeenCalledWith(
+      "appt-1",
+      expect.any(Function),
+    );
+  });
+
+  // #1589 R-P1-01 / R-P1-04 — the restore target is the ORIGIN status.
+  it("writes no parent transition when the request was PENDING all along", async () => {
+    seed({ origin: "PENDING" });
+
+    const result = await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(result).toEqual({ withdrawn: true });
+    expect(state.consultation?.status).toBe("PENDING");
+    expect(tx.consultation.updateMany).not.toHaveBeenCalled();
+    expect(reportSentryMessage).not.toHaveBeenCalled();
+  });
+
+  it("restores an unpaid origin to APPROVED_PENDING_PAYMENT, never APPROVED", async () => {
+    seed({ origin: "APPROVED_PENDING_PAYMENT" });
+
+    await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(state.consultation?.status).toBe("APPROVED_PENDING_PAYMENT");
+  });
+
+  it("keeps the APPROVED restore and reports once when no origin row exists", async () => {
+    seed({ origin: undefined });
+    state.origin = undefined;
+
+    await withdrawRescheduleRequest({
+      rescheduleRequestId: "req-1",
+      withdrawnById: INITIATOR,
+    });
+
+    expect(state.consultation?.status).toBe("APPROVED");
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
   });
 
   it("restores a WHOLE-subscription reschedule to APPROVED", async () => {

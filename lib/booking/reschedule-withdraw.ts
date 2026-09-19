@@ -1,5 +1,10 @@
-import prisma from "@/lib/prisma";
-import { reportSentryError } from "@/lib/observability/report";
+import prisma, { type Tx } from "@/lib/prisma";
+import type { AppointmentStatus } from "@prisma/client";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
+import { withAppointmentLock } from "@/utils/appointmentlock";
 import {
   RESCHEDULE_OPEN_STATUSES,
   transitionConsultationRequest,
@@ -29,6 +34,60 @@ import { notificationHref } from "@/lib/novu/resolve-href";
  * the only path that ever wrote proposed times onto rows, and it no longer
  * does — it hands them to the allocator instead.)
  */
+/**
+ * #1589 R-P1-01 / R-P1-04 — the status the request held BEFORE the reschedule
+ * flipped it to PENDING, read from the history row the reschedule route wrote
+ * in the same transaction as the proposal (#1333). `undefined` means no such
+ * row: a pre-#1333 proposal, or a partial one that never re-stamped.
+ */
+async function readRescheduleOrigin(
+  tx: Pick<Tx, "bookingStatusHistory">,
+  entity: "CONSULTATION" | "SUBSCRIPTION",
+  entityId: string,
+  requestCreatedAt: Date,
+): Promise<string | undefined> {
+  const skewMs = 5_000;
+  const origin = await tx.bookingStatusHistory.findFirst({
+    where: {
+      entity,
+      entityId,
+      toStatus: "PENDING",
+      createdAt: {
+        gte: new Date(requestCreatedAt.getTime() - skewMs),
+        lte: new Date(requestCreatedAt.getTime() + skewMs),
+      },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { fromStatus: true },
+  });
+  return origin?.fromStatus;
+}
+
+/**
+ * Where a withdrawn request goes back to. A never-approved PENDING request
+ * must not come back APPROVED (consultant-gate bypass) and an unpaid
+ * APPROVED_PENDING_PAYMENT one must not come back APPROVED (payment bypass).
+ * `null` means the parent never left PENDING, so nothing is written.
+ */
+function restoreTargetFor(
+  origin: string | undefined,
+  fallback: AppointmentStatus,
+): AppointmentStatus | null {
+  switch (origin) {
+    case "PENDING":
+      return null;
+    case "APPROVED_PENDING_PAYMENT":
+      return "APPROVED_PENDING_PAYMENT";
+    // SCHEDULED is unreachable for requests (docs/booking/18-state-machines.md),
+    // so APPROVED is the only live shape it can stand for.
+    case "APPROVED":
+    case "SCHEDULED":
+      return "APPROVED";
+    default:
+      return fallback;
+  }
+}
+
 export async function withdrawRescheduleRequest(args: {
   rescheduleRequestId: string;
   /** Must be the initiator. The caller is responsible for proving that. */
@@ -44,6 +103,7 @@ export async function withdrawRescheduleRequest(args: {
       initiatedById: true,
       releasedOccurrenceIds: true,
       appointmentId: true,
+      createdAt: true,
       appointment: {
         select: {
           consultationId: true,
@@ -67,81 +127,120 @@ export async function withdrawRescheduleRequest(args: {
   }
 
   let restored = 0;
+  const auditMeta = {
+    actorUserId: withdrawnById,
+    appointmentId: request.appointmentId,
+    reason: "reschedule withdrawn",
+  };
+  const reportMissingOrigin = (entity: "CONSULTATION" | "SUBSCRIPTION") =>
+    reportSentryMessage("Reschedule withdraw found no origin history row", {
+      subsystem: "bookings",
+      op: "reschedule-withdraw-origin",
+      expected: true,
+      extra: { rescheduleRequestId, entity },
+    });
   try {
-    await prisma.$transaction(async (tx) => {
-      // The CAS is the guard: if the other party answered while we were
-      // deciding, this matches zero rows and throws rather than un-releasing
-      // slots that a concurrent accept has already re-confirmed.
-      await transitionRescheduleRequest(tx, {
-        actorUserId: withdrawnById,
-        appointmentId: request.appointmentId,
-        where: { id: request.id },
-        to: "WITHDRAWN",
-        data: { resolvedById: withdrawnById },
-      });
-
-      // Reverses exactly what the reschedule did to these rows. The from-set
-      // rides in `fromIn` rather than the WHERE (the helper overwrites
-      // `completionStatus` there), and `allowZero` keeps the outcome below
-      // intact: restoring nothing means the released rows are gone, which is
-      // what an allocation replacing them does, not a lost CAS.
-      // No appointmentId: a whole-subscription reschedule releases slots across
-      // sibling appointments, so each row's history belongs to the appointment
-      // it actually sits on, not to the one the proposal was opened against.
-      restored = await transitionOccurrenceCompletion(tx, {
-        actorUserId: withdrawnById,
-        where: { id: { in: request.releasedOccurrenceIds } },
-        to: "SCHEDULED",
-        data: { isTentative: false },
-        fromIn: ["RESCHEDULED"],
-        allowZero: true,
-      });
-
-      // A consultation reschedule sends the booking back to PENDING so it
-      // re-enters the consultant's queue; withdrawing has to undo that or the
-      // consultee is left with a confirmed-looking booking still sitting in
-      // someone's inbox.
-      //
-      // fromIn narrows to PENDING rather than the map's default: this edge is
-      // only ever undoing the reschedule's own flip, so an APPROVED booking
-      // reaching here means the state moved under us and should throw, not be
-      // re-stamped.
-      if (request.appointment?.consultationId) {
-        await transitionConsultationRequest(tx, {
+    // #1583 A-P0-04 — the withdraw is a lifecycle mutation like accept and
+    // cancel; it serialises on the appointment atom, and the tx opens inside.
+    await withAppointmentLock(request.appointmentId, () =>
+      prisma.$transaction(async (tx) => {
+        // The CAS is the guard: if the other party answered while we were
+        // deciding, this matches zero rows and throws rather than un-releasing
+        // slots that a concurrent accept has already re-confirmed.
+        await transitionRescheduleRequest(tx, {
           actorUserId: withdrawnById,
           appointmentId: request.appointmentId,
-          where: { id: request.appointment.consultationId },
-          to: "APPROVED",
-          fromIn: ["PENDING"],
+          where: { id: request.id },
+          to: "WITHDRAWN",
+          data: { resolvedById: withdrawnById },
         });
-      }
 
-      // E2E-audit P1 fix — subscriptions need the same undo. #448 kept
-      // PARTIAL subscription reschedules from flipping the parent, but the
-      // whole-booking reschedule (no slotIds) DOES flip it to PENDING via the
-      // reschedule route. Leaving a withdrawn, paid plan in PENDING strands
-      // it in the consultant's request queue, where expirePendingSubscriptions
-      // can EXPIRE + refund a plan that still owes (or already delivered)
-      // sessions. Restore only when the parent actually sits in PENDING —
-      // i.e., this proposal was a whole-booking flip; partial proposals left
-      // the parent APPROVED and must not be touched (#448). The CAS keeps the
-      // concurrent-answer race modelled.
-      if (request.appointment?.subscriptionId) {
-        const sub = await tx.subscription.findUnique({
-          where: { id: request.appointment.subscriptionId },
-          select: { status: true },
+        // Reverses exactly what the reschedule did to these rows. The from-set
+        // rides in `fromIn` rather than the WHERE (the helper overwrites
+        // `completionStatus` there), and `allowZero` keeps the outcome below
+        // intact: restoring nothing means the released rows are gone, which is
+        // what an allocation replacing them does, not a lost CAS.
+        // No appointmentId: a whole-subscription reschedule releases slots across
+        // sibling appointments, so each row's history belongs to the appointment
+        // it actually sits on, not to the one the proposal was opened against.
+        restored = await transitionOccurrenceCompletion(tx, {
+          actorUserId: withdrawnById,
+          where: { id: { in: request.releasedOccurrenceIds } },
+          to: "SCHEDULED",
+          data: { isTentative: false },
+          fromIn: ["RESCHEDULED"],
+          allowZero: true,
         });
-        if (sub?.status === "PENDING") {
-          await transitionSubscriptionRequest(tx, {
-            actorUserId: withdrawnById,
-            appointmentId: request.appointmentId,
-            where: { id: request.appointment.subscriptionId },
-            to: "APPROVED",
-            fromIn: ["PENDING"],
-          });
+
+        // A consultation reschedule sends the booking back to PENDING so it
+        // re-enters the consultant's queue; withdrawing has to undo that or the
+        // consultee is left with a confirmed-looking booking still sitting in
+        // someone's inbox.
+        //
+        // fromIn narrows to PENDING rather than the map's default: this edge is
+        // only ever undoing the reschedule's own flip, so an APPROVED booking
+        // reaching here means the state moved under us and should throw, not be
+        // re-stamped.
+        //
+        // #1589 R-P1-01 — "back to what it was" is the ORIGIN status, not
+        // APPROVED: a PENDING origin writes nothing, an unpaid origin stays
+        // unpaid (the pay-link expiry cohort keeps it), and a missing origin
+        // keeps the historical APPROVED restore and reports once.
+        if (request.appointment?.consultationId) {
+          const origin = await readRescheduleOrigin(
+            tx,
+            "CONSULTATION",
+            request.appointment.consultationId,
+            request.createdAt,
+          );
+          if (origin === undefined) reportMissingOrigin("CONSULTATION");
+          const to = restoreTargetFor(origin, "APPROVED");
+          if (to) {
+            await transitionConsultationRequest(tx, {
+              ...auditMeta,
+              where: { id: request.appointment.consultationId },
+              to,
+              fromIn: ["PENDING"],
+            });
+          }
         }
-      }
-    });
+
+        // E2E-audit P1 fix — subscriptions need the same undo. #448 kept
+        // PARTIAL subscription reschedules from flipping the parent, but the
+        // whole-booking reschedule (no slotIds) DOES flip it to PENDING via the
+        // reschedule route. Leaving a withdrawn, paid plan in PENDING strands
+        // it in the consultant's request queue, where expirePendingSubscriptions
+        // can EXPIRE + refund a plan that still owes (or already delivered)
+        // sessions. Restore only when the parent actually sits in PENDING —
+        // i.e., this proposal was a whole-booking flip; partial proposals left
+        // the parent APPROVED and must not be touched (#448). The CAS keeps the
+        // concurrent-answer race modelled.
+        if (request.appointment?.subscriptionId) {
+          const sub = await tx.subscription.findUnique({
+            where: { id: request.appointment.subscriptionId },
+            select: { status: true },
+          });
+          if (sub?.status === "PENDING") {
+            const origin = await readRescheduleOrigin(
+              tx,
+              "SUBSCRIPTION",
+              request.appointment.subscriptionId,
+              request.createdAt,
+            );
+            if (origin === undefined) reportMissingOrigin("SUBSCRIPTION");
+            const to = restoreTargetFor(origin, "APPROVED");
+            if (to) {
+              await transitionSubscriptionRequest(tx, {
+                ...auditMeta,
+                where: { id: request.appointment.subscriptionId },
+                to,
+                fromIn: ["PENDING"],
+              });
+            }
+          }
+        }
+      }),
+    );
   } catch (err) {
     // A lost CAS is a MODELLED outcome, not a fault: the other party accepted
     // or declined while this withdrawal was in flight. Reporting it as an error

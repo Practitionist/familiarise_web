@@ -4,6 +4,10 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { withdrawRescheduleRequest } from "@/lib/booking/reschedule-withdraw";
 import { RESCHEDULE_OPEN_STATUSES } from "@/lib/booking/transitions";
+import {
+  AppointmentBusyError,
+  BookingLockUnavailableError,
+} from "@/utils/appointmentlock";
 
 /**
  * POST /api/appointments/[appointmentId]/reschedule/withdraw
@@ -80,6 +84,17 @@ export async function POST(
       message: "Your reschedule request has been withdrawn.",
     });
   } catch (error) {
+    // #1583 A-P0-04 — the withdraw now serialises on the appointment atom;
+    // lock outcomes are structured answers (423 / 503), as in respond.
+    if (
+      error instanceof AppointmentBusyError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     return apiError({ tag: "[Reschedule.Withdraw]", error });
   }
 }
