@@ -313,6 +313,13 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     userMessage:
       "We couldn't process the refund automatically; support has been notified.",
   },
+  // #1584 P2-P0-02 — the replay-purchase mint lock; a second overlapping
+  // POST is told to retry instead of being handed a second payable order.
+  {
+    code: "RECORDING_PURCHASE_IN_PROGRESS",
+    errorType: ErrorTypes.LOCK_CONTENTION,
+    httpStatus: 409,
+  },
 ] as const;
 
 /**
