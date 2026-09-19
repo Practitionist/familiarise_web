@@ -129,6 +129,9 @@ export async function makeCheckoutRequest(
 const BUSY_ERROR_TYPES = new Set([
   "EVENT_CHECKOUT_BUSY",
   "CONSULTEE_BOOKING_BUSY",
+  // #1592 A-P1-06 — exhausted Serializable retries; the server already
+  // ships `retryAfter: 2` for it (app/api/checkout/route.ts).
+  "SERIALIZATION_CONFLICT",
 ]);
 
 /** Never wait longer than this server-advised pause (function-ceiling friendly). */

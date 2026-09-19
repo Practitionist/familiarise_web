@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
+import { listDateFilterSchema } from "@/schemas/list-date-filter";
 import type { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
 import {
@@ -54,6 +55,23 @@ export async function GET(request: NextRequest) {
     }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
+    // #1592 A-P1-04 — an unparsable date used to reach Prisma as Invalid Date
+    // and 500; the ISO schema also refuses a real-looking 2026-02-30.
+    const dateRange = listDateFilterSchema.safeParse({
+      startDateStr,
+      endDateStr,
+    });
+    if (!dateRange.success) {
+      return NextResponse.json(
+        {
+          error:
+            dateRange.error.issues[0]?.message ??
+            "startDate and endDate must be valid ISO 8601 date-times",
+          code: "INVALID_DATE",
+        },
+        { status: 400 },
+      );
+    }
 
     // Org-scope filter — Class rows don't carry organizationId directly;
     // attribution lives on the parent ClassPlan (per

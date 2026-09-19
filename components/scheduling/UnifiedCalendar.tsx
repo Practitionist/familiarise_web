@@ -1774,10 +1774,12 @@ export function UnifiedCalendar({
             })}
           </div>
 
-          {/* Week grid */}
+          {/* Week grid — pt-1 keeps the first row's pills clear of the
+              sticky week header; the row hairline below gives the sparse
+              cells grid structure without re-filling unavailable cells. */}
           <div
             ref={setWeekGridEl}
-            className="flex-1 overflow-y-auto scrollbar-thin min-h-0"
+            className="flex-1 overflow-y-auto scrollbar-thin min-h-0 pt-1"
           >
             {folded.allDead && (
               <p
@@ -1836,7 +1838,7 @@ export function UnifiedCalendar({
                   <div
                     key={`interval-row-${interval.hour}-${interval.minute}`}
                     data-row={rowIndex}
-                    className={`${GRID_COLS} gap-0.5 md:gap-1`}
+                    className={`${GRID_COLS} gap-0.5 border-b border-border/40 md:gap-1`}
                   >
                     <div className="min-w-0">
                       <div className="flex h-7 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs">

@@ -40,7 +40,11 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   EVENT_ALLOWED_FROM,
   REQUEST_ALLOWED_FROM,
+  transitionClassEvent,
+  transitionConsultationRequest,
+  transitionSubscriptionRequest,
   transitionTrial,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
 import {
@@ -55,6 +59,20 @@ const COMPLETION_BUFFER_HOURS = 1;
 // Slot rows each completion pass moves per run; the next hourly run continues.
 const MAX_SLOT_COMPLETIONS_PER_RUN = 2000;
 
+// #1583 B-P1-16 — "every session has ended" counts live confirmed rows only:
+// a stale tentative hold or a tombstoned row must not veto completion.
+function allLiveOccurrencesEnded(
+  bufferTime: Date,
+): Prisma.AppointmentOccurrenceListRelationFilter {
+  const live = { isTentative: false, deletedAt: null };
+  return {
+    some: { ...live, endsAt: { lt: bufferTime } },
+    none: { ...live, endsAt: { gte: bufferTime } },
+  };
+}
+
+const AUTO_COMPLETE_REASON = "auto-complete";
+
 export interface AutoCompleteResult {
   success: boolean;
   webinarsCompleted: number;
@@ -64,6 +82,22 @@ export interface AutoCompleteResult {
   trialsCompleted: number;
   errors: string[];
   timestamp: string;
+}
+
+/**
+ * Run one guarded completion; false when the CAS matched nothing because the
+ * row moved since the cohort read (the helper's throw IS the old count === 0).
+ */
+async function completeThroughHelper(
+  run: () => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await run();
+    return true;
+  } catch (error) {
+    if (error instanceof IllegalTransitionError) return false;
+    throw error;
+  }
 }
 
 /**
@@ -84,16 +118,7 @@ async function completeWebinars(): Promise<{
   const webinarsToComplete = await prisma.webinar.findMany({
     where: {
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
-      appointment: {
-        occurrences: {
-          some: {
-            endsAt: { lt: bufferTime },
-          },
-          every: {
-            endsAt: { lt: bufferTime },
-          },
-        },
-      },
+      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
     },
     include: {
       webinarPlan: { select: { title: true } },
@@ -122,11 +147,18 @@ async function completeWebinars(): Promise<{
 
       // CAS (#1319): a webinar cancelled since the cohort read must not be
       // resurrected as COMPLETED — that would release earnings for nothing.
-      const moved = await prisma.webinar.updateMany({
-        where: { id: webinar.id, status: { in: EVENT_ALLOWED_FROM.COMPLETED } },
-        data: { status: WebinarStatus.COMPLETED },
-      });
-      if (moved.count === 0) {
+      // #1583 A-P1-03 — through the helper, so the history row rides along.
+      const moved = await completeThroughHelper(() =>
+        prisma.$transaction((tx) =>
+          transitionWebinarEvent(tx, {
+            where: { id: webinar.id },
+            to: WebinarStatus.COMPLETED,
+            fromIn: EVENT_ALLOWED_FROM.COMPLETED,
+            reason: AUTO_COMPLETE_REASON,
+          }),
+        ),
+      );
+      if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
       }
@@ -161,13 +193,8 @@ async function completeClasses(): Promise<{
   const classesToComplete = await prisma.class.findMany({
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
-      // #1554 — one wrapper: at least one occurrence, and every one ended.
-      appointment: {
-        occurrences: {
-          some: { endsAt: { lt: bufferTime } },
-          every: { endsAt: { lt: bufferTime } },
-        },
-      },
+      // #1554 — one wrapper: at least one occurrence, and every live one ended.
+      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
     },
     include: {
       classPlan: { select: { title: true } },
@@ -198,11 +225,17 @@ async function completeClasses(): Promise<{
       );
 
       // CAS (#1319) — same reasoning as the webinar arm above.
-      const moved = await prisma.class.updateMany({
-        where: { id: cls.id, status: { in: EVENT_ALLOWED_FROM.COMPLETED } },
-        data: { status: ClassStatus.COMPLETED },
-      });
-      if (moved.count === 0) {
+      const moved = await completeThroughHelper(() =>
+        prisma.$transaction((tx) =>
+          transitionClassEvent(tx, {
+            where: { id: cls.id },
+            to: ClassStatus.COMPLETED,
+            fromIn: EVENT_ALLOWED_FROM.COMPLETED,
+            reason: AUTO_COMPLETE_REASON,
+          }),
+        ),
+      );
+      if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since the sweep read`);
         continue;
       }
@@ -237,16 +270,7 @@ async function completeConsultations(): Promise<{
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointment: {
-        occurrences: {
-          some: {
-            endsAt: { lt: bufferTime },
-          },
-          every: {
-            endsAt: { lt: bufferTime },
-          },
-        },
-      },
+      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
     },
     include: {
       consultationPlan: {
@@ -323,14 +347,17 @@ async function completeConsultations(): Promise<{
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
       // read and this write must not be overwritten by COMPLETED.
-      const moved = await prisma.consultation.updateMany({
-        where: {
-          id: consultation.id,
-          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
-        },
-        data: { status: AppointmentStatus.COMPLETED },
-      });
-      if (moved.count === 0) {
+      const moved = await completeThroughHelper(() =>
+        prisma.$transaction((tx) =>
+          transitionConsultationRequest(tx, {
+            where: { id: consultation.id },
+            to: AppointmentStatus.COMPLETED,
+            fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
+            reason: AUTO_COMPLETE_REASON,
+          }),
+        ),
+      );
+      if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);
         continue;
       }
@@ -390,13 +417,8 @@ async function completeSubscriptions(): Promise<{
   const subscriptionsToComplete = await prisma.subscription.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      // #1554 — one wrapper: at least one occurrence, and every one ended.
-      appointment: {
-        occurrences: {
-          some: { endsAt: { lt: bufferTime } },
-          every: { endsAt: { lt: bufferTime } },
-        },
-      },
+      // #1554 — one wrapper: at least one occurrence, and every live one ended.
+      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
     },
     include: {
       subscriptionPlan: {
@@ -440,14 +462,17 @@ async function completeSubscriptions(): Promise<{
 
       // #836 — guard rides the WHERE: a cancel landing between the sweep's
       // read and this write must not be overwritten by COMPLETED.
-      const moved = await prisma.subscription.updateMany({
-        where: {
-          id: subscription.id,
-          status: { in: REQUEST_ALLOWED_FROM.COMPLETED },
-        },
-        data: { status: AppointmentStatus.COMPLETED },
-      });
-      if (moved.count === 0) {
+      const moved = await completeThroughHelper(() =>
+        prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id },
+            to: AppointmentStatus.COMPLETED,
+            fromIn: REQUEST_ALLOWED_FROM.COMPLETED,
+            reason: AUTO_COMPLETE_REASON,
+          }),
+        ),
+      );
+      if (!moved) {
         console.log(`   ⏭️ Skipped — status changed since sweep read`);
         continue;
       }
@@ -510,16 +535,7 @@ async function completeTrials(): Promise<{
   const trialsToComplete = await prisma.trial.findMany({
     where: {
       status: TrialStatus.SCHEDULED,
-      appointment: {
-        occurrences: {
-          some: {
-            endsAt: { lt: bufferTime },
-          },
-          every: {
-            endsAt: { lt: bufferTime },
-          },
-        },
-      },
+      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
     },
     include: {
       subscriptionPlan: { select: { title: true } },

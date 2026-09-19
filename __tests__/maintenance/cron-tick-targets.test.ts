@@ -68,6 +68,14 @@ describe("cron-tick targetRequest", () => {
     });
   });
 
+  // #1583 E-P0-04 — the two booking sweeps with per-row outbox staging or
+  // gateway refunds get the 20 s tier; the other three keep the default.
+  it("gives the reminders and stale-request sweeps 20 s, the rest 6 s", () => {
+    expect(targetRequest(base, "appointment-reminders").timeoutMs).toBe(20_000);
+    expect(targetRequest(base, "expire-stale-requests").timeoutMs).toBe(20_000);
+    expect(targetRequest(base, "expire-unpaid-trials").timeoutMs).toBe(6_000);
+  });
+
   // #1708 — one Stream round trip per unchanneled row: a bite of ten under a
   // 20 s budget, where fifty under 6 s was aborted on every tick.
   it("gives the orphaned-confirmation reconcile a bite of ten and 20 s", () => {
@@ -95,6 +103,12 @@ describe("cron-tick dueTargets cadence", () => {
       "reconcile-refunds",
       "abandoned-payments",
       "retry-failed-emails",
+      // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
+      "expire-unpaid-trials",
+      "reschedule-proposals",
+      "appointment-reminders",
+      "tentative-occurrences",
+      "expire-stale-requests",
     ]) {
       expect(off).not.toContain(name);
       expect(on).toContain(name);

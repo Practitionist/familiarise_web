@@ -42,6 +42,7 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { reportSentryError } from "@/lib/observability/report";
+import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 
 /**
  * Type for consultation with all related details needed for payment processing.
@@ -770,8 +771,15 @@ export async function PATCH(
         };
 
         try {
-          await prisma.consultation.update({
-            where: { id: consultationId },
+          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
+          // mint landing after the lapse sweep EXPIRED the request must not
+          // re-arm a link; zero rows is reported, never thrown.
+          const persisted = await prisma.consultation.updateMany({
+            where: {
+              id: consultationId,
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+              pendingPaymentUrl: null,
+            },
             data: {
               pendingPaymentUrl: paymentResult.checkoutUrl,
               requestNotes: result.data.requestNotes
@@ -779,9 +787,25 @@ export async function PATCH(
                 : `[System] Payment link generated and sent to user.`,
             },
           });
+          if (persisted.count === 0) {
+            // The request moved since the mint (lapsed, paid, or a sibling
+            // persisted first): the orphaned order is tombstoned and only a
+            // link still live on the row may reach the consultee.
+            const outcome = await reconcileOrphanedPayLink({
+              kind: "consultation",
+              id: consultationId,
+              paymentIntentId: paymentResult.paymentIntentId,
+              checkoutUrl: paymentResult.checkoutUrl,
+            });
+            mintedLink = outcome.url
+              ? { ...mintedLink, paymentUrl: outcome.url }
+              : null;
+          }
         } catch (persistError) {
-          // The link is live and rides the response + email; only the
-          // dashboard copy is missing.
+          // The row's state is unproven, so the link is not delivered; the
+          // consultant re-approves and the retry reuses the same PENDING
+          // intent (#1181), so nothing is minted twice.
+          mintedLink = null;
           console.error(
             `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
             persistError instanceof Error
@@ -796,35 +820,40 @@ export async function PATCH(
           );
         }
 
-        try {
-          await sendPaymentLinkEmail({
-            email: result.data.requestedBy.user.email || "",
-            name: result.data.requestedBy.user.name || "User",
-            consultantName:
-              result.data.consultationPlan.consultantProfile.user.name ||
-              "Consultant",
-            appointmentType: "consultation" as const,
-            amount: paymentResult.amount,
-            currency: paymentResult.currency,
-            paymentUrl: paymentResult.checkoutUrl,
-            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-          });
-          console.log(
-            `📧 Payment link email sent for consultation ${consultationId}`,
-          );
-        } catch (emailError) {
-          // Link exists on the dashboard via pendingPaymentUrl; email is
-          // best-effort.
-          console.error(
-            `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
-            emailError instanceof Error ? emailError.message : "Unknown error",
-          );
-          Sentry.captureException(
-            emailError instanceof Error
-              ? emailError
-              : new Error(String(emailError)),
-            { tags: { subsystem: "bookings" } },
-          );
+        // Only a link that is live on the row is mailed (#1583 A-P0-06).
+        if (mintedLink) {
+          try {
+            await sendPaymentLinkEmail({
+              email: result.data.requestedBy.user.email || "",
+              name: result.data.requestedBy.user.name || "User",
+              consultantName:
+                result.data.consultationPlan.consultantProfile.user.name ||
+                "Consultant",
+              appointmentType: "consultation" as const,
+              amount: paymentResult.amount,
+              currency: paymentResult.currency,
+              paymentUrl: mintedLink.paymentUrl,
+              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+            });
+            console.log(
+              `📧 Payment link email sent for consultation ${consultationId}`,
+            );
+          } catch (emailError) {
+            // Link exists on the dashboard via pendingPaymentUrl; email is
+            // best-effort.
+            console.error(
+              `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
+              emailError instanceof Error
+                ? emailError.message
+                : "Unknown error",
+            );
+            Sentry.captureException(
+              emailError instanceof Error
+                ? emailError
+                : new Error(String(emailError)),
+              { tags: { subsystem: "bookings" } },
+            );
+          }
         }
       }
 

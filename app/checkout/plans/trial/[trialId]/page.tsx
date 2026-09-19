@@ -9,6 +9,11 @@ import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+import {
+  needsTrialPayLinkRemint,
+  remintTrialPayLink,
+} from "@/lib/trials/pay-link";
+
 import { TrialPayButton } from "./TrialPayButton";
 import { ViewerLocalTime } from "./ViewerLocalTime";
 
@@ -54,6 +59,7 @@ export default async function TrialCheckoutPage({
       status: true,
       paymentDueAt: true,
       pendingPaymentUrl: true,
+      subscriptionPlanId: true,
       consulteeProfile: { select: { userId: true } },
       subscriptionPlan: {
         select: {
@@ -68,8 +74,9 @@ export default async function TrialCheckoutPage({
       },
       appointment: {
         select: {
+          id: true,
           occurrences: {
-            select: { startsAt: true },
+            select: { startsAt: true, endsAt: true },
             orderBy: { startsAt: "asc" },
             take: 1,
           },
@@ -94,10 +101,31 @@ export default async function TrialCheckoutPage({
   // guessable id would leak who is trialling whom.
   if (!trial || trial.consulteeProfile.userId !== session.user.id) notFound();
 
+  // #1589 T-P1-02 — the accept path's mint can fail or its persist can be
+  // lost; while the pay window is open this read re-mints (reusing a live
+  // PENDING intent first) instead of showing "unavailable" until the sweep.
+  let chargedPayment = trial.appointment?.payment[0] ?? null;
+  if (needsTrialPayLinkRemint(trial)) {
+    trial.pendingPaymentUrl = await remintTrialPayLink(trial);
+    // The quote must be the row the new link charges against: a re-mint can
+    // re-freeze the amount, and the pre-remint read may be stale or empty.
+    // For Razorpay the stored link IS the order id (Payment.paymentIntent).
+    if (trial.pendingPaymentUrl && trial.appointment) {
+      chargedPayment =
+        (await prisma.payment.findFirst({
+          where: {
+            appointmentId: trial.appointment.id,
+            paymentIntent: trial.pendingPaymentUrl,
+            deletedAt: null,
+          },
+          select: { amount: true, currency: true },
+        })) ?? chargedPayment;
+    }
+  }
+
   const startsAt = trial.appointment?.occurrences[0]?.startsAt ?? null;
   // Prefer the frozen charge; fall back to the plan only before a payment
   // exists, where the plan price genuinely IS the quote.
-  const chargedPayment = trial.appointment?.payment[0] ?? null;
   const amountPaise = Number(
     chargedPayment?.amount ?? trial.subscriptionPlan.trialPriceInPaise,
   );

@@ -26,6 +26,8 @@ import {
   OccurrenceCompletionStatus,
 } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
+import { recordSystemErrorSafe } from "@/lib/enterprise/system-events";
+import { reportSentryMessage } from "@/lib/observability/report";
 import {
   buildOccupiedAppointmentFilter,
   OCCUPIED_EVENT_STATUSES,
@@ -194,6 +196,113 @@ async function clearTentativeOnSuccessfulPayments(): Promise<{
   }
 }
 
+/** One page of the double-booking scan (#1583 E-P1-10); see the caller. */
+function readDoubleBookingPage(
+  windowEnd: Date,
+  take: number,
+  cursor: string | undefined,
+) {
+  return prisma.appointmentOccurrence.findMany({
+    where: {
+      endsAt: { gt: new Date() }, // Only future slots
+      startsAt: { lt: windowEnd },
+      appointment: {
+        AND: [
+          { OR: buildOccupiedAppointmentFilter() },
+          // Exclude legitimately in-flight tentative holds. A consultation/
+          // subscription reset to PENDING is either awaiting first approval or
+          // mid-reschedule (#623) — its slots are transient and self-resolve, so
+          // flagging them is report noise, not a real double-booking. We still
+          // catch APPROVED_PENDING_PAYMENT (unpaid but committed) overlaps, which
+          // is the widening this detector was changed to cover.
+          {
+            NOT: {
+              OR: [
+                { consultation: { status: "PENDING" } },
+                { subscription: { status: "PENDING" } },
+              ],
+            },
+          },
+        ],
+      },
+    },
+    // FIX #625: Include all 5 appointment types (not just consultation/subscription)
+    // so webinar and class overlaps are also detected. Note: trial sessions
+    // typically lack SUCCEEDED payments, so they won't match this query's
+    // payment filter — their inclusion here is for consultant resolution only.
+    include: {
+      appointment: {
+        include: {
+          consultation: {
+            include: {
+              consultationPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          subscription: {
+            include: {
+              subscriptionPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          webinar: {
+            include: {
+              webinarPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          class: {
+            include: {
+              classPlan: {
+                include: {
+                  consultantProfile: {
+                    include: {
+                      user: { select: { id: true, name: true, email: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          trial: {
+            include: {
+              consultantProfile: {
+                include: {
+                  user: { select: { id: true, name: true, email: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    orderBy: [{ startsAt: "asc" }, { id: "asc" }],
+    take,
+    ...pageArgs(cursor),
+  });
+}
+
 /**
  * Detect double-booked slots (overlapping confirmed bookings for same consultant)
  */
@@ -221,103 +330,40 @@ async function detectDoubleBookings(): Promise<{
     const windowEnd = new Date(
       Date.now() + RECONCILE_WINDOW_DAYS * 24 * 60 * 60 * 1000,
     );
-    const confirmedSlots = await prisma.appointmentOccurrence.findMany({
-      where: {
-        endsAt: { gt: new Date() }, // Only future slots
-        startsAt: { lt: windowEnd },
-        appointment: {
-          AND: [
-            { OR: buildOccupiedAppointmentFilter() },
-            // Exclude legitimately in-flight tentative holds. A consultation/
-            // subscription reset to PENDING is either awaiting first approval or
-            // mid-reschedule (#623) — its slots are transient and self-resolve, so
-            // flagging them is report noise, not a real double-booking. We still
-            // catch APPROVED_PENDING_PAYMENT (unpaid but committed) overlaps, which
-            // is the widening this detector was changed to cover.
-            {
-              NOT: {
-                OR: [
-                  { consultation: { status: "PENDING" } },
-                  { subscription: { status: "PENDING" } },
-                ],
-              },
-            },
-          ],
-        },
-      },
-      // FIX #625: Include all 5 appointment types (not just consultation/subscription)
-      // so webinar and class overlaps are also detected. Note: trial sessions
-      // typically lack SUCCEEDED payments, so they won't match this query's
-      // payment filter — their inclusion here is for consultant resolution only.
-      include: {
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: { select: { id: true, name: true, email: true } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            subscription: {
-              include: {
-                subscriptionPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: { select: { id: true, name: true, email: true } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            webinar: {
-              include: {
-                webinarPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: { select: { id: true, name: true, email: true } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            class: {
-              include: {
-                classPlan: {
-                  include: {
-                    consultantProfile: {
-                      include: {
-                        user: { select: { id: true, name: true, email: true } },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-            trial: {
-              include: {
-                consultantProfile: {
-                  include: {
-                    user: { select: { id: true, name: true, email: true } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { startsAt: "asc" },
-    });
+    // #1583 E-P1-10 — paged like the top-up scans below; the id tiebreak
+    // keeps the cursor stable across rows that share a startsAt.
+    const DOUBLE_BOOKING_PAGE = 500;
+    const DOUBLE_BOOKING_MAX_PAGES = 40;
+    const confirmedSlots: Awaited<ReturnType<typeof readDoubleBookingPage>> =
+      [];
+    let page = 0;
+    let slotCursor: string | undefined;
+    for (;;) {
+      const rows = await readDoubleBookingPage(
+        windowEnd,
+        DOUBLE_BOOKING_PAGE,
+        slotCursor,
+      );
+      confirmedSlots.push(...rows);
+      page += 1;
+      if (rows.length < DOUBLE_BOOKING_PAGE) break;
+      if (page >= DOUBLE_BOOKING_MAX_PAGES) {
+        // Every run restarts at page 0, so a tail past the cap stays unseen
+        // until the earlier rows age out of the window; say so once per run.
+        console.warn(
+          `⚠️ Double-booking scan capped at ${page * DOUBLE_BOOKING_PAGE} slots`,
+        );
+        reportSentryMessage("Double-booking scan hit its page cap", {
+          subsystem: "bookings",
+          op: "reconcile-occurrence-availability",
+          expected: true,
+          level: "warning",
+          extra: { scanned: page * DOUBLE_BOOKING_PAGE, windowEnd },
+        });
+        break;
+      }
+      slotCursor = nextCursor(rows);
+    }
 
     console.log(`Checking ${confirmedSlots.length} confirmed future slots`);
 
@@ -327,6 +373,7 @@ async function detectDoubleBookings(): Promise<{
       Array<{
         slot: (typeof confirmedSlots)[0];
         consultantId: string;
+        consultantProfileId: string;
         consultantName: string;
       }>
     >();
@@ -359,6 +406,7 @@ async function detectDoubleBookings(): Promise<{
       slotsByConsultant.get(consultantId)!.push({
         slot,
         consultantId,
+        consultantProfileId: consultantProfile.id,
         consultantName,
       });
     }
@@ -388,6 +436,36 @@ async function detectDoubleBookings(): Promise<{
           };
 
           doubleBookings.push(doubleBooking);
+          // #1583 E-P0-06 — a durable row per finding, not a log line and a
+          // 207 nobody reads; the run-level Sentry message follows below.
+          // Keyed on the unordered occurrence pair (correlationId) so hourly
+          // re-runs do not pile up a row per run for the same conflict.
+          // Code-point order, not localeCompare: a key derived from ids must not
+          // depend on collation.
+          const [lo, hi] =
+            current.slot.id < next.slot.id
+              ? [current.slot.id, next.slot.id]
+              : [next.slot.id, current.slot.id];
+          const pairKey = `double-booking:${lo}:${hi}`;
+          const alreadyRecorded = await prisma.systemEvent.findFirst({
+            where: { correlationId: pairKey },
+            select: { id: true },
+          });
+          if (!alreadyRecorded) {
+            await recordSystemErrorSafe({
+              category: "BOOKING",
+              summary: `double-booking detected for consultant ${current.consultantProfileId}`,
+              err: new Error(
+                `Overlapping occurrences ${current.slot.id} / ${next.slot.id}`,
+              ),
+              context: {
+                consultantProfileId: current.consultantProfileId,
+                occurrenceIds: [current.slot.id, next.slot.id],
+                appointmentIds: doubleBooking.appointments,
+              },
+              correlationId: pairKey,
+            });
+          }
 
           console.log(`\n🚨 DOUBLE BOOKING DETECTED:`);
           console.log(`   Consultant: ${current.consultantName}`);
@@ -409,6 +487,16 @@ async function detectDoubleBookings(): Promise<{
     } else {
       console.log(
         `\n⚠️ Found ${doubleBookings.length} double booking conflicts`,
+      );
+      reportSentryMessage(
+        "Double bookings detected by the occurrence reconcile",
+        {
+          subsystem: "bookings",
+          op: "reconcile-occurrence-availability",
+          expected: true,
+          level: "warning",
+          extra: { count: doubleBookings.length },
+        },
       );
     }
 
@@ -909,7 +997,11 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
   }
 
   return {
-    success: allErrors.length === 0 && doubleBookingResult.detected === 0,
+    // `success` means the run completed; findings ride doubleBookingsDetected,
+    // which the HTTP twin reports as 207 and the Actions wrapper exits 1 on. A
+    // clean run with findings used to read as a failed run (500), which the
+    // ticker would count as a failure.
+    success: allErrors.length === 0,
     tentativeFlagsCleared: tentativeResult.cleared,
     doubleBookingsDetected: doubleBookingResult.detected,
     doubleBookings: doubleBookingResult.bookings,

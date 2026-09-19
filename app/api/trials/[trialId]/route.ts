@@ -6,6 +6,11 @@ import {
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import {
+  needsTrialPayLinkRemint,
+  persistTrialPayLink,
+  remintTrialPayLink,
+} from "@/lib/trials/pay-link";
 import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
 import {
   refundCancelledTrial,
@@ -135,6 +140,26 @@ export async function GET(request: NextRequest, context: RouteContext) {
         { error: "Trial session not found" },
         { status: 404 },
       );
+    }
+
+    // #1589 T-P1-02 — a lost link is re-minted on the consultee's own read
+    // while the pay window is open, so "unavailable" is no longer terminal.
+    if (
+      trial.consulteeProfile.userId === session.user.id &&
+      needsTrialPayLinkRemint(trial)
+    ) {
+      trial.pendingPaymentUrl = await remintTrialPayLink({
+        ...trial,
+        appointment: trial.appointment
+          ? {
+              id: trial.appointment.id,
+              occurrences: trial.appointment.occurrences.map((o) => ({
+                startsAt: o.startsAt,
+                endsAt: o.endsAt,
+              })),
+            }
+          : null,
+      });
     }
 
     return NextResponse.json({ data: trial });
@@ -642,6 +667,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           // consultee sees nothing payable and the expiry job releases the slot,
           // which is the safe direction to fail.
           let paymentUrl: string | null = null;
+          const trialCheckoutPath = `/checkout/plans/trial/${trialId}`;
           if (requiresPayment) {
             try {
               const intent = await createApprovalPaymentIntent({
@@ -656,10 +682,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 startsAt: startTime.toISOString(),
                 endsAt: endTime.toISOString(),
               });
-              paymentUrl = intent.checkoutUrl;
-              await prisma.trial.update({
-                where: { id: trialId },
-                data: { pendingPaymentUrl: intent.checkoutUrl },
+              // #1583 A-P0-06 — a CAS, not a bare update: a mint landing after
+              // the expiry sweep cancelled the trial must not re-arm the link,
+              // and a link that did not land is never mailed (null = not payable).
+              paymentUrl = await persistTrialPayLink({
+                trialId,
+                paymentIntentId: intent.paymentIntentId,
+                checkoutUrl: intent.checkoutUrl,
               });
             } catch (error) {
               Sentry.captureException(
@@ -682,7 +711,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             status: requiresPayment
               ? TrialStatus.AWAITING_PAYMENT
               : TrialStatus.SCHEDULED,
-            dashboardUrl: paymentUrl ?? "/dashboard",
+            // #1591 J4-P1-02 — the consultee lands on our branded trial
+            // checkout, never the raw gateway link (trialCheckoutHref parity).
+            dashboardUrl: paymentUrl ? trialCheckoutPath : "/dashboard",
           });
 
           // #1653 — the email twin, to both parties: the consultee's CTA is
@@ -699,7 +730,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               startsAt: startTime,
               awaitingPayment: requiresPayment,
               dashboardUrl: `${getAppUrl()}/dashboard`,
-              paymentUrl,
+              paymentUrl: paymentUrl
+                ? `${getAppUrl()}${trialCheckoutPath}`
+                : null,
             },
             EMAIL_BUDGET_MS.REQUEST,
           );

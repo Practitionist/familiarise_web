@@ -29,6 +29,7 @@ import {
   StreamSessionParticipantLeftEvent,
 } from "@/lib/stream/session-handlers";
 import {
+  type WebhookClaim,
   logWebhookEvent,
   markWebhookEventProcessed,
   isDbHealthy,
@@ -308,8 +309,11 @@ export async function processStreamEvent(
       return;
     }
 
+    // The live route's claim on the row; the sweeper holds its own and passes
+    // none, so its completion stays unfenced.
+    let claim: WebhookClaim | undefined;
     if (!opts.claimAlreadyHeld) {
-      const { isNew } = await logWebhookEvent(
+      const logged = await logWebhookEvent(
         "stream",
         eventId,
         eventType,
@@ -317,10 +321,11 @@ export async function processStreamEvent(
         signature,
       );
 
-      if (!isNew) {
+      if (!logged.isNew) {
         streamLogger.debug(`Duplicate Stream webhook event: ${eventId}`);
         return;
       }
+      claim = logged.claim;
     }
 
     streamLogger.info(`Processing Stream webhook: ${eventType}`, {
@@ -335,7 +340,7 @@ export async function processStreamEvent(
     // a check that reads as protection and verifies nothing.
     if (!isHandledEventType(eventType)) {
       streamLogger.debug(`Unhandled Stream event type: ${eventType}`);
-      await markWebhookEventProcessed(eventId, undefined);
+      await markWebhookEventProcessed(eventId, undefined, claim);
       return;
     }
 
@@ -346,7 +351,7 @@ export async function processStreamEvent(
         call_cid: baseEvent.call_cid,
         expected: STREAM_CALL_TYPE,
       });
-      await markWebhookEventProcessed(eventId);
+      await markWebhookEventProcessed(eventId, undefined, claim);
       return;
     }
 
@@ -391,7 +396,7 @@ export async function processStreamEvent(
           level: "error",
         },
       );
-      await markWebhookEventProcessed(eventId, processingError);
+      await markWebhookEventProcessed(eventId, processingError, claim);
       return;
     }
 
@@ -413,7 +418,7 @@ export async function processStreamEvent(
       // is nothing to signal to Stream; the error is stamped on the row below
       // and the sweeper owns the retry.
     } finally {
-      await markWebhookEventProcessed(eventId, processingError);
+      await markWebhookEventProcessed(eventId, processingError, claim);
     }
   } catch (error) {
     // Reaching here means the bookkeeping itself failed. That used to be the one
