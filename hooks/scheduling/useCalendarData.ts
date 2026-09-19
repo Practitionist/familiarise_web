@@ -260,7 +260,9 @@ export function useCalendarData(
   const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
     Record<string, number>
   >({});
-  const [loading, setLoading] = useState(false);
+  // Start loading on mount when autoLoad is on so the first paint shows the
+  // grid skeleton instead of the "No calendar data available" empty state.
+  const [loading, setLoading] = useState(autoLoad);
   const [error, setError] = useState<string | null>(null);
   // Flicker fix — a fetch for week N can resolve after the user has already
   // navigated to week N+1 (no AbortController here). Only the response

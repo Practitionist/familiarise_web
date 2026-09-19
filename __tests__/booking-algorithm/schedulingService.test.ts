@@ -2304,8 +2304,18 @@ describe("deleteExistingAppointments", () => {
     const tentativeAppointment = {
       id: "rescheduled-apt",
       occurrences: [
-        { id: "s1", isTentative: true },
-        { id: "s2", isTentative: true },
+        {
+          id: "s1",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
+        {
+          id: "s2",
+          isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
+        },
       ],
       participants: [],
       _count: { payment: 0 },
@@ -2769,6 +2779,9 @@ describe("partial reschedule slot count", () => {
         consultantProfile: makeConsultantProfile(),
       },
     });
+  // Genuine reschedule releases: tentative + RESCHEDULED + live. Bare
+  // tentative holds (fresh request-for-approval / unpaid checkout) are NOT
+  // releases and no longer count toward the reschedule total.
   const twoTentativeAppointments = [
     {
       id: "resched-1",
@@ -2776,6 +2789,8 @@ describe("partial reschedule slot count", () => {
         {
           id: "ts1",
           isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
           startsAt: new Date(),
           endsAt: new Date(),
         },
@@ -2789,6 +2804,8 @@ describe("partial reschedule slot count", () => {
         {
           id: "ts2",
           isTentative: true,
+          completionStatus: "RESCHEDULED",
+          deletedAt: null,
           startsAt: new Date(),
           endsAt: new Date(),
         },

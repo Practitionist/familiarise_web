@@ -1173,6 +1173,26 @@ export class SchedulingService {
     );
   }
 
+  /**
+   * Live reschedule releases awaiting replacement — the canonical
+   * `isReleasedForReschedule` predicate (tentative + RESCHEDULED + live).
+   * Bare `isTentative` over-counts: every fresh request already carries
+   * tentative holds (request-for-approval and unpaid checkout create them),
+   * plus stale duplicate/tombstoned rows. Counting those demanded e.g. 12
+   * slots for a 4-session plan and rejected the correct 8 with
+   * "replacing 6 session(s)".
+   */
+  private static releasedSessionCountOf(
+    appointments: AppointmentWithSlots[],
+  ): number {
+    return appointments.reduce(
+      (count, appointment) =>
+        count +
+        appointment.occurrences.filter(isReleasedForReschedule).length,
+      0,
+    );
+  }
+
   private static releasedOccurrenceIdsOf(
     appointments: AppointmentWithSlots[],
   ): string[] {
@@ -1443,7 +1463,10 @@ export class SchedulingService {
         tentativeSlotCount,
         expectedTentativeSlotCount,
       );
-      const isReschedule = tentativeSlotCount > 0;
+      // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
+      // tentativeness: fresh requests already carry tentative holds.
+      const isReschedule =
+        this.releasedSessionCountOf(existingAppointments) > 0;
 
       // ADR B10, derived rather than trusted. The client set initialAllocation
       // only when tentativeSlotCount === 0, but EVERY pending request already
@@ -1591,10 +1614,7 @@ export class SchedulingService {
       const appointmentIdsToExclude =
         isReschedule || isTopUp ? [] : existingAppointments.map((a) => a.id);
       const occurrenceIdsToExclude = isReschedule
-        ? existingAppointments
-            .flatMap((a) => a.occurrences)
-            .filter((s) => s.isTentative)
-            .map((s) => s.id)
+        ? this.releasedOccurrenceIdsOf(existingAppointments)
         : [];
       // The event's own wrapper never clashes with itself for a co-host.
       const ownAppointmentIds = existingAppointments.map((a) => a.id);
@@ -1602,15 +1622,14 @@ export class SchedulingService {
       // Calculate required slots
       let requiredSlots: number;
       if (isReschedule) {
-        // Expected count = (tentative appointments) × slotsPerCall = the number
+        // Expected count = (live RELEASED sessions) × slotsPerCall = the number
         // of SESSIONS being rescheduled (1 Appointment = 1 session). Equals
         // calculateRequiredSlots for a FULL reschedule — preserving the class
         // crud-with-plan case (commit 2b6be4c1, 1 full-duration tentative row per
         // session) — but correctly smaller for a PARTIAL reschedule (e.g. 2 of 10),
         // which calculateRequiredSlots (the full total) would over-allocate.
-        const rescheduleSessions = existingAppointments
-          .flatMap((a) => a.occurrences)
-          .filter((s) => s.isTentative).length;
+        const rescheduleSessions =
+          this.releasedSessionCountOf(existingAppointments);
         requiredSlots = rescheduleSessions * slotsPerCall;
       } else {
         const fullRequired = ScheduleCalculationService.calculateRequiredSlots(
@@ -2138,7 +2157,10 @@ export class SchedulingService {
         tentativeSlotCount,
         expectedTentativeSlotCount,
       );
-      const isReschedule = tentativeSlotCount > 0;
+      // A reschedule is a live RELEASE (tentative + RESCHEDULED), not mere
+      // tentativeness: fresh requests already carry tentative holds.
+      const isReschedule =
+        this.releasedSessionCountOf(existingAppointments) > 0;
 
       // Intervals, not rows — see autoAllocate.
       const existingNonTentativeSlotCount =
@@ -2176,10 +2198,7 @@ export class SchedulingService {
         ? []
         : existingAppointments.map((a) => a.id);
       const occurrenceIdsToExclude = isReschedule
-        ? existingAppointments
-            .flatMap((a) => a.occurrences)
-            .filter((s) => s.isTentative)
-            .map((s) => s.id)
+        ? this.releasedOccurrenceIdsOf(existingAppointments)
         : [];
       const ownAppointmentIds = existingAppointments.map((a) => a.id);
 
@@ -2193,16 +2212,15 @@ export class SchedulingService {
       // Validate total slot count for recurring event types
       if (isRecurringEventType(eventType)) {
         if (isReschedule) {
-          // Expected count = (tentative appointments) × slotsPerCall, i.e. the
+          // Expected count = (live RELEASED sessions) × slotsPerCall, i.e. the
           // number of SESSIONS actually being rescheduled (1 Appointment = 1
           // session). This equals calculateRequiredSlots for a FULL reschedule
-          // (all sessions tentative) — preserving the class crud-with-plan case
+          // (all sessions released) — preserving the class crud-with-plan case
           // (commit 2b6be4c1, where each session has 1 full-duration tentative
           // row) — but is correctly smaller for a PARTIAL reschedule (e.g. 2 of
           // 10). calculateRequiredSlots (the full total) wrongly rejected partials.
-          const rescheduleSessions = existingAppointments
-            .flatMap((a) => a.occurrences)
-            .filter((s) => s.isTentative).length;
+          const rescheduleSessions =
+            this.releasedSessionCountOf(existingAppointments);
           const rescheduleRequired = rescheduleSessions * slotsPerCall;
           if (slots.length !== rescheduleRequired) {
             throw new AllocationValidationError(
