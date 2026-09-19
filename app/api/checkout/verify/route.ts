@@ -2,8 +2,12 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
-import { getRazorpayClient } from "@/lib/payments/core/razorpay";
+import {
+  getRazorpayClient,
+  withRazorpaySdkTimeout,
+} from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
   try {
@@ -83,20 +87,49 @@ export async function GET(req: NextRequest) {
     // earnings, and the `booking:<paymentId>` journal entry. It now drives the
     // same idempotent pipeline the webhook drives, so a sync can only ever
     // produce the complete outcome or none of it.
+    // #1592 S-P0-05 / #1599 F-P0-02 — the sync arm drives a gateway read and
+    // the confirmation pipeline on the caller's say-so, so it is budgeted.
+    // Keyed apart from the checkout POST so the success page's poll cannot
+    // starve a checkout; when the budget is spent the gateway is simply not
+    // asked and the poller gets the "still processing" 400 it already treats
+    // as keep-waiting (checkout-success/page.tsx), with `retryAfter` so it can
+    // back off — a bare 429 would be rendered as VERIFICATION_FAILED.
+    let syncRetryAfter: number | null = null;
     if (
       shouldSync &&
       payment.paymentStatus === "PENDING" &&
       paymentIntent.startsWith("order_") &&
       razorpayClient
     ) {
+      const limited = await applyRateLimit(
+        checkoutLimiter,
+        `verify-sync:${session.user.id}`,
+      );
+      if (limited) {
+        syncRetryAfter = Number(limited.headers.get("Retry-After")) || null;
+      }
+    }
+    if (
+      shouldSync &&
+      syncRetryAfter === null &&
+      payment.paymentStatus === "PENDING" &&
+      paymentIntent.startsWith("order_") &&
+      razorpayClient
+    ) {
       try {
-        const rzpOrder = await razorpayClient.orders.fetch(paymentIntent);
+        // Bounded like every other SDK call: a hung gateway must not hold
+        // the buyer's poll (or this instance) open.
+        const rzpOrder = await withRazorpaySdkTimeout("orders.fetch", () =>
+          razorpayClient.orders.fetch(paymentIntent),
+        );
         if (rzpOrder.status === "paid") {
           // Resolve the captured payment so the parity check and the
           // notes-based routing both see gateway truth, exactly as the
           // webhook does.
-          const orderPayments =
-            await razorpayClient.orders.fetchPayments(paymentIntent);
+          const orderPayments = await withRazorpaySdkTimeout(
+            "orders.fetchPayments",
+            () => razorpayClient.orders.fetchPayments(paymentIntent),
+          );
           const captured =
             orderPayments.items?.find((p) => p.status === "captured") ??
             orderPayments.items?.[0];
@@ -145,6 +178,7 @@ export async function GET(req: NextRequest) {
           error: "Payment not completed",
           status: payment.paymentStatus,
           message: getPaymentStatusMessage(payment.paymentStatus),
+          ...(syncRetryAfter !== null ? { retryAfter: syncRetryAfter } : {}),
         },
         { status: 400 },
       );
