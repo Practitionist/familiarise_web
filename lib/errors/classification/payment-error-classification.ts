@@ -334,6 +334,15 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.LOCK_CONTENTION,
     httpStatus: 409,
   },
+  // #1584 P1-GW01c — an org payout batch asked for a gateway that cannot
+  // disburse it; the route answers the code directly, registered for parity.
+  {
+    code: "GATEWAY_UNSUPPORTED_FOR_PAYOUT",
+    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
+    httpStatus: 400,
+    userMessage:
+      "Organisation payouts disburse through RazorpayX only; choose RAZORPAY.",
+  },
   // #1582 B-P1-01b/c — org-sponsorship refusals thrown inside and before the
   // checkout transaction. Each names the admin who can act; none is a fault.
   {
