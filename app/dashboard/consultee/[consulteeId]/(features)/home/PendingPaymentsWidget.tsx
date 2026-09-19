@@ -407,22 +407,26 @@ export function PendingPaymentsWidget({
                           Pay Now
                         </Link>
                       </Button>
+                    ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <a
+                          href={payment.paymentUrl as string}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Pay Now
+                          <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
                     ) : (
                       <Button
                         size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                        onClick={() => {
-                          if (
-                            payment.paymentUrl &&
-                            /^https?:\/\//.test(payment.paymentUrl)
-                          ) {
-                            window.open(
-                              payment.paymentUrl,
-                              "_blank",
-                              "noopener,noreferrer",
-                            );
-                          }
-                        }}
+                        disabled
+                        className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
                       >
                         Pay Now
                         <ExternalLink className="ml-1 h-3 w-3" />

@@ -25,12 +25,15 @@ export interface PlanFilterParams {
 export function parsePlanFilters(
   searchParams: URLSearchParams,
 ): PlanFilterParams {
-  const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+  const page = Math.max(
+    1,
+    Number.parseInt(searchParams.get("page") || "1") || 1,
+  );
   // Bounded: an uncapped `take` lets one request scan the whole table.
   // Callers ask for 8–12 rows; 50 is generous headroom, not a behavior cap.
   const limit = Math.min(
     50,
-    Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+    Math.max(1, Number.parseInt(searchParams.get("limit") || "10") || 10),
   );
   const skip = (page - 1) * limit;
 
@@ -238,15 +241,19 @@ async function webinarTrendingRankUncached(
     },
   });
 
-  return plansForRanking
-    .map((p) => ({
-      id: p.id,
-      count: p.webinars.reduce(
-        (sum, w) => sum + (w.appointment?.occurrences?.length ?? 0),
-        0,
-      ),
-    }))
-    .sort((a, b) => b.count - a.count);
+  return (
+    plansForRanking
+      .map((p) => ({
+        id: p.id,
+        count: p.webinars.reduce(
+          (sum, w) => sum + (w.appointment?.occurrences?.length ?? 0),
+          0,
+        ),
+      }))
+      // Deterministic tie-break: equal counts must not reshuffle across
+      // revalidations, or paged clients see duplicates/gaps.
+      .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
+  );
 }
 
 export const getWebinarTrendingRank = unstable_cache(
@@ -294,15 +301,18 @@ async function classTrendingRankUncached(
 
   // The ranking measures how much of a plan is running: one occurrence
   // row is one held call (#1554), so the live rows are the count.
-  return plansForRanking
-    .map((p) => ({
-      id: p.id,
-      count: p.classes.reduce(
-        (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
-        0,
-      ),
-    }))
-    .sort((a, b) => b.count - a.count);
+  return (
+    plansForRanking
+      .map((p) => ({
+        id: p.id,
+        count: p.classes.reduce(
+          (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
+          0,
+        ),
+      }))
+      // Deterministic tie-break (see webinar rank above).
+      .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id))
+  );
 }
 
 export const getClassTrendingRank = unstable_cache(

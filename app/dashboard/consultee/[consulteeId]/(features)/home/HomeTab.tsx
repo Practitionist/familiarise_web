@@ -902,7 +902,7 @@ export default function HomeTab({
               <>Welcome back, {userDetails.name?.split(" ")[0]}</>
             ) : (
               <span
-                className="inline-block h-7 w-48 animate-pulse rounded-md bg-muted align-middle"
+                className="inline-block h-7 w-48 motion-safe:animate-pulse rounded-md bg-muted align-middle"
                 aria-label="Loading greeting"
               />
             )}

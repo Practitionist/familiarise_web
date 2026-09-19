@@ -14,7 +14,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
-import { addDays, endOfDay, startOfDay } from "date-fns";
+import {
+  addDays,
+  differenceInCalendarDays,
+  endOfDay,
+  startOfDay,
+} from "date-fns";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
@@ -71,12 +76,13 @@ export function ExpertProfileClient({
   // single in-flight request instead of firing its own 1-day compute. Day
   // clicks inside a loaded week cost zero requests (staleTime 30s).
   const todayStart = startOfDay(new Date());
+  // Calendar-day arithmetic: a DST transition makes seven days 167 or 169
+  // elapsed hours, which would park the selected day in the wrong week.
   const selectedWeekOffset = selectedDate
     ? Math.max(
         0,
         Math.floor(
-          (startOfDay(selectedDate).getTime() - todayStart.getTime()) /
-            (7 * 24 * 60 * 60 * 1000),
+          differenceInCalendarDays(startOfDay(selectedDate), todayStart) / 7,
         ),
       )
     : 0;
@@ -356,6 +362,7 @@ export function ExpertProfileClient({
                 <ConsultantAvailability
                   consultantDetails={consultantDetails}
                   timezone={timezone}
+                  bypassRef={bypassCacheOnce}
                 />
               ) : null}
             </div>

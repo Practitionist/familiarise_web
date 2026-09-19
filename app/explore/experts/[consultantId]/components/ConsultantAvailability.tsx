@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import type { MutableRefObject } from "react";
 import { DayOfWeek } from "@prisma/client";
 import { WeeklyAvailability } from "./WeeklyAvailability";
 import { CustomAvailability } from "./CustomAvailability";
@@ -12,6 +13,13 @@ import { useAvailabilityWindow } from "../hooks/useAvailabilityWindow";
 interface ConsultantAvailabilityProps {
   consultantDetails: ConsultantDetailData;
   timezone: string;
+  /**
+   * Shared with the pricing panel's reader: both observers carry the same
+   * one-shot bypass ref, so a BFCache-restore invalidation refetches past
+   * the browser cache no matter which observer's queryFn the shared entry
+   * keeps. Consumed once, by whichever fetch runs first.
+   */
+  bypassRef?: MutableRefObject<boolean>;
 }
 
 type PickerIntervalsByDay = Record<DayOfWeek, PickerInterval[]>;
@@ -24,6 +32,7 @@ type DayWithSlots = {
 export function ConsultantAvailability({
   consultantDetails,
   timezone,
+  bypassRef,
 }: ConsultantAvailabilityProps) {
   const [weekOffset, setWeekOffset] = useState(0);
 
@@ -49,6 +58,7 @@ export function ConsultantAvailability({
     startUtc: consultantDetails?.id ? startDateInUtc : null,
     endUtc: consultantDetails?.id ? endDateInUtc : null,
     timezone: consultantDetails?.id ? timezone : null,
+    bypassRef,
   });
 
   // Keep the previous week's rows on screen while the next week loads (was:
@@ -62,6 +72,9 @@ export function ConsultantAvailability({
   );
   const hasData = Object.keys(availabilityData).length > 0;
   const showLoadingCard = weekQuery.isLoading && !hasData;
+  // A failed week fetch must not read as "no availability" (flag consumed
+  // below, after ALL hooks — early returns cannot precede useMemo calls).
+  const showErrorCard = !!weekQuery.error && !hasData;
 
   // Process data for WeeklyAvailability component (group by day of week)
   const processedWeeklySlots = useMemo((): PickerIntervalsByDay => {
@@ -134,6 +147,28 @@ export function ConsultantAvailability({
 
     return days;
   }, [availabilityData, timezone, weekOffset]);
+
+  if (showErrorCard) {
+    return (
+      <div className="bg-gradient-to-br from-white via-gray-50/50 to-white rounded-2xl shadow-xl border border-gray-200/50 p-8 backdrop-blur-sm relative">
+        <div className="relative text-center">
+          <h3 className="text-xl font-bold mb-2 bg-gradient-to-r from-gray-700 to-gray-900 bg-clip-text text-transparent">
+            Consultant Availability
+          </h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Couldn&apos;t load availability. Please try again.
+          </p>
+          <button
+            type="button"
+            onClick={() => weekQuery.refetch()}
+            className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-zinc-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (showLoadingCard) {
     return (

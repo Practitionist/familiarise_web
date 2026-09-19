@@ -13,10 +13,13 @@ export async function GET(request: NextRequest) {
     const consultantId = searchParams.get("consultantId");
     // Bounded: an uncapped `take` lets one request scan the whole table
     // (DoS shape). No caller asks for more than the default 10.
-    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+    const page = Math.max(
+      1,
+      Number.parseInt(searchParams.get("page") || "1") || 1,
+    );
     const limit = Math.min(
       50,
-      Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+      Math.max(1, Number.parseInt(searchParams.get("limit") || "10") || 10),
     );
     const skip = (page - 1) * limit;
 

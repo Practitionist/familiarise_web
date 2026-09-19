@@ -22,14 +22,15 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  // The access check reads the session/user row; the detail read is keyed on
-  // the appointment id — independent, so they run concurrently. Guards below
-  // are unchanged: a redirect from the access check still wins, a missing
-  // detail still 404s.
-  const [access, detail] = await Promise.all([
-    requirePersonalProfileAccess("consultant", consultantId),
-    readAppointmentDetail(appointmentId),
-  ]);
+  //
+  // Deliberately sequential, NOT Promise.all: the guard must SETTLE before
+  // the detail read starts. Firing both concurrently would run the query
+  // against someone else's rows before the ownership check resolves — the
+  // exact bug this file's comment and the ssr-ownership guard test pin
+  // against. The round trip this costs is the price of the invariant.
+  const access = await requirePersonalProfileAccess("consultant", consultantId);
+
+  const detail = await readAppointmentDetail(appointmentId);
 
   if (!detail) notFound();
 
