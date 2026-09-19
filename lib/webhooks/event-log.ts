@@ -75,11 +75,15 @@ export async function logWebhookEvent(
 
       // If previous attempt failed, allow retry by resetting state.
       //
-      // `receivedAt` MUST move with it. The staleness check below measures
-      // `now - receivedAt`, and a retried row keeps its original timestamp — so
-      // every retry was instantly older than the 5-minute threshold and the
-      // in-progress guard fell open for exactly the rows it exists to protect.
-      // Two sweeper workers could then claim the same event simultaneously.
+      // The claim stamp MUST move with it. The staleness check below measures
+      // the age of the claim, and a retried row that kept its original stamp
+      // was instantly older than the 5-minute threshold, so the in-progress
+      // guard fell open for exactly the rows it exists to protect and two
+      // sweeper workers could claim the same event simultaneously.
+      //
+      // #1589 M-P0-03 — the stamp is `claimedAt`, never `receivedAt`: the
+      // sweeper's 168 h give-up ages on receivedAt, and refreshing it here on
+      // every re-drive kept a crash-looping row young forever (#1205-triage).
       //
       // The `updateMany` + count is the claim: two workers racing here, only one
       // sees `count === 1`, and the loser is told the row is not new. A bare
@@ -91,7 +95,7 @@ export async function logWebhookEvent(
             processed: false,
             processedAt: null,
             error: null,
-            receivedAt: new Date(),
+            claimedAt: new Date(),
             payload: payload as Prisma.InputJsonValue,
           },
         });
@@ -112,19 +116,21 @@ export async function logWebhookEvent(
       // treat it as abandoned (e.g., after() callback didn't run due to crash)
       // and allow reprocessing.
       const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-      const age = Date.now() - new Date(existing.receivedAt).getTime();
+      // The claim is the freshness signal; a never-claimed row ages from arrival.
+      const claimStamp = existing.claimedAt ?? existing.receivedAt;
+      const age = Date.now() - new Date(claimStamp).getTime();
       if (age > STALE_THRESHOLD_MS) {
         // Claim it atomically. Reading the age and then writing is check-then-act:
         // two workers both see the row as stale, both write, and both believe
         // they own it — so the same event gets processed twice. Scoping the
-        // update to the timestamp we read means exactly one write can land.
+        // update to the stamp we read means exactly one write can land.
         const claimed = await prisma.webhookEvent.updateMany({
-          where: { eventId, receivedAt: existing.receivedAt },
+          where: { eventId, claimedAt: existing.claimedAt },
           data: {
             processed: false,
             processedAt: null,
             error: null,
-            receivedAt: new Date(),
+            claimedAt: new Date(),
             payload: payload as Prisma.InputJsonValue,
           },
         });
