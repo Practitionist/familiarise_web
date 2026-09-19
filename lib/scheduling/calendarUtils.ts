@@ -353,6 +353,44 @@ export function calculateRequiredSlots(
 }
 
 /**
+ * A selected session for display: one consecutive same-day run of 30-minute
+ * atoms, collapsed so a 1-hour pick reads as one chip ("Thu 24 Sep ·
+ * 11:00 am–12:00 pm") instead of two atom rows. Sorted ascending by start.
+ */
+export interface SelectedSession {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Collapse selected 30-minute atoms into consecutive same-day sessions.
+ * Pure: sorts a copy, never mutates. An atom joins the open run only when it
+ * starts exactly when the run ends; any gap (or day change, which always
+ * leaves a gap) opens a new session.
+ */
+export function groupSelectedIntoSessions(
+  selectedSlots: CalendarInterval[],
+): SelectedSession[] {
+  const sorted = [...selectedSlots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  const sessions: SelectedSession[] = [];
+  for (const slot of sorted) {
+    const open = sessions[sessions.length - 1];
+    if (
+      open &&
+      slot.startTime.getTime() === open.end.getTime() &&
+      slot.endTime.getTime() > open.end.getTime()
+    ) {
+      open.end = slot.endTime;
+    } else {
+      sessions.push({ start: slot.startTime, end: slot.endTime });
+    }
+  }
+  return sessions;
+}
+
+/**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to ScheduleCalculationService.countWeeks as the single source of truth.
  */

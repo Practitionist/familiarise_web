@@ -36,6 +36,7 @@ import {
   calculateCallProgress,
   getAppointmentTitle,
   getAppointmentUser,
+  groupSelectedIntoSessions,
   type CalendarInterval,
   type Appointment,
 } from "@/lib/scheduling/calendarUtils";
@@ -860,5 +861,45 @@ describe("getAppointmentUser", () => {
       appointmentType: AppointmentsType.WEBINAR,
     };
     expect(getAppointmentUser(apt)).toBe("");
+  });
+});
+
+// ─── groupSelectedIntoSessions ──────────────────────────────────────────────
+// Footer pre-commit preview: consecutive 30-min atoms collapse into sessions.
+
+describe("groupSelectedIntoSessions", () => {
+  const interval = (s: string, e: string): CalendarInterval =>
+    makeTimeSlot(s, e) as CalendarInterval;
+
+  it("collapses two consecutive atoms into one session", () => {
+    const sessions = groupSelectedIntoSessions([
+      interval("2026-11-16T11:00:00Z", "2026-11-16T11:30:00Z"),
+      interval("2026-11-16T11:30:00Z", "2026-11-16T12:00:00Z"),
+    ]);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].start.toISOString()).toBe("2026-11-16T11:00:00.000Z");
+    expect(sessions[0].end.toISOString()).toBe("2026-11-16T12:00:00.000Z");
+  });
+
+  it("splits on a gap and across days", () => {
+    const sessions = groupSelectedIntoSessions([
+      interval("2026-11-16T11:00:00Z", "2026-11-16T11:30:00Z"),
+      interval("2026-11-16T14:00:00Z", "2026-11-16T14:30:00Z"),
+      interval("2026-11-17T11:00:00Z", "2026-11-17T11:30:00Z"),
+    ]);
+    expect(sessions).toHaveLength(3);
+  });
+
+  it("sorts unordered input and does not mutate it", () => {
+    const b = interval("2026-11-16T11:30:00Z", "2026-11-16T12:00:00Z");
+    const a = interval("2026-11-16T11:00:00Z", "2026-11-16T11:30:00Z");
+    const input = [b, a];
+    const sessions = groupSelectedIntoSessions(input);
+    expect(sessions).toHaveLength(1);
+    expect(input[0]).toBe(b);
+  });
+
+  it("returns [] for an empty selection", () => {
+    expect(groupSelectedIntoSessions([])).toEqual([]);
   });
 });

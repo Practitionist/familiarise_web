@@ -49,6 +49,7 @@ import {
   calculateRequiredSlots,
   calculateCallProgress,
   countSundayWeeksInclusive,
+  groupSelectedIntoSessions,
   validateDayBasedConsecutiveSlots,
 } from "@/lib/scheduling/calendarUtils";
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
@@ -97,6 +98,7 @@ import {
   formatDateLabel,
   formatDateRangeLabel,
   formatDateTimeLabel,
+  formatDayLabel,
   formatDayOfMonth,
   formatMonthLabel,
   formatWeekdayShort,
@@ -530,7 +532,10 @@ export interface UnifiedCalendarProps {
    */
   viewerZone?: string | null;
   /** The states painted in the visible week, for a legend that shows only them (#1703 QA-2). */
-  onPaintedKeysChange?: (keys: ReadonlySet<SlotStatusKey>) => void;
+  onPaintedKeysChange?: (
+    keys: ReadonlySet<SlotStatusKey>,
+    counts?: ReadonlyMap<SlotStatusKey, number>,
+  ) => void;
 }
 
 export function UnifiedCalendar({
@@ -1211,18 +1216,25 @@ export function UnifiedCalendar({
   // Dead-hour fold (#1703 F1): a row is live when any column in the visible
   // week has something in it. Computed from the fetched grid so a custom
   // week folds to its own shape, not the profile's.
-  // One pass over the week gives both the dead-hour fold and the set of
-  // states painted, which the legend is trimmed to (#1703 QA-2).
-  const { folded, paintedKeys } = useMemo(() => {
+  // One pass over the week gives the dead-hour fold, the set of states
+  // painted (which the legend is trimmed to, #1703 QA-2) and the per-state
+  // cell counts the legend annotates — no second traversal.
+  const { folded, paintedKeys, paintedCounts } = useMemo(() => {
     const painted = new Set<SlotStatusKey>();
+    const counts = new Map<SlotStatusKey, number>();
     const live = INTERVALS.map((interval) =>
       weekDates.reduce((anyLive, date) => {
         const cell = describeCell(interval, date);
         painted.add(cell.statusKey);
+        counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
         return anyLive || cell.isLive;
       }, false),
     );
-    return { folded: foldDeadHourBands(live), paintedKeys: painted };
+    return {
+      folded: foldDeadHourBands(live),
+      paintedKeys: painted,
+      paintedCounts: counts,
+    };
   }, [weekDates, describeCell]);
 
   // Reported through a ref for the same reason as onSlotsSelected: a host
@@ -1232,8 +1244,8 @@ export function UnifiedCalendar({
     onPaintedKeysChangeRef.current = onPaintedKeysChange;
   });
   useEffect(() => {
-    onPaintedKeysChangeRef.current?.(paintedKeys);
-  }, [paintedKeys]);
+    onPaintedKeysChangeRef.current?.(paintedKeys, paintedCounts);
+  }, [paintedKeys, paintedCounts]);
 
   // Which bands the consultant has opened; remembered for the tab's session
   // and keyed by consultant so one grid's choice does not leak into another.
@@ -1951,6 +1963,29 @@ export function UnifiedCalendar({
               );
             })()}
           </div>
+          {/* Pre-commit preview: what is actually chosen, as sessions not
+              atoms, in the event's scheduling timezone (#1703 F2). Static
+              text — the counter above stays the "Go to selection" control. */}
+          {selectedSlots.length > 0 && (
+            <ul
+              className="flex flex-wrap items-center gap-1.5"
+              aria-label="Selected times"
+            >
+              {groupSelectedIntoSessions(selectedSlots).map((session) => {
+                const zone = schedulingTimezone ?? gridZone;
+                const label = `${formatDayLabel(session.start, { zone })} · ${formatClockTime(session.start, { zone })}–${formatClockTime(session.end, { zone })}`;
+                return (
+                  <li
+                    key={`${session.start.toISOString()}/${session.end.toISOString()}`}
+                    title={label}
+                    className="rounded-full border border-emerald-600/30 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-900"
+                  >
+                    {label}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
           {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
           {eventType === "subscription" && (
             <div className="text-xs text-muted-foreground">
