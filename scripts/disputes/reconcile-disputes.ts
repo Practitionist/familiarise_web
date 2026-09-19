@@ -172,10 +172,14 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
       );
 
       // Check if status has changed
+      // #1584 P1-CR03 — CAS on the status this loop read: a `dispute.lost`
+      // webhook landing between fetch and write must not be overwritten by
+      // the stale gateway snapshot. A miss is skipped; the next tick re-reads.
+      const casWhere = { disputeId: dispute.disputeId, status: dispute.status };
       const newStatus = mapGatewayDisputeStatus(gatewayDispute.status);
       if (newStatus !== dispute.status) {
-        await prisma.dispute.update({
-          where: { disputeId: dispute.disputeId },
+        const { count } = await prisma.dispute.updateMany({
+          where: casWhere,
           data: {
             status: newStatus,
             evidence: gatewayDispute.evidence as Prisma.InputJsonValue,
@@ -183,6 +187,12 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
             dueBy: gatewayDispute.dueBy,
           },
         });
+        if (count === 0) {
+          console.log(
+            `⏭️ Dispute ${dispute.disputeId} moved off ${dispute.status} mid-run — left alone`,
+          );
+          continue;
+        }
 
         console.log(
           `✅ Reconciled dispute ${dispute.disputeId}: ${dispute.status} -> ${newStatus}`,
@@ -190,8 +200,8 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
         reconciledCount++;
       } else {
         // Update dueBy and evidence even if status unchanged
-        await prisma.dispute.update({
-          where: { disputeId: dispute.disputeId },
+        await prisma.dispute.updateMany({
+          where: casWhere,
           data: {
             dueBy: gatewayDispute.dueBy,
             evidence: gatewayDispute.evidence as Prisma.InputJsonValue,
@@ -220,8 +230,8 @@ async function reconcileDisputesUnlocked(): Promise<DisputeReconciliationResult>
           string,
           unknown
         >;
-        await prisma.dispute.update({
-          where: { disputeId: dispute.disputeId },
+        await prisma.dispute.updateMany({
+          where: { disputeId: dispute.disputeId, status: dispute.status },
           data: {
             evidence: {
               ...existingEvidence,

@@ -22,8 +22,16 @@ const notifyPayoutProcessed = jest.fn().mockResolvedValue(undefined);
 jest.mock("../../lib/payments/tax/tds-service", () => ({
   __esModule: true,
   recordTDSDeduction: (...a: unknown[]) => recordTDSDeduction(...a),
-  getIndianFinancialYear: () => "2026-27",
-  getFYDateRange: () => ({ start: new Date(2026, 3, 1), end: new Date(2027, 2, 31) }),
+  // #1582 E-P0-02 — the real IST helpers, so the period follows the clock.
+  getIndianFinancialYear: jest.requireActual(
+    "../../lib/payments/tax/tds-service",
+  ).getIndianFinancialYear,
+  getIndianFYQuarter: jest.requireActual("../../lib/payments/tax/tds-service")
+    .getIndianFYQuarter,
+  getFYDateRange: () => ({
+    start: new Date(2026, 3, 1),
+    end: new Date(2027, 2, 31),
+  }),
   getCurrentFYCumulativePayments: jest.fn().mockResolvedValue(0),
   TDS_THRESHOLD_PAISE: 5_000_000,
 }));
@@ -35,7 +43,9 @@ jest.mock("../../lib/novu/service", () => ({
   __esModule: true,
   notifyPayoutProcessed: (...a: unknown[]) => notifyPayoutProcessed(...a),
 }));
-jest.mock("../../lib/url", () => ({ getAppUrl: () => "http://localhost:3000" }));
+jest.mock("../../lib/url", () => ({
+  getAppUrl: () => "http://localhost:3000",
+}));
 // payout-service imports these at module top — stub so the module loads under
 // the test env. handlePayoutWebhook's COMPLETED path uses none of them.
 jest.mock("../../lib/redis", () => ({
@@ -65,7 +75,11 @@ let payoutRow: Row;
 // declaration line, and only `var` is initialized (to undefined) at hoist time.
 // eslint-disable-next-line no-var
 var prismaStub: {
-  consultantPayout: { findFirst: jest.Mock; updateMany: jest.Mock; aggregate: jest.Mock };
+  consultantPayout: {
+    findFirst: jest.Mock;
+    updateMany: jest.Mock;
+    aggregate: jest.Mock;
+  };
   consultantEarnings: { updateMany: jest.Mock };
   tDSRecord: { deleteMany: jest.Mock };
   consultantProfile: { findUnique: jest.Mock };
@@ -76,19 +90,23 @@ jest.mock("../../lib/prisma", () => {
   prismaStub = {
     consultantPayout: {
       findFirst: jest.fn(async () => payoutRow),
-      updateMany: jest.fn(async ({ where, data }: { where: Row; data: Row }) => {
-        const notIn = (where.status as { notIn?: string[] })?.notIn;
-        if (notIn && notIn.includes(payoutRow.status as string)) {
-          return { count: 0 }; // already terminal — idempotent no-op
-        }
-        Object.assign(payoutRow, data);
-        return { count: 1 };
-      }),
+      updateMany: jest.fn(
+        async ({ where, data }: { where: Row; data: Row }) => {
+          const notIn = (where.status as { notIn?: string[] })?.notIn;
+          if (notIn && notIn.includes(payoutRow.status as string)) {
+            return { count: 0 }; // already terminal — idempotent no-op
+          }
+          Object.assign(payoutRow, data);
+          return { count: 1 };
+        },
+      ),
       aggregate: jest.fn(async () => ({ _sum: { amount: 0 } })),
     },
     consultantEarnings: { updateMany: jest.fn(async () => ({ count: 1 })) },
     tDSRecord: { deleteMany: jest.fn(async () => ({ count: 0 })) },
-    consultantProfile: { findUnique: jest.fn(async () => ({ userId: "user_1" })) },
+    consultantProfile: {
+      findUnique: jest.fn(async () => ({ userId: "user_1" })),
+    },
     $transaction: async (fn: (tx: unknown) => unknown) => fn(prismaStub),
   };
   return { __esModule: true, default: prismaStub };
@@ -98,7 +116,10 @@ import { handlePayoutWebhook } from "../../lib/payments/payouts/payout-service";
 
 beforeEach(() => {
   jest.clearAllMocks();
-  payoutRow = { ...PAYOUT, earnings: [{ id: "ce_1", payoutId: "po_1", status: "BATCHED" }] };
+  payoutRow = {
+    ...PAYOUT,
+    earnings: [{ id: "ce_1", payoutId: "po_1", status: "BATCHED" }],
+  };
 });
 
 describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () => {
@@ -131,6 +152,29 @@ describe("PM-15 — handlePayoutWebhook records TDS + ledger on COMPLETED", () =
         data: expect.objectContaining({ status: "PAID" }),
       }),
     );
+  });
+
+  it("dates the TDS period at the completion instant, not the batch stamp (#1582 E-P0-02)", async () => {
+    // Batched in late March (FY 2025-26), settled on 5 April: the record must
+    // file FY 2026-27 Q1, and both halves must come from the same instant.
+    payoutRow.tdsFinancialYear = "2025-26";
+    jest.useFakeTimers({ now: new Date("2026-04-05T06:00:00.000Z") });
+    try {
+      await handlePayoutWebhook("RAZORPAY", "pout_live_1", "COMPLETED");
+    } finally {
+      jest.useRealTimers();
+    }
+
+    expect(recordTDSDeduction).toHaveBeenCalledTimes(1);
+    expect(recordTDSDeduction.mock.calls[0][0]).toMatchObject({
+      financialYear: "2026-27",
+      quarter: 1,
+    });
+    // The rewrite spares the refund cascade's reversal rows.
+    expect(prismaStub.tDSRecord.deleteMany).toHaveBeenCalledWith({
+      where: { payoutId: "po_1", isReversal: false },
+    });
+    expect(payoutRow.tdsFinancialYear).toBe("2025-26");
   });
 
   it("idempotent: an already-COMPLETED payout records no new TDS/ledger", async () => {

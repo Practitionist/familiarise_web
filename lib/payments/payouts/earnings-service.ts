@@ -344,9 +344,12 @@ async function resolveOrgSplit(
   };
 
   if (payoutRecipient === "ORGANIZATION") {
-    // Internal/salaried consultant: org absorbs the consultant slice.
+    // Internal/salaried consultant: org absorbs the consultant slice, so the
+    // persisted bps say so too (#1584 P1-EC01 — the snapshot was self-inconsistent).
     return {
       ...base,
+      orgBps: base.orgBps + base.consultantBps,
+      consultantBps: 0,
       platformFeePaise,
       orgShare: grossAmount - platformFeePaise,
       consultantSharePaise: 0,
@@ -1513,70 +1516,6 @@ export async function refundEarnings(
       },
     });
   }
-
-  return true;
-}
-
-/**
- * Hold earnings (e.g., for dispute investigation)
- */
-export async function holdEarnings(
-  earningsId: string,
-  reason?: string,
-): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
-    where: { id: earningsId },
-  });
-
-  if (!earnings) {
-    console.warn(`Earnings not found: ${earningsId}`);
-    return false;
-  }
-
-  // Can only hold if pending or ready
-  if (
-    earnings.status !== EarningStatus.PENDING &&
-    earnings.status !== EarningStatus.READY
-  ) {
-    console.warn(
-      `Cannot hold earnings ${earningsId} - status is ${earnings.status}`,
-    );
-    return false;
-  }
-
-  await prisma.consultantEarnings.update({
-    where: { id: earningsId },
-    data: {
-      status: EarningStatus.HELD,
-    },
-  });
-
-  console.log(
-    `Earnings ${earningsId} held. Reason: ${reason || "Not specified"}`,
-  );
-  return true;
-}
-
-/**
- * Release held earnings back to ready state
- */
-export async function releaseHeldEarnings(
-  earningsId: string,
-): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
-    where: { id: earningsId },
-  });
-
-  if (!earnings || earnings.status !== EarningStatus.HELD) {
-    return false;
-  }
-
-  await prisma.consultantEarnings.update({
-    where: { id: earningsId },
-    data: {
-      status: EarningStatus.READY,
-    },
-  });
 
   return true;
 }

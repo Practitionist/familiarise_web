@@ -329,10 +329,14 @@ export async function POST(req: NextRequest) {
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 
+    // A coded refusal that names a retry window (CREDIT_SHORTFALL after a
+    // concurrent spend, #1582 B-P1-01) lets the client auto-retry once.
+    const retryAfter = (error as { retryAfter?: unknown } | null)?.retryAfter;
     return NextResponse.json(
       {
         error: classified.errorMessage,
         errorType: classified.errorType,
+        ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         timestamp: new Date().toISOString(),
       },
       { status: classified.httpStatus },

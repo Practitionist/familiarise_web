@@ -32,7 +32,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS "appointment_feedback_level_key"
 -- SPLIT
 ALTER TABLE "Payment" DROP CONSTRAINT IF EXISTS "payment_amounts_nonnegative";
 -- SPLIT
-ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative" CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0);
+-- #1582 A-P1-04 — GST-TCS collected rides the same floor as the other amounts.
+ALTER TABLE "Payment" ADD CONSTRAINT "payment_amounts_nonnegative"
+  CHECK ("amount" >= 0 AND "originalAmount" >= 0 AND "taxAmount" >= 0
+    AND ("gstTcsCollectedPaise" IS NULL OR "gstTcsCollectedPaise" >= 0));
+-- SPLIT
+-- #1582 A-P0-02 — a funding leg is non-negative unless it is a *_REVERSAL
+-- sibling (INVOICE_ACCRUAL_REVERSAL / OVERAGE_INVOICE_ACCRUAL_REVERSAL), the
+-- one shape that nets a refund through a negative row.
+ALTER TABLE "PaymentLeg" DROP CONSTRAINT IF EXISTS "payment_leg_nonreversal_nonnegative";
+-- SPLIT
+ALTER TABLE "PaymentLeg" ADD CONSTRAINT "payment_leg_nonreversal_nonnegative"
+  CHECK ("source"::text LIKE '%\_REVERSAL' OR "amountPaise" >= 0);
 -- SPLIT
 ALTER TABLE "ConsultationPlan" DROP CONSTRAINT IF EXISTS "consultation_plan_price_nonnegative";
 -- SPLIT
@@ -372,6 +383,14 @@ ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_amounts_nonnegative"
     AND "igstPaise" + "cgstPaise" + "sgstPaise" <= "totalPaise"
   );
 -- SPLIT
+-- #1582 C-P0-01 — exactly one trigger keys an org credit note: a Refund or a
+-- Dispute. Both minters (lib/payments/operations/refund.ts) set exactly one and
+-- no seed file writes CreditNote, so the strict XOR is the true shape.
+ALTER TABLE "CreditNote" DROP CONSTRAINT IF EXISTS "credit_note_trigger_xor";
+-- SPLIT
+ALTER TABLE "CreditNote" ADD CONSTRAINT "credit_note_trigger_xor"
+  CHECK (("refundId" IS NULL) <> ("disputeId" IS NULL));
+-- SPLIT
 ALTER TABLE "WalletTopUp" DROP CONSTRAINT IF EXISTS "wallet_topup_amount_positive";
 -- SPLIT
 ALTER TABLE "WalletTopUp" ADD CONSTRAINT "wallet_topup_amount_positive"
@@ -463,6 +482,14 @@ ALTER TABLE "ConsumerCreditNote" DROP CONSTRAINT IF EXISTS "consumer_credit_note
 -- SPLIT
 ALTER TABLE "ConsumerCreditNote" ADD CONSTRAINT "consumer_credit_note_amounts_nonnegative"
   CHECK ("taxableValuePaise" >= 0 AND "cgstPaise" >= 0 AND "sgstPaise" >= 0 AND "igstPaise" >= 0 AND "totalPaise" >= 0);
+-- SPLIT
+-- #1582 — the credit note reverses one supply, so it carries the same
+-- one-place-of-supply rule as the invoice it reverses (mirrors
+-- consumer_invoice_tax_head_xor exactly).
+ALTER TABLE "ConsumerCreditNote" DROP CONSTRAINT IF EXISTS "consumer_credit_note_tax_head_xor";
+-- SPLIT
+ALTER TABLE "ConsumerCreditNote" ADD CONSTRAINT "consumer_credit_note_tax_head_xor"
+  CHECK ("igstPaise" = 0 OR ("cgstPaise" = 0 AND "sgstPaise" = 0));
 
 -- SPLIT
 -- ============================================================================

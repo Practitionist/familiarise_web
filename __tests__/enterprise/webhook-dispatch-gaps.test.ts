@@ -16,11 +16,12 @@ import { processRazorpayWebhookEvent } from "../../app/api/webhooks/razorpay-dis
 const handleRazorpayPayoutWebhook = jest.fn().mockResolvedValue(undefined);
 const handleDisputeUpdated = jest.fn().mockResolvedValue(undefined);
 const markWebhookEventProcessed = jest.fn().mockResolvedValue(undefined);
+const handlePaymentSuccess = jest.fn().mockResolvedValue(undefined);
 
 jest.mock("../../app/api/webhooks/utils", () => ({
   __esModule: true,
   handlePaymentFailure: jest.fn(),
-  handlePaymentSuccess: jest.fn(),
+  handlePaymentSuccess: (...args: unknown[]) => handlePaymentSuccess(...args),
   handleOrgPaymentSuccess: jest.fn(),
   handleOrgPaymentFailure: jest.fn(),
   handleRefundCreated: jest.fn(),
@@ -114,5 +115,75 @@ describe("schema mismatch is terminal (FAMILIARISE_WEB-3W)", () => {
     const [eventId, error] = markWebhookEventProcessed.mock.calls[0];
     expect(eventId).toBe("payment.captured:pay_S4Priya00000001");
     expect(error).toMatch(/^permanent: schema mismatch: payment\.captured/);
+  });
+});
+
+describe("order.paid carries the payment entity (#1582 F-P0-01)", () => {
+  it("forwards the pay_* id and the payment amount when Razorpay ships both entities", async () => {
+    const paymentEntity = {
+      id: "pay_OrderPaid000001",
+      entity: "payment",
+      amount: 118000,
+      currency: "INR",
+      status: "captured",
+      order_id: "order_OrderPaid0001",
+      invoice_id: null,
+      international: false,
+      method: "upi",
+      amount_refunded: 0,
+      refund_status: null,
+      captured: true,
+      description: null,
+      card_id: null,
+      bank: null,
+      wallet: null,
+      vpa: "buyer@upi",
+      email: "buyer@example.com",
+      contact: "+919999999999",
+      notes: { type: "booking" },
+      fee: null,
+      tax: null,
+      error_code: null,
+      error_description: null,
+      error_source: null,
+      error_step: null,
+      error_reason: null,
+      created_at: 1_700_000_000,
+    };
+    const orderEntity = {
+      id: "order_OrderPaid0001",
+      entity: "order",
+      amount: 118000,
+      amount_paid: 118000,
+      amount_due: 0,
+      currency: "INR",
+      receipt: null,
+      offer_id: null,
+      status: "paid",
+      attempts: 1,
+      notes: { type: "booking" },
+      created_at: 1_700_000_000,
+    };
+    await processRazorpayWebhookEvent(
+      {
+        entity: "event",
+        account_id: "acc_test",
+        event: "order.paid",
+        contains: ["payment", "order"],
+        payload: {
+          payment: { entity: paymentEntity },
+          order: { entity: orderEntity },
+        },
+        created_at: 1_700_000_000,
+      } as never,
+      "order.paid",
+      "order.paid:order_OrderPaid0001",
+    );
+    expect(handlePaymentSuccess).toHaveBeenCalledWith(
+      "order_OrderPaid0001",
+      { type: "booking" },
+      118000,
+      "pay_OrderPaid000001",
+    );
   });
 });

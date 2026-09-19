@@ -80,7 +80,10 @@ export async function GET(
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error fetching payment for recovery:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
@@ -149,11 +152,14 @@ export async function POST(
       );
     }
 
-    // Check if appointment already exists
+    // Already linked: the same answer the CAS miss gives below (qa-1753).
     if (payment.appointmentId) {
       return NextResponse.json(
-        { error: "Payment already has an appointment linked" },
-        { status: 400 },
+        {
+          error: "Payment already has an appointment linked",
+          code: "ALREADY_RECOVERED",
+        },
+        { status: 409 },
       );
     }
 
@@ -180,12 +186,43 @@ export async function POST(
     }
 
     // Import handlePaymentSuccess dynamically to avoid circular dependencies
-    const { handlePaymentSuccess } =
+    const { handlePaymentSuccess, RecoveryAlreadyDoneError } =
       await import("@/lib/payments/webhooks/handlers");
 
     // Retry appointment creation with corrected metadata
     try {
-      await handlePaymentSuccess(payment.paymentIntent, body.metadata);
+      // #1440 — `recover: true` is what lets a SUCCEEDED, unlinked row past the
+      // idempotency short-circuit; without it this call was a no-op. The link
+      // write's CAS (ADR 21) is the single-writer guard, so two concurrent
+      // recoveries build one appointment: the loser answers 409 below.
+      const outcome = await handlePaymentSuccess(
+        payment.paymentIntent,
+        body.metadata,
+        undefined,
+        undefined,
+        { recover: true },
+      );
+      if (outcome === null) {
+        return NextResponse.json(
+          {
+            error: "Payment already has an appointment linked",
+            code: "ALREADY_RECOVERED",
+          },
+          { status: 409 },
+        );
+      }
+      // Any other outcome is Phase 1 refusing the booking (overlap, released
+      // hold, amount mismatch) with Phase 2 refunding the money — not a recovery.
+      if (outcome !== "confirmed") {
+        return NextResponse.json(
+          {
+            error: `Recovery could not place the booking (${outcome}); the payment is being refunded.`,
+            code: "RECOVERY_NOT_CONFIRMED",
+            outcome,
+          },
+          { status: 409 },
+        );
+      }
 
       // Fetch updated payment
       const updatedPayment = await prisma.payment.findUnique({
@@ -213,7 +250,18 @@ export async function POST(
         appointment: updatedPayment?.appointment,
       });
     } catch (recoveryError) {
-      Sentry.captureException(recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError)), { tags: { subsystem: "payments" } });
+      if (recoveryError instanceof RecoveryAlreadyDoneError) {
+        return NextResponse.json(
+          { error: recoveryError.message, code: recoveryError.code },
+          { status: recoveryError.httpStatus },
+        );
+      }
+      Sentry.captureException(
+        recoveryError instanceof Error
+          ? recoveryError
+          : new Error(String(recoveryError)),
+        { tags: { subsystem: "payments" } },
+      );
       console.error("Error during payment recovery:", recoveryError);
       return NextResponse.json(
         {

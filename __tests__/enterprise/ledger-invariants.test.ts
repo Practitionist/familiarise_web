@@ -125,6 +125,8 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
       },
       creditNote: {
         findUnique: jest.fn().mockResolvedValue(null),
+        // #1582 C-P0-01 — the cumulative cap reads prior notes; none here.
+        aggregate: jest.fn().mockResolvedValue({ _sum: { totalPaise: null } }),
         create: jest
           .fn()
           .mockImplementation(async (a: { data: Record<string, unknown> }) => {
@@ -147,9 +149,15 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
       organization: {
         findUnique: jest
           .fn()
-          .mockResolvedValue({ id: "org", slug: "acme", invoiceNumberPrefix: "ACM" }),
+          .mockResolvedValue({
+            id: "org",
+            slug: "acme",
+            invoiceNumberPrefix: "ACM",
+          }),
       },
-      orgCreditNoteCounter: { upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }) },
+      orgCreditNoteCounter: {
+        upsert: jest.fn().mockResolvedValue({ nextSeq: 2 }),
+      },
     };
   }
 
@@ -179,7 +187,9 @@ describe("#812 invariant — refund credit note fully reverses proportional GST"
           expect(cn.subtotalPaise).toBe(reverse);
           expect(cn.totalPaise).toBe(cn.subtotalPaise + cnTax);
           // Tax is the invoice's 18% applied to the reversed pre-tax base.
-          expect(cnTax).toBe(Math.round((reverse * Math.round(subtotal * 0.18)) / subtotal));
+          expect(cnTax).toBe(
+            Math.round((reverse * Math.round(subtotal * 0.18)) / subtotal),
+          );
         },
       ),
     );

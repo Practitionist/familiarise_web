@@ -54,10 +54,21 @@ const paymentEventPayloadSchema = z.object({
   }),
 });
 
+// #1582 F-P0-01 — `order.paid` ships `payload.payment.entity` too; declaring
+// it stops Zod stripping the `pay_*` id the org branch needs to mark PAID.
 const orderEventPayloadSchema = z.object({
   order: z.object({
     entity: razorpayOrderEntitySchema,
   }),
+  // Loose on purpose: only the id (and amount, when present) is used, and a
+  // provider field that varies by method must not turn a real capture into a
+  // permanent parse failure (CodeRabbit on #1753).
+  payment: z
+    .object({
+      entity: z.object({ id: z.string(), amount: z.number().int().optional() }),
+    })
+    .optional()
+    .catch(undefined),
 });
 
 // Combined event schemas
