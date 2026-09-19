@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Calendar,
@@ -72,12 +73,16 @@ const processedEventBadge = (event: ProcessedEvent) =>
     : appointmentStatusBadge(event.status?.toUpperCase());
 
 interface HomeTabProps {
+  /**
+   * Nullable: the layout user fetch may land after the events query. The
+   * page paints events first; only the greeting waits (inline shimmer).
+   */
   userDetails: {
     id: string;
     name: string;
     email: string;
     image?: string;
-  };
+  } | null;
   eventsData: TConsulteeEventsResponse;
   isRefreshing?: boolean;
   consulteeId: string;
@@ -889,7 +894,14 @@ export default function HomeTab({
       <motion.div variants={fadeInUp} className="space-y-5">
         <div>
           <h1 className="text-fluid-2xl font-semibold tracking-tight text-foreground">
-            Welcome back, {userDetails.name?.split(" ")[0]}
+            {userDetails ? (
+              <>Welcome back, {userDetails.name?.split(" ")[0]}</>
+            ) : (
+              <span
+                className="inline-block h-7 w-48 animate-pulse rounded-md bg-muted align-middle"
+                aria-label="Loading greeting"
+              />
+            )}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Here&apos;s an overview of your learning journey
@@ -955,9 +967,11 @@ export default function HomeTab({
                 <p className="text-sm text-muted-foreground mt-1 mb-5">
                   Book a session with an expert to get started
                 </p>
-                <Button onClick={() => router.push("/explore/experts")}>
-                  <Users className="h-4 w-4 mr-2" />
-                  Find Experts
+                <Button asChild>
+                  <Link href="/explore/experts">
+                    <Users className="h-4 w-4 mr-2" />
+                    Find Experts
+                  </Link>
                 </Button>
               </div>
             )}

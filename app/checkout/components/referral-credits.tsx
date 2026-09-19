@@ -11,13 +11,27 @@ import { reportPaymentsError } from "@/app/checkout/plans/utils";
  * "failed fetch must not read as zero" — silently missed the other three
  * before).
  */
-export function useReferralCreditsBalance() {
+export function useReferralCreditsBalance(
+  prefetchLoaded?: boolean,
+  prefetchPaise?: number | null,
+) {
   const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(!prefetchLoaded);
   // Distinct from zero: a failed fetch must not masquerade as "no credits".
   const [creditsLoadFailed, setCreditsLoadFailed] = useState(false);
 
   useEffect(() => {
+    // Embedded in /api/checkout/context: skip the second round trip.
+    // Nullish (not just null): an older server build may omit the key.
+    if (prefetchLoaded) {
+      if (prefetchPaise === null || prefetchPaise === undefined) {
+        setCreditsLoadFailed(true);
+      } else {
+        setAvailableCredits(prefetchPaise);
+      }
+      setIsLoadingCredits(false);
+      return;
+    }
     async function fetchCredits() {
       try {
         const response = await fetch("/api/referrals/credits/available");
@@ -42,7 +56,7 @@ export function useReferralCreditsBalance() {
       }
     }
     fetchCredits();
-  }, []);
+  }, [prefetchLoaded, prefetchPaise]);
 
   return { availableCredits, isLoadingCredits, creditsLoadFailed };
 }

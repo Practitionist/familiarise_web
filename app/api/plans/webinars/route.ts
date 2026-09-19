@@ -13,6 +13,7 @@ import {
   buildPlanOrderBy,
   paginatedResponse,
   rankAndPaginate,
+  getWebinarTrendingRank,
 } from "../shared/plan-filters";
 import {
   requireApiAuth,
@@ -62,40 +63,10 @@ export async function GET(request: NextRequest) {
     }
 
     // For trending sort, use a two-step Prisma approach:
-    // 1. Lightweight select (IDs + nested slot IDs only) to rank by enrollment count
+    // 1. Ranked ids from the cached 60s scan (IDs + nested slot IDs only)
     // 2. Fetch full plan data only for the paginated slice
     if (sort === "trending") {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const plansForRanking = await prisma.webinarPlan.findMany({
-        where,
-        select: {
-          id: true,
-          webinars: {
-            select: {
-              appointment: {
-                select: {
-                  occurrences: {
-                    where: { createdAt: { gte: thirtyDaysAgo } },
-                    select: { id: true },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      const ranked = plansForRanking
-        .map((p) => ({
-          id: p.id,
-          count: p.webinars.reduce(
-            (sum, w) => sum + (w.appointment?.occurrences?.length ?? 0),
-            0,
-          ),
-        }))
-        .sort((a, b) => b.count - a.count);
+      const ranked = await getWebinarTrendingRank(JSON.stringify(where));
 
       return rankAndPaginate(
         ranked,

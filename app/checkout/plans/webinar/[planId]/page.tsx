@@ -111,7 +111,10 @@ export default function WebinarCheckoutPage({
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance();
+    useReferralCreditsBalance(
+      checkoutTaxContext.referralCreditsLoaded,
+      checkoutTaxContext.referralCreditsPaise,
+    );
   const [planData, setPlanData] = useState<PlanResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

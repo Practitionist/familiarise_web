@@ -11,8 +11,13 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const consultantId = searchParams.get("consultantId");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    // Bounded: an uncapped `take` lets one request scan the whole table
+    // (DoS shape). No caller asks for more than the default 10.
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+    const limit = Math.min(
+      50,
+      Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+    );
     const skip = (page - 1) * limit;
 
     // #726 — public marketplace must not surface ORG_ONLY plans.
@@ -50,7 +55,15 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      {
+        status: 200,
+        // Public marketplace list — same convention as the sibling
+        // webinars/classes lists (paginatedResponse): CDN-cached 60s with
+        // background revalidation instead of hitting Postgres per visit.
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
     );
   } catch (error) {
     Sentry.captureException(

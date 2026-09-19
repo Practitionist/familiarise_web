@@ -1,10 +1,6 @@
 import { notFound } from "next/navigation";
 import { Clock, PlayCircle, ShieldCheck } from "lucide-react";
-import {
-  getPublicRecordingBySlug,
-  publicRecordingWhere,
-} from "@/lib/data/recordings-explore";
-import prisma from "@/lib/prisma";
+import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { RecordingBuyButton } from "./RecordingBuyButton";
 
@@ -77,17 +73,12 @@ export default async function RecordingDetailPage({
   readonly params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  // Single read: the public-listing filter (PUBLISHED + durably-ours +
+  // discoverable plan) IS the gate, applied here and in generateMetadata
+  // (deduped per render via React.cache). Per-request enforcement lives in
+  // POST /api/recordings/[id]/purchase, which re-checks eligibility live.
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
-
-  // Generation-time gate (ISR): an unpublish between list generation and
-  // detail generation 404s here. Per-request enforcement lives in
-  // POST /api/recordings/[id]/purchase, which re-checks eligibility live.
-  const stillListed = await prisma.recording.findFirst({
-    where: { ...publicRecordingWhere(), id: listing.id },
-    select: { id: true },
-  });
-  if (!stillListed) notFound();
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
@@ -143,17 +134,16 @@ export default async function RecordingDetailPage({
         <RecordingBuyButton
           recordingId={listing.id}
           listPricePaise={listing.listPricePaise}
-          formattedPrice={formatCurrencyAmount(
-            listing.listPricePaise,
-            "INR",
-          )}
+          formattedPrice={formatCurrencyAmount(listing.listPricePaise, "INR")}
         />
         <ul className="space-y-2 pt-2 text-xs text-muted-foreground">
           <li className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" /> Lifetime access via your dashboard
+            <ShieldCheck className="h-4 w-4" /> Lifetime access via your
+            dashboard
           </li>
           <li className="flex items-center gap-2">
-            <PlayCircle className="h-4 w-4" /> Secure streaming — links expire hourly
+            <PlayCircle className="h-4 w-4" /> Secure streaming — links expire
+            hourly
           </li>
         </ul>
       </aside>

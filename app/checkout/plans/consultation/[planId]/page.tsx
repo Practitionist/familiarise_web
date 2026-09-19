@@ -107,7 +107,10 @@ export default function ConsultationCheckoutPage({
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance();
+    useReferralCreditsBalance(
+      checkoutTaxContext.referralCreditsLoaded,
+      checkoutTaxContext.referralCreditsPaise,
+    );
   const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
   const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(
     null,

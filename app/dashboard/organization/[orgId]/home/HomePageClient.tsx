@@ -209,7 +209,13 @@ function toActivationSnapshot(data: OrgAnalytics): OrgActivationSnapshot {
 // ---------------------------------------------------------------------------
 
 export function HomePageClient({ orgId }: { orgId: string }) {
-  const { role, canSponsor, canHost, isAtLeast } = useOrgRole(orgId);
+  const {
+    role,
+    canSponsor,
+    canHost,
+    isAtLeast,
+    isLoading: roleLoading,
+  } = useOrgRole(orgId);
   // BILLING_ADMIN gets the finance-tuned overview. Operator surfaces
   // (member analytics, checklist, activity feed) are gated at MANAGER
   // and intentionally excluded for BILLING_ADMIN — see the role
@@ -239,6 +245,29 @@ export function HomePageClient({ orgId }: { orgId: string }) {
     enabled: isOperator,
   });
 
+  // Role resolves LEARNER while the org payload is in flight (fail-closed by
+  // design in useOrgRole). Branching the consumer card on that default paints
+  // the wrong home for an operator and then flips — a neutral skeleton until
+  // the role is known removes the double render without weakening the gate.
+  // (After the queries above: hooks must run unconditionally every render.)
+  if (roleLoading) {
+    return (
+      <>
+        <DashboardHeader
+          title="Overview"
+          subtitle="Your membership on this organization"
+        />
+        <DashboardContent>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <StatCardSkeleton key={i} />
+            ))}
+          </div>
+        </DashboardContent>
+      </>
+    );
+  }
+
   // Render the BILLING_ADMIN-tuned finance overview ahead of the
   // operator branch. Bails out early so the operator-only stat grid +
   // checklist below don't render for the finance lead.
@@ -256,8 +285,8 @@ export function HomePageClient({ orgId }: { orgId: string }) {
             <FinanceLeadViewCard orgId={orgId} data={analytics.data} />
           ) : (
             <p className="text-sm text-zinc-500">
-              Couldn&apos;t load the finance summary. Try refreshing the
-              page or pinging the OWNER if this persists.
+              Couldn&apos;t load the finance summary. Try refreshing the page or
+              pinging the OWNER if this persists.
             </p>
           )}
         </DashboardContent>
@@ -274,23 +303,20 @@ export function HomePageClient({ orgId }: { orgId: string }) {
       role === "LEARNER" && canSponsor
         ? {
             title: "Your sponsored bookings live here",
-            body:
-              "This organisation covers your sessions through one or more programs. Open My Program to see your current cycle allocation and recent activity.",
+            body: "This organisation covers your sessions through one or more programs. Open My Program to see your current cycle allocation and recent activity.",
             ctaLabel: "Open My Program",
             ctaHref: `/dashboard/organization/${orgId}/my-program`,
           }
         : role === "EXPERT" && canHost
           ? {
               title: "Your hosting arrangement with this organisation",
-              body:
-                "This organisation routes session payments through a shared rate card. Open Compensation to see the split and your recent earnings.",
+              body: "This organisation routes session payments through a shared rate card. Open Compensation to see the split and your recent earnings.",
               ctaLabel: "Open Compensation",
               ctaHref: `/dashboard/organization/${orgId}/compensation`,
             }
           : {
               title: "You're a member here",
-              body:
-                "Day-to-day activity — booking history, upcoming sessions, and account settings — lives on your personal dashboard.",
+              body: "Day-to-day activity — booking history, upcoming sessions, and account settings — lives on your personal dashboard.",
               ctaLabel: "Go to my personal dashboard",
               ctaHref: "/dashboard",
             };
@@ -393,9 +419,7 @@ export function HomePageClient({ orgId }: { orgId: string }) {
       minRole: MemberRole;
     }[]
   ).filter(
-    (a) =>
-      isAtLeast(a.minRole) &&
-      (a.title !== "View billing" || canSponsor),
+    (a) => isAtLeast(a.minRole) && (a.title !== "View billing" || canSponsor),
   );
 
   return (
@@ -469,8 +493,19 @@ export function HomePageClient({ orgId }: { orgId: string }) {
           </DashboardGrid>
         ) : !data ? (
           <DashboardGrid columns={4}>
-            <StatCard title="Members" value="—" subtitle="Could not load" icon={Users} variant="info" />
-            <StatCard title="Active programs" value="—" subtitle="Could not load" icon={Briefcase} />
+            <StatCard
+              title="Members"
+              value="—"
+              subtitle="Could not load"
+              icon={Users}
+              variant="info"
+            />
+            <StatCard
+              title="Active programs"
+              value="—"
+              subtitle="Could not load"
+              icon={Briefcase}
+            />
             <StatCard title="Experts" value="—" icon={UserCog} />
             <StatCard title="Learners" value="—" icon={UserCheck} />
           </DashboardGrid>

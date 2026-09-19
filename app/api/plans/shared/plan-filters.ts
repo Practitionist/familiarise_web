@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { unstable_cache } from "next/cache";
+import prisma from "@/lib/prisma";
 import { Prisma, type OrgPlanVisibility } from "@prisma/client";
 import { MARKETPLACE_VISIBILITY } from "@/lib/api/plans/visibility";
 
@@ -23,8 +25,13 @@ export interface PlanFilterParams {
 export function parsePlanFilters(
   searchParams: URLSearchParams,
 ): PlanFilterParams {
-  const page = parseInt(searchParams.get("page") || "1") || 1;
-  const limit = parseInt(searchParams.get("limit") || "10") || 10;
+  const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+  // Bounded: an uncapped `take` lets one request scan the whole table.
+  // Callers ask for 8–12 rows; 50 is generous headroom, not a behavior cap.
+  const limit = Math.min(
+    50,
+    Math.max(1, parseInt(searchParams.get("limit") || "10") || 10),
+  );
   const skip = (page - 1) * limit;
 
   const rawMin = searchParams.get("minPrice");
@@ -194,3 +201,112 @@ export async function rankAndPaginate<T extends { id: string }>(
 
   return paginatedResponse(items, total, page, limit);
 }
+
+/**
+ * Trending rank, cached 60s per filter combination.
+ *
+ * The rank scans every plan's nested occurrences in a 30-day window — the
+ * heaviest read on these list endpoints — while the ORDER it produces is
+ * insensitive to minute-level freshness (a plan jumping rank within 60s is
+ * invisible). The cache key is the JSON of the public where clause, which
+ * is pure data (strings/numbers/arrays/null) by construction in
+ * buildPlanWhereClause, so keying is exact and user-agnostic.
+ */
+async function webinarTrendingRankUncached(
+  whereKey: string,
+): Promise<{ id: string; count: number }[]> {
+  const where = JSON.parse(whereKey) as Prisma.WebinarPlanWhereInput;
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const plansForRanking = await prisma.webinarPlan.findMany({
+    where,
+    select: {
+      id: true,
+      webinars: {
+        select: {
+          appointment: {
+            select: {
+              occurrences: {
+                where: { createdAt: { gte: thirtyDaysAgo } },
+                select: { id: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return plansForRanking
+    .map((p) => ({
+      id: p.id,
+      count: p.webinars.reduce(
+        (sum, w) => sum + (w.appointment?.occurrences?.length ?? 0),
+        0,
+      ),
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export const getWebinarTrendingRank = unstable_cache(
+  webinarTrendingRankUncached,
+  ["webinar-trending-rank"],
+  { revalidate: 60 },
+);
+
+async function classTrendingRankUncached(
+  whereKey: string,
+): Promise<{ id: string; count: number }[]> {
+  const where = JSON.parse(whereKey) as Prisma.ClassPlanWhereInput;
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  const plansForRanking = await prisma.classPlan.findMany({
+    where,
+    select: {
+      id: true,
+      classes: {
+        select: {
+          appointment: {
+            select: {
+              id: true,
+              // #1554 — one row per held call, so the count is the rows.
+              _count: {
+                select: {
+                  occurrences: {
+                    where: {
+                      createdAt: { gte: thirtyDaysAgo },
+                      deletedAt: null,
+                      completionStatus: {
+                        notIn: ["CANCELLED", "RESCHEDULED"],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // The ranking measures how much of a plan is running: one occurrence
+  // row is one held call (#1554), so the live rows are the count.
+  return plansForRanking
+    .map((p) => ({
+      id: p.id,
+      count: p.classes.reduce(
+        (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
+        0,
+      ),
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export const getClassTrendingRank = unstable_cache(
+  classTrendingRankUncached,
+  ["class-trending-rank"],
+  { revalidate: 60 },
+);

@@ -29,7 +29,7 @@ function CategoryCard({
       transition={{ duration: 0.4, delay: index * 0.05 }}
       viewport={{ once: true }}
     >
-      <Link href={`/explore/experts?category=${category.name.toLowerCase()}`}>
+      <Link href={`/explore/experts?domain=${category.name.toLowerCase()}`}>
         <Card className="group cursor-pointer border border-border bg-card hover:border-foreground/40 transition-all duration-300 hover:-translate-y-1 hover:shadow-elevation-2">
           <CardContent className="p-6 flex items-center gap-4">
             <div
