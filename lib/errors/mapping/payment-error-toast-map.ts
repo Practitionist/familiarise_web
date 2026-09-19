@@ -144,6 +144,51 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     description:
       "Your organisation's wallet does not cover this booking. Ask your billing admin to top it up.",
   },
+  // #1582 B-P1-01b/c — the server's userMessage already names the fix, so
+  // these pass it through under a title that says whose action it is.
+  [ErrorTypes.ORG_NOT_OPERATIONAL]: {
+    title: "Organisation Cannot Sponsor Right Now",
+    description: null,
+  },
+  [ErrorTypes.ORG_CANNOT_SPONSOR]: {
+    title: "Sponsorship Not Enabled",
+    description: null,
+  },
+  [ErrorTypes.ORG_MEMBERSHIP_REQUIRED]: {
+    title: "Not An Active Member",
+    description: null,
+  },
+  [ErrorTypes.ORG_CREDIT_LIMIT_REACHED]: {
+    title: "Organisation Credit Limit Reached",
+    description: null,
+  },
+  [ErrorTypes.CONSULTANT_NOT_ON_PANEL]: {
+    title: "Consultant Not On Your Panel",
+    description: null,
+  },
+  [ErrorTypes.CONSULTANT_EXCLUSIVE_ENGAGEMENT]: {
+    title: "Consultant Books Through Their Organisation",
+    description: null,
+  },
+  [ErrorTypes.CURRENCY_UNSUPPORTED]: {
+    title: "Currency Not Supported",
+    description: null,
+  },
+  [ErrorTypes.CREDIT_SHORTFALL]: {
+    title: "Credits Changed — Please Retry",
+    description: null,
+  },
+  [ErrorTypes.DISCOUNT_CURRENCY_MISMATCH]: {
+    title: "Discount Code Not Applicable",
+    description: null,
+  },
+  // The verify route's non-2xx: the capture may still confirm by webhook, so
+  // the copy must not claim the payment failed (PR-G makes verify emit it).
+  [ErrorTypes.VERIFICATION_FAILED]: {
+    title: "Payment Still Being Confirmed",
+    description:
+      "We could not verify the payment yet — it is still being confirmed. Check your bookings in a moment before paying again.",
+  },
   [ErrorTypes.UNKNOWN]: {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message

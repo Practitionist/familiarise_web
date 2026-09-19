@@ -13,7 +13,7 @@ import { PaymentError } from "../core/types";
 // surfaces a gateway booking a currency we can't represent — callers on
 // webhook paths must catch and dead-letter, not 500-loop.
 export function toCurrencyEnum(raw: string | null | undefined): Currency {
-  if (raw == null) return Currency.INR;
+  if (raw === null || raw === undefined) return Currency.INR;
   const up = raw.trim().toUpperCase();
   // #873 — a present-but-blank gateway currency is dead-lettered, not coerced
   // to INR; only null/undefined defaults (webhook refund/dispute write path).
@@ -64,13 +64,18 @@ export function assertInrSettlement(
     normalized = null;
   }
   if (normalized !== Currency.INR) {
-    throw new PaymentError(
-      `Cannot ${operation} in ${currency}: settlement is INR-only by design (ADR 15). ` +
-        "Every stored amount is INR paise and the ledger is INR-denominated, so a " +
-        "non-INR order would be charged in the target currency's subunit while the " +
-        "platform recorded rupees.",
-      "NON_INR_SETTLEMENT",
-      gateway,
+    // #1564 — the code is registered at 422 in BUSINESS_ERROR_CODES; the
+    // httpStatus stamp lets routes that read the shape directly agree.
+    throw Object.assign(
+      new PaymentError(
+        `Cannot ${operation} in ${currency}: settlement is INR-only by design (ADR 15). ` +
+          "Every stored amount is INR paise and the ledger is INR-denominated, so a " +
+          "non-INR order would be charged in the target currency's subunit while the " +
+          "platform recorded rupees.",
+        "NON_INR_SETTLEMENT",
+        gateway,
+      ),
+      { httpStatus: 422 },
     );
   }
   return normalized;
@@ -87,9 +92,13 @@ export function validatePlanCurrency(
   expected: string = "INR",
 ): void {
   if (priceCurrency !== expected) {
-    throw new Error(
-      `Plan currency mismatch: expected ${expected}, got ${priceCurrency}. ` +
-        `Multi-currency pricing is not yet supported.`,
+    // #1564 — a registered 422 code, not a bare Error the route answers 500.
+    throw Object.assign(
+      new Error(
+        `Plan currency mismatch: expected ${expected}, got ${priceCurrency}. ` +
+          `Multi-currency pricing is not yet supported.`,
+      ),
+      { httpStatus: 422, code: "CURRENCY_UNSUPPORTED" },
     );
   }
 }
