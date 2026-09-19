@@ -78,6 +78,25 @@ jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
 }));
 
+// #1589 N-P0-01 — the in-tx notice pair and its post-commit attempts.
+const mockNotifyRefundProcessed = jest.fn();
+const mockAttemptTrigger = jest.fn();
+const mockStageRefundProcessedEmail = jest.fn();
+const mockAttemptStagedEmails = jest.fn();
+jest.mock("../../lib/novu", () => ({
+  notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
+  attemptTrigger: (...a: unknown[]) => mockAttemptTrigger(...a),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { REQUEST: 1 },
+  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
+  stageRefundProcessedEmail: (...a: unknown[]) =>
+    mockStageRefundProcessedEmail(...a),
+}));
+jest.mock("../../lib/email/send-to-recipients", () => ({
+  attemptStaged: (...a: unknown[]) => mockAttemptStagedEmails(...a),
+}));
+
 import {
   isInternalFundedIntent,
   refundBookingPayment,
@@ -111,6 +130,8 @@ beforeEach(() => {
     clawbackPosted: false,
   });
   mockReverseCredits.mockResolvedValue(0);
+  mockNotifyRefundProcessed.mockResolvedValue({ staged: { id: "bell-1" } });
+  mockStageRefundProcessedEmail.mockResolvedValue([]);
 });
 
 describe("isInternalFundedIntent", () => {
@@ -292,5 +313,69 @@ describe("refundBookingPayment", () => {
     await expect(
       refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancellation" }),
     ).rejects.toThrow(/not SUCCEEDED/);
+  });
+});
+
+// #1589 N-P0-01 — a gateway refund is announced by the `refund.processed`
+// webhook; the org rail settles in one transaction and told the payer nothing.
+describe("the internal rail tells the payer (#1589 N-P0-01)", () => {
+  it("stages one refund-processed notice inside the tx and attempts it after", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      ...orgFundedPayment("org_wallet_1_a"),
+      userId: "user-1",
+      organizationId: "org-1",
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      reason: "cancellation",
+      initiatedByUserId: "user-1",
+    });
+
+    expect(mockNotifyRefundProcessed).toHaveBeenCalledTimes(1);
+    const [userId, payload, opts] = mockNotifyRefundProcessed.mock.calls[0];
+    expect(userId).toBe("user-1");
+    expect(payload).toMatchObject({ amount: 100_000, currency: "INR" });
+    expect(opts).toMatchObject({
+      entityRef: `payment:${PAYMENT_ID}`,
+      tx: expect.anything(),
+    });
+    expect(mockStageRefundProcessedEmail).toHaveBeenCalledTimes(1);
+    expect(mockAttemptTrigger).toHaveBeenCalledWith({ id: "bell-1" });
+    expect(mockAttemptStagedEmails).toHaveBeenCalledTimes(1);
+  });
+
+  it("a partial refund tells the payer the requested amount, not the payment's", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      ...orgFundedPayment("org_wallet_1_a"),
+      userId: "user-1",
+      organizationId: "org-1",
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 40_000,
+      reason: "late cancellation, 40% tier",
+    });
+
+    expect(mockNotifyRefundProcessed.mock.calls[0][1]).toMatchObject({
+      amount: 40_000,
+    });
+    expect(mockStageRefundProcessedEmail.mock.calls[0][1]).toMatchObject({
+      amountPaise: 40_000,
+    });
+  });
+
+  it("stages nothing for a gateway refund — the webhook owns that notice", async () => {
+    mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
+    mockRefundPayment.mockResolvedValue({
+      refundId: "r1",
+      amountRefundedPaise: 100_000,
+    });
+
+    await refundBookingPayment({ paymentId: PAYMENT_ID, reason: "cancel" });
+
+    expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
+    expect(mockStageRefundProcessedEmail).not.toHaveBeenCalled();
   });
 });

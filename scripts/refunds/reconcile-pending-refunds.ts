@@ -18,8 +18,21 @@ import { getRefund, listRefunds } from "../../lib/payments";
 import { isRazorpayUnknownRefundIdError } from "../../lib/payments/core/razorpay";
 import type { RefundResult } from "../../lib/payments/core/types";
 import { reportSentryMessage } from "../../lib/observability/report";
-import { notifyRefundFailed } from "../../lib/novu/service";
-import { sendRefundFailedEmail } from "@/lib/email";
+import {
+  notifyRefundFailed,
+  notifyRefundProcessed,
+} from "../../lib/novu/service";
+import { attemptTrigger, type StagedTrigger } from "../../lib/novu/outbox";
+import {
+  EMAIL_BUDGET_MS,
+  MONEY_EMAIL_TYPES,
+  sendRefundFailedEmail,
+  stageRefundProcessedEmail,
+} from "@/lib/email";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
 import { notificationScope } from "../../lib/novu/workflows";
 import { getAppUrl } from "../../lib/url";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
@@ -288,7 +301,16 @@ async function reconcilePendingRefundsUnlocked(
       })),
       createdAt: { lt: thresholdDate },
     },
-    include: { payment: { select: { paymentGateway: true } } },
+    include: {
+      payment: {
+        select: {
+          id: true,
+          paymentGateway: true,
+          userId: true,
+          organizationId: true,
+        },
+      },
+    },
     // Same starvation reasoning as the placeholder pass above: "still
     // settling" leaves the row untouched, so order least-recently-touched
     // first rather than by creation.
@@ -320,10 +342,47 @@ async function reconcilePendingRefundsUnlocked(
       );
 
       if (gatewayRefund.status === RefundStatus.SUCCEEDED) {
-        await prisma.refund.update({
-          where: { id: refund.id },
-          data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
+        // #1589 N-P0-01 — this mark stands in for the lost `refund.processed`
+        // webhook, so it owes the payer the same bell and receipt: staged in
+        // the mark's own tx, attempted after it. The outbox's deterministic
+        // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
+        let bell: StagedTrigger | null = null;
+        let emails: StagedRecipientEmail[] = [];
+        const claimed = await prisma.$transaction(async (tx) => {
+          // Claim by status: a re-entrant run or a webhook that settled the
+          // row first matches zero rows and stages nothing.
+          const claim = await tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
+            data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
+          });
+          if (claim.count !== 1) return false;
+          const notice = await notifyRefundProcessed(
+            refund.payment.userId,
+            {
+              ...notificationScope(refund.payment.organizationId),
+              amount: refund.amountPaise,
+              currency: refund.currency,
+              dashboardUrl: `${getAppUrl()}/dashboard`,
+            },
+            { tx, entityRef: `payment:${refund.payment.id}` },
+          );
+          bell = notice?.staged ?? null;
+          emails = await stageRefundProcessedEmail(tx, {
+            userId: refund.payment.userId,
+            paymentId: refund.payment.id,
+            amountPaise: refund.amountPaise,
+            currency: refund.currency,
+          });
+          return true;
         });
+        if (!claimed) {
+          console.log(
+            `♻️ Real-id refund ${refund.id} (${refund.refundId}) was settled by another writer; nothing to mark`,
+          );
+          skippedCount++;
+          continue;
+        }
+        await attemptRefundNotice(bell, emails);
         console.log(
           `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway; backstop cascade will complete it`,
         );
@@ -457,6 +516,19 @@ async function bindGatewayRefundToPlaceholder(
   }
   await prisma.refund.delete({ where: { id: placeholderRowId } });
   return "superseded";
+}
+
+/** Post-commit half of the SUCCEEDED-mark notice; a parameter so TS's narrowing cannot see the closure. */
+async function attemptRefundNotice(
+  bell: StagedTrigger | null,
+  emails: StagedRecipientEmail[],
+): Promise<void> {
+  if (bell) await attemptTrigger(bell);
+  await attemptStagedEmails(
+    emails,
+    MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+    EMAIL_BUDGET_MS.JOB,
+  );
 }
 
 function prismaMetadataObject(metadata: unknown): Record<string, unknown> {
