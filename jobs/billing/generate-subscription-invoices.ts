@@ -22,7 +22,6 @@
  *      from `<= now` to the next cycle end.
  *   3. Create an OrganizationInvoice with GST breakdown (stubbed via
  *      lib/compliance/gst.ts).
- *   4. Emit a SettlementLedgerEntry (kind=INVOICE_ISSUED).
  *
  * IRP upload is handled by the separate `irp-uploader.ts` cron.
  */
