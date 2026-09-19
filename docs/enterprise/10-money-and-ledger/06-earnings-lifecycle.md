@@ -24,12 +24,12 @@ The two row types differ in what they cache and how the split is stamped. A `Con
 
 The table below summarises which row each settlement path produces.
 
-| Settlement path | `ConsultantEarnings` | `OrganizationEarnings` | Notes |
-|---|---|---|---|
-| Marketplace (solo expert, no HOST org) | one row, full consultant pool | none | flat 20% platform fee; no org leg exists |
-| HOST org, `payoutRecipient = SELF` | one row per party (owner + collaborators) | one row, `orgSharePaise > 0` | three-way `RateCard` split |
-| HOST org, `payoutRecipient = ORGANIZATION` | expert leg collapses into the org | one row | salaried/internal expert; see [expert lifecycle](../30-programs-and-lifecycle/03-expert-lifecycle.md) |
-| HOST org, platform-only mode (`orgShare == 0`) | one row | none | a zero-value org row is intentionally skipped as noise |
+| Settlement path                                | `ConsultantEarnings`                      | `OrganizationEarnings`       | Notes                                                                                                 |
+| ---------------------------------------------- | ----------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Marketplace (solo expert, no HOST org)         | one row, full consultant pool             | none                         | flat 20% platform fee; no org leg exists                                                              |
+| HOST org, `payoutRecipient = SELF`             | one row per party (owner + collaborators) | one row, `orgSharePaise > 0` | three-way `RateCard` split                                                                            |
+| HOST org, `payoutRecipient = ORGANIZATION`     | expert leg collapses into the org         | one row                      | salaried/internal expert; see [expert lifecycle](../30-programs-and-lifecycle/03-expert-lifecycle.md) |
+| HOST org, platform-only mode (`orgShare == 0`) | one row                                   | none                         | a zero-value org row is intentionally skipped as noise                                                |
 
 > A single payment can carry **N** `OrganizationEarnings` rows post-A3 — the primary expert's org plus one per collaborator who settles to a different HOST org — bounded by the `@@unique([paymentId, organizationId])` constraint. See [booking → earnings §4](05-booking-to-earnings.md).
 
@@ -65,7 +65,7 @@ The **`PENDING_TRUST → PENDING`** promotion is performed by the `release-pendi
 
 The **`PENDING → READY`** transition is the hold elapsing. The hourly `releaseEarningsFromHold` function (`earnings-service.ts`) flips every row whose `status` is `PENDING` and whose `holdUntil <= now` to `READY`, for both `ConsultantEarnings` and `OrganizationEarnings` in the same run. Hold mechanics are detailed in §4.
 
-The **`PENDING → HELD`** and **`READY → HELD`** transitions freeze a row for a dispute. `holdEarnings` (`earnings-service.ts`) refuses to act unless the row is currently `PENDING` or `READY`, so a `PAID` or `REFUNDED` row can never be re-frozen. The inverse **`HELD → READY`** transition is `releaseHeldEarnings`, called when the dispute resolves in the seller's favour; it acts only on a row that is currently `HELD`.
+The **`PENDING → HELD`** and **`READY → HELD`** transitions freeze a row for a dispute. There is no longer a named `holdEarnings` function in `earnings-service.ts`; the freeze is an inline CAS `updateMany` inside the dispute webhook handler in `app/api/webhooks/utils.ts`, scoped to rows currently `PENDING` or `READY`, so a `PAID` or `REFUNDED` row can never be re-frozen. The inverse **`HELD → READY`** transition is the same handler's release branch, run when the dispute resolves in the seller's favour, and it acts only on a row that is currently `HELD`.
 
 The **`READY → BATCHED → PAID`** progression is where this doc hands off to the payout pipeline. Batching claims a row by stamping its `payoutId` / `orgPayoutId` and flipping it from `READY` to the intermediate **`BATCHED`** status at batch-creation time — on both the consultant and the org rail. A `BATCHED` row is committed to a payout but its cash has **not** yet left, so it is neither eligible to be batched again nor counted as disbursed by finance exports or dashboards. Only when the payout's gateway leg confirms (`PROCESSING → COMPLETED` **with a UTR**) does the pipeline flip `BATCHED → PAID` and post the settlement to the ledger — see [payout pipeline §3](07-payout-pipeline.md). A batch that fails before any cash moves releases its `BATCHED` rows back to `READY` for the next run (§5).
 
@@ -75,7 +75,7 @@ The transitions into **`REFUNDED`** are driven by `refundEarnings` and are cover
 
 ## 3. `PENDING_TRUST` — the #687 invoice-fraud guard
 
-`PENDING_TRUST` exists to close a fraud hole. An organization that is still `PENDING_VERIFICATION` and funds its bookings by INVOICE could otherwise accrue real consultant earnings against bookings it has not yet paid for, and then disappear before its first invoice ever clears — leaving the platform owing experts for work an unverified, unpaid org commissioned. To prevent that, `createEarningsFromPayment` resolves the booking's **sponsoring** org (`payment.organizationId` — the org that owes the invoice, not the expert's HOST org) once, up front: if that sponsoring org is `PENDING_VERIFICATION` and its count of `PAID` `OrganizationInvoice` rows is zero, **every** earnings row the booking writes — the consultant row, the primary org row, and each collaborator-org row — is minted in `PENDING_TRUST` rather than `PENDING` (`earnings-service.ts`). Keying on the sponsor rather than the host is what stops an unverified sponsor from letting either consultant *or* org earnings clear.
+`PENDING_TRUST` exists to close a fraud hole. An organization that is still `PENDING_VERIFICATION` and funds its bookings by INVOICE could otherwise accrue real consultant earnings against bookings it has not yet paid for, and then disappear before its first invoice ever clears — leaving the platform owing experts for work an unverified, unpaid org commissioned. To prevent that, `createEarningsFromPayment` resolves the booking's **sponsoring** org (`payment.organizationId` — the org that owes the invoice, not the expert's HOST org) once, up front: if that sponsoring org is `PENDING_VERIFICATION` and its count of `PAID` `OrganizationInvoice` rows is zero, **every** earnings row the booking writes — the consultant row, the primary org row, and each collaborator-org row — is minted in `PENDING_TRUST` rather than `PENDING` (`earnings-service.ts`). Keying on the sponsor rather than the host is what stops an unverified sponsor from letting either consultant _or_ org earnings clear.
 
 A row parked in `PENDING_TRUST` is excluded from the hold-release cron (which only touches `PENDING` rows) and therefore can never reach `READY` or be batched into a payout. The `release-pending-trust-earnings` cron promotes it to `PENDING` only once the org has earned trust — it goes `ACTIVE`, or it pays its first invoice. The rejected alternative, accruing straight to `PENDING`, would have been one less state to carry but would have re-opened the ghost-org hole.
 
@@ -89,18 +89,18 @@ The hold window is what gives the platform time to absorb a refund or dispute be
 
 The table below lists the configured hold periods and the reasoning behind each.
 
-| Appointment type | Hold (hours) | Rationale |
-|---|---|---|
-| `CONSULTATION` | 24 | short engagement, quick refund resolution |
-| `CLASS` | 24 | same profile as a consultation |
-| `WEBINAR` | 48 | leaves room for participant feedback |
-| `SUBSCRIPTION` | 168 (7 days) | longer commitment, higher refund risk |
+| Appointment type | Hold (hours) | Rationale                                 |
+| ---------------- | ------------ | ----------------------------------------- |
+| `CONSULTATION`   | 24           | short engagement, quick refund resolution |
+| `CLASS`          | 24           | same profile as a consultation            |
+| `WEBINAR`        | 48           | leaves room for participant feedback      |
+| `SUBSCRIPTION`   | 168 (7 days) | longer commitment, higher refund risk     |
 
 > 🟡 **Gap (doc-vs-code, no issue filed yet):** earlier drafts of the payout doc described the hold as roughly `completedAt + 3 days`. The code derives `holdUntil` from `Date.now()` at earnings-creation time using the per-type `HOLD_PERIOD_HOURS` table above (24h / 48h / 168h), and the default when the type is unknown is the 24-hour `CONSULTATION` window — there is no three-day default and the anchor is the creation timestamp, not `completedAt`. Treat the per-type table as ground truth.
 
-Release is the hourly cron `releaseEarningsFromHold`, which runs one `updateMany` per row type: every `PENDING` row whose `holdUntil <= now` becomes `READY`. It does not touch `HELD` rows — a dispute hold is released only by an explicit `releaseHeldEarnings` call, never by the timer.
+Release is the hourly cron `releaseEarningsFromHold`, which runs one `updateMany` per row type: every `PENDING` row whose `holdUntil <= now` becomes `READY`. It does not touch `HELD` rows — a dispute hold is released only by the dispute webhook handler's own CAS write, never by the timer.
 
-A dispute hold is the manual override on top of the timed hold. `holdEarnings` moves a `PENDING` or `READY` row to `HELD` and is rejected for any other starting status, so disputes can only freeze money that has not yet been paid. When the dispute resolves, the seller-favourable outcome is `releaseHeldEarnings` (`HELD → READY`, after which the row re-enters normal batching) and the buyer-favourable outcome is a refund (`HELD → REFUNDED`, §5).
+A dispute hold is the manual override on top of the timed hold. The dispute-creation branch of `app/api/webhooks/utils.ts` moves a `PENDING` or `READY` row to `HELD` and its `WHERE` clause excludes any other starting status, so disputes can only freeze money that has not yet been paid. When the dispute resolves, the seller-favourable outcome is the same handler's release branch (`HELD → READY`, after which the row re-enters normal batching) and the buyer-favourable outcome is a refund (`HELD → REFUNDED`, §5).
 
 ---
 
@@ -125,6 +125,7 @@ When a row finally reaches `PAID`, no new earnings-side number is written to the
 ---
 
 ### Related docs
+
 - [Booking → earnings](05-booking-to-earnings.md) — the rate-card bps split that feeds each earnings row.
 - [Payout pipeline](07-payout-pipeline.md) — how `READY` rows roll up into payouts and reach `PAID`.
 - [Ledger & postings](03-ledger-and-postings.md) — the `BOOKING` credits the earnings rows cache.

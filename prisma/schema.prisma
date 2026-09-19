@@ -2791,6 +2791,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
+  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND
@@ -2798,6 +2799,7 @@ enum LedgerTransactionKind {
   ORG_PAYOUT
   REFUND
   OVERAGE_MEMBER
+  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
 }
 
@@ -6164,7 +6166,9 @@ model DiscountCode {
   expiresAt     DateTime?
   maxUses       Int?
   currentUses   Int          @default(0)
-  maxDiscount   BigInt? // in paise (cap for FIXED_AMOUNT discounts)
+  /// In paise. Caps a PERCENTAGE discount only; FIXED_AMOUNT is capped by the
+  /// base price in derive-checkout-amount.ts (#1584 P1-FX01b).
+  maxDiscount   BigInt?
 
   Payment Payment[]
 

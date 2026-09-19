@@ -276,7 +276,19 @@ export function EarningsSummaryPanel({
       key: "status",
       header: "Status",
       cell: (earning) => (
-        <StatusBadge {...earningStatusBadge(earning.status)} />
+        <span className="flex flex-col gap-0.5">
+          <StatusBadge {...earningStatusBadge(earning.status)} />
+          {/* #1675 item 4 — the hold date was fetched but never shown. HELD is
+              a dispute hold, not the maturity timer, so only a PENDING row
+              with a future hold shows it. */}
+          {earning.holdUntil &&
+            earning.status === "PENDING" &&
+            new Date(earning.holdUntil) > new Date() && (
+              <span className="text-xs text-zinc-500">
+                available on {formatDate(earning.holdUntil, viewerZone)}
+              </span>
+            )}
+        </span>
       ),
     },
     {
