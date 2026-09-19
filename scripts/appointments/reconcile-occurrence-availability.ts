@@ -988,7 +988,11 @@ async function reconcileSlotAvailabilityUnlocked(): Promise<SlotReconciliationRe
   }
 
   return {
-    success: allErrors.length === 0 && doubleBookingResult.detected === 0,
+    // `success` means the run completed; findings ride doubleBookingsDetected,
+    // which the HTTP twin reports as 207 and the Actions wrapper exits 1 on. A
+    // clean run with findings used to read as a failed run (500), which the
+    // ticker would count as a failure.
+    success: allErrors.length === 0,
     tentativeFlagsCleared: tentativeResult.cleared,
     doubleBookingsDetected: doubleBookingResult.detected,
     doubleBookings: doubleBookingResult.bookings,
