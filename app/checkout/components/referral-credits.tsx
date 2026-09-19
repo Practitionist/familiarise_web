@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Switch } from "@/components/ui/switch";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
 
@@ -11,13 +11,33 @@ import { reportPaymentsError } from "@/app/checkout/plans/utils";
  * "failed fetch must not read as zero" — silently missed the other three
  * before).
  */
-export function useReferralCreditsBalance() {
+export function useReferralCreditsBalance(
+  prefetchLoaded?: boolean,
+  prefetchPaise?: number | null,
+) {
   const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
+  const [isLoadingCredits, setIsLoadingCredits] = useState(!prefetchLoaded);
   // Distinct from zero: a failed fetch must not masquerade as "no credits".
   const [creditsLoadFailed, setCreditsLoadFailed] = useState(false);
+  // Mirrors prefetchLoaded for the in-flight legacy fetch below: a legacy
+  // response landing AFTER the embedded balance must not overwrite it (or
+  // re-raise a failure the embedded value already resolved).
+  const prefetchAlive = useRef(prefetchLoaded ?? false);
+  prefetchAlive.current = prefetchLoaded ?? false;
 
   useEffect(() => {
+    // Embedded in /api/checkout/context: skip the second round trip.
+    // Nullish (not just null): an older server build may omit the key.
+    if (prefetchLoaded) {
+      if (prefetchPaise === null || prefetchPaise === undefined) {
+        setCreditsLoadFailed(true);
+      } else {
+        setAvailableCredits(prefetchPaise);
+        setCreditsLoadFailed(false);
+      }
+      setIsLoadingCredits(false);
+      return;
+    }
     async function fetchCredits() {
       try {
         const response = await fetch("/api/referrals/credits/available");
@@ -30,19 +50,23 @@ export function useReferralCreditsBalance() {
           );
         }
         const data = await response.json();
+        // Obsolete fetch: the embedded balance landed while this was in
+        // flight — ignore the stale loser instead of overwriting.
+        if (prefetchAlive.current) return;
         setAvailableCredits(
           data.data.totalAvailable || 0, // already in paise
         );
       } catch (error) {
+        if (prefetchAlive.current) return;
         reportPaymentsError(error);
         console.error("Error fetching referral credits:", error);
         setCreditsLoadFailed(true);
       } finally {
-        setIsLoadingCredits(false);
+        if (!prefetchAlive.current) setIsLoadingCredits(false);
       }
     }
     fetchCredits();
-  }, []);
+  }, [prefetchLoaded, prefetchPaise]);
 
   return { availableCredits, isLoadingCredits, creditsLoadFailed };
 }

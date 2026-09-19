@@ -12,6 +12,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { cache } from "react";
 import prisma from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
@@ -222,8 +223,12 @@ export async function listPublicRecordings(
         where,
         select: recordingListingSelect,
         // `id` as final key: offset pagination over non-unique timestamps can
-      // repeat/skip rows between requests otherwise.
-      orderBy: [{ publishedAt: "desc" }, { recordedAt: "desc" }, { id: "asc" }],
+        // repeat/skip rows between requests otherwise.
+        orderBy: [
+          { publishedAt: "desc" },
+          { recordedAt: "desc" },
+          { id: "asc" },
+        ],
         take: perPage,
         skip: (page - 1) * perPage,
       });
@@ -246,7 +251,7 @@ export async function listPublicRecordings(
   throw lastError;
 }
 
-export async function getPublicRecordingBySlug(
+export async function getPublicRecordingBySlugUncached(
   slug: string,
 ): Promise<RecordingListing | null> {
   const row = await prisma.recording.findFirst({
@@ -255,3 +260,10 @@ export async function getPublicRecordingBySlug(
   });
   return row ? flattenListing(row) : null;
 }
+
+/**
+ * Request-deduped wrapper: the detail page calls this in both
+ * `generateMetadata` and the page body, which would otherwise pay the
+ * 5-join listing query twice per generation.
+ */
+export const getPublicRecordingBySlug = cache(getPublicRecordingBySlugUncached);

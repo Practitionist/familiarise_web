@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-server";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
+import { getUserCredits } from "@/lib/referrals/service";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
 
 export async function GET(req: NextRequest) {
@@ -17,12 +18,30 @@ export async function GET(req: NextRequest) {
   if (rl) return rl;
 
   try {
-    const taxContext = await resolveCheckoutTaxContext({
-      userId: session.user.id,
-      headers: req.headers,
-    });
+    // Credits ride along so checkout pages pay ONE round trip instead of two
+    // (tax context + referral balance fired independently on every mount).
+    // `null` means the credits read failed — distinct from zero, matching the
+    // checkout UI's "failed fetch must not read as no credits" contract. The
+    // standalone /api/referrals/credits/available route stays as fallback.
+    const [taxContext, credits] = await Promise.all([
+      resolveCheckoutTaxContext({
+        userId: session.user.id,
+        headers: req.headers,
+      }),
+      getUserCredits(session.user.id)
+        .then(({ totalAvailable }) => totalAvailable as number | null)
+        .catch((creditsError) => {
+          Sentry.captureException(
+            creditsError instanceof Error
+              ? creditsError
+              : new Error(String(creditsError)),
+            { tags: { subsystem: "checkout-context-credits" } },
+          );
+          return null;
+        }),
+    ]);
 
-    return NextResponse.json(taxContext);
+    return NextResponse.json({ ...taxContext, referralCreditsPaise: credits });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

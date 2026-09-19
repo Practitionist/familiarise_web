@@ -1,16 +1,20 @@
 import { notFound } from "next/navigation";
 import { Clock, PlayCircle, ShieldCheck } from "lucide-react";
-import {
-  getPublicRecordingBySlug,
-  publicRecordingWhere,
-} from "@/lib/data/recordings-explore";
-import prisma from "@/lib/prisma";
+import { getPublicRecordingBySlug } from "@/lib/data/recordings-explore";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { RecordingBuyButton } from "./RecordingBuyButton";
 
-// Dynamic by design (#932): the viewable gate reads the live row; a cached
-// HTML could sell a recording that was just unpublished.
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. This page reads no session — the gate is the
+// public listing filter (PUBLISHED + durably-ours + discoverable plan), which
+// only changes on publish/unpublish events. A 120s window means an unpublish
+// can stay buyable for up to two minutes; the purchase route re-checks the
+// live gate before minting an order, so a stale shell can never sell a
+// withdrawn replay. In exchange every repeat click is served off the CDN with
+// no function invocation (and no cold-start lottery).
+export const revalidate = 120;
+
+// Slugs created after build render on demand, then join the ISR cache.
+export const dynamicParams = true;
 
 export async function generateMetadata({
   params,
@@ -69,16 +73,12 @@ export default async function RecordingDetailPage({
   readonly params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  // Single read: the public-listing filter (PUBLISHED + durably-ours +
+  // discoverable plan) IS the gate, applied here and in generateMetadata
+  // (deduped per render via React.cache). Per-request enforcement lives in
+  // POST /api/recordings/[id]/purchase, which re-checks eligibility live.
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
-
-  // Preview clip presence check happens against the live gate too — an
-  // unpublish between list render and detail render must 404 here.
-  const stillListed = await prisma.recording.findFirst({
-    where: { ...publicRecordingWhere(), id: listing.id },
-    select: { id: true },
-  });
-  if (!stillListed) notFound();
 
   return (
     <div className="container mx-auto max-w-5xl px-4 py-10 grid gap-8 lg:grid-cols-[1.6fr_1fr]">
@@ -134,17 +134,16 @@ export default async function RecordingDetailPage({
         <RecordingBuyButton
           recordingId={listing.id}
           listPricePaise={listing.listPricePaise}
-          formattedPrice={formatCurrencyAmount(
-            listing.listPricePaise,
-            "INR",
-          )}
+          formattedPrice={formatCurrencyAmount(listing.listPricePaise, "INR")}
         />
         <ul className="space-y-2 pt-2 text-xs text-muted-foreground">
           <li className="flex items-center gap-2">
-            <ShieldCheck className="h-4 w-4" /> Lifetime access via your dashboard
+            <ShieldCheck className="h-4 w-4" /> Lifetime access via your
+            dashboard
           </li>
           <li className="flex items-center gap-2">
-            <PlayCircle className="h-4 w-4" /> Secure streaming — links expire hourly
+            <PlayCircle className="h-4 w-4" /> Secure streaming — links expire
+            hourly
           </li>
         </ul>
       </aside>

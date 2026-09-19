@@ -1,17 +1,12 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { useQuery } from "@tanstack/react-query";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 
 import PendingPayoutsSection from "./_sections/PendingPayoutsSection";
@@ -58,23 +53,40 @@ async function fetchPayoutTrend(): Promise<PayoutTrendResponse> {
 }
 
 export default function AdminPayoutsPage() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const activeTab: TabKey = (VALID_TABS as readonly string[]).includes(
+  const urlTab: TabKey = (VALID_TABS as readonly string[]).includes(
     tabParam ?? "",
   )
     ? (tabParam as TabKey)
     : "pending";
 
-  const handleTabChange = useCallback(
-    (value: string) => {
-      const next = new URLSearchParams(Array.from(searchParams.entries()));
-      next.set("tab", value);
-      router.replace(`?${next.toString()}`, { scroll: false });
-    },
-    [router, searchParams],
-  );
+  // URL writes go through window.history.replaceState rather than
+  // router.replace: the tab panels are client state (each section fetches
+  // client-side) and this page reads no search params server-side, so a
+  // router navigation would re-render the tree via useSearchParams
+  // reactivity for no benefit (same discipline as
+  // components/dashboard/UrlTabs.tsx). Local state flips the panel
+  // immediately since replaceState does not update useSearchParams; an
+  // external URL change wins back over a stale local pick.
+  const [localTab, setLocalTab] = useState<TabKey | null>(null);
+  const activeTab: TabKey = localTab ?? urlTab;
+  useEffect(() => {
+    setLocalTab(null);
+  }, [tabParam]);
+
+  const handleTabChange = (value: string) => {
+    const nextTab: TabKey = (VALID_TABS as readonly string[]).includes(value)
+      ? (value as TabKey)
+      : "pending";
+    setLocalTab(nextTab);
+    const next = new URLSearchParams(Array.from(searchParams.entries()));
+    next.set("tab", nextTab);
+    const target = `?${next.toString()}`;
+    if (target !== window.location.search) {
+      window.history.replaceState(window.history.state, "", target);
+    }
+  };
 
   const { data: trendData, isLoading: trendLoading } = useQuery({
     queryKey: ["admin-payout-trend"],
@@ -121,7 +133,11 @@ export default function AdminPayoutsPage() {
       </Card>
 
       {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+      <Tabs
+        value={activeTab}
+        onValueChange={handleTabChange}
+        className="w-full"
+      >
         <TabsList className="grid h-auto w-full max-w-xl grid-cols-2 gap-1 sm:h-9 sm:grid-cols-4">
           <TabsTrigger value="pending">Pending</TabsTrigger>
           <TabsTrigger value="processing">Processing</TabsTrigger>

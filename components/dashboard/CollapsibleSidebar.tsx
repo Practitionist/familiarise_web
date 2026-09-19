@@ -3,7 +3,6 @@
 import { cn } from "@/utils/tailwind";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronsUpDown, LogOut, type LucideIcon } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { LinkPendingIcon } from "@/components/ui/NavLink";
@@ -154,7 +153,6 @@ export function CollapsibleSidebar({
   onSignOut,
   className,
 }: CollapsibleSidebarProps) {
-  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
 
   // An EMPTY array is truthy, so a consultant with no org memberships still got
@@ -180,13 +178,6 @@ export function CollapsibleSidebar({
   );
 
   const isActive = (path: string) => isActiveRoute(pathname, basePath, path);
-
-  /** Navigate to the tab root even when already under a nested child route. */
-  const goToNavPath = (path: string) => {
-    const href = path ? `${basePath}/${path}` : basePath;
-    if (pathname === href) return;
-    router.push(href);
-  };
 
   const fallbackChar =
     avatarFallback ??
@@ -377,10 +368,6 @@ export function CollapsibleSidebar({
                               <TooltipTrigger asChild>
                                 <Link
                                   href={`${basePath}/${item.path}`}
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    goToNavPath(item.path);
-                                  }}
                                   aria-label={collapsed ? item.name : undefined}
                                   aria-current={
                                     isActive(item.path) ? "page" : undefined
@@ -435,10 +422,6 @@ export function CollapsibleSidebar({
                     <TooltipTrigger asChild>
                       <Link
                         href={`${basePath}/${item.path}`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          goToNavPath(item.path);
-                        }}
                         aria-label={collapsed ? item.name : undefined}
                         aria-current={isActive(item.path) ? "page" : undefined}
                         className={cn(

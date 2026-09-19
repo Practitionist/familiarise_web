@@ -425,54 +425,58 @@ export async function getConsultantDashboard(
     now.getMonth(),
     now.getDate(),
   );
-  const soonestSlots = await prisma.appointmentOccurrence.findMany({
-    where: {
-      deletedAt: null,
-      // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
-      // APPROVED parent; without this guard it seeded "Today's Appointments"
-      // with a session that no longer exists. Tentative holds belong to the
-      // Requests tab, not the home calendar.
-      completionStatus: "SCHEDULED",
-      isTentative: false,
-      endsAt: { gte: startOfToday },
-      appointment: consultantAppointmentScope(consultantProfileId),
-    },
-    select: { appointmentId: true },
-    orderBy: { startsAt: "asc" },
-    take: HOME_APPOINTMENTS_TAKE * 5,
-  });
+  // The two head reads are independent (same scope inputs, no data flow
+  // between them) — fire together instead of serially. Each is one indexed
+  // round trip; serialising them doubled the pooler wait on every home load.
+  const [soonestSlots, orgSessionRows] = await Promise.all([
+    prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
+        // APPROVED parent; without this guard it seeded "Today's Appointments"
+        // with a session that no longer exists. Tentative holds belong to the
+        // Requests tab, not the home calendar.
+        completionStatus: "SCHEDULED",
+        isTentative: false,
+        endsAt: { gte: startOfToday },
+        appointment: consultantAppointmentScope(consultantProfileId),
+      },
+      select: { appointmentId: true },
+      orderBy: { startsAt: "asc" },
+      take: HOME_APPOINTMENTS_TAKE * 5,
+    }),
+    // #1703 B13 — the next org-funded sessions this consultant delivers. Same
+    // occurrence predicate as above with the org pin inverted; metadata only.
+    prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        completionStatus: "SCHEDULED",
+        isTentative: false,
+        endsAt: { gte: startOfToday },
+        appointment: consultantOrgAppointmentScope(consultantProfileId),
+      },
+      select: {
+        id: true,
+        appointmentId: true,
+        startsAt: true,
+        endsAt: true,
+        isTentative: true,
+        completionStatus: true,
+        meeting: { select: { id: true, endedAt: true, endedReason: true } },
+        appointment: {
+          select: {
+            organizationId: true,
+            organization: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { startsAt: "asc" },
+      take: HOME_ORG_SESSIONS_TAKE,
+    }),
+  ]);
   const homeAppointmentIds = [
     ...new Set(soonestSlots.map((s) => s.appointmentId)),
   ].slice(0, HOME_APPOINTMENTS_TAKE);
-
-  // #1703 B13 — the next org-funded sessions this consultant delivers. Same
-  // occurrence predicate as above with the org pin inverted; metadata only.
-  const orgSessionRows = await prisma.appointmentOccurrence.findMany({
-    where: {
-      deletedAt: null,
-      completionStatus: "SCHEDULED",
-      isTentative: false,
-      endsAt: { gte: startOfToday },
-      appointment: consultantOrgAppointmentScope(consultantProfileId),
-    },
-    select: {
-      id: true,
-      appointmentId: true,
-      startsAt: true,
-      endsAt: true,
-      isTentative: true,
-      completionStatus: true,
-      meeting: { select: { id: true, endedAt: true, endedReason: true } },
-      appointment: {
-        select: {
-          organizationId: true,
-          organization: { select: { name: true } },
-        },
-      },
-    },
-    orderBy: { startsAt: "asc" },
-    take: HOME_ORG_SESSIONS_TAKE,
-  });
   const orgSessions = orgSessionRows.map((row) => ({
     occurrenceId: row.id,
     appointmentId: row.appointmentId,
