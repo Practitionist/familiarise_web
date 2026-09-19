@@ -372,14 +372,12 @@ describe("checkout price parity — the edges that actually move money", () => {
   });
 
   /**
-   * A known, live divergence rather than a wish. `MIN_CREDIT_REDEMPTION_PAISE`
-   * is enforced only on the server, so on an order under ₹500 the page shows a
-   * credit that the charge will not honour — the one case in this suite where
-   * the two sides disagree by more than rounding. Asserted so the gap is
-   * recorded and its eventual fix (teaching the pages the floor) turns this
-   * test red instead of passing silently.
+   * #1592 S-P1-04 — the pages now apply the same ₹500 redemption floor the
+   * server does (app/checkout/plans/math.ts imports MIN_CREDIT_REDEMPTION_PAISE),
+   * so a preview below the floor never shows a credit the charge will not
+   * honour. This used to be the one recorded divergence in this suite.
    */
-  it("DIVERGES: the pages ignore the ₹500 credit-redemption floor", async () => {
+  it("applies the ₹500 credit-redemption floor on both sides", async () => {
     const input: ServerInputs = {
       basePaise: 30000, // ₹300 + 18% = ₹354, below the floor
       buyerCountry: "IN",
@@ -390,8 +388,8 @@ describe("checkout price parity — the edges that actually move money", () => {
 
     expect(server.totalPaise).toBeLessThan(MIN_CREDIT_REDEMPTION_PAISE);
     expect(server.creditsPaise).toBe(0);
-    expect(client.creditsPaise).toBe(20000);
-    expect(client.totalPaise).toBe(server.totalPaise - 20000);
+    expect(client.creditsPaise).toBe(0);
+    expect(client.totalPaise).toBe(server.totalPaise);
   });
 
   it("rejects a stored percentage outside 1–100 rather than pricing it", async () => {

@@ -57,6 +57,14 @@ export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
+// #1583 E-P1-06 — the tax-context read runs once per checkout page mount and
+// falls back to the domestic profile on any non-2xx, so it must not share the
+// five-a-minute POST bucket: a page reload would silently mis-tax the buyer.
+export const checkoutContextLimiter = makeLimiter(
+  30,
+  "1 m",
+  "rl:checkout-context",
+);
 
 /**
  * 10 per minute — DELETE /api/checkout/pending/[paymentId] (#849).
