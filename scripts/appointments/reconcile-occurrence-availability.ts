@@ -431,7 +431,13 @@ async function detectDoubleBookings(): Promise<{
           // 207 nobody reads; the run-level Sentry message follows below.
           // Keyed on the unordered occurrence pair (correlationId) so hourly
           // re-runs do not pile up a row per run for the same conflict.
-          const pairKey = `double-booking:${[current.slot.id, next.slot.id].sort().join(":")}`;
+          // Code-point order, not localeCompare: a key derived from ids must not
+          // depend on collation.
+          const [lo, hi] =
+            current.slot.id < next.slot.id
+              ? [current.slot.id, next.slot.id]
+              : [next.slot.id, current.slot.id];
+          const pairKey = `double-booking:${lo}:${hi}`;
           const alreadyRecorded = await prisma.systemEvent.findFirst({
             where: { correlationId: pairKey },
             select: { id: true },

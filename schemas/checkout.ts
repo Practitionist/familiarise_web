@@ -233,7 +233,7 @@ export const checkoutSchema = z
     // booking lead time (#1583 E-P1-03 — shared with request-for-approval).
     if (data.startsAt) {
       const slotStart = new Date(data.startsAt);
-      const refusal = isNaN(slotStart.getTime())
+      const refusal = Number.isNaN(slotStart.getTime())
         ? null
         : slotStartRefusal(slotStart);
       if (refusal) {

@@ -56,7 +56,7 @@ export const RequestForApprovalSchema = z
   // a typed code the route lifts out of `params`.
   .superRefine((data, ctx) => {
     const start = new Date(data.startsAt);
-    if (isNaN(start.getTime())) return;
+    if (Number.isNaN(start.getTime())) return;
     const refusal = slotStartRefusal(start);
     if (refusal) {
       ctx.addIssue({
