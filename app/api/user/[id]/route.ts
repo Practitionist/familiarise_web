@@ -7,6 +7,7 @@ import { UserRole, Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { deleteSubscriber } from "@/lib/novu/subscriber";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -260,6 +261,8 @@ export async function DELETE(
 
     if (hasMoneyHistory) {
       await scrubUser(prisma, id);
+      // Erasure propagates to Novu (never throws; warn-only internally).
+      await deleteSubscriber(id);
       return NextResponse.json({
         message:
           "Account erased (PII scrubbed; financial history retained per statutory retention)",
@@ -272,6 +275,8 @@ export async function DELETE(
       prisma.session.deleteMany({ where: { userId: id } }),
       prisma.user.delete({ where: { id: id } }),
     ]);
+    // Novu holds the same PII (email/name) — remove it too. Never throws.
+    await deleteSubscriber(id);
 
     return NextResponse.json(
       { message: "User deleted successfully" },

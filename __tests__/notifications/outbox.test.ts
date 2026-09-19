@@ -110,6 +110,7 @@ describe("stageTrigger + attemptTrigger", () => {
       transactionId: "appointment-booked:abc",
       attempts: 0,
       status: "PENDING",
+      notBefore: null,
     });
 
     expect(result).toMatchObject({ success: false, outcome: "PENDING" });
@@ -121,6 +122,24 @@ describe("stageTrigger + attemptTrigger", () => {
     expect(mockCaptureException.mock.calls[0][1]).toMatchObject({
       level: "warning",
     });
+  });
+
+  it("holds a row whose notBefore is in the future for the drain", async () => {
+    const result = await attemptTrigger({
+      id: "nx-3",
+      workflowId: "appointment-booked",
+      kind: "SINGLE",
+      recipients: ["u1"],
+      payload,
+      transactionId: "appointment-booked:def",
+      attempts: 0,
+      status: "PENDING",
+      notBefore: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    expect(result).toMatchObject({ success: true, outcome: "PENDING" });
+    expect(mockTrigger).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 

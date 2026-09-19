@@ -55,12 +55,32 @@ const CHANNEL_FIELDS: ToggleField[] = [
     label: "Email Notifications",
     description: "Receive notification emails",
   },
-  {
-    key: "pushEnabled",
-    label: "Push Notifications",
-    description: "Receive browser push notifications",
-  },
 ];
+
+/**
+ * Q2 fix — push has no delivery path (no FCM/APNS, no Novu push step; nothing
+ * reads `preferPush`). The toggle stays visible so the setting is not silently
+ * lost, but disabled with honest copy instead of implying it works.
+ */
+const PUSH_COMING_SOON = {
+  key: "pushEnabled",
+  label: "Push Notifications",
+  description:
+    "Coming soon — push delivery is not available yet. Your choice is saved for when it launches.",
+} as const;
+
+/** Q3 fix — the zones the platform actually serves; keep in sync with staff settings. */
+const QUIET_HOURS_TIMEZONES = [
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Asia/Singapore",
+  "Europe/London",
+  "Europe/Berlin",
+  "America/New_York",
+  "America/Chicago",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+] as const;
 
 const CATEGORY_FIELDS: ToggleField[] = [
   {
@@ -233,6 +253,14 @@ export function NotificationPreferencesPanel() {
     quietHoursTimezone: null,
   };
 
+  // Single source for "which zone the UI shows": saved preference, else the
+  // browser zone, else the platform default. Used by the select value, the
+  // "(current)" fallback option, and the enable mutation so display and
+  // enforcement can never diverge.
+  const browserTimezone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Asia/Kolkata";
+  const effectiveTimezone = prefs.quietHoursTimezone ?? browserTimezone;
+
   return (
     <div className="space-y-6">
       {/* Master Toggle */}
@@ -282,6 +310,26 @@ export function NotificationPreferencesPanel() {
                 </div>
               </div>
             ))}
+            <Separator className="mb-4" />
+            <div className="flex items-center justify-between opacity-60">
+              <div>
+                <Label className="text-sm font-medium">
+                  {PUSH_COMING_SOON.label}{" "}
+                  <span className="ml-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                    Soon
+                  </span>
+                </Label>
+                <p className="text-xs text-zinc-500">
+                  {PUSH_COMING_SOON.description}
+                </p>
+              </div>
+              <Switch
+                checked={prefs.pushEnabled}
+                disabled
+                aria-disabled="true"
+                title="Push delivery is not available yet"
+              />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -361,7 +409,15 @@ export function NotificationPreferencesPanel() {
               <Switch
                 checked={prefs.quietHoursEnabled}
                 onCheckedChange={(checked) =>
-                  handleToggle("quietHoursEnabled", checked)
+                  // Persist the effective timezone alongside the enable so
+                  // the displayed schedule and the enforced one cannot
+                  // diverge when nothing was stored yet.
+                  checked && !prefs.quietHoursTimezone
+                    ? mutation.mutate({
+                        quietHoursEnabled: true,
+                        quietHoursTimezone: browserTimezone,
+                      })
+                    : handleToggle("quietHoursEnabled", checked)
                 }
               />
             </div>
@@ -391,6 +447,36 @@ export function NotificationPreferencesPanel() {
                       className="mt-1"
                     />
                   </div>
+                </div>
+                <div>
+                  <Label htmlFor="quiet-hours-timezone" className="text-sm">
+                    Timezone
+                  </Label>
+                  <select
+                    id="quiet-hours-timezone"
+                    value={effectiveTimezone}
+                    onChange={(e) =>
+                      mutation.mutate({ quietHoursTimezone: e.target.value })
+                    }
+                    className="mt-1 w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm"
+                  >
+                    {!QUIET_HOURS_TIMEZONES.includes(
+                      effectiveTimezone as (typeof QUIET_HOURS_TIMEZONES)[number],
+                    ) && (
+                      <option value={effectiveTimezone}>
+                        {effectiveTimezone} (current)
+                      </option>
+                    )}
+                    {QUIET_HOURS_TIMEZONES.map((zone) => (
+                      <option key={zone} value={zone}>
+                        {zone}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Non-urgent notifications pause during these hours and
+                    deliver afterwards.
+                  </p>
                 </div>
               </>
             )}

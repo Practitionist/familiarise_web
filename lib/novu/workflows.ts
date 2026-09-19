@@ -51,12 +51,12 @@ export const NOVU_WORKFLOWS = {
   // Subscriptions
   SUBSCRIPTION_STARTED: "subscription-started",
   SUBSCRIPTION_CANCELLED: "subscription-cancelled",
-  SUBSCRIPTION_RENEWED: "subscription-renewed",
 
   // Consultant-specific
   NEW_BOOKING_REQUEST: "new-booking-request",
   VERIFICATION_STATUS_CHANGED: "verification-status-changed",
   PAYOUT_PROCESSED: "payout-processed",
+  PAYOUT_FAILED: "payout-failed",
 
   // Admin / System
   GENERAL_ANNOUNCEMENT: "general-announcement",

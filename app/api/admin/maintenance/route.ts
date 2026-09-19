@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
+import { notifyMaintenanceScheduled } from "@/lib/novu/service";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState, setMaintenanceState } from "@/lib/maintenance";
 import prisma from "@/lib/prisma";
@@ -199,6 +200,23 @@ export async function POST(request: NextRequest) {
     startedBy: auth.userId,
     betterstackIncidentId: betterstackIncidentId ?? undefined,
   });
+
+  // The scheduling moment: broadcast the advance notice (Started/Ended
+  // fire from the drain/post-recovery actions). Warn-only — a Novu hiccup
+  // must not fail the admin action.
+  try {
+    await notifyMaintenanceScheduled({
+      phase: targetPhase,
+      ...(reason ? { reason } : {}),
+      ...(estimatedEndDate ? { estimatedEnd: estimatedEndDate.toISOString() } : {}),
+    });
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "maintenance",
+      op: "MaintenanceScheduledNotice",
+      level: "warning",
+    });
+  }
 
   let offlineActivation: OfflineActivationResult | undefined;
   if (targetPhase === MaintenancePhase.OFFLINE) {

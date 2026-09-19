@@ -166,6 +166,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.PAYOUT_FAILED,
+    name: "Payout failed",
+    description:
+      "The consultant, when a payout fails or is cancelled (earnings return to READY for the next batch).",
+    category: "payments",
+    inApp: {
+      subject: "Payout needs attention",
+      body: "Your payout of {{payload.amount}} could not be completed{% if payload.payoutId %} ({{payload.payoutId}}){% endif %}. The earnings are back in your balance for the next payout run.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.DISPUTE_CREATED,
     name: "Dispute opened",
     description: "The consultant and ops, when a chargeback is raised.",
@@ -241,17 +253,6 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     inApp: {
       subject: "Subscription cancelled",
       body: "The subscription to {{payload.planTitle}} has been cancelled.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
-    workflowId: W.SUBSCRIPTION_RENEWED,
-    name: "Subscription renewed",
-    description: "The consultee, on renewal.",
-    category: "subscriptions",
-    inApp: {
-      subject: "Subscription renewed",
-      body: "Your subscription to {{payload.planTitle}} with {{payload.consultantName}} has renewed for another cycle.",
       redirect: "dashboardUrl",
     },
   },

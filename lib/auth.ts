@@ -324,13 +324,17 @@ export const auth = betterAuth({
               );
             }
 
-            // Sync Novu subscriber (fire and forget with error logging)
+            // Sync Novu subscriber (fire and forget with error logging).
+            // routingMode is the operator default; workspace owners who later
+            // pick EMAIL_ONLY/BELL_ONLY re-sync via the workspace settings
+            // PATCH + the subscriber hook.
             const nameParts = (user.name || "User").split(" ");
             syncSubscriber({
               userId: user.id,
               email: user.email,
               firstName: nameParts[0],
               lastName: nameParts.slice(1).join(" ") || undefined,
+              routingMode: "BELL_AND_EMAIL",
             }).catch((err) => {
               console.error("[AUTH_HOOK] Novu subscriber sync error:", err);
               Sentry.captureException(
