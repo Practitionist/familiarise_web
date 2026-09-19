@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -58,7 +58,9 @@ export async function GET(req: NextRequest) {
       perPage: pagination.pageSize,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -66,7 +68,7 @@ export async function GET(req: NextRequest) {
     );
     return NextResponse.json(
       { error: "Failed to load documents" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

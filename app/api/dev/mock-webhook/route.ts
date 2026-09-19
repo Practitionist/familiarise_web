@@ -408,6 +408,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(response, {
       status: response.success ? 200 : 400,
+      // Dev-only doc/test endpoint: never cache.
+      headers: { "Cache-Control": "no-store" },
     });
   } catch (error) {
     console.error("Mock webhook error:", error);
@@ -423,59 +425,71 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   if (!isDevelopment()) {
-    return NextResponse.json({ error: "Not available" }, { status: 403 });
+    return NextResponse.json(
+      { error: "Not available" },
+      {
+        status: 403,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   }
 
-  return NextResponse.json({
-    name: "Mock Webhook API",
-    description: "Simulates payment gateway webhooks for development testing",
-    usage: {
-      endpoint: "POST /api/dev/mock-webhook",
-      events: [
+  return NextResponse.json(
+    {
+      name: "Mock Webhook API",
+      description: "Simulates payment gateway webhooks for development testing",
+      usage: {
+        endpoint: "POST /api/dev/mock-webhook",
+        events: [
+          {
+            event: "payment.captured",
+            params: "paymentId OR orderId OR appointmentId, optional: release",
+            description: "Simulates payment capture and creates earnings",
+          },
+          {
+            event: "order.paid",
+            params: "Same as payment.captured",
+            description: "Alias for payment.captured",
+          },
+          {
+            event: "refund.created",
+            params: "paymentId",
+            description: "Marks earnings as refunded",
+          },
+          {
+            event: "payout.processed",
+            params: "payoutId",
+            description: "Marks payout as completed and earnings as paid",
+          },
+          {
+            event: "payout.rejected",
+            params: "payoutId",
+            description: "Marks payout as failed",
+          },
+        ],
+      },
+      examples: [
         {
-          event: "payment.captured",
-          params: "paymentId OR orderId OR appointmentId, optional: release",
-          description: "Simulates payment capture and creates earnings",
+          description: "Capture payment and create earnings",
+          request: { event: "payment.captured", paymentId: "pay_xxx" },
         },
         {
-          event: "order.paid",
-          params: "Same as payment.captured",
-          description: "Alias for payment.captured",
+          description: "Capture and immediately release for payout",
+          request: {
+            event: "payment.captured",
+            appointmentId: "app_xxx",
+            release: true,
+          },
         },
         {
-          event: "refund.created",
-          params: "paymentId",
-          description: "Marks earnings as refunded",
-        },
-        {
-          event: "payout.processed",
-          params: "payoutId",
-          description: "Marks payout as completed and earnings as paid",
-        },
-        {
-          event: "payout.rejected",
-          params: "payoutId",
-          description: "Marks payout as failed",
+          description: "Process a payout",
+          request: { event: "payout.processed", payoutId: "payout_xxx" },
         },
       ],
     },
-    examples: [
-      {
-        description: "Capture payment and create earnings",
-        request: { event: "payment.captured", paymentId: "pay_xxx" },
-      },
-      {
-        description: "Capture and immediately release for payout",
-        request: {
-          event: "payment.captured",
-          appointmentId: "app_xxx",
-          release: true,
-        },
-      },
-      {
-        description: "Process a payout",
-        request: { event: "payout.processed", payoutId: "payout_xxx" },
-      },
-    ],
-  });
+    {
+      // Dev-only doc endpoint: never cache.
+      headers: { "Cache-Control": "no-store" },
+    },
+  );
 }

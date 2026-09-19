@@ -69,7 +69,10 @@ export async function GET() {
       totalPaise: v.totalPaise,
     }));
 
-    return NextResponse.json({ series });
+    return NextResponse.json(
+      { series },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -78,7 +81,7 @@ export async function GET() {
     console.error("Error fetching payout trend:", error);
     return NextResponse.json(
       { error: "Failed to fetch payout trend" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

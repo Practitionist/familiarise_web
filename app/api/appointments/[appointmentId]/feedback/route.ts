@@ -119,10 +119,13 @@ export async function GET(
       // A provider could otherwise infer a rater from ordering on a group call.
       orderBy: { createdAt: "asc" },
     });
-    return NextResponse.json({
-      data: feedback,
-      rateableSlotIds: rateable.map((s) => s.id),
-    });
+    return NextResponse.json(
+      {
+        data: feedback,
+        rateableSlotIds: rateable.map((s) => s.id),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

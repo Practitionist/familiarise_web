@@ -20,7 +20,9 @@ const updateTaxInfoSchema = z.object({
   // (null ⇒ no ₹5L exemption). Until a consultant declares it here, every
   // payout over-withholds rather than wrongly granting companies the
   // individual exemption.
-  taxEntityType: z.enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"]).optional(),
+  taxEntityType: z
+    .enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"])
+    .optional(),
   // MSME declaration — #1230 intake writer. The payout deadline engine reads
   // msmeStatus/writtenAgreementWithFamiliarise on ConsultantProfile to stamp
   // mustPayByDate (MSMED 15/45-day terms + §16 interest exposure); nothing
@@ -36,9 +38,9 @@ const updateTaxInfoSchema = z.object({
  * Get the authenticated consultant's tax info
  */
 // S3776 — PAN encryption extracted so PUT stays under the complexity budget.
-function buildPanFields(panNumber: string | undefined):
-  | { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string }
-  | undefined {
+function buildPanFields(
+  panNumber: string | undefined,
+): { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string } | undefined {
   if (!panNumber) return undefined;
   const { encrypted, last4 } = encryptPAN(panNumber);
   return { panEncrypted: encrypted, panLast4: last4 };
@@ -77,7 +79,10 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const consultantProfile = await prisma.consultantProfile.findUnique({
@@ -88,30 +93,36 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
     const taxInfo = consultantProfile.taxInfo;
-    return NextResponse.json({
-      hasTaxInfo: !!taxInfo,
-      panMasked: taxInfo?.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
-      panVerified: taxInfo?.panVerified ?? false,
-      gstin: taxInfo?.gstin ?? null,
-      gstinVerified: taxInfo?.gstinVerified ?? false,
-      country: taxInfo?.country ?? "IN",
-      isIndianResident: taxInfo?.isIndianResident ?? true,
-      taxEntityType: taxInfo?.taxEntityType ?? null,
-      msmeStatus: consultantProfile.msmeStatus,
-      udyamNumber: consultantProfile.udyamNumber,
-      msmeWrittenAgreement: consultantProfile.writtenAgreementWithFamiliarise,
-    });
+    return NextResponse.json(
+      {
+        hasTaxInfo: !!taxInfo,
+        panMasked: taxInfo?.panLast4 ? `XXXXXX${taxInfo.panLast4}` : null,
+        panVerified: taxInfo?.panVerified ?? false,
+        gstin: taxInfo?.gstin ?? null,
+        gstinVerified: taxInfo?.gstinVerified ?? false,
+        country: taxInfo?.country ?? "IN",
+        isIndianResident: taxInfo?.isIndianResident ?? true,
+        taxEntityType: taxInfo?.taxEntityType ?? null,
+        msmeStatus: consultantProfile.msmeStatus,
+        udyamNumber: consultantProfile.udyamNumber,
+        msmeWrittenAgreement: consultantProfile.writtenAgreementWithFamiliarise,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     console.error("Tax info GET error:", error);
     return NextResponse.json(
       { error: "Failed to fetch tax info" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -161,7 +172,8 @@ export async function PUT(req: NextRequest) {
     // Encrypt PAN if provided
     const panFields = buildPanFields(validated.panNumber);
 
-    const taxInfo = await prisma.consultantTaxInfo.upsert({      where: { consultantProfileId: consultantProfile.id },
+    const taxInfo = await prisma.consultantTaxInfo.upsert({
+      where: { consultantProfileId: consultantProfile.id },
       create: {
         consultantProfileId: consultantProfile.id,
         panEncrypted: panFields?.panEncrypted ?? null,
@@ -219,7 +231,8 @@ export async function PUT(req: NextRequest) {
       taxEntityType: taxInfo.taxEntityType ?? null,
       msmeStatus: profileAfter?.msmeStatus ?? null,
       udyamNumber: profileAfter?.udyamNumber ?? null,
-      msmeWrittenAgreement: profileAfter?.writtenAgreementWithFamiliarise ?? false,
+      msmeWrittenAgreement:
+        profileAfter?.writtenAgreementWithFamiliarise ?? false,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -228,7 +241,10 @@ export async function PUT(req: NextRequest) {
         { status: 400 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     console.error("Tax info PUT error:", error);
     return NextResponse.json(
       { error: "Failed to update tax info" },

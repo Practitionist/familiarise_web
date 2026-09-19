@@ -46,7 +46,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -374,10 +374,13 @@ export async function GET(
       );
     });
 
-    return NextResponse.json({
-      pendingPayments,
-      count: pendingPayments.length,
-    });
+    return NextResponse.json(
+      {
+        pendingPayments,
+        count: pendingPayments.length,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -390,7 +393,7 @@ export async function GET(
         pendingPayments: [],
         count: 0,
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

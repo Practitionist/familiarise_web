@@ -50,9 +50,10 @@ const CreateBodySchema = z
     licenseCycle: LicenseCycleSchema.optional(),
   })
   .refine(
-    (v) => v.effectiveTo === null || v.effectiveTo === undefined
-      ? true
-      : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
+    (v) =>
+      v.effectiveTo === null || v.effectiveTo === undefined
+        ? true
+        : v.effectiveTo.getTime() > v.effectiveFrom.getTime(),
     {
       message: "effectiveTo must be strictly after effectiveFrom",
       path: ["effectiveTo"],
@@ -64,7 +65,8 @@ const CreateBodySchema = z
       // carry a flat fee; FLAT_FEE is the reverse. E2E-audit P1 fix — PER_SEAT
       // was unreachable: the create route hardcoded FLAT_FEE.
       v.licenseModel !== "PER_SEAT" ||
-      (v.licenseRatePerSeatPaise !== undefined && v.licenseFeePaise === undefined),
+      (v.licenseRatePerSeatPaise !== undefined &&
+        v.licenseFeePaise === undefined),
     {
       message:
         "PER_SEAT requires licenseRatePerSeatPaise and forbids licenseFeePaise",
@@ -85,9 +87,7 @@ export async function GET(
 
   const url = new URL(req.url);
   const statusRaw = url.searchParams.get("status");
-  const status = statusRaw
-    ? ContractStatusSchema.safeParse(statusRaw)
-    : null;
+  const status = statusRaw ? ContractStatusSchema.safeParse(statusRaw) : null;
 
   const contracts = await prisma.contract.findMany({
     where: {
@@ -117,7 +117,10 @@ export async function GET(
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({ data: contracts });
+  return NextResponse.json(
+    { data: contracts },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -169,7 +172,8 @@ export async function POST(
   // existing subscription via contract create (renewals are a separate
   // flow). Fail loud rather than silently dropping the operator's input.
   const wantsLicenseSubscription =
-    body.licenseFeePaise !== undefined || body.licenseRatePerSeatPaise !== undefined;
+    body.licenseFeePaise !== undefined ||
+    body.licenseRatePerSeatPaise !== undefined;
   if (wantsLicenseSubscription) {
     if (billingAccount.fundingSource !== "LICENSE") {
       return NextResponse.json(

@@ -7,17 +7,26 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const code = await getReferralCode(session.user.id);
-    return NextResponse.json({ data: code });
+    return NextResponse.json(
+      { data: code },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error fetching referral code:", error);
     return NextResponse.json(
       { error: "Failed to fetch referral code" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -32,7 +41,10 @@ export async function POST() {
     const code = await createReferralCode(session.user.id);
     return NextResponse.json({ data: code });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error creating referral code:", error);
     return NextResponse.json(
       { error: "Failed to create referral code" },

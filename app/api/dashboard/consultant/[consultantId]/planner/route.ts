@@ -245,7 +245,7 @@ export async function GET(
     if (!consultantId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -276,7 +276,10 @@ export async function GET(
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
     // For Webinar (1:1 appointment) — `appointment.is.organizationId`.
@@ -480,10 +483,13 @@ export async function GET(
       participantCounts,
     };
 
-    return NextResponse.json({
-      data: plannerData,
-      success: true,
-    });
+    return NextResponse.json(
+      {
+        data: plannerData,
+        success: true,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -492,7 +498,7 @@ export async function GET(
     console.error("Error fetching planner data:", error);
     return NextResponse.json(
       { error: "Failed to fetch planner data" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

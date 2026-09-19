@@ -101,7 +101,10 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({ data: thread, intents });
+    return NextResponse.json(
+      { data: thread, intents },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

@@ -47,7 +47,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "purchaseOrders.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "purchaseOrders.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -67,7 +70,10 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ data: purchaseOrders });
+  return NextResponse.json(
+    { data: purchaseOrders },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -148,7 +154,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

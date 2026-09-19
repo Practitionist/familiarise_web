@@ -318,7 +318,7 @@ export async function GET(
     if (!appointment) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -341,7 +341,7 @@ export async function GET(
     if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -359,22 +359,25 @@ export async function GET(
 
     if (eventKind && eventId) {
       const quote = await quoteWholeEventRefund(eventKind, eventId);
-      return NextResponse.json({
-        refundPct: 100,
-        estimatedRefundPaise: quote.estimatedRefundPaise,
-        currency: quote.currency,
-        // The whole-event rail never consults the clock, so no notice window is
-        // computed for it.
-        hoursUntilNextSession: null,
-        prorated: false,
-        // Seats fund through several rails at once (card, org wallet, credits),
-        // so no single funding sentence is true of the aggregate. Null rather
-        // than a rail: the whole-event copy stands on its own and naming one
-        // rail here would be a claim about seats it does not cover.
-        fundingRail: null,
-        wholeEvent: true,
-        attendeeCount: quote.attendeeCount,
-      });
+      return NextResponse.json(
+        {
+          refundPct: 100,
+          estimatedRefundPaise: quote.estimatedRefundPaise,
+          currency: quote.currency,
+          // The whole-event rail never consults the clock, so no notice window is
+          // computed for it.
+          hoursUntilNextSession: null,
+          prorated: false,
+          // Seats fund through several rails at once (card, org wallet, credits),
+          // so no single funding sentence is true of the aggregate. Null rather
+          // than a rail: the whole-event copy stands on its own and naming one
+          // rail here would be a claim about seats it does not cover.
+          fundingRail: null,
+          wholeEvent: true,
+          attendeeCount: quote.attendeeCount,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     return NextResponse.json(
@@ -384,6 +387,7 @@ export async function GET(
         roles,
         isPrivilegedUser,
       ),
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
     Sentry.captureException(
@@ -392,7 +396,7 @@ export async function GET(
     );
     return NextResponse.json(
       { error: "Could not estimate the refund" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

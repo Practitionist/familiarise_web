@@ -144,7 +144,10 @@ export async function GET(request: NextRequest) {
       if (!scopeResolution.ok) {
         return NextResponse.json(
           { error: scopeResolution.message, code: scopeResolution.code },
-          { status: scopeResolution.status },
+          {
+            status: scopeResolution.status,
+            headers: { "Cache-Control": "no-store" },
+          },
         );
       }
       // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active
@@ -191,15 +194,18 @@ export async function GET(request: NextRequest) {
       prisma.consultation.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: consultations,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: consultations,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -208,7 +214,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching consultations:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultations" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

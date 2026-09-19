@@ -49,11 +49,14 @@ export async function GET(
     if (!consultee) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    return NextResponse.json({ data: consultee }, { status: 200 });
+    return NextResponse.json(
+      { data: consultee },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -69,7 +72,7 @@ export async function GET(
             ? error.message
             : "Failed to get consultee profile",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

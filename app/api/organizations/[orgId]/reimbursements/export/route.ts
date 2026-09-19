@@ -29,7 +29,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "reimbursements.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "reimbursements.read",
+  });
   if (access.error) return access.error;
 
   const billingAccount = await prisma.billingAccount.findUnique({
@@ -39,7 +41,7 @@ export async function GET(
   if (!billingAccount || billingAccount.fundingSource !== "PERSONAL") {
     return NextResponse.json(
       { error: "Reimbursements export only for PERSONAL-funded orgs." },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -52,7 +54,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
 

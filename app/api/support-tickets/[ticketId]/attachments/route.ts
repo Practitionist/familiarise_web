@@ -27,7 +27,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { ticketId } = await params;
@@ -48,12 +51,18 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Ticket not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Only ticket owner or staff/admin can view attachments
     if (ticket.userId !== session.user.id && !isStaffOrAdmin) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const attachments = await prisma.supportTicketAttachment.findMany({
@@ -61,13 +70,19 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       orderBy: { uploadedAt: "desc" },
     });
 
-    return NextResponse.json({ attachments });
+    return NextResponse.json(
+      { attachments },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error fetching attachments:", error);
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -179,7 +194,10 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       { status: 201 },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error uploading attachment:", error);
     return NextResponse.json(
       { error: "Failed to upload attachment" },
@@ -249,7 +267,10 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ message: "Attachment deleted successfully" });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "support" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "support" } },
+    );
     console.error("Error deleting attachment:", error);
     return NextResponse.json(
       { error: "Failed to delete attachment" },

@@ -74,14 +74,17 @@ export async function GET(req: NextRequest) {
         prisma.refund.count({ where: { status: "FAILED" } }),
       ]);
 
-    return NextResponse.json({
-      refunds,
-      total,
-      stats: { pendingCount, succeededCount, failedCount },
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        refunds,
+        total,
+        stats: { pendingCount, succeededCount, failedCount },
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -90,7 +93,7 @@ export async function GET(req: NextRequest) {
     console.error("Admin refunds list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch refunds" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

@@ -36,7 +36,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -45,10 +45,12 @@ export async function GET(
     if (!access.hasAccess) {
       return NextResponse.json(
         { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
+        {
+          status: access.reason === "not_found" ? 404 : 403,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
-
 
     const notice = await getRecordingNotice(
       access.meetingId,
@@ -56,7 +58,9 @@ export async function GET(
       access.appointment,
     );
 
-    return NextResponse.json(notice);
+    return NextResponse.json(notice, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     reportSentryError(error, {
       subsystem: "stream",
@@ -64,7 +68,7 @@ export async function GET(
     });
     return NextResponse.json(
       { error: "Could not load the recording notice" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -98,7 +102,6 @@ export async function POST(
         { status: 400 },
       );
     }
-
 
     const appointment = access.appointment;
     const notice = await getRecordingNotice(

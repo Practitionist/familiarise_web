@@ -16,7 +16,10 @@ export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const consultantProfile = await prisma.consultantProfile.findFirst({
@@ -24,14 +27,17 @@ export async function GET(request: NextRequest) {
     });
 
     if (!consultantProfile) {
-      return NextResponse.json({
-        data: {
-          webinarCollaborations: [],
-          classCollaborations: [],
-          hostedWebinarPlans: [],
-          hostedClassPlans: [],
+      return NextResponse.json(
+        {
+          data: {
+            webinarCollaborations: [],
+            classCollaborations: [],
+            hostedWebinarPlans: [],
+            hostedClassPlans: [],
+          },
         },
-      });
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { searchParams } = request.nextUrl;
@@ -50,7 +56,10 @@ export async function GET(request: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
 
@@ -59,23 +68,29 @@ export async function GET(request: NextRequest) {
       getHostedCollaborations(consultantProfile.id, scopeResolution.scope),
     ]);
 
-    return NextResponse.json({
-      data: {
-        ...collaborations,
-        hostedWebinarPlans: hosted.webinarPlans,
-        hostedClassPlans: hosted.classPlans,
-        hostUser: {
-          name: session.user.name ?? null,
-          image: session.user.image ?? null,
+    return NextResponse.json(
+      {
+        data: {
+          ...collaborations,
+          hostedWebinarPlans: hosted.webinarPlans,
+          hostedClassPlans: hosted.classPlans,
+          hostUser: {
+            name: session.user.name ?? null,
+            image: session.user.image ?? null,
+          },
         },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
     console.error("Error fetching collaborations:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborations" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

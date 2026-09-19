@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
             error:
               "No consultant or consultee profile configured. Please complete onboarding.",
           },
-          { status: 422 },
+          { status: 422, headers: { "Cache-Control": "no-store" } },
         );
       }
       // Explicit profile-id filters stay locked to the caller's own ids.
@@ -62,13 +62,19 @@ export async function GET(request: NextRequest) {
         consultantProfileId &&
         consultantProfileId !== session.user.consultantProfileId
       ) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: { "Cache-Control": "no-store" } },
+        );
       }
       if (
         consulteeProfileId &&
         consulteeProfileId !== session.user.consulteeProfileId
       ) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: { "Cache-Control": "no-store" } },
+        );
       }
       // No explicit side requested → union both identities the caller holds.
       applyOwnershipOr = !consultantProfileId && !consulteeProfileId;
@@ -94,7 +100,10 @@ export async function GET(request: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
 
@@ -210,20 +219,23 @@ export async function GET(request: NextRequest) {
       prisma.trial.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: trials,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: trials,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching trial sessions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial sessions" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

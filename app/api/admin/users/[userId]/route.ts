@@ -61,16 +61,25 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "User not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({ user });
+    return NextResponse.json(
+      { user },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching user details:", error);
     return NextResponse.json(
       { error: "Failed to fetch user details" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

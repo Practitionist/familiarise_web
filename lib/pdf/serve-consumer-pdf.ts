@@ -62,7 +62,10 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
 ): Promise<Response> {
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   // Rate-limited per actor: rendering a PDF is expensive, and the bucket is
@@ -80,7 +83,7 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
           "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
-      { status: 503 },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -91,12 +94,15 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
         error: "No such statutory document has been issued for this payment.",
         code: "INVOICE_NOT_ISSUED",
       },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
   if (doc.ownerUserId !== session.user.id && !isPrivileged(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json(
+      { error: "Forbidden" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const cachedPath = doc.pdfStoragePath;
@@ -137,6 +143,9 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
         tags: { subsystem: "payments" },
       },
     );
-    return NextResponse.json({ error: args.failureMessage }, { status: 500 });
+    return NextResponse.json(
+      { error: args.failureMessage },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }

@@ -57,7 +57,10 @@ export async function GET(req: NextRequest) {
       return Number.isFinite(parsed) ? parsed : fallback;
     };
     const page = Math.max(1, toInt(searchParams.get("page"), 1));
-    const limit = Math.min(50, Math.max(1, toInt(searchParams.get("limit"), 20)));
+    const limit = Math.min(
+      50,
+      Math.max(1, toInt(searchParams.get("limit"), 20)),
+    );
     const offset = (page - 1) * limit;
 
     const where: Prisma.AppointmentSupportThreadWhereInput = {};
@@ -113,29 +116,32 @@ export async function GET(req: NextRequest) {
       }),
     ]);
 
-    return NextResponse.json({
-      data: threads.map((t) => ({
-        id: t.id,
-        appointmentId: t.appointmentId,
-        category: t.category,
-        status: t.status,
-        activeChannel: t.activeChannel,
-        lastMessageAt: t.lastMessageAt ?? t.createdAt,
-        createdAt: t.createdAt,
-        resolvedAt: t.resolvedAt,
-        supportTicketId: t.supportTicketId,
-        organizationId: t.organizationId,
-        messageCount: t._count.messages,
-        lastMessage: t.messages[0]
-          ? { sender: t.messages[0].sender, body: t.messages[0].body }
-          : null,
-        user: t.user,
-      })),
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
-      counts: Object.fromEntries(
-        counts.map((c) => [c.status, c._count._all]),
-      ) as Record<string, number>,
-    });
+    return NextResponse.json(
+      {
+        data: threads.map((t) => ({
+          id: t.id,
+          appointmentId: t.appointmentId,
+          category: t.category,
+          status: t.status,
+          activeChannel: t.activeChannel,
+          lastMessageAt: t.lastMessageAt ?? t.createdAt,
+          createdAt: t.createdAt,
+          resolvedAt: t.resolvedAt,
+          supportTicketId: t.supportTicketId,
+          organizationId: t.organizationId,
+          messageCount: t._count.messages,
+          lastMessage: t.messages[0]
+            ? { sender: t.messages[0].sender, body: t.messages[0].body }
+            : null,
+          user: t.user,
+        })),
+        pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+        counts: Object.fromEntries(
+          counts.map((c) => [c.status, c._count._all]),
+        ) as Record<string, number>,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

@@ -21,5 +21,8 @@ export async function GET(request: Request) {
   }
 
   const url = new URL("/auth/signin", request.url);
-  return NextResponse.redirect(url);
+  // Session-teardown redirect: must never be served from a shared cache.
+  return NextResponse.redirect(url, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

@@ -84,7 +84,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!ticket) {
-      return NextResponse.json({ error: "Ticket not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Ticket not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Fetch linked entities in parallel for better performance
@@ -182,23 +185,28 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         : Promise.resolve(null),
     ]);
 
-    return NextResponse.json({
-      ...ticket,
-      // Transcript was fetched newest-50 for the bound; hand it back oldest-
-      // first, the ascending shape the page has always rendered.
-      ...(ticket.appointmentSupportThread
-        ? {
-            appointmentSupportThread: {
-              ...ticket.appointmentSupportThread,
-              messages: [...ticket.appointmentSupportThread.messages].reverse(),
-            },
-          }
-        : {}),
-      linkedConsultation,
-      linkedSubscription,
-      linkedPayment,
-      linkedRefund,
-    });
+    return NextResponse.json(
+      {
+        ...ticket,
+        // Transcript was fetched newest-50 for the bound; hand it back oldest-
+        // first, the ascending shape the page has always rendered.
+        ...(ticket.appointmentSupportThread
+          ? {
+              appointmentSupportThread: {
+                ...ticket.appointmentSupportThread,
+                messages: [
+                  ...ticket.appointmentSupportThread.messages,
+                ].reverse(),
+              },
+            }
+          : {}),
+        linkedConsultation,
+        linkedSubscription,
+        linkedPayment,
+        linkedRefund,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -207,7 +215,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching support ticket:", error);
     return NextResponse.json(
       { error: "Failed to fetch support ticket" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

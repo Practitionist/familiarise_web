@@ -22,7 +22,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { consulteeId } = await params;
@@ -33,7 +36,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       session.user.role !== "STAFF" &&
       session.user.consulteeProfileId !== consulteeId
     ) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Access denied" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Parse query params for filtering
@@ -47,51 +53,58 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     );
 
     // Format recordings for response (async — generates presigned URLs)
-    const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
-      const appointment =
-        recording.meeting?.occurrence?.appointment;
+    const formattedRecordings = await Promise.all(
+      recordings.map(async (recording) => {
+        const appointment = recording.meeting?.occurrence?.appointment;
 
-      let planType: "webinar" | "class" | null = null;
-      let planId: string | null = null;
-      let planTitle: string | null = null;
+        let planType: "webinar" | "class" | null = null;
+        let planId: string | null = null;
+        let planTitle: string | null = null;
 
-      if (appointment?.webinar?.webinarPlan) {
-        planType = "webinar";
-        planId = appointment.webinar.webinarPlan.id ?? null;
-        planTitle = appointment.webinar.webinarPlan.title ?? null;
-      } else if (appointment?.class?.classPlan) {
-        planType = "class";
-        planId = appointment.class.classPlan.id ?? null;
-        planTitle = appointment.class.classPlan.title ?? null;
-      }
+        if (appointment?.webinar?.webinarPlan) {
+          planType = "webinar";
+          planId = appointment.webinar.webinarPlan.id ?? null;
+          planTitle = appointment.webinar.webinarPlan.title ?? null;
+        } else if (appointment?.class?.classPlan) {
+          planType = "class";
+          planId = appointment.class.classPlan.id ?? null;
+          planTitle = appointment.class.classPlan.title ?? null;
+        }
 
-      return {
-        id: recording.id,
-        title: recording.title,
-        durationInMinutes: recording.durationInMinutes,
-        recordedAt: recording.recordedAt,
-        status: recording.status,
-        storageType: recording.storageType,
-        playbackUrl: await getBestRecordingUrl(recording),
-        thumbnailUrl: recording.thumbnailUrl,
-        resolution: recording.resolution,
-        planType,
-        planId,
-        planTitle,
-        createdAt: recording.createdAt,
-      };
-    }));
+        return {
+          id: recording.id,
+          title: recording.title,
+          durationInMinutes: recording.durationInMinutes,
+          recordedAt: recording.recordedAt,
+          status: recording.status,
+          storageType: recording.storageType,
+          playbackUrl: await getBestRecordingUrl(recording),
+          thumbnailUrl: recording.thumbnailUrl,
+          resolution: recording.resolution,
+          planType,
+          planId,
+          planTitle,
+          createdAt: recording.createdAt,
+        };
+      }),
+    );
 
-    return NextResponse.json({
-      recordings: formattedRecordings,
-      total: formattedRecordings.length,
-    });
+    return NextResponse.json(
+      {
+        recordings: formattedRecordings,
+        total: formattedRecordings.length,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultees" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultees" } },
+    );
     console.error("Error getting consultee recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

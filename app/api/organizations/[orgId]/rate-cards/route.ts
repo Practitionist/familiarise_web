@@ -86,7 +86,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsedQuery.data;
@@ -102,7 +102,7 @@ export async function GET(
     if (!contract) {
       return NextResponse.json(
         { error: "Contract not found for this organization" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
   }
@@ -124,7 +124,10 @@ export async function GET(
     orderBy: [{ effectiveFrom: "desc" }],
   });
 
-  return NextResponse.json({ data: rateCards });
+  return NextResponse.json(
+    { data: rateCards },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(

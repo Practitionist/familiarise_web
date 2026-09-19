@@ -85,14 +85,17 @@ export async function GET(
     select: { ...POLICY_TERMS_INCLUDE.select, createdAt: true },
   });
 
-  return NextResponse.json({
-    // Null means this org has never published, in which case the platform ladder
-    // applies to its bookings — the client says so rather than showing an empty form.
-    policy: row
-      ? { ...termsFromPolicyRow(row), createdAt: row.createdAt }
-      : null,
-    platformDefault: PLATFORM_DEFAULT_TERMS,
-  });
+  return NextResponse.json(
+    {
+      // Null means this org has never published, in which case the platform ladder
+      // applies to its bookings — the client says so rather than showing an empty form.
+      policy: row
+        ? { ...termsFromPolicyRow(row), createdAt: row.createdAt }
+        : null,
+      platformDefault: PLATFORM_DEFAULT_TERMS,
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PUT(

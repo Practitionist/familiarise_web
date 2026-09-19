@@ -53,7 +53,9 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(tickets, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (cause) {
     return supportError({
       status: 500,

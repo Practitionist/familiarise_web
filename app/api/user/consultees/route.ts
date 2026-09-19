@@ -43,13 +43,19 @@ export async function GET(request: NextRequest) {
       take: limit,
     });
 
-    return NextResponse.json(consultees, { status: 200 });
+    return NextResponse.json(consultees, {
+      status: 200,
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

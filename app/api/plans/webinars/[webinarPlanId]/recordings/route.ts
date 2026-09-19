@@ -25,7 +25,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { webinarPlanId } = await params;
@@ -44,7 +47,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!webinarPlan) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -91,7 +94,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to these recordings" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -100,35 +103,43 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       await RecordingService.getWebinarPlanRecordings(webinarPlanId);
 
     // Map recordings to response format (async — presigned URLs)
-    const formattedRecordings = await Promise.all(recordings.map(async (recording) => ({
-      id: recording.id,
-      title: recording.title,
-      durationInMinutes: recording.durationInMinutes,
-      recordedAt: recording.recordedAt,
-      status: recording.status,
-      storageType: recording.storageType,
-      playbackUrl: await getBestRecordingUrl(recording),
-      thumbnailUrl: recording.thumbnailUrl,
-      resolution: recording.resolution,
-      previewClipUrl: recording.previewClipUrl,
-      previewClipDuration: recording.previewClipDuration,
-      streamUrlExpiresAt: recording.streamUrlExpiresAt,
-      createdAt: recording.createdAt,
-    })));
+    const formattedRecordings = await Promise.all(
+      recordings.map(async (recording) => ({
+        id: recording.id,
+        title: recording.title,
+        durationInMinutes: recording.durationInMinutes,
+        recordedAt: recording.recordedAt,
+        status: recording.status,
+        storageType: recording.storageType,
+        playbackUrl: await getBestRecordingUrl(recording),
+        thumbnailUrl: recording.thumbnailUrl,
+        resolution: recording.resolution,
+        previewClipUrl: recording.previewClipUrl,
+        previewClipDuration: recording.previewClipDuration,
+        streamUrlExpiresAt: recording.streamUrlExpiresAt,
+        createdAt: recording.createdAt,
+      })),
+    );
 
-    return NextResponse.json({
-      planId: webinarPlanId,
-      planTitle: webinarPlan.title,
-      recordingEnabled: webinarPlan.recordingEnabled,
-      recordings: formattedRecordings,
-      total: formattedRecordings.length,
-    });
+    return NextResponse.json(
+      {
+        planId: webinarPlanId,
+        planTitle: webinarPlan.title,
+        recordingEnabled: webinarPlan.recordingEnabled,
+        recordings: formattedRecordings,
+        total: formattedRecordings.length,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "plans" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "plans" } },
+    );
     console.error("Error getting webinar plan recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

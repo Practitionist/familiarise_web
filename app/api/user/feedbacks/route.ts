@@ -12,7 +12,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your feedback" },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -25,7 +25,9 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(feedbacks);
+    return NextResponse.json(feedbacks, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("Error fetching feedbacks:", error);
     return NextResponse.json(
@@ -33,7 +35,7 @@ export async function GET() {
         error: "An unexpected error occurred while fetching your feedback",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

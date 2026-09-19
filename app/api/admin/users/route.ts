@@ -64,18 +64,24 @@ export async function GET(req: NextRequest) {
       prisma.user.count({ where }),
     ]);
 
-    return NextResponse.json({
-      users,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        users,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching users:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

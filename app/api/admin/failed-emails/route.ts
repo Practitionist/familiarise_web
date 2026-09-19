@@ -38,11 +38,12 @@ export async function GET(req: NextRequest) {
     200,
   );
   const statusParam = url.searchParams.get("status");
-  const status = statusParam
-    ? StatusSchema.safeParse(statusParam)
-    : undefined;
+  const status = statusParam ? StatusSchema.safeParse(statusParam) : undefined;
   if (status && !status.success) {
-    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid status" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const rows = await prisma.failedEmail.findMany({
@@ -66,7 +67,10 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ data: rows });
+  return NextResponse.json(
+    { data: rows },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(req: NextRequest) {

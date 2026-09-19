@@ -99,10 +99,13 @@ export async function GET(
 
   // BigInt is not JSON-serializable — paise cross the wire as strings, matching
   // the money convention the rest of the org surfaces use.
-  return NextResponse.json({
-    webinars: webinars.map((w) => ({ ...w, price: w.price.toString() })),
-    classes: classes.map((c) => ({ ...c, price: c.price.toString() })),
-  });
+  return NextResponse.json(
+    {
+      webinars: webinars.map((w) => ({ ...w, price: w.price.toString() })),
+      classes: classes.map((c) => ({ ...c, price: c.price.toString() })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -314,7 +317,10 @@ export async function DELETE(
               where: scope,
               data: { archivedAt },
             })
-          : await tx.classPlan.updateMany({ where: scope, data: { archivedAt } });
+          : await tx.classPlan.updateMany({
+              where: scope,
+              data: { archivedAt },
+            });
 
       if (affected > 0) {
         await tx.orgAuditLog.create({
@@ -334,7 +340,9 @@ export async function DELETE(
       return affected;
     });
 
-    return NextResponse.json(restore ? { restored: count } : { archived: count });
+    return NextResponse.json(
+      restore ? { restored: count } : { archived: count },
+    );
   } catch (err) {
     Sentry.captureException(
       err instanceof Error ? err : new Error(String(err)),

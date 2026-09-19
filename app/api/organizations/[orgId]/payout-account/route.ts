@@ -46,7 +46,7 @@ export async function GET(
   if (!access.org.canHost) {
     return NextResponse.json(
       { error: "Organization does not host (canHost=false)" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -72,10 +72,13 @@ export async function GET(
   if (!payoutAccount) {
     return NextResponse.json(
       { payoutAccount: null, exists: false },
-      { status: 200 },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   }
-  return NextResponse.json({ payoutAccount, exists: true });
+  return NextResponse.json(
+    { payoutAccount, exists: true },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /**
@@ -185,7 +188,8 @@ export async function PUT(
   if (!access.org.canHost) {
     return NextResponse.json(
       {
-        error: "Organization does not host. Enable canHost before setting a payout account.",
+        error:
+          "Organization does not host. Enable canHost before setting a payout account.",
       },
       { status: 409 },
     );
@@ -206,7 +210,10 @@ export async function PUT(
   try {
     encrypted = encodeAccountEnvelope(body.accountNumber);
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     return NextResponse.json(
       {
         error: "Payout encryption is not configured on this server",

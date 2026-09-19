@@ -182,7 +182,9 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       },
     });
 
-    return NextResponse.json(responses);
+    return NextResponse.json(responses, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -191,7 +193,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching support responses:", error);
     return NextResponse.json(
       { error: "Failed to fetch responses" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

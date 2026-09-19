@@ -67,7 +67,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsedQuery.data;
@@ -89,7 +89,10 @@ export async function GET(
     take: q.limit,
   });
 
-  return NextResponse.json({ data: consents });
+  return NextResponse.json(
+    { data: consents },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -97,7 +100,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "consent.manage",
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -120,7 +125,9 @@ export async function POST(
     raw: c,
     code: normalizePurposeCode(c),
   }));
-  const unknown = normalized.filter((n) => n.code === undefined).map((n) => n.raw);
+  const unknown = normalized
+    .filter((n) => n.code === undefined)
+    .map((n) => n.raw);
   if (unknown.length > 0) {
     return NextResponse.json(
       { error: "Unknown purpose code(s)", detail: { unknown } },
@@ -216,7 +223,9 @@ export async function DELETE(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "consent.manage" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "consent.manage",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -240,7 +249,10 @@ export async function DELETE(
     purposeCode = normalizePurposeCode(parsed.data.purposeCode);
     if (purposeCode === undefined) {
       return NextResponse.json(
-        { error: "Unknown purpose code", detail: { purposeCode: parsed.data.purposeCode } },
+        {
+          error: "Unknown purpose code",
+          detail: { purposeCode: parsed.data.purposeCode },
+        },
         { status: 400 },
       );
     }
@@ -285,7 +297,10 @@ export async function DELETE(
         },
       })
       .catch((err) => {
-        Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "enterprise" } },
+        );
         console.error("[consent DELETE] audit write failed", err);
       });
   }

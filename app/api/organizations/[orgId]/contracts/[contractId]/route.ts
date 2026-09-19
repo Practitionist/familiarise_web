@@ -79,13 +79,19 @@ export async function GET(
     },
   });
   if (!contract) {
-    return NextResponse.json({ error: "Contract not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Contract not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
   // Surface the in-use lock so the detail/edit drawer can disable term
   // fields (effective dates, payment terms) without a second round-trip
   // (#777 §B). autoRenew stays editable regardless.
   const { locked } = await getContractLockState(contractId, contract.status);
-  return NextResponse.json({ contract: { ...contract, locked } });
+  return NextResponse.json(
+    { contract: { ...contract, locked } },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 // TODO(#1332 server-actions): kept as a Route Handler + useMutation to match the

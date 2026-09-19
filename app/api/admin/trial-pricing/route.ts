@@ -27,12 +27,15 @@ export async function GET() {
 
   try {
     const minTrialPriceInPaise = await getMinTrialPriceInPaise();
-    return NextResponse.json({ minTrialPriceInPaise });
+    return NextResponse.json(
+      { minTrialPriceInPaise },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(error);
     return NextResponse.json(
       { error: "Failed to read trial pricing config" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

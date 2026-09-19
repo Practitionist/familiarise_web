@@ -26,7 +26,7 @@ export async function GET(
           message: "Please sign in to view material",
           code: "UNAUTHORIZED",
         },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -74,7 +74,7 @@ export async function GET(
           message: "The requested material does not exist",
           code: "NOT_FOUND",
         },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -92,7 +92,7 @@ export async function GET(
           message: "You don't have permission to view this material",
           code: "FORBIDDEN",
         },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -104,9 +104,15 @@ export async function GET(
       classPlan,
       ...materialData
     } = material;
-    return NextResponse.json({ data: materialData });
+    return NextResponse.json(
+      { data: materialData },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching material:", error);
     return NextResponse.json(
       {
@@ -114,7 +120,7 @@ export async function GET(
         message: "Failed to fetch material",
         code: "SERVER_ERROR",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

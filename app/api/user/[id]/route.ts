@@ -36,21 +36,33 @@ export async function GET(
     const { id } = await params;
     const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const user = await getUserDetails(id);
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "User not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({ data: user }, { status: 200 });
+    return NextResponse.json(
+      { data: user },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       {
         error:
@@ -58,7 +70,7 @@ export async function GET(
             ? error.message
             : "An error occurred while fetching the user",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -168,7 +180,10 @@ export async function PUT(
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
     console.error("Error updating user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
       { status: 500 },
@@ -197,7 +212,10 @@ export async function PATCH(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error patching user professional background:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating professional background" },
       { status: 500 },
@@ -246,7 +264,9 @@ export async function DELETE(
       prisma.consultantProfile.findFirst({
         where: { userId: id },
         select: {
-          _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
+          _count: {
+            select: { earnings: true, payouts: true, tdsRecords: true },
+          },
         },
       }),
     ]);
@@ -279,7 +299,10 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while deleting the user" },
       { status: 500 },

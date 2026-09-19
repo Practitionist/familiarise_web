@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     if (!session.user.consultantProfileId) {
       return NextResponse.json(
         { error: "Only consultants can search consultees" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -250,13 +250,16 @@ export async function GET(req: NextRequest) {
 
     // Validated against the same schema the dialog derives its type from, so
     // a drift in this handler fails here rather than showing up as a blank row.
-    return NextResponse.json({
-      success: true,
-      consultees: ConsulteeSearchResultSchema.array().parse(
-        results.slice(0, 50),
-      ),
-      total: results.length,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        consultees: ConsulteeSearchResultSchema.array().parse(
+          results.slice(0, 50),
+        ),
+        total: results.length,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -265,7 +268,7 @@ export async function GET(req: NextRequest) {
     console.error("Error searching consultees:", error);
     return NextResponse.json(
       { error: "Failed to search consultees" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

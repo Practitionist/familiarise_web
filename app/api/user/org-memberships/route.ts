@@ -31,13 +31,16 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json({
-      data: memberships.map((m) => ({
-        organizationId: m.organizationId,
-        orgName: m.organization.name,
-        role: m.role,
-      })),
-    });
+    return NextResponse.json(
+      {
+        data: memberships.map((m) => ({
+          organizationId: m.organizationId,
+          orgName: m.organization.name,
+          role: m.role,
+        })),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

@@ -48,16 +48,30 @@ async function resolveIdentity(): Promise<{
 export async function GET() {
   const { userId, sessionId } = await resolveIdentity();
   if (!userId && !sessionId) {
-    return NextResponse.json({ error: "No identity" }, { status: 401 });
+    return NextResponse.json(
+      { error: "No identity" },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const pref = await prisma.cookiePreference.findFirst({
     where: userId ? { userId } : { sessionId },
-    select: { essential: true, analytics: true, marketing: true, functional: true },
+    select: {
+      essential: true,
+      analytics: true,
+      marketing: true,
+      functional: true,
+    },
   });
 
   return NextResponse.json(
-    pref ?? { essential: true, analytics: false, marketing: false, functional: false },
+    pref ?? {
+      essential: true,
+      analytics: false,
+      marketing: false,
+      functional: false,
+    },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }
 

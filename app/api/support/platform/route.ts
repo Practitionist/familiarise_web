@@ -88,7 +88,10 @@ export async function GET() {
       title: f.title,
       description: f.description,
     }));
-    return NextResponse.json({ data: { flows } });
+    return NextResponse.json(
+      { data: { flows } },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

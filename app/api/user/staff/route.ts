@@ -23,15 +23,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const {
-      email,
-      password,
-      name,
-      phone,
-      address,
-      department,
-      position,
-    } = body;
+    const { email, password, name, phone, address, department, position } =
+      body;
 
     // Basic validation
     if (!email || !password || !name) {
@@ -87,7 +80,10 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating staff:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     // Provide a generic error message
     return NextResponse.json(
       { message: "Internal Server Error" },
@@ -120,13 +116,18 @@ export async function GET(_request: NextRequest) {
       },
     });
 
-    return NextResponse.json(staffUsers);
+    return NextResponse.json(staffUsers, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("Failed to fetch staff users:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

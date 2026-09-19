@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsed.data;
@@ -69,10 +69,13 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    data: events.map((e) => ({
-      ...e,
-      createdAt: e.createdAt.toISOString(),
-    })),
-  });
+  return NextResponse.json(
+    {
+      data: events.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

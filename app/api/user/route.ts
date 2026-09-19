@@ -8,7 +8,10 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -46,14 +49,17 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error getting users:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching users" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -100,7 +106,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: newUser }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error creating user:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the user" },

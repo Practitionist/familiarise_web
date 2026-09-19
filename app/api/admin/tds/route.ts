@@ -43,7 +43,10 @@ export async function GET(req: NextRequest) {
 
     if (view === "consultants") {
       const breakdown = await getConsultantTDSBreakdown(fy);
-      return NextResponse.json({ financialYear: fy, consultants: breakdown });
+      return NextResponse.json(
+        { financialYear: fy, consultants: breakdown },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Form 26Q filing view — ADMIN only (exposes decrypted PAN)
@@ -51,7 +54,7 @@ export async function GET(req: NextRequest) {
       if (session.user.role !== "ADMIN") {
         return NextResponse.json(
           { error: "Forbidden — Admin only for PAN access" },
-          { status: 403 },
+          { status: 403, headers: { "Cache-Control": "no-store" } },
         );
       }
 
@@ -110,11 +113,16 @@ export async function GET(req: NextRequest) {
         createdAt: r.createdAt,
       }));
 
-      return NextResponse.json({ financialYear: fy, records: form26qData });
+      return NextResponse.json(
+        { financialYear: fy, records: form26qData },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const summary = await getTDSSummary(fy);
-    return NextResponse.json(summary);
+    return NextResponse.json(summary, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -123,7 +131,7 @@ export async function GET(req: NextRequest) {
     console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

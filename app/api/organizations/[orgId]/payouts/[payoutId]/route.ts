@@ -67,9 +67,15 @@ export async function GET(
     },
   });
   if (!payout) {
-    return NextResponse.json({ error: "Payout not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Payout not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
-  return NextResponse.json({ payout });
+  return NextResponse.json(
+    { payout },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(
@@ -184,11 +190,13 @@ export async function PATCH(
     return NextResponse.json({ payout: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

@@ -34,10 +34,17 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       { isDuplicate: !!existingSubscription },
-      { status: 200 },
+      {
+        status: 200,
+        // Owner-intent check with no auth: never shared-cache the oracle.
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error checking duplicate subscription title:", error);
     return NextResponse.json(
       {

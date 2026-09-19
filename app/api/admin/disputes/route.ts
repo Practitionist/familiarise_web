@@ -80,21 +80,27 @@ export async function GET(req: NextRequest) {
         prisma.dispute.count({ where: { status: "WON" } }),
       ]);
 
-    return NextResponse.json({
-      disputes,
-      total,
-      urgentDisputes,
-      stats: { underReviewCount, wonCount },
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        disputes,
+        total,
+        urgentDisputes,
+        stats: { underReviewCount, wonCount },
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin disputes list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch disputes" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

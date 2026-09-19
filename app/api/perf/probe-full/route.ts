@@ -24,5 +24,9 @@ const heldImports = {
 
 export async function GET() {
   const report = await runProbe(moduleLoadedAt);
-  return NextResponse.json({ route: "probe-full", heldImports, ...report });
+  // Diagnostics must never be cached — see probe-bare.
+  return NextResponse.json(
+    { route: "probe-full", heldImports, ...report },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

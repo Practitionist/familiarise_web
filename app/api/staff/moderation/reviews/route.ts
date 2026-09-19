@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", details: parsed.error.flatten() },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
     const { consultantProfileId, minRating, maxRating, page, limit } =
@@ -155,22 +155,25 @@ export async function GET(req: NextRequest) {
       ratingDistribution.map((r) => [r.rating, r._count.id]),
     );
 
-    return NextResponse.json({
-      reviews: formattedReviews,
-      distribution,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        reviews: formattedReviews,
+        distribution,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching reviews:", error);
     return NextResponse.json(
       { error: "Failed to fetch reviews" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

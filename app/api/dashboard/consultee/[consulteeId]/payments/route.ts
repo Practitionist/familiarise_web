@@ -35,7 +35,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -47,7 +47,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -71,7 +71,10 @@ export async function GET(
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
     // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
@@ -237,25 +240,32 @@ export async function GET(
     // number), NOT from the capped display list. `?? 0` on the nullable
     // sums; Number() because aggregations bypass the money result
     // extensions and return raw BigInt.
-    const totalCredits = creditAgg._sum.amount ? Number(creditAgg._sum.amount) : 0;
-    const usedCredits = creditAgg._sum.usedAmount ? Number(creditAgg._sum.usedAmount) : 0;
+    const totalCredits = creditAgg._sum.amount
+      ? Number(creditAgg._sum.amount)
+      : 0;
+    const usedCredits = creditAgg._sum.usedAmount
+      ? Number(creditAgg._sum.usedAmount)
+      : 0;
     const remainingCredits = creditAgg._sum.remainingAmount
       ? Number(creditAgg._sum.remainingAmount)
       : 0;
 
-    return NextResponse.json({
-      data: {
-        payments: transformedPayments,
-        credits,
-        creditUsages,
-        creditSummary: {
-          total: totalCredits,
-          used: usedCredits,
-          remaining: remainingCredits,
+    return NextResponse.json(
+      {
+        data: {
+          payments: transformedPayments,
+          credits,
+          creditUsages,
+          creditSummary: {
+            total: totalCredits,
+            used: usedCredits,
+            remaining: remainingCredits,
+          },
         },
+        success: true,
       },
-      success: true,
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -264,7 +274,7 @@ export async function GET(
     console.error("Error fetching consultee payments:", error);
     return NextResponse.json(
       { error: "Failed to fetch payments" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

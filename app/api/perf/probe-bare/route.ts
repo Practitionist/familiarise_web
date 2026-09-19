@@ -8,5 +8,10 @@ const moduleLoadedAt = Date.now();
 
 export async function GET() {
   const report = await runProbe(moduleLoadedAt);
-  return Response.json({ route: "probe-bare", ...report });
+  // Diagnostics must never be cached — a cached probe would report a stale
+  // instance age and mask the very stalls these routes exist to measure.
+  return Response.json(
+    { route: "probe-bare", ...report },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

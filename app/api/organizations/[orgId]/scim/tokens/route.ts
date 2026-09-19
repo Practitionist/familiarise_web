@@ -44,10 +44,19 @@ export async function GET(
         revokedAt: true,
       },
     });
-    return NextResponse.json({ data: tokens });
+    return NextResponse.json(
+      { data: tokens },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "enterprise" } });
-    return NextResponse.json({ error: "Failed to list SCIM tokens" }, { status: 500 });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "enterprise" } },
+    );
+    return NextResponse.json(
+      { error: "Failed to list SCIM tokens" },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }
 
@@ -99,8 +108,14 @@ export async function POST(
       return token;
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "enterprise" } });
-    return NextResponse.json({ error: "Failed to create SCIM token" }, { status: 500 });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "enterprise" } },
+    );
+    return NextResponse.json(
+      { error: "Failed to create SCIM token" },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json(

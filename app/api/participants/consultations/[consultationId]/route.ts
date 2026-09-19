@@ -89,18 +89,27 @@ export async function GET(
         ).values(),
       );
 
-      return NextResponse.json({
-        consultation,
-        participants: uniqueUsers,
-      });
+      return NextResponse.json(
+        {
+          consultation,
+          participants: uniqueUsers,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({
-      consultation,
-      participants,
-    });
+    return NextResponse.json(
+      {
+        consultation,
+        participants,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -159,7 +168,10 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

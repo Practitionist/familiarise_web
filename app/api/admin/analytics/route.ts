@@ -128,37 +128,43 @@ export async function GET() {
     const avgSessionValue =
       paymentStats._count > 0 ? totalRevenue / paymentStats._count : 0;
 
-    return NextResponse.json({
-      // User stats
-      totalUsers,
-      totalConsultants,
-      totalConsultees,
-      totalStaff,
-      newUsersThisMonth,
-      activeConsultants,
-      activeConsultees,
+    return NextResponse.json(
+      {
+        // User stats
+        totalUsers,
+        totalConsultants,
+        totalConsultees,
+        totalStaff,
+        newUsersThisMonth,
+        activeConsultants,
+        activeConsultees,
 
-      // Session stats
-      totalSessions,
-      completedSessions,
-      upcomingSessions,
-      cancelledSessions,
+        // Session stats
+        totalSessions,
+        completedSessions,
+        upcomingSessions,
+        cancelledSessions,
 
-      // Revenue stats
-      totalRevenue,
-      revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
-      avgSessionValue,
-      totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
+        // Revenue stats
+        totalRevenue,
+        revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
+        avgSessionValue,
+        totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
 
-      // Top domains
-      topDomains: formattedTopDomains,
-    });
+        // Top domains
+        topDomains: formattedTopDomains,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching analytics:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

@@ -17,7 +17,10 @@ export async function GET(
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { planId } = await params;
@@ -28,11 +31,20 @@ export async function GET(
     );
 
     if (result.status === "not_found")
-      return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Plan not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     if (result.status === "forbidden")
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
 
-    return NextResponse.json({ data: result.data });
+    return NextResponse.json(
+      { data: result.data },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -41,7 +53,7 @@ export async function GET(
     console.error("Error fetching webinar collaborators:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborators" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

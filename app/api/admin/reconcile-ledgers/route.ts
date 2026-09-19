@@ -185,9 +185,15 @@ export async function GET(req: NextRequest) {
       where: { id },
     });
     if (!report) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
-    return NextResponse.json({ data: report });
+    return NextResponse.json(
+      { data: report },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const limit = Math.min(
@@ -202,5 +208,8 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
-  return NextResponse.json({ data: reports });
+  return NextResponse.json(
+    { data: reports },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

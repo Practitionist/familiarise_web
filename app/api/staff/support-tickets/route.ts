@@ -135,17 +135,20 @@ export async function GET(req: NextRequest) {
       closed: statusCounts.find((s) => s.status === "CLOSED")?._count.id || 0,
     };
 
-    return NextResponse.json({
-      tickets: formattedTickets,
-      counts,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        tickets: formattedTickets,
+        counts,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -154,7 +157,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching support tickets:", error);
     return NextResponse.json(
       { error: "Failed to fetch support tickets" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

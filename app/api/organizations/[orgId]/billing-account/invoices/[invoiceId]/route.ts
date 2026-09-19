@@ -45,7 +45,10 @@ export async function GET(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MANAGER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const invoice = await prisma.organizationInvoice.findFirst({
@@ -60,9 +63,15 @@ export async function GET(
     },
   });
   if (!invoice) {
-    return NextResponse.json({ error: "Invoice not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invoice not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
-  return NextResponse.json({ invoice });
+  return NextResponse.json(
+    { invoice },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(
@@ -74,7 +83,9 @@ export async function PATCH(
   },
 ) {
   const { orgId, invoiceId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const raw = await req.json().catch(() => null);
@@ -215,8 +226,7 @@ export async function PATCH(
     return NextResponse.json({ invoice: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     throw err;

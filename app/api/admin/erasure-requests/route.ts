@@ -21,5 +21,8 @@ export async function GET() {
       user: { select: { id: true, name: true, email: true, erasedAt: true } },
     },
   });
-  return NextResponse.json({ data: requests });
+  return NextResponse.json(
+    { data: requests },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

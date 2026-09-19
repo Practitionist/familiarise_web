@@ -46,7 +46,10 @@ export async function GET(req: NextRequest) {
   if (!scopeResolution.ok) {
     return NextResponse.json(
       { error: scopeResolution.message, code: scopeResolution.code },
-      { status: scopeResolution.status },
+      {
+        status: scopeResolution.status,
+        headers: { "Cache-Control": "no-store" },
+      },
     );
   }
 
@@ -56,7 +59,7 @@ export async function GET(req: NextRequest) {
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const pagination = parsePagination(url);
@@ -68,5 +71,7 @@ export async function GET(req: NextRequest) {
     page: pagination.page,
     perPage: pagination.pageSize,
   });
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

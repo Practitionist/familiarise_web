@@ -2,6 +2,11 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 
+// Public taxonomy read (no session, no per-user data): safe for shared caching.
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+};
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -62,16 +67,25 @@ export async function GET(request: NextRequest) {
         .filter((t) => t.programCount > 0)
         .sort((a, b) => b.programCount - a.programCount);
 
-      return NextResponse.json({ data: topicsWithCount }, { status: 200 });
+      return NextResponse.json(
+        { data: topicsWithCount },
+        { status: 200, headers: PUBLIC_CACHE_HEADERS },
+      );
     }
 
     const topics = await prisma.topic.findMany({
       orderBy: { name: "asc" },
     });
 
-    return NextResponse.json({ data: topics }, { status: 200 });
+    return NextResponse.json(
+      { data: topics },
+      { status: 200, headers: PUBLIC_CACHE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "topics" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "topics" } },
+    );
     console.error("Error fetching topics:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching topics" },

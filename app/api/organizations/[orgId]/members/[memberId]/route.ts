@@ -108,7 +108,10 @@ export async function GET(
     },
   });
   if (!membership) {
-    return NextResponse.json({ error: "Member not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Member not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const isSelf = membership.id === access.member.id;
@@ -116,11 +119,14 @@ export async function GET(
   if (!isSelf && !isManagerPlus) {
     return NextResponse.json(
       { error: "Insufficient role to view other members" },
-      { status: 403 },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
     );
   }
 
-  return NextResponse.json({ membership });
+  return NextResponse.json(
+    { membership },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(

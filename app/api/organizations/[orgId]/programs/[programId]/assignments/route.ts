@@ -43,7 +43,7 @@ export async function GET(
   if (!access.org.canSponsor) {
     return NextResponse.json(
       { error: "Organization does not sponsor programs" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -54,7 +54,10 @@ export async function GET(
     select: { id: true },
   });
   if (!program) {
-    return NextResponse.json({ error: "Program not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Program not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const url = new URL(req.url);
@@ -77,7 +80,10 @@ export async function GET(
     orderBy: { periodStart: "desc" },
   });
 
-  return NextResponse.json({ data: assignments });
+  return NextResponse.json(
+    { data: assignments },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -135,74 +141,73 @@ export async function POST(
   const outcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
-    // B2B gap 10 — belonging to the org is not the same as being IN it. A
-    // PENDING member has not accepted the invite yet and a SUSPENDED/REMOVED/
-    // ERASED one is gone, so assigning either seats a program against somebody
-    // who cannot consume it: activeSeatCount goes up, the seat is billed, and
-    // nobody can use it.
-    //
-    // Read INSIDE the transaction. Checking first and claiming after left a
-    // window where a membership suspended in between still took a billed seat;
-    // Serializable puts this row in the transaction's read set, so the
-    // suspension and the claim can no longer interleave.
-    const membership = await tx.membership.findFirst({
-      where: { id: body.membershipId, organizationId: orgId },
-      select: { id: true, status: true },
-    });
-    if (!membership) return { ok: false as const, code: "FOREIGN" as const };
-    if (membership.status !== "ACTIVE") {
-      return {
-        ok: false as const,
-        code: "INACTIVE" as const,
-        status: membership.status,
-      };
-    }
+        // B2B gap 10 — belonging to the org is not the same as being IN it. A
+        // PENDING member has not accepted the invite yet and a SUSPENDED/REMOVED/
+        // ERASED one is gone, so assigning either seats a program against somebody
+        // who cannot consume it: activeSeatCount goes up, the seat is billed, and
+        // nobody can use it.
+        //
+        // Read INSIDE the transaction. Checking first and claiming after left a
+        // window where a membership suspended in between still took a billed seat;
+        // Serializable puts this row in the transaction's read set, so the
+        // suspension and the claim can no longer interleave.
+        const membership = await tx.membership.findFirst({
+          where: { id: body.membershipId, organizationId: orgId },
+          select: { id: true, status: true },
+        });
+        if (!membership)
+          return { ok: false as const, code: "FOREIGN" as const };
+        if (membership.status !== "ACTIVE") {
+          return {
+            ok: false as const,
+            code: "INACTIVE" as const,
+            status: membership.status,
+          };
+        }
 
-    // claimProgramAssignment reports whether THIS call created the row (atomic
-    // INSERT … ON CONFLICT DO NOTHING). Seat-count only on a genuine create, so
-    // a re-claim or two concurrent identical POSTs increment activeSeatCount
-    // exactly once (the old preexisting-probe was a check-then-act race).
-    const { assignment: created, created: isNew } = await claimProgramAssignment(
-      tx,
-      {
-        programId,
-        membershipId: body.membershipId,
-        periodStart: body.periodStart,
-        periodEnd: body.periodEnd,
+        // claimProgramAssignment reports whether THIS call created the row (atomic
+        // INSERT … ON CONFLICT DO NOTHING). Seat-count only on a genuine create, so
+        // a re-claim or two concurrent identical POSTs increment activeSeatCount
+        // exactly once (the old preexisting-probe was a check-then-act race).
+        const { assignment: created, created: isNew } =
+          await claimProgramAssignment(tx, {
+            programId,
+            membershipId: body.membershipId,
+            periodStart: body.periodStart,
+            periodEnd: body.periodEnd,
+          });
+        if (isNew) {
+          await adjustActiveSeatCount(tx, { programId, delta: +1 });
+          // #779 — set-point for the persistent money-config lock: the FIRST genuine
+          // assignment freezes LOCKED_PROGRAM_FIELDS. updateMany gated on
+          // configLockedAt:null so a re-stamp (already-locked program, later
+          // assignment) is a no-op and the original lock instant is preserved.
+          await tx.program.updateMany({
+            where: { id: programId, configLockedAt: null },
+            data: { configLockedAt: new Date() },
+          });
+        }
+        await tx.orgAuditLog.create({
+          data: {
+            organizationId: orgId,
+            actorMembershipId: access.member.id,
+            targetMembershipId: body.membershipId,
+            category: "PROGRAM",
+            action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
+            description: `Assigned membership ${body.membershipId} to program ${programId}`,
+            details: {
+              programId,
+              membershipId: body.membershipId,
+              periodStart: body.periodStart.toISOString(),
+              periodEnd: body.periodEnd.toISOString(),
+            },
+          },
+        });
+        return { ok: true as const, assignment: created };
       },
-    );
-    if (isNew) {
-      await adjustActiveSeatCount(tx, { programId, delta: +1 });
-      // #779 — set-point for the persistent money-config lock: the FIRST genuine
-      // assignment freezes LOCKED_PROGRAM_FIELDS. updateMany gated on
-      // configLockedAt:null so a re-stamp (already-locked program, later
-      // assignment) is a no-op and the original lock instant is preserved.
-      await tx.program.updateMany({
-        where: { id: programId, configLockedAt: null },
-        data: { configLockedAt: new Date() },
-      });
-    }
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        targetMembershipId: body.membershipId,
-        category: "PROGRAM",
-        action: AUDIT_ACTIONS.PROGRAM.PROGRAM_ASSIGNED,
-        description: `Assigned membership ${body.membershipId} to program ${programId}`,
-        details: {
-          programId,
-          membershipId: body.membershipId,
-          periodStart: body.periodStart.toISOString(),
-          periodEnd: body.periodEnd.toISOString(),
-        },
-      },
-    });
-    return { ok: true as const, assignment: created };
-        },
-        { isolationLevel: "Serializable" },
-      ),
-    );
+      { isolationLevel: "Serializable" },
+    ),
+  );
 
   if (!outcome.ok) {
     // 400 for a membership that is not this org's (malformed request), 409 for

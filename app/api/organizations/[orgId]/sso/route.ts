@@ -124,11 +124,7 @@ async function assertSensitiveChangeVerified(
   }
 }
 
-function upsertSsoSettings(
-  tx: Tx,
-  orgId: string,
-  body: PatchBody,
-) {
+function upsertSsoSettings(tx: Tx, orgId: string, body: PatchBody) {
   return tx.organizationSSOSettings.upsert({
     where: { organizationId: orgId },
     create: {
@@ -151,7 +147,10 @@ function upsertSsoSettings(
 
 // SSO_ENABLED/DISABLED specifically fires on enforceSSO flips, not generic
 // setting edits. Domain list changes still count as SETTINGS_CHANGED.
-function resolveSsoAuditAction(existing: SsoSettingsRow | null, body: PatchBody) {
+function resolveSsoAuditAction(
+  existing: SsoSettingsRow | null,
+  body: PatchBody,
+) {
   const ssoStateChanged =
     body.enforceSSO !== undefined &&
     body.enforceSSO !== (existing?.enforceSSO ?? false);
@@ -183,8 +182,7 @@ async function writeSsoAuditLog(
         from: {
           allowedEmailDomains: existing?.allowedEmailDomains ?? [],
           enforceSSO: existing?.enforceSSO ?? false,
-          defaultRoleForAutoJoin:
-            existing?.defaultRoleForAutoJoin ?? "LEARNER",
+          defaultRoleForAutoJoin: existing?.defaultRoleForAutoJoin ?? "LEARNER",
         },
         to: {
           allowedEmailDomains: next.allowedEmailDomains,
@@ -206,8 +204,7 @@ function buildKnownSsoErrorResponse(err: unknown): NextResponse | null {
     );
   }
   if (err instanceof Error && "httpStatus" in err) {
-    const status =
-      typeof err.httpStatus === "number" ? err.httpStatus : 500;
+    const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
     // VERSION_CONFLICT carries currentVersion so the client can
     // refetch-and-retry without an extra GET.
     const code =
@@ -257,20 +254,23 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    settings: settings ?? {
-      organizationId: orgId,
-      allowedEmailDomains: [],
-      enforceSSO: false,
-      defaultRoleForAutoJoin: "LEARNER",
-      version: 1,
+  return NextResponse.json(
+    {
+      settings: settings ?? {
+        organizationId: orgId,
+        allowedEmailDomains: [],
+        enforceSSO: false,
+        defaultRoleForAutoJoin: "LEARNER",
+        version: 1,
+      },
+      providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
+        ...rest,
+        providerType: samlConfig ? "saml" : oidcConfig ? "oidc" : null,
+      })),
+      domainClaims: claims,
     },
-    providers: providers.map(({ samlConfig, oidcConfig, ...rest }) => ({
-      ...rest,
-      providerType: samlConfig ? "saml" : oidcConfig ? "oidc" : null,
-    })),
-    domainClaims: claims,
-  });
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(

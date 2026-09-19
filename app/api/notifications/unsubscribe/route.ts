@@ -43,7 +43,12 @@ function readLink(request: NextRequest): { userId: string; valid: boolean } {
 }
 
 function toPage(query: string): NextResponse {
-  return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, 303);
+  // Token-gated one-click action: scanners prefetch these links, so neither
+  // the redirect nor the JSON may sit in a shared cache.
+  return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, {
+    status: 303,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -62,7 +67,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!valid) {
     return wantsHtml
       ? toPage("error=1")
-      : NextResponse.json({ error: "invalid link" }, { status: 400 });
+      : NextResponse.json(
+          { error: "invalid link" },
+          {
+            status: 400,
+            headers: { "Cache-Control": "no-store" },
+          },
+        );
   }
 
   try {

@@ -181,7 +181,10 @@ export async function GET() {
       lastRun: executionMap.get(job.id)?.lastRun || null,
     }));
 
-    return NextResponse.json({ jobs: jobsWithStats });
+    return NextResponse.json(
+      { jobs: jobsWithStats },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -190,7 +193,7 @@ export async function GET() {
     console.error("Error fetching system jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch system jobs" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

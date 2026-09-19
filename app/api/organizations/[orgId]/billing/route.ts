@@ -151,51 +151,54 @@ export async function GET(
       : Promise.resolve(null),
   ]);
 
-  return NextResponse.json({
-    walletFrozen,
-    walletFrozenReason: walletFrozen
-      ? "Wallet spend is paused pending a balance-reconciliation review."
-      : null,
-    dunningSuspended: suspendingInvoice !== null,
-    dunningSuspendedInvoiceNumber: suspendingInvoice?.invoiceNumber ?? null,
-    fundingSource: billingAccount?.fundingSource ?? null,
-    // null = unlimited (#777 §B credit-limit visibility).
-    creditLimitPaise: billingAccount?.creditLimit ?? null,
-    monthToDate: {
-      gross: sumPaise(monthAgg._sum.amount),
-      paymentCount: monthAgg._count._all,
+  return NextResponse.json(
+    {
+      walletFrozen,
+      walletFrozenReason: walletFrozen
+        ? "Wallet spend is paused pending a balance-reconciliation review."
+        : null,
+      dunningSuspended: suspendingInvoice !== null,
+      dunningSuspendedInvoiceNumber: suspendingInvoice?.invoiceNumber ?? null,
+      fundingSource: billingAccount?.fundingSource ?? null,
+      // null = unlimited (#777 §B credit-limit visibility).
+      creditLimitPaise: billingAccount?.creditLimit ?? null,
+      monthToDate: {
+        gross: sumPaise(monthAgg._sum.amount),
+        paymentCount: monthAgg._count._all,
+      },
+      outstanding: {
+        amount: sumPaise(outstandingAgg._sum.totalPaise),
+        invoiceCount: outstandingAgg._count._all,
+      },
+      pendingCharges: pendingAgg
+        ? {
+            amount: sumPaise(pendingAgg._sum.amount),
+            paymentCount: pendingAgg._count._all,
+          }
+        : null,
+      paymentTermsDays: org?.paymentTermsDays ?? 60,
+      licenseContract: licenseContract
+        ? {
+            id: licenseContract.id,
+            effectiveFrom: licenseContract.effectiveFrom.toISOString(),
+            effectiveTo: licenseContract.effectiveTo?.toISOString() ?? null,
+            autoRenew: licenseContract.autoRenew,
+            subscription: licenseContract.subscription
+              ? {
+                  model: licenseContract.subscription.model,
+                  cycle: licenseContract.subscription.cycle,
+                  flatFeePaise: licenseContract.subscription.flatFeePaise,
+                  currentCycleStart:
+                    licenseContract.subscription.currentCycleStart.toISOString(),
+                  currentCycleEnd:
+                    licenseContract.subscription.currentCycleEnd.toISOString(),
+                  nextInvoiceDate:
+                    licenseContract.subscription.nextInvoiceDate.toISOString(),
+                }
+              : null,
+          }
+        : null,
     },
-    outstanding: {
-      amount: sumPaise(outstandingAgg._sum.totalPaise),
-      invoiceCount: outstandingAgg._count._all,
-    },
-    pendingCharges: pendingAgg
-      ? {
-          amount: sumPaise(pendingAgg._sum.amount),
-          paymentCount: pendingAgg._count._all,
-        }
-      : null,
-    paymentTermsDays: org?.paymentTermsDays ?? 60,
-    licenseContract: licenseContract
-      ? {
-          id: licenseContract.id,
-          effectiveFrom: licenseContract.effectiveFrom.toISOString(),
-          effectiveTo: licenseContract.effectiveTo?.toISOString() ?? null,
-          autoRenew: licenseContract.autoRenew,
-          subscription: licenseContract.subscription
-            ? {
-                model: licenseContract.subscription.model,
-                cycle: licenseContract.subscription.cycle,
-                flatFeePaise: licenseContract.subscription.flatFeePaise,
-                currentCycleStart:
-                  licenseContract.subscription.currentCycleStart.toISOString(),
-                currentCycleEnd:
-                  licenseContract.subscription.currentCycleEnd.toISOString(),
-                nextInvoiceDate:
-                  licenseContract.subscription.nextInvoiceDate.toISOString(),
-              }
-            : null,
-        }
-      : null,
-  });
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

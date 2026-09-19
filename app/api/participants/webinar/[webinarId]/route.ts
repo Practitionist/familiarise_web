@@ -107,11 +107,14 @@ export async function GET(
       participants.map((u) => u.id),
     );
 
-    return NextResponse.json({
-      webinarEvent,
-      participants,
-      seatPayments,
-    });
+    return NextResponse.json(
+      {
+        webinarEvent,
+        participants,
+        seatPayments,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

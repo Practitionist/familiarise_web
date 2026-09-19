@@ -17,7 +17,10 @@ export async function GET(
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const resolvedParams = await params;
@@ -26,7 +29,7 @@ export async function GET(
     if (!consultantProfileId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -39,7 +42,10 @@ export async function GET(
       session.user.consultantProfileId === consultantProfileId;
 
     if (!isPrivileged && !ownsProfile) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // #890 — shared read; same fn the consultant home server page calls so
@@ -47,12 +53,18 @@ export async function GET(
     const data = await getConsultantDashboard(consultantProfileId);
 
     // Return consolidated response
-    return NextResponse.json({
-      success: true,
-      data,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        data,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
     console.error("Error fetching dashboard data:", error);
     return NextResponse.json(
       {
@@ -60,7 +72,7 @@ export async function GET(
         error: "Failed to fetch dashboard data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

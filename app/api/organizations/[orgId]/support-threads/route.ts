@@ -78,7 +78,9 @@ export async function GET(
   if (!id.ok) return id.response;
   const { orgId } = id.data;
   try {
-    const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+    const access = await requireOrgAccess(orgId, {
+      permission: "operations.read",
+    });
     if (access.error) return access.error;
 
     const url = new URL(req.url);
@@ -116,39 +118,42 @@ export async function GET(
       prisma.appointmentSupportThread.count({ where }),
     ]);
 
-    return NextResponse.json({
-      data: threads.map((t) => ({
-        id: t.id,
-        appointmentId: t.appointmentId,
-        category: t.category,
-        status: t.status,
-        activeChannel: t.activeChannel,
-        createdAt: t.createdAt,
-        lastMessageAt: t.lastMessageAt ?? t.createdAt,
-        resolvedAt: t.resolvedAt,
-        supportTicketId: t.supportTicketId,
-        member: t.user,
-        appointment: {
-          appointmentType: t.appointment.appointmentType,
-          startsAt: t.appointment.occurrences[0]?.startsAt ?? null,
-          planTitle:
-            t.appointment.consultation?.consultationPlan?.title ??
-            t.appointment.subscription?.subscriptionPlan?.title ??
-            t.appointment.webinar?.webinarPlan?.title ??
-            t.appointment.class?.classPlan?.title ??
-            null,
+    return NextResponse.json(
+      {
+        data: threads.map((t) => ({
+          id: t.id,
+          appointmentId: t.appointmentId,
+          category: t.category,
+          status: t.status,
+          activeChannel: t.activeChannel,
+          createdAt: t.createdAt,
+          lastMessageAt: t.lastMessageAt ?? t.createdAt,
+          resolvedAt: t.resolvedAt,
+          supportTicketId: t.supportTicketId,
+          member: t.user,
+          appointment: {
+            appointmentType: t.appointment.appointmentType,
+            startsAt: t.appointment.occurrences[0]?.startsAt ?? null,
+            planTitle:
+              t.appointment.consultation?.consultationPlan?.title ??
+              t.appointment.subscription?.subscriptionPlan?.title ??
+              t.appointment.webinar?.webinarPlan?.title ??
+              t.appointment.class?.classPlan?.title ??
+              null,
+          },
+          // Deliberately NO transcript, NO last-message preview: metadata triage
+          // only (ADR 20). The count of exchanges is operational metadata; their
+          // content is not.
+        })),
+        pagination: {
+          page: pagination.page,
+          perPage: pagination.pageSize,
+          total,
+          pages: Math.ceil(total / pagination.pageSize),
         },
-        // Deliberately NO transcript, NO last-message preview: metadata triage
-        // only (ADR 20). The count of exchanges is operational metadata; their
-        // content is not.
-      })),
-      pagination: {
-        page: pagination.page,
-        perPage: pagination.pageSize,
-        total,
-        pages: Math.ceil(total / pagination.pageSize),
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

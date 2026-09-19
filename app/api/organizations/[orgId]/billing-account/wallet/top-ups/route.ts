@@ -57,7 +57,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const ba = await prisma.billingAccount.findFirst({
@@ -67,7 +70,7 @@ export async function GET(
   if (!ba || ba.fundingSource !== "WALLET") {
     return NextResponse.json(
       { error: "Wallet top-ups require WALLET funding" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -89,10 +92,13 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    data: topUps,
-    meta: { total, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data: topUps,
+      meta: { total, page, perPage },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -148,7 +154,10 @@ export async function POST(
   if (clientIdempotencyKey) {
     const existing = await prisma.walletTopUp.findUnique({
       where: { providerOrderId: clientIdempotencyKey },
-      select: { providerOrderId: true, billingAccount: { select: { ownerOrgId: true } } },
+      select: {
+        providerOrderId: true,
+        billingAccount: { select: { ownerOrgId: true } },
+      },
     });
     if (existing) {
       // Cross-tenant guard: providerOrderId is globally unique, so without
@@ -217,7 +226,10 @@ export async function POST(
     ) {
       const winner = await prisma.walletTopUp.findUnique({
         where: { providerOrderId: walletEntryOrderId },
-        select: { providerOrderId: true, billingAccount: { select: { ownerOrgId: true } } },
+        select: {
+          providerOrderId: true,
+          billingAccount: { select: { ownerOrgId: true } },
+        },
       });
       if (winner?.billingAccount.ownerOrgId === orgId) {
         return NextResponse.json(
@@ -237,7 +249,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error(
       "[wallet/top-ups] placeholder WalletEntry persistence failed:",
       err,
@@ -288,8 +303,13 @@ export async function POST(
           cleanupErr,
         ),
       );
-    if (err instanceof PaymentError && err.code === "RAZORPAY_NOT_INITIALIZED") {
-      Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", { tags: { subsystem: "enterprise" } });
+    if (
+      err instanceof PaymentError &&
+      err.code === "RAZORPAY_NOT_INITIALIZED"
+    ) {
+      Sentry.logger.warn("[wallet/top-ups] payment gateway not configured", {
+        tags: { subsystem: "enterprise" },
+      });
       return NextResponse.json(
         {
           error:
@@ -299,7 +319,10 @@ export async function POST(
         { status: 503 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error("[wallet/top-ups] createRazorpayOrder failed:", err);
     return NextResponse.json(
       {
@@ -341,7 +364,10 @@ export async function POST(
     // Notes/audit-log write failed, but the WalletEntry already exists
     // and the Razorpay order is live — the top-up will still settle on
     // webhook capture. Return 201 and log for operators.
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     console.error(
       "[wallet/top-ups] notes/audit-log write failed (top-up still valid):",
       err,

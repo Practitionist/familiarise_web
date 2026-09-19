@@ -68,21 +68,27 @@ export async function GET(req: NextRequest) {
       prisma.consultantEarnings.count({ where }),
     ]);
 
-    return NextResponse.json({
-      earnings,
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        earnings,
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

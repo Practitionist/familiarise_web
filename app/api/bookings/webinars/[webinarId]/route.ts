@@ -39,7 +39,8 @@ export async function GET(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -47,13 +48,19 @@ export async function GET(
       },
     });
 
-    return NextResponse.json({ data: webinarData }, { status: 200 });
+    return NextResponse.json(
+      { data: webinarData },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Webinar not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -62,7 +69,7 @@ export async function GET(
     console.error("Error fetching webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -105,7 +112,10 @@ export async function PUT(
         select: { status: true },
       });
       if (!current) {
-        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Webinar not found" },
+          { status: 404 },
+        );
       }
       allowedFrom = EVENT_ALLOWED_FROM[requestedStatus];
       if (!allowedFrom.includes(current.status)) {
@@ -162,7 +172,8 @@ export async function PUT(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -284,7 +295,8 @@ export async function DELETE(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },

@@ -88,7 +88,10 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ data: invitations });
+  return NextResponse.json(
+    { data: invitations },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(

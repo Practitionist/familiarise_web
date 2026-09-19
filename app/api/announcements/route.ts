@@ -46,10 +46,22 @@ export async function GET() {
   try {
     const announcements = await getActiveAnnouncements();
 
-    return NextResponse.json({
-      success: true,
-      data: announcements,
-    });
+    // Session-free public banner read: safe for shared caching. Matches the
+    // existing ANNOUNCEMENTS_TAG invalidation on the POST write below (and
+    // app/api/announcements/[id]/route.ts writes), so freshness still comes
+    // from revalidateTag. The degraded empty-banner branch below stays
+    // `no-store` on purpose (#1125).
+    return NextResponse.json(
+      {
+        success: true,
+        data: announcements,
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+        },
+      },
+    );
   } catch (error) {
     // The announcements banner is non-critical and polled often. A transient
     // pooler connect/read timeout (cross-region cold connect) should degrade to

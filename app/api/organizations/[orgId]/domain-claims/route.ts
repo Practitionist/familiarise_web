@@ -56,7 +56,10 @@ export async function GET(
     orderBy: { claimedAt: "desc" },
   });
 
-  return NextResponse.json({ data: claims });
+  return NextResponse.json(
+    { data: claims },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -127,15 +130,15 @@ export async function POST(
           recordName: `_familiarise-verify.${created.domain}`,
           recordValue: created.verificationToken,
           recordType: "TXT",
-          instructionsUrl: "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
+          instructionsUrl:
+            "/docs/enterprise/20-iam-and-security/01-sso-and-authentication.md",
         },
       },
       { status: 201 },
     );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
     // P2002 race: two concurrent OWNERs claim the same domain at the
@@ -156,7 +159,10 @@ export async function POST(
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

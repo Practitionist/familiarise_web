@@ -56,7 +56,7 @@ export async function GET(
   if (!ENABLE_HOST_ORGS || !access.org.canHost) {
     return NextResponse.json(
       { error: "Organization does not host — no earnings to list" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -67,7 +67,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsedQuery.data;
@@ -124,16 +124,19 @@ export async function GET(
   const rows = hasMore ? earnings.slice(0, q.limit) : earnings;
   const nextCursor = hasMore ? (rows[rows.length - 1]?.id ?? null) : null;
 
-  return NextResponse.json({
-    data: rows,
-    pagination: { hasMore, nextCursor, limit: q.limit },
-    aggregates: aggregates.map((g) => ({
-      status: g.status,
-      count: g._count._all,
-      orgSharePaise: sumPaise(g._sum.orgSharePaise),
-      platformFeePaise: sumPaise(g._sum.platformFeePaise),
-      consultantSharePaise: sumPaise(g._sum.consultantSharePaise),
-      refundedAmountPaise: sumPaise(g._sum.refundedAmountPaise),
-    })),
-  });
+  return NextResponse.json(
+    {
+      data: rows,
+      pagination: { hasMore, nextCursor, limit: q.limit },
+      aggregates: aggregates.map((g) => ({
+        status: g.status,
+        count: g._count._all,
+        orgSharePaise: sumPaise(g._sum.orgSharePaise),
+        platformFeePaise: sumPaise(g._sum.platformFeePaise),
+        consultantSharePaise: sumPaise(g._sum.consultantSharePaise),
+        refundedAmountPaise: sumPaise(g._sum.refundedAmountPaise),
+      })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

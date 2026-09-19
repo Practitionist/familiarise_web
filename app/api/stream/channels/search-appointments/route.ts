@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to search appointments" },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -55,7 +55,9 @@ export async function GET(request: NextRequest) {
     const query = searchParams.get("q")?.trim().toLowerCase();
 
     if (!query || query.length < 2) {
-      return NextResponse.json([]);
+      return NextResponse.json([], {
+        headers: { "Cache-Control": "no-store" },
+      });
     }
 
     const results: AppointmentSearchResult[] = [];
@@ -500,6 +502,7 @@ export async function GET(request: NextRequest) {
     // boundary instead of arriving as `undefined` in the search dropdown.
     return NextResponse.json(
       AppointmentSearchResultSchema.array().parse(results.slice(0, 20)),
+      { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
     Sentry.captureException(
@@ -509,7 +512,7 @@ export async function GET(request: NextRequest) {
     console.error("Error searching appointments:", error);
     return NextResponse.json(
       { error: "Failed to search appointments" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

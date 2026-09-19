@@ -24,7 +24,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { consultantId } = await params;
@@ -36,7 +39,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         select: { id: true },
       });
       if (consultantProfile?.id !== consultantId) {
-        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Access denied" },
+          { status: 403, headers: { "Cache-Control": "no-store" } },
+        );
       }
     }
 
@@ -49,9 +55,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const limit = parseInt(searchParams.get("limit") || "12");
 
     // Get recordings with database-level filtering
-    const { recordings, total } = await RecordingService.getConsultantRecordings(
-      consultantId,
-      {
+    const { recordings, total } =
+      await RecordingService.getConsultantRecordings(consultantId, {
         type: type || undefined,
         status: status || undefined,
         search,
@@ -60,71 +65,78 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         // #1166 ORG-6 — personal dashboard endpoint, so pin personal
         // (ADR 19). An org recordings surface would pass its own orgId.
         organizationId: null,
-      },
-    );
+      });
 
     // Map recordings to response format with best URLs (async — presigned URLs)
-    const formattedRecordings = await Promise.all(recordings.map(async (recording) => {
-      const slot = recording.meeting.occurrence;
-      const appointment = slot.appointment;
+    const formattedRecordings = await Promise.all(
+      recordings.map(async (recording) => {
+        const slot = recording.meeting.occurrence;
+        const appointment = slot.appointment;
 
-      let planType: "webinar" | "class" | null = null;
-      let planId: string | null = null;
-      let planTitle: string | null = null;
+        let planType: "webinar" | "class" | null = null;
+        let planId: string | null = null;
+        let planTitle: string | null = null;
 
-      if (appointment?.webinar?.webinarPlan) {
-        planType = "webinar";
-        planId = appointment.webinar.webinarPlan.id;
-        planTitle = appointment.webinar.webinarPlan.title;
-      } else if (appointment?.class?.classPlan) {
-        planType = "class";
-        planId = appointment.class.classPlan.id;
-        planTitle = appointment.class.classPlan.title;
-      }
+        if (appointment?.webinar?.webinarPlan) {
+          planType = "webinar";
+          planId = appointment.webinar.webinarPlan.id;
+          planTitle = appointment.webinar.webinarPlan.title;
+        } else if (appointment?.class?.classPlan) {
+          planType = "class";
+          planId = appointment.class.classPlan.id;
+          planTitle = appointment.class.classPlan.title;
+        }
 
-      // Participant names come from the appointment's live roster (#1554)
-      const allNames = appointment.participants
-        .map((participant) => participant.user.name)
-        .filter((n): n is string => n !== null);
-      const participantNames = allNames.slice(0, 3);
-      const participantCount = allNames.length;
+        // Participant names come from the appointment's live roster (#1554)
+        const allNames = appointment.participants
+          .map((participant) => participant.user.name)
+          .filter((n): n is string => n !== null);
+        const participantNames = allNames.slice(0, 3);
+        const participantCount = allNames.length;
 
-      return {
-        id: recording.id,
-        title: recording.title,
-        durationInMinutes: recording.durationInMinutes,
-        recordedAt: recording.recordedAt,
-        status: recording.status,
-        storageType: recording.storageType,
-        playbackUrl: await getBestRecordingUrl(recording),
-        thumbnailUrl: recording.thumbnailUrl,
-        resolution: recording.resolution,
-        fileSize: recording.fileSize ? Number(recording.fileSize) : null,
-        streamUrlExpiresAt: recording.streamUrlExpiresAt,
-        transferredAt: recording.transferredAt,
-        planType,
-        planId,
-        planTitle,
-        participantNames,
-        participantCount,
-        appointmentDate: slot.startsAt,
-        createdAt: recording.createdAt,
-      };
-    }));
+        return {
+          id: recording.id,
+          title: recording.title,
+          durationInMinutes: recording.durationInMinutes,
+          recordedAt: recording.recordedAt,
+          status: recording.status,
+          storageType: recording.storageType,
+          playbackUrl: await getBestRecordingUrl(recording),
+          thumbnailUrl: recording.thumbnailUrl,
+          resolution: recording.resolution,
+          fileSize: recording.fileSize ? Number(recording.fileSize) : null,
+          streamUrlExpiresAt: recording.streamUrlExpiresAt,
+          transferredAt: recording.transferredAt,
+          planType,
+          planId,
+          planTitle,
+          participantNames,
+          participantCount,
+          appointmentDate: slot.startsAt,
+          createdAt: recording.createdAt,
+        };
+      }),
+    );
 
-    return NextResponse.json({
-      recordings: formattedRecordings,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        recordings: formattedRecordings,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultants" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultants" } },
+    );
     console.error("Error getting consultant recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

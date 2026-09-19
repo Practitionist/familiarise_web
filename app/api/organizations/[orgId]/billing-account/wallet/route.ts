@@ -54,7 +54,7 @@ export async function GET(
   if (!ba) {
     return NextResponse.json(
       { error: "Organization does not have a BillingAccount" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
   if (ba.fundingSource !== "WALLET") {
@@ -63,7 +63,7 @@ export async function GET(
         error: "Wallet is only available for WALLET-funded accounts",
         currentFundingSource: ba.fundingSource,
       },
-      { status: 409 },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -74,7 +74,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid pagination", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const { page, perPage } = parsed.data;
@@ -154,16 +154,19 @@ export async function GET(
     journalBalance - newerDelta,
   );
 
-  return NextResponse.json({
-    billingAccount: {
-      id: ba.id,
-      currency: ba.currency,
-      walletBalance: ba.walletBalance ?? 0,
-      minBalancePaise: ba.minBalancePaise,
-      autoTopUpEnabled: ba.autoTopUpEnabled,
-      autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
+  return NextResponse.json(
+    {
+      billingAccount: {
+        id: ba.id,
+        currency: ba.currency,
+        walletBalance: ba.walletBalance ?? 0,
+        minBalancePaise: ba.minBalancePaise,
+        autoTopUpEnabled: ba.autoTopUpEnabled,
+        autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
+      },
+      ledger,
+      meta: { total, page, perPage },
     },
-    ledger,
-    meta: { total, page, perPage },
-  });
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

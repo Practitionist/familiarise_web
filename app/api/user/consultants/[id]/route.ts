@@ -279,7 +279,14 @@ export async function GET(
       { data: consultant ? consultantPublicApiSchema.parse(consultant) : null },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+          // Branch the cache directive with the access level: the privileged
+          // projection (own profile / admin: full user include, all plan
+          // visibilities) must NEVER sit in the shared cache under this URL,
+          // or an anonymous visitor could be served another user's private
+          // rows. The public projection keeps the shared 60s entry.
+          "Cache-Control": isPrivilegedAccess
+            ? "private, no-store"
+            : "public, s-maxage=60, stale-while-revalidate=300",
         },
       },
     );

@@ -15,7 +15,10 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
   const userId = session.user.id;
 
@@ -47,15 +50,18 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({
-    charges: rows.map((r) => ({
-      id: r.id,
-      amountPaise: r.marginalPaise,
-      currency: r.currency,
-      status: r.chargeStatus,
-      programName: r.programAssignment.program.name,
-      orgName: r.programAssignment.program.contract.organization.name,
-      createdAt: r.createdAt,
-    })),
-  });
+  return NextResponse.json(
+    {
+      charges: rows.map((r) => ({
+        id: r.id,
+        amountPaise: r.marginalPaise,
+        currency: r.currency,
+        status: r.chargeStatus,
+        programName: r.programAssignment.program.name,
+        orgName: r.programAssignment.program.contract.organization.name,
+        createdAt: r.createdAt,
+      })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

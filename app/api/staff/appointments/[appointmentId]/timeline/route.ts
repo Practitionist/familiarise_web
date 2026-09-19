@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid appointment id" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -53,16 +53,18 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     if (!timeline) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    return NextResponse.json(timeline);
+    return NextResponse.json(timeline, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("Error fetching appointment timeline:", error);
     return NextResponse.json(
       { error: "Failed to fetch appointment timeline" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

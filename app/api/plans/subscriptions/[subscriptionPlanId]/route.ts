@@ -25,6 +25,12 @@ export async function GET(
 ) {
   try {
     const { subscriptionPlanId } = await params;
+    // NOTE: no public Cache-Control here on purpose. This read is
+    // session-free but includes `subscriptions` — other buyers' booking rows
+    // (requestedById, requestNotes, pendingPaymentUrl). Per-user data must
+    // never sit in shared cache. Purge TODO: none needed while the GET stays
+    // uncached; /api/programs/stats counts class/webinar plans only, so this
+    // plan family's writes don't affect it.
     const subscriptionPlan = await prisma.subscriptionPlan.findUniqueOrThrow({
       where: { id: subscriptionPlanId },
       include: {

@@ -9,13 +9,18 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     const stats = await getAdminStats();
-    return NextResponse.json(stats);
+    return NextResponse.json(stats, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     console.error("Admin stats error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     return NextResponse.json(
       { error: "Failed to fetch admin stats" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

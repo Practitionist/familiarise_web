@@ -99,7 +99,7 @@ export async function GET(
   if (!parsedPagination.success) {
     return NextResponse.json(
       { error: "Invalid pagination", detail: parsedPagination.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const { page, perPage } = parsedPagination.data;
@@ -154,10 +154,13 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    data,
-    meta: { total, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data,
+      meta: { total, page, perPage },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /**

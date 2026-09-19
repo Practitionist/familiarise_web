@@ -15,7 +15,10 @@ export async function GET(req: NextRequest) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Get payment intent from query parameters
@@ -27,7 +30,7 @@ export async function GET(req: NextRequest) {
     if (!paymentIntent) {
       return NextResponse.json(
         { error: "Payment intent ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -67,14 +70,17 @@ export async function GET(req: NextRequest) {
     });
 
     if (!payment) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Payment not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Verify the payment belongs to the authenticated user
     if (payment.userId !== session.user.id) {
       return NextResponse.json(
         { error: "Unauthorized access to payment" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -180,7 +186,7 @@ export async function GET(req: NextRequest) {
           message: getPaymentStatusMessage(payment.paymentStatus),
           ...(syncRetryAfter !== null ? { retryAfter: syncRetryAfter } : {}),
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -191,26 +197,29 @@ export async function GET(req: NextRequest) {
     }
 
     // Return success response with appointment details
-    return NextResponse.json({
-      paymentIntent: payment.paymentIntent,
-      appointmentType,
-      status: "SUCCEEDED",
-      message: "Payment verified successfully",
-      appointment: payment.appointment
-        ? {
-            id: payment.appointment.id,
-            type: payment.appointment.appointmentType,
-            slots: payment.appointment.occurrences,
-            consultation: payment.appointment.consultation,
-            subscription: payment.appointment.subscription,
-            webinar: payment.appointment.webinar,
-            class: payment.appointment.class,
-          }
-        : null,
-      amount: payment.amount,
-      currency: payment.currency,
-      createdAt: payment.createdAt,
-    });
+    return NextResponse.json(
+      {
+        paymentIntent: payment.paymentIntent,
+        appointmentType,
+        status: "SUCCEEDED",
+        message: "Payment verified successfully",
+        appointment: payment.appointment
+          ? {
+              id: payment.appointment.id,
+              type: payment.appointment.appointmentType,
+              slots: payment.appointment.occurrences,
+              consultation: payment.appointment.consultation,
+              subscription: payment.appointment.subscription,
+              webinar: payment.appointment.webinar,
+              class: payment.appointment.class,
+            }
+          : null,
+        amount: payment.amount,
+        currency: payment.currency,
+        createdAt: payment.createdAt,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -219,7 +228,7 @@ export async function GET(req: NextRequest) {
     console.error("Payment verification error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

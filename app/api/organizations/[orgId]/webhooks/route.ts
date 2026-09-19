@@ -92,9 +92,12 @@ export async function GET(
 
   // Redact-by-construction: the SELECT above never reads `secret`, so
   // there's no value to leak even by serialization mistake.
-  return NextResponse.json({
-    data: endpoints.map((e) => ({ ...e, secret: REDACTED_SECRET })),
-  });
+  return NextResponse.json(
+    {
+      data: endpoints.map((e) => ({ ...e, secret: REDACTED_SECRET })),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(

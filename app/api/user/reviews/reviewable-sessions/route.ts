@@ -39,7 +39,10 @@ export async function GET(req: NextRequest) {
     // Not having a consultee profile is not an error — it just means there is
     // nothing to review, and the card renders nothing.
     if (!consulteeProfileId) {
-      return NextResponse.json({ data: [] });
+      return NextResponse.json(
+        { data: [] },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // #705 — the profile page asks about a CONSULTANT, not an appointment:
@@ -63,13 +66,16 @@ export async function GET(req: NextRequest) {
       // Filtered in the QUERY, not after it. `loadReviewableAppointments` caps
       // at the 50 newest bookings, so narrowing afterwards silently returned
       // nothing to anyone whose session with this expert sat outside that page.
-      return NextResponse.json({
-        data: await listReviewableSessions(
-          consulteeProfileId,
-          session.user.id,
-          consultantProfileId,
-        ),
-      });
+      return NextResponse.json(
+        {
+          data: await listReviewableSessions(
+            consulteeProfileId,
+            session.user.id,
+            consultantProfileId,
+          ),
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     if (appointmentId) {
@@ -78,12 +84,18 @@ export async function GET(req: NextRequest) {
         session.user.id,
         appointmentId,
       );
-      return NextResponse.json({ data: one ? [one] : [] });
+      return NextResponse.json(
+        { data: one ? [one] : [] },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({
-      data: await listReviewableSessions(consulteeProfileId, session.user.id),
-    });
+    return NextResponse.json(
+      {
+        data: await listReviewableSessions(consulteeProfileId, session.user.id),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

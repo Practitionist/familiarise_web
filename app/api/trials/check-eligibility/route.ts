@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   if (!consulteeProfileId || !consultantProfileId) {
     return NextResponse.json(
       { error: "consulteeProfileId and consultantProfileId are required" },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -36,7 +36,10 @@ export async function GET(request: NextRequest) {
       consulteeProfileId !== session.user.consulteeProfileId &&
       consultantProfileId !== session.user.consultantProfileId
     ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
   }
 
@@ -76,7 +79,7 @@ export async function GET(request: NextRequest) {
       if (!plan) {
         return NextResponse.json(
           { error: "Subscription plan not found" },
-          { status: 404 },
+          { status: 404, headers: { "Cache-Control": "no-store" } },
         );
       }
 
@@ -108,35 +111,41 @@ export async function GET(request: NextRequest) {
         : null;
     const isEligible = !blockingTrial && planTrialEnabled;
 
-    return NextResponse.json({
-      data: {
-        isEligible,
-        hasExistingTrial: !!blockingTrial,
-        existingTrial: blockingTrial
-          ? {
-              id: blockingTrial.id,
-              status: blockingTrial.status,
-              subscriptionPlanId: blockingTrial.subscriptionPlanId,
-              requestedAt: blockingTrial.requestedAt,
-            }
-          : null,
-        planTrialEnabled,
-        planTrialDuration,
-        planTrialPriceInPaise,
-        plansWithTrialEnabled,
-        reason: !isEligible
-          ? blockingTrial
-            ? "You have already requested or completed a trial with this consultant"
-            : "This plan does not offer trials"
-          : null,
+    return NextResponse.json(
+      {
+        data: {
+          isEligible,
+          hasExistingTrial: !!blockingTrial,
+          existingTrial: blockingTrial
+            ? {
+                id: blockingTrial.id,
+                status: blockingTrial.status,
+                subscriptionPlanId: blockingTrial.subscriptionPlanId,
+                requestedAt: blockingTrial.requestedAt,
+              }
+            : null,
+          planTrialEnabled,
+          planTrialDuration,
+          planTrialPriceInPaise,
+          plansWithTrialEnabled,
+          reason: !isEligible
+            ? blockingTrial
+              ? "You have already requested or completed a trial with this consultant"
+              : "This plan does not offer trials"
+            : null,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "trials" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "trials" } },
+    );
     console.error("Error checking trial eligibility:", error);
     return NextResponse.json(
       { error: "An error occurred while checking trial eligibility" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

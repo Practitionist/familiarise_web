@@ -104,7 +104,10 @@ export async function GET(req: NextRequest) {
       },
     }));
 
-    return NextResponse.json({ data });
+    return NextResponse.json(
+      { data },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

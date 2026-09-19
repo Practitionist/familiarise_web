@@ -19,7 +19,7 @@ export async function GET(
           message: "Please sign in to view documents for review",
           code: "UNAUTHORIZED",
         },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -32,7 +32,7 @@ export async function GET(
           message: "Consultant ID is required",
           code: "INVALID_INPUT",
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -63,7 +63,7 @@ export async function GET(
           message: `"limit" must be an integer between 1 and ${MAX_LIMIT}.`,
           code: "INVALID_PAGINATION",
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -74,7 +74,7 @@ export async function GET(
           message: `"offset" must be a non-negative integer.`,
           code: "INVALID_PAGINATION",
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -117,7 +117,10 @@ export async function GET(
       }
     } catch (dbError) {
       console.error("Database error fetching consultant:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
       return NextResponse.json(
         {
           error: "Database temporarily unavailable",
@@ -125,7 +128,7 @@ export async function GET(
             "Unable to verify consultant access. Please try again in a few moments.",
           code: "DATABASE_ERROR",
         },
-        { status: 503 },
+        { status: 503, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -139,7 +142,7 @@ export async function GET(
               : "You don't have permission to view documents for this consultant profile. Please check that you're accessing the correct consultant dashboard.",
           code: "ACCESS_DENIED",
         },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -163,7 +166,10 @@ export async function GET(
           error: docScopeResolution.message,
           code: docScopeResolution.code,
         },
-        { status: docScopeResolution.status },
+        {
+          status: docScopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
     // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
@@ -218,7 +224,7 @@ export async function GET(
             message: `Status "${status}" is not valid. Valid statuses are: ${validStatuses.join(", ")}`,
             code: "INVALID_FILTER",
           },
-          { status: 400 },
+          { status: 400, headers: { "Cache-Control": "no-store" } },
         );
       }
     }
@@ -233,7 +239,7 @@ export async function GET(
             message: `Appointment type "${appointmentType}" is not valid. Valid types are: ${validTypes.join(", ")}`,
             code: "INVALID_FILTER",
           },
-          { status: 400 },
+          { status: 400, headers: { "Cache-Control": "no-store" } },
         );
       }
 
@@ -303,37 +309,43 @@ export async function GET(
       ]);
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "dashboard" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "dashboard" } },
+      );
 
       // Return an empty page envelope with helpful message instead of failing.
       // Shape must match the success branch so the UI's pagination prop is
       // never undefined on DB errors.
-      return NextResponse.json({
-        data: [],
-        count: 0,
-        message:
-          "Unable to load documents at the moment. This might be because no documents have been uploaded yet, or there's a temporary system issue. Please try again later.",
-        consultant: consultant.user.name,
-        filters: {
-          status,
-          appointmentType,
+      return NextResponse.json(
+        {
+          data: [],
+          count: 0,
+          message:
+            "Unable to load documents at the moment. This might be because no documents have been uploaded yet, or there's a temporary system issue. Please try again later.",
+          consultant: consultant.user.name,
+          filters: {
+            status,
+            appointmentType,
+          },
+          pagination: {
+            limit: take,
+            offset: skip,
+            totalCount: 0,
+            totalPages: 1,
+            currentPage: 1,
+            hasNextPage: false,
+            hasPrevPage: false,
+          },
+          metadata: {
+            pendingCount: 0,
+            reviewingCount: 0,
+            needsRevisionCount: 0,
+            completedCount: 0,
+          },
         },
-        pagination: {
-          limit: take,
-          offset: skip,
-          totalCount: 0,
-          totalPages: 1,
-          currentPage: 1,
-          hasNextPage: false,
-          hasPrevPage: false,
-        },
-        metadata: {
-          pendingCount: 0,
-          reviewingCount: 0,
-          needsRevisionCount: 0,
-          completedCount: 0,
-        },
-      });
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Transform data for frontend with error resilience
@@ -387,7 +399,12 @@ export async function GET(
         };
       } catch (transformError) {
         console.error("Error transforming document:", transformError, doc);
-        Sentry.captureException(transformError instanceof Error ? transformError : new Error(String(transformError)), { tags: { subsystem: "dashboard" } });
+        Sentry.captureException(
+          transformError instanceof Error
+            ? transformError
+            : new Error(String(transformError)),
+          { tags: { subsystem: "dashboard" } },
+        );
 
         // Return a safe fallback version of the document
         return {
@@ -453,31 +470,37 @@ export async function GET(
       message = `Found ${totalCount} document${totalCount === 1 ? "" : "s"} for review${filterSuffix}.${devModeMessage}`;
     }
 
-    return NextResponse.json({
-      data: transformedDocuments,
-      count: totalCount,
-      message,
-      consultant: isDevelopment
-        ? `${consultant.user.name} [DEV MODE]`
-        : consultant.user.name,
-      filters: {
-        status,
-        appointmentType,
+    return NextResponse.json(
+      {
+        data: transformedDocuments,
+        count: totalCount,
+        message,
+        consultant: isDevelopment
+          ? `${consultant.user.name} [DEV MODE]`
+          : consultant.user.name,
+        filters: {
+          status,
+          appointmentType,
+        },
+        pagination: {
+          limit: take,
+          offset: skip,
+          totalCount,
+          totalPages: Math.max(1, Math.ceil(totalCount / take)),
+          currentPage: Math.floor(skip / take) + 1,
+          hasNextPage: skip + take < totalCount,
+          hasPrevPage: skip > 0,
+        },
+        metadata,
       },
-      pagination: {
-        limit: take,
-        offset: skip,
-        totalCount,
-        totalPages: Math.max(1, Math.ceil(totalCount / take)),
-        currentPage: Math.floor(skip / take) + 1,
-        hasNextPage: skip + take < totalCount,
-        hasPrevPage: skip > 0,
-      },
-      metadata,
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching consultant documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "dashboard" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "dashboard" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -492,7 +515,7 @@ export async function GET(
               "Unable to connect to the document system. Please check your internet connection and try again.",
             code: "CONNECTION_ERROR",
           },
-          { status: 503 },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
         );
       }
 
@@ -507,7 +530,7 @@ export async function GET(
               "The document review system is temporarily unavailable. Please try again in a few moments.",
             code: "DATABASE_ERROR",
           },
-          { status: 503 },
+          { status: 503, headers: { "Cache-Control": "no-store" } },
         );
       }
     }
@@ -519,7 +542,7 @@ export async function GET(
           "Something went wrong while loading documents for review. Please refresh the page or try again later. If the problem persists, contact support.",
         code: "UNKNOWN_ERROR",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

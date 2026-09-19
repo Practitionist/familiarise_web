@@ -17,10 +17,16 @@ export async function GET() {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
     if (session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Three fully independent reads — run concurrently instead of paying the
@@ -276,17 +282,20 @@ export async function GET() {
       );
     });
 
-    return NextResponse.json({
-      approvalPayments,
-      count: approvalPayments.length,
-      expiredCount: approvalPayments.filter((p) => p.isExpired).length,
-      expiringSoonCount: approvalPayments.filter(
-        (p) => p.isExpiringSoon && !p.isExpired,
-      ).length,
-      activeCount: approvalPayments.filter(
-        (p) => !p.isExpired && !p.isExpiringSoon,
-      ).length,
-    });
+    return NextResponse.json(
+      {
+        approvalPayments,
+        count: approvalPayments.length,
+        expiredCount: approvalPayments.filter((p) => p.isExpired).length,
+        expiringSoonCount: approvalPayments.filter(
+          (p) => p.isExpiringSoon && !p.isExpired,
+        ).length,
+        activeCount: approvalPayments.filter(
+          (p) => !p.isExpired && !p.isExpiringSoon,
+        ).length,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -299,7 +308,7 @@ export async function GET() {
         approvalPayments: [],
         count: 0,
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

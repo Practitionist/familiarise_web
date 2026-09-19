@@ -27,7 +27,10 @@ export async function GET() {
     orderBy: { requestedAt: "desc" },
     take: 10,
   });
-  return NextResponse.json({ data: requests });
+  return NextResponse.json(
+    { data: requests },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(req: Request) {

@@ -48,7 +48,10 @@ export async function GET(
       completedAt: true,
     },
   });
-  return NextResponse.json({ data: exports });
+  return NextResponse.json(
+    { data: exports },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(

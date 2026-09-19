@@ -47,7 +47,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsed.data;
@@ -73,5 +73,8 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({ data: disputes });
+  return NextResponse.json(
+    { data: disputes },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

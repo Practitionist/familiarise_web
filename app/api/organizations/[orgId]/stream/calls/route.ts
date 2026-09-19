@@ -116,8 +116,11 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({
-    data: sessions,
-    meta: { totalResults, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data: sessions,
+      meta: { totalResults, page, perPage },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

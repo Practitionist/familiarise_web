@@ -30,9 +30,15 @@ export async function GET(
     where: { id: invitationId, organizationId: orgId },
   });
   if (!invitation) {
-    return NextResponse.json({ error: "Invitation not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Invitation not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
-  return NextResponse.json({ invitation });
+  return NextResponse.json(
+    { invitation },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function DELETE(

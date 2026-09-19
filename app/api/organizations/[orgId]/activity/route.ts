@@ -60,7 +60,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsedQuery.data;
@@ -90,10 +90,13 @@ export async function GET(
 
   const hasMore = rows.length > q.limit;
   const data = hasMore ? rows.slice(0, q.limit) : rows;
-  const nextCursor = hasMore ? data[data.length - 1]?.id ?? null : null;
+  const nextCursor = hasMore ? (data[data.length - 1]?.id ?? null) : null;
 
-  return NextResponse.json({
-    data,
-    pagination: { hasMore, nextCursor, limit: q.limit },
-  });
+  return NextResponse.json(
+    {
+      data,
+      pagination: { hasMore, nextCursor, limit: q.limit },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

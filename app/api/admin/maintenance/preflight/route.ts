@@ -62,14 +62,17 @@ export async function GET() {
     recommendation = "SAFE";
   }
 
-  return NextResponse.json({
-    activeCalls,
-    pendingPayments,
-    upcomingAppointments,
-    pendingPayouts,
-    openDisputes,
-    recommendation,
-    warnings,
-    checkedAt: now.toISOString(),
-  });
+  return NextResponse.json(
+    {
+      activeCalls,
+      pendingPayments,
+      upcomingAppointments,
+      pendingPayouts,
+      openDisputes,
+      recommendation,
+      warnings,
+      checkedAt: now.toISOString(),
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

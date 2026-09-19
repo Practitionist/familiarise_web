@@ -15,7 +15,10 @@ export async function GET(
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     const { id: consultantId } = await params;
@@ -29,34 +32,43 @@ export async function GET(
     if (!consultant) {
       return NextResponse.json(
         { error: "Consultant not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
     // Only the owner may read their booking-load pre-flight; the count leaks
     // how busy a consultant is.
     if (consultant.userId !== session.user.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Check for active appointments using shared utility
     const activeAppointments = await checkActiveAppointments(consultantId);
 
     if (activeAppointments.hasActive) {
-      return NextResponse.json({
-        canSwitch: false,
-        reason: `Cannot switch schedule type while you have active appointments`,
-        details: activeAppointments.details,
-        breakdown: {
-          ...activeAppointments.breakdown,
-          total: activeAppointments.total,
+      return NextResponse.json(
+        {
+          canSwitch: false,
+          reason: `Cannot switch schedule type while you have active appointments`,
+          details: activeAppointments.details,
+          breakdown: {
+            ...activeAppointments.breakdown,
+            total: activeAppointments.total,
+          },
         },
-      });
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({
-      canSwitch: true,
-      currentScheduleType: consultant.scheduleType,
-    });
+    return NextResponse.json(
+      {
+        canSwitch: true,
+        currentScheduleType: consultant.scheduleType,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -65,7 +77,7 @@ export async function GET(
     console.error("Error checking schedule switch eligibility:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

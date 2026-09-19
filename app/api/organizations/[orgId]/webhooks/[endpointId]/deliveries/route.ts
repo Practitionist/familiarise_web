@@ -32,7 +32,7 @@ export async function GET(
   if (!endpoint) {
     return NextResponse.json(
       { error: "Webhook endpoint not found" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -70,8 +70,11 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    data: deliveries,
-    meta: { total, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data: deliveries,
+      meta: { total, page, perPage },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

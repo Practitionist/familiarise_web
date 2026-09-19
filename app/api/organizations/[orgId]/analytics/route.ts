@@ -28,16 +28,20 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   if (access.error) return access.error;
 
   const analytics = await getOrgAnalytics(orgId);
   if (!analytics) {
     return NextResponse.json(
       { error: "Organization not found" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
-  return NextResponse.json(analytics);
+  return NextResponse.json(analytics, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

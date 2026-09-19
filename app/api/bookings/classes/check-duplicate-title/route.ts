@@ -32,9 +32,21 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ isDuplicate: !!existingClass }, { status: 200 });
+    return NextResponse.json(
+      { isDuplicate: !!existingClass },
+      {
+        status: 200,
+        // Owner-intent check with no auth: never shared-cache the oracle.
+        // (Whether this endpoint should require auth at all is a separate,
+        // product-level question — this header only stops CDN replay.)
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error checking duplicate class title:", error);
     return NextResponse.json(
       { error: "An error occurred while checking for duplicate class titles" },

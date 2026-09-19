@@ -21,22 +21,25 @@ export async function GET() {
     if (!prefs) {
       return NextResponse.json(
         { data: { essential: true, analytics: false, marketing: false } },
-        { status: 200 },
+        { status: 200, headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    return NextResponse.json({
-      data: {
-        essential: prefs.essential,
-        analytics: prefs.analytics,
-        marketing: prefs.marketing,
+    return NextResponse.json(
+      {
+        data: {
+          essential: prefs.essential,
+          analytics: prefs.analytics,
+          marketing: prefs.marketing,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching cookie preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch cookie preferences" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

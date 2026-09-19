@@ -187,7 +187,7 @@ export async function GET(
     // the nav treats this as "feature off" rather than "forbidden".
     return NextResponse.json(
       { error: "Organization does not sponsor — no programs to list" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -244,7 +244,10 @@ export async function GET(
     };
   });
 
-  return NextResponse.json({ data });
+  return NextResponse.json(
+    { data },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(

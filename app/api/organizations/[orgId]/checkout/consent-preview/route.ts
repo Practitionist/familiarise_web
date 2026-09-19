@@ -24,5 +24,8 @@ export async function GET(
     purposeCode: PURPOSE_CODES.SESSION_BOOKING,
   });
 
-  return NextResponse.json({ hasConsent });
+  return NextResponse.json(
+    { hasConsent },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

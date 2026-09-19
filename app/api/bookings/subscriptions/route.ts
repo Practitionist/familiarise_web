@@ -143,7 +143,10 @@ export async function GET(request: NextRequest) {
       if (!scopeResolution.ok) {
         return NextResponse.json(
           { error: scopeResolution.message, code: scopeResolution.code },
-          { status: scopeResolution.status },
+          {
+            status: scopeResolution.status,
+            headers: { "Cache-Control": "no-store" },
+          },
         );
       }
       // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
@@ -197,15 +200,18 @@ export async function GET(request: NextRequest) {
       prisma.subscription.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: subscriptions,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: subscriptions,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -214,7 +220,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscriptions" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

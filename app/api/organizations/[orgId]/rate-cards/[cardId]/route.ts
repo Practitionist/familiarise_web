@@ -43,16 +43,16 @@ export async function GET(
   },
 ) {
   const { orgId, cardId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canHost: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MANAGER",
+    canHost: true,
+  });
   if (access.error) return access.error;
 
   const card = await prisma.rateCard.findFirst({
     where: {
       id: cardId,
-      OR: [
-        { ownerOrgId: orgId },
-        { ownerContract: { organizationId: orgId } },
-      ],
+      OR: [{ ownerOrgId: orgId }, { ownerContract: { organizationId: orgId } }],
     },
     include: {
       ownerContract: {
@@ -67,9 +67,15 @@ export async function GET(
     },
   });
   if (!card) {
-    return NextResponse.json({ error: "RateCard not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "RateCard not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
-  return NextResponse.json({ rateCard: card });
+  return NextResponse.json(
+    { rateCard: card },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(
@@ -173,11 +179,13 @@ export async function PATCH(
     return NextResponse.json({ rateCard: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

@@ -189,7 +189,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -201,7 +201,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -430,7 +430,10 @@ export async function GET(
       ).filter(shouldInclude),
     };
 
-    return NextResponse.json({ data: transform, success: true });
+    return NextResponse.json(
+      { data: transform, success: true },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -439,7 +442,7 @@ export async function GET(
     console.error("Error fetching consultee resources:", error);
     return NextResponse.json(
       { error: "Failed to fetch resources" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

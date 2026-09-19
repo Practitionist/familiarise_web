@@ -33,7 +33,10 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Get consultant profile
@@ -49,19 +52,25 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
-    return NextResponse.json({
-      accounts: consultantProfile.payoutAccounts,
-    });
+    return NextResponse.json(
+      {
+        accounts: consultantProfile.payoutAccounts,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching payout accounts:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     return NextResponse.json(
       { error: "Failed to fetch payout accounts" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -250,7 +259,10 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     return NextResponse.json(
       { error: "Failed to create payout account" },
       { status: 500 },

@@ -71,10 +71,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!report) {
-      return NextResponse.json({ error: "Report not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Report not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({ report });
+    return NextResponse.json(
+      { report },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -83,7 +89,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching moderation report:", error);
     return NextResponse.json(
       { error: "Failed to fetch report" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

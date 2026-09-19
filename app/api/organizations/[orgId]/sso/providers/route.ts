@@ -66,7 +66,10 @@ export async function GET(
     };
   });
 
-  return NextResponse.json({ data: augmented });
+  return NextResponse.json(
+    { data: augmented },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -176,12 +179,8 @@ export async function POST(
           issuer: body.issuer,
           domain: body.domain.toLowerCase(),
           organizationId: orgId,
-          oidcConfig: body.oidcConfig
-            ? JSON.stringify(body.oidcConfig)
-            : null,
-          samlConfig: body.samlConfig
-            ? JSON.stringify(body.samlConfig)
-            : null,
+          oidcConfig: body.oidcConfig ? JSON.stringify(body.oidcConfig) : null,
+          samlConfig: body.samlConfig ? JSON.stringify(body.samlConfig) : null,
         },
       });
 
@@ -219,8 +218,7 @@ export async function POST(
     );
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       const code =
         "code" in err && typeof err.code === "string" ? err.code : undefined;
       return NextResponse.json(
@@ -228,7 +226,10 @@ export async function POST(
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

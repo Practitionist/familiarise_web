@@ -1,5 +1,19 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
+
+// Public taxonomy read (no session, no per-user data; varies by ?query=):
+// safe for shared caching.
+const PUBLIC_CACHE_HEADERS = {
+  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
+};
+
+// Topic writes in this file feed two publicly cached reads — this file's GET
+// and /api/topics — so both paths are purged after each committed write.
+function revalidateTopicReads() {
+  revalidatePath("/api/user/content/topics");
+  revalidatePath("/api/topics");
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -21,7 +35,7 @@ export async function GET(req: NextRequest) {
       {
         data: topics,
       },
-      { status: 200 },
+      { status: 200, headers: PUBLIC_CACHE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching topics:", error);
@@ -96,6 +110,9 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // Purge after the write commits: both topic GETs are publicly cached.
+    revalidateTopicReads();
+
     return NextResponse.json(
       {
         data: allTopics,
@@ -164,6 +181,9 @@ export async function DELETE(req: NextRequest) {
         { status: 404 }, // 404 Not Found or 400 Bad Request could be appropriate
       );
     }
+
+    // Purge after the write commits: both topic GETs are publicly cached.
+    revalidateTopicReads();
 
     return NextResponse.json(
       {

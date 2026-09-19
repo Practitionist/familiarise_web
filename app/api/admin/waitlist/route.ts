@@ -9,10 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { WaitlistSource, WaitlistStatus } from "@prisma/client";
 import { z } from "zod";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
-import {
-  exportSubscribersCsv,
-  listSubscribers,
-} from "@/lib/waitlist/service";
+import { exportSubscribersCsv, listSubscribers } from "@/lib/waitlist/service";
 
 const querySchema = z.object({
   status: z.nativeEnum(WaitlistStatus).optional(),
@@ -35,7 +32,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", details: parsed.error.flatten() },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -51,7 +48,9 @@ export async function GET(request: NextRequest): Promise<Response> {
       });
     }
 
-    return NextResponse.json(await listSubscribers(filters));
+    return NextResponse.json(await listSubscribers(filters), {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -60,7 +59,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     console.error("[admin/waitlist]", error);
     return NextResponse.json(
       { error: "Failed to load subscribers" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

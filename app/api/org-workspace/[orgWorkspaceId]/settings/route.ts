@@ -40,9 +40,7 @@ const PatchBodySchema = z
     // distinction between "key absent" (don't touch) and "key=null"
     // (clear) is preserved via Zod's optional+nullable composition.
     defaultLandingOrganizationId: z.string().min(1).nullable().optional(),
-    notificationRoutingMode: z
-      .nativeEnum(NotificationRoutingMode)
-      .optional(),
+    notificationRoutingMode: z.nativeEnum(NotificationRoutingMode).optional(),
     // Light validation only — Intl.NumberFormat will tolerate most BCP-47
     // strings. We reject obvious garbage but don't enumerate every locale.
     locale: z
@@ -75,7 +73,10 @@ export async function GET(
   if (auth.error) return auth.error;
 
   if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   // Body extracted to lib/data/org-workspace so the settings page's SSR
@@ -86,11 +87,13 @@ export async function GET(
       auth.session.user.id,
       orgWorkspaceId,
     );
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch {
     return NextResponse.json(
       { error: "OrgWorkspaceProfile not found" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

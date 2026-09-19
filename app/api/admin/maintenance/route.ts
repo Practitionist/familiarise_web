@@ -113,7 +113,10 @@ export async function GET() {
     }),
   ]);
 
-  return NextResponse.json({ state, history: recentWindows });
+  return NextResponse.json(
+    { state, history: recentWindows },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /**

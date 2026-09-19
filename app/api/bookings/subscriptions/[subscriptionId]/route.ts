@@ -152,7 +152,10 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: subscriptionData }, { status: 200 });
+    return NextResponse.json(
+      { data: subscriptionData },
+      { status: 200, headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -160,7 +163,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
     Sentry.captureException(
@@ -170,7 +173,7 @@ export async function GET(
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

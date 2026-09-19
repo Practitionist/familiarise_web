@@ -32,19 +32,25 @@ export async function GET(req: NextRequest) {
   // whole defence.
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: { "Cache-Control": "no-store" } },
+    );
   }
   if (!isPrivileged(session.user.role)) {
     streamLogger.warn("Non-privileged Stream debug attempt", {
       userId: session.user.id,
     });
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json(
+      { error: "Forbidden" },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   if (!isDev && !ALLOW_IN_PRODUCTION) {
     return NextResponse.json(
       { error: "Debug endpoint not available in production" },
-      { status: 403 },
+      { status: 403, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -59,7 +65,10 @@ export async function GET(req: NextRequest) {
       streamLogger.warn("Unauthorized debug attempt", {
         userId: session.user.id,
       });
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
   }
 
@@ -67,7 +76,7 @@ export async function GET(req: NextRequest) {
     if (!isStreamConfigured()) {
       return NextResponse.json(
         { error: "Stream API keys not configured" },
-        { status: 500 },
+        { status: 500, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -77,7 +86,7 @@ export async function GET(req: NextRequest) {
     if (!userId) {
       return NextResponse.json(
         { error: "userId query parameter is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -97,7 +106,7 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json(
         { error: "User not found in database" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -174,39 +183,42 @@ export async function GET(req: NextRequest) {
           }),
     ]);
 
-    return NextResponse.json({
-      success: true,
-      user: {
-        id: user.id,
-        name: user.name,
-        role: user.role,
-        isConsultant: !!user.consultantProfileId,
-        isConsultee: !!user.consulteeProfileId,
-      },
-      stream: {
-        channelCount: channels.length,
-        channels: channels.map((channel) => ({
-          id: channel.id,
-          type: channel.type,
-          name: channel.data?.name,
-          memberCount: Object.keys(channel.state.members || {}).length,
-          messageCount: channel.state.messages.length,
-        })),
-      },
-      database: {
-        consultations: eventCounts[0],
-        subscriptions: eventCounts[1],
-        webinars: eventCounts[2],
-        classes: eventCounts[3],
-      },
-      // Include additional details only in development
-      ...(isDev && {
-        debug: {
-          timestamp: new Date().toISOString(),
-          nodeEnv: process.env.NODE_ENV,
+    return NextResponse.json(
+      {
+        success: true,
+        user: {
+          id: user.id,
+          name: user.name,
+          role: user.role,
+          isConsultant: !!user.consultantProfileId,
+          isConsultee: !!user.consulteeProfileId,
         },
-      }),
-    });
+        stream: {
+          channelCount: channels.length,
+          channels: channels.map((channel) => ({
+            id: channel.id,
+            type: channel.type,
+            name: channel.data?.name,
+            memberCount: Object.keys(channel.state.members || {}).length,
+            messageCount: channel.state.messages.length,
+          })),
+        },
+        database: {
+          consultations: eventCounts[0],
+          subscriptions: eventCounts[1],
+          webinars: eventCounts[2],
+          classes: eventCounts[3],
+        },
+        // Include additional details only in development
+        ...(isDev && {
+          debug: {
+            timestamp: new Date().toISOString(),
+            nodeEnv: process.env.NODE_ENV,
+          },
+        }),
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -218,7 +230,7 @@ export async function GET(req: NextRequest) {
         error: "Debug request failed",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

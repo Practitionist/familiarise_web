@@ -39,7 +39,11 @@ async function verifyMaterialManageAccess(
   userId: string,
   planId: string,
   config: PlanMaterialsConfig,
-): Promise<{ allowed: boolean; organizationId: string | null; error?: string }> {
+): Promise<{
+  allowed: boolean;
+  organizationId: string | null;
+  error?: string;
+}> {
   if (isDevelopment()) {
     return { allowed: true, organizationId: null };
   }
@@ -110,7 +114,11 @@ async function verifyMaterialManageAccess(
     };
   } catch (error) {
     console.error("Error verifying material access:", error);
-    return { allowed: false, organizationId: null, error: "Failed to verify access" };
+    return {
+      allowed: false,
+      organizationId: null,
+      error: "Failed to verify access",
+    };
   }
 }
 
@@ -202,7 +210,7 @@ export async function handleGetMaterials(
           message: "Please sign in to view materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401 },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -219,7 +227,7 @@ export async function handleGetMaterials(
           message: error || "You don't have permission to view these materials",
           code: "FORBIDDEN",
         },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -233,7 +241,10 @@ export async function handleGetMaterials(
       orderBy: { order: "asc" },
     });
 
-    return NextResponse.json({ data: materials });
+    return NextResponse.json(
+      { data: materials },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching materials:", error);
     return NextResponse.json(
@@ -242,7 +253,7 @@ export async function handleGetMaterials(
         message: "Failed to fetch materials",
         code: "SERVER_ERROR",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

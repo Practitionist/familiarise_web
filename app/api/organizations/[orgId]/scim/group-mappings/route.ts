@@ -35,7 +35,10 @@ export async function GET(
     where: { organizationId: orgId },
     orderBy: { scimGroupName: "asc" },
   });
-  return NextResponse.json({ data: mappings });
+  return NextResponse.json(
+    { data: mappings },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function POST(
@@ -87,11 +90,17 @@ export async function POST(
       (err as { code: string }).code === "P2002"
     ) {
       return NextResponse.json(
-        { error: `Group '${parsed.data.scimGroupName}' is already mapped`, code: "SCIM_GROUP_DUPLICATE" },
+        {
+          error: `Group '${parsed.data.scimGroupName}' is already mapped`,
+          code: "SCIM_GROUP_DUPLICATE",
+        },
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

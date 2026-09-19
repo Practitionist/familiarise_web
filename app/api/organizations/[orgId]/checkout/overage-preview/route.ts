@@ -82,7 +82,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid preview params", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -91,7 +91,10 @@ export async function GET(
     parsed.data.planId,
   );
   if (pricePaise == null) {
-    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Plan not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
 
   const result = await previewOverageForBooking({
@@ -102,5 +105,7 @@ export async function GET(
     engagementsConsumed: parsed.data.sessions,
   });
 
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }

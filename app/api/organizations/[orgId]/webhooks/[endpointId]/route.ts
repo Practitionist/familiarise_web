@@ -77,12 +77,15 @@ export async function GET(
   if (!endpoint) {
     return NextResponse.json(
       { error: "Webhook endpoint not found" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
-  return NextResponse.json({
-    endpoint: { ...endpoint, secret: REDACTED_SECRET },
-  });
+  return NextResponse.json(
+    {
+      endpoint: { ...endpoint, secret: REDACTED_SECRET },
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 export async function PATCH(

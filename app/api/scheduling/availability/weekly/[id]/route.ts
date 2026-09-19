@@ -16,6 +16,7 @@ import {
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
+import { revalidatePath } from "next/cache";
 import {
   validateWeeklyWindow,
   AVAILABILITY_REFUSAL_STATUS,
@@ -178,6 +179,12 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    // NOTE: no public Cache-Control here on purpose. This read is
+    // session-free but serialises the FULL consultantProfile row
+    // (panNumber, TDS fields, MSME status) — per-user sensitive data that
+    // must never sit in shared cache. The collection GET
+    // (/api/scheduling/availability/weekly) selects only the public name and
+    // is the cached one; its path is purged by the PUT/PATCH/DELETE below.
     const weeklySlot = await prisma.availabilityWindowWeekly.findUnique({
       where: { id: id },
       include: {
@@ -345,7 +352,13 @@ export async function PUT(
         endTimeUtc,
       },
       body.utcOffsetMinutes ?? null,
-    );
+    ).then((response) => {
+      // Purge only AFTER the edit transaction commits (and only on success).
+      if (response.status === 200) {
+        revalidatePath("/api/scheduling/availability/weekly");
+      }
+      return response;
+    });
   } catch (error) {
     return weeklySlotErrorResponse(error, "updating", "updating");
   }
@@ -483,7 +496,13 @@ export async function PATCH(
         endTimeUtc,
       },
       body.utcOffsetMinutes ?? null,
-    );
+    ).then((response) => {
+      // Purge only AFTER the edit transaction commits (and only on success).
+      if (response.status === 200) {
+        revalidatePath("/api/scheduling/availability/weekly");
+      }
+      return response;
+    });
   } catch (error) {
     return weeklySlotErrorResponse(error, "partially updating", "updating");
   }
@@ -536,6 +555,9 @@ export async function DELETE(
       prisma,
       deletedSlot.consultantProfileId,
     );
+
+    // Purge after the delete commits: the collection GET is publicly cached.
+    revalidatePath("/api/scheduling/availability/weekly");
 
     return NextResponse.json(
       {

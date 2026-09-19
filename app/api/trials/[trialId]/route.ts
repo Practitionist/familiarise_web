@@ -138,7 +138,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!trial) {
       return NextResponse.json(
         { error: "Trial session not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -162,12 +162,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
       });
     }
 
-    return NextResponse.json({ data: trial });
+    return NextResponse.json(
+      { data: trial },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial session" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

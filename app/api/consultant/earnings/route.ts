@@ -20,7 +20,10 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Get consultant profile
@@ -31,7 +34,7 @@ export async function GET(req: NextRequest) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -69,7 +72,10 @@ export async function GET(req: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
     const organizationId =
@@ -93,10 +99,13 @@ export async function GET(req: NextRequest) {
     // not in flight to a bank — and the earnings page's own tooltip said "cash
     // is on its way to your bank". The client needs the flag to tell the truth,
     // and it is server-only, so it rides the payload.
-    return NextResponse.json({
-      ...payload,
-      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-    });
+    return NextResponse.json(
+      {
+        ...payload,
+        livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -105,7 +114,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

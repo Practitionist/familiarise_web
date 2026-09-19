@@ -49,7 +49,7 @@ export async function GET(
   if (!access.org.canSponsor) {
     return NextResponse.json(
       { error: "Organization does not sponsor programs" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -60,14 +60,22 @@ export async function GET(
       program: { contract: { organizationId: orgId } },
     },
     include: {
-      membership: { include: { user: { select: { id: true, name: true, email: true } } } },
+      membership: {
+        include: { user: { select: { id: true, name: true, email: true } } },
+      },
       utilizations: { orderBy: { createdAt: "desc" }, take: 50 },
     },
   });
   if (!assignment) {
-    return NextResponse.json({ error: "Assignment not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Assignment not found" },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
+    );
   }
-  return NextResponse.json({ assignment });
+  return NextResponse.json(
+    { assignment },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }
 
 /**
@@ -89,7 +97,9 @@ async function cancelAssignment(
   current: { membershipId: string; periodStart: Date },
 ) {
   const { orgId, programId, assignmentId, actorMembershipId } = ctx;
-  const cancelEnd = new Date(Math.max(Date.now(), current.periodStart.getTime()));
+  const cancelEnd = new Date(
+    Math.max(Date.now(), current.periodStart.getTime()),
+  );
   const claimed = await tx.programAssignment.updateMany({
     where: { id: assignmentId, status: "ACTIVE" },
     data: { status: "CANCELLED", periodEnd: cancelEnd },
@@ -269,8 +279,7 @@ export async function PATCH(
     return NextResponse.json({ assignment: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       // Code passthrough so clients can branch on ASSIGNMENT_NOT_LIVE etc.
       // without string-matching messages (parity with supersede/invoices).
       const code = "code" in err ? err.code : undefined;
@@ -279,7 +288,10 @@ export async function PATCH(
         { status },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }
@@ -341,11 +353,13 @@ export async function DELETE(
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

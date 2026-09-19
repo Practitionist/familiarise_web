@@ -53,7 +53,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -66,7 +66,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -92,7 +92,10 @@ export async function GET(
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: { "Cache-Control": "no-store" },
+        },
       );
     }
     const scope: Scope = scopeResolution.scope;
@@ -101,15 +104,18 @@ export async function GET(
     // SSR hydration matches.
     const data = await readConsulteeEvents(consulteeId, scope);
 
-    return NextResponse.json({
-      data,
-      success: true,
-    });
+    return NextResponse.json(
+      {
+        data,
+        success: true,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     if (error instanceof ConsulteeProfileNotFoundError) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
       );
     }
     Sentry.captureException(
@@ -119,7 +125,7 @@ export async function GET(
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       { error: "Failed to fetch consultee events" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }

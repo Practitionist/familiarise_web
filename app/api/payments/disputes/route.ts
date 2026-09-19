@@ -48,7 +48,10 @@ export async function GET(req: NextRequest) {
     // Authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
     // Admin/Staff check
@@ -61,13 +64,10 @@ export async function GET(req: NextRequest) {
     // that staff hold. The dashboard already told staff this
     // ("As a staff member… you cannot submit evidence") and hid the button;
     // the route contradicted its own UI and accepted the call anyway.
-    if (
-      !user?.role ||
-      !hasBackofficePermission(user.role, "disputes.manage")
-    ) {
+    if (!user?.role || !hasBackofficePermission(user.role, "disputes.manage")) {
       return NextResponse.json(
         { error: "Forbidden - Admin access required" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
           error:
             "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
         },
-        { status: 400 },
+        { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -90,11 +90,14 @@ export async function GET(req: NextRequest) {
       // Fetch from Stripe API
       const disputes = await listDisputes("STRIPE", limit);
 
-      return NextResponse.json({
-        disputes,
-        gateway: "STRIPE",
-        count: disputes.length,
-      });
+      return NextResponse.json(
+        {
+          disputes,
+          gateway: "STRIPE",
+          count: disputes.length,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     } else {
       // List all disputes from database
       const disputes = await prisma.dispute.findMany({
@@ -110,38 +113,44 @@ export async function GET(req: NextRequest) {
         },
       });
 
-      return NextResponse.json({
-        disputes: disputes.map((d) => ({
-          id: d.id,
-          disputeId: d.disputeId,
-          amount: d.amountPaise,
-          currency: d.currency,
-          status: d.status,
-          reason: d.reason,
-          gateway: d.paymentGateway,
-          dueBy: d.dueBy,
-          isChargeRefundable: d.isChargeRefundable,
-          createdAt: d.createdAt,
-          payment: {
-            id: d.payment.id,
-            amount: d.payment.amount,
-            user: d.payment.user,
-            appointment: d.payment.appointment,
-          },
-        })),
-        count: disputes.length,
-      });
+      return NextResponse.json(
+        {
+          disputes: disputes.map((d) => ({
+            id: d.id,
+            disputeId: d.disputeId,
+            amount: d.amountPaise,
+            currency: d.currency,
+            status: d.status,
+            reason: d.reason,
+            gateway: d.paymentGateway,
+            dueBy: d.dueBy,
+            isChargeRefundable: d.isChargeRefundable,
+            createdAt: d.createdAt,
+            payment: {
+              id: d.payment.id,
+              amount: d.payment.amount,
+              user: d.payment.user,
+              appointment: d.payment.appointment,
+            },
+          })),
+          count: disputes.length,
+        },
+        { headers: { "Cache-Control": "no-store" } },
+      );
     }
   } catch (error) {
     console.error("Disputes listing error:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
 
     return NextResponse.json(
       {
         error:
           error instanceof Error ? error.message : "Failed to list disputes",
       },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -168,10 +177,7 @@ export async function POST(req: NextRequest) {
     // that staff hold. The dashboard already told staff this
     // ("As a staff member… you cannot submit evidence") and hid the button;
     // the route contradicted its own UI and accepted the call anyway.
-    if (
-      !user?.role ||
-      !hasBackofficePermission(user.role, "disputes.manage")
-    ) {
+    if (!user?.role || !hasBackofficePermission(user.role, "disputes.manage")) {
       return NextResponse.json(
         { error: "Forbidden - Admin access required" },
         { status: 403 },
@@ -179,10 +185,7 @@ export async function POST(req: NextRequest) {
     }
 
     // #677/PM-36 — evidence submission is an irreversible gateway push.
-    const limited = await applyRateLimit(
-      moneyOpsLimiter,
-      session.user.id,
-    );
+    const limited = await applyRateLimit(moneyOpsLimiter, session.user.id);
     if (limited) return limited;
 
     // Validate request
@@ -295,7 +298,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
 
     return NextResponse.json(
       {

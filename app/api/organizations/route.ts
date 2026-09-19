@@ -140,7 +140,9 @@ export async function GET() {
   // Body extracted to lib/data/org-workspace so the workspace home page's
   // SSR prefetch reads through the same code path (no SSR/CSR drift).
   const result = await getOperatorOrganizations(auth.session.user.id);
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 export async function POST(req: NextRequest) {

@@ -91,7 +91,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
     );
   }
   const q = parsed.data;
@@ -121,9 +121,7 @@ export async function GET(
     organizationId: orgId,
     ...(q.categories.length > 0 ? { category: { in: q.categories } } : {}),
     ...(q.actions.length > 0 ? { action: { in: q.actions } } : {}),
-    ...(q.actorMembershipId
-      ? { actorMembershipId: q.actorMembershipId }
-      : {}),
+    ...(q.actorMembershipId ? { actorMembershipId: q.actorMembershipId } : {}),
     ...(q.from || q.to
       ? {
           createdAt: {
@@ -179,8 +177,12 @@ export async function GET(
   // viewer can render human-readable names without N+1.
   const membershipIds = Array.from(
     new Set([
-      ...pageRows.map((r) => r.actorMembershipId).filter((v): v is string => !!v),
-      ...pageRows.map((r) => r.targetMembershipId).filter((v): v is string => !!v),
+      ...pageRows
+        .map((r) => r.actorMembershipId)
+        .filter((v): v is string => !!v),
+      ...pageRows
+        .map((r) => r.targetMembershipId)
+        .filter((v): v is string => !!v),
     ]),
   );
 
@@ -205,21 +207,24 @@ export async function GET(
   // written before the call-site discipline landed, plus any future
   // regression. The raw payload remains in the DB for compliance;
   // only the projection is sanitized. See lib/enterprise/audit-sanitize.ts.
-  return NextResponse.json({
-    rows: pageRows.map((r) => ({
-      id: r.id,
-      category: r.category,
-      action: r.action,
-      description: sanitizeAuditDescription(r.description),
-      details: sanitizeAuditDetails(r.details),
-      createdAt: r.createdAt.toISOString(),
-      actor: r.actorMembershipId
-        ? memberMap.get(r.actorMembershipId) ?? null
-        : null,
-      target: r.targetMembershipId
-        ? memberMap.get(r.targetMembershipId) ?? null
-        : null,
-    })),
-    nextCursor,
-  });
+  return NextResponse.json(
+    {
+      rows: pageRows.map((r) => ({
+        id: r.id,
+        category: r.category,
+        action: r.action,
+        description: sanitizeAuditDescription(r.description),
+        details: sanitizeAuditDetails(r.details),
+        createdAt: r.createdAt.toISOString(),
+        actor: r.actorMembershipId
+          ? (memberMap.get(r.actorMembershipId) ?? null)
+          : null,
+        target: r.targetMembershipId
+          ? (memberMap.get(r.targetMembershipId) ?? null)
+          : null,
+      })),
+      nextCursor,
+    },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

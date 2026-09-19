@@ -35,7 +35,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Unauthorized - Admin access required" },
-        { status: 403 },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
       );
     }
 
@@ -62,29 +62,38 @@ export async function GET(
     });
 
     if (!payment) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Payment not found" },
+        { status: 404, headers: { "Cache-Control": "no-store" } },
+      );
     }
 
-    return NextResponse.json({
-      payment: {
-        id: payment.id,
-        amount: payment.amount,
-        currency: payment.currency,
-        paymentIntent: payment.paymentIntent,
-        paymentStatus: payment.paymentStatus,
-        description: payment.description,
-        userId: payment.userId,
-        appointmentId: payment.appointmentId,
-        createdAt: payment.createdAt,
-        hasAppointment: !!payment.appointment,
+    return NextResponse.json(
+      {
+        payment: {
+          id: payment.id,
+          amount: payment.amount,
+          currency: payment.currency,
+          paymentIntent: payment.paymentIntent,
+          paymentStatus: payment.paymentStatus,
+          description: payment.description,
+          userId: payment.userId,
+          appointmentId: payment.appointmentId,
+          createdAt: payment.createdAt,
+          hasAppointment: !!payment.appointment,
+        },
       },
-    });
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error fetching payment for recovery:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
-      { status: 500 },
+      { status: 500, headers: { "Cache-Control": "no-store" } },
     );
   }
 }
@@ -213,7 +222,12 @@ export async function POST(
         appointment: updatedPayment?.appointment,
       });
     } catch (recoveryError) {
-      Sentry.captureException(recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(
+        recoveryError instanceof Error
+          ? recoveryError
+          : new Error(String(recoveryError)),
+        { tags: { subsystem: "payments" } },
+      );
       console.error("Error during payment recovery:", recoveryError);
       return NextResponse.json(
         {

@@ -32,7 +32,7 @@ export async function GET(
   if (!job) {
     return NextResponse.json(
       { error: "Export job not found" },
-      { status: 404 },
+      { status: 404, headers: { "Cache-Control": "no-store" } },
     );
   }
   if (job.status !== "READY" || !job.fileUrl) {
@@ -41,7 +41,7 @@ export async function GET(
         error: `Export is ${job.status}; download unavailable`,
         code: "EXPORT_NOT_READY",
       },
-      { status: 409 },
+      { status: 409, headers: { "Cache-Control": "no-store" } },
     );
   }
   if (job.expiresAt && job.expiresAt < new Date()) {
@@ -50,7 +50,7 @@ export async function GET(
         error: "Export bundle has expired; request a fresh one",
         code: "EXPORT_EXPIRED",
       },
-      { status: 410 },
+      { status: 410, headers: { "Cache-Control": "no-store" } },
     );
   }
 
@@ -61,9 +61,15 @@ export async function GET(
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOADED,
       description: `Downloaded export bundle ${exportId}`,
-      details: { exportId, fileSizeBytes: job.fileSizeBytes?.toString() ?? null },
+      details: {
+        exportId,
+        fileSizeBytes: job.fileSizeBytes?.toString() ?? null,
+      },
     },
   });
 
-  return NextResponse.json({ url: job.fileUrl, expiresAt: job.expiresAt });
+  return NextResponse.json(
+    { url: job.fileUrl, expiresAt: job.expiresAt },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 }

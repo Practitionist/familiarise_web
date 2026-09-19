@@ -95,7 +95,10 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
         context: { route: THREAD_ROUTE, action: "get", threadId },
       });
     }
-    return NextResponse.json({ data: thread });
+    return NextResponse.json(
+      { data: thread },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (cause) {
     return supportError({
       status: 500,
