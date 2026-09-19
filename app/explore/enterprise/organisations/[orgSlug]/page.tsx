@@ -5,17 +5,18 @@ import {
   Building2,
   Globe,
   Users,
-  BadgeCheck,
   ArrowLeft,
-  ArrowRight,
   ExternalLink,
-  Star,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import prisma from "@/lib/prisma";
 import { displayedScore } from "@/lib/reviews-display";
 import { eventPlanDiscoverableWhere } from "@/lib/api/plans/visibility";
+import OrgProfileTabs, {
+  type OrgTabExpert,
+  type OrgTabPlan,
+} from "./OrgProfileTabs";
 
 import {
   ORG_DIRECTORY_TYPE_LABEL,
@@ -187,20 +188,6 @@ const fetchOrgBySlug = cache(async (slug: string) => {
 
 type OrgData = NonNullable<Awaited<ReturnType<typeof fetchOrgBySlug>>>;
 
-// Plan family → its public detail page. This used to be a map to checkout
-// segments, so an org buyer weighing a multi-month programme for their team
-// went straight to payment with nothing to read. All four types now have a
-// detail page, so the card links there and checkout is reached from it.
-const PLAN_DETAIL_PATH: Record<
-  OrgData["organizationPlans"][number]["planType"],
-  string
-> = {
-  CONSULTATION: "consultations",
-  SUBSCRIPTION: "subscriptions",
-  WEBINAR: "webinars",
-  CLASS: "classes",
-};
-
 export async function generateMetadata({
   params,
 }: {
@@ -218,66 +205,6 @@ export async function generateMetadata({
     title: `${org.name} — Familiarise`,
     description: org.description ?? `Expert network on Familiarise`,
   };
-}
-
-function ExpertMiniCard({
-  expert,
-}: {
-  expert: NonNullable<OrgData["memberships"][number]["consultantProfile"]>;
-}) {
-  // A person card: the 1:1 score or nothing (#1566).
-  const expertScore = displayedScore(expert);
-  return (
-    <Link
-      href={`/explore/experts/${expert.id}`}
-      className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border hover:border-border hover:shadow-md transition-all group"
-    >
-      <div className="relative w-12 h-12 flex-shrink-0">
-        <Image
-          src={
-            expert.user.profileDisplayImage ??
-            expert.user.image ??
-            "/placeholder-user.jpg"
-          }
-          alt={expert.user.name}
-          fill
-          className="rounded-xl object-cover"
-        />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1">
-          <p className="font-semibold text-sm text-foreground group-hover:text-muted-foreground truncate">
-            {expert.user.name}
-          </p>
-          {expert.isVerified && (
-            <BadgeCheck className="w-4 h-4 text-foreground flex-shrink-0" />
-          )}
-        </div>
-        {expert.headline && (
-          <p className="text-xs text-muted-foreground truncate">
-            {expert.headline}
-          </p>
-        )}
-        <div className="flex items-center gap-2 mt-0.5">
-          {/* Suppressed below the publication threshold — say nothing rather than
-              print a number one review could define. */}
-          {expertScore.score !== null && (
-            <div className="flex items-center gap-0.5">
-              <Star className="w-3 h-3 text-amber-400 fill-amber-400" />
-              <span className="text-xs font-medium text-muted-foreground">
-                {expertScore.score.toFixed(1)}
-              </span>
-            </div>
-          )}
-          {expert.domain && (
-            <span className="text-xs text-muted-foreground/70">
-              {expert.domain.name}
-            </span>
-          )}
-        </div>
-      </div>
-    </Link>
-  );
 }
 
 export default async function OrgProfilePage({
@@ -309,20 +236,41 @@ export default async function OrgProfilePage({
     OrgData["memberships"][number]["consultantProfile"]
   >[];
 
+  // JSON-safe tab props (Decimal → number; score resolved server-side).
+  const tabExperts: OrgTabExpert[] = exclusiveExperts.map((expert) => ({
+    id: expert.id,
+    name: expert.user.name,
+    image: expert.user.profileDisplayImage ?? expert.user.image,
+    headline: expert.headline,
+    // A person card: the 1:1 score or nothing (#1566).
+    score: displayedScore(expert).score,
+    domain: expert.domain?.name ?? null,
+    isVerified: expert.isVerified,
+  }));
+  const tabPlans: OrgTabPlan[] = org.organizationPlans.map((plan) => ({
+    id: plan.id,
+    title: plan.title,
+    subtitle: plan.subtitle,
+    description: plan.description,
+    price: Number(plan.price),
+    planType: plan.planType,
+  }));
+
   return (
     <main className="min-h-screen bg-muted">
-      {/* Banner — decorative dark cover header */}
-      <div className="relative h-48 md:h-64 bg-gradient-to-br from-zinc-800 to-zinc-900 overflow-hidden">
-        {org.bannerImage && (
+      {/* Cover — only when a real banner exists. The old always-rendered dark
+          block read as a broken slot for orgs without one. */}
+      {org.bannerImage ? (
+        <div className="relative h-48 md:h-64 bg-zinc-900 overflow-hidden">
           <Image
             src={org.bannerImage}
             alt=""
             fill
             className="object-cover opacity-40"
           />
-        )}
-        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-900/60" />
-      </div>
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent to-zinc-900/60" />
+        </div>
+      ) : null}
 
       <div className="max-w-[1100px] mx-auto px-4 md:px-8">
         {/* Back link */}
@@ -336,8 +284,10 @@ export default async function OrgProfilePage({
           </Link>
         </div>
 
-        {/* Org header card */}
-        <div className="bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 -mt-16 relative shadow-sm">
+        {/* Org header card — overlaps the cover only when one exists. */}
+        <div
+          className={`bg-card rounded-2xl border border-border p-6 md:p-8 mb-8 relative shadow-sm ${org.bannerImage ? "-mt-16" : ""}`}
+        >
           <div className="flex flex-col sm:flex-row gap-5 items-start">
             {/* Logo */}
             <div className="w-20 h-20 rounded-2xl bg-muted border-2 border-card shadow-md flex items-center justify-center overflow-hidden flex-shrink-0">
@@ -375,7 +325,7 @@ export default async function OrgProfilePage({
               )}
 
               {org.description && (
-                <p className="text-muted-foreground leading-relaxed mb-4 max-w-2xl">
+                <p className="text-muted-foreground leading-relaxed mb-4 max-w-2xl line-clamp-2">
                   {org.description}
                 </p>
               )}
@@ -416,90 +366,30 @@ export default async function OrgProfilePage({
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 pb-16">
-          {/* Main: Expert roster */}
-          <div className="lg:col-span-2 space-y-6">
-            {exclusiveExperts.length > 0 ? (
-              <>
-                {/* The sidebar CTA targets #experts; nothing carried that id. */}
-                <h2
-                  id="experts"
-                  className="scroll-mt-28 text-xl font-bold text-foreground tracking-tight"
-                >
-                  Exclusive Experts
-                </h2>
-                {/* Single column at every width: two-up halved the card and
-                    truncated most headlines mid-word ("Executive Coa…"), which
-                    is the one line that tells you what the expert actually
-                    does. Full width lets them read. */}
-                <div className="grid grid-cols-1 gap-3">
-                  {exclusiveExperts.map((expert) => (
-                    <ExpertMiniCard key={expert.id} expert={expert} />
-                  ))}
-                </div>
-              </>
-            ) : (
-              org.canHost && (
-                <div className="flex flex-col items-center justify-center py-16 text-center bg-card rounded-2xl border border-border">
-                  <Users className="w-10 h-10 text-muted-foreground/70 mb-3" />
-                  <p className="text-muted-foreground">
-                    No exclusive experts listed yet
-                  </p>
-                </div>
-              )
-            )}
+          {/* Tabbed catalog: experts / programs / about. */}
+          <div className="lg:col-span-2 min-w-0 scroll-mt-28" id="org-catalog">
+            <OrgProfileTabs
+              orgName={org.name}
+              experts={tabExperts}
+              plans={tabPlans}
+              about={{
+                description: org.description,
+                industry: org.industry,
+                sizeLabel: org.sizeBucket
+                  ? ORG_SIZE_BUCKET_LABEL[org.sizeBucket]
+                  : null,
+                capabilityLabel,
+                website: org.website,
+              }}
+              canHost={org.canHost}
+            />
           </div>
 
-          {/* Sidebar: Org plans */}
+          {/* Sidebar: CTA — intentional dark surface. Now that sponsor-only
+              orgs can be listed, an experts CTA only makes sense where a
+              roster actually exists; otherwise point at the org's own site. */}
           <div className="space-y-6">
-            {org.organizationPlans.length > 0 && (
-              <div className="bg-card rounded-2xl border border-border p-5">
-                <h2 className="text-base font-bold text-foreground mb-4 tracking-tight">
-                  Available Programs
-                </h2>
-                <div className="space-y-3">
-                  {org.organizationPlans.map((plan) => (
-                    <Link
-                      key={plan.id}
-                      href={`/explore/programs/plans/${PLAN_DETAIL_PATH[plan.planType]}/${plan.id}`}
-                      className="block p-3 rounded-xl bg-muted border border-border hover:border-border hover:bg-card hover:shadow-sm transition-all group"
-                    >
-                      <p className="text-sm font-semibold text-foreground mb-0.5">
-                        {plan.title}
-                      </p>
-                      {/* Prefer the authored one-liner; fall back to the
-                          long description, which reads badly when clamped. */}
-                      {(plan.subtitle || plan.description) && (
-                        <p className="text-xs text-muted-foreground line-clamp-2">
-                          {plan.subtitle || plan.description}
-                        </p>
-                      )}
-                      <div className="flex items-center justify-between mt-2">
-                        <Badge
-                          variant="outline"
-                          className="text-[10px] px-1.5 py-0 capitalize"
-                        >
-                          {plan.planType.toLowerCase()}
-                        </Badge>
-                        {plan.price > 0 && (
-                          <span className="text-xs font-semibold text-muted-foreground">
-                            ₹{(plan.price / 100).toLocaleString("en-IN")}
-                          </span>
-                        )}
-                      </div>
-                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-foreground group-hover:text-muted-foreground">
-                        Book
-                        <ArrowRight className="w-3 h-3" />
-                      </span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* CTA — intentional dark surface. Now that sponsor-only orgs can
-                be listed, an experts CTA only makes sense where a roster
-                actually exists; otherwise point at the org's own site. */}
-            <div className="bg-primary rounded-2xl p-5 text-center">
+            <div className="bg-primary rounded-2xl p-5 text-center lg:sticky lg:top-24">
               <Building2 className="w-8 h-8 text-primary-foreground/70 mx-auto mb-3" />
               <p className="text-primary-foreground font-semibold text-sm mb-1">
                 Work with {org.name}
@@ -513,7 +403,7 @@ export default async function OrgProfilePage({
                     asChild
                     className="w-full bg-card text-foreground hover:bg-muted font-medium rounded-xl"
                   >
-                    <Link href="#experts">Browse Experts</Link>
+                    <Link href="#org-catalog">Browse Experts</Link>
                   </Button>
                 </>
               ) : (

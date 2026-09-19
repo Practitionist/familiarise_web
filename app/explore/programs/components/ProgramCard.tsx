@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { RegistrationBadge } from "@/components/ui/registration-badge";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Flame, Sparkles, Star } from "lucide-react";
+import { ArrowRight, Flame, GraduationCap, Sparkles, Star, Video } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -69,6 +69,56 @@ function ExtraBadge({ badge }: { badge: ProgramBadge }) {
       {config.icon}
       {config.label}
     </span>
+  );
+}
+
+/**
+ * Deterministic cover fallback. Plans without an uploaded image used to get
+ * a random picsum photo (skateboard, pug, deer…), which read as broken stock
+ * next to real covers. A picsum URL is detectable, so the card renders a
+ * topic-agnostic gradient + type icon instead — same program, same cover,
+ * every render — while real uploads render untouched.
+ */
+const FALLBACK_GRADIENTS = [
+  "from-indigo-600 to-violet-800",
+  "from-slate-700 to-slate-950",
+  "from-emerald-600 to-teal-800",
+  "from-amber-500 to-rose-700",
+  "from-sky-600 to-indigo-800",
+  "from-fuchsia-600 to-purple-800",
+];
+
+function ProgramCover({
+  program,
+  sizes,
+  imgClassName = "object-cover group-hover:scale-105 transition-transform duration-500",
+}: {
+  program: Program;
+  sizes: string;
+  imgClassName?: string;
+}) {
+  if (!program.imageUrl.includes("picsum.photos")) {
+    return (
+      <Image
+        src={program.imageUrl}
+        alt={program.title}
+        fill
+        className={imgClassName}
+        sizes={sizes}
+      />
+    );
+  }
+  const hash = [...program.id].reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const gradient = FALLBACK_GRADIENTS[hash % FALLBACK_GRADIENTS.length];
+  const Icon = program.type === "class" ? GraduationCap : Video;
+  return (
+    <div
+      className={`absolute inset-0 flex items-center justify-center bg-gradient-to-br ${gradient}`}
+      role="img"
+      aria-label={`${program.type} cover`}
+    >
+      <Icon className="w-12 h-12 text-white/80" strokeWidth={1.5} />
+    </div>
   );
 }
 
@@ -157,11 +207,8 @@ function GridCard({
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
-        <Image
-          src={program.imageUrl}
-          alt={program.title}
-          fill
-          className="object-cover group-hover:scale-105 transition-transform duration-500"
+        <ProgramCover
+          program={program}
           sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
         />
         <div className="absolute top-3 left-3 flex gap-2">
@@ -280,13 +327,7 @@ function ListCard({
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative w-48 md:w-64 flex-shrink-0">
-        <Image
-          src={program.imageUrl}
-          alt={program.title}
-          fill
-          className="object-cover"
-          sizes="256px"
-        />
+        <ProgramCover program={program} sizes="256px" imgClassName="object-cover" />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
           {badge && <ExtraBadge badge={badge} />}
@@ -408,13 +449,7 @@ function CarouselCard({
       aria-label={`View details for ${program.title}`}
     >
       <div className="relative aspect-[16/10] overflow-hidden">
-        <Image
-          src={program.imageUrl}
-          alt={program.title}
-          fill
-          className="object-cover group-hover:scale-105 transition-transform duration-500"
-          sizes="360px"
-        />
+        <ProgramCover program={program} sizes="360px" />
         <div className="absolute top-3 left-3 flex gap-2">
           <TypeBadge type={program.type} />
         </div>
