@@ -22,9 +22,15 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  const access = await requirePersonalProfileAccess("consultant", consultantId);
+  // The access check reads the session/user row; the detail read is keyed on
+  // the appointment id — independent, so they run concurrently. Guards below
+  // are unchanged: a redirect from the access check still wins, a missing
+  // detail still 404s.
+  const [access, detail] = await Promise.all([
+    requirePersonalProfileAccess("consultant", consultantId),
+    readAppointmentDetail(appointmentId),
+  ]);
 
-  const detail = await readAppointmentDetail(appointmentId);
   if (!detail) notFound();
 
   // Ownership: the route's consultant must own the plan or be an ACCEPTED

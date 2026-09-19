@@ -48,54 +48,58 @@ export default async function TrialCheckoutPage({
   params: Promise<{ trialId: string }>;
 }) {
   const { trialId } = await params;
-  const session = await getSession(true);
+  // The trial read is keyed on the URL id and the session read on the cookie —
+  // independent, so they run concurrently. The auth check stays after, before
+  // any use of either value.
+  const [session, trial] = await Promise.all([
+    getSession(true),
+    prisma.trial.findUnique({
+      where: { id: trialId },
+      select: {
+        id: true,
+        status: true,
+        paymentDueAt: true,
+        pendingPaymentUrl: true,
+        subscriptionPlanId: true,
+        consulteeProfile: { select: { userId: true } },
+        subscriptionPlan: {
+          select: {
+            title: true,
+            trialPriceInPaise: true,
+            trialDurationMinutes: true,
+            priceCurrency: true,
+            consultantProfile: {
+              select: { user: { select: { name: true } } },
+            },
+          },
+        },
+        appointment: {
+          select: {
+            id: true,
+            occurrences: {
+              select: { startsAt: true, endsAt: true },
+              orderBy: { startsAt: "asc" },
+              take: 1,
+            },
+            // The amount the gateway will actually take. `createApprovalPaymentIntent`
+            // froze it onto this row when the consultant accepted, and minted the
+            // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
+            // stays editable underneath. Quoting the plan meant a consultant who
+            // repriced after accepting turned this page into a number the charge
+            // would not honour.
+            payment: {
+              where: { deletedAt: null },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { amount: true, currency: true },
+            },
+          },
+        },
+      },
+    }),
+  ]);
 
   if (!session?.user?.id) notFound();
-
-  const trial = await prisma.trial.findUnique({
-    where: { id: trialId },
-    select: {
-      id: true,
-      status: true,
-      paymentDueAt: true,
-      pendingPaymentUrl: true,
-      subscriptionPlanId: true,
-      consulteeProfile: { select: { userId: true } },
-      subscriptionPlan: {
-        select: {
-          title: true,
-          trialPriceInPaise: true,
-          trialDurationMinutes: true,
-          priceCurrency: true,
-          consultantProfile: {
-            select: { user: { select: { name: true } } },
-          },
-        },
-      },
-      appointment: {
-        select: {
-          id: true,
-          occurrences: {
-            select: { startsAt: true, endsAt: true },
-            orderBy: { startsAt: "asc" },
-            take: 1,
-          },
-          // The amount the gateway will actually take. `createApprovalPaymentIntent`
-          // froze it onto this row when the consultant accepted, and minted the
-          // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
-          // stays editable underneath. Quoting the plan meant a consultant who
-          // repriced after accepting turned this page into a number the charge
-          // would not honour.
-          payment: {
-            where: { deletedAt: null },
-            orderBy: { createdAt: "asc" },
-            take: 1,
-            select: { amount: true, currency: true },
-          },
-        },
-      },
-    },
-  });
 
   // 404 rather than 403 for someone else's trial — an existence oracle on a
   // guessable id would leak who is trialling whom.

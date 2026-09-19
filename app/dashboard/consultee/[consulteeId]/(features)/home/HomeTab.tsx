@@ -810,6 +810,10 @@ export default function HomeTab({
   // from one cache entry instead of fetching the list twice.
   const { data: pendingPayments } = useQuery({
     queryKey: ["pending-payments", consulteeId],
+    // Shares the key (and cache entry) with PendingPaymentsWidget, which keeps
+    // its own 30s + focus-refetch for the money-critical surface; this reader
+    // only derives counts, so a longer stale window avoids a second fetch.
+    staleTime: 2 * 60_000,
     queryFn: async (): Promise<Array<{ amount: number }>> => {
       const res = await fetch(
         `/api/dashboard/consultee/${consulteeId}/pending-payments`,

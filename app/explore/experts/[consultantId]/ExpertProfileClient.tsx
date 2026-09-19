@@ -10,7 +10,7 @@ import type {
 } from "@/types/review";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
@@ -42,6 +42,7 @@ export function ExpertProfileClient({
   reviewTracks,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { data: session } = useSession();
   const queryClient = useQueryClient();
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
@@ -162,7 +163,6 @@ export function ExpertProfileClient({
       const params = new URLSearchParams();
       const startsAt = new Date(selectedSlot.startsAt);
       const endsAt = new Date(selectedSlot.endsAt);
-
       if (
         (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
           .type === "WEEKLY"
@@ -186,13 +186,16 @@ export function ExpertProfileClient({
       // them hit /checkout first works only via a middleware 302 onto a
       // generic sign-in page with no purchase context; doing it here keeps
       // one full-page load out of the funnel and reads as intentional.
+      // SPA navigation (router.push) so the client bundle stays warm.
       if (!session?.user?.id) {
-        window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+        router.push(
+          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
+        );
         return;
       }
-      window.location.href = checkoutUrl;
+      router.push(checkoutUrl);
     },
-    [selectedSlot, consultantDetails, session?.user?.id, toast],
+    [selectedSlot, consultantDetails, session?.user?.id, router, toast],
   );
 
   const handleSubscriptionBooking = useCallback(
@@ -236,13 +239,16 @@ export function ExpertProfileClient({
       // #booking-journey — same explicit guest handoff as consultations: the
       // checkout URL (plan + scheduling period) becomes the auth callback so
       // the purchase resumes untouched after sign-in/sign-up/onboarding.
+      // SPA navigation (router.push) so the client bundle stays warm.
       if (!session?.user?.id) {
-        window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+        router.push(
+          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
+        );
         return;
       }
-      window.location.href = checkoutUrl;
+      router.push(checkoutUrl);
     },
-    [consultantDetails, session?.user?.id, toast],
+    [consultantDetails, session?.user?.id, router, toast],
   );
 
   const renderCalendar = useCallback(() => {

@@ -21,6 +21,7 @@ import {
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -108,9 +109,7 @@ export default function ClassCheckoutPage({
       checkoutTaxContext.referralCreditsLoaded,
       checkoutTaxContext.referralCreditsPaise,
     );
-  const [planData, setPlanData] = useState<PlanResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [staleError, setStaleError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -140,6 +139,61 @@ export default function ClassCheckoutPage({
     const result = searchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
+
+  // Stable string for the query key below.
+  const searchParamsString = useMemo(() => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(resolvedSearchParams)) {
+      if (Array.isArray(value)) {
+        for (const v of value) params.append(key, v);
+      } else if (value !== undefined) {
+        params.append(key, value);
+      }
+    }
+    return params.toString();
+  }, [resolvedSearchParams]);
+
+  // ONE cached read for the mount fetch (was a bare useEffect fetch).
+  // Discount validation stays a click-time POST in handleApplyDiscount.
+  const checkoutPlanQuery = useQuery({
+    queryKey: ["checkout-plan", resolvedParams.planId, searchParamsString],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<PlanResponse> => {
+      const response = await fetch(
+        `/api/plans/classes/${resolvedParams.planId}`,
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.data?.consultantProfile?.user) {
+        throw new Error("Consultant details not found");
+      }
+
+      return data;
+    },
+  });
+
+  const planData = checkoutPlanQuery.data ?? null;
+  const isLoading = checkoutPlanQuery.isPending;
+  const error =
+    staleError ??
+    (checkoutPlanQuery.error
+      ? checkoutPlanQuery.error instanceof Error
+        ? checkoutPlanQuery.error.message
+        : "An unexpected error occurred. Please try again."
+      : null);
+
+  // Plan-load failures report exactly as the old fetch catch did.
+  useEffect(() => {
+    if (checkoutPlanQuery.error) {
+      reportPaymentsError(checkoutPlanQuery.error);
+      console.error("Error fetching plan data:", checkoutPlanQuery.error);
+    }
+  }, [checkoutPlanQuery.error]);
 
   // Derive the first available class ID — used by both component renders and handleCheckout
   const availableClassId = useMemo(() => {
@@ -320,40 +374,6 @@ export default function ClassCheckoutPage({
     ],
   );
 
-  useEffect(() => {
-    async function fetchPlanData() {
-      setIsLoading(true);
-      try {
-        const endpoint = `/api/plans/classes/${resolvedParams.planId}`;
-
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.data?.consultantProfile?.user) {
-          throw new Error("Consultant details not found");
-        }
-
-        setPlanData(data);
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching plan data:", error);
-        setError(
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred. Please try again.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchPlanData();
-  }, [resolvedParams.planId]);
-
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
@@ -396,7 +416,7 @@ export default function ClassCheckoutPage({
         (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
       );
       if (!hasAvailable) {
-        setError(
+        setStaleError(
           "No available class sessions. All sessions may be full, cancelled, or completed.",
         );
       }

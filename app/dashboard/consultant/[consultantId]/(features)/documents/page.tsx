@@ -1,12 +1,16 @@
 "use client";
 
 import { use, useState } from "react";
+import { useRouter } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { TableSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { fetchDocuments, type DocumentFetchError } from "../../utils/fetchHelpers";
+import {
+  fetchDocuments,
+  type DocumentFetchError,
+} from "../../utils/fetchHelpers";
 import { DocumentsTab } from "./DocumentsTab";
 import {
   RefreshCw,
@@ -25,6 +29,7 @@ export default function DocumentsPage({
   params: Promise<{ consultantId: string }>;
 }) {
   const { consultantId } = use(params);
+  const router = useRouter();
 
   // Pagination + filter state lifted up from DocumentsTab so the React Query
   // key depends on them. This is what makes server-side pagination work with
@@ -131,7 +136,7 @@ export default function DocumentsPage({
         <Button
           key="signin"
           size="sm"
-          onClick={() => (window.location.href = "/auth/signin")}
+          onClick={() => router.push("/auth/signin")}
         >
           Sign In
         </Button>,
