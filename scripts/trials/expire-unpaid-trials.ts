@@ -7,8 +7,9 @@
  * `buildOccupiedAppointmentFilter`, so the consultant can neither deliver it
  * nor rebook the time.
  *
- * Releasing the slot needs no slot surgery — occupancy is derived from the
- * trial's status, so moving it to CANCELLED drops it out of that filter.
+ * The status move drops the trial out of that filter; since #1591 J4-P0-03
+ * the held appointment is tombstoned too (softCancelTrialAppointment), so the
+ * occurrence stops arming the overlap constraint and the seats read CANCELLED.
  *
  * The learner is not penalised: a cancelled trial frees the
  * learner-consultant pair, so they can request again. See
@@ -26,6 +27,9 @@ import { TrialStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { transitionTrial } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
+import { notifyTrialCancelled } from "@/lib/novu/service";
+import { reportSentryError } from "@/lib/observability/report";
 import prisma from "../../lib/prisma";
 
 export interface ExpireUnpaidTrialsResult {
@@ -47,16 +51,50 @@ export async function expireUnpaidTrials(): Promise<ExpireUnpaidTrialsResult> {
   );
 }
 
+/** What the tombstone and the consultee notice need, read with the cohort. */
+const EXPIRY_SELECT = {
+  id: true,
+  appointmentId: true,
+  consulteeProfile: { select: { user: { select: { id: true, name: true } } } },
+  subscriptionPlan: {
+    select: {
+      title: true,
+      consultantProfile: { select: { user: { select: { name: true } } } },
+    },
+  },
+  appointment: {
+    select: {
+      occurrences: {
+        where: { deletedAt: null },
+        orderBy: { startsAt: "asc" as const },
+        take: 1,
+        select: { startsAt: true },
+      },
+    },
+  },
+} as const;
+
+type LapsedTrial = {
+  id: string;
+  appointmentId: string | null;
+  consulteeProfile: { user: { id: string; name: string | null } };
+  subscriptionPlan: {
+    title: string;
+    consultantProfile: { user: { name: string | null } };
+  };
+  appointment: { occurrences: { startsAt: Date }[] } | null;
+};
+
 /**
  * Expire one lapsed trial through the guarded transition. Returns true when
  * it moved. Throws on anything but a lost race so the caller aborts the
  * batch loudly instead of skipping rows silently.
  */
-async function expireOneTrial(id: string, now: Date): Promise<boolean> {
+async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
   try {
     await prisma.$transaction((tx) =>
       transitionTrial(tx, {
-        where: { id },
+        where: { id: trial.id },
         to: TrialStatus.CANCELLED,
         fromIn: [TrialStatus.AWAITING_PAYMENT],
         // Repeat the cohort's stale-time predicate inside the CAS: a
@@ -74,13 +112,82 @@ async function expireOneTrial(id: string, now: Date): Promise<boolean> {
         reason: "Trial pay-link lapsed without payment",
       }),
     );
-    return true;
   } catch (error) {
     // Scheduled or paid between the read and the write — the payment
     // wins, and there is nothing left to expire.
     if (error instanceof IllegalTransitionError) return false;
     throw error;
   }
+
+  // #1591 J4-P0-03 / #1583 A-P1-05 — the CAS win owns the held call: the
+  // appointment/occurrence tombstone and the participants' CANCELLED ride
+  // it, in a second transaction AFTER this one commits (PG_POOL_MAX=1). A
+  // failure here is isolated: the trial is CANCELLED already, and the repair
+  // cohort below re-tombstones it on the next run.
+  if (trial.appointmentId) {
+    await tombstoneHeldCall(trial.id, trial.appointmentId);
+  }
+  // The same notice the interactive cancel path sends; never fatal.
+  try {
+    await notifyTrialCancelled([trial.consulteeProfile.user.id], {
+      consultantName:
+        trial.subscriptionPlan.consultantProfile.user.name || "Consultant",
+      consulteeName: trial.consulteeProfile.user.name || "User",
+      planTitle: trial.subscriptionPlan.title,
+      status: TrialStatus.CANCELLED,
+      dateTime: trial.appointment?.occurrences[0]?.startsAt.toISOString(),
+      dashboardUrl: "/dashboard",
+    });
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "expire-unpaid-trials-notify",
+      expected: true,
+      extra: { trialId: trial.id },
+    });
+  }
+  return true;
+}
+
+async function tombstoneHeldCall(
+  trialId: string,
+  appointmentId: string,
+): Promise<boolean> {
+  try {
+    await softCancelTrialAppointment(appointmentId);
+    return true;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "expire-unpaid-trials-tombstone",
+      extra: { trialId, appointmentId },
+    });
+    return false;
+  }
+}
+
+/**
+ * A CANCELLED trial whose held call is still live: the tombstone step failed
+ * after the CAS committed, or the row predates #1591 J4-P0-03. The
+ * AWAITING_PAYMENT cohort never revisits it, so this bounded pass does.
+ */
+const REPAIR_BATCH_SIZE = 50;
+async function repairUntombstonedCancelledTrials(): Promise<number> {
+  const stale = await prisma.trial.findMany({
+    where: {
+      status: TrialStatus.CANCELLED,
+      appointment: { deletedAt: null },
+    },
+    orderBy: { updatedAt: "asc" },
+    take: REPAIR_BATCH_SIZE,
+    select: { id: true, appointmentId: true },
+  });
+  let repaired = 0;
+  for (const row of stale) {
+    if (!row.appointmentId) continue;
+    if (await tombstoneHeldCall(row.id, row.appointmentId)) repaired += 1;
+  }
+  return repaired;
 }
 
 async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
@@ -116,12 +223,12 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
         },
         orderBy: { id: "asc" },
         take: BATCH_SIZE,
-        select: { id: true },
+        select: EXPIRY_SELECT,
       });
       if (stale.length === 0) break;
 
       for (const row of stale) {
-        if (await expireOneTrial(row.id, now)) trialsExpired += 1;
+        if (await expireOneTrial(row, now)) trialsExpired += 1;
       }
       batchesRun += 1;
 
@@ -129,6 +236,9 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     }
 
     console.log(`   Trials expired: ${trialsExpired}`);
+
+    const repaired = await repairUntombstonedCancelledTrials();
+    if (repaired > 0) console.log(`   Held calls re-tombstoned: ${repaired}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);

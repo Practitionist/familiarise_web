@@ -38,7 +38,7 @@ import {
 } from "@/schemas/webhooks/razorpay";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import prisma from "@/lib/prisma";
-import { permanentFailure } from "@/lib/webhooks/event-log";
+import { type WebhookClaim, permanentFailure } from "@/lib/webhooks/event-log";
 import { reportSentryError } from "@/lib/observability/report";
 import { z, ZodError } from "zod";
 
@@ -147,6 +147,8 @@ export async function processRazorpayWebhookEvent(
   event: RazorpayWebhookEnvelope,
   eventType: string,
   eventId: string,
+  /** The live route's claim on the row; the sweeper re-drive passes none. */
+  claim?: WebhookClaim,
 ): Promise<void> {
   // PII-scrub the payload before logging — Razorpay payloads can carry
   // payer email/phone/contact, partial card/UPI fingerprints, and any
@@ -511,7 +513,7 @@ export async function processRazorpayWebhookEvent(
         })
         .catch(() => {});
     } else {
-      await markWebhookEventProcessed(eventId, processingError);
+      await markWebhookEventProcessed(eventId, processingError, claim);
     }
   }
 }

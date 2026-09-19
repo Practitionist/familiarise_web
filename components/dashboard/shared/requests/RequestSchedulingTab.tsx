@@ -33,7 +33,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import {
@@ -715,7 +715,6 @@ export function RequestSchedulingTab({
   orgScope = "personal",
 }: RequestSchedulingTabProps) {
   const params = useParams();
-  const router = useRouter();
   const routeConsultantId = params.consultantId as string | undefined;
   // The allocate page lives in the consultant tree behind a personal-profile
   // check, and this id passes it on both mount points: the consultant route
@@ -1529,11 +1528,11 @@ export function RequestSchedulingTab({
                     scheduling period under per-day and per-week caps needs
                     the width, and a URL the notification can link to. */}
                 <Button
+                  asChild
                   size="sm"
                   className={cn("w-full", TOUCH_TARGET)}
-                  onClick={() => router.push(allocateHrefFor(request))}
                 >
-                  Allocate Slots
+                  <Link href={allocateHrefFor(request)}>Allocate Slots</Link>
                 </Button>
                 {/* Hidden for directly booked consultations (Bug #8 fix), and
                     for a reschedule that names NO times: released slots still
@@ -1721,6 +1720,9 @@ export function RequestSchedulingTab({
             selectedRequestForDialog
               ? allocateHrefFor(selectedRequestForDialog)
               : `/dashboard/consultant/${consultantId}/requests`
+          }
+          appointmentHrefFor={(appointmentId) =>
+            `/dashboard/consultant/${consultantId}/appointments/${appointmentId}`
           }
           rescheduleNeedsAllocator={
             // Only an actual reschedule-in-flight (RESCHEDULED rows) makes

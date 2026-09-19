@@ -50,6 +50,32 @@ describe("requested-slot verdicts", () => {
     expect(verdictFor(requested[2], null)).toEqual({ kind: "checking" });
   });
 
+  it("names and links the consultant's own conflicting booking, and only that (#1703 C8)", () => {
+    const own = {
+      ...result,
+      conflicts: [
+        {
+          slot: "2026-09-24T08:30:00",
+          existingAppointment: {
+            type: "Consultation",
+            with: "Olivia Anderson",
+            time: "",
+            appointmentId: "apt_9",
+          },
+        },
+      ],
+    };
+    expect(verdictFor(requested[0], own)).toEqual({
+      kind: "conflict",
+      existing: "your Consultation with Olivia Anderson",
+      appointmentId: "apt_9",
+    });
+    // No id (another viewer): no name, no link.
+    expect(verdictFor(requested[0], result)).not.toHaveProperty(
+      "appointmentId",
+    );
+  });
+
   it("summarises as one sentence and stays quiet about zero counts", () => {
     const verdicts = requested.map((slot) => verdictFor(slot, result));
     expect(summarizeVerdicts(verdicts)).toBe(

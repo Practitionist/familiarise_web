@@ -83,6 +83,12 @@ export interface TConsultantDashboardResponse {
   awaitingPayment: { count: number; items: TConsultantApproval[] };
   /** Next org-funded sessions to deliver, metadata only (ADR 20). #1703 */
   orgSessions: TConsultantOrgSession[];
+  /** Share of requests answered within a day over the last 30 days. #1703 */
+  responseRate: {
+    withinTarget: number;
+    total: number;
+    withinTargetPct: number | null;
+  };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
 }

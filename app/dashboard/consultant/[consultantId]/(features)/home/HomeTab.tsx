@@ -10,7 +10,6 @@ import { Button } from "@/components/ui/button";
 // are acquired lazily inside the Join handler (only when a user clicks Join).
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
@@ -91,6 +90,8 @@ interface HomeTabProps {
   pendingRequestsCount?: number;
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
+  /** Read-only metric on the requests card; absent on older payloads. #1703 */
+  responseRate?: TConsultantDashboardResponse["responseRate"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
   viewerZone: ViewerZone;
   performanceSnapshot?: TPerformanceSnapshot;
@@ -110,17 +111,22 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
 
+// Prefetching row link: the upcoming-session row used to SPA-push on click,
+// so the appointments page always loaded cold. motion(Link) keeps the exact
+// hover animation while making it a real anchor Next prefetches.
+const MotionLink = motion(Link);
+
 export function HomeTab({
   appointments,
   consultantId,
   pendingRequestsCount = 0,
   awaitingPayment,
   orgSessions = [],
+  responseRate,
   viewerZone,
   performanceSnapshot,
   financialSummary,
 }: Readonly<HomeTabProps>) {
-  const router = useRouter();
   const joinMeeting = useLazyJoinMeeting();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
@@ -471,15 +477,11 @@ export function HomeTab({
                       } = calculateSessionProgress(groupAppointments);
 
                       return (
-                        <motion.div
+                        <MotionLink
                           key={groupKey}
+                          href={`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`}
                           whileHover={{ x: 4 }}
                           className="group flex items-center gap-4 p-3 rounded-xl hover:bg-zinc-50 cursor-pointer transition-all"
-                          onClick={() =>
-                            router.push(
-                              `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`,
-                            )
-                          }
                         >
                           <Avatar className="h-10 w-10">
                             <AvatarImage
@@ -572,7 +574,7 @@ export function HomeTab({
                           </div>
 
                           <ChevronRight className="h-5 w-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
-                        </motion.div>
+                        </MotionLink>
                       );
                     })}
                   </div>
@@ -611,6 +613,18 @@ export function HomeTab({
                 viewAllLink={`/dashboard/consultant/${consultantId}/requests`}
                 viewAllText="View all requests"
               >
+                {/* #1703 D4 — a consultant's own number, no ranking use yet. */}
+                {responseRate?.withinTargetPct !== null &&
+                  responseRate?.withinTargetPct !== undefined && (
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      You answer {responseRate.withinTargetPct}% of requests
+                      within a day
+                      <span className="text-muted-foreground/70">
+                        {" "}
+                        (last 30 days, {responseRate.total} answered)
+                      </span>
+                    </p>
+                  )}
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
                   <RequestSchedulingTabMini />
                 </div>

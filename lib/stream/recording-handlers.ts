@@ -3,7 +3,7 @@
  * Handles webhook events for recording lifecycle
  */
 
-import { after } from "next/server";
+import { runAfterOrInline } from "@/lib/stream/run-after-or-inline";
 import prisma from "@/lib/prisma";
 import { RecordingStatus } from "@prisma/client";
 import { streamLogger } from "@/lib/stream-logger";
@@ -328,7 +328,8 @@ export async function handleRecordingReady(
       appointment?.webinar?.webinarPlan?.recordingStoragePolicy ??
       appointment?.class?.classPlan?.recordingStoragePolicy;
     if (storagePolicy === "PERMANENT") {
-      after(() =>
+      // #1589 M-P0-04 — inline when re-driven outside a request scope.
+      await runAfterOrInline(() =>
         RecordingTransferService.queueRecordingTransfer(recording.id).catch(
           (err) =>
             streamLogger.error("Ready-time transfer kick threw", err, {
@@ -369,7 +370,7 @@ export async function handleRecordingReady(
 
       // Same serverless rationale as the transfer kick above: run the
       // notification via `after()` so it survives the webhook response.
-      after(() =>
+      await runAfterOrInline(() =>
         notifyRecordingAvailable(userIds, {
           // ADR 20 still holds: `userIds` here is the participant list from
           // getEventAttendeeIds, never an org roster, so the recordingUrl below
@@ -458,18 +459,31 @@ export async function handleRecordingFailed(
     // Create a failed recording record for tracking. Stamp the parent
     // appointment's `organizationId` so the failure shows up under the
     // host org's dashboard rather than orphaning under "personal".
-    await prisma.recording.create({
-      data: {
-        title: "Recording Failed",
-        recordingUrl: "",
-        durationInMinutes: 0,
-        recordedAt: new Date(),
+    // #1589 M-P1-06 — one FAILED row per call: a sweeper re-drive of the
+    // same event used to mint another (a failed event carries no recording id).
+    const alreadyRecorded = await prisma.recording.findFirst({
+      where: {
+        meetingId: meeting.id,
         streamCallId,
         status: RecordingStatus.FAILED,
-        meetingId: meeting.id,
-        organizationId: meeting.occurrence.appointment?.organizationId ?? null,
       },
+      select: { id: true },
     });
+    if (!alreadyRecorded) {
+      await prisma.recording.create({
+        data: {
+          title: "Recording Failed",
+          recordingUrl: "",
+          durationInMinutes: 0,
+          recordedAt: new Date(),
+          streamCallId,
+          status: RecordingStatus.FAILED,
+          meetingId: meeting.id,
+          organizationId:
+            meeting.occurrence.appointment?.organizationId ?? null,
+        },
+      });
+    }
 
     // Build recipient list — every live seat holder of the booking (#1554)
     const appointment = meeting.occurrence.appointment;

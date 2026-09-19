@@ -1,6 +1,12 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { FieldError } from "@/components/ui/field-error";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import {
+  isLinkedinProfileUrl,
+  LINKEDIN_PROFILE_URL_HINT,
+} from "@/schemas/user";
 import React, { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,11 +55,7 @@ export default function ConsultantAgreementAndVerificationStep({
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validateLinkedIn = (url: string) => {
-    if (!url) return true;
-    const linkedinRegex = /^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
-    return linkedinRegex.test(url);
-  };
+  const validateLinkedIn = (url: string) => !url || isLinkedinProfileUrl(url);
 
   const handleUpload = useCallback(
     async (file: File): Promise<UploadedDocument> => {
@@ -106,12 +108,14 @@ export default function ConsultantAgreementAndVerificationStep({
     // Validate agreement
     if (!termsChecked || !privacyChecked) {
       setError("You must accept both terms and privacy policy to continue.");
+      scrollToFirstErrorSoon();
       return;
     }
 
     // Validate LinkedIn URL if provided
     if (linkedinUrl && !validateLinkedIn(linkedinUrl)) {
-      setError("Please enter a valid LinkedIn profile URL");
+      setError(LINKEDIN_PROFILE_URL_HINT);
+      scrollToFirstErrorSoon();
       return;
     }
 
@@ -183,10 +187,7 @@ export default function ConsultantAgreementAndVerificationStep({
             We use your LinkedIn profile to verify your professional background.
           </p>
           {linkedinUrl && !validateLinkedIn(linkedinUrl) && (
-            <p className="text-xs text-red-500">
-              Please enter a valid LinkedIn URL (e.g.,
-              https://linkedin.com/in/username)
-            </p>
+            <FieldError message={LINKEDIN_PROFILE_URL_HINT} />
           )}
         </div>
 
@@ -291,7 +292,7 @@ export default function ConsultantAgreementAndVerificationStep({
 
       {/* Error Display */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" data-field-error="" tabIndex={-1}>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

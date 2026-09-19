@@ -1,6 +1,7 @@
 "use client";
 
-import { notFound, useParams, useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { notFound, useParams, useSearchParams } from "next/navigation";
 import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { OfferingEditorContainer } from "@/components/offerings/editor/OfferingEditorContainer";
@@ -18,7 +19,6 @@ import type { OfferingType } from "@/components/offerings/editor/manifest";
 export default function NewOrgOfferingPage() {
   const params = useParams();
   const search = useSearchParams();
-  const router = useRouter();
 
   const orgId = params.orgId as string;
   const type = params.type as OfferingType;
@@ -65,13 +65,9 @@ export default function NewOrgOfferingPage() {
               <p className="text-sm text-muted-foreground">
                 Pick the expert who will deliver this offering first.
               </p>
-              <button
-                type="button"
-                className="text-sm underline"
-                onClick={() => router.push(returnHref)}
-              >
+              <Link href={returnHref} className="text-sm underline">
                 Back to catalog
-              </button>
+              </Link>
             </div>
           )}
         </DashboardErrorBoundary>

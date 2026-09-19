@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type LucideIcon } from "lucide-react";
 import { useCssVarHeight } from "@/components/dashboard/useCssVarHeight";
 import {
@@ -84,14 +83,7 @@ export function PersonalDashboardShell({
   onSignOut,
   children,
 }: PersonalDashboardShellProps) {
-  const router = useRouter();
   const bannerRef = useCssVarHeight("--dashboard-banner-height");
-
-  const goToNavPath = (path: string) => {
-    const href = path ? `${basePath}/${path}` : basePath;
-    if (pathname === href) return;
-    router.push(href);
-  };
 
   return (
     // Shell clips the document so a tall page cannot window-scroll the
@@ -149,10 +141,6 @@ export function PersonalDashboardShell({
               <Link
                 key={path}
                 href={`${basePath}/${path}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  goToNavPath(path);
-                }}
                 className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[10px] font-medium transition-colors ${
                   isActive
                     ? "text-zinc-900 dark:text-zinc-100"

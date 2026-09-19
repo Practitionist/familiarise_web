@@ -13,6 +13,13 @@ import {
 } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import { setPendingReferral } from "@/lib/pending-referral";
+import { ReferralCodeField } from "./ReferralCodeField";
+import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { AuthEmailField } from "../AuthEmailField";
+import {
+  humanizeAuthError,
+  type AuthErrorField,
+} from "@/lib/labels/auth-errors";
 import { ssoSigninWithGuard } from "@/lib/sso/signin-with-toast";
 import { GlobeIcon } from "@/components/auth/auth-icons";
 import { SocialLoginButtons } from "@/components/auth/social-login-buttons";
@@ -50,6 +57,10 @@ function SignUpContent() {
   const [ssoChecking, setSsoChecking] = useState(false);
   const [verificationSent, setVerificationSent] = useState(false);
   const [resending, setResending] = useState(false);
+  // The sentence under the input the server refused, cleared on retype.
+  const [fieldError, setFieldError] = useState<
+    Partial<Record<AuthErrorField, string>>
+  >({});
 
   // Validate the callbackUrl once and reuse the safe value across onboarding,
   // verification, and social login. safeSameOriginPath rejects backslash /
@@ -121,6 +132,7 @@ function SignUpContent() {
   }, [refCode]);
 
   // Show loading while checking session status (fallback for when middleware doesn't catch)
+
   if (isPending) {
     return <AuthFormSkeleton />;
   }
@@ -146,7 +158,7 @@ function SignUpContent() {
       });
       toast({
         title: "Verification email sent",
-        description: `Check ${email} for the link.`,
+        description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
     } catch {
       toast({
@@ -245,35 +257,11 @@ function SignUpContent() {
     }
   };
 
-  const friendlyAuthError = (raw: string | undefined): string => {
-    if (!raw) return "An unexpected error occurred. Please try again.";
-    const lower = raw.toLowerCase();
-    const issues: string[] = [];
-    if (
-      lower.includes("email") &&
-      (lower.includes("invalid") || lower.includes("required"))
-    )
-      issues.push("Please enter a valid email address.");
-    if (
-      lower.includes("password") &&
-      (lower.includes("too small") ||
-        lower.includes(">=") ||
-        lower.includes("required"))
-    )
-      issues.push("Password must be at least 8 characters.");
-    if (lower.includes("already") || lower.includes("exists"))
-      return "An account with this email already exists. Try signing in instead.";
-    if (issues.length > 0) return issues.join(" ");
-    // Strip "[body.field]" prefixes for anything we didn't catch
-    return (
-      raw.replace(/\[body\.\w+\]\s*/g, "").trim() ||
-      "An unexpected error occurred."
-    );
-  };
-
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFieldError({});
     if (password !== confirmPassword) {
+      setFieldError({ password: "The two passwords don't match." });
       toast({ title: "Passwords do not match", variant: "destructive" });
       return;
     }
@@ -289,9 +277,11 @@ function SignUpContent() {
       });
 
       if (error) {
+        const copy = humanizeAuthError("signup", error);
+        if (copy.field) setFieldError({ [copy.field]: copy.description });
         toast({
-          title: "Sign Up Failed",
-          description: friendlyAuthError(error.message),
+          title: copy.title,
+          description: copy.description,
           variant: "destructive",
         });
       } else if (data && !data.token) {
@@ -379,22 +369,17 @@ function SignUpContent() {
                 disabled={isLoading}
               />
             </div>
-            <div className="grid gap-2 mt-4">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                placeholder="name@example.com"
-                type="email"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect="off"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onBlur={handleEmailBlur}
-                required
-                disabled={isLoading || ssoChecking}
-              />
-            </div>
+            <AuthEmailField
+              value={email}
+              onChange={(v) => {
+                setEmail(v);
+                setFieldError((f) => ({ ...f, email: undefined }));
+              }}
+              onBlur={handleEmailBlur}
+              disabled={isLoading || ssoChecking}
+              error={fieldError.email}
+              className="grid gap-2 mt-4"
+            />
             {!ssoCheck?.enforceSSO && (
               <>
                 <div className="grid gap-2 mt-4">
@@ -404,10 +389,21 @@ function SignUpContent() {
                     type="password"
                     placeholder="••••••••"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      setFieldError((f) => ({ ...f, password: undefined }));
+                    }}
                     required
+                    minLength={8}
+                    maxLength={128}
                     disabled={isLoading}
+                    {...invalidProps(fieldError.password, "password-error")}
                   />
+                  <FieldError
+                    id="password-error"
+                    message={fieldError.password}
+                  />
+                  <p className="text-xs text-zinc-400">8 to 128 characters.</p>
                 </div>
                 <div className="grid gap-2 mt-4">
                   <Label htmlFor="confirm-password">Confirm Password</Label>
@@ -424,17 +420,11 @@ function SignUpContent() {
               </>
             )}
             {!referralCode && !ssoCheck?.enforceSSO && (
-              <div className="grid gap-2 mt-4">
-                <Label htmlFor="referral-code">Referral Code (optional)</Label>
-                <Input
-                  id="referral-code"
-                  placeholder="Enter referral code"
-                  type="text"
-                  value={refCode}
-                  onChange={(e) => setRefCode(e.target.value)}
-                  disabled={isLoading}
-                />
-              </div>
+              <ReferralCodeField
+                value={refCode}
+                onChange={setRefCode}
+                disabled={isLoading}
+              />
             )}
             {referralCode && !ssoCheck?.enforceSSO && (
               <div className="mt-4 p-3 rounded-md bg-green-900/30 border border-green-700">

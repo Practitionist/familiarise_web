@@ -46,15 +46,15 @@ Every guarded status transition appends one `BookingStatusHistory` row inside th
 
 ### Backend Services (`utils/scheduling-engine/`)
 
-| File                        | Purpose                                                                                        |
-| --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress |
-| `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules  |
-| `SchedulingService.ts`  | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation             |
-| `intervals.ts`               | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange` |
-| `interval-validation.ts`     | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
-| `interval-meta.ts`           | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta` |
-| `types.ts`                  | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.             |
+| File                            | Purpose                                                                                                                                          |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ScheduleCalculationService.ts` | Pure math: countWeeks, calculateRequiredSlots, getSlotsPerCall, groupSlotsByDay/Week, progress                                                   |
+| `ScheduleValidationService.ts`  | Unified validation: future check, conflict detection, schedule matching, event-specific rules                                                    |
+| `SchedulingService.ts`          | Allocation engine: auto/manual/requested modes, rescheduling, appointment creation                                                               |
+| `intervals.ts`                  | Booking-status math for a bookable interval (available / partially-booked / fully-booked) against `weeklyRowOccurrencesInRange`                  |
+| `interval-validation.ts`        | Validates a submitted interval against `MAX_DURATION_MINUTES` (12h) and the 30-minute/15-minute increment rules an availability row must satisfy |
+| `interval-meta.ts`              | Overlap and metadata helpers shared by availability rows and appointment intervals, keyed off `TimeSlotMeta`                                     |
+| `types.ts`                      | Shared types: EventType, AllocationMode, AllocationRequest, ValidationResult, etc.                                                               |
 
 ### Zod Schemas (`schemas/slotAllocation/`)
 
@@ -68,7 +68,7 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 
 | File                    | Purpose                                                                                                                 |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `useScheduling.ts`  | Central hook for the Allocate Slots calendar: manual/requested submission, event-specific blocking, weekly distribution |
+| `useScheduling.ts`      | Central hook for the Allocate Slots calendar: manual/requested submission, event-specific blocking, weekly distribution |
 | `useCalendarData.ts`    | Calendar data sync: fetch, polling (`availabilityPolling.ts`), server-calculated slot status                            |
 | `useInFlightGuard.ts`   | Runs at most one instance of an async action at a time, keyed by string — guards double-click races on join/allocate    |
 | `useLazyJoinMeeting.ts` | Lazy-loads and joins a Stream call from a slot/appointment, built on `useInFlightGuard`                                 |
@@ -108,32 +108,36 @@ Auto-allocation itself has no client-side engine: the client submits `isAuto: tr
 
 ## Quick Navigation
 
-| I want to...                           | Go to                                                                          |
-| -------------------------------------- | ------------------------------------------------------------------------------ |
-| **Get the big-picture lifecycle**      | [06-booking-lifecycle.md](./06-booking-lifecycle.md)                           |
-| See why the system is built this way   | [00-architecture-decisions.md](./00-architecture-decisions.md)                 |
-| Understand the system architecture     | [01-architecture.md](./01-architecture.md)                                     |
-| Learn event type rules and validation  | [02-event-types-and-validation.md](./02-event-types-and-validation.md)         |
-| Understand slot math and calculations  | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)         |
-| Look up API endpoints                  | [04-api-reference.md](./04-api-reference.md)                                   |
-| Debug an error or see recent fixes     | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)   |
-| Understand rescheduling                | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                           |
-| Understand cancellation                | [08-cancellation-flow.md](./08-cancellation-flow.md)                           |
-| Learn about trial sessions             | [09-trials.md](./09-trials.md)                                 |
-| See how checkout connects to booking   | [10-checkout-payment-integration.md](./10-checkout-payment-integration.md)     |
-| Learn about concurrency and locking    | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)               |
-| See all cron jobs and background tasks | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md) |
-| Set up local dev and run tests         | [14-local-development-and-testing.md](./14-local-development-and-testing.md)   |
-| Run the release checklist              | [15-checklist.md](./15-checklist.md)                                           |
-| Follow a recurring event end to end    | [16-recurring-events-journey.md](./16-recurring-events-journey.md)             |
-| Understand org-sponsored bookings      | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                       |
-| **Check legal status transitions**     | [18-state-machines.md](./18-state-machines.md)                                 |
-| **Understand the DST stub**            | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)             |
-| Know what a grid poll costs            | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                 |
-| Look up booking table columns and indexes | [21-schema-reference.md](./21-schema-reference.md)                       |
-| Learn why a Prisma create must not mix `connect` with scalar ids | [engineering-log-2026-09-18-prisma-create-input-shape.md](./engineering-log-2026-09-18-prisma-create-input-shape.md) |
-| Understand the payment system          | [../payments/01-architecture.md](../payments/01-architecture.md)               |
-| Check the database schema              | [../../prisma/schema.prisma](../../prisma/schema.prisma)                       |
+| I want to...                                                                   | Go to                                                                                                                                                                          |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Get the big-picture lifecycle**                                              | [06-booking-lifecycle.md](./06-booking-lifecycle.md)                                                                                                                           |
+| See why the system is built this way                                           | [00-architecture-decisions.md](./00-architecture-decisions.md)                                                                                                                 |
+| Understand the system architecture                                             | [01-architecture.md](./01-architecture.md)                                                                                                                                     |
+| Learn event type rules and validation                                          | [02-event-types-and-validation.md](./02-event-types-and-validation.md)                                                                                                         |
+| Understand slot math and calculations                                          | [03-interval-math-and-calculations.md](./03-interval-math-and-calculations.md)                                                                                                 |
+| Look up API endpoints                                                          | [04-api-reference.md](./04-api-reference.md)                                                                                                                                   |
+| Debug an error or see recent fixes                                             | [05-troubleshooting-and-changelog.md](./05-troubleshooting-and-changelog.md)                                                                                                   |
+| Understand rescheduling                                                        | [07-rescheduling-flow.md](./07-rescheduling-flow.md)                                                                                                                           |
+| Understand cancellation                                                        | [08-cancellation-flow.md](./08-cancellation-flow.md)                                                                                                                           |
+| Learn about trial sessions                                                     | [09-trials.md](./09-trials.md)                                                                                                                                                 |
+| See how checkout connects to booking                                           | [10-checkout-payment-integration.md](./10-checkout-payment-integration.md)                                                                                                     |
+| Learn about concurrency and locking                                            | [12-concurrency-and-locking.md](./12-concurrency-and-locking.md)                                                                                                               |
+| See all cron jobs and background tasks                                         | [13-cron-jobs-and-background-tasks.md](./13-cron-jobs-and-background-tasks.md)                                                                                                 |
+| Set up local dev and run tests                                                 | [14-local-development-and-testing.md](./14-local-development-and-testing.md)                                                                                                   |
+| Run the release checklist                                                      | [15-checklist.md](./15-checklist.md)                                                                                                                                           |
+| Follow a recurring event end to end                                            | [16-recurring-events-journey.md](./16-recurring-events-journey.md)                                                                                                             |
+| Understand org-sponsored bookings                                              | [17-org-funded-checkout.md](./17-org-funded-checkout.md)                                                                                                                       |
+| **Check legal status transitions**                                             | [18-state-machines.md](./18-state-machines.md)                                                                                                                                 |
+| **Understand the DST stub**                                                    | [19-dst-and-timezone-posture.md](./19-dst-and-timezone-posture.md)                                                                                                             |
+| Know what a grid poll costs                                                    | [20-availability-grid-cost.md](./20-availability-grid-cost.md)                                                                                                                 |
+| Look up booking table columns and indexes                                      | [21-schema-reference.md](./21-schema-reference.md)                                                                                                                             |
+| Learn why a Prisma create must not mix `connect` with scalar ids               | [engineering-log-2026-09-18-prisma-create-input-shape.md](./engineering-log-2026-09-18-prisma-create-input-shape.md)                                                           |
+| Read the requests/heat-map train's Sentry evidence, PRs and follow-ups         | [engineering-log-2026-09-18-requests-heatmap-train.md](./engineering-log-2026-09-18-requests-heatmap-train.md)                                                                 |
+| Read the Muse Spark booking sweep's verdict split, money P0s and follow-ups    | [engineering-log-2026-09-19-muse-spark-sweep.md](./engineering-log-2026-09-19-muse-spark-sweep.md)                                                                             |
+| Understand why an approval pay-link now charges GST                            | [../decisions/2026-09-19-pay-link-gst-parity.md](../decisions/2026-09-19-pay-link-gst-parity.md)                                                                               |
+| Understand booking mode, the pay-link window, request caps and the grid states | [../enterprise/70-design-decisions/34-booking-mode-pay-link-window-and-request-caps.md](../enterprise/70-design-decisions/34-booking-mode-pay-link-window-and-request-caps.md) |
+| Understand the payment system                                                  | [../payments/01-architecture.md](../payments/01-architecture.md)                                                                                                               |
+| Check the database schema                                                      | [../../prisma/schema.prisma](../../prisma/schema.prisma)                                                                                                                       |
 
 ## Recommended Reading Order
 

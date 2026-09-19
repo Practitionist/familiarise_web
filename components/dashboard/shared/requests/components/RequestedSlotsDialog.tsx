@@ -90,6 +90,8 @@ interface RequestedSlotsDialogProps {
   /** The allocate page for this request — every "pick another time" exit
    * in the dialog is a real link there, never a disabled button. #1705 */
   allocateHref: string;
+  /** The consultant's detail page for a conflicting booking they own (#1703 C8). */
+  appointmentHrefFor?: (appointmentId: string) => string;
   onConfirm: (override: boolean) => Promise<void>;
   onCancel: () => void;
 }
@@ -184,6 +186,7 @@ export function RequestedSlotsDialog({
   confirmation = null,
   rescheduleNeedsAllocator = false,
   allocateHref,
+  appointmentHrefFor,
   onConfirm,
   onCancel,
 }: RequestedSlotsDialogProps) {
@@ -344,7 +347,22 @@ export function RequestedSlotsDialog({
             </span>
             <VerdictChip verdict={verdict} />
             {verdict.kind === "conflict" && (
-              <span className="text-muted-foreground">{verdict.existing}</span>
+              <span className="text-muted-foreground">
+                {verdict.existing}
+                {verdict.appointmentId && appointmentHrefFor && (
+                  <>
+                    {" "}
+                    (
+                    <Link
+                      href={appointmentHrefFor(verdict.appointmentId)}
+                      className="underline underline-offset-4"
+                    >
+                      view
+                    </Link>
+                    )
+                  </>
+                )}
+              </span>
             )}
             {verdict.kind === "outsidePeriod" && (
               <span className="text-muted-foreground">

@@ -353,6 +353,58 @@ export function calculateRequiredSlots(
 }
 
 /**
+ * A selected session for display: one consecutive same-day run of 30-minute
+ * atoms, collapsed so a 1-hour pick reads as one chip ("Thu 24 Sep ·
+ * 11:00 am–12:00 pm") instead of two atom rows. Sorted ascending by start.
+ */
+export interface SelectedSession {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Collapse selected 30-minute atoms into consecutive same-day sessions.
+ * Pure: sorts a copy, never mutates. An atom joins the open run only when it
+ * starts exactly when the run ends *and* both fall on the same scheduling-
+ * timezone day (ADR B9): an overnight run crossing local midnight is two
+ * sessions, so the chip never attributes post-midnight time to the prior day.
+ * Without a zone the UTC day is used — pass the event's scheduling timezone.
+ * Callers must pass the SAME resolved zone they format the chip with
+ * (`schedulingTimezone ?? gridZone`): grouping and labelling share one
+ * day-boundary by construction, so a chip's day always owns both atoms.
+ */
+export function groupSelectedIntoSessions(
+  selectedSlots: CalendarInterval[],
+  schedulingTimezone?: string,
+): SelectedSession[] {
+  const sorted = [...selectedSlots].sort(
+    (a, b) => a.startTime.getTime() - b.startTime.getTime(),
+  );
+  const sessions: SelectedSession[] = [];
+  for (const slot of sorted) {
+    const open = sessions[sessions.length - 1];
+    if (
+      open &&
+      slot.startTime.getTime() === open.end.getTime() &&
+      slot.endTime.getTime() > open.end.getTime() &&
+      (schedulingTimezone
+        ? ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
+          ScheduleCalculationService.dayKey(
+            slot.startTime,
+            schedulingTimezone,
+          )
+        : open.start.toISOString().slice(0, 10) ===
+          slot.startTime.toISOString().slice(0, 10))
+    ) {
+      open.end = slot.endTime;
+    } else {
+      sessions.push({ start: slot.startTime, end: slot.endTime });
+    }
+  }
+  return sessions;
+}
+
+/**
  * Count the number of distinct Sunday-start weeks overlapping [start, end].
  * Delegates to ScheduleCalculationService.countWeeks as the single source of truth.
  */

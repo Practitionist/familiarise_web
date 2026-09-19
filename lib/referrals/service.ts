@@ -161,9 +161,14 @@ export async function validateReferralCode(
   code: string,
   db: Tx | typeof prisma = prisma,
 ): Promise<ReferralCodeRow | null> {
+  // Generated codes are upper-case; seeded and hand-typed ones are not.
+  const typed = code.trim();
   return db.referralCode.findFirst({
     where: {
-      OR: [{ code: code.toUpperCase() }, { customCode: code.toUpperCase() }],
+      OR: [
+        { code: { equals: typed, mode: "insensitive" } },
+        { customCode: { equals: typed, mode: "insensitive" } },
+      ],
       isActive: true,
     },
   });
@@ -431,7 +436,10 @@ export async function processQualifyingAction(
         // #880 — persist the budget window (lazy monthly rollover) and the
         // spend, auto-pausing the program when the monthly budget is exhausted
         // so later qualifications defer until an admin reviews.
-        if (config.monthlyBudgetPaise !== null || config.currentPeriod !== period) {
+        if (
+          config.monthlyBudgetPaise !== null ||
+          config.currentPeriod !== period
+        ) {
           const newSpent = spentThisMonth + spentNow;
           await tx.referralProgramConfig.update({
             where: { id: config.id },

@@ -18,11 +18,18 @@ import {
 interface SlotStatusLegendProps {
   keys: SlotStatusKey[];
   className?: string;
+  /**
+   * Live cell counts per state for the painted week. Shown as a suffix
+   * ("Available · 12") so the key doubles as a salience readout; absent
+   * (still loading) renders the plain key with no count.
+   */
+  counts?: ReadonlyMap<SlotStatusKey, number>;
 }
 
 export function SlotStatusLegend({
   keys,
   className,
+  counts,
 }: Readonly<SlotStatusLegendProps>) {
   return (
     // Sticky so a tall grid that scrolls the page keeps its key in view; in a
@@ -36,13 +43,18 @@ export function SlotStatusLegend({
     >
       {keys.map((key) => {
         const token = SLOT_STATUS_TOKENS[key];
+        const count = counts?.get(key);
+        const label =
+          count === undefined
+            ? token.label
+            : `${token.label} · ${count}`;
         return (
           <li
             key={key}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
             title={token.hint}
             role="img"
-            aria-label={`${token.label}: ${token.hint}`}
+            aria-label={`${token.label}: ${token.hint}${count === undefined ? "" : `, ${count} slots this week`}`}
           >
             {/* No border-COLOUR of its own: `swatchClassName` carries the
                 cell's, and a hardcoded one here would win or lose by
@@ -54,7 +66,7 @@ export function SlotStatusLegend({
                 token.swatchClassName,
               )}
             />
-            <span aria-hidden>{token.label}</span>
+            <span aria-hidden>{label}</span>
           </li>
         );
       })}

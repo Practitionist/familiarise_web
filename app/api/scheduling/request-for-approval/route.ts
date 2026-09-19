@@ -27,7 +27,9 @@ import { requestApprovalLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { ensureConsulteeProfile } from "@/lib/profiles/ensure-consultee-profile";
 import {
   MAX_ACTIVE_REQUESTS_PER_USER,
+  capacityRefusal,
   countActiveConsultationRequests,
+  pausedRefusal,
 } from "@/lib/booking/request-caps";
 
 import { getSession } from "@/lib/auth-server";
@@ -50,8 +52,18 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const parseResult = RequestForApprovalSchema.safeParse(body);
     if (!parseResult.success) {
+      // #1583 E-P1-03 — a typed refusal (grid / lead time) rides `params.code`.
+      const typed = parseResult.error.issues.find(
+        (issue) => issue.code === "custom" && !!issue.params?.code,
+      );
+      const typedCode =
+        typed?.code === "custom" ? String(typed.params?.code) : null;
       return NextResponse.json(
-        { error: "Validation failed", details: parseResult.error.issues },
+        {
+          error: typed?.message ?? "Validation failed",
+          ...(typedCode ? { code: typedCode } : {}),
+          details: parseResult.error.issues,
+        },
         { status: 400 },
       );
     }
@@ -147,6 +159,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // #1703 D4 — the pause is a profile switch, so it is answered before any
+    // lock is taken; the cap needs a count and runs inside the slot lock.
+    const paused = pausedRefusal(consultationPlan.consultantProfile);
+    if (paused) {
+      return NextResponse.json(
+        { error: paused.message, code: paused.code },
+        { status: 409 },
+      );
+    }
+
     // Create request notes with availability slot information
     const requestNotes =
       `Request for approval - Slot: ${startTime.toISOString()} to ${endTime.toISOString()}. ` +
@@ -205,6 +227,19 @@ export async function POST(req: NextRequest) {
           }),
         );
 
+        // #1703 D4 — counted under the slot lock (consultant + interval atoms)
+        // so a burst on one slot overshoots the cap by at most what it allows.
+        const atCapacity = await capacityRefusal(
+          prisma,
+          consultationPlan.consultantProfile,
+        );
+        if (atCapacity) {
+          return NextResponse.json(
+            { error: atCapacity.message, code: atCapacity.code },
+            { status: 409 },
+          );
+        }
+
         // The 30-minute interval starts the window covers — the validator's
         // unit of arithmetic (#1554: the persisted shape is one row below).
         if (!(startTime < endTime)) {
@@ -226,10 +261,15 @@ export async function POST(req: NextRequest) {
 
         // RE-VALIDATE inside lock: Ensure ALL 30-min chunks are still available
         // This is the critical missing piece - prevents double-booking even after lock
+        // #1583 B-P1-06 / E-P1-05 — both parties and the co-host arm: the
+        // consultee's own overlap on another consultant, and an ACCEPTED
+        // webinar/class seat the consultant holds, are conflicts too.
         const validationService = new ScheduleValidationService(prisma);
         const validation = await validationService.checkSlotAvailability(
           slotChunkStarts,
           consultationPlan.consultantProfile.user.id,
+          consultantProfileId,
+          session.user.id,
         );
 
         if (!validation.isValid) {
@@ -244,10 +284,19 @@ export async function POST(req: NextRequest) {
             }),
           );
 
+          // Typed like the allocator's 409 family (#1702); the other party's
+          // name stays out of a consultee-facing body.
+          const ownOverlap = validation.conflicts?.some(
+            (c) => c.otherParty?.userId === session.user.id,
+          );
           return NextResponse.json(
             {
-              error: "Slot no longer available",
-              details: validation.errors,
+              error: ownOverlap
+                ? "You already have a session booked during this time."
+                : "Slot no longer available",
+              code: "SLOT_TAKEN",
+              conflicts:
+                validation.conflicts?.length ?? validation.errors.length,
             },
             { status: 409 },
           );

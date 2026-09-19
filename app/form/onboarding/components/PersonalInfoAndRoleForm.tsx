@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -158,23 +160,29 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
     },
   });
 
-  // Sync form values when initialData changes (for back navigation)
+  // Sync form values when initialData changes: back navigation, and the
+  // saved draft or identity seed arriving after mount. Fields the user has
+  // already typed into win over the stored values — a draft that loads
+  // slowly on a cold instance must never overwrite live typing.
   useEffect(() => {
     if (initialData && Object.keys(initialData).length > 0) {
-      reset({
-        name: "",
-        email: session?.user?.email || "",
-        onlineStatus: false,
-        onboardingCompleted: false,
-        role: lockedRole ?? UserRole.CONSULTEE,
-        gender: null,
-        city: "",
-        country: "",
-        linkedinUrl: "",
-        bio: "",
-        ...initialData,
-        ...(lockedRole ? { role: lockedRole } : {}),
-      });
+      reset(
+        {
+          name: "",
+          email: session?.user?.email || "",
+          onlineStatus: false,
+          onboardingCompleted: false,
+          role: lockedRole ?? UserRole.CONSULTEE,
+          gender: null,
+          city: "",
+          country: "",
+          linkedinUrl: "",
+          bio: "",
+          ...initialData,
+          ...(lockedRole ? { role: lockedRole } : {}),
+        },
+        { keepDirtyValues: true },
+      );
     }
   }, [initialData, reset, session?.user?.email, lockedRole]);
 
@@ -268,7 +276,10 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form
+      onSubmit={handleSubmit(onSubmit, () => scrollToFirstErrorSoon())}
+      className="space-y-6"
+    >
       {/* Essential Fields */}
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -281,9 +292,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
               {...register("name")}
               placeholder="Enter your full name"
             />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
+            <FieldError message={errors.name?.message} />
           </div>
 
           <div className="space-y-2">
@@ -346,9 +355,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             )}
           />
           {errors.dateOfBirth ? (
-            <p className="text-sm text-destructive">
-              {errors.dateOfBirth.message}
-            </p>
+            <FieldError message={errors.dateOfBirth.message} />
           ) : (
             <p className="text-xs text-muted-foreground">
               You must be at least 18 to use Familiarise.
@@ -377,11 +384,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
                 {...register("phone")}
                 placeholder="+1 (555) 000-0000"
               />
-              {errors.phone && (
-                <p className="text-sm text-destructive">
-                  {errors.phone.message}
-                </p>
-              )}
+              <FieldError message={errors.phone?.message} />
             </div>
 
             <div className="space-y-2">
@@ -457,9 +460,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
                 {bioLength}/160
               </span>
             </div>
-            {errors.bio && (
-              <p className="text-sm text-destructive">{errors.bio.message}</p>
-            )}
+            <FieldError message={errors.bio?.message} />
           </div>
 
           <div className="space-y-2">
@@ -472,11 +473,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
               {...register("linkedinUrl")}
               placeholder="https://linkedin.com/in/yourprofile"
             />
-            {errors.linkedinUrl && (
-              <p className="text-sm text-destructive">
-                {errors.linkedinUrl.message}
-              </p>
-            )}
+            <FieldError message={errors.linkedinUrl?.message} />
           </div>
         </CollapsibleContent>
       </Collapsible>
@@ -521,9 +518,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
             </div>
           )}
         />
-        {errors.role && (
-          <p className="text-sm text-destructive">{errors.role.message}</p>
-        )}
+        <FieldError message={errors.role?.message} />
       </div>
 
       {/* Role-specific info */}

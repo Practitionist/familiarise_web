@@ -1,4 +1,6 @@
 import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
 import { TrashIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -283,9 +285,7 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                   }
                 />
               </div>
-              {!slot.isValid && slot.errorMessage && (
-                <p className="text-destructive text-sm">{slot.errorMessage}</p>
-              )}
+              {!slot.isValid && <FieldError message={slot.errorMessage} />}
             </div>
           ))}
           <Button
@@ -442,20 +442,12 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
                 handleDeleteSlot(dateString, index, customSlots, setCustomSlots)
               }
             />
+            {/* Inside the row so the first-error scroll lands on this slot's inputs. */}
+            {!slot.isValid && (
+              <FieldError className="col-span-5" message={slot.errorMessage} />
+            )}
           </div>
         ))}
-        {customSlots[dateString]?.map(
-          (slot: SlotType, index: number) =>
-            !slot.isValid &&
-            slot.errorMessage && (
-              <p
-                key={`custom-error-${dateString}-${index}`}
-                className="text-destructive text-sm mt-1"
-              >
-                {slot.errorMessage}
-              </p>
-            ),
-        )}
         <Button
           type="button"
           variant="outline"
@@ -481,7 +473,10 @@ const ConsultantPreferredScheduleForm: React.FC<Props> = ({
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmitForm)} className="space-y-6">
+    <form
+      onSubmit={handleSubmit(onSubmitForm, () => scrollToFirstErrorSoon())}
+      className="space-y-6"
+    >
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           Availability Schedule

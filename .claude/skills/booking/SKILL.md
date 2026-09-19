@@ -28,15 +28,15 @@ as wrong until proven otherwise.
 status column may be written any other way. As of wave 5 (#1319) the set is
 complete:
 
-| Helper                          | Guards                               | Allowed-from map               |
-| ------------------------------- | ------------------------------------ | ------------------------------ |
-| `transitionConsultationRequest` | `Consultation.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionSubscriptionRequest` | `Subscription.status`                | `REQUEST_ALLOWED_FROM`         |
-| `transitionWebinarEvent`        | `Webinar.status`                     | `EVENT_ALLOWED_FROM`           |
-| `transitionClassEvent`          | `Class.status`                       | `CLASS_EVENT_ALLOWED_FROM`     |
-| `transitionOccurrenceCompletion`      | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
-| `transitionTrial`        | `Trial.status`                | `TRIAL_ALLOWED_FROM`           |
-| `transitionRescheduleRequest`   | `RescheduleRequest.status`           | `RESCHEDULE_ALLOWED_FROM`      |
+| Helper                           | Guards                                   | Allowed-from map               |
+| -------------------------------- | ---------------------------------------- | ------------------------------ |
+| `transitionConsultationRequest`  | `Consultation.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionSubscriptionRequest`  | `Subscription.status`                    | `REQUEST_ALLOWED_FROM`         |
+| `transitionWebinarEvent`         | `Webinar.status`                         | `EVENT_ALLOWED_FROM`           |
+| `transitionClassEvent`           | `Class.status`                           | `CLASS_EVENT_ALLOWED_FROM`     |
+| `transitionOccurrenceCompletion` | `AppointmentOccurrence.completionStatus` | `SLOT_COMPLETION_ALLOWED_FROM` |
+| `transitionTrial`                | `Trial.status`                           | `TRIAL_ALLOWED_FROM`           |
+| `transitionRescheduleRequest`    | `RescheduleRequest.status`               | `RESCHEDULE_ALLOWED_FROM`      |
 
 Every map is keyed by **target** state: `ALLOWED_FROM[to]` lists the only states
 the row may currently be in, and that set is baked into the `updateMany`'s
@@ -64,10 +64,11 @@ state. Wave 6 (#1333) widened that same pre-read to fetch the owning
 appointment, so `appointmentId` is stamped without a caller supplying it, and
 added `appendCreationHistory` — the one row that is not a transition, written
 from the literal `"CREATED"` in the same transaction as the create, because a
-booking that has never moved still needs a timeline. The three creation call
-sites are `app/api/scheduling/request-for-approval` and the consultation and
-subscription checkout handlers; the capture webhook's legacy creators do not
-write it yet.
+booking that has never moved still needs a timeline. The creation call
+sites are `app/api/scheduling/request-for-approval`, the consultation and
+subscription checkout handlers, and, as of 2026-09-19 (#1583 A-P1-06), the
+capture webhook's legacy consultation and subscription creators in
+`lib/payments/webhooks/handlers.ts` — every request birth now writes it.
 
 ### 2. Nothing that a Payment points at is ever deleted
 
@@ -159,6 +160,31 @@ to `EXPIRED` through `transitionConsultationRequest`, with `fromIn:
 ["APPROVED_PENDING_PAYMENT"]` and the `UNPAID_CONSULTATION` money predicate
 repeated inside the CAS `where`, the same two guards this rule requires of any
 new sweep.
+
+A lapsed pay-link (#1703 D2) can be seen first by either of two sweeps —
+`cleanupAbandonedPayments` and `cleanupExpiredApprovalPendingPayments`, both in
+`scripts/payments/cleanup-abandoned-payments.ts` — and both now call one shared
+helper, `expireLapsedPayLink`, rather than each running its own CAS. The helper
+is the same `fromIn: [APPROVED_PENDING_PAYMENT]` plus repeated-money-predicate
+shape this rule already requires, and the consultee's `PAY_LINK_LAPSED_REASON`
+notice is tied to the CAS **win** inside the helper, not to either caller
+individually, so the notice fires exactly once regardless of which sweep gets
+to the row first. Before this was fixed (#1724 QA, 2026-09-19), whichever sweep
+claimed the row first could leave the consultee un-notified. The rule this
+generalizes to: when two sweeps can legally claim the same row, give them one
+shared CAS-plus-notice function, not two copies that only one of them
+remembers to notify from.
+
+As of 2026-09-19 (#1732, #1589 P-P1-01) a subscription's lapsed pay-link rides
+the exact same `expireLapsedPayLink` path a consultation's does — the
+`cleanupAbandonedPayments` cohort read was widened to subscriptions, closing
+the gap where a subscription's placeholder appointment has no tentative
+occurrence for the abandoned-payment cohort to match before allocation. The
+same date retired `cleanup-stale-pending-consultations` entirely: it CANCELled
+the same `APPROVED`/`APPROVED_PENDING_PAYMENT` unpaid-after-seven-days cohort
+`expire-stale-requests` EXPIREs, which was two sweeps and two terminal words
+for one event — the exact violation this rule exists to prevent. There is now
+one sweep pair and one outcome.
 
 ### 6. There are no backfill migrations
 

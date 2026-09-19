@@ -189,6 +189,22 @@ partial success returns `partial`, `placedSessions`, `requiredSessions` and
 so the client can offer the partial option instead of a dead end. The consultee
 learns of it through the Novu workflow `appointment-partially-scheduled`.
 
+Allocation goes through **one handler route** as of #1702:
+`lib/scheduling/allocate-route.ts` carries the whole auth → limiter → Zod →
+`SchedulingService` → typed-error contract, and each of the four `PATCH …/allocate`
+routes is a thin delegator that only resolves its own typed segment param. There
+is no per-event-type copy of the allocate logic to drift out of sync.
+
+A conflict on allocation answers one of a typed family, not a bare 409: `AllocationErrorCode`
+carries `LOCK_CONTENTION` (Redis lock busy or a replay in flight), `ALREADY_ALLOCATED`
+(confirmed slots already exist), `RESCHEDULE_STATE_CHANGED` (the stale-tab case —
+the tentative-slot count moved since the client loaded the page), and `SLOT_TAKEN`
+(a chosen time went to someone else mid-allocation). A client must branch on
+`errorCode`, never on the message wording: the message is free to change for
+readability, and only `ALREADY_ALLOCATED` is the one code that should close the
+dialog and drop the row — every other code should keep the dialog open and
+refetch the grid, because the underlying request is still live and retriable.
+
 Also as of wave 5 (#1329), the co-host guard runs in **every** allocation mode:
 `SchedulingService.assertCollaboratorsFree` calls
 `assertCollaboratorsAvailableForWindows` (`lib/collaborators/availability.ts`)
@@ -201,3 +217,21 @@ occupying state and must not be a dead hold, so a co-host's live checkout hold
 blocks an allocation even though its slot is still tentative. It was previously reachable from one route only, so
 a class scheduled through the allocator could land on a time a co-host was
 already busy (AE-2, #784).
+
+## Grid states, and how they are painted (#1703 D6)
+
+`lib/scheduling/interval-status-tokens.ts` is the single colour vocabulary the
+grid, the legend and the time picker all read from, so a swatch can never
+document a state the cells do not actually paint. Two states are hatched
+rather than given a new hue, because the palette itself is locked: `outsidePeriod`
+(inside the consultant's published hours but outside this booking's own
+scheduling period) uses a 45° stripe, and `past` (already gone, shown only so
+the day reads whole) uses a 135° stripe, so the two "not really available"
+states cannot be mistaken for each other at a glance. `rescheduling` (a slot a
+reschedule released, awaiting a new time) keeps the same amber fill as
+`partiallyBooked` but adds a dashed border, because two solid-amber states next
+to each other read as one state. `unavailable` (outside the consultant's
+published hours at all) is flat — no fill, no border — because the dead-hour
+folding on the allocate grid already names those hours in a collapsed strip,
+so the cells inside it can go quiet rather than repeat the same grey the whole
+row already announced.

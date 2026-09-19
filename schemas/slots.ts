@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 
 export const RequestForApprovalSchema = z
   .object({
@@ -50,4 +51,19 @@ export const RequestForApprovalSchema = z
       message: "Start time must be before end time",
       path: ["startsAt"],
     },
-  );
+  )
+  // #1583 E-P1-03 — the grid and the lead time are refused at the edge, with
+  // a typed code the route lifts out of `params`.
+  .superRefine((data, ctx) => {
+    const start = new Date(data.startsAt);
+    if (Number.isNaN(start.getTime())) return;
+    const refusal = slotStartRefusal(start);
+    if (refusal) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: refusal.message,
+        path: ["startsAt"],
+        params: { code: refusal.code },
+      });
+    }
+  });

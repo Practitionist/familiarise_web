@@ -10,6 +10,7 @@
 import {
   cleanupAbandonedPayments,
   cleanupExpiredApprovalPendingPayments,
+  remindApprovalPaymentsDue,
   disconnectDatabase,
   type CleanupResult,
 } from "../../scripts/payments/cleanup-abandoned-payments";
@@ -26,6 +27,7 @@ import { runJob } from "../../lib/observability/job-sentry";
 function outputToGitHubActions(
   paymentResult: CleanupResult,
   consultationResult: CleanupResult,
+  reminderResult: CleanupResult,
   overallSuccess: boolean,
 ): void {
   if (!process.env.GITHUB_ACTIONS) return;
@@ -38,6 +40,9 @@ function outputToGitHubActions(
       `total_processed=${paymentResult.totalProcessed}`,
       `consultation_cleaned_count=${consultationResult.cleanedCount}`,
       `consultation_error_count=${consultationResult.errorCount}`,
+      // #1703 D2 — the reminder pass decides `success` too, so it reports.
+      `reminder_sent_count=${reminderResult.cleanedCount}`,
+      `reminder_error_count=${reminderResult.errorCount}`,
       `success=${overallSuccess}`,
     ].join("\n");
 
@@ -48,6 +53,7 @@ function outputToGitHubActions(
     const allErrors = [
       ...paymentResult.errors,
       ...consultationResult.errors,
+      ...reminderResult.errors,
     ].join("; ");
     console.log(`::error::Cleanup job completed with errors: ${allErrors}`);
   }
@@ -69,6 +75,9 @@ async function main(): Promise<void> {
     // Run expired consultation cleanup
     const consultationResult = await cleanupExpiredApprovalPendingPayments();
 
+    // #1703 D2 — the half-window pay-link reminder rides the same run.
+    const reminderResult = await remindApprovalPaymentsDue();
+
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
 
@@ -81,14 +90,25 @@ async function main(): Promise<void> {
       `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
     );
     console.log(
-      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount}`,
+      `   ⏰ Pay-link reminders sent: ${reminderResult.cleanedCount}`,
+    );
+    console.log(
+      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount + reminderResult.errorCount}`,
     );
 
     // Determine overall success
-    const overallSuccess = paymentResult.success && consultationResult.success;
+    const overallSuccess =
+      paymentResult.success &&
+      consultationResult.success &&
+      reminderResult.success;
 
     // Output to GitHub Actions
-    outputToGitHubActions(paymentResult, consultationResult, overallSuccess);
+    outputToGitHubActions(
+      paymentResult,
+      consultationResult,
+      reminderResult,
+      overallSuccess,
+    );
 
     if (overallSuccess) {
       Sentry.logger.info("job:cleanup-abandoned-payments finished", {
@@ -97,6 +117,7 @@ async function main(): Promise<void> {
         totalProcessed: paymentResult.totalProcessed,
         consultationCleanedCount: consultationResult.cleanedCount,
         consultationErrorCount: consultationResult.errorCount,
+        reminderSentCount: reminderResult.cleanedCount,
       });
       console.log("🎉 Cleanup job completed successfully");
     } else {

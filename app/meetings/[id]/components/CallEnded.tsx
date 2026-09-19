@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { PhoneOff, RefreshCw, Home } from "lucide-react";
 
 interface CallEndedProps {
@@ -15,16 +15,10 @@ const CallEnded = ({
   onRejoin,
   onReturnHome,
 }: CallEndedProps) => {
-  const router = useRouter();
-
-  // Handle return to home - use cleanup callback if provided, otherwise fallback to router
-  const handleReturnHome = () => {
-    if (onReturnHome) {
-      onReturnHome();
-    } else {
-      router.push("/");
-    }
-  };
+  // When a cleanup callback is provided the home button runs it (the caller
+  // owns the navigation); otherwise a prefetchable <Link> takes the user
+  // home without remounting the app.
+  const showHomeLink = !onReturnHome;
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950">
@@ -52,14 +46,27 @@ const CallEnded = ({
 
         {/* Actions */}
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Button
-            onClick={handleReturnHome}
-            variant="outline"
-            className="bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:border-zinc-600 px-6 py-2.5 h-auto"
-          >
-            <Home className="w-4 h-4 mr-2" />
-            Return to Home
-          </Button>
+          {showHomeLink ? (
+            <Button
+              asChild
+              variant="outline"
+              className="bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:border-zinc-600 px-6 py-2.5 h-auto"
+            >
+              <Link href="/" prefetch>
+                <Home className="w-4 h-4 mr-2" />
+                Return to Home
+              </Link>
+            </Button>
+          ) : (
+            <Button
+              onClick={onReturnHome}
+              variant="outline"
+              className="bg-transparent border-zinc-700 text-white hover:bg-zinc-800 hover:border-zinc-600 px-6 py-2.5 h-auto"
+            >
+              <Home className="w-4 h-4 mr-2" />
+              Return to Home
+            </Button>
+          )}
 
           {onRejoin && (
             <Button

@@ -1,12 +1,13 @@
 "use client";
 
 import { ScheduleType } from "@prisma/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "components/ui/button";
 import { Card, CardContent } from "components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "components/ui/tabs";
 import { useToast } from "components/ui/use-toast";
 import { Loader2, SettingsIcon } from "lucide-react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useState } from "react";
 import { TConsultantProfile } from "types/consultant";
 import { EmptyState } from "@/components/dashboard/DataCard";
@@ -37,6 +38,7 @@ import { ProfileSection, type Option } from "./sections/ProfileSection";
 import { AvailabilitySection } from "./sections/AvailabilitySection";
 import { VerificationSection } from "./sections/VerificationSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
+import { BookingRequestsSection } from "./sections/BookingRequestsSection";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
@@ -45,6 +47,7 @@ interface SettingsTabProps {
 const SETTINGS_TABS = [
   { key: "profile", label: "Profile" },
   { key: "availability", label: "Availability" },
+  { key: "booking", label: "Booking requests" },
   { key: "verification", label: "Verification" },
   { key: "notifications", label: "Notifications" },
 ] as const;
@@ -70,7 +73,7 @@ const isSettingsTabKey = (v: string | null): v is SettingsTabKey =>
  */
 export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const { toast } = useToast();
-  const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { timezone, isLoading: timezoneLoading } = useTimezone();
@@ -95,14 +98,32 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
   const [scheduleSwitchBlockedReason, setScheduleSwitchBlockedReason] =
     useState<string | null>(null);
 
-  // Active tab from the URL (default: profile; invalid values fall back)
+  // Active tab from the URL (default: profile; invalid values fall back).
+  // URL writes go through window.history.replaceState rather than
+  // router.replace: the panels are client state and the parent page reads no
+  // search params server-side, so a router navigation would re-render the
+  // tree via useSearchParams reactivity for no benefit (same discipline as
+  // components/dashboard/UrlTabs.tsx). Local state flips the panel
+  // immediately since replaceState does not update useSearchParams; an
+  // external URL change (e.g. the verification banner's ?tab=verification
+  // deep link) wins back over a stale local pick.
   const tabParam = searchParams.get("tab");
-  const activeTab: SettingsTabKey = isSettingsTabKey(tabParam)
+  const urlTab: SettingsTabKey = isSettingsTabKey(tabParam)
     ? tabParam
     : "profile";
+  const [localTab, setLocalTab] = useState<SettingsTabKey | null>(null);
+  const activeTab: SettingsTabKey = localTab ?? urlTab;
+  useEffect(() => {
+    setLocalTab(null);
+  }, [tabParam]);
   const handleTabChange = (value: string) => {
     const next = isSettingsTabKey(value) ? value : "profile";
-    router.replace(`${pathname}?tab=${next}`, { scroll: false });
+    setLocalTab(next);
+    const target = `${pathname}?tab=${next}`;
+    const current = window.location.pathname + window.location.search;
+    if (target !== current) {
+      window.history.replaceState(window.history.state, "", target);
+    }
   };
 
   // Initialize slots data when timezone is available
@@ -515,6 +536,12 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
         setScheduleType(updatedConsultant.scheduleType);
       }
 
+      // #1703 D4 — the Requests page reads the same query for its paused
+      // banner; remount refetching is off, so the save must invalidate it.
+      await queryClient.invalidateQueries({
+        queryKey: ["consultant-settings", consultant.id],
+      });
+
       // Shrink notice: a booking is a contract and keeps its time; the new
       // hours are an offer for future bookings. Say how many sit outside them
       // rather than refuse the save (docs/onboarding/03-availability-contract.md).
@@ -626,6 +653,13 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
               onAddSlot={handleAddSlot}
               onUpdateSlot={handleUpdateSlot}
               onDeleteSlot={handleDeleteSlot}
+            />
+          )}
+
+          {activeTab === "booking" && (
+            <BookingRequestsSection
+              formData={formData}
+              setFormData={setFormData}
             />
           )}
 

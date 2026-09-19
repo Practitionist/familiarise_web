@@ -37,6 +37,8 @@ import { ConsultantProfile, ConsultationPlan } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import { createHandleApiError, paymentGateways } from "../../utils";
@@ -44,6 +46,8 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import {
+  createRazorpayCheckoutHandlers,
+  createStripeCheckoutHandlers,
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
@@ -101,17 +105,16 @@ export default function ConsultationCheckoutPage({
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
+  const router = useRouter();
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
   const { availableCredits, isLoadingCredits, creditsLoadFailed } =
-    useReferralCreditsBalance();
-  const [eventData, setEventData] = useState<ConsultationResponse | null>(null);
-  const [_slotData, setSlotData] = useState<Record<string, unknown> | null>(
-    null,
-  );
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+    useReferralCreditsBalance(
+      checkoutTaxContext.referralCreditsLoaded,
+      checkoutTaxContext.referralCreditsPaise,
+    );
+  const [slotPassedError, setSlotPassedError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   // #828 — useState's lazy initializer runs once per mount.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
@@ -154,6 +157,128 @@ export default function ConsultationCheckoutPage({
       consultationSearchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
+
+  // Stable string for the query key below.
+  const searchParamsString = useMemo(() => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(resolvedSearchParams)) {
+      if (Array.isArray(value)) {
+        for (const v of value) params.append(key, v);
+      } else if (value !== undefined) {
+        params.append(key, value);
+      }
+    }
+    return params.toString();
+  }, [resolvedSearchParams]);
+
+  // ONE cached read for the mount fetches: the plan plus the (display-only)
+  // slot detail previously fired as two separate useEffects. Discount
+  // validation stays a click-time POST in handleApplyDiscount.
+  const checkoutPlanQuery = useQuery({
+    queryKey: ["checkout-plan", resolvedParams.planId, searchParamsString],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<{
+      plan: ConsultationResponse;
+      slot: Record<string, unknown> | null;
+      slotFailed: boolean;
+    }> => {
+      // Use pre-validated search params
+      if (!validatedSearchParams) {
+        throw new Refusal({
+          code: "TIME_NOT_PICKED",
+          httpStatus: 422,
+          userMessage:
+            "Pick a time on the expert's profile — under the plan you want — before checking out.",
+        });
+      }
+
+      // Staleness check: verify the selected slot hasn't passed or is too soon
+      const slotStart = new Date(validatedSearchParams.startsAt);
+      const now = new Date();
+      if (slotStart.getTime() < now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS) {
+        throw new Error(
+          "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
+        );
+      }
+
+      const { availabilityWindowWeeklyId, availabilityWindowCustomId } =
+        resolvedSearchParams;
+      const slotUrl = availabilityWindowWeeklyId
+        ? `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`
+        : availabilityWindowCustomId
+          ? `/api/scheduling/availability/custom/${availabilityWindowCustomId}`
+          : null;
+
+      const [planRes, slotRes] = await Promise.all([
+        fetch(`/api/plans/consultations/${resolvedParams.planId}`),
+        // A slot failure stays non-blocking (was the fetchSlotData catch):
+        // only a fetch-level throw marks slotFailed; a non-OK answer just
+        // leaves the slot empty, as before.
+        slotUrl ? fetch(slotUrl).catch(() => null) : Promise.resolve(null),
+      ]);
+
+      if (!planRes.ok) {
+        throw new Error(`HTTP error! status: ${planRes.status}`);
+      }
+
+      const data = await planRes.json();
+
+      if (!data.data.consultantProfile?.user) {
+        throw new Error("Consultant details not found");
+      }
+
+      let slot: Record<string, unknown> | null = null;
+      let slotFailed = false;
+      if (slotRes) {
+        try {
+          if (slotRes.ok) {
+            const slotJson = await slotRes.json();
+            slot = slotJson.data;
+          }
+        } catch {
+          slotFailed = true;
+        }
+      } else if (slotUrl) {
+        slotFailed = true;
+      }
+
+      return { plan: data, slot, slotFailed };
+    },
+  });
+
+  const eventData = checkoutPlanQuery.data?.plan ?? null;
+  const isLoading = checkoutPlanQuery.isPending;
+  const error =
+    slotPassedError ??
+    (checkoutPlanQuery.error
+      ? checkoutPlanQuery.error instanceof Error
+        ? checkoutPlanQuery.error.message
+        : "An unexpected error occurred. Please try again."
+      : null);
+
+  // Plan-load failures report exactly as the old fetch catch did.
+  useEffect(() => {
+    if (checkoutPlanQuery.error) {
+      reportPaymentsError(checkoutPlanQuery.error);
+      console.error(
+        "[Checkout] Error fetching event data:",
+        checkoutPlanQuery.error,
+      );
+    }
+  }, [checkoutPlanQuery.error]);
+
+  // Slot-detail failure stays a non-blocking warning toast.
+  useEffect(() => {
+    if (checkoutPlanQuery.data?.slotFailed) {
+      toast({
+        title: "Warning",
+        description:
+          "Could not load slot details. You may still proceed with checkout.",
+        variant: "default",
+      });
+    }
+  }, [checkoutPlanQuery.data?.slotFailed, toast]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -199,49 +324,6 @@ export default function ConsultationCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Fetch slot details
-  useEffect(() => {
-    async function fetchSlotData() {
-      try {
-        const { availabilityWindowWeeklyId, availabilityWindowCustomId } =
-          resolvedSearchParams;
-
-        if (availabilityWindowWeeklyId) {
-          const response = await fetch(
-            `/api/scheduling/availability/weekly/${availabilityWindowWeeklyId}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            setSlotData(data.data);
-          }
-        } else if (availabilityWindowCustomId) {
-          const response = await fetch(
-            `/api/scheduling/availability/custom/${availabilityWindowCustomId}`,
-          );
-          if (response.ok) {
-            const data = await response.json();
-            setSlotData(data.data);
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching slot data:", error);
-        toast({
-          title: "Warning",
-          description:
-            "Could not load slot details. You may still proceed with checkout.",
-          variant: "default",
-        });
-      }
-    }
-
-    if (
-      resolvedSearchParams.availabilityWindowWeeklyId ||
-      resolvedSearchParams.availabilityWindowCustomId
-    ) {
-      fetchSlotData();
-    }
-  }, [resolvedSearchParams, toast]);
 
   // Shared error map covers slot-conflict types (AVAILABILITY, LOCK_CONTENTION)
   // so a slot taken mid-checkout shows a clear "pick another time" toast.
@@ -371,7 +453,7 @@ export default function ConsultationCheckoutPage({
           });
 
           setTimeout(() => {
-            window.location.href = "/dashboard";
+            router.push("/dashboard");
           }, 2000);
         }
       } catch (error) {
@@ -394,6 +476,7 @@ export default function ConsultationCheckoutPage({
     [
       resolvedParams,
       toast,
+      router,
       isCheckoutProcessing,
       isMaintenanceBlocked,
       maintenanceBlockReason,
@@ -407,62 +490,6 @@ export default function ConsultationCheckoutPage({
       makeCheckoutRequest,
     ],
   );
-
-  useEffect(() => {
-    async function fetchEventData() {
-      setIsLoading(true);
-      try {
-        // Use pre-validated search params
-        if (!validatedSearchParams) {
-          throw new Refusal({
-            code: "TIME_NOT_PICKED",
-            httpStatus: 422,
-            userMessage:
-              "Pick a time on the expert's profile — under the plan you want — before checking out.",
-          });
-        }
-
-        // Staleness check: verify the selected slot hasn't passed or is too soon
-        const slotStart = new Date(validatedSearchParams.startsAt);
-        const now = new Date();
-        if (
-          slotStart.getTime() <
-          now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS
-        ) {
-          throw new Error(
-            "The selected time slot is no longer available. It has either passed or starts too soon. Please go back and select a new slot.",
-          );
-        }
-
-        const endpoint = `/api/plans/consultations/${resolvedParams.planId}`;
-
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.data.consultantProfile?.user) {
-          throw new Error("Consultant details not found");
-        }
-
-        setEventData(data);
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("[Checkout] Error fetching event data:", error);
-        setError(
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred. Please try again.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchEventData();
-  }, [resolvedParams.planId, resolvedSearchParams, validatedSearchParams]);
 
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
@@ -518,7 +545,7 @@ export default function ConsultationCheckoutPage({
         (slotStart.getTime() - now.getTime()) / (60 * 1000);
 
       if (minutesUntilSlot <= 0) {
-        setError(
+        setSlotPassedError(
           "This time slot has passed. Please go back and select a new available slot.",
         );
       } else if (
@@ -888,16 +915,12 @@ export default function ConsultationCheckoutPage({
                             organizationId: selectedOrganizationId ?? undefined,
                             ...billingState.bodyField,
                           })}
-                          onPaymentSuccess={(response: {
-                            razorpay_payment_id?: string;
-                            message?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Successful",
-                              description: `Payment ID: ${response.razorpay_payment_id ?? "N/A"}`,
-                            });
-                            window.location.href = "/dashboard";
-                          }}
+                          // #1591 J1-P0-01 — checkout-success polls verify;
+                          // /dashboard read as "I paid and got nothing".
+                          onPaymentSuccess={
+                            createRazorpayCheckoutHandlers(toast)
+                              .onPaymentSuccess
+                          }
                           disabled={isMaintenanceBlocked}
                           onPaymentError={(error: {
                             description?: string;
@@ -936,17 +959,9 @@ export default function ConsultationCheckoutPage({
                             organizationId: selectedOrganizationId ?? undefined,
                             ...billingState.bodyField,
                           })}
-                          onPaymentSuccess={(response: {
-                            message?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Successful",
-                              description:
-                                response.message ||
-                                "Payment completed successfully",
-                            });
-                            window.location.href = "/dashboard";
-                          }}
+                          onPaymentSuccess={
+                            createStripeCheckoutHandlers(toast).onPaymentSuccess
+                          }
                           disabled={isMaintenanceBlocked}
                           onPaymentError={(error: {
                             message?: string;
