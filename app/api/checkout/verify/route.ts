@@ -1,7 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   getRazorpayClient,
   withRazorpaySdkTimeout,
@@ -12,11 +12,11 @@ import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
 export async function GET(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: ?sync=true drives
+    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     // Get payment intent from query parameters
     const { searchParams } = new URL(req.url);
