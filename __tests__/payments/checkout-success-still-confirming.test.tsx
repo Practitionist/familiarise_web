@@ -152,6 +152,34 @@ describe("checkout-success terminal states", () => {
     expect(container.textContent).not.toContain("on its way");
   });
 
+  // qa-1752 — the session lookup's replica-lag 503 (Retry-After) must be
+  // waited out like a 429, never routed to the failure page.
+  it("keeps polling on a 503 with Retry-After instead of routing to failure", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce(
+        verifyAnswer(503, {
+          error: "Session lookup unavailable",
+          retryAfter: 1,
+        }),
+      )
+      .mockResolvedValue(
+        verifyAnswer(200, {
+          appointmentType: "CONSULTATION",
+          status: "SUCCEEDED",
+          bookingState: "CONFIRMED",
+        }),
+      ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+    await step(1);
+
+    expect(push).not.toHaveBeenCalledWith("/checkout/checkout-failure");
+  });
+
   // #1586 P1-J32 — a typed 500 is the route failing, not the payment.
   it("keeps the confirming card on a VERIFICATION_FAILED 500", async () => {
     global.fetch = jest.fn().mockResolvedValue(

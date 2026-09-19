@@ -80,8 +80,10 @@ function CheckoutSuccessContent() {
             `/api/checkout/verify?payment_intent=${encodeURIComponent(paymentIntent)}&sync=true`,
           );
           const data = await response.json();
-          if (response.status === 429) {
-            // Honour the verify route's own pause (#1591 J1-P1-02).
+          if (response.status === 429 || response.status === 503) {
+            // Honour the verify route's own pause (#1591 J1-P1-02). A 503 is
+            // the force-fresh session lookup's replica-lag retry (it carries
+            // Retry-After, qa-1752), never a verdict on the payment.
             const retryAfter = Number(
               data?.retryAfter ?? response.headers.get("Retry-After"),
             );
