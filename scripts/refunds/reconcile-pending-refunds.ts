@@ -348,11 +348,14 @@ async function reconcilePendingRefundsUnlocked(
         // transactionId (lib/novu/outbox.ts) makes a re-drive safe.
         let bell: StagedTrigger | null = null;
         let emails: StagedRecipientEmail[] = [];
-        await prisma.$transaction(async (tx) => {
-          await tx.refund.update({
-            where: { id: refund.id },
+        const claimed = await prisma.$transaction(async (tx) => {
+          // Claim by status: a re-entrant run or a webhook that settled the
+          // row first matches zero rows and stages nothing.
+          const claim = await tx.refund.updateMany({
+            where: { id: refund.id, status: RefundStatus.PENDING },
             data: { status: RefundStatus.SUCCEEDED, updatedAt: new Date() },
           });
+          if (claim.count !== 1) return false;
           const notice = await notifyRefundProcessed(
             refund.payment.userId,
             {
@@ -370,7 +373,15 @@ async function reconcilePendingRefundsUnlocked(
             amountPaise: refund.amountPaise,
             currency: refund.currency,
           });
+          return true;
         });
+        if (!claimed) {
+          console.log(
+            `♻️ Real-id refund ${refund.id} (${refund.refundId}) was settled by another writer; nothing to mark`,
+          );
+          skippedCount++;
+          continue;
+        }
         await attemptRefundNotice(bell, emails);
         console.log(
           `✅ Real-id refund ${refund.id} (${refund.refundId}) confirmed settled at gateway; backstop cascade will complete it`,

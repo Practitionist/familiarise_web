@@ -66,11 +66,11 @@ import { Prisma } from "@prisma/client";
 import { POST } from "../../app/api/checkout/route";
 import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
 
-function checkoutRequest() {
+function checkoutRequest(body: Record<string, unknown> = {}) {
   return new NextRequest("https://x.test/api/checkout", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ appointmentId: "appt_1", amount: 100 }),
+    body: JSON.stringify({ appointmentId: "appt_1", amount: 100, ...body }),
   });
 }
 
@@ -144,23 +144,35 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
 // replay branch for that P2002, but handleCheckout rewrapped the Prisma error
 // into a generic one so the branch never fired and the loser answered 500.
 describe("a same-key P2002 out of handleCheckout replays the winner", () => {
-  it("answers the winner's response instead of a 500", async () => {
-    handleCheckout.mockRejectedValue(
+  it("the loser of two same-key requests answers the winner's response instead of a 500", async () => {
+    const KEY = "same-key-both-tabs";
+    const winnerBody = { success: true, paymentId: "pay_w" };
+    // Request A wins the unique; request B's create dies on it.
+    handleCheckout.mockResolvedValueOnce(winnerBody).mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError("unique", {
         code: "P2002",
         clientVersion: "test",
         meta: { target: ["userId", "clientIdempotencyKey"] },
       }),
     );
-    const winner = NextResponse.json({ success: true, paymentId: "pay_w" });
     (replayByIdempotencyKey as jest.Mock)
-      .mockResolvedValueOnce(null) // the fast-path lookup, before the race
-      .mockResolvedValueOnce(winner); // the catch, after the loser's P2002
+      .mockResolvedValueOnce(null) // A's fast path: nothing recorded yet
+      .mockResolvedValueOnce(null) // B's fast path: A has not committed yet
+      .mockResolvedValueOnce(NextResponse.json(winnerBody)); // B's catch
 
-    const res = await POST(checkoutRequest());
+    const [winner, loser] = await Promise.all([
+      POST(checkoutRequest({ clientIdempotencyKey: KEY })),
+      POST(checkoutRequest({ clientIdempotencyKey: KEY })),
+    ]);
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ success: true, paymentId: "pay_w" });
-    expect(replayByIdempotencyKey).toHaveBeenCalledTimes(2);
+    expect(winner.status).toBe(200);
+    expect(loser.status).toBe(200);
+    expect(await loser.json()).toEqual(winnerBody);
+    // Every replay lookup — both fast paths and the loser's catch — is keyed
+    // by the one key both tabs sent, never a server-minted one.
+    expect(replayByIdempotencyKey).toHaveBeenCalledTimes(3);
+    for (const call of (replayByIdempotencyKey as jest.Mock).mock.calls) {
+      expect(call).toEqual(["user_1", KEY]);
+    }
   });
 });

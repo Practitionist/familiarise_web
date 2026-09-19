@@ -175,6 +175,7 @@ export async function refundWholeEventPayments(
   const memberOverageFollowUps: string[] = [];
   if (internal.length > 0) {
     let internalTotal = 0;
+    let settledSeats = 0;
     try {
       const result = await withSerializableRetry(() =>
         prisma.$transaction(
@@ -184,6 +185,11 @@ export async function refundWholeEventPayments(
               internal.map((p) => p.id),
             );
             internalTotal = balances.reduce((s, p) => s + p.refundablePaise, 0);
+            // Seats with nothing left are skips, whether or not the rest of
+            // the batch still has a balance.
+            settledSeats = balances.filter(
+              (p) => p.refundablePaise <= 0,
+            ).length;
             if (internalTotal === 0) return null;
             return applyReversal(tx, {
               source: {
@@ -205,8 +211,8 @@ export async function refundWholeEventPayments(
           },
         ),
       );
+      summary.skippedAlreadyRefunded += settledSeats;
       if (result === null) {
-        summary.skippedAlreadyRefunded += internal.length;
         summary.alreadyRefunded = true;
       } else {
         summary.refundsIssued += result.childRefundIds.length;

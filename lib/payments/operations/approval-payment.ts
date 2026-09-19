@@ -18,6 +18,7 @@ import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards"
 import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amount";
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
+import { tombstoneAbortedGatewayOrder } from "@/lib/payments/operations/checkout";
 import {
   AppointmentStatus,
   Currency,
@@ -355,10 +356,24 @@ export async function createApprovalPaymentIntent(
         },
       });
     } catch (err) {
+      // Only the [userId, appointmentId] pair is the double-accept race; any
+      // other unique is a real fault and keeps its Prisma error.
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002"
+        err.code === "P2002" &&
+        String(err.meta?.target ?? "").includes("appointmentId")
       ) {
+        // The gateway order above is already minted and payable; give a late
+        // capture on it a row to refund against (#1695) before refusing.
+        await tombstoneAbortedGatewayOrder({
+          paymentIntent: paymentResponse.id,
+          userId: params.userId,
+          amount,
+          originalAmount,
+          taxAmount,
+          currency,
+          reason: "approval pay-link lost a concurrent double-accept",
+        });
         throw new ApprovalPaymentExistsError();
       }
       throw err;

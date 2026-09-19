@@ -133,6 +133,17 @@ jest.mock("../../lib/compliance/lut", () => ({
   hasValidPlatformLut: () => lutValid,
 }));
 
+// CodeRabbit r1 — the loser of a double-accept tombstones its minted order
+// (#1695). Boundary-mocked: checkout.ts's import graph is not under test.
+const mockTombstone = jest.fn<Promise<void>, [Record<string, unknown>]>(
+  async () => undefined,
+);
+jest.mock("../../lib/payments/operations/checkout", () => ({
+  __esModule: true,
+  tombstoneAbortedGatewayOrder: (input: Record<string, unknown>) =>
+    mockTombstone(input),
+}));
+
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
@@ -481,7 +492,7 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
 
   // #1589 T-P0-02 — a concurrent double-accept: the loser's create dies on
   // Payment's [userId, appointmentId] unique and must surface as a 409.
-  it("maps the unique-pair P2002 on create to ApprovalPaymentExistsError", async () => {
+  it("maps the unique-pair P2002 on create to ApprovalPaymentExistsError and tombstones the minted order", async () => {
     mockedPaymentCreate.mockRejectedValueOnce(
       new Prisma.PrismaClientKnownRequestError("unique", {
         code: "P2002",
@@ -493,6 +504,28 @@ describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", (
     await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
       ApprovalPaymentExistsError,
     );
+    // The gateway order was already minted; a late capture on it needs a
+    // row to be refunded against, so the loser leaves the #1695 tombstone.
+    expect(mockTombstone).toHaveBeenCalledTimes(1);
+    expect(mockTombstone.mock.calls[0][0]).toMatchObject({
+      paymentIntent: "order_new",
+      userId: CUID,
+      amount: 118_000,
+      originalAmount: 100_000,
+      taxAmount: 18_000,
+    });
+  });
+
+  it("rethrows a P2002 on any other unique unchanged, with no tombstone", async () => {
+    const other = new Prisma.PrismaClientKnownRequestError("unique", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { target: ["paymentIntent"] },
+    });
+    mockedPaymentCreate.mockRejectedValueOnce(other);
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toBe(other);
+    expect(mockTombstone).not.toHaveBeenCalled();
   });
 });
 

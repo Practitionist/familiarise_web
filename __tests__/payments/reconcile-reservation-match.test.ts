@@ -262,9 +262,11 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
 
     expect(mockGet).toHaveBeenCalledWith("rfnd_real", "RAZORPAY");
     expect(result.reconciledCount).toBe(1);
-    expect(refundTable.update).toHaveBeenCalledWith(
+    // CodeRabbit r1 — the mark is a CAS on PENDING so a re-entrant run or a
+    // webhook that settled the row first cannot mark or notify twice.
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_9" },
+        where: { id: "row_9", status: "PENDING" },
         data: expect.objectContaining({ status: "SUCCEEDED" }),
       }),
     );
@@ -275,6 +277,39 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
       expect.objectContaining({ amount: 10_000, currency: "INR" }),
       expect.objectContaining({ entityRef: "payment:pay-9" }),
     );
+  });
+
+  test("a row another writer already settled is neither re-marked nor re-notified", async () => {
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "row_9",
+        refundId: "rfnd_real",
+        status: "PENDING",
+        amountPaise: 10_000,
+        currency: "INR",
+        createdAt: new Date(Date.now() - 3 * HOUR),
+        payment: {
+          id: "pay-9",
+          paymentGateway: "RAZORPAY",
+          userId: "user-9",
+          organizationId: null,
+        },
+      },
+    ]);
+    mockGet.mockResolvedValueOnce({
+      refundId: "rfnd_real",
+      amount: 10_000,
+      currency: "INR",
+      status: "SUCCEEDED",
+      metadata: undefined,
+    });
+    refundTable.updateMany.mockResolvedValueOnce({ count: 0 }); // lost the claim
+
+    const result = await reconcilePendingRefunds();
+
+    expect(result.reconciledCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
   });
 
   test("a still-settling real-id refund is never aged out locally", async () => {

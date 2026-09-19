@@ -195,6 +195,8 @@ describe("refundWholeEventPayments — funding partition", () => {
     expect(summary).toMatchObject({
       refundsIssued: 1,
       refundedPaise: 100_000,
+      // CodeRabbit r1 — the settled seat is a skip even in a mixed batch.
+      skippedAlreadyRefunded: 1,
       alreadyRefunded: false,
       failures: [],
     });

@@ -345,6 +345,27 @@ describe("the internal rail tells the payer (#1589 N-P0-01)", () => {
     expect(mockAttemptStagedEmails).toHaveBeenCalledTimes(1);
   });
 
+  it("a partial refund tells the payer the requested amount, not the payment's", async () => {
+    mockPaymentFindUnique.mockResolvedValue({
+      ...orgFundedPayment("org_wallet_1_a"),
+      userId: "user-1",
+      organizationId: "org-1",
+    });
+
+    await refundBookingPayment({
+      paymentId: PAYMENT_ID,
+      amountPaise: 40_000,
+      reason: "late cancellation, 40% tier",
+    });
+
+    expect(mockNotifyRefundProcessed.mock.calls[0][1]).toMatchObject({
+      amount: 40_000,
+    });
+    expect(mockStageRefundProcessedEmail.mock.calls[0][1]).toMatchObject({
+      amountPaise: 40_000,
+    });
+  });
+
   it("stages nothing for a gateway refund — the webhook owns that notice", async () => {
     mockPaymentFindUnique.mockResolvedValue({ paymentIntent: "pay_ABC" });
     mockRefundPayment.mockResolvedValue({
