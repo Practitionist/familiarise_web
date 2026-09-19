@@ -39,6 +39,7 @@ import { AvailabilitySection } from "./sections/AvailabilitySection";
 import { VerificationSection } from "./sections/VerificationSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
 import { BookingRequestsSection } from "./sections/BookingRequestsSection";
+import { SecuritySection } from "./sections/SecuritySection";
 
 interface SettingsTabProps {
   consultant: TConsultantProfile;
@@ -50,6 +51,7 @@ const SETTINGS_TABS = [
   { key: "booking", label: "Booking requests" },
   { key: "verification", label: "Verification" },
   { key: "notifications", label: "Notifications" },
+  { key: "security", label: "Security" },
 ] as const;
 
 type SettingsTabKey = (typeof SETTINGS_TABS)[number]["key"];
@@ -651,6 +653,8 @@ export function SettingsTab({ consultant }: Readonly<SettingsTabProps>) {
           )}
 
           {activeTab === "notifications" && <NotificationsSection />}
+
+          {activeTab === "security" && <SecuritySection />}
         </CardContent>
       </Card>
 

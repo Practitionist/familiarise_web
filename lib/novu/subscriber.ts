@@ -83,6 +83,8 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
 export async function updateSubscriberPreferences(
   userId: string,
   preferences: {
+    // Master toggle — gates the bell via `masterEnabled` (Q1 fix).
+    allNotifications?: boolean;
     // Channel preferences
     inApp?: boolean;
     email?: boolean;
@@ -120,7 +122,9 @@ export async function updateSubscriberPreferences(
     await novu.subscribers.patch(
       {
         data: {
-          // Channel preferences
+          // Master toggle + channel preferences (Q1: the bell skip rule
+          // reads `masterEnabled` and `preferInApp`; see conditions.ts).
+          masterEnabled: preferences.allNotifications ?? true,
           preferInApp: preferences.inApp ?? true,
           preferEmail: preferences.email ?? true,
           preferPush: preferences.push ?? false,

@@ -1,8 +1,21 @@
+/**
+ * @deprecated Use GET/PUT /api/novu/preferences instead. This legacy narrow
+ * API (allNotifications + mentions/directMessages/updates) has no Novu sync,
+ * so edits here never reach the bell — the split-brain behind "I turned email
+ * off but still got notified". Kept read-only-compatible for old clients;
+ * new UI must use `components/notifications/NotificationPreferencesPanel`.
+ */
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { z } from "zod";
+
+const DEPRECATION_HEADERS = {
+  Deprecation: "true",
+  Sunset: "Sat, 01 Aug 2026 00:00:00 GMT",
+  Link: '</api/novu/preferences>; rel="successor-version"',
+} as const;
 
 const UpdateNotificationPreferencesSchema = z.object({
   allNotifications: z.boolean(),
@@ -31,18 +44,21 @@ export async function GET() {
             updates: false,
           },
         },
-        { status: 200 },
+        { status: 200, headers: DEPRECATION_HEADERS },
       );
     }
 
-    return NextResponse.json({
-      data: {
-        allNotifications: prefs.allNotifications,
-        mentions: prefs.mentions,
-        directMessages: prefs.directMessages,
-        updates: prefs.updates,
+    return NextResponse.json(
+      {
+        data: {
+          allNotifications: prefs.allNotifications,
+          mentions: prefs.mentions,
+          directMessages: prefs.directMessages,
+          updates: prefs.updates,
+        },
       },
-    });
+      { headers: DEPRECATION_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error fetching notification preferences:", error);
@@ -94,14 +110,21 @@ export async function PUT(request: NextRequest) {
       },
     });
 
-    return NextResponse.json({
-      data: {
-        allNotifications: prefs.allNotifications,
-        mentions: prefs.mentions,
-        directMessages: prefs.directMessages,
-        updates: prefs.updates,
+    const response = NextResponse.json(
+      {
+        data: {
+          allNotifications: prefs.allNotifications,
+          mentions: prefs.mentions,
+          directMessages: prefs.directMessages,
+          updates: prefs.updates,
+        },
       },
-    });
+      { headers: DEPRECATION_HEADERS },
+    );
+    console.warn(
+      "[Notifications] Legacy PUT /api/user/notification-preferences used — migrate caller to /api/novu/preferences",
+    );
+    return response;
   } catch (error) {
     Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
     console.error("Error updating notification preferences:", error);

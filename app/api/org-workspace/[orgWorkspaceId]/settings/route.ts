@@ -29,10 +29,12 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
+import * as Sentry from "@sentry/nextjs";
 import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceSettings } from "@/lib/data/org-workspace";
+import { syncSubscriber } from "@/lib/novu/subscriber";
 
 const PatchBodySchema = z
   .object({
@@ -169,6 +171,32 @@ export async function PATCH(
       updatedAt: true,
     },
   });
+
+  // Q2-routing fix — the routing mode only took effect on the next 30-minute
+  // subscriber sync. Re-sync inline so the bell/email gate applies immediately.
+  // Fire-and-forget: a Novu hiccup must not fail the settings save.
+  if (body.notificationRoutingMode !== undefined) {
+    const account = await prisma.user.findUnique({
+      where: { id: auth.session.user.id },
+      select: { email: true, name: true },
+    });
+    if (account?.email) {
+      const nameParts = (account.name || "User").split(" ");
+      syncSubscriber({
+        userId: auth.session.user.id,
+        email: account.email,
+        firstName: nameParts[0],
+        lastName: nameParts.slice(1).join(" ") || undefined,
+        routingMode: body.notificationRoutingMode,
+      }).catch((err) => {
+        console.error("[OrgWorkspace] Novu routing re-sync error:", err);
+        Sentry.captureException(
+          err instanceof Error ? err : new Error(String(err)),
+          { tags: { subsystem: "novu" }, level: "warning" },
+        );
+      });
+    }
+  }
 
   return NextResponse.json({ profile: updated });
 }
