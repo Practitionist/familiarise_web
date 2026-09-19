@@ -621,7 +621,8 @@ async function releaseSupersededHolds(params: {
  * in-transaction abort, so a late capture on it has a row to be refunded
  * against. EXPIRED with `expiresAt` now: no sweep re-drives it (they cohort on
  * PENDING) and no checkout resumes it. A failure here must not mask the abort
- * the buyer is about to hear about, so it only reports.
+ * the buyer is about to hear about, so it only reports — and returns whether
+ * the row landed, for a caller whose next answer depends on it.
  */
 export async function tombstoneAbortedGatewayOrder(input: {
   paymentIntent: string;
@@ -631,7 +632,7 @@ export async function tombstoneAbortedGatewayOrder(input: {
   taxAmount: number;
   currency: Currency;
   reason: string;
-}): Promise<void> {
+}): Promise<boolean> {
   try {
     await prisma.payment.create({
       data: {
@@ -648,11 +649,13 @@ export async function tombstoneAbortedGatewayOrder(input: {
         description: `Checkout aborted after the gateway order was minted (${input.reason.slice(0, 160)}). A late capture on this order is auto-refunded.`,
       },
     });
+    return true;
   } catch (tombstoneError) {
     reportSentryError(tombstoneError, {
       subsystem: "payments",
       extra: { paymentIntent: input.paymentIntent },
     });
+    return false;
   }
 }
 

@@ -212,9 +212,7 @@ export async function refundWholeEventPayments(
         ),
       );
       summary.skippedAlreadyRefunded += settledSeats;
-      if (result === null) {
-        summary.alreadyRefunded = true;
-      } else {
+      if (result !== null) {
         summary.refundsIssued += result.childRefundIds.length;
         summary.refundedPaise += internalTotal;
         summary.childRefundIds.push(...result.childRefundIds);
@@ -270,6 +268,14 @@ export async function refundWholeEventPayments(
       }
     }
   }
+
+  // Derived after every rail: the event is "already refunded" only when each
+  // seat was a skip, nothing was issued and nothing failed — an internal no-op
+  // beside a failed gateway seat is a failure, not idempotent success.
+  summary.alreadyRefunded =
+    summary.refundsIssued === 0 &&
+    summary.failures.length === 0 &&
+    summary.skippedAlreadyRefunded === payments.length;
 
   return summary;
 }

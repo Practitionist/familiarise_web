@@ -19,6 +19,7 @@ import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amo
 import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
 import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import { tombstoneAbortedGatewayOrder } from "@/lib/payments/operations/checkout";
+import { sumPaise } from "@/lib/payments/utils/money";
 import {
   AppointmentStatus,
   Currency,
@@ -237,10 +238,16 @@ export async function createApprovalPaymentIntent(
           throw new ApprovalWindowLapsedError();
         }
         remintIntoPaymentId = existingPayment.id;
-      } else if (existingPayment.amount !== amount) {
-        // #1583 C-P0-01 — a live row frozen at a different figure (a pre-tax
-        // mint) would charge the stale number; re-mint into it instead, the
-        // same way checkout supersedes an amount-mismatched open order.
+      } else if (
+        existingPayment.amount !== amount ||
+        existingPayment.originalAmount !== originalAmount ||
+        existingPayment.taxAmount !== taxAmount ||
+        existingPayment.isInternational !== isInternational
+      ) {
+        // #1583 C-P0-01 — a live row frozen at a different pricing state (a
+        // pre-tax mint, or the same total under another tax classification)
+        // would charge or invoice the stale figures; re-mint into it instead,
+        // the same way checkout supersedes an amount-mismatched open order.
         remintIntoPaymentId = existingPayment.id;
       } else {
         // #1181 — a live PENDING payment from a previous mint attempt is
@@ -273,7 +280,7 @@ export async function createApprovalPaymentIntent(
       isMockPayment: false,
     });
 
-    if (remintIntoPaymentId) {
+    if (remintIntoPaymentId && existingPayment) {
       // #1319 review — re-mint IN PLACE. The row keeps its id, userId and
       // appointmentId (so the unique pair, the appointment back-link and every
       // downstream reference survive) and takes the new order's identity,
@@ -283,28 +290,81 @@ export async function createApprovalPaymentIntent(
       // exactly the drift that froze the amount onto this row to begin with.
       // The CARD leg follows for the same reason — the funding legs (every
       // source but REFERRAL_CREDIT) must still sum to amount (#1347).
-      await prisma.payment.update({
-        where: { id: remintIntoPaymentId },
-        data: {
+      //
+      // CAS-in-WHERE (ADR 21): the pre-read's status AND intent ride the
+      // WHERE, so a capture that landed on the old order between the read and
+      // this write matches zero rows instead of being reset to PENDING under
+      // a replaced order. The leg follows only once the CAS has won.
+      const priorStatus = existingPayment.paymentStatus;
+      const priorIntent = existingPayment.paymentIntent;
+      const claimed = await prisma.$transaction(async (tx) => {
+        const cas = await tx.payment.updateMany({
+          where: {
+            id: remintIntoPaymentId,
+            paymentStatus: priorStatus,
+            paymentIntent: priorIntent,
+          },
+          data: {
+            paymentIntent: paymentResponse.id,
+            paymentStatus: PaymentStatus.PENDING,
+            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+            amount,
+            originalAmount,
+            taxAmount,
+            buyerCountry,
+            isInternational,
+            currency,
+            description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
+            paymentGateway: params.paymentGateway,
+          },
+        });
+        if (cas.count !== 1) return false;
+        await tx.paymentLeg.updateMany({
+          where: { paymentId: remintIntoPaymentId, source: "CARD" },
+          data: { amountPaise: amount, sourceRef: paymentResponse.id },
+        });
+        return true;
+      });
+
+      if (!claimed) {
+        // The row moved under us. The order just minted is payable and owned
+        // by nobody, so it gets the #1695 tombstone; then the fresh row says
+        // what actually happened.
+        await tombstoneAbortedGatewayOrder({
           paymentIntent: paymentResponse.id,
-          paymentStatus: PaymentStatus.PENDING,
-          expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+          userId: params.userId,
           amount,
           originalAmount,
           taxAmount,
-          buyerCountry,
-          isInternational,
           currency,
-          description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
-          paymentGateway: params.paymentGateway,
-          legs: {
-            updateMany: {
-              where: { source: "CARD" },
-              data: { amountPaise: amount, sourceRef: paymentResponse.id },
-            },
+          reason: "approval re-mint lost its CAS to a concurrent writer",
+        });
+        const fresh = await prisma.payment.findUnique({
+          where: { id: remintIntoPaymentId },
+          select: {
+            paymentStatus: true,
+            paymentIntent: true,
+            amount: true,
+            currency: true,
           },
-        },
-      });
+        });
+        if (fresh?.paymentStatus === PaymentStatus.SUCCEEDED) {
+          // The old order was captured; the routes answer this the same way
+          // the pre-read does. Handing back a link would email a pay-link
+          // for a paid order.
+          throw new Error("This request has already been paid");
+        }
+        if (fresh?.paymentStatus === PaymentStatus.PENDING) {
+          // Another mint replaced the order first; its link is the live one.
+          return {
+            paymentIntentId: fresh.paymentIntent,
+            checkoutUrl: fresh.paymentIntent,
+            amount: fresh.amount,
+            currency: fresh.currency,
+          };
+        }
+        throw new ApprovalPaymentExistsError();
+      }
 
       return {
         paymentIntentId: paymentResponse.id,
@@ -364,8 +424,10 @@ export async function createApprovalPaymentIntent(
         String(err.meta?.target ?? "").includes("appointmentId")
       ) {
         // The gateway order above is already minted and payable; give a late
-        // capture on it a row to refund against (#1695) before refusing.
-        await tombstoneAbortedGatewayOrder({
+        // capture on it a row to refund against (#1695) before refusing. If
+        // that row could not be written the conflict is not safe to answer as
+        // a settled 409: the original error keeps the caller's retry alive.
+        const persisted = await tombstoneAbortedGatewayOrder({
           paymentIntent: paymentResponse.id,
           userId: params.userId,
           amount,
@@ -374,7 +436,7 @@ export async function createApprovalPaymentIntent(
           currency,
           reason: "approval pay-link lost a concurrent double-accept",
         });
-        throw new ApprovalPaymentExistsError();
+        if (persisted) throw new ApprovalPaymentExistsError();
       }
       throw err;
     }
@@ -404,6 +466,20 @@ interface ApprovalAmount {
   isInternational: boolean;
   currency: Currency;
   plan: { title: string };
+}
+
+/**
+ * A stored plan price as a safe, non-negative paise integer. `sumPaise` is the
+ * repo's BigInt-to-number gate (#780); a negative list price is a data fault.
+ */
+function planPricePaise(value: bigint | number, label: string): number {
+  const paise = sumPaise(value);
+  if (paise < 0) {
+    throw new Error(
+      `${label} is negative (${paise} paise); refusing to price it`,
+    );
+  }
+  return paise;
 }
 
 /**
@@ -475,7 +551,7 @@ async function calculateAmount(
 
     return {
       ...(await priceWithTax(
-        Number(plan.trialPriceInPaise),
+        planPricePaise(plan.trialPriceInPaise, "trialPriceInPaise"),
         buyerCountry,
         params.appointmentType,
       )),
@@ -512,7 +588,11 @@ async function calculateAmount(
     validatePlanCurrency(currency);
 
     return {
-      ...(await priceWithTax(plan.price, buyerCountry, params.appointmentType)),
+      ...(await priceWithTax(
+        planPricePaise(plan.price, "plan price"),
+        buyerCountry,
+        params.appointmentType,
+      )),
       currency,
       plan: { title: plan.title },
     };
@@ -536,7 +616,11 @@ async function calculateAmount(
     validatePlanCurrency(currency); // see the note on the CONSULTATION branch
 
     return {
-      ...(await priceWithTax(plan.price, buyerCountry, params.appointmentType)),
+      ...(await priceWithTax(
+        planPricePaise(plan.price, "plan price"),
+        buyerCountry,
+        params.appointmentType,
+      )),
       currency,
       plan: { title: plan.title },
     };
@@ -617,6 +701,10 @@ export interface ExistingApprovalPayment {
   paymentStatus: PaymentStatus;
   paymentIntent: string;
   amount: number;
+  /** The frozen pricing state; a live row is reused only when all of it matches. */
+  originalAmount: number;
+  taxAmount: number;
+  isInternational: boolean;
   currency: Currency;
   expiresAt: Date | null;
   /**
@@ -681,6 +769,9 @@ export async function findExistingLivePayment(params: {
             paymentStatus: true,
             paymentIntent: true,
             amount: true,
+            originalAmount: true,
+            taxAmount: true,
+            isInternational: true,
             currency: true,
             expiresAt: true,
           },
@@ -724,6 +815,9 @@ export async function findExistingLivePayment(params: {
       paymentStatus: payment.paymentStatus,
       paymentIntent: payment.paymentIntent,
       amount: payment.amount,
+      originalAmount: payment.originalAmount,
+      taxAmount: payment.taxAmount,
+      isInternational: payment.isInternational,
       currency: payment.currency,
       expiresAt: payment.expiresAt,
       requestIsPayable:
@@ -756,6 +850,9 @@ export async function findExistingLivePayment(params: {
           paymentStatus: payment.paymentStatus,
           paymentIntent: payment.paymentIntent,
           amount: payment.amount,
+          originalAmount: payment.originalAmount,
+          taxAmount: payment.taxAmount,
+          isInternational: payment.isInternational,
           currency: payment.currency,
           expiresAt: payment.expiresAt,
           requestIsPayable:

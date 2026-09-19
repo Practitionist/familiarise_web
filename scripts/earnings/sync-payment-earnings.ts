@@ -366,6 +366,27 @@ async function syncPaymentEarningsUnlocked(
         continue;
       }
 
+      // The cohort read is one snapshot; a refund can land between it and
+      // the earnings write. Re-ask the same predicate immediately before the
+      // create so the window is the write itself, not the whole batch.
+      const refundedSince = await prisma.payment.findFirst({
+        where: { id: payment.id, ...REFUNDED_OR_DISPUTED },
+        select: { id: true },
+      });
+      if (refundedSince) {
+        reportSentryMessage(
+          `EARNINGS_SKIPPED_REFUNDED: payment ${payment.id} was refunded or charged back after the cohort read; not accrued`,
+          {
+            subsystem: "payments",
+            op: "sync-payment-earnings.race",
+            expected: true,
+            extra: { paymentId: payment.id },
+          },
+        );
+        skippedCount++;
+        continue;
+      }
+
       try {
         const earningsId = await createEarningsFromPayment({
           payment: {

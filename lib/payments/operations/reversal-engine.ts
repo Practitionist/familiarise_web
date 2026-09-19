@@ -49,6 +49,7 @@ import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
+import { sumPaise } from "@/lib/payments/utils/money";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
@@ -253,10 +254,19 @@ async function reverseClassMulti(
   // the whole reversal. Total headroom (totalRefundable − assigned) always
   // covers the remainder for any amountPaise <= totalRefundable, so one pass
   // suffices.
+  // The product of two paise figures can leave the safe-integer range long
+  // before either figure does, so the share is computed in BigInt and every
+  // boundary value is asserted back into the safe range (#780 posture).
+  for (const v of [input.amountPaise, totalRefundable]) {
+    if (!Number.isSafeInteger(v)) {
+      throw new Error(`CLASS_MULTI reversal figure outside safe range: ${v}`);
+    }
+  }
   const shares = payments.map((p) => ({
     payment: p,
-    share: Math.floor(
-      (input.amountPaise * p.refundablePaise) / totalRefundable,
+    share: sumPaise(
+      (BigInt(input.amountPaise) * BigInt(p.refundablePaise)) /
+        BigInt(totalRefundable),
     ),
   }));
   let remainder = input.amountPaise - shares.reduce((s, x) => s + x.share, 0);

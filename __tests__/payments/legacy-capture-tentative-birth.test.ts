@@ -399,6 +399,49 @@ describe("#1583 A-P0-01 — capture after a terminal subscription state", () => 
     expect(refundPayment).not.toHaveBeenCalled();
   });
 
+  // CodeRabbit r2 — the CAS can lose to a writer that moved the row between
+  // the pre-read and the update; the fresh status decides benign or refund.
+  // findUnique is read three times: the arm's pre-read, the helper's own
+  // pre-image, then the arm's re-read after the miss.
+  it("a CAS miss whose fresh status is still live moves nothing and refunds nothing", async () => {
+    subscriptionFindUnique
+      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
+      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
+      .mockResolvedValueOnce({ status: "APPROVED" });
+    subscriptionUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentSuccess(
+      "order1",
+      SUB_METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(historyCreate).not.toHaveBeenCalled();
+    expect(refundPayment).not.toHaveBeenCalled();
+  });
+
+  it("a CAS miss whose fresh status is CANCELLED is flagged and refunded", async () => {
+    subscriptionFindUnique
+      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
+      .mockResolvedValueOnce({ status: "APPROVED_PENDING_PAYMENT" })
+      .mockResolvedValueOnce({ status: "CANCELLED" });
+    subscriptionUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentSuccess(
+      "order1",
+      SUB_METADATA as unknown as Record<string, string>,
+      10000,
+    );
+
+    expect(historyCreate).not.toHaveBeenCalled();
+    expect(refundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        paymentId: "pay1",
+        reason: "capture after cancellation",
+      }),
+    );
+  });
+
   it("APPROVED_PENDING_PAYMENT moves through the guarded helper with a history row", async () => {
     subscriptionFindUnique.mockResolvedValue({
       status: "APPROVED_PENDING_PAYMENT",

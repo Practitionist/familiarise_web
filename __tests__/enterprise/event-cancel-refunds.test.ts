@@ -226,6 +226,60 @@ describe("refundWholeEventPayments — funding partition", () => {
     });
   });
 
+  // CodeRabbit r2 — `alreadyRefunded` is derived after EVERY rail: an internal
+  // no-op beside a failed gateway seat is a failure, not idempotent success.
+  it("does not report alreadyRefunded when the internal batch was settled but a gateway seat failed", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_card", amount: 1000, paymentIntent: "pay_abc" },
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+    ]);
+    balances = { p_org1: 0 };
+    refundPayment_.mockRejectedValueOnce(new Error("gateway down"));
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(applyReversalMock).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({
+      refundsIssued: 0,
+      skippedAlreadyRefunded: 1,
+      alreadyRefunded: false,
+      failures: [{ paymentId: "pay_card", error: "gateway down" }],
+    });
+  });
+
+  it("reports alreadyRefunded when every gateway seat was already settled too", async () => {
+    findMany.mockResolvedValue([
+      { id: "pay_card", amount: 1000, paymentIntent: "pay_abc" },
+      { id: "p_org1", amount: 100_000, paymentIntent: "org_wallet_1" },
+    ]);
+    balances = { p_org1: 0 };
+    const { RefundValidationError } = jest.requireMock(
+      "../../lib/payments/operations/refund",
+    ) as { RefundValidationError: new (m: string, c: string) => Error };
+    refundPayment_.mockRejectedValueOnce(
+      new RefundValidationError("settled", "ALREADY_FULLY_REFUNDED"),
+    );
+
+    const summary = await refundWholeEventPayments(
+      "class",
+      "cls1",
+      "cancel",
+      "a",
+    );
+
+    expect(summary).toMatchObject({
+      refundsIssued: 0,
+      skippedAlreadyRefunded: 2,
+      alreadyRefunded: true,
+      failures: [],
+    });
+  });
+
   it("no-ops on an event with no paid seats", async () => {
     findMany.mockResolvedValue([]);
     const summary = await refundWholeEventPayments(

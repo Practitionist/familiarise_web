@@ -21,6 +21,7 @@
 
 const mockPaymentFindMany = jest.fn();
 const mockPaymentCount = jest.fn();
+const mockPaymentFindFirst = jest.fn();
 const mockReportSentryMessage = jest.fn();
 const mockConsultantEarningsFindMany = jest.fn();
 const mockSystemEventFindMany = jest.fn();
@@ -33,6 +34,7 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       findMany: (...a: unknown[]) => mockPaymentFindMany(...a),
       count: (...a: unknown[]) => mockPaymentCount(...a),
+      findFirst: (...a: unknown[]) => mockPaymentFindFirst(...a),
     },
     consultantEarnings: {
       findMany: (...a: unknown[]) => mockConsultantEarningsFindMany(...a),
@@ -120,6 +122,7 @@ function servePayments(rows: unknown[]) {
 beforeEach(() => {
   jest.clearAllMocks();
   mockPaymentCount.mockResolvedValue(0);
+  mockPaymentFindFirst.mockResolvedValue(null);
   mockConsultantEarningsFindMany.mockResolvedValue([]);
   mockSystemEventFindMany.mockResolvedValue([]);
   mockRecordSystemError.mockResolvedValue(undefined);
@@ -214,6 +217,34 @@ describe("the cohort has no age window", () => {
     const result = await syncPaymentEarnings();
 
     expect(result.totalProcessed).toBe(500);
+  });
+});
+
+// CodeRabbit r2 — the cohort read is one snapshot; a refund that lands after
+// it and before the earnings write is caught by a re-check of the same
+// predicate immediately before the create.
+describe("a refund that lands after the cohort read", () => {
+  it("is re-checked right before the create and skipped with the expected tag", async () => {
+    servePayments([healablePayment("pay-late", 3)]);
+    mockPaymentFindFirst.mockResolvedValue({ id: "pay-late" }); // now refunded
+
+    const result = await syncPaymentEarnings();
+
+    expect(mockPaymentFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "pay-late",
+          OR: expect.any(Array),
+        }),
+      }),
+    );
+    expect(mockCreateEarningsFromPayment).not.toHaveBeenCalled();
+    expect(result.createdCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(mockReportSentryMessage).toHaveBeenCalledWith(
+      expect.stringContaining("EARNINGS_SKIPPED_REFUNDED: payment pay-late"),
+      expect.objectContaining({ expected: true }),
+    );
   });
 });
 
