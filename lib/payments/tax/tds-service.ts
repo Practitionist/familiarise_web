@@ -279,6 +279,9 @@ export async function recordTDSDeduction(params: {
   db?: Tx | typeof prisma;
 }) {
   const quarter = params.quarter ?? getIndianFYQuarter();
+  if (!Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
+    throw new RangeError(`TDS quarter must be 1-4, got ${quarter}`);
+  }
 
   const db = params.db || prisma;
 

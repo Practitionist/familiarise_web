@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { DiscountType } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -7,12 +8,14 @@ import { discountLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { computeDiscountPaise } from "@/lib/payments/pricing/derive-checkout-amount";
 import { validateDiscountCurrency } from "@/lib/payments/validation/currency-guards";
 
-interface ValidateDiscountRequest {
-  code: string;
-  amount?: number; // Optional: base amount to calculate discount
-  /** Plan price currency; settlement is INR-only so it defaults to INR. */
-  currency?: string;
-}
+// CodeRabbit on #1753 — the preview shares checkout's arithmetic, so it also
+// refuses the inputs checkout would: a non-integer or negative amount, a
+// non-string currency. Zero is allowed (a free plan previews a zero discount).
+const validateDiscountRequestSchema = z.object({
+  code: z.string().min(1, "Discount code is required"),
+  amount: z.number().int().nonnegative().safe().optional(),
+  currency: z.string().trim().toUpperCase().optional().default("INR"),
+});
 
 interface DiscountCodeResponse {
   valid: boolean;
@@ -43,16 +46,20 @@ export async function POST(request: NextRequest) {
     const rl = await applyRateLimit(discountLimiter, session.user.id);
     if (rl) return rl;
 
-    const body: ValidateDiscountRequest = await request.json();
-    const { code, amount } = body;
-    const planCurrency = body.currency ?? "INR";
-
-    if (!code || typeof code !== "string") {
+    const parsed = validateDiscountRequestSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) {
       return NextResponse.json<DiscountCodeResponse>(
-        { valid: false, message: "Discount code is required" },
+        {
+          valid: false,
+          message:
+            parsed.error.issues[0]?.message ?? "Invalid discount request",
+        },
         { status: 400 },
       );
     }
+    const { code, amount, currency: planCurrency } = parsed.data;
 
     const discountCode = await prisma.discountCode.findUnique({
       where: { code: code.toUpperCase().trim() },

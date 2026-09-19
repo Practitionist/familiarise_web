@@ -832,7 +832,7 @@ export async function applyRefundCascade(
     disputes: payment.disputes,
   });
   if (rawInput.amountPaise > remaining) {
-    input = { ...rawInput, amountPaise: remaining };
+    input = { ...rawInput, amountPaise: Math.max(remaining, 0) };
     await recordSystemEvent({
       db: tx,
       organizationId: payment.organizationId ?? null,
@@ -859,8 +859,12 @@ export async function applyRefundCascade(
     });
   }
 
-  if (payment.amount <= 0) {
-    // Zero-amount payments (LICENSE-only) have no money to refund.
+  if (payment.amount <= 0 || input.amountPaise <= 0) {
+    // Zero-amount payments (LICENSE-only) have no money to refund, and a
+    // cascade clamped to zero (#1582 C-P0-03: every rupee already returned or
+    // charged back) must write nothing — a 0 reversal leg trips the
+    // `reversal < 0` trigger and the journal rejects a 0 entry, which would
+    // fail the tx at COMMIT and leave the refund re-cascading forever.
     // Still reverse the booking utilization so the seat returns.
     if (payment.bookingUtilization) {
       await reverseBookingUtilization(tx, {

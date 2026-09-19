@@ -307,6 +307,13 @@ describe("refund guards at the gateway boundary (#1584 P2-P0-01, P1-GW01b)", () 
         idempotencyKey: "clx3k2j9a0000abcd1234efgh",
       }),
     ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: -100,
+        idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
     expect(rzp.ordersFetchPayments).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });

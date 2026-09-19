@@ -1519,4 +1519,36 @@ describe("applyRefundCascade — gateway-cron entry path", () => {
       }),
     );
   });
+
+  // CodeRabbit on #1753 — a balance already consumed in full must produce a
+  // zero-effect cascade: a 0 reversal leg would trip the `reversal < 0`
+  // trigger at COMMIT and leave the refund re-cascading forever.
+  it("writes nothing when the LOST dispute already consumed the whole balance", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    state.disputes.push({
+      paymentId: "pay-1",
+      amountPaise: 10000,
+      status: "LOST",
+    });
+    state.refunds.push({
+      id: "r-late",
+      paymentId: "pay-1",
+      amountPaise: 6000,
+      status: "SUCCEEDED",
+      refundId: "rfnd_late",
+    });
+    const before = state.billingAccounts.get("ba-1")!.walletBalance as number;
+    const legsBefore = state.paymentLegs.length;
+
+    const result = await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: "r-late",
+      amountPaise: 6000,
+      reason: "late refund",
+    });
+
+    expect(result.legsReversed).toBe(0);
+    expect(state.paymentLegs.length).toBe(legsBefore);
+    expect(state.billingAccounts.get("ba-1")!.walletBalance).toBe(before);
+  });
 });

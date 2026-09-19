@@ -80,7 +80,10 @@ export async function GET(
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error fetching payment for recovery:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
@@ -205,6 +208,18 @@ export async function POST(
           { status: 409 },
         );
       }
+      // Any other outcome is Phase 1 refusing the booking (overlap, released
+      // hold, amount mismatch) with Phase 2 refunding the money — not a recovery.
+      if (outcome !== "confirmed") {
+        return NextResponse.json(
+          {
+            error: `Recovery could not place the booking (${outcome}); the payment is being refunded.`,
+            code: "RECOVERY_NOT_CONFIRMED",
+            outcome,
+          },
+          { status: 409 },
+        );
+      }
 
       // Fetch updated payment
       const updatedPayment = await prisma.payment.findUnique({
@@ -238,7 +253,12 @@ export async function POST(
           { status: recoveryError.httpStatus },
         );
       }
-      Sentry.captureException(recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(
+        recoveryError instanceof Error
+          ? recoveryError
+          : new Error(String(recoveryError)),
+        { tags: { subsystem: "payments" } },
+      );
       console.error("Error during payment recovery:", recoveryError);
       return NextResponse.json(
         {

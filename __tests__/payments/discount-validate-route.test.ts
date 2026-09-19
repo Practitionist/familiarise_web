@@ -91,4 +91,13 @@ describe("discount preview shares checkout's arithmetic and guard", () => {
     expect(res.status).toBe(400);
     expect((await res.json()).valid).toBe(false);
   });
+
+  it("refuses a negative amount at the edge and previews zero as a zero discount", async () => {
+    findUnique.mockResolvedValue(base);
+
+    expect((await post({ code: "save25", amount: -1 })).status).toBe(400);
+    const zero = await post({ code: "save25", amount: 0 });
+    expect(zero.status).toBe(200);
+    expect((await zero.json()).discountAmount ?? 0).toBe(0);
+  });
 });

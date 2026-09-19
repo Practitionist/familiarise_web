@@ -33,21 +33,27 @@ import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
  */
 async function notifyInternalSeatRefunds(childRefundIds: string[]) {
   if (childRefundIds.length === 0) return;
-  const refunds = await prisma.refund.findMany({
-    where: { id: { in: childRefundIds } },
-    select: {
-      amountPaise: true,
-      payment: {
-        select: {
-          id: true,
-          userId: true,
-          organizationId: true,
-          currency: true,
-          paymentIntent: true,
+  // The refunds are settled; a failed receipt lookup is reported, never thrown.
+  const refunds = await prisma.refund
+    .findMany({
+      where: { id: { in: childRefundIds } },
+      select: {
+        amountPaise: true,
+        payment: {
+          select: {
+            id: true,
+            userId: true,
+            organizationId: true,
+            currency: true,
+            paymentIntent: true,
+          },
         },
       },
-    },
-  });
+    })
+    .catch((err: unknown) => {
+      Sentry.captureException(err, { tags: { subsystem: "admin" } });
+      return [];
+    });
   for (const refund of refunds) {
     const payment = refund.payment;
     if (!payment || fundingRailForIntent(payment.paymentIntent) !== "INTERNAL")

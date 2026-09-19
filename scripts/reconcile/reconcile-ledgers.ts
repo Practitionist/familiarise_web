@@ -1110,9 +1110,13 @@ async function stepEarningsLedger(
  * the BOOKING journal follows, so a payment younger than this is in flight,
  * not a finding. Two ticker intervals by default.
  */
-export const RECONCILE_UNJOURNALED_GRACE_MS = Number(
-  process.env.RECONCILE_UNJOURNALED_GRACE_MS ?? 30 * 60 * 1000,
-);
+const DEFAULT_UNJOURNALED_GRACE_MS = 30 * 60 * 1000;
+const configuredGraceMs = Number(process.env.RECONCILE_UNJOURNALED_GRACE_MS);
+// A malformed or negative env value falls back to the two-ticker default.
+export const RECONCILE_UNJOURNALED_GRACE_MS =
+  Number.isFinite(configuredGraceMs) && configuredGraceMs >= 0
+    ? configuredGraceMs
+    : DEFAULT_UNJOURNALED_GRACE_MS;
 
 /** Q2 — an unjournaled payment is a finding only once the grace has lapsed. */
 export function isPastUnjournaledGrace(
