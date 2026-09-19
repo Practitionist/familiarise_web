@@ -27,7 +27,10 @@ export const DEFAULT_EXPERT_FILTERS: IExpertFilters = {
   tags: [],
   experience: 0,
   search: "",
-  sort: "nameAsc",
+  // Default to highest-rating first ("Recommended" in the UI): an
+  // alphabetical default buries the best, most-booked experts behind
+  // the letter A and carries zero intent signal.
+  sort: "rating",
   minPrice: undefined,
   maxPrice: undefined,
   minRating: undefined,
@@ -118,7 +121,7 @@ export function filtersFromSearchParams(
   const sort: SortOption =
     rawSort && VALID_SORT_OPTIONS.has(rawSort as SortOption)
       ? (rawSort as SortOption)
-      : "nameAsc";
+      : "rating";
 
   return {
     domain: params.get("domain"),
@@ -154,7 +157,7 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
   if (filters.experience > 0)
     params.set("experience", String(filters.experience));
   if (filters.search) params.set("search", filters.search);
-  if (filters.sort !== "nameAsc") params.set("sort", filters.sort);
+  if (filters.sort !== "rating") params.set("sort", filters.sort);
   if (filters.minPrice !== undefined)
     params.set("minPrice", String(filters.minPrice));
   if (filters.maxPrice !== undefined)
