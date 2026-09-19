@@ -363,7 +363,8 @@ async function reversePayoutClawback(
     },
   });
 
-  // Best-effort ledger counter-post (mirrors refund.ts dual-write safety).
+  // The counter-post is part of the reversal, not a side effect: report, then
+  // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
       idempotencyKey: `clawback:${input.refundId}:${orgPayoutId}`,
@@ -385,7 +386,7 @@ async function reversePayoutClawback(
   } catch (err) {
     reportSentryError(err, { subsystem: "payments", level: "fatal" });
     console.error(
-      `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (reconcile will flag): ${err instanceof Error ? err.message : String(err)}`,
+      `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
     );
     // #776 — page immediately on dual-write drift; fire-and-forget.
     void recordSystemError({
@@ -395,6 +396,7 @@ async function reversePayoutClawback(
       err,
       context: { orgPayoutId, refundId: input.refundId },
     }).catch(() => {});
+    throw err;
   }
 
   return true;

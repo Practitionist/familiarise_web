@@ -65,8 +65,9 @@ jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...a: unknown[]) => mockRefundBookingPayment(...a),
 }));
 
+const mockPostLedgerTxn = jest.fn();
 jest.mock("../../lib/payments/ledger/post", () => ({
-  postLedgerTxn: jest.fn(),
+  postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
 jest.mock("../../lib/enterprise/system-events", () => ({
   recordSystemError: jest.fn().mockResolvedValue(undefined),
@@ -82,6 +83,8 @@ jest.mock("../../lib/email", () => ({
 }));
 
 import { refundWholeEventPayments } from "../../lib/payments/operations/event-refunds";
+import { applyReversal } from "../../lib/payments/operations/reversal-engine";
+import type { Tx } from "../../lib/prisma";
 
 /** An org-funded ₹1,000 seat with the refund/dispute history the clamp reads. */
 function seat(
@@ -173,5 +176,36 @@ describe("refundWholeEventPayments clamps internal seats to their refundable bal
       skippedAlreadyRefunded: 2,
       alreadyRefunded: true,
     });
+  });
+});
+
+// #1583 C-P1-09 — the clawback's counter-post was reported and swallowed, so
+// a payout could be stamped clawed-back with no journal behind it. The failure
+// now propagates and the enclosing refund transaction rolls back with it.
+describe("applyReversal PAYOUT_CLAWBACK", () => {
+  it("propagates a rejected ledger posting instead of committing an unbalanced journal", async () => {
+    const tx = {
+      organizationPayout: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ id: "payout-1", clawbackInitiatedAt: null }),
+        update: jest.fn().mockResolvedValue({}),
+      },
+      orgAuditLog: { create: jest.fn().mockResolvedValue({}) },
+    } as unknown as Tx;
+    mockPostLedgerTxn.mockRejectedValueOnce(new Error("journal unbalanced"));
+
+    await expect(
+      applyReversal(tx, {
+        source: {
+          kind: "PAYOUT_CLAWBACK",
+          orgPayoutId: "payout-1",
+          organizationId: "org-1",
+        },
+        amountPaise: 50_000,
+        reason: "dispute lost",
+        refundId: "refund-1",
+      }),
+    ).rejects.toThrow("journal unbalanced");
   });
 });
