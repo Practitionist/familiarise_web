@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -160,17 +161,22 @@ export function DisputesPage({
     router.push(`${basePath}/disputes/${disputeId}`);
   };
 
+  // NOTE: the row itself still navigates via onRowClick below —
+  // ResponsiveTable renders plain <tr>/<Card> click targets with no href
+  // support, so making the row a prefetching Link would mean editing that
+  // shared component. The eye action IS a real Link (prefetched), and the
+  // table's own cell wrapper keeps its stopPropagation behavior.
   const renderRowActions = (dispute: Dispute) => (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-8 w-8"
-      onClick={(e) => {
-        e.stopPropagation();
-        handleViewDispute(dispute.id);
-      }}
-    >
-      <Eye className="h-4 w-4" />
+    <Button asChild variant="ghost" size="icon" className="h-8 w-8">
+      <Link
+        href={`${basePath}/disputes/${dispute.id}`}
+        onClick={(e) => {
+          e.stopPropagation();
+        }}
+        aria-label="View dispute"
+      >
+        <Eye className="h-4 w-4" />
+      </Link>
     </Button>
   );
 
@@ -182,7 +188,8 @@ export function DisputesPage({
       cell: (dispute) => (
         <div>
           <p className="font-mono text-sm">
-            {dispute.disputeId?.slice(-12) || dispute.id.slice(-8).toUpperCase()}
+            {dispute.disputeId?.slice(-12) ||
+              dispute.id.slice(-8).toUpperCase()}
           </p>
           {dispute.payment && (
             <p className="text-xs text-muted-foreground/70">
@@ -196,7 +203,8 @@ export function DisputesPage({
       key: "amount",
       header: "Amount",
       className: "font-medium",
-      cell: (dispute) => formatCurrencyAmount(dispute.amountPaise, dispute.currency),
+      cell: (dispute) =>
+        formatCurrencyAmount(dispute.amountPaise, dispute.currency),
     },
     {
       key: "gateway",
@@ -233,7 +241,9 @@ export function DisputesPage({
             {formatDate(dispute.dueBy)}
             {daysUntilDue !== null && daysUntilDue >= 0 && (
               <p className="text-xs">
-                {daysUntilDue === 0 ? "Due today!" : `${daysUntilDue} days left`}
+                {daysUntilDue === 0
+                  ? "Due today!"
+                  : `${daysUntilDue} days left`}
               </p>
             )}
           </div>

@@ -23,7 +23,6 @@ import path from "path";
 const SWEEPS = [
   "scripts/payments/cleanup-abandoned-payments.ts",
   "scripts/appointments/cleanup-invalid-appointments.ts",
-  "scripts/appointments/cleanup-stale-pending-consultations.ts",
   "scripts/appointments/cleanup-tentative-occurrences.ts",
   "scripts/appointments/expire-stale-requests.ts",
   "scripts/appointments/auto-complete-appointments.ts",
@@ -99,11 +98,11 @@ describe("no sweep hard-deletes a booking row (#1319)", () => {
     });
   }
 
-  it("the three sweeps that used to delete slots now soft-cancel them", () => {
+  // (The third, cleanup-stale-pending-consultations, was retired by #1732.)
+  it("the sweeps that used to delete slots now soft-cancel them", () => {
     for (const file of [
       "scripts/payments/cleanup-abandoned-payments.ts",
       "scripts/appointments/cleanup-invalid-appointments.ts",
-      "scripts/appointments/cleanup-stale-pending-consultations.ts",
     ]) {
       const source = fs.readFileSync(path.join(process.cwd(), file), "utf8");
       // Single-row deletes in a loop are the #1074 shape; forbid both forms.

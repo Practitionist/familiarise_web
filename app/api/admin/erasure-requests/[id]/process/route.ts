@@ -13,7 +13,11 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
-import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import {
+  hasMoneyInFlight,
+  moneyInFlightForUser,
+  scrubUser,
+} from "@/lib/compliance/erasure/scrub-user";
 
 export async function POST(
   _req: NextRequest,
@@ -30,6 +34,22 @@ export async function POST(
   if (request.status === "COMPLETED" || request.status === "REJECTED") {
     return NextResponse.json(
       { error: `Request is already ${request.status}` },
+      { status: 409 },
+    );
+  }
+
+  // #1598 P4-P0-05 — money still moving for this identity (payouts, unpaid
+  // earnings, invoices on an org they solely own, contested disputes) has to
+  // settle before the scrub; a typed 409 with the counts, never a scrub.
+  const inFlight = await moneyInFlightForUser(prisma, request.userId);
+  if (hasMoneyInFlight(inFlight)) {
+    return NextResponse.json(
+      {
+        error:
+          "Erasure is blocked while money is in flight for this user; settle the listed items first.",
+        code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
+        counts: inFlight,
+      },
       { status: 409 },
     );
   }

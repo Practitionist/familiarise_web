@@ -1,8 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
-import { isPrivileged } from "@/lib/auth-helpers";
-import { getSession } from "@/lib/auth-server";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import {
   bookingAppointmentFilter,
   resolveBookingRefundContext,
@@ -307,10 +306,10 @@ export async function GET(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const { appointmentId } = await params;
 

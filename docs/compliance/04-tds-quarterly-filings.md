@@ -54,6 +54,7 @@ Three related deliverables to the income-tax department after every quarter's TD
 ### Cross-cutting
 
 - The same consultant may have earnings on **both rails** in a quarter. The quarterly return should aggregate **all TDS** for that consultant (both `OrganizationPayout` and `Payout` rows), not file them separately.
+- Both rails derive the `TDSRecord`'s financial year and quarter from the payout's **completion instant**, not from whichever moment the batch job runs, so a late-March batch that settles in April is filed in the quarter it actually completed rather than a quarter that does not exist. The org rail has done this since #1354; the consultant rail was corrected to match (#1582 E-P0-02).
 
 ## Current code
 

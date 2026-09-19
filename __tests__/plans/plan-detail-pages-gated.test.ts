@@ -20,6 +20,14 @@ jest.mock("../../lib/data/plan-viewable", () => ({
   canViewPlanDetail: (...args: unknown[]) => mockCanViewPlanDetail(...args),
 }));
 
+// The pages fetch the session concurrently with the plan and hand it to the
+// gate (perf: one round trip instead of two). Pin the session so the gate
+// assertion below can verify the handoff.
+const mockSession = { user: { id: "user-1" } };
+jest.mock("../../lib/auth-server", () => ({
+  getSession: jest.fn(() => Promise.resolve(mockSession)),
+}));
+
 const mockGetConsultationPlanDetail = jest.fn();
 const mockGetSubscriptionPlanDetail = jest.fn();
 const mockGetWebinarPlanDetail = jest.fn();
@@ -109,7 +117,11 @@ describe("plan detail pages apply canViewPlanDetail", () => {
       await expect(Page({ params: Promise.resolve(params) })).rejects.toThrow(
         "NEXT_NOT_FOUND",
       );
-      expect(mockCanViewPlanDetail).toHaveBeenCalledWith(hiddenPlan);
+      // Gate receives the concurrently-fetched session, not just the plan.
+      expect(mockCanViewPlanDetail).toHaveBeenCalledWith(
+        hiddenPlan,
+        mockSession,
+      );
     },
   );
 

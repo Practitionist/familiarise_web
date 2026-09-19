@@ -104,8 +104,10 @@ export async function setMaintenanceState(
   // Persist to Prisma for audit trail (transactional to prevent find+update races)
   await prisma.$transaction(async (tx) => {
     if (phase === MaintenancePhase.OFF) {
+      // #1598 P1-W01 — platform rows only (organizationId null); the per-org
+      // write API is #730/#746, so OFF must never close a tenant's window.
       const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { phase: { not: MaintenancePhase.OFF } },
+        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
         orderBy: { createdAt: "desc" },
       });
 
@@ -120,8 +122,9 @@ export async function setMaintenanceState(
         });
       }
     } else {
+      // #1598 P1-W01 — same platform-only scope as the OFF branch above.
       const activeWindow = await tx.maintenanceWindow.findFirst({
-        where: { phase: { not: MaintenancePhase.OFF } },
+        where: { organizationId: null, phase: { not: MaintenancePhase.OFF } },
         orderBy: { createdAt: "desc" },
       });
 

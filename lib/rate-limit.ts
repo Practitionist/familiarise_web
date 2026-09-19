@@ -13,7 +13,7 @@
  * - requestApprovalLimiter: 10/hr per user   — POST /api/scheduling/request-for-approval
  * - searchLimiter:          60/min per IP    — GET /api/user/consultants, /api/consultants/search
  * - eligibilityLimiter:     20/min per IP    — GET /api/trials/check-eligibility
- * - availabilityLimiter:    30/min per IP    — GET /api/scheduling/availability/[consultantId]
+ * - availabilityLimiter:    30/min per IP    — /api/scheduling/availability/* (weekly, custom)
  * - availabilityGridLimiter: 120/min per IP  — GET /api/scheduling/availability-with-allocation/[consultantId]
  * - currencyLimiter:        30/min per IP    — GET /api/currency (protects the FX provider quota)
  * - documentUploadLimiter:  10/min per user  — POST /api/appointments/[id]/documents (+ /consultant)
@@ -57,6 +57,14 @@ export const authLimiter = makeLimiter(10, "15 m", "rl:auth");
 
 /** 5 per minute — POST /api/checkout */
 export const checkoutLimiter = makeLimiter(5, "1 m", "rl:checkout");
+// #1583 E-P1-06 — the tax-context read runs once per checkout page mount and
+// falls back to the domestic profile on any non-2xx, so it must not share the
+// five-a-minute POST bucket: a page reload would silently mis-tax the buyer.
+export const checkoutContextLimiter = makeLimiter(
+  30,
+  "1 m",
+  "rl:checkout-context",
+);
 
 /**
  * 10 per minute — DELETE /api/checkout/pending/[paymentId] (#849).
@@ -159,7 +167,7 @@ export const searchLimiter = makeLimiter(60, "1 m", "rl:search");
 /** 20 per minute — GET /api/trials/check-eligibility */
 export const eligibilityLimiter = makeLimiter(20, "1 m", "rl:eligibility");
 
-/** 30 per minute — GET /api/scheduling/availability/[consultantId] (IP-based, public booking flow) */
+/** 30 per minute — /api/scheduling/availability/* (IP-based; the public grid is availability-with-allocation) */
 export const availabilityLimiter = makeLimiter(30, "1 m", "rl:availability");
 
 /**
@@ -376,7 +384,10 @@ export async function applyRateLimit(
         // Machine-readable code alongside the sentence: clients key the
         // shared "wait a moment, then retry" toast off it instead of
         // string-matching the message.
-        { error: "Too many requests. Please try again later.", code: "RATE_LIMITED" },
+        {
+          error: "Too many requests. Please try again later.",
+          code: "RATE_LIMITED",
+        },
         {
           status: 429,
           headers: {

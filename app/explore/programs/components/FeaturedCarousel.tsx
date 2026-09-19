@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { useCurrency } from "@/hooks/useCurrency";
 import { isClassProgram, Program } from "@/lib/explore/programs";
@@ -31,11 +31,7 @@ function SkeletonSlide() {
   );
 }
 
-function FeaturedCarouselImpl({
-  programs,
-  isLoading,
-}: FeaturedCarouselProps) {
-  const router = useRouter();
+function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
   const { formatPrice } = useCurrency();
   const [currentIndex, setCurrentIndex] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -70,29 +66,19 @@ function FeaturedCarouselImpl({
   const program = programs[currentIndex];
 
   // Extract instructor work experiences for company logos
-  const workExperiences = program.consultantProfile?.user?.workExperiences ?? [];
+  const workExperiences =
+    program.consultantProfile?.user?.workExperiences ?? [];
 
-  const handleClick = () => {
-    if (isClassProgram(program)) {
-      router.push(`/explore/programs/plans/classes/${program.id}`);
-    } else {
-      router.push(`/explore/programs/plans/webinars/${program.id}`);
-    }
-  };
+  // Plain href (not router.push) so the featured slide prefetches on hover.
+  const programHref = isClassProgram(program)
+    ? `/explore/programs/plans/classes/${program.id}`
+    : `/explore/programs/plans/webinars/${program.id}`;
 
   return (
     <div className="relative">
-      <div
-        className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer"
-        onClick={handleClick}
-        role="button"
-        tabIndex={0}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleClick();
-          }
-        }}
+      <Link
+        href={programHref}
+        className="group bg-card rounded-2xl overflow-hidden border border-border hover:border-border hover:shadow-xl transition-all duration-300 cursor-pointer block"
         aria-label={`View details for ${program.title}`}
       >
         <div className="flex flex-col md:flex-row h-auto md:h-[280px]">
@@ -155,26 +141,20 @@ function FeaturedCarouselImpl({
             </div>
           </div>
         </div>
-      </div>
+      </Link>
 
       {/* Navigation */}
       {programs.length > 1 && (
         <>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              prev();
-            }}
+            onClick={() => prev()}
             className="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-md flex items-center justify-center hover:bg-card transition-colors"
             aria-label="Previous"
           >
             <ChevronLeft className="w-4 h-4 text-muted-foreground" />
           </button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              next();
-            }}
+            onClick={() => next()}
             className="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-9 h-9 rounded-full bg-card/90 backdrop-blur border border-border shadow-md flex items-center justify-center hover:bg-card transition-colors"
             aria-label="Next"
           >
@@ -186,10 +166,7 @@ function FeaturedCarouselImpl({
             {programs.map((_, i) => (
               <button
                 key={i}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  goTo(i);
-                }}
+                onClick={() => goTo(i)}
                 className={`w-2 h-2 rounded-full transition-all duration-200 ${
                   i === currentIndex
                     ? "bg-primary w-6"

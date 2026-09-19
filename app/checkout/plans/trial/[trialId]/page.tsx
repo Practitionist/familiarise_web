@@ -9,6 +9,11 @@ import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
+import {
+  needsTrialPayLinkRemint,
+  remintTrialPayLink,
+} from "@/lib/trials/pay-link";
+
 import { TrialPayButton } from "./TrialPayButton";
 import { ViewerLocalTime } from "./ViewerLocalTime";
 
@@ -43,61 +48,88 @@ export default async function TrialCheckoutPage({
   params: Promise<{ trialId: string }>;
 }) {
   const { trialId } = await params;
-  const session = await getSession(true);
+  // The trial read is keyed on the URL id and the session read on the cookie —
+  // independent, so they run concurrently. The auth check stays after, before
+  // any use of either value.
+  const [session, trial] = await Promise.all([
+    getSession(true),
+    prisma.trial.findUnique({
+      where: { id: trialId },
+      select: {
+        id: true,
+        status: true,
+        paymentDueAt: true,
+        pendingPaymentUrl: true,
+        subscriptionPlanId: true,
+        consulteeProfile: { select: { userId: true } },
+        subscriptionPlan: {
+          select: {
+            title: true,
+            trialPriceInPaise: true,
+            trialDurationMinutes: true,
+            priceCurrency: true,
+            consultantProfile: {
+              select: { user: { select: { name: true } } },
+            },
+          },
+        },
+        appointment: {
+          select: {
+            id: true,
+            occurrences: {
+              select: { startsAt: true, endsAt: true },
+              orderBy: { startsAt: "asc" },
+              take: 1,
+            },
+            // The amount the gateway will actually take. `createApprovalPaymentIntent`
+            // froze it onto this row when the consultant accepted, and minted the
+            // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
+            // stays editable underneath. Quoting the plan meant a consultant who
+            // repriced after accepting turned this page into a number the charge
+            // would not honour.
+            payment: {
+              where: { deletedAt: null },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { amount: true, currency: true },
+            },
+          },
+        },
+      },
+    }),
+  ]);
 
   if (!session?.user?.id) notFound();
-
-  const trial = await prisma.trial.findUnique({
-    where: { id: trialId },
-    select: {
-      id: true,
-      status: true,
-      paymentDueAt: true,
-      pendingPaymentUrl: true,
-      consulteeProfile: { select: { userId: true } },
-      subscriptionPlan: {
-        select: {
-          title: true,
-          trialPriceInPaise: true,
-          trialDurationMinutes: true,
-          priceCurrency: true,
-          consultantProfile: {
-            select: { user: { select: { name: true } } },
-          },
-        },
-      },
-      appointment: {
-        select: {
-          occurrences: {
-            select: { startsAt: true },
-            orderBy: { startsAt: "asc" },
-            take: 1,
-          },
-          // The amount the gateway will actually take. `createApprovalPaymentIntent`
-          // froze it onto this row when the consultant accepted, and minted the
-          // pay-link for exactly that figure — while `SubscriptionPlan.trialPriceInPaise`
-          // stays editable underneath. Quoting the plan meant a consultant who
-          // repriced after accepting turned this page into a number the charge
-          // would not honour.
-          payment: {
-            where: { deletedAt: null },
-            orderBy: { createdAt: "asc" },
-            take: 1,
-            select: { amount: true, currency: true },
-          },
-        },
-      },
-    },
-  });
 
   // 404 rather than 403 for someone else's trial — an existence oracle on a
   // guessable id would leak who is trialling whom.
   if (!trial || trial.consulteeProfile.userId !== session.user.id) notFound();
 
+  // #1589 T-P1-02 — the accept path's mint can fail or its persist can be
+  // lost; while the pay window is open this read re-mints (reusing a live
+  // PENDING intent first) instead of showing "unavailable" until the sweep.
+  let chargedPayment = trial.appointment?.payment[0] ?? null;
+  if (needsTrialPayLinkRemint(trial)) {
+    trial.pendingPaymentUrl = await remintTrialPayLink(trial);
+    // The quote must be the row the new link charges against: a re-mint can
+    // re-freeze the amount, and the pre-remint read may be stale or empty.
+    // For Razorpay the stored link IS the order id (Payment.paymentIntent).
+    if (trial.pendingPaymentUrl && trial.appointment) {
+      chargedPayment =
+        (await prisma.payment.findFirst({
+          where: {
+            appointmentId: trial.appointment.id,
+            paymentIntent: trial.pendingPaymentUrl,
+            deletedAt: null,
+          },
+          select: { amount: true, currency: true },
+        })) ?? chargedPayment;
+    }
+  }
+
   const startsAt = trial.appointment?.occurrences[0]?.startsAt ?? null;
   // Prefer the frozen charge; fall back to the plan only before a payment
   // exists, where the plan price genuinely IS the quote.
-  const chargedPayment = trial.appointment?.payment[0] ?? null;
   const amountPaise = Number(
     chargedPayment?.amount ?? trial.subscriptionPlan.trialPriceInPaise,
   );

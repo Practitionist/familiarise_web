@@ -39,11 +39,12 @@ const PayoutStatusSchema = z.enum([
   "CANCELLED",
 ]);
 
-const PaymentGatewaySchema = z.enum([
-  "STRIPE",
-  "RAZORPAY",
-  "CARD",
-]);
+// #1584 P1-GW01c — only RazorpayX can disburse an org payout. The service
+// claims PENDING→PROCESSING before it checks the gateway and the re-drive
+// skips non-RAZORPAY rows (#1744 tracks that ordering), so the door refuses
+// the other enum members with a typed 400 rather than stranding a row.
+const PaymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
+const PAYOUT_GATEWAY = "RAZORPAY" as const;
 
 const CreatePayoutBodySchema = z
   .object({
@@ -190,6 +191,15 @@ export async function POST(
     );
   }
   const body = parsed.data;
+  if (body.paymentGateway !== PAYOUT_GATEWAY) {
+    return NextResponse.json(
+      {
+        error: `Organisation payouts disburse through RazorpayX only; ${body.paymentGateway} cannot be used.`,
+        code: "GATEWAY_UNSUPPORTED_FOR_PAYOUT",
+      },
+      { status: 400 },
+    );
+  }
 
   try {
     // Delegate to the canonical batch creator rather than re-implementing it.
@@ -212,7 +222,7 @@ export async function POST(
       body.periodStart,
       body.periodEnd,
       {
-        paymentGateway: body.paymentGateway,
+        paymentGateway: PAYOUT_GATEWAY,
         notes: body.notes,
         actorMembershipId: access.member.id,
       },

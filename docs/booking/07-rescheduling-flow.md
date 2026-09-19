@@ -209,11 +209,18 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** tab (`RequestRequestSchedulingTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots:
+The consultant's dashboard includes a **Requests** tab (`RequestRequestSchedulingTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
 
-- It counts **tentative** slots (`isTentative: true`) vs **total** slots.
-- If tentative slots exist, it is a reschedule.
-- The ratio of tentative to total slots determines the badge type.
+- Bare tentativeness is NOT the signal: every fresh request already carries tentative holds (request-for-approval and unpaid checkout create them that way), and tombstoned/stale duplicates linger. Counting bare `isTentative` over-counted reschedules (e.g. demanded 12 slots for a 4-session plan, #1739).
+- The ratio of **released** to total sessions determines the badge type.
+
+### Reschedule-write contract (allocator)
+
+All three allocate paths (`autoAllocate`, `manualAllocate`, `deleteExistingAppointments` in `utils/scheduling-engine/SchedulingService.ts`) obey the same three rules:
+
+1. **Count releases, not tentatives.** `isReschedule` and the required-slot total derive from `releasedSessionCountOf` (live releases × `slotsPerCall`). The #1012 stale-tab guard (`assertExpectedTentativeSlotCount`) still compares tentative ROWS, because the page's `expectedTentativeSlotCount` is measured in rows.
+2. **Delete releases, not tentatives.** The `onlyTentative` branch frees only rows matching the canonical predicate (`isTentative + RESCHEDULED + live` in the delete's WHERE clause); coexisting fresh holds and crud-with-plan placeholders survive.
+3. **Keep wrappers with survivors.** The appointment wrapper is deleted only when no occurrences remain after the release removal (payment guard still rides in the delete WHERE, B-P1-05); a surviving fresh hold keeps the wrapper and the 1:1 REUSE pointer with it.
 
 ### Badge Indicators
 

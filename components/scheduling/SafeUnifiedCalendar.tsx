@@ -51,17 +51,20 @@ export function SafeUnifiedCalendar({
   legendPosition?: "top" | "bottom";
 }) {
   // The states the grid painted this render; null until the first report so
-  // the legend shows the full set rather than nothing while loading.
-  const [painted, setPainted] = useState<ReadonlySet<SlotStatusKey> | null>(
-    null,
-  );
+  // the legend shows the full set rather than nothing while loading. Counts
+  // ride the same report, so the legend annotates live per-state totals.
+  const [painted, setPainted] = useState<{
+    keys: ReadonlySet<SlotStatusKey> | null;
+    counts?: ReadonlyMap<SlotStatusKey, number>;
+  }>({ keys: null });
   const order =
     (props.showConsultantLegend ?? props.mode === "allocate")
       ? CONSULTANT_LEGEND_KEYS
       : BUYER_LEGEND_KEYS;
   const legend = (
     <SlotStatusLegend
-      keys={legendKeysFor(order, painted)}
+      keys={legendKeysFor(order, painted.keys)}
+      counts={painted.counts}
       className="shrink-0"
     />
   );
@@ -81,7 +84,7 @@ export function SafeUnifiedCalendar({
         {legendPosition === "top" && legend}
         <UnifiedCalendar
           {...props}
-          onPaintedKeysChange={setPainted}
+          onPaintedKeysChange={(keys, counts) => setPainted({ keys, counts })}
           className="min-h-0 flex-1"
           aboveActionsSlot={legendPosition === "bottom" ? legend : undefined}
         />

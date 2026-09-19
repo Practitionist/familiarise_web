@@ -20,18 +20,38 @@
  *     PENDING and page instead of guessing;
  *   - real-id PENDING rows are polled via getRefund and settled.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    refund: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      delete: jest.fn().mockResolvedValue({}),
+jest.mock("../../lib/prisma", () => {
+  const refund = {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    delete: jest.fn().mockResolvedValue({}),
+  };
+  return {
+    __esModule: true,
+    default: {
+      refund,
+      // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
+      // payer's notice; the tx sees the same refund table.
+      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({ refund }),
+      ),
     },
-    $transaction: jest.fn(),
-  },
+  };
+});
+const mockNotifyRefundProcessed = jest.fn().mockResolvedValue(null);
+jest.mock("../../lib/novu/outbox", () => ({
+  attemptTrigger: jest.fn(),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { JOB: 1 },
+  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
+  sendRefundFailedEmail: jest.fn(),
+  stageRefundProcessedEmail: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("../../lib/email/send-to-recipients", () => ({
+  attemptStaged: jest.fn(),
 }));
 jest.mock("../../lib/payments", () => ({
   listRefunds: jest.fn(),
@@ -43,6 +63,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyRefundFailed: jest.fn().mockResolvedValue(undefined),
+  notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
@@ -219,8 +240,14 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
           refundId: "rfnd_real",
           status: "PENDING",
           amountPaise: 10_000,
+          currency: "INR",
           createdAt: new Date(Date.now() - 3 * HOUR),
-          payment: { paymentGateway: "RAZORPAY" },
+          payment: {
+            id: "pay-9",
+            paymentGateway: "RAZORPAY",
+            userId: "user-9",
+            organizationId: null,
+          },
         },
       ]);
     mockGet.mockResolvedValueOnce({
@@ -235,12 +262,54 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
 
     expect(mockGet).toHaveBeenCalledWith("rfnd_real", "RAZORPAY");
     expect(result.reconciledCount).toBe(1);
-    expect(refundTable.update).toHaveBeenCalledWith(
+    // CodeRabbit r1 — the mark is a CAS on PENDING so a re-entrant run or a
+    // webhook that settled the row first cannot mark or notify twice.
+    expect(refundTable.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: "row_9" },
+        where: { id: "row_9", status: "PENDING" },
         data: expect.objectContaining({ status: "SUCCEEDED" }),
       }),
     );
+    // #1589 N-P0-01 — the mark stands in for the lost webhook, so it owes the
+    // payer the same notice, staged through the mark's own tx.
+    expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
+      "user-9",
+      expect.objectContaining({ amount: 10_000, currency: "INR" }),
+      expect.objectContaining({ entityRef: "payment:pay-9" }),
+    );
+  });
+
+  test("a row another writer already settled is neither re-marked nor re-notified", async () => {
+    refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "row_9",
+        refundId: "rfnd_real",
+        status: "PENDING",
+        amountPaise: 10_000,
+        currency: "INR",
+        createdAt: new Date(Date.now() - 3 * HOUR),
+        payment: {
+          id: "pay-9",
+          paymentGateway: "RAZORPAY",
+          userId: "user-9",
+          organizationId: null,
+        },
+      },
+    ]);
+    mockGet.mockResolvedValueOnce({
+      refundId: "rfnd_real",
+      amount: 10_000,
+      currency: "INR",
+      status: "SUCCEEDED",
+      metadata: undefined,
+    });
+    refundTable.updateMany.mockResolvedValueOnce({ count: 0 }); // lost the claim
+
+    const result = await reconcilePendingRefunds();
+
+    expect(result.reconciledCount).toBe(0);
+    expect(result.skippedCount).toBe(1);
+    expect(mockNotifyRefundProcessed).not.toHaveBeenCalled();
   });
 
   test("a still-settling real-id refund is never aged out locally", async () => {
@@ -367,6 +436,55 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
       expect(result.skippedFenced).toBe(1);
       expect(result.success).toBe(true);
       expect(result.errors).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.STRIPE_ENABLED;
+      else process.env.STRIPE_ENABLED = previous;
+    }
+  });
+});
+
+/**
+ * #1757 — a real-id PENDING refund on a fenced gateway was skipped on every
+ * tick forever (the seed minted them on STRIPE). Past 24 h it is retired
+ * FAILED/GATEWAY_DISABLED through the PENDING-guarded CAS, which re-opens the
+ * refundable balance, and the run reports it once.
+ */
+describe("reconcilePendingRefunds — no live client past 24h (#1757)", () => {
+  test("a 3-day-old PENDING STRIPE refund with Stripe disabled → FAILED once", async () => {
+    const previous = process.env.STRIPE_ENABLED;
+    delete process.env.STRIPE_ENABLED;
+    try {
+      refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        {
+          id: "row_stripe_old",
+          refundId: "re_real_old",
+          status: "PENDING",
+          amountPaise: 10_000,
+          createdAt: new Date(Date.now() - 72 * HOUR),
+          payment: { paymentGateway: "STRIPE" },
+        },
+      ]);
+
+      const result = await reconcilePendingRefunds();
+
+      expect(mockGet).not.toHaveBeenCalled();
+      expect(refundTable.updateMany).toHaveBeenCalledTimes(1);
+      expect(refundTable.updateMany).toHaveBeenCalledWith({
+        where: { id: "row_stripe_old", status: "PENDING" },
+        data: expect.objectContaining({
+          status: "FAILED",
+          failureReason: "GATEWAY_DISABLED",
+        }),
+      });
+      expect(result.failedGatewayDisabled).toBe(1);
+      expect(result.failedCount).toBe(1);
+      expect(result.skippedFenced).toBe(0);
+      expect(result.success).toBe(true);
+      expect(mockPage).toHaveBeenCalledTimes(1);
+      expect(mockPage.mock.calls[0][1]).toMatchObject({
+        expected: true,
+        extra: { retired: ["row_stripe_old"] },
+      });
     } finally {
       if (previous === undefined) delete process.env.STRIPE_ENABLED;
       else process.env.STRIPE_ENABLED = previous;

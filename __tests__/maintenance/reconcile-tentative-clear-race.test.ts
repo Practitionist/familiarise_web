@@ -113,3 +113,46 @@ describe("reconcile-occurrence-availability × tentative-clear race (#1424)", ()
     warn.mockRestore();
   });
 });
+
+describe("reconcile-occurrence-availability result semantics (QA #1741)", () => {
+  it("reports a completed run with findings as success: true, not a failed run", async () => {
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const overlap = (id: string, appointmentId: string) => ({
+      id,
+      appointmentId,
+      startsAt: new Date("2026-10-01T10:00:00Z"),
+      endsAt: new Date("2026-10-01T11:00:00Z"),
+      appointment: {
+        consultation: {
+          consultationPlan: {
+            consultantProfile: {
+              id: "cp-1",
+              user: { id: "u-c", name: "Olivia", email: "o@x.test" },
+            },
+          },
+        },
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: null,
+      },
+    });
+    // First read: the tentative-clear cohort (empty); second: the double-
+    // booking page with two overlapping occurrences for one consultant.
+    (prisma.appointmentOccurrence.findMany as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        overlap("occ-1", "apt-1"),
+        overlap("occ-2", "apt-2"),
+      ]);
+    (
+      prisma as unknown as { systemEvent: { findFirst: jest.Mock } }
+    ).systemEvent = { findFirst: jest.fn().mockResolvedValue({ id: "seen" }) };
+
+    const result = await reconcileOccurrenceAvailability();
+
+    expect(result.doubleBookingsDetected).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(result.success).toBe(true);
+  });
+});

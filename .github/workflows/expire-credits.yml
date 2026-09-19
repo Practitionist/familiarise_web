@@ -1,9 +1,10 @@
-name: Cleanup Stale Pending Consultations
+name: Expire Credits
 
 on:
   schedule:
-    # Run hourly
-    - cron: "37 * * * *"
+    # Daily 00:35 UTC. #1757 — the script existed with no schedule, so expired
+    # referral credits never had their remainingAmount zeroed.
+    - cron: "35 0 * * *"
   workflow_dispatch: # Allow manual triggering
 
 concurrency:
@@ -11,7 +12,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cleanup-stale-pending-consultations:
+  expire-credits:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -44,8 +45,8 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
-      - name: Cleanup stale pending consultations
-        run: npx --yes tsx@4.23.1 jobs/appointments/cleanup-stale-pending-consultations.ts
+      - name: Expire stale credits
+        run: npx --yes tsx@4.23.1 jobs/referrals/expire-credits.ts
 
       - name: Notify on failure
         if: failure()
@@ -54,4 +55,4 @@ jobs:
           # Fallback sink — Slack has never been provisioned, so this is
           # what actually pages today. See 07-required-secrets.md.
           SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-        run: bash scripts/ci/notify-ops-failure.sh "cleanup-stale-pending-consultations"
+        run: bash scripts/ci/notify-ops-failure.sh "expire-credits"

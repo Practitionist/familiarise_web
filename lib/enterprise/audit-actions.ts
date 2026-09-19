@@ -124,6 +124,11 @@ export const AUDIT_ACTIONS = {
     /// PAYOUT_CLAWBACK (post-completion refund). Releases earnings to
     /// READY for the next batch.
     PAYOUT_REVERSED: "PAYOUT_REVERSED",
+    // #1584 P1-AU01 — payout-account create/update and a manual status
+    // override used to hide behind SETTINGS_CHANGED and PAYOUT_INITIATED.
+    PAYOUT_ACCOUNT_CREATED: "PAYOUT_ACCOUNT_CREATED",
+    PAYOUT_ACCOUNT_UPDATED: "PAYOUT_ACCOUNT_UPDATED",
+    PAYOUT_STATUS_OVERRIDDEN: "PAYOUT_STATUS_OVERRIDDEN",
   },
   SETTINGS: {
     SETTINGS_CHANGED: "SETTINGS_CHANGED",

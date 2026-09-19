@@ -158,11 +158,12 @@ describe("X-Refund-Idempotency header", () => {
 });
 
 describe("request shape", () => {
-  it("POSTs to the captured payment with basic auth and omits amount on a full refund", async () => {
+  it("POSTs to the captured payment with basic auth and always pins the amount", async () => {
     fetchMock.mockResolvedValue(okResponse());
 
     await createRazorpayRefund({
       paymentIntentId: "order_1",
+      amount: 5000,
       idempotencyKey: "clx3k2j9a0000abcd1234efgh",
     });
 
@@ -174,8 +175,9 @@ describe("request shape", () => {
     expect(headersOf().Authorization).toBe(
       `Basic ${Buffer.from("rzp_test_key:rzp_test_secret").toString("base64")}`,
     );
-    // A full refund must not pin an amount — Razorpay refunds the balance.
-    expect(bodyOf()).not.toHaveProperty("amount");
+    // #1584 P2-P0-01 — an omitted amount refunds the ENTIRE payment, so the
+    // figure the caller computed is always sent.
+    expect(bodyOf().amount).toBe(5000);
   });
 
   it("sends the amount in paise for a partial refund", async () => {
@@ -293,5 +295,26 @@ describe("status mapping", () => {
     });
 
     expect(result.status).toBe(expected);
+  });
+});
+
+describe("refund guards at the gateway boundary (#1584 P2-P0-01, P1-GW01b)", () => {
+  it("refuses amount 0 before any SDK or HTTP call — an omitted amount would refund everything", async () => {
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: 0,
+        idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_1",
+        amount: -100,
+        idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_AMOUNT" });
+    expect(rzp.ordersFetchPayments).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

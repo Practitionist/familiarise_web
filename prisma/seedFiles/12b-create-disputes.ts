@@ -114,6 +114,27 @@ import { config } from "./config";
 // Dispute volume - configurable via SEED_MODE environment variable
 const NUM_DISPUTES = config.volumes.disputes;
 
+/** The statuses that still await a response and therefore carry a deadline. */
+const OPEN_DISPUTE_STATUSES: DisputeStatus[] = [
+  "WARNING_NEEDS_RESPONSE",
+  "NEEDS_RESPONSE",
+];
+
+/**
+ * #1757 — an open dispute's deadline sits 30–90 days out, never in the past:
+ * a seeded dueBy a week away was CRITICAL by the next reset's second week and
+ * kept alert-dispute-deadlines paging on rows nobody can answer. Terminal and
+ * under-review statuses carry no deadline.
+ */
+export function seedDisputeDueBy(
+  status: DisputeStatus,
+  now: Date = new Date(),
+): Date | null {
+  if (!OPEN_DISPUTE_STATUSES.includes(status)) return null;
+  const days = faker.number.int({ min: 30, max: 90 });
+  return new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
 export async function createDisputes(): Promise<void> {
   console.log(`Creating ${NUM_DISPUTES} disputes...`);
 
@@ -150,13 +171,7 @@ export async function createDisputes(): Promise<void> {
       const disputeId = generateDisputeId(payment.paymentGateway);
       const evidence = generateEvidence(reasonCode, status);
 
-      // Due date for response (7-21 days from creation for active disputes)
-      let dueBy: Date | null = null;
-      if (["WARNING_NEEDS_RESPONSE", "NEEDS_RESPONSE"].includes(status)) {
-        dueBy = faker.date.soon({
-          days: faker.number.int({ min: 7, max: 21 }),
-        });
-      }
+      const dueBy = seedDisputeDueBy(status);
 
       // Charge refundable status
       const isChargeRefundable = !["CHARGE_REFUNDED", "LOST"].includes(status);

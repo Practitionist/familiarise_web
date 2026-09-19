@@ -109,26 +109,23 @@ describe("PM-12 — createRazorpayRefund targets the captured payment", () => {
     expect(refundedPaymentId()).toBe("pay_captured");
   });
 
-  it("falls back to items[0] when no payment is captured", async () => {
+  it("refuses NOT_CAPTURED when no payment is captured instead of refunding items[0] (#1584 P1-GW01b)", async () => {
     ordersFetchPayments.mockResolvedValue({
-      count: 1,
-      items: [{ id: "pay_only", status: "authorized" }],
-    });
-    mockRefundResponse({
-      id: "rfnd_2",
-      amount: 1000,
-      currency: "inr",
-      status: "pending",
-      notes: {},
+      count: 2,
+      items: [
+        { id: "pay_failed", status: "failed" },
+        { id: "pay_only", status: "authorized" },
+      ],
     });
 
-    await createRazorpayRefund({
-      paymentIntentId: "order_2",
-      amount: 1000,
-      idempotencyKey: "clx3k2j9a0000abcd1234efgh",
-    });
-
-    expect(refundedPaymentId()).toBe("pay_only");
+    await expect(
+      createRazorpayRefund({
+        paymentIntentId: "order_2",
+        amount: 1000,
+        idempotencyKey: "clx3k2j9a0000abcd1234efgh",
+      }),
+    ).rejects.toMatchObject({ code: "NOT_CAPTURED" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

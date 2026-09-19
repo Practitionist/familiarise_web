@@ -186,7 +186,7 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 5. **Overnight overlap:** Create Mon 22:00->Tue 02:00, then try Tue 01:00->Wed 03:00 -> overlap rejected
 6. **Auth on writes:** Unauthenticated POST to `/api/scheduling/availability/weekly` -> 401
 7. **Lock contention:** Two concurrent auto-allocations for same consultant -> one gets 409
-8. **Unallocated overnight:** Mon 22:00->Tue 02:00 with Tue 01:00 booking is excluded from both `/api/scheduling/unallocated/weekly` and `/api/scheduling/unallocated/[consultantId]`
+8. **Unallocated overnight:** Mon 22:00->Tue 02:00 with Tue 01:00 booking is excluded from the grid served by `/api/scheduling/availability-with-allocation/[consultantId]`
 9. **Midnight boundary:** 22:00→00:00 weekly availability saves with `endTimeUtc=0` on the next day (not `1439` on the same day); 23:30→00:00 slot is bookable
 10. **Scheduling period boundary:** A 1-hour session ending after `schedulingPeriodEndsAt` is rejected even if its last slot starts exactly at the end time
 11. **Illegal transition:** Attempt to approve an already-cancelled request -> `IllegalTransitionError` -> 409, not a silent no-op
@@ -198,20 +198,20 @@ Every direct slot writer (checkout, request-for-approval, trial scheduling) lock
 
 | Area                          | Files                                                                                                                                                                 |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Availability CRUD             | `app/api/scheduling/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                       |
-| Public availability           | `app/api/scheduling/availability/[consultantId]/route.ts`, `availability-with-allocation/[consultantId]/route.ts`                                                          |
+| Availability CRUD             | `app/api/scheduling/availability/weekly/route.ts`, `weekly/[id]/route.ts`, `custom/route.ts`, `custom/[id]/route.ts`                                                  |
+| Public availability           | `app/api/scheduling/availability-with-allocation/[consultantId]/route.ts` (the only public grid since the bespoke `availability/[consultantId]` route was deleted)    |
 | Checkout                      | `lib/payments/operations/checkout.ts`, `schemas/checkout.ts`                                                                                                          |
 | Status transitions (CAS)      | `lib/booking/transitions.ts`                                                                                                                                          |
-| Availability union check      | `utils/scheduling-engine/availabilityCoverage.ts`                                                                                                                        |
-| Occupancy / hold-expiry       | `utils/scheduling-engine/occupancyPolicy.ts`, `utils/scheduling-engine/ScheduleValidationService.ts` (`isOccupiedByLiveAppointment`)                                            |
-| Slot utils                    | `utils/scheduling-engine/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                                                                                |
-| Allocation engine (server)    | `utils/scheduling-engine/SchedulingService.ts`                                                                                                                       |
-| Validation engine             | `utils/scheduling-engine/ScheduleValidationService.ts`                                                                                                                       |
-| Calculation                   | `utils/scheduling-engine/ScheduleCalculationService.ts`                                                                                                                      |
+| Availability union check      | `utils/scheduling-engine/availabilityCoverage.ts`                                                                                                                     |
+| Occupancy / hold-expiry       | `utils/scheduling-engine/occupancyPolicy.ts`, `utils/scheduling-engine/ScheduleValidationService.ts` (`isOccupiedByLiveAppointment`)                                  |
+| Slot utils                    | `utils/scheduling-engine/slotTimeUtils.ts` (overlap, overnight matching, time conversion)                                                                             |
+| Allocation engine (server)    | `utils/scheduling-engine/SchedulingService.ts`                                                                                                                        |
+| Validation engine             | `utils/scheduling-engine/ScheduleValidationService.ts`                                                                                                                |
+| Calculation                   | `utils/scheduling-engine/ScheduleCalculationService.ts`                                                                                                               |
 | Locking                       | `utils/appointmentlock.ts`                                                                                                                                            |
 | Cancel/Reschedule             | `app/api/appointments/[appointmentId]/cancel/route.ts`, `reschedule/route.ts`                                                                                         |
-| Request flow                  | `app/api/scheduling/request-for-approval/route.ts`                                                                                                                         |
-| Frontend hooks                | `hooks/scheduling/useScheduling.ts`, `hooks/scheduling/useCalendarData.ts`                                                                                        |
+| Request flow                  | `app/api/scheduling/request-for-approval/route.ts`                                                                                                                    |
+| Frontend hooks                | `hooks/scheduling/useScheduling.ts`, `hooks/scheduling/useCalendarData.ts`                                                                                            |
 | Frontend selection/validation | `lib/scheduling/slotSelectionValidation.ts`, `lib/scheduling/allocationAlgorithms.ts` (manual/requested pre-submission only), `lib/scheduling/availabilityPolling.ts` |
 | Stream cleanup                | `actions/stream/chat/event-channel.action.ts`                                                                                                                         |
 | Appointments page             | `app/dashboard/consultant/[consultantId]/(features)/appointments/page.tsx`                                                                                            |

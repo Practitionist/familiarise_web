@@ -47,14 +47,14 @@ stateDiagram-v2
 
 ## Status Definitions
 
-| Status       | Description                             | Next Actions         |
-| ------------ | --------------------------------------- | -------------------- |
-| **PENDING**  | Earnings created, within hold period    | Wait for hold expiry |
-| **READY**    | Hold period passed, eligible for payout | Include in batch     |
-| **HELD**     | Frozen due to dispute                   | Await resolution     |
-| **BATCHED**  | Rolled into a payout batch, but cash has not left yet | Await payout completion |
-| **PAID**     | Successfully paid to consultant (payout reached COMPLETED with a UTR) | Terminal state       |
-| **REFUNDED** | Payment was refunded                    | Terminal state       |
+| Status       | Description                                                           | Next Actions            |
+| ------------ | --------------------------------------------------------------------- | ----------------------- |
+| **PENDING**  | Earnings created, within hold period                                  | Wait for hold expiry    |
+| **READY**    | Hold period passed, eligible for payout                               | Include in batch        |
+| **HELD**     | Frozen due to dispute                                                 | Await resolution        |
+| **BATCHED**  | Rolled into a payout batch, but cash has not left yet                 | Await payout completion |
+| **PAID**     | Successfully paid to consultant (payout reached COMPLETED with a UTR) | Terminal state          |
+| **REFUNDED** | Payment was refunded                                                  | Terminal state          |
 
 ---
 
@@ -253,15 +253,15 @@ sequenceDiagram
 
 ### Refund States
 
-| Original Status | Can Refund? | Action                                             |
-| --------------- | ----------- | -------------------------------------------------- |
-| PENDING         | Yes         | Proportional or full reversal, may mark REFUNDED   |
-| READY           | Yes         | Proportional or full reversal, may mark REFUNDED   |
-| HELD            | Yes         | Proportional or full reversal, may mark REFUNDED   |
-| PAID            | Yes*        | Via `forceRefund: true` (lost disputes), decrements totalRevenue |
-| REFUNDED        | No          | Already refunded                                   |
+| Original Status | Can Refund? | Action                                                           |
+| --------------- | ----------- | ---------------------------------------------------------------- |
+| PENDING         | Yes         | Proportional or full reversal, may mark REFUNDED                 |
+| READY           | Yes         | Proportional or full reversal, may mark REFUNDED                 |
+| HELD            | Yes         | Proportional or full reversal, may mark REFUNDED                 |
+| PAID            | Yes\*       | Via `forceRefund: true` (lost disputes), decrements totalRevenue |
+| REFUNDED        | No          | Already refunded                                                 |
 
-> *PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This routes through the shared `recordTdsReversal` helper to write a negative `isReversal` `TDSRecord` (capped at the original withholding so a refund-then-chargeback can't double-reverse, #813) and decrements `totalRevenue`.
+> \*PAID earnings can now be refunded using `forceRefund: true`, used by the lost-dispute handler. This routes through the shared `recordTdsReversal` helper to write a negative `isReversal` `TDSRecord` (capped at the original withholding so a refund-then-chargeback can't double-reverse, #813) and decrements `totalRevenue`.
 
 ---
 
@@ -289,13 +289,21 @@ flowchart TD
 
 ### Dispute Functions
 
+The freeze and release around a dispute are no longer named service functions. Both transitions are inline CAS `updateMany` writes inside the dispute webhook handler in `app/api/webhooks/utils.ts`, run directly against `ConsultantEarnings` and `OrganizationEarnings`:
+
 ```typescript
-// Freeze earnings on dispute
-await holdEarnings(paymentId);
+// Freeze earnings on dispute creation (inline in app/api/webhooks/utils.ts)
+await tx.consultantEarnings.updateMany({
+  where: { paymentId, status: "READY" },
+  data: { status: "HELD", preDisputeStatus: "READY" },
+});
 // Status: READY → HELD
 
-// Resolve in consultant's favor
-await releaseHeldEarnings(earningsId);
+// Resolve in consultant's favor (inline in app/api/webhooks/utils.ts)
+await tx.consultantEarnings.updateMany({
+  where: { paymentId, status: "HELD" },
+  data: { status: "READY" },
+});
 // Status: HELD → READY
 
 // Resolve in customer's favor (standard)

@@ -64,8 +64,79 @@ import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earni
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
-import { applyReversal } from "./reversal-engine";
+import {
+  attemptTrigger,
+  notifyRefundProcessed,
+  type StagedTrigger,
+} from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { getAppUrl } from "@/lib/url";
+import {
+  EMAIL_BUDGET_MS,
+  MONEY_EMAIL_TYPES,
+  stageRefundProcessedEmail,
+} from "@/lib/email";
+import {
+  attemptStaged as attemptStagedEmails,
+  type StagedRecipientEmail,
+} from "@/lib/email/send-to-recipients";
+import { applyReversal, postPayoutClawback } from "./reversal-engine";
 import { RefundValidationError, refundPayment } from "./refund";
+
+/**
+ * #1589 N-P0-01 — the payer's notice for a refund that never touches the
+ * gateway. Gateway refunds are told by the `refund.processed` webhook; the
+ * INTERNAL and CREDITS rails settle in one transaction and told nobody. The
+ * bell and the receipt are staged inside that transaction (same rows the
+ * webhook stages) and attempted after commit; the outbox's deterministic
+ * `transactionId` (lib/novu/outbox.ts) is what makes a re-drive safe.
+ */
+type StagedRefundNotice = {
+  bell: StagedTrigger | null;
+  emails: StagedRecipientEmail[];
+};
+
+async function stageRefundNotice(
+  tx: Tx,
+  payment: {
+    id: string;
+    userId: string;
+    organizationId: string | null;
+    currency: string;
+  },
+  amountPaise: number,
+): Promise<StagedRefundNotice> {
+  const bell = await notifyRefundProcessed(
+    payment.userId,
+    {
+      ...notificationScope(payment.organizationId),
+      amount: amountPaise,
+      currency: payment.currency,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
+    },
+    { tx, entityRef: `payment:${payment.id}` },
+  );
+  const emails = await stageRefundProcessedEmail(tx, {
+    userId: payment.userId,
+    paymentId: payment.id,
+    amountPaise,
+    currency: payment.currency,
+  });
+  return { bell: bell?.staged ?? null, emails };
+}
+
+/** Post-commit half: never inside the Serializable callback. */
+async function attemptRefundNotice(
+  staged: StagedRefundNotice | null,
+): Promise<void> {
+  if (!staged) return;
+  if (staged.bell) await attemptTrigger(staged.bell);
+  await attemptStagedEmails(
+    staged.emails,
+    MONEY_EMAIL_TYPES.REFUND_PROCESSED,
+    EMAIL_BUDGET_MS.REQUEST,
+  );
+}
 
 /** Which rail a booking's money travels on, in or out. */
 export type FundingRail = "GATEWAY" | "INTERNAL" | "CREDITS";
@@ -175,6 +246,8 @@ async function refundFreeCreditPayment(input: {
     where: { id: input.paymentId, deletedAt: null },
     select: {
       id: true,
+      userId: true,
+      organizationId: true,
       currency: true,
       paymentStatus: true,
       paymentGateway: true,
@@ -193,7 +266,9 @@ async function refundFreeCreditPayment(input: {
     );
   }
 
-  return withSerializableRetry(() =>
+  // Staged inside the tx, attempted after it; a retried attempt re-stages.
+  let notice: StagedRefundNotice | null = null;
+  const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         const existing = await tx.refund.findFirst({
@@ -227,7 +302,7 @@ async function refundFreeCreditPayment(input: {
         });
 
         // No amounts → full restoration of every usage row on the payment.
-        await reverseCreditsForPayment(payment.id, tx);
+        const restoredPaise = await reverseCreditsForPayment(payment.id, tx);
 
         // #1003 convention (mirrors cancelPendingCheckout): utilization is
         // debited at checkout before capture, so release it here. A no-op for
@@ -249,6 +324,8 @@ async function refundFreeCreditPayment(input: {
         });
 
         await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        // The Refund row is ₹0; the value that came back is the restored credit.
+        notice = await stageRefundNotice(tx, payment, restoredPaise);
         return {
           refundId: refundRow.id,
           amountRefundedPaise: 0,
@@ -262,6 +339,8 @@ async function refundFreeCreditPayment(input: {
       },
     ),
   );
+  await attemptRefundNotice(notice);
+  return result;
 }
 
 /**
@@ -423,6 +502,13 @@ async function reverseFreeCreditSettlement(
           } as Prisma.InputJsonValue,
         },
       });
+      // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
+      await postPayoutClawback(tx, {
+        refundId: input.refundId,
+        payoutId: orgEarn.orgPayoutId,
+        amountPaise: orgEarn.orgSharePaise,
+        organizationId: orgEarn.organizationId,
+      });
     }
   }
 
@@ -563,6 +649,8 @@ async function refundInternalFundedPayment(input: {
     where: { id: input.paymentId, deletedAt: null },
     select: {
       id: true,
+      userId: true,
+      organizationId: true,
       amount: true,
       currency: true,
       paymentStatus: true,
@@ -584,7 +672,9 @@ async function refundInternalFundedPayment(input: {
     );
   }
 
-  return withSerializableRetry(() =>
+  // Staged inside the tx, attempted after it; a retried attempt re-stages.
+  let notice: StagedRefundNotice | null = null;
+  const result = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         // Re-derive the balance inside the Serializable tx so two concurrent
@@ -664,6 +754,7 @@ async function refundInternalFundedPayment(input: {
         );
 
         await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        notice = await stageRefundNotice(tx, payment, requested);
         return {
           refundId: refundRow.id,
           amountRefundedPaise: requested,
@@ -677,4 +768,6 @@ async function refundInternalFundedPayment(input: {
       },
     ),
   );
+  await attemptRefundNotice(notice);
+  return result;
 }

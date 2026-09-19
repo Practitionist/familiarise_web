@@ -129,6 +129,9 @@ export async function makeCheckoutRequest(
 const BUSY_ERROR_TYPES = new Set([
   "EVENT_CHECKOUT_BUSY",
   "CONSULTEE_BOOKING_BUSY",
+  // #1592 A-P1-06 — exhausted Serializable retries; the server already
+  // ships `retryAfter: 2` for it (app/api/checkout/route.ts).
+  "SERIALIZATION_CONFLICT",
 ]);
 
 /** Never wait longer than this server-advised pause (function-ceiling friendly). */
@@ -193,6 +196,9 @@ export function busyRetryToast(waitSeconds: number): {
 }
 
 // Common success handling logic for different appointment types
+// `navigate` is the caller's SPA navigation (router.push) when available —
+// these factories live in a plain client module with no router of their own,
+// so without it they fall back to a full navigation to the same destination.
 export function createHandleCheckoutSuccess(
   toast: ReturnType<typeof useToast>["toast"],
   appointmentType:
@@ -201,6 +207,7 @@ export function createHandleCheckoutSuccess(
     | "CLASS"
     | "SUBSCRIPTION"
     | "TRIAL",
+  navigate?: (url: string) => void,
 ) {
   return (
     data: { skipPayment?: boolean; [key: string]: unknown },
@@ -258,9 +265,11 @@ export function createHandleCheckoutSuccess(
         variant: "default",
       });
 
-      // Redirect after a short delay
+      // Redirect after a short delay (SPA navigation when the caller passed
+      // router.push, same destination otherwise)
       setTimeout(() => {
-        window.location.href = "/dashboard";
+        if (navigate) navigate("/dashboard");
+        else window.location.href = "/dashboard";
       }, 2000);
     } else {
       // Production mode - payment initiated success
@@ -378,6 +387,7 @@ export const paymentGateways = [
 // Default success and error handlers for StripeCheckout component
 export function createStripeCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
+  navigate?: (url: string) => void,
 ) {
   return {
     onPaymentSuccess: (_response: { message: string }) => {
@@ -386,7 +396,8 @@ export function createStripeCheckoutHandlers(
         description:
           "Your payment has been confirmed! Redirecting to your confirmation page...",
       });
-      window.location.href = "/checkout/checkout-success";
+      if (navigate) navigate("/checkout/checkout-success");
+      else window.location.href = "/checkout/checkout-success";
     },
     onPaymentError: (error: {
       message?: string;
@@ -434,6 +445,7 @@ export function createStripeCheckoutHandlers(
 // Default success and error handlers for RazorpayCheckout component
 export function createRazorpayCheckoutHandlers(
   toast: ReturnType<typeof useToast>["toast"],
+  navigate?: (url: string) => void,
 ) {
   return {
     onPaymentSuccess: (response: {
@@ -451,9 +463,11 @@ export function createRazorpayCheckoutHandlers(
       // `Payment.paymentIntent` IS the Razorpay order id (the verify route
       // keys on `order_` for its sync branch), so that is the id to hand over.
       if (response.razorpay_order_id) {
-        window.location.href = `/checkout/checkout-success?payment_intent=${encodeURIComponent(
+        const successUrl = `/checkout/checkout-success?payment_intent=${encodeURIComponent(
           response.razorpay_order_id,
         )}`;
+        if (navigate) navigate(successUrl);
+        else window.location.href = successUrl;
         return;
       }
       // No order id = credits covered the whole price, so there is nothing to
@@ -464,7 +478,8 @@ export function createRazorpayCheckoutHandlers(
           response.message ??
           "Your booking is confirmed. Redirecting to your dashboard...",
       });
-      window.location.href = "/dashboard";
+      if (navigate) navigate("/dashboard");
+      else window.location.href = "/dashboard";
     },
     onPaymentError: (error: {
       description?: string;

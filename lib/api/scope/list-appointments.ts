@@ -57,6 +57,9 @@ export function buildWhere(
   params: ListAppointmentsParams,
 ): Prisma.AppointmentWhereInput {
   const base: Prisma.AppointmentWhereInput = {
+    // #1583 D-P1-06 — a tombstoned appointment (a cancelled trial's held
+    // call) is not a listing.
+    deletedAt: null,
     ...(params.appointmentType && {
       appointmentType: params.appointmentType,
     }),
@@ -80,8 +83,16 @@ export function buildWhere(
         { subscription: { requestedBy: { userId: uid } } },
         { trial: { consulteeProfile: { userId: uid } } },
         // Consultant side — sessions the user delivers B2C.
-        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
-        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        {
+          consultation: {
+            consultationPlan: { consultantProfile: { userId: uid } },
+          },
+        },
+        {
+          subscription: {
+            subscriptionPlan: { consultantProfile: { userId: uid } },
+          },
+        },
         { trial: { consultantProfile: { userId: uid } } },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
@@ -115,8 +126,16 @@ export function buildWhere(
         // Mirrors lib/data/consultee-events-read.ts slot membership.
         { participants: { some: liveParticipant(uid) } },
         // Delivered as an expert (owns the plan).
-        { consultation: { consultationPlan: { consultantProfile: { userId: uid } } } },
-        { subscription: { subscriptionPlan: { consultantProfile: { userId: uid } } } },
+        {
+          consultation: {
+            consultationPlan: { consultantProfile: { userId: uid } },
+          },
+        },
+        {
+          subscription: {
+            subscriptionPlan: { consultantProfile: { userId: uid } },
+          },
+        },
         { webinar: { webinarPlan: { consultantProfile: { userId: uid } } } },
         { class: { classPlan: { consultantProfile: { userId: uid } } } },
       ],
@@ -205,7 +224,9 @@ export async function listAppointmentsScoped(
               },
             },
             requestedBy: {
-              select: { user: { select: { id: true, name: true, email: true } } },
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
             },
           },
         },
@@ -222,7 +243,9 @@ export async function listAppointmentsScoped(
               },
             },
             requestedBy: {
-              select: { user: { select: { id: true, name: true, email: true } } },
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
             },
           },
         },
@@ -257,10 +280,14 @@ export async function listAppointmentsScoped(
         trial: {
           select: {
             consulteeProfile: {
-              select: { user: { select: { id: true, name: true, email: true } } },
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
             },
             consultantProfile: {
-              select: { user: { select: { id: true, name: true, email: true } } },
+              select: {
+                user: { select: { id: true, name: true, email: true } },
+              },
             },
           },
         },

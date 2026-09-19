@@ -5,9 +5,10 @@
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
- * sweeps, since #1633 the ledger reconcile backstop and, since #1654, the
- * Novu outbox relay every tick and the email outbox relay on every third
- * tick) instead of waiting on Actions. It never writes money state itself: every
+ * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
+ * outbox relay every tick and the email outbox relay on every third tick,
+ * and since #1583/#1589 five booking sweeps on every third tick, two of them
+ * on the 20 s tier) instead of waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -15,7 +16,8 @@
  *
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides.
+ * Functions runtime already provides. The one exception is a lazy
+ * `@sentry/node` import on the missing-secret path (#1582 F-P2-02).
  *
  * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
  * from a scheduled function costs three invocations and reports nothing.
@@ -42,6 +44,16 @@ const TARGETS = [
   "retry-failed-emails",
   // #1654 — the Novu outbox relay, every tick.
   "drain-notification-outbox",
+  // #1583 E-P0-04 / #1589 P-P0-01, N-P1-03 / #1591 J1-P1-05 / #1599 C-P1-06 —
+  // the booking sweeps whose hourly Actions twin let a lapsed pay-link, a
+  // stale proposal, a missed reminder or a dead hold sit for ~100 minutes.
+  // Every 15 minutes, see TARGET_EVERY_MINUTES; none of the five reads
+  // `limit`, so they get no entry in TARGET_LIMITS.
+  "expire-unpaid-trials",
+  "reschedule-proposals",
+  "appointment-reminders",
+  "tentative-occurrences",
+  "expire-stale-requests",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -85,6 +97,13 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
+  // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
+  // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
+  "expire-unpaid-trials": 15,
+  "reschedule-proposals": 15,
+  "appointment-reminders": 15,
+  "tentative-occurrences": 15,
+  "expire-stale-requests": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
@@ -112,6 +131,11 @@ const TARGET_TIMEOUTS_MS: Partial<Record<Target, number>> = {
   "drain-notification-outbox": 20_000,
   // #1708 — one Stream round trip per unchanneled row; 6 s aborted every tick.
   "reconcile-orphaned-confirmations": 20_000,
+  // #1583 E-P0-04 — per-row outbox staging (reminders) and gateway refunds
+  // (stale requests) do not fit 6 s on a cold instance; the cron lock makes
+  // an overlap with the Actions run a 409, not a double run.
+  "appointment-reminders": 20_000,
+  "expire-stale-requests": 20_000,
 };
 
 /** The request one target gets; exported so a test can pin it without a Netlify runtime. */
@@ -173,7 +197,7 @@ async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
-): Promise<{ name: string; status: number }> {
+): Promise<{ name: string; status: number; maintenance?: boolean }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -183,11 +207,47 @@ async function hitTarget(
       headers: { Authorization: `Bearer ${secret}` },
       signal: controller.signal,
     });
-    return { name, status: res.status };
+    // Only the twin's own maintenance refusal carries `phase`; a platform or
+    // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
+    let maintenance = false;
+    if (res.status === 503) {
+      const body = (await res.json().catch(() => null)) as {
+        phase?: unknown;
+      } | null;
+      maintenance = typeof body?.phase === "string";
+    }
+    return { name, status: res.status, maintenance };
   } catch {
-    return { name, status: 0 };
+    return { name, status: 0, maintenance: false };
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Which bucket a target's status lands in; exported so a test can pin it.
+ * 409 is the cron lock's loser; a 503 whose body carries the maintenance
+ * `phase` is a twin refusing inside a hold — both expected, neither a failure.
+ * A bare 503 has no such marker and stays failed (#1598 P1-W03).
+ */
+export function bucketFor(
+  status: number,
+  maintenance = false,
+): "ok" | "held" | "failed" {
+  if (status === 200 || status === 207) return "ok";
+  if (status === 409 || (status === 503 && maintenance)) return "held";
+  return "failed";
+}
+
+/** #1582 F-P2-02 — a missing secret is a silent fleet outage; page Sentry, not just the log. */
+async function alertMissingSecret(error: string): Promise<void> {
+  try {
+    const Sentry = await import("@sentry/node");
+    Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0 });
+    Sentry.captureMessage(error, "fatal");
+    await Sentry.flush(2_000);
+  } catch (err) {
+    console.error(JSON.stringify({ event: "cron-tick", sentry: String(err) }));
   }
 }
 
@@ -197,8 +257,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
+    await alertMissingSecret(error);
     // #1686 — a 5xx would only be re-invoked three times against the same
-    // missing secret; the log line is the signal.
+    // missing secret; the log line and the Sentry message are the signal.
     return jsonResponse({ error }, 200);
   }
 
@@ -225,8 +286,11 @@ export default async function cronTick(_req: Request): Promise<Response> {
     // hitTarget never rejects, but a defensive fallback keeps a Promise API
     // surprise from throwing out of the handler instead of being counted.
     const status = result.status === "fulfilled" ? result.value.status : 0;
-    if (status === 200 || status === 207) ok.push(name);
-    else if (status === 409) lockHeld.push(name);
+    const maintenance =
+      result.status === "fulfilled" && result.value.maintenance === true;
+    const bucket = bucketFor(status, maintenance);
+    if (bucket === "ok") ok.push(name);
+    else if (bucket === "held") lockHeld.push(name);
     else failed.push({ name, status });
   });
 

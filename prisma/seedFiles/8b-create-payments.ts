@@ -2,6 +2,7 @@ import { faker } from "@faker-js/faker";
 import {
   Currency,
   PaymentGateway,
+  PaymentLegSource,
   PaymentStatus,
   Prisma,
   DiscountType,
@@ -9,6 +10,33 @@ import {
 import prisma from "../../lib/prisma";
 import { UserWithProfiles } from "./1a-create-users";
 import { config } from "./config";
+import { weightedRandom } from "./utils";
+
+/**
+ * #1757 — statuses a seeded payment may take. PENDING is deliberately absent:
+ * a seeded PENDING row has no expiresAt and no tentative hold, so no sweep can
+ * ever retire it and reconcile-payment-status re-reports its fake gateway id
+ * on every tick (FAMILIARISE_WEB-4P). A real PENDING row only exists mid-checkout.
+ */
+export const SEED_PAYMENT_STATUS_WEIGHTS = [
+  { value: PaymentStatus.SUCCEEDED, weight: 0.75 },
+  { value: PaymentStatus.FAILED, weight: 0.15 },
+  { value: PaymentStatus.EXPIRED, weight: 0.1 },
+];
+
+/**
+ * #1757 — a SUCCEEDED payment funds itself with one CARD leg equal to its
+ * amount, the same leg-sum identity production writes hold to
+ * (`payment_legs_sum_to_amount`). Nothing else carries a leg: a FAILED or
+ * EXPIRED row never collected, and a zero-amount row has nothing to fund.
+ */
+export function buildSeedPaymentLegs(
+  status: PaymentStatus,
+  amountPaise: number,
+): Prisma.PaymentLegCreateWithoutPaymentInput[] {
+  if (status !== PaymentStatus.SUCCEEDED || amountPaise <= 0) return [];
+  return [{ source: PaymentLegSource.CARD, amountPaise }];
+}
 
 // Payment volume - configurable via SEED_MODE environment variable
 const NUM_PAYMENTS = config.volumes.payments;
@@ -96,6 +124,8 @@ export async function createPayments(users: UserWithProfiles[]) {
         }
       }
 
+      const paymentStatus = weightedRandom(SEED_PAYMENT_STATUS_WEIGHTS);
+      const legs = buildSeedPaymentLegs(paymentStatus, finalAmount);
       const paymentData: Prisma.PaymentCreateInput = {
         user: { connect: { id: user.id } },
         amount: finalAmount,
@@ -119,10 +149,9 @@ export async function createPayments(users: UserWithProfiles[]) {
         paymentGateway: faker.helpers.arrayElement<PaymentGateway>(
           Object.values(PaymentGateway),
         ),
-        paymentStatus: faker.helpers.arrayElement<PaymentStatus>(
-          Object.values(PaymentStatus),
-        ),
+        paymentStatus,
         appointment: { connect: { id: appointment.id } },
+        ...(legs.length > 0 ? { legs: { create: legs } } : {}),
         ...(discountCode
           ? { discountCode: { connect: { id: discountCode.id } } }
           : {}),

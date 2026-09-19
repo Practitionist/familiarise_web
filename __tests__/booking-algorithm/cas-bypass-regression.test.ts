@@ -57,15 +57,20 @@ describe("sweeps cancel only from a cancellable state", () => {
     expect(src).not.toMatch(/transitionOccurrenceCompletion\(prisma,/);
   });
 
-  it("cleanup-stale-pending-consultations' from-set is its own cohort (APPROVED*)", () => {
-    const src = read(
+  // #1589 P-P1-01 / #1732 — cleanup-stale-pending-consultations is retired:
+  // it CANCELLED the approved-but-unpaid cohort that expire-stale-requests
+  // and the pay-link sweep EXPIRE (doctrine rule 5, one terminal word).
+  it("the retired stale-pending-consultations sweep does not come back", () => {
+    for (const file of [
       "scripts/appointments/cleanup-stale-pending-consultations.ts",
-    );
-    expect(src).toContain("transitionConsultationRequest(tx, {");
-    expect(src).toMatch(
-      /fromIn: \[\s*AppointmentStatus\.APPROVED,\s*AppointmentStatus\.APPROVED_PENDING_PAYMENT,?\s*\]/,
-    );
-    expect(src).not.toContain("fromIn: [AppointmentStatus.PENDING]");
+      "app/api/cleanup/stale-pending-consultations/route.ts",
+      // The scheduled entry points too: a reintroduced wrapper or workflow
+      // would re-arm the retired sweep without either file above.
+      "jobs/appointments/cleanup-stale-pending-consultations.ts",
+      ".github/workflows/cleanup-stale-pending-consultations.yml",
+    ]) {
+      expect(fs.existsSync(path.join(process.cwd(), file))).toBe(false);
+    }
   });
 });
 
@@ -83,6 +88,45 @@ describe("slot completion writers use transitionOccurrenceCompletion", () => {
       expect(src).toContain("transitionOccurrenceCompletion(");
     });
   }
+});
+
+// #1583 A-P0-05 / A-P1-03 — the three sweeps that still wrote status with a
+// raw updateMany (no history row, no tombstone on the released occurrence).
+describe("moderation and the two sweeps write status through the helpers", () => {
+  it("cancel-user-engagements cancels parents and tombstones occurrences through the helpers", () => {
+    const src = read("lib/moderation/cancel-user-engagements.ts");
+    // The one remaining updateMany is the tombstone of rows already
+    // CANCELLED (no status moves), never a completionStatus write.
+    expect(src).not.toMatch(
+      /appointmentOccurrence\.updateMany\(\{[\s\S]*?data:\s*\{[^}]*completionStatus/,
+    );
+    expect(src).not.toMatch(
+      /tx\.(consultation|subscription|webinar|class)\.updateMany\(/,
+    );
+    expect(src).toContain("transitionOccurrenceCompletion(");
+    expect(src).toContain("data: { deletedAt: now }");
+  });
+
+  it("auto-complete completes every parent through its helper", () => {
+    const src = read("scripts/appointments/auto-complete-appointments.ts");
+    expect(src).not.toMatch(
+      /prisma\.(consultation|subscription|webinar|class)\.updateMany\(/,
+    );
+    for (const helper of [
+      "transitionWebinarEvent(",
+      "transitionClassEvent(",
+      "transitionConsultationRequest(",
+      "transitionSubscriptionRequest(",
+    ]) {
+      expect(src).toContain(helper);
+    }
+  });
+
+  it("detect-consultant-no-shows tombstones the released occurrences", () => {
+    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+    expect(src).not.toMatch(/appointmentOccurrence\.updateMany\(/);
+    expect(src).toContain("transitionOccurrenceCompletion(");
+  });
 });
 
 describe("trial status writers use transitionTrial", () => {

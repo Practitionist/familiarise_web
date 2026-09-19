@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -29,6 +29,8 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
+import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 
 interface PendingPayment {
   id: string;
@@ -51,6 +53,31 @@ interface PendingPayment {
   appointmentId?: string | null;
 }
 
+/**
+ * The route's whole payload. HomeTab shares this query key, so both readers
+ * must return the same shape (#1675 added the lapsed rows next to the list).
+ */
+export interface PendingPaymentsPayload {
+  pendingPayments: PendingPayment[];
+  lapsedPayLinks: LapsedPayLink[];
+}
+
+export async function fetchPendingPayments(
+  consulteeId: string,
+): Promise<PendingPaymentsPayload> {
+  const response = await fetch(
+    `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch pending payments");
+  }
+  const data = await response.json();
+  return {
+    pendingPayments: data.pendingPayments || [],
+    lapsedPayLinks: data.lapsedPayLinks || [],
+  };
+}
+
 type PendingCancelTarget =
   | { kind: "gateway"; paymentId: string; title: string }
   | { kind: "approval"; appointmentId: string; title: string };
@@ -69,7 +96,6 @@ export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
   const { formatPrice } = useCurrency();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
@@ -81,26 +107,19 @@ export function PendingPaymentsWidget({
   // when the refetch should fire. The global refetchOnWindowFocus is false, so
   // this query opts back in explicitly.
   const {
-    data: pendingPayments = [],
+    data: payload,
     isLoading: loading,
     error: queryError,
   } = useQuery({
     queryKey: ["pending-payments", consulteeId],
-    queryFn: async (): Promise<PendingPayment[]> => {
-      const response = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch pending payments");
-      }
-      const data = await response.json();
-      return data.pendingPayments || [];
-    },
+    queryFn: () => fetchPendingPayments(consulteeId),
     // No interval: focus alone covers this. Someone waiting on a payment
     // comes back to the tab, which is exactly when the refetch fires.
     refetchOnWindowFocus: true,
     staleTime: 30 * 1000,
   });
+  const pendingPayments = payload?.pendingPayments ?? [];
+  const lapsedPayLinks = payload?.lapsedPayLinks ?? [];
   const error = queryError
     ? queryError instanceof Error
       ? queryError.message
@@ -155,9 +174,7 @@ export function PendingPaymentsWidget({
           { method: "POST", headers: { "Content-Type": "application/json" } },
         );
         if (response.status === 409) {
-          setCancelNotice(
-            "This booking already changed state — refreshing.",
-          );
+          setCancelNotice("This booking already changed state — refreshing.");
         } else if (!response.ok) {
           const data = await response.json().catch(() => null);
           // A 5xx with no sentence is a timeout or crash: the cancel may
@@ -236,6 +253,16 @@ export function PendingPaymentsWidget({
     );
   }
 
+  // #1675 — a lapsed link is not a pending payment, so it never turns the
+  // card amber or joins the count; it sits under the list as a muted row.
+  const lapsedSection = lapsedPayLinks.length > 0 && (
+    <div className="divide-y divide-border">
+      {lapsedPayLinks.map((link) => (
+        <LapsedPayLinkRow key={link.id} link={link} />
+      ))}
+    </div>
+  );
+
   // Empty state
   if (pendingPayments.length === 0) {
     return (
@@ -246,15 +273,17 @@ export function PendingPaymentsWidget({
             Pending Payments
           </h3>
         </div>
-        <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
-          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
-            <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+        {lapsedSection || (
+          <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
+            <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+              <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+            </div>
+            <p className="text-sm text-muted-foreground">No pending payments</p>
+            <p className="text-xs text-muted-foreground/70 mt-0.5">
+              You&apos;re all caught up!
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">No pending payments</p>
-          <p className="text-xs text-muted-foreground/70 mt-0.5">
-            You&apos;re all caught up!
-          </p>
-        </div>
+        )}
       </div>
     );
   }
@@ -394,36 +423,47 @@ export function PendingPaymentsWidget({
                         )}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      onClick={() => {
-                        // #1167 — a trial has a branded checkout page of our
-                        // own (`payment.id` IS the Trial id here), which
-                        // shows the amount, the duration and the hold deadline
-                        // before handing off to the gateway. Everything else
-                        // still opens the gateway link directly.
-                        if (payment.type === "trial") {
-                          router.push(`/checkout/plans/trial/${payment.id}`);
-                          return;
-                        }
-                        if (
-                          payment.paymentUrl &&
-                          /^https?:\/\//.test(payment.paymentUrl)
-                        ) {
-                          window.open(
-                            payment.paymentUrl,
-                            "_blank",
-                            "noopener,noreferrer",
-                          );
-                        }
-                      }}
-                    >
-                      Pay Now
-                      {payment.type !== "trial" && (
+                    {/* #1167 — a trial has a branded checkout page of our
+                        own (`payment.id` IS the Trial id here), which
+                        shows the amount, the duration and the hold deadline
+                        before handing off to the gateway: a prefetching
+                        Link. Everything else still opens the gateway link
+                        directly in a new tab. */}
+                    {payment.type === "trial" ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <Link href={`/checkout/plans/trial/${payment.id}`}>
+                          Pay Now
+                        </Link>
+                      </Button>
+                    ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <a
+                          href={payment.paymentUrl as string}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Pay Now
+                          <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled
+                        className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
+                      >
+                        Pay Now
                         <ExternalLink className="ml-1 h-3 w-3" />
-                      )}
-                    </Button>
+                      </Button>
+                    )}
                   </span>
                 )}
               </div>
@@ -431,17 +471,20 @@ export function PendingPaymentsWidget({
           );
         })}
       </div>
+      {lapsedSection && (
+        <div className="border-t border-amber-100">{lapsedSection}</div>
+      )}
       {pendingPayments.length > 1 && (
         <div className="px-5 py-3 border-t border-amber-100">
           <Button
+            asChild
             variant="ghost"
             size="sm"
             className="w-full text-amber-800 hover:text-amber-900 hover:bg-amber-100 text-xs font-semibold"
-            onClick={() =>
-              router.push(`/dashboard/consultee/${consulteeId}/payments`)
-            }
           >
-            View All Payments
+            <Link href={`/dashboard/consultee/${consulteeId}/payments`}>
+              View All Payments
+            </Link>
           </Button>
         </div>
       )}
