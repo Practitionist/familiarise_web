@@ -90,6 +90,21 @@ jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
 }));
 
+// #1589 N-P0-01 — the credits rail now stages the payer's notice in the tx;
+// the notice plumbing is boundary-mocked, the settlement is what is under test.
+jest.mock("../../lib/novu", () => ({
+  notifyRefundProcessed: jest.fn().mockResolvedValue(null),
+  attemptTrigger: jest.fn(),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { REQUEST: 1 },
+  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
+  stageRefundProcessedEmail: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("../../lib/email/send-to-recipients", () => ({
+  attemptStaged: jest.fn(),
+}));
+
 jest.mock("../../lib/api/organizations/program-helpers", () => ({
   reverseBookingUtilization: (...a: unknown[]) => mockReverseUtilization(...a),
 }));
