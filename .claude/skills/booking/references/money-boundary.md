@@ -49,9 +49,24 @@ analytics on it expecting only test rows.
 
 ## 3. One price derivation
 
+As of 2026-09-19 (#1583 C-P0-01, owner decision Q3) `deriveCheckoutAmount` has a
+second production call site: `createApprovalPaymentIntent`
+(`lib/payments/operations/approval-payment.ts`) mints an approval pay-link
+through the same function, so a consultant-minted pay-link charges the same
+GST a direct checkout would, instead of the plan's raw pre-tax price with
+`taxAmount` frozen at 0. `buyerCountry` comes from `detectBuyerCountry({
+userCountry: buyer.country })` rather than a request header, because the mint
+runs inside the consultant's approval action, not the buyer's own request; no
+`discount` and no `useReferralCredits` are passed, so a pay-link is tax-only —
+discount codes and referral credits on the approval rail are a deliberate
+follow-up, not an oversight. `originalAmount` stays the pre-tax list price
+(what earnings read as the consultant's base) and the CARD leg carries the
+taxed `amount`, matching the leg-sum identity checkout already keeps. A
+re-mint always re-derives; it never copies a prior mint's frozen figure.
+
 `deriveCheckoutAmount` (`lib/payments/pricing/derive-checkout-amount.ts`) is the
-only place a checkout price is computed, with exactly one production call site,
-inside checkout's transaction. It works in **integer paise as plain `number`**,
+only place a checkout price is computed, with two production call sites now,
+both inside a transaction. It works in **integer paise as plain `number`**,
 not BigInt. The fixed order of operations is why it is centralised: list price,
 discount, tax on the discounted base, then referral credits against the
 tax-inclusive total. It returns `originalAmount`, `discountPaise`,

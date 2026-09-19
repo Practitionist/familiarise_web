@@ -14,12 +14,13 @@ The full rationale — session-budget economics, the resume-from-worktree patter
 
 ## The role agents
 
-| Agent           | Model  | Effort | Role                                                                                                                                                                                        |
-| --------------- | ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pr-builder.md` | opus   | high   | Builds or resumes one PR from a numbered spec inside a dedicated worktree. The multi-file-coherence executor for money code.                                                                |
-| `pr-triager.md` | opus   | medium | Review-comment triage on a non-money PR (docs, cron plumbing, UI, config), checking each claim against current code. Money-semantics threads are reported as needs-decision, never changed. |
-| `sweeper.md`    | sonnet | medium | Mechanical breadth work with some judgment — E2E scenarios, docs regeneration, cron plumbing, a small Netlify function.                                                                     |
-| `mechanic.md`   | sonnet | low    | Purely mechanical breadth work — relabels, formatting, YAML sweeps, rename/lint passes, doc regeneration from an already-written verdict.                                                   |
+| Agent           | Model  | Effort | Role                                                                                                                                                                                                                   |
+| --------------- | ------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pr-builder.md` | opus   | high   | Builds or resumes one PR from a numbered spec inside a dedicated worktree. The multi-file-coherence executor for money code.                                                                                           |
+| `pr-triager.md` | opus   | medium | Review-comment triage on a non-money PR (docs, cron plumbing, UI, config), checking each claim against current code. Money-semantics threads are reported as needs-decision, never changed.                            |
+| `sweeper.md`    | sonnet | medium | Mechanical breadth work with some judgment — E2E scenarios, docs regeneration, cron plumbing, a small Netlify function.                                                                                                |
+| `mechanic.md`   | sonnet | low    | Purely mechanical breadth work — relabels, formatting, YAML sweeps, rename/lint passes, doc regeneration from an already-written verdict.                                                                              |
+| `qa-preview.md` | sonnet | xhigh  | End-to-end QA of one pull request on its Netlify deploy preview — chrome-devtools for the browser, the Supabase MCP for money truth, the Sentry MCP for the release sweep; writes a per-case report, never edits code. |
 
 ## The `razorpay-*` pack
 
@@ -27,4 +28,4 @@ Nine vendor-specific agents scaffold and audit the Razorpay integration directly
 
 ## Dispatch rule
 
-Money code goes to `pr-builder` at opus/high. Money review triage also goes to `pr-builder`, because verifying a reviewer's claim against money-path code needs the same multi-file coherence as building the code did. Non-money triage goes to `pr-triager`. E2E and docs work goes to `sweeper`. Purely mechanical work goes to `mechanic`.
+Money code goes to `pr-builder` at opus/high. Money review triage also goes to `pr-builder`, because verifying a reviewer's claim against money-path code needs the same multi-file coherence as building the code did. Non-money triage goes to `pr-triager`. Docs work goes to `sweeper`; end-to-end preview QA goes to `qa-preview`. Purely mechanical work goes to `mechanic`.

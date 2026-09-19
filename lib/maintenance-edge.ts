@@ -214,9 +214,21 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/scheduling/availability",
   "/api/waitlist", // Block newsletter signups
   "/api/referrals", // Block referral code creation
-  "/api/collaborators", // Block collaborator management
+  // #1599 F-P0-02 — the routes live under /api/collaborations; the old
+  // "/api/collaborators" entry matched nothing.
+  "/api/collaborations",
   "/api/payments/disputes", // Block dispute handling mutations
   "/api/admin/payouts", // Block admin payout mutations
+  // #1599 F-P0-03..05, F-P1-02/05/06 — money-writing doors the list missed:
+  // an admin re-drive of a payment, a recording purchase, an overage order,
+  // a seat removal (its DELETE refunds through refundRemovedAttendeeSeat),
+  // and a call join/end (the provision side already refuses in maintenance).
+  "/api/payments/*/recover",
+  "/api/recordings/*/purchase",
+  "/api/overage/*/order",
+  "/api/participants",
+  "/api/meetings/*/join",
+  "/api/meetings/*/end",
   // Org money rails. Nothing under /api/organizations was blocked before, so
   // an org could top up a wallet, issue an invoice or move a payout while the
   // deployment was half-applied. Prefix semantics mean `programs` also covers
@@ -277,7 +289,17 @@ function matchesBlockedPattern(pathname: string, pattern: string): boolean {
 export function isWriteBlockedInDegraded(
   pathname: string,
   method: string,
+  searchParams?: URLSearchParams,
 ): boolean {
+  // #1599 R-P0-02 — GET /api/checkout/verify?sync=true drives the capture
+  // pipeline, so it is a money write wearing a read-only method.
+  if (
+    method.toUpperCase() === "GET" &&
+    pathname === "/api/checkout/verify" &&
+    searchParams?.get("sync") === "true"
+  ) {
+    return true;
+  }
   if (READ_ONLY_METHODS.has(method.toUpperCase())) return false;
 
   return WRITE_BLOCKED_IN_DEGRADED.some((pattern) =>

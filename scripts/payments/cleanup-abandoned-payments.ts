@@ -21,6 +21,7 @@ import {
   PaymentGateway,
   AppointmentStatus,
   OccurrenceCompletionStatus,
+  type Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
@@ -908,7 +909,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
   opts: CleanupAbandonedOptions = {},
 ): Promise<CleanupResult> {
   console.log(
-    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
+    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT requests...",
   );
 
   const result: CleanupResult = {
@@ -921,139 +922,176 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
   };
 
   try {
-    // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
-    const expiredConsultations = await prisma.consultation.findMany({
-      take: opts.limit,
-      // Oldest-first with an id tie-break: see findAbandonedAppointments above.
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        appointment: {
-          payment: {
-            some: {
-              AND: [
-                { paymentStatus: PaymentStatus.PENDING },
-                { expiresAt: { lt: new Date() } },
-              ],
-            },
+    // Both request kinds stuck in APPROVED_PENDING_PAYMENT with a lapsed
+    // PENDING payment. #1732 — subscriptions used to fall through here (this
+    // read was consultations-only, and the abandoned sweep needs a tentative
+    // occurrence a placeholder subscription appointment does not have), so
+    // their pay-link lapse only ever reached the 7 d updatedAt fallback.
+    const lapsedWhere = {
+      status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      appointment: {
+        payment: {
+          some: {
+            AND: [
+              { paymentStatus: PaymentStatus.PENDING },
+              { expiresAt: { lt: new Date() } },
+            ],
           },
         },
       },
+    } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
+    const lapsedAppointment = {
       include: {
-        appointment: {
-          include: {
-            payment: {
-              where: { paymentStatus: PaymentStatus.PENDING },
-            },
-            occurrences: true,
-          },
-        },
-        // #1703 D2 — what the consultee's expiry notice names.
-        ...LAPSED_LINK_PARTIES,
-        consultationPlan: LAPSED_LINK_PLAN_SELECT,
+        payment: { where: { paymentStatus: PaymentStatus.PENDING } },
+        occurrences: true,
       },
-    });
+    } as const;
+    // One `limit` bounds the run, split across the two kinds; undefined
+    // (the Actions run) stays unbounded on both.
+    const perKind =
+      opts.limit === undefined ? undefined : Math.ceil(opts.limit / 2);
+    const [expiredConsultations, expiredSubscriptions] = await Promise.all([
+      prisma.consultation.findMany({
+        take: perKind,
+        // Oldest-first with an id tie-break: see findAbandonedAppointments above.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        where: lapsedWhere,
+        include: {
+          appointment: lapsedAppointment,
+          // #1703 D2 — what the consultee's expiry notice names.
+          ...LAPSED_LINK_PARTIES,
+          consultationPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      }),
+      prisma.subscription.findMany({
+        take: perKind,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        where: lapsedWhere,
+        include: {
+          appointment: lapsedAppointment,
+          ...LAPSED_LINK_PARTIES,
+          subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      }),
+    ]);
 
-    result.totalProcessed = expiredConsultations.length;
+    result.totalProcessed =
+      expiredConsultations.length + expiredSubscriptions.length;
     console.log(
-      `📊 Found ${expiredConsultations.length} expired APPROVED_PENDING_PAYMENT consultations`,
+      `📊 Found ${expiredConsultations.length} consultations and ${expiredSubscriptions.length} subscriptions with a lapsed pay-link`,
     );
 
-    // Process each expired consultation
     for (const consultation of expiredConsultations) {
-      try {
-        const outcome = await prisma.$transaction(async (tx) => {
-          // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
-          // REJECTED reads as "the consultant declined" on every surface, and
-          // the CAS keeps a capture that raced this sweep from being clobbered.
-          // The same narrow CAS the abandoned sweep uses, so a row either pass
-          // claims is claimed once.
-          if (
-            !(await expireLapsedPayLink(tx, "consultation", consultation.id))
-          ) {
-            console.log(
-              `⏭️ Skipped consultation ${consultation.id} — status changed since the sweep read`,
-            );
-            return "skipped" as const;
-          }
-
-          // Release the tentative hold by status; the rows stay for support.
-          if (consultation.appointment) {
-            const released = await transitionOccurrenceCompletion(tx, {
-              where: {
-                appointmentId: consultation.appointment.id,
-                isTentative: true,
-                deletedAt: null,
-              },
-              to: OccurrenceCompletionStatus.CANCELLED,
-              data: { deletedAt: new Date() },
-              allowZero: true,
-            });
-            console.log(
-              `🗑️ Released ${released} tentative slot(s) for consultation ${consultation.id}`,
-            );
-          }
-
-          // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
-          if (consultation.appointment?.payment) {
-            for (const payment of consultation.appointment.payment) {
-              // Conditional: only a still-PENDING row expires; a capture that
-              // raced this write keeps its SUCCEEDED status.
-              await tx.payment.updateMany({
-                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-                data: { paymentStatus: PaymentStatus.EXPIRED },
-              });
-            }
-          }
-
-          console.log(
-            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
-          );
-          return "cleaned" as const;
-        });
-
-        if (outcome === "skipped") {
-          result.skippedCount++;
-        } else {
-          result.cleanedCount++;
-          // #1703 D2 — after the commit: the consultee learns the link lapsed.
-          const notice = consultation.appointment
-            ? lapsedLinkNotice(
-                "consultation",
-                consultation,
-                consultation.consultationPlan,
-                consultation.appointment,
-              )
-            : null;
-          if (notice) await notifyConsulteeRequestExpired(notice);
-        }
-      } catch (error) {
-        result.errorCount++;
-        const errorMessage = describeError(error);
-        console.error(
-          `❌ Failed to clean up consultation ${consultation.id}:`,
-          errorMessage,
-        );
-        result.errors.push(
-          `Consultation cleanup failed for ${consultation.id}: ${errorMessage}`,
-        );
-      }
+      await expireOneLapsedRequest(
+        "consultation",
+        consultation,
+        consultation.consultationPlan,
+        result,
+      );
+    }
+    for (const subscription of expiredSubscriptions) {
+      await expireOneLapsedRequest(
+        "subscription",
+        subscription,
+        subscription.subscriptionPlan,
+        result,
+      );
     }
 
     result.success = result.errorCount === 0;
-    logCleanupSummary(
-      "Expired Consultation Cleanup Summary",
-      "consultations",
-      result,
-    );
+    logCleanupSummary("Expired Request Cleanup Summary", "requests", result);
   } catch (error) {
     const errorMessage = describeError(error);
-    console.error("❌ Expired consultation cleanup failed:", errorMessage);
+    console.error("❌ Expired request cleanup failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
   }
 
   return result;
+}
+
+/**
+ * One lapsed approval request: the shared CAS, the tentative-hold release,
+ * the PENDING → EXPIRED payment flip, then the consultee notice on the win.
+ */
+async function expireOneLapsedRequest(
+  kind: "consultation" | "subscription",
+  request: LapsedLinkRequest & {
+    appointment: {
+      id: string;
+      organizationId: string | null;
+      payment: { id: string }[];
+      occurrences: { startsAt: Date }[];
+    } | null;
+  },
+  plan: LapsedLinkPlan,
+  result: CleanupResult,
+): Promise<void> {
+  try {
+    const outcome = await prisma.$transaction(async (tx) => {
+      // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
+      // REJECTED reads as "the consultant declined" on every surface, and
+      // the CAS keeps a capture that raced this sweep from being clobbered.
+      // The same narrow CAS the abandoned sweep uses, so a row either pass
+      // claims is claimed once.
+      if (!(await expireLapsedPayLink(tx, kind, request.id))) {
+        console.log(
+          `⏭️ Skipped ${kind} ${request.id} — status changed since the sweep read`,
+        );
+        return "skipped" as const;
+      }
+
+      // Release the tentative hold by status; the rows stay for support.
+      if (request.appointment) {
+        const released = await transitionOccurrenceCompletion(tx, {
+          where: {
+            appointmentId: request.appointment.id,
+            isTentative: true,
+            deletedAt: null,
+          },
+          to: OccurrenceCompletionStatus.CANCELLED,
+          data: { deletedAt: new Date() },
+          allowZero: true,
+        });
+        console.log(
+          `🗑️ Released ${released} tentative slot(s) for ${kind} ${request.id}`,
+        );
+      }
+
+      // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
+      for (const payment of request.appointment?.payment ?? []) {
+        // Conditional: only a still-PENDING row expires; a capture that
+        // raced this write keeps its SUCCEEDED status.
+        await tx.payment.updateMany({
+          where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+          data: { paymentStatus: PaymentStatus.EXPIRED },
+        });
+      }
+
+      console.log(
+        `✅ Reset ${kind} ${request.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
+      );
+      return "cleaned" as const;
+    });
+
+    if (outcome === "skipped") {
+      result.skippedCount++;
+      return;
+    }
+    result.cleanedCount++;
+    // #1703 D2 — after the commit: the consultee learns the link lapsed.
+    const notice = request.appointment
+      ? lapsedLinkNotice(kind, request, plan, request.appointment)
+      : null;
+    if (notice) await notifyConsulteeRequestExpired(notice);
+  } catch (error) {
+    result.errorCount++;
+    const errorMessage = describeError(error);
+    console.error(`❌ Failed to clean up ${kind} ${request.id}:`, errorMessage);
+    result.errors.push(
+      `${kind === "consultation" ? "Consultation" : "Subscription"} cleanup failed for ${request.id}: ${errorMessage}`,
+    );
+  }
 }
 
 /**

@@ -5,6 +5,8 @@
  * Tax rates and discount logic should be configured per region/business rules.
  */
 
+import { MIN_CREDIT_REDEMPTION_PAISE } from "@/lib/referrals/constants";
+
 // Default tax rate (can be overridden via env or region config)
 const DEFAULT_TAX_RATE = parseFloat(
   process.env.NEXT_PUBLIC_CHECKOUT_TAX_RATE || "0.18",
@@ -98,9 +100,7 @@ export function calculatePricing(
   // country comparison; the checkout context ships `exportZeroRated` so the
   // client preview cannot diverge from determineTax/gst.ts.
   const taxRate =
-    config.exportZeroRated === true
-      ? 0
-      : (config.taxRate ?? DEFAULT_TAX_RATE);
+    config.exportZeroRated === true ? 0 : (config.taxRate ?? DEFAULT_TAX_RATE);
   const discountPercent = config.discountPercent ?? 0;
 
   const subtotal = calculateSubtotal(baseAmount);
@@ -112,10 +112,13 @@ export function calculatePricing(
   const netAmount = calculateNetAmount(subtotal, discountAmount);
   const taxAmount = calculateTax(netAmount, taxRate);
   const totalBeforeCredits = calculateTotal(netAmount, taxAmount);
-  const creditsApplied = Math.min(
-    config.creditsApplied ?? 0,
-    totalBeforeCredits,
-  );
+  // #1592 S-P1-04 — the same ₹500 redemption floor the server applies in
+  // lib/payments/pricing/derive-checkout-amount.ts, so the preview never
+  // shows a credit the charge will not honour.
+  const creditsApplied =
+    totalBeforeCredits >= MIN_CREDIT_REDEMPTION_PAISE
+      ? Math.min(config.creditsApplied ?? 0, totalBeforeCredits)
+      : 0;
   const total = Math.round((totalBeforeCredits - creditsApplied) * 100) / 100;
 
   return {

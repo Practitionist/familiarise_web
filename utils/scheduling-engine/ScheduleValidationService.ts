@@ -186,12 +186,15 @@ export class ScheduleValidationService {
     slots: Date[],
     consultantUserId: string,
     consultantProfileId?: string,
+    // #1583 B-P1-06 — the requesting consultee, so their own overlap on
+    // another consultant is a conflict here as it is in revalidateConflicts.
+    consulteeUserId?: string,
   ): Promise<ValidationResult> {
     return await this.validateNoConflicts(
       slots,
       consultantUserId,
       undefined,
-      undefined,
+      consulteeUserId,
       undefined,
       consultantProfileId,
     );

@@ -8,7 +8,8 @@ Key characteristics:
 
 - Priced per plan via `trialPriceInPaise`, which defaults to 0 (a free trial); the consultant can raise it, and a priced trial is paid for on the branded checkout page described under "Paying for a trial" below.
 - A platform-wide minimum sits under every plan's trial price: admin or staff set `PlatformPricingConfig.minTrialPriceInPaise` via `PATCH /api/admin/trial-pricing`, and the plan create/update routes reject prices below it. The floor defaults to 0, which keeps free trials allowed.
-- A priced trial is accepted into `AWAITING_PAYMENT` with its slot held: `Trial.pendingPaymentUrl` carries the checkout hand-off, `Trial.paymentId` links the settled `Payment`, and the capture webhook moves the trial to `SCHEDULED`. A hold that is never paid is released by the expire-unpaid-trials sweep.
+- A priced trial is accepted into `AWAITING_PAYMENT` with its slot held: `Trial.pendingPaymentUrl` carries the checkout hand-off, `Trial.paymentId` links the settled `Payment`, and the capture webhook moves the trial to `SCHEDULED`. A hold that is never paid is released by the expire-unpaid-trials sweep, which since 2026-09-19 (#1591 J4-P0-03) also tombstones the held appointment (`softCancelTrialAppointment`) and notifies the consultee, not just the status column.
+- The pay-link persist is a CAS, not a bare write (#1583 A-P0-06): a mint that matched zero rows on `Trial.updateMany({ where: { status: AWAITING_PAYMENT, pendingPaymentUrl: null } })` tombstones the freshly minted order rather than orphaning it, and reports `PAY_LINK_ORPHANED` (`lib/booking/pay-link-persist.ts`). A trial whose link was lost this way — still `AWAITING_PAYMENT`, `pendingPaymentUrl` null, `paymentDueAt` still in the future — is re-minted from the consultee's own read (`lib/trials/pay-link.ts`), under the same `lockApprovalPaymentMint` key and appointment lock the original mint used, reusing a live PENDING intent first rather than minting a second gateway order.
 - Duration configured per plan via `trialDurationMinutes` (default 30 min)
 - Consultant must approve and schedule the session
 - Successful trials can convert into a full subscription
@@ -106,9 +107,9 @@ Valid transitions, as `TRIAL_ALLOWED_FROM` in `lib/booking/transitions.ts` encod
 
 Both `PATCH` (with `status: CANCELLED`) and `DELETE` now exhibit identical cleanup behavior:
 
-- **Appointment/slot cleanup**: If the trial has a linked appointment, the associated `AppointmentOccurrence` records and the `Appointment` record are deleted inside a transaction.
+- **Appointment/slot cleanup**: If the trial has a linked appointment, `softCancelTrialAppointment` (`lib/trials/cancellation.ts`) soft-cancels it inside a transaction — the `AppointmentOccurrence` rows move to `CANCELLED` with `deletedAt` set, the `Appointment` itself gets `deletedAt`, and its participants move to `CANCELLED`. Doctrine rule 2 forbids deleting anything a `Payment` points at; a hard delete here used to cascade-destroy a paid trial's Payment row with no refund and nothing left to reconcile (#1009).
 - **Notifications**: Both paths send cancellation notifications to both parties via Novu (`trial-session-cancelled`).
-- **Transaction wrapping**: All database operations (status update, appointment deletion, slot deletion) are wrapped in a Prisma `$transaction` to ensure atomicity.
+- **Transaction boundaries**: The trial's status transition commits in its own transaction first; `softCancelTrialAppointment` then opens a second transaction of its own for the appointment tombstone, the occurrence tombstone and the participant release, because a global-client read inside an open transaction deadlocks under `PG_POOL_MAX=1`. A failure between the two leaves a `CANCELLED` trial whose appointment still has `deletedAt: null`; the expire-unpaid-trials sweep repairs that shape on its next run (a bounded cohort of `CANCELLED` trials with a live appointment), so no manual reconciliation is needed.
 
 Previously, PATCH CANCELLED did not clean up appointments/slots, and DELETE did not send cancellation notifications. Both paths now handle both concerns.
 

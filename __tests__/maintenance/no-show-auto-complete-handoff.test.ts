@@ -79,7 +79,13 @@ jest.mock("../../lib/prisma", () => {
     class: { findMany: jest.fn(), updateMany: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
     trial: { findMany: jest.fn() },
-    appointmentOccurrence: { findMany: jest.fn(), updateMany: jest.fn() },
+    // #1583 A-P0-05 — the no-show release now runs through
+    // transitionOccurrenceCompletion (pre-read + updateManyAndReturn).
+    appointmentOccurrence: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn(),
+    },
     supportTicket: { findFirst: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),
@@ -156,6 +162,11 @@ beforeEach(() => {
     db[model].findMany.mockResolvedValue([]);
     db[model].updateMany?.mockResolvedValue({ count: 1 });
   }
+  // The release CAS moves the booking's one occurrence; `[]` is reserved for
+  // the lost-race case below, where the claim must roll back.
+  db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([
+    { id: "occ-1", appointmentId: "apt-1" },
+  ]);
   db.supportTicket.findFirst.mockResolvedValue(null);
   db.consultation.findUnique.mockResolvedValue({
     status: "APPROVED",
@@ -195,6 +206,20 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
         data: expect.objectContaining({ status: "CANCELLED" }),
       }),
     );
+  });
+
+  it("the detector rolls the claim back when no live occurrence is left to take", async () => {
+    // A concurrent writer took the sessions first: the occurrence CAS moves
+    // zero rows, the parent cancel must not commit, and no refund is issued.
+    db.consultation.findMany.mockResolvedValue([
+      consultation(NO_SHOW_GRACE_MINUTES + 30, [CONSULTEE]),
+    ]);
+    db.appointmentOccurrence.updateManyAndReturn.mockResolvedValue([]);
+
+    const result = await detectConsultantNoShows();
+
+    expect(result.refunded).toBe(0);
+    expect(refundBookingPayment).not.toHaveBeenCalled();
   });
 
   it("auto-complete still completes a consultation the consultant attended", async () => {

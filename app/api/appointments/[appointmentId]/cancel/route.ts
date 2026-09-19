@@ -25,8 +25,7 @@ import {
   logSubscriptionCancelled,
 } from "@/lib/activity/log-activity";
 
-import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
   refundBookingPayment,
@@ -138,10 +137,10 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;

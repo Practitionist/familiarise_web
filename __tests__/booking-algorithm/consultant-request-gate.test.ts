@@ -32,12 +32,16 @@ jest.mock("../../utils/appointmentlock", () => ({
   BookingLockUnavailableError: class extends Error {},
   LockContentionError: class extends Error {},
 }));
+const mockCheckSlotAvailability = jest.fn(async () => ({
+  isValid: true,
+  errors: [] as string[],
+  warnings: [] as string[],
+  conflicts: [] as { otherParty: { userId: string } | null }[],
+}));
 jest.mock("../../utils/scheduling-engine/ScheduleValidationService", () => ({
   ScheduleValidationService: class {
-    checkSlotAvailability = jest.fn(async () => ({
-      isValid: true,
-      errors: [],
-    }));
+    checkSlotAvailability = (...a: unknown[]) =>
+      mockCheckSlotAvailability(...(a as []));
   },
 }));
 jest.mock("../../lib/novu", () => ({
@@ -106,14 +110,14 @@ jest.mock("../../lib/prisma", () => {
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/scheduling/request-for-approval/route";
 
-function request() {
+function request(startsAt = "2030-01-01T10:00:00.000Z") {
   return new NextRequest("https://x.test/api/scheduling/request-for-approval", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       consultantProfileId: "cp_1",
       consultationPlanId: "plan_1",
-      startsAt: "2030-01-01T10:00:00.000Z",
+      startsAt,
       endsAt: "2030-01-01T11:00:00.000Z",
       availabilityWindowWeeklyId: "aw_1",
     }),
@@ -158,5 +162,50 @@ describe("consultant request gate", () => {
     mockSubscriptionCount.mockResolvedValueOnce(1);
     const res = await POST(request());
     expect(res.status).toBe(201);
+  });
+});
+
+// #1583 B-P1-06 / E-P1-03 — the Zod edge refuses off-grid and too-soon
+// starts with a typed code, and the in-lock check sees the consultee too.
+describe("request-for-approval slot edge (#1583)", () => {
+  it("10:07Z → 400 SLOT_NOT_ON_GRID before any lock", async () => {
+    const res = await POST(request("2030-01-01T10:07:00.000Z"));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("SLOT_NOT_ON_GRID");
+    expect(mockLockSlotBooking).not.toHaveBeenCalled();
+  });
+
+  it("two minutes ahead → 400 SLOT_TOO_SOON", async () => {
+    // A frozen clock: 09:58Z against a 10:00Z grid start is two minutes
+    // ahead — inside the 15-minute lead — and never in the past.
+    jest.useFakeTimers({ now: new Date("2030-01-01T09:58:00.000Z") });
+    try {
+      const res = await POST(request("2030-01-01T10:00:00.000Z"));
+      expect(res.status).toBe(400);
+      expect((await res.json()).code).toBe("SLOT_TOO_SOON");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("passes the consultee to the conflict check and types their own overlap as 409 SLOT_TAKEN", async () => {
+    mockCheckSlotAvailability.mockResolvedValueOnce({
+      isValid: false,
+      errors: ["[CONFLICT] Slot already booked"],
+      warnings: [],
+      conflicts: [{ otherParty: { userId: "user_consultee" } }],
+    });
+    const res = await POST(request());
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("SLOT_TAKEN");
+    expect(body.error).toMatch(/already have a session/);
+    expect(body.details).toBeUndefined();
+    expect(mockCheckSlotAvailability).toHaveBeenCalledWith(
+      expect.any(Array),
+      "user_consultant",
+      "cp_1",
+      "user_consultee",
+    );
   });
 });

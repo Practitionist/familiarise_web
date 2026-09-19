@@ -55,6 +55,12 @@ export function ExpertProfileClient({
 
   const timezone = browserTimezone || userDetails?.timezone;
 
+  // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
+  // after a checkout 409 re-read the stale green cell. Entered with
+  // `?conflict=1`, or restored from the back/forward cache, the next fetch
+  // bypasses the browser cache once.
+  const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
+
   // Handle ?action=trial or ?action=book from explore page buttons
   useEffect(() => {
     const action = searchParams.get("action");
@@ -81,10 +87,13 @@ export function ExpertProfileClient({
         const endDateInUtc = new Date(selectedDate);
         endDateInUtc.setHours(23, 59, 59, 999);
 
+        const noStore = bypassCacheOnce.current;
+        bypassCacheOnce.current = false;
         const response = await fetch(
           `/api/scheduling/availability-with-allocation/${
             consultantDetails.id
           }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
+          noStore ? { cache: "no-store" } : undefined,
         );
 
         if (!response.ok) {
@@ -118,6 +127,16 @@ export function ExpertProfileClient({
 
   useEffect(() => {
     fetchSlots();
+  }, [fetchSlots]);
+
+  useEffect(() => {
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      bypassCacheOnce.current = true;
+      void fetchSlots();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
   }, [fetchSlots]);
 
   const handleConsultationBooking = useCallback(

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
+import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 import {
   PaymentGateway,
   PaymentStatus,
@@ -731,8 +732,15 @@ export async function PATCH(
         };
 
         try {
-          await prisma.subscription.update({
-            where: { id: subscriptionId },
+          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
+          // mint landing after the lapse sweep EXPIRED the request must not
+          // re-arm a link; zero rows is reported, never thrown.
+          const persisted = await prisma.subscription.updateMany({
+            where: {
+              id: subscriptionId,
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+              pendingPaymentUrl: null,
+            },
             data: {
               pendingPaymentUrl: paymentResult.checkoutUrl,
               requestNotes: result.data.requestNotes
@@ -740,7 +748,24 @@ export async function PATCH(
                 : `[System] Payment link generated and sent to user.`,
             },
           });
+          if (persisted.count === 0) {
+            // The request moved since the mint (lapsed, paid, or a sibling
+            // persisted first): the orphaned order is tombstoned and only a
+            // link still live on the row may reach the consultee.
+            const outcome = await reconcileOrphanedPayLink({
+              kind: "subscription",
+              id: subscriptionId,
+              paymentIntentId: paymentResult.paymentIntentId,
+              checkoutUrl: paymentResult.checkoutUrl,
+            });
+            mintedLink = outcome.url
+              ? { ...mintedLink, paymentUrl: outcome.url }
+              : null;
+          }
         } catch (persistError) {
+          // Unproven row state: the link is not delivered (see the
+          // consultation twin); a re-approval reuses the same intent.
+          mintedLink = null;
           Sentry.captureException(
             persistError instanceof Error
               ? persistError
@@ -755,33 +780,38 @@ export async function PATCH(
           );
         }
 
-        try {
-          await sendPaymentLinkEmail({
-            email: result.data.requestedBy.user.email || "",
-            name: result.data.requestedBy.user.name || "User",
-            consultantName:
-              result.data.subscriptionPlan.consultantProfile.user.name ||
-              "Consultant",
-            appointmentType: "subscription" as const,
-            amount: paymentResult.amount,
-            currency: paymentResult.currency,
-            paymentUrl: paymentResult.checkoutUrl,
-            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-          });
-          console.log(
-            `📧 Payment link email sent for subscription ${subscriptionId}`,
-          );
-        } catch (emailError) {
-          Sentry.captureException(
-            emailError instanceof Error
-              ? emailError
-              : new Error(String(emailError)),
-            { tags: { subsystem: "bookings" } },
-          );
-          console.error(
-            `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
-            emailError instanceof Error ? emailError.message : "Unknown error",
-          );
+        // Only a link that is live on the row is mailed (#1583 A-P0-06).
+        if (mintedLink) {
+          try {
+            await sendPaymentLinkEmail({
+              email: result.data.requestedBy.user.email || "",
+              name: result.data.requestedBy.user.name || "User",
+              consultantName:
+                result.data.subscriptionPlan.consultantProfile.user.name ||
+                "Consultant",
+              appointmentType: "subscription" as const,
+              amount: paymentResult.amount,
+              currency: paymentResult.currency,
+              paymentUrl: mintedLink.paymentUrl,
+              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+            });
+            console.log(
+              `📧 Payment link email sent for subscription ${subscriptionId}`,
+            );
+          } catch (emailError) {
+            Sentry.captureException(
+              emailError instanceof Error
+                ? emailError
+                : new Error(String(emailError)),
+              { tags: { subsystem: "bookings" } },
+            );
+            console.error(
+              `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
+              emailError instanceof Error
+                ? emailError.message
+                : "Unknown error",
+            );
+          }
         }
       }
 

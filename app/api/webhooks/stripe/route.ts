@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
       event.id ||
       `stripe_body_${crypto.createHash("sha256").update(body).digest("hex").slice(0, 16)}`;
 
-    const { isNew } = await logWebhookEvent(
+    const { isNew, claim } = await logWebhookEvent(
       "stripe",
       eventId,
       eventType,
@@ -92,7 +92,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ status: "ok", duplicate: true });
     }
 
-    Sentry.logger.info(Sentry.logger.fmt`stripe webhook: ${eventType}`, { eventId });
+    Sentry.logger.info(Sentry.logger.fmt`stripe webhook: ${eventType}`, {
+      eventId,
+    });
 
     // PII-scrub the payload before logging — Stripe payloads can carry
     // `receipt_email`, `billing_details.name/email/phone`, and arbitrary
@@ -116,10 +118,7 @@ export async function POST(req: NextRequest) {
             stripeCheckoutSessionCompletedEventSchema.parse(event);
           const session = sessionEvent.data.object;
           // Use session.id (cs_...) which matches Payment.paymentIntent
-          await handlePaymentSuccess(
-            session.id,
-            session.metadata || {},
-          );
+          await handlePaymentSuccess(session.id, session.metadata || {});
           break;
         }
 
@@ -291,7 +290,7 @@ export async function POST(req: NextRequest) {
       throw handlerError;
     } finally {
       // Mark event as processed
-      await markWebhookEventProcessed(eventId, processingError);
+      await markWebhookEventProcessed(eventId, processingError, claim);
     }
 
     return NextResponse.json({ status: "ok" });
