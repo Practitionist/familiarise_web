@@ -53,7 +53,6 @@ export {
   // Subscriptions
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
-  notifySubscriptionRenewed,
   // Consultant
   notifyNewBookingRequest,
   notifyVerificationStatusChanged,

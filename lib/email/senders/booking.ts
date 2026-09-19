@@ -150,13 +150,6 @@ function bookedRecipientIds(args: AppointmentBookedEmailArgs): string[] {
   );
 }
 
-export function sendAppointmentBookedEmail(
-  args: AppointmentBookedEmailArgs,
-  budgetMs: number,
-): Promise<SendToRecipientsResult> {
-  return guarded(bookedSpec(args), bookedRecipientIds(args), budgetMs);
-}
-
 /**
  * The payment webhook's twin: recipients are read and rows staged through
  * `tx`, and the caller runs `attemptStaged()` after commit. A database

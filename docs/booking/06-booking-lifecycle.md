@@ -1115,7 +1115,8 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 | ---------------------- | ------------------------ | ---------------------- | ------------------------- | ------------------- |
 | Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SchedulingService` |
 | Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes |
-| Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts     |
+
+> `subscription-renewed` was removed: the `Subscription` model has no renewal transition (PENDING→APPROVED/CANCELLED/REJECTED only), so the event had no hook point and no trigger call site.
 
 ### Financial Notifications
 

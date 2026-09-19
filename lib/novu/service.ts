@@ -831,13 +831,6 @@ export async function notifySubscriptionCancelled(
   );
 }
 
-export async function notifySubscriptionRenewed(
-  userId: string,
-  payload: SubscriptionPayload,
-) {
-  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED, userId, payload);
-}
-
 // ============================================================================
 // Consultant-Specific Notifications
 // ============================================================================

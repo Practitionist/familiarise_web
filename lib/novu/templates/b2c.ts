@@ -257,17 +257,6 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
-    workflowId: W.SUBSCRIPTION_RENEWED,
-    name: "Subscription renewed",
-    description: "The consultee, on renewal.",
-    category: "subscriptions",
-    inApp: {
-      subject: "Subscription renewed",
-      body: "Your subscription to {{payload.planTitle}} with {{payload.consultantName}} has renewed for another cycle.",
-      redirect: "dashboardUrl",
-    },
-  },
-  {
     workflowId: W.TRIAL_SESSION_REQUESTED,
     name: "Trial requested",
     description: "The consultant, when a consultee asks for a free trial.",

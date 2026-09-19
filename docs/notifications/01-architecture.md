@@ -349,10 +349,10 @@ notifyTrialCompleted(userIds[], payload)         -> triggerForMultiple
 notifyTrialCancelled(userIds[], payload)         -> triggerForMultiple
 notifySubscriptionStarted(userId, payload)        -> triggerWorkflow
 notifySubscriptionCancelled(userIds[], payload)   -> triggerForMultiple
-notifySubscriptionRenewed(userId, payload)        -> triggerWorkflow
 notifyNewBookingRequest(consultantUserId, payload)          -> triggerWorkflow
 notifyVerificationStatusChanged(consultantUserId, payload)  -> triggerWorkflow
 notifyPayoutProcessed(consultantUserId, payload)            -> triggerWorkflow
+notifyPayoutFailed(consultantUserId, payload)               -> triggerWorkflow (deferrable: false)
 notifyGeneralAnnouncement(payload)                -> triggerBroadcastWorkflow
 notifyNewConsultantApplication(adminUserIds[], payload)  -> triggerForMultiple
 notifyDisputeCreated(userIds[], payload)          -> triggerForMultiple

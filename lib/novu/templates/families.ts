@@ -140,7 +140,6 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
 
   "subscription-started": "subscription",
   "subscription-cancelled": "subscription",
-  "subscription-renewed": "subscription",
 
   "trial-session-requested": "trial",
   "trial-session-scheduled": "trial",
