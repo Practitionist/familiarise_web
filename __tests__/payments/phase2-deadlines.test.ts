@@ -58,6 +58,8 @@ const webhookTx = {
     updateMany: jest.fn().mockResolvedValue({ count: 2 }),
     findMany: jest.fn().mockResolvedValue([]),
   },
+  // #1583 A-P1-06 — the legacy creator now opens the request's timeline.
+  bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
 };
 
 const baseAppointmentFindUnique = jest.fn();
