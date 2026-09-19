@@ -11,10 +11,64 @@ import {
   RefundValidationError,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  fundingRailForIntent,
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
+import { notifyRefundProcessed } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { getAppUrl } from "@/lib/url";
+import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
+
+/**
+ * #1586 / parity with #1740 M9 — the payer's receipt for the whole-event
+ * INTERNAL seats. The single-payment door and the CREDITS seats stage their
+ * notice inside `refundBookingPayment`; GATEWAY seats are told by the
+ * `refund.processed` webhook (#1671), so they are skipped here to avoid a
+ * double notice. Only the CLASS_MULTI reversal of org-funded seats told
+ * nobody. Post-commit and best-effort: a receipt never fails a settled refund.
+ */
+async function notifyInternalSeatRefunds(childRefundIds: string[]) {
+  if (childRefundIds.length === 0) return;
+  const refunds = await prisma.refund.findMany({
+    where: { id: { in: childRefundIds } },
+    select: {
+      amountPaise: true,
+      payment: {
+        select: {
+          id: true,
+          userId: true,
+          organizationId: true,
+          currency: true,
+          paymentIntent: true,
+        },
+      },
+    },
+  });
+  for (const refund of refunds) {
+    const payment = refund.payment;
+    if (!payment || fundingRailForIntent(payment.paymentIntent) !== "INTERNAL")
+      continue;
+    await notifyRefundProcessed(payment.userId, {
+      ...notificationScope(payment.organizationId),
+      amount: refund.amountPaise,
+      currency: payment.currency,
+      dashboardUrl: `${getAppUrl()}/dashboard`,
+    }).catch(() => {});
+    await sendRefundProcessedEmail(
+      {
+        userId: payment.userId,
+        paymentId: payment.id,
+        amountPaise: refund.amountPaise,
+        currency: payment.currency,
+      },
+      { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+    ).catch(() => {});
+  }
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -189,6 +243,7 @@ export async function POST(req: NextRequest) {
             refunded: 0,
           });
         }
+        await notifyInternalSeatRefunds(summary.childRefundIds);
         return NextResponse.json({ kind: eventKind, summary });
       },
     );
