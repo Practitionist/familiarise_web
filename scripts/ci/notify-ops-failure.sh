@@ -99,7 +99,7 @@ if [ -n "${SENTRY_DSN:-}" ]; then
     # 32 lowercase hex chars; the envelope header and the event must carry the
     # same id or Sentry drops the item.
     event_id="$(uuidgen 2>/dev/null | tr -d - | tr 'A-F' 'a-f' || true)"
-    if [ -z "$event_id" ]; then event_id="$(openssl rand -hex 16)"; fi
+    if [[ -z "$event_id" ]]; then event_id="$(openssl rand -hex 16)"; fi
     sent_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     event=$(jq -cn \
       --arg job "$JOB_NAME" --arg url "$RUN_URL" --arg level "$level" \
@@ -142,8 +142,8 @@ fi
 
 # #1757 — a configured Sentry sink that did not accept the event is a dead
 # sink; the step goes red so nobody mistakes "warned in a log" for "paged".
-if [ "$sentry_sink_failed" -eq 1 ]; then
-  echo "::error::${JOB_NAME} failed and the Sentry sink rejected the event — the alert path itself is broken"
+if [[ "$sentry_sink_failed" -eq 1 ]]; then
+  echo "::error::${JOB_NAME} failed and the Sentry sink rejected the event — the alert path itself is broken" >&2
   exit 1
 fi
 

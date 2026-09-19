@@ -13,7 +13,7 @@ import {
   disconnectDatabase,
   type ExpireCreditsResult,
 } from "../../scripts/referrals/expire-credits";
-import fs from "fs";
+import fs from "node:fs";
 import { abortIfMaintenance } from "../../lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
 import { runJob } from "../../lib/observability/job-sentry";
