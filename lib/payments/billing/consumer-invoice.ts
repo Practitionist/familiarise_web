@@ -22,7 +22,10 @@
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import {
   recordSystemError,
   recordSystemEvent,
@@ -210,6 +213,9 @@ function resolvePlaceOfSupplySource(
 }
 
 let supplierUnconfiguredLogged = false;
+// #1757 — every capture skipped here is an un-invoiced supply; counted so the
+// one-per-process Sentry warning below carries how many the console line hid.
+let supplierUnconfiguredSkips = 0;
 
 /**
  * Mint the statutory tax invoice for one successful consumer payment.
@@ -283,6 +289,7 @@ export async function mintConsumerInvoice(
     // Fail closed and loudly ONCE per process: minting a tax invoice without a
     // real GSTIN is worse than minting none, and the download route already
     // returns an ops-actionable 503 for the same reason.
+    supplierUnconfiguredSkips++;
     if (!supplierUnconfiguredLogged) {
       supplierUnconfiguredLogged = true;
       console.warn(
@@ -292,6 +299,22 @@ export async function mintConsumerInvoice(
             "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued.",
         }),
       );
+      // #1757 — the console line alone left the gate invisible on real
+      // traffic; one expected warning per process makes it show up in Sentry.
+      reportSentryMessage("CONSUMER_INVOICE_MINT_DISABLED", {
+        subsystem: "payments",
+        op: "consumer-invoice.mint",
+        expected: true,
+        level: "warning",
+        tags: { feature: "consumer-invoice" },
+        extra: {
+          env: "PLATFORM_GSTIN",
+          reason:
+            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued (fail-open, pre-launch posture).",
+          skippedMints: supplierUnconfiguredSkips,
+          firstSkippedPaymentId: payment.id,
+        },
+      });
     }
     return { consumerInvoiceId: null };
   }
