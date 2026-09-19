@@ -10,7 +10,8 @@
  * partial failure (or budget exhaustion) is safe.
  */
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
+import prisma, { type Tx } from "@/lib/prisma";
 import {
   liveParticipant,
   releaseParticipant,
@@ -29,7 +30,14 @@ import {
   CANCELLABLE_FROM,
   CLASS_EVENT_ALLOWED_FROM,
   EVENT_ALLOWED_FROM,
+  SLOT_RESCHEDULABLE_FROM,
+  transitionClassEvent,
+  transitionConsultationRequest,
+  transitionOccurrenceCompletion,
+  transitionSubscriptionRequest,
+  transitionWebinarEvent,
 } from "@/lib/booking/transitions";
+import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 export interface BulkCancelSummary {
   engagementsCancelled: number;
@@ -381,40 +389,75 @@ async function casCancelExclusiveEngagement(
   engagementId: string,
   ctx: { initiatedByUserId: string; notes?: string },
 ): Promise<number> {
+  const now = new Date();
   const cancellationData = {
-    status: "CANCELLED" as const,
     cancellationReason: "MODERATION" as const,
     cancellationNotes: ctx.notes ?? null,
-    cancelledAt: new Date(),
+    cancelledAt: now,
     cancelledBy: ctx.initiatedByUserId,
+  };
+  const audit = {
+    actorUserId: ctx.initiatedByUserId,
+    reason: MODERATION_REASON,
   };
 
   return prisma.$transaction(async (tx) => {
-    const res =
+    // #1583 A-P0-05 — through the helpers so the history row rides along;
+    // the zero-row throw is the old `count === 0` (already terminal).
+    try {
+      if (kind === "consultation") {
+        await transitionConsultationRequest(tx, {
+          ...audit,
+          where: { id: engagementId },
+          to: "CANCELLED",
+          fromIn: [...CANCELLABLE_FROM],
+          data: cancellationData,
+        });
+      } else {
+        await transitionSubscriptionRequest(tx, {
+          ...audit,
+          where: { id: engagementId },
+          to: "CANCELLED",
+          fromIn: [...CANCELLABLE_FROM],
+          data: cancellationData,
+        });
+      }
+    } catch (err) {
+      if (err instanceof IllegalTransitionError) return 0;
+      throw err;
+    }
+    await releaseEngagementOccurrences(
+      tx,
       kind === "consultation"
-        ? await tx.consultation.updateMany({
-            where: { id: engagementId, status: { in: [...CANCELLABLE_FROM] } },
-            data: cancellationData,
-          })
-        : await tx.subscription.updateMany({
-            where: { id: engagementId, status: { in: [...CANCELLABLE_FROM] } },
-            data: cancellationData,
-          });
-    if (res.count === 0) return 0;
-    await tx.appointmentOccurrence.updateMany({
-      where:
-        kind === "consultation"
-          ? {
-              appointment: { consultationId: engagementId },
-              completionStatus: "SCHEDULED",
-            }
-          : {
-              appointment: { subscriptionId: engagementId },
-              completionStatus: "SCHEDULED",
-            },
-      data: { completionStatus: "CANCELLED" },
-    });
-    return res.count;
+        ? { appointment: { consultationId: engagementId } }
+        : { appointment: { subscriptionId: engagementId } },
+      now,
+      audit,
+    );
+    return 1;
+  });
+}
+
+const MODERATION_REASON = "moderation";
+
+/**
+ * Tombstone the engagement's live slots. Since #1694 the overlap constraint
+ * exempts only `deletedAt IS NOT NULL`, so a CANCELLED row without the
+ * tombstone stayed armed and phantom-blocked the consultant's time.
+ */
+async function releaseEngagementOccurrences(
+  tx: Pick<Tx, "appointmentOccurrence" | "bookingStatusHistory">,
+  scope: Prisma.AppointmentOccurrenceWhereInput,
+  now: Date,
+  audit: { actorUserId: string; reason: string },
+): Promise<void> {
+  await transitionOccurrenceCompletion(tx, {
+    ...audit,
+    where: { ...scope, deletedAt: null },
+    to: "CANCELLED",
+    fromIn: [...SLOT_RESCHEDULABLE_FROM],
+    data: { deletedAt: now },
+    allowZero: true,
   });
 }
 
@@ -508,28 +551,41 @@ async function cancelGroupEvent(
 ) {
   const isWebinar = kind === "webinar-event";
 
+  const audit = {
+    actorUserId: ctx.initiatedByUserId,
+    reason: MODERATION_REASON,
+  };
   const moved = await prisma.$transaction(async (tx) => {
-    const res = isWebinar
-      ? await tx.webinar.updateMany({
-          where: { id: eventId, status: { in: EVENT_ALLOWED_FROM.CANCELLED } },
-          data: { status: "CANCELLED" },
-        })
-      : await tx.class.updateMany({
-          where: {
-            id: eventId,
-            status: { in: CLASS_EVENT_ALLOWED_FROM.CANCELLED },
-          },
-          data: { status: "CANCELLED" },
+    // #1583 A-P0-05 — same shape as the exclusive arm above.
+    try {
+      if (isWebinar) {
+        await transitionWebinarEvent(tx, {
+          ...audit,
+          where: { id: eventId },
+          to: "CANCELLED",
+          fromIn: EVENT_ALLOWED_FROM.CANCELLED,
         });
-    if (res.count === 0) return 0;
-    await tx.appointmentOccurrence.updateMany({
-      where: {
+      } else {
+        await transitionClassEvent(tx, {
+          ...audit,
+          where: { id: eventId },
+          to: "CANCELLED",
+          fromIn: CLASS_EVENT_ALLOWED_FROM.CANCELLED,
+        });
+      }
+    } catch (err) {
+      if (err instanceof IllegalTransitionError) return 0;
+      throw err;
+    }
+    await releaseEngagementOccurrences(
+      tx,
+      {
         appointment: isWebinar ? { webinarId: eventId } : { classId: eventId },
-        completionStatus: "SCHEDULED",
       },
-      data: { completionStatus: "CANCELLED" },
-    });
-    return res.count;
+      new Date(),
+      audit,
+    );
+    return 1;
   });
   if (moved === 0) return;
 

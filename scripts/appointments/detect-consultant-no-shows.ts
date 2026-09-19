@@ -54,6 +54,7 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 import {
   CANCELLABLE_FROM,
   transitionConsultationRequest,
+  transitionOccurrenceCompletion,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
@@ -442,17 +443,19 @@ async function claimConsultantNoShow(
         },
       });
 
-      await tx.appointmentOccurrence.updateMany({
-        where: {
-          appointmentId,
-          completionStatus: {
-            in: [
-              OccurrenceCompletionStatus.SCHEDULED,
-              OccurrenceCompletionStatus.UNVERIFIED,
-            ],
-          },
-        },
-        data: { completionStatus: OccurrenceCompletionStatus.CANCELLED },
+      // #1583 A-P0-05 — through the helper, tombstoned, with a history row;
+      // the from-set is the one the raw updateMany carried.
+      await transitionOccurrenceCompletion(tx, {
+        where: { appointmentId, deletedAt: null },
+        to: OccurrenceCompletionStatus.CANCELLED,
+        fromIn: [
+          OccurrenceCompletionStatus.SCHEDULED,
+          OccurrenceCompletionStatus.UNVERIFIED,
+        ],
+        data: { deletedAt: new Date() },
+        allowZero: true,
+        actorUserId: null,
+        reason: "consultant no-show",
       });
     });
   } catch (error) {

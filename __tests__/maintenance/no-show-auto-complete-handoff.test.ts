@@ -79,7 +79,13 @@ jest.mock("../../lib/prisma", () => {
     class: { findMany: jest.fn(), updateMany: jest.fn() },
     subscription: { findMany: jest.fn(), updateMany: jest.fn() },
     trial: { findMany: jest.fn() },
-    appointmentOccurrence: { findMany: jest.fn(), updateMany: jest.fn() },
+    // #1583 A-P0-05 — the no-show release now runs through
+    // transitionOccurrenceCompletion (pre-read + updateManyAndReturn).
+    appointmentOccurrence: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
+      updateManyAndReturn: jest.fn().mockResolvedValue([]),
+    },
     supportTicket: { findFirst: jest.fn() },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),

@@ -85,6 +85,41 @@ describe("slot completion writers use transitionOccurrenceCompletion", () => {
   }
 });
 
+// #1583 A-P0-05 / A-P1-03 — the three sweeps that still wrote status with a
+// raw updateMany (no history row, no tombstone on the released occurrence).
+describe("moderation and the two sweeps write status through the helpers", () => {
+  it("cancel-user-engagements cancels parents and tombstones occurrences through the helpers", () => {
+    const src = read("lib/moderation/cancel-user-engagements.ts");
+    expect(src).not.toMatch(/appointmentOccurrence\.updateMany\(/);
+    expect(src).not.toMatch(
+      /tx\.(consultation|subscription|webinar|class)\.updateMany\(/,
+    );
+    expect(src).toContain("transitionOccurrenceCompletion(");
+    expect(src).toContain("data: { deletedAt: now }");
+  });
+
+  it("auto-complete completes every parent through its helper", () => {
+    const src = read("scripts/appointments/auto-complete-appointments.ts");
+    expect(src).not.toMatch(
+      /prisma\.(consultation|subscription|webinar|class)\.updateMany\(/,
+    );
+    for (const helper of [
+      "transitionWebinarEvent(",
+      "transitionClassEvent(",
+      "transitionConsultationRequest(",
+      "transitionSubscriptionRequest(",
+    ]) {
+      expect(src).toContain(helper);
+    }
+  });
+
+  it("detect-consultant-no-shows tombstones the released occurrences", () => {
+    const src = read("scripts/appointments/detect-consultant-no-shows.ts");
+    expect(src).not.toMatch(/appointmentOccurrence\.updateMany\(/);
+    expect(src).toContain("transitionOccurrenceCompletion(");
+  });
+});
+
 describe("trial status writers use transitionTrial", () => {
   it("the trial route never writes status with a bare update", () => {
     const src = read("app/api/trials/[trialId]/route.ts");
