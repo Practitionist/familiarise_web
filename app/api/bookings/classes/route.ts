@@ -54,6 +54,20 @@ export async function GET(request: NextRequest) {
     }
     const startDateStr = searchParams.get("startDate");
     const endDateStr = searchParams.get("endDate");
+    // #1592 A-P1-04 — an unparsable date used to reach Prisma as Invalid Date
+    // and 500; refuse it as the caller's fault.
+    if (
+      (startDateStr && isNaN(new Date(startDateStr).getTime())) ||
+      (endDateStr && isNaN(new Date(endDateStr).getTime()))
+    ) {
+      return NextResponse.json(
+        {
+          error: "startDate and endDate must be valid dates",
+          code: "INVALID_DATE",
+        },
+        { status: 400 },
+      );
+    }
 
     // Org-scope filter — Class rows don't carry organizationId directly;
     // attribution lives on the parent ClassPlan (per
