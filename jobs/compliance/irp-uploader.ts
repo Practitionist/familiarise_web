@@ -150,6 +150,9 @@ async function fetchIrpCandidates(thirtyDaysAgo: Date) {
         },
       },
     },
+    // #1584 P2-P0-03 — oldest first so a backlog cannot starve an invoice
+    // out of the 30-day window; the window and requeue policy are #1366's.
+    orderBy: { issuedAt: "asc" },
     take: 50, // batch size
   });
 }
