@@ -95,6 +95,12 @@ describe("cron-tick dueTargets cadence", () => {
       "reconcile-refunds",
       "abandoned-payments",
       "retry-failed-emails",
+      // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
+      "expire-unpaid-trials",
+      "reschedule-proposals",
+      "appointment-reminders",
+      "tentative-occurrences",
+      "expire-stale-requests",
     ]) {
       expect(off).not.toContain(name);
       expect(on).toContain(name);

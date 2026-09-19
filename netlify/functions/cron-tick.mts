@@ -5,9 +5,10 @@
  * roughly once every hundred minutes (#866), so the fleet's money sweeps were
  * running six times slower than their declared cadence. This function POSTs
  * the latency-sensitive `/api/cleanup/*` routes every five minutes (ten money
- * sweeps, since #1633 the ledger reconcile backstop and, since #1654, the
- * Novu outbox relay every tick and the email outbox relay on every third
- * tick) instead of waiting on Actions. It never writes money state itself: every
+ * sweeps, since #1633 the ledger reconcile backstop, since #1654 the Novu
+ * outbox relay every tick and the email outbox relay on every third tick,
+ * and since #1583/#1589 five booking sweeps on every third tick) instead of
+ * waiting on Actions. It never writes money state itself: every
  * target is `CRON_SECRET`-gated and wraps its core in `withCronLock`, so a
  * tick that overlaps a GitHub Actions run (or another tick) answers 409 from
  * the loser — expected, not an error — and Actions stays as the unbounded
@@ -42,6 +43,16 @@ const TARGETS = [
   "retry-failed-emails",
   // #1654 — the Novu outbox relay, every tick.
   "drain-notification-outbox",
+  // #1583 E-P0-04 / #1589 P-P0-01, N-P1-03 / #1591 J1-P1-05 / #1599 C-P1-06 —
+  // the booking sweeps whose hourly Actions twin let a lapsed pay-link, a
+  // stale proposal, a missed reminder or a dead hold sit for ~100 minutes.
+  // Every 15 minutes, see TARGET_EVERY_MINUTES; none of the five reads
+  // `limit`, so they get no entry in TARGET_LIMITS.
+  "expire-unpaid-trials",
+  "reschedule-proposals",
+  "appointment-reminders",
+  "tentative-occurrences",
+  "expire-stale-requests",
 ] as const;
 
 type Target = (typeof TARGETS)[number];
@@ -85,6 +96,13 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
+  // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
+  // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
+  "expire-unpaid-trials": 15,
+  "reschedule-proposals": 15,
+  "appointment-reminders": 15,
+  "tentative-occurrences": 15,
+  "expire-stale-requests": 15,
 };
 
 /** The targets due on this tick; exported so a test can pin the cadence. */
