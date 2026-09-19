@@ -201,6 +201,7 @@ function taxedRow(extra: Record<string, unknown> = {}) {
     originalAmount: 500_000,
     taxAmount: 90_000,
     isInternational: false,
+    buyerCountry: "IN",
     currency: Currency.INR,
     ...extra,
   };
@@ -324,6 +325,23 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
         data: { amountPaise: TAXED_PLAN_PAISE, sourceRef: "order_new" },
       }),
     );
+  });
+
+  // CodeRabbit r2 follow-up — two countries can carry one tax figure (both
+  // fail-closed exports), and the invoice's place of supply reads the country.
+  it("re-mints when only the frozen buyer country differs", async () => {
+    state.appointmentPayments = [
+      taxedRow({
+        id: "pay-gb",
+        buyerCountry: "GB",
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    ];
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.paymentIntentId).toBe("order_new");
+    expect(mockedPaymentUpdate).toHaveBeenCalledTimes(1);
+    expect(mockedPaymentUpdate.mock.calls[0][0].data.buyerCountry).toBe("IN");
   });
 
   // CodeRabbit r2 — the same total under a different tax classification is a
@@ -532,6 +550,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
       originalAmount: 250_000,
       taxAmount: 45_000,
       isInternational: false,
+      buyerCountry: "IN",
       currency: Currency.INR,
     };
 

@@ -242,7 +242,8 @@ export async function createApprovalPaymentIntent(
         existingPayment.amount !== amount ||
         existingPayment.originalAmount !== originalAmount ||
         existingPayment.taxAmount !== taxAmount ||
-        existingPayment.isInternational !== isInternational
+        existingPayment.isInternational !== isInternational ||
+        existingPayment.buyerCountry !== buyerCountry
       ) {
         // #1583 C-P0-01 — a live row frozen at a different pricing state (a
         // pre-tax mint, or the same total under another tax classification)
@@ -705,6 +706,8 @@ export interface ExistingApprovalPayment {
   originalAmount: number;
   taxAmount: number;
   isInternational: boolean;
+  /** Place of supply on the invoice; two countries can carry one tax figure. */
+  buyerCountry: string | null;
   currency: Currency;
   expiresAt: Date | null;
   /**
@@ -772,6 +775,7 @@ export async function findExistingLivePayment(params: {
             originalAmount: true,
             taxAmount: true,
             isInternational: true,
+            buyerCountry: true,
             currency: true,
             expiresAt: true,
           },
@@ -818,6 +822,7 @@ export async function findExistingLivePayment(params: {
       originalAmount: payment.originalAmount,
       taxAmount: payment.taxAmount,
       isInternational: payment.isInternational,
+      buyerCountry: payment.buyerCountry,
       currency: payment.currency,
       expiresAt: payment.expiresAt,
       requestIsPayable:
@@ -853,6 +858,7 @@ export async function findExistingLivePayment(params: {
           originalAmount: payment.originalAmount,
           taxAmount: payment.taxAmount,
           isInternational: payment.isInternational,
+          buyerCountry: payment.buyerCountry,
           currency: payment.currency,
           expiresAt: payment.expiresAt,
           requestIsPayable:
