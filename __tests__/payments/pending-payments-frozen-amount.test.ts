@@ -26,6 +26,12 @@ jest.mock("../../lib/auth-helpers", () => ({
   ),
 }));
 
+// #1675 — the lapsed-link read rides the same route; not this pin's subject.
+jest.mock("../../lib/data/lapsed-pay-links", () => ({
+  __esModule: true,
+  readLapsedPayLinks: jest.fn().mockResolvedValue([]),
+}));
+
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
