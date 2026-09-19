@@ -416,6 +416,29 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
   });
 });
 
+// #1592 A-P1-05 — an unknown discount code used to be ignored: the buyer was
+// charged full price with no word about the code they typed. It is now a
+// coded 400 refusal raised before any Payment row or gateway order exists.
+describe("an unknown discount code is refused, not silently ignored", () => {
+  it("throws DISCOUNT_CODE_INVALID and mints nothing", async () => {
+    txClient.discountCode = { findUnique: jest.fn(async () => null) };
+
+    await expect(
+      handleCheckout(checkoutInput({ discountCode: "NOPE10" }), "user-1"),
+    ).rejects.toMatchObject({
+      code: "DISCOUNT_CODE_INVALID",
+      httpStatus: 400,
+      message: "That discount code is not valid for this purchase",
+    });
+
+    expect(txClient.discountCode.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { code: "NOPE10" } }),
+    );
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(txClient.payment.create).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #1220-triage — the gates themselves, exercised directly (the webinar flow
 // above cannot discriminate them: eventId already pins scope and its fixtures

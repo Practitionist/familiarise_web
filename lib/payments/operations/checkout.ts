@@ -1022,6 +1022,13 @@ export async function calculateAmountAndValidate(
 
         // NOTE: currentUses increment is done in the payment transaction
         // to ensure count only increases when payment is successfully created
+      } else {
+        // #1592 A-P1-05 — an unknown code used to fall through to full price
+        // with no word to the buyer. A coded 400 the classifier answers.
+        throw Object.assign(
+          new Error("That discount code is not valid for this purchase"),
+          { httpStatus: 400, code: "DISCOUNT_CODE_INVALID" },
+        );
       }
     }
 
