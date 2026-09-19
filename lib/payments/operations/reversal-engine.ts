@@ -425,7 +425,8 @@ export async function postPayoutClawback(
     console.error(
       `[ledger] payout clawback posting FAILED for payout ${payoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
     );
-    // #776 — page immediately on dual-write drift; fire-and-forget.
+    // #776 — page immediately on dual-write drift; fire-and-forget. #1582
+    // B-P1-02 — global client on purpose: the rethrow rolls the tx back.
     void recordSystemError({
       organizationId,
       category: "LEDGER",

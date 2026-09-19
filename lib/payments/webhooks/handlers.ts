@@ -281,7 +281,9 @@ async function reportTerminalCaptureRace(params: {
     select: { paymentStatus: true },
   });
   const currentStatus = fresh?.paymentStatus ?? params.observedStatus;
-  void recordSystemError({
+  // #1582 B-P1-02 — written through the caller's client (PG_POOL_MAX=1): a
+  // global-client insert inside the tx would queue and die at the connect timeout.
+  await recordSystemError({
     organizationId: null,
     category: "PAYMENT",
     summary: `Capture for order ${params.orderId} landed on a ${currentStatus} payment — status left alone, refund by hand`,
@@ -292,6 +294,7 @@ async function reportTerminalCaptureRace(params: {
       currentStatus,
       reason: params.reason,
     },
+    db: params.db,
   }).catch(() => {});
   reportSentryMessage(
     "Capture landed on a terminal payment — status not restamped",
@@ -1881,12 +1884,15 @@ async function confirmApprovalStatus(
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps a
+        // telemetry failure from aborting money.
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "consultation", entityId },
+          db: tx,
         }).catch(() => {});
       }
     }
@@ -1901,14 +1907,16 @@ async function confirmApprovalStatus(
       throw new Error(`Subscription ${entityId} not found`);
     }
 
-    const flagTerminal = (status: AppointmentStatus) => {
+    const flagTerminal = async (status: AppointmentStatus) => {
       capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
-      void recordSystemError({
+      // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+      await recordSystemError({
         organizationId: null,
         category: "PAYMENT",
         summary: `Payment captured for subscription ${entityId} in terminal state ${status} — refund needed`,
         err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
         context: { entityType: "subscription", entityId },
+        db: tx,
       }).catch(() => {});
     };
 
@@ -1943,13 +1951,13 @@ async function confirmApprovalStatus(
             `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
           );
         } else {
-          flagTerminal(freshStatus);
+          await flagTerminal(freshStatus);
         }
       }
     } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
       // #1583 A-P0-01 — REJECTED and EXPIRED are as dead as CANCELLED: a
       // capture on any of them is money for a booking nobody will deliver.
-      flagTerminal(subscription.status);
+      await flagTerminal(subscription.status);
     } else {
       console.log(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
@@ -2066,7 +2074,9 @@ export async function confirmExistingAppointment(
           select: { id: true },
         });
         if (!alreadyRecorded) {
-          void recordSystemError({
+          // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); also keeps the
+          // once-per-appointment probe above in the same snapshot.
+          await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
             summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
@@ -2077,6 +2087,7 @@ export async function confirmExistingAppointment(
               slotId: slot.id,
             },
             correlationId,
+            db: tx,
           }).catch(() => {});
         }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
@@ -2116,12 +2127,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "class", entityId: classId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }
@@ -2168,12 +2181,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for webinar ${webinarId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "webinar", entityId: webinarId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }

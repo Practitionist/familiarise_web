@@ -1535,6 +1535,9 @@ export async function applyRefundCascade(
         refund: { paymentId: payment.id, refundId: input.refundId },
       },
     });
+    // #1582 B-P1-02 — deliberately NOT `db: tx`: the rethrow below rolls the
+    // tx back, so a tx-client row would vanish; the global insert queues
+    // behind the rollback (PG_POOL_MAX=1) and lands once it releases.
     void recordSystemError({
       organizationId: payment.organizationId ?? null,
       category: "LEDGER",
@@ -1581,14 +1584,19 @@ async function remainingOrgInvoiceCreditPaise(
 }
 
 /** Records the refused over-credit for ops; no money moved, so it is expected. */
-function reportOrgCreditNoteFullyCredited(params: {
-  organizationId: string;
-  invoiceId: string;
-  requestedPaise: number;
-  refundId?: string;
-  disputeId?: string;
-}): void {
-  void recordSystemEvent({
+async function reportOrgCreditNoteFullyCredited(
+  tx: Tx,
+  params: {
+    organizationId: string;
+    invoiceId: string;
+    requestedPaise: number;
+    refundId?: string;
+    disputeId?: string;
+  },
+): Promise<void> {
+  // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); this branch commits.
+  await recordSystemEvent({
+    db: tx,
     organizationId: params.organizationId,
     category: "BILLING",
     severity: "WARN",
@@ -1736,7 +1744,7 @@ export async function mintRefundCreditNote(
   // LOST dispute must never reverse more than the invoice.
   const remaining = await remainingOrgInvoiceCreditPaise(tx, invoice);
   if (remaining <= 0) {
-    reportOrgCreditNoteFullyCredited({
+    await reportOrgCreditNoteFullyCredited(tx, {
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: cnTotal,
@@ -1835,7 +1843,7 @@ export async function mintInvoiceRefundCreditNote(
   // consumer minter; the clamp re-derives the tax heads from the clamped total.
   const remaining = await remainingOrgInvoiceCreditPaise(tx, invoice);
   if (remaining <= 0) {
-    reportOrgCreditNoteFullyCredited({
+    await reportOrgCreditNoteFullyCredited(tx, {
       organizationId: org.id,
       invoiceId: invoice.id,
       requestedPaise: params.amountPaise,

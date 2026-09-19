@@ -1331,12 +1331,15 @@ export async function handleDisputeCreated(
           // earnings stay payable until the 6h reconcile-disputes cron — page on it,
           // unless the lookup-failure catch above already paged for this incident.
           if (!unlinkAlertRecorded) {
-            void recordSystemError({
+            // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps
+            // a telemetry failure from aborting the webhook.
+            await recordSystemError({
               category: "WEBHOOK",
               summary: `CRITICAL_DISPUTE_UNLINKED: no payment matched dispute ${disputeId}`,
               err: new Error("dispute payment not found"),
               context: { disputeId, chargeId, gateway },
               correlationId: disputeId,
+              db: tx,
             }).catch(() => {});
           }
           return;
