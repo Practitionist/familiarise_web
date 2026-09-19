@@ -46,16 +46,21 @@ The gap they left open was in the error boundary rather than in the gate itself.
 | **Classes** (`/api/bookings/classes`)                                                              | GET: Allowed, POST: Allowed (gap)       | Blocked                    | MEDIUM     |
 | **Allocate slots** (`/api/bookings/*/allocate`)                                                    | Allowed (gap)                           | Blocked                    | HIGH       |
 | **Validate** (`/api/bookings/*/validate`)                                                          | Allowed (read-only)                     | Blocked                    | LOW        |
-| **Participants** (`/api/participants/*`)                                                           | Allowed                                 | Blocked                    | LOW        |
 | **Trials** (`/api/trials`, `/api/trials/[id]`)                                                     | Allowed (gap)                           | Blocked                    | MEDIUM     |
 | **Plans** (`/api/plans/*`)                                                                         | GET: Allowed, POST/PATCH: Allowed (gap) | Blocked                    | MEDIUM     |
-| **Slot appointments** (`/api/scheduling/appointments`)                                                  | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Slot appointments** (`/api/scheduling/appointments`)                                             | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
 | **Waitlist / newsletter** (`/api/waitlist`)                                                        | **Writes blocked (503)** (Mar 2026)     | Blocked                    | LOW        |
 | **Referrals** (`/api/referrals`)                                                                   | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
-| **Collaborators** (`/api/collaborators`)                                                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
+| **Collaborations** (`/api/collaborations`)                                                         | **Writes blocked (503)** (Mar 2026)     | Blocked                    | MEDIUM     |
 | **Refunds** (`/api/payments/refunds`)                                                              | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
 | **Disputes** (`/api/payments/disputes`)                                                            | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
 | **Admin payouts** (`/api/admin/payouts`)                                                           | **Writes blocked (503)** (Mar 2026)     | Blocked                    | HIGH       |
+| **Payment recovery** (`/api/payments/*/recover`)                                                   | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Recording purchase** (`/api/recordings/*/purchase`)                                              | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Overage order** (`/api/overage/*/order`)                                                         | **Writes blocked (503)** (#1741)        | Blocked                    | HIGH       |
+| **Participants** (`/api/participants`)                                                             | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
+| **Meetings join/end** (`/api/meetings/*/join`, `/api/meetings/*/end`)                              | **Writes blocked (503)** (#1741)        | Blocked                    | MEDIUM     |
+| **Checkout verify sync** (`GET /api/checkout/verify?sync=true`)                                    | **Blocked (503)** (#1741)               | Blocked                    | HIGH       |
 | **User routes** (`/api/user/*`)                                                                    | Allowed                                 | Blocked                    | LOW        |
 | **Admin routes** (`/api/admin/*`)                                                                  | Allowed                                 | Blocked                    | LOW        |
 | **Staff routes** (`/api/staff/*`)                                                                  | Allowed                                 | Blocked                    | LOW        |
@@ -80,17 +85,23 @@ The gap they left open was in the error boundary rather than in the gate itself.
 
 **Mar 2026 fix**: The following routes are now **write-blocked** (return 503) during DEGRADED mode:
 
-| Route                     | Reason                                        |
-| ------------------------- | --------------------------------------------- |
-| `/api/scheduling/appointments` | Prevent slot modifications during maintenance |
-| `/api/waitlist`           | Prevent newsletter signups                    |
-| `/api/referrals`          | Prevent referral creation                     |
-| `/api/collaborators`      | Prevent collaborator changes                  |
-| `/api/payments/refunds`   | Prevent refund processing                     |
-| `/api/payments/disputes`  | Prevent dispute evidence submission           |
-| `/api/admin/payouts`      | Prevent payout batch creation/approval        |
+| Route                                         | Reason                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `/api/scheduling/appointments`                | Prevent slot modifications during maintenance                                                                            |
+| `/api/waitlist`                               | Prevent newsletter signups                                                                                               |
+| `/api/referrals`                              | Prevent referral creation                                                                                                |
+| `/api/collaborations`                         | Prevent collaboration changes (the old `/api/collaborators` entry matched no real route; #1741)                          |
+| `/api/payments/refunds`                       | Prevent refund processing                                                                                                |
+| `/api/payments/disputes`                      | Prevent dispute evidence submission                                                                                      |
+| `/api/admin/payouts`                          | Prevent payout batch creation/approval                                                                                   |
+| `/api/payments/*/recover`                     | Prevent an admin re-drive of a payment (#1741)                                                                           |
+| `/api/recordings/*/purchase`                  | Prevent a recording purchase (#1741)                                                                                     |
+| `/api/overage/*/order`                        | Prevent an overage order (#1741)                                                                                         |
+| `/api/participants`                           | Prevent a seat removal, whose DELETE refunds through `refundRemovedAttendeeSeat` (#1741)                                 |
+| `/api/meetings/*/join`, `/api/meetings/*/end` | Agree with the provision-side refusal a call join/end already has (#1741)                                                |
+| `GET /api/checkout/verify?sync=true`          | This GET drives a capture and therefore writes money; special-cased ahead of the read-only-methods short-circuit (#1741) |
 
-**Remaining gap**: Checkout (`/api/checkout`), appointment cancel/reschedule, event CRUD, and trial routes are still **not** write-blocked in DEGRADED mode. These may be addressed in a future update.
+**Status**: checkout, appointment cancel/reschedule, event CRUD (webinars, classes), and trial routes are all now write-blocked in DEGRADED mode too — see `lib/maintenance-edge.ts`'s `WRITE_BLOCKED_IN_DEGRADED` list for the current, complete set of doors.
 
 ### Gap 2: Cron Jobs Bypass Middleware — Resolved via `abortIfMaintenance()`
 
