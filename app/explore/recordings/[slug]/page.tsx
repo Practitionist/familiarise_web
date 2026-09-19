@@ -8,9 +8,17 @@ import prisma from "@/lib/prisma";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { RecordingBuyButton } from "./RecordingBuyButton";
 
-// Dynamic by design (#932): the viewable gate reads the live row; a cached
-// HTML could sell a recording that was just unpublished.
-export const dynamic = "force-dynamic";
+// ISR, not force-dynamic. This page reads no session — the gate is the
+// public listing filter (PUBLISHED + durably-ours + discoverable plan), which
+// only changes on publish/unpublish events. A 120s window means an unpublish
+// can stay buyable for up to two minutes; the purchase route re-checks the
+// live gate before minting an order, so a stale shell can never sell a
+// withdrawn replay. In exchange every repeat click is served off the CDN with
+// no function invocation (and no cold-start lottery).
+export const revalidate = 120;
+
+// Slugs created after build render on demand, then join the ISR cache.
+export const dynamicParams = true;
 
 export async function generateMetadata({
   params,
@@ -72,8 +80,9 @@ export default async function RecordingDetailPage({
   const listing = await getPublicRecordingBySlug(slug);
   if (!listing) notFound();
 
-  // Preview clip presence check happens against the live gate too — an
-  // unpublish between list render and detail render must 404 here.
+  // Generation-time gate (ISR): an unpublish between list generation and
+  // detail generation 404s here. Per-request enforcement lives in
+  // POST /api/recordings/[id]/purchase, which re-checks eligibility live.
   const stillListed = await prisma.recording.findFirst({
     where: { ...publicRecordingWhere(), id: listing.id },
     select: { id: true },
