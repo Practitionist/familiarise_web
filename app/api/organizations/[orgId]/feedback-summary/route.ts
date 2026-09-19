@@ -18,6 +18,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parseRouteParams } from "@/lib/api/support-http";
 import { OrgIdParams } from "@/schemas/support";
@@ -172,28 +173,31 @@ export async function GET(
     ? { average: null, responses: null, respondents: null }
     : reportable(last30);
 
-  return NextResponse.json({
-    data: {
-      // Kept under the old names so the existing card keeps rendering.
-      averageRating: reportable(overall).average,
-      totalResponses: reportable(overall).responses,
-      respondents: reportable(overall).respondents,
-      averageRating30d: last30Reported.average,
-      responses30d: last30Reported.responses,
-      respondents30d: last30Reported.respondents,
-      /** The floor itself, so the UI can say "needs 5 responses" rather than
-       *  rendering an unexplained blank. */
-      minRespondents: ORG_QUALITY_MIN_RESPONDENTS,
-      /** Per consultant, already floored and secondarily suppressed. */
-      byConsultant: published.map((c) => ({
-        consultantProfileId: c.consultantProfileId,
-        name: c.name,
-        ...reportable(c),
-      })),
-      /** How many experts are hidden: the difference between "no data on them"
-       *  and "not telling you". Stated only when the hidden people themselves
-       *  clear the floor; below that it is 0 and nothing is published at all. */
-      consultantsSuppressed,
+  return NextResponse.json(
+    {
+      data: {
+        // Kept under the old names so the existing card keeps rendering.
+        averageRating: reportable(overall).average,
+        totalResponses: reportable(overall).responses,
+        respondents: reportable(overall).respondents,
+        averageRating30d: last30Reported.average,
+        responses30d: last30Reported.responses,
+        respondents30d: last30Reported.respondents,
+        /** The floor itself, so the UI can say "needs 5 responses" rather than
+         *  rendering an unexplained blank. */
+        minRespondents: ORG_QUALITY_MIN_RESPONDENTS,
+        /** Per consultant, already floored and secondarily suppressed. */
+        byConsultant: published.map((c) => ({
+          consultantProfileId: c.consultantProfileId,
+          name: c.name,
+          ...reportable(c),
+        })),
+        /** How many experts are hidden: the difference between "no data on them"
+         *  and "not telling you". Stated only when the hidden people themselves
+         *  clear the floor; below that it is 0 and nothing is published at all. */
+        consultantsSuppressed,
+      },
     },
-  });
+    { headers: NO_STORE_HEADERS },
+  );
 }

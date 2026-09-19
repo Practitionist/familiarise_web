@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
@@ -107,11 +108,14 @@ export async function GET(
       participants.map((u) => u.id),
     );
 
-    return NextResponse.json({
-      webinarEvent,
-      participants,
-      seatPayments,
-    });
+    return NextResponse.json(
+      {
+        webinarEvent,
+        participants,
+        seatPayments,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

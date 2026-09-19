@@ -15,6 +15,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
@@ -67,9 +68,12 @@ export async function GET(
     },
   });
   if (!payout) {
-    return NextResponse.json({ error: "Payout not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Payout not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
-  return NextResponse.json({ payout });
+  return NextResponse.json({ payout }, { headers: NO_STORE_HEADERS });
 }
 
 export async function PATCH(
@@ -184,11 +188,13 @@ export async function PATCH(
     return NextResponse.json({ payout: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

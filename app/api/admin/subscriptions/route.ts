@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -190,26 +191,32 @@ export async function GET(req: NextRequest) {
     });
 
     // Status filtering now happens in the database query, so pagination is correct
-    return NextResponse.json({
-      subscriptions: formattedSubscriptions,
-      stats: {
-        activeCount,
-        expiringCount,
-        expiredCount,
+    return NextResponse.json(
+      {
+        subscriptions: formattedSubscriptions,
+        stats: {
+          activeCount,
+          expiringCount,
+          expiredCount,
+        },
+        pagination: {
+          total,
+          limit,
+          offset,
+          hasMore: offset + limit < total,
+        },
       },
-      pagination: {
-        total,
-        limit,
-        offset,
-        hasMore: offset + limit < total,
-      },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "Failed to fetch subscriptions" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

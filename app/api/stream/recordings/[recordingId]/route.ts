@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
@@ -47,7 +48,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const { recordingId } = await params;
@@ -58,7 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!recording) {
       return NextResponse.json(
         { error: "Recording not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -161,7 +165,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to this recording" },
-        { status: 403 },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -206,19 +210,22 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       // either over is still handing over the content the cap exists to
       // protect. `access.level` is what a consumer branches on — a null URL
       // alone cannot distinguish "not permitted" from "not ready yet".
-      return NextResponse.json({
-        recording: {
-          ...metadata,
-          playbackUrl: null,
-          thumbnailUrl: null,
-          previewClipUrl: null,
+      return NextResponse.json(
+        {
+          recording: {
+            ...metadata,
+            playbackUrl: null,
+            thumbnailUrl: null,
+            previewClipUrl: null,
+          },
+          access: {
+            level: "METADATA_ONLY" as const,
+            reason:
+              "Playback requires the recordings.play permission; staff receive metadata only.",
+          },
         },
-        access: {
-          level: "METADATA_ONLY" as const,
-          reason:
-            "Playback requires the recordings.play permission; staff receive metadata only.",
-        },
-      });
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     // Check if Stream URL has expired
@@ -233,29 +240,34 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
           expired: true,
         },
-        { status: 410 },
+        { status: 410, headers: NO_STORE_HEADERS },
       );
     }
 
     // Get the best available URL (async — generates presigned URL for Supabase)
-    const playbackUrl =
-      await getBestRecordingUrl(recording);
+    const playbackUrl = await getBestRecordingUrl(recording);
 
-    return NextResponse.json({
-      recording: {
-        ...metadata,
-        playbackUrl,
-        thumbnailUrl: recording.thumbnailUrl,
-        previewClipUrl: recording.previewClipUrl,
+    return NextResponse.json(
+      {
+        recording: {
+          ...metadata,
+          playbackUrl,
+          thumbnailUrl: recording.thumbnailUrl,
+          previewClipUrl: recording.previewClipUrl,
+        },
+        access: { level: "FULL" as const },
       },
-      access: { level: "FULL" as const },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

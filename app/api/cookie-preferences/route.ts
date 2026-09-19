@@ -8,6 +8,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -48,16 +49,30 @@ async function resolveIdentity(): Promise<{
 export async function GET() {
   const { userId, sessionId } = await resolveIdentity();
   if (!userId && !sessionId) {
-    return NextResponse.json({ error: "No identity" }, { status: 401 });
+    return NextResponse.json(
+      { error: "No identity" },
+      { status: 401, headers: NO_STORE_HEADERS },
+    );
   }
 
   const pref = await prisma.cookiePreference.findFirst({
     where: userId ? { userId } : { sessionId },
-    select: { essential: true, analytics: true, marketing: true, functional: true },
+    select: {
+      essential: true,
+      analytics: true,
+      marketing: true,
+      functional: true,
+    },
   });
 
   return NextResponse.json(
-    pref ?? { essential: true, analytics: false, marketing: false, functional: false },
+    pref ?? {
+      essential: true,
+      analytics: false,
+      marketing: false,
+      functional: false,
+    },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

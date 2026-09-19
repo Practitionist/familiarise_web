@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -165,7 +166,10 @@ export async function GET(
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const resolvedParams = await params;
@@ -174,7 +178,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -187,7 +191,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -198,7 +202,10 @@ export async function GET(
       session.user.consulteeProfileId === consulteeId;
 
     if (!isPrivileged && !ownsProfile) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
     }
 
     // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
@@ -299,15 +306,18 @@ export async function GET(
     );
 
     // Return consolidated response
-    return NextResponse.json({
-      success: true,
-      data: {
-        consultations: consultations || [],
-        subscriptions: subscriptions || [],
-        webinars: webinars || [],
-        classes: classes || [],
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          consultations: consultations || [],
+          subscriptions: subscriptions || [],
+          webinars: webinars || [],
+          classes: classes || [],
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -320,7 +330,7 @@ export async function GET(
         error: "Failed to fetch events data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

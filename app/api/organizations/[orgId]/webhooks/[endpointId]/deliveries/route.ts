@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 
@@ -32,7 +33,7 @@ export async function GET(
   if (!endpoint) {
     return NextResponse.json(
       { error: "Webhook endpoint not found" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -70,8 +71,11 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    data: deliveries,
-    meta: { total, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data: deliveries,
+      meta: { total, page, perPage },
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

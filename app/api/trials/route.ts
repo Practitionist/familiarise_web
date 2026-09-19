@@ -2,6 +2,7 @@ import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { Prisma, TrialStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { logTrialRequested } from "@/lib/activity/log-activity";
 import { notifyTrialRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
@@ -54,7 +55,7 @@ export async function GET(request: NextRequest) {
             error:
               "No consultant or consultee profile configured. Please complete onboarding.",
           },
-          { status: 422 },
+          { status: 422, headers: NO_STORE_HEADERS },
         );
       }
       // Explicit profile-id filters stay locked to the caller's own ids.
@@ -62,13 +63,19 @@ export async function GET(request: NextRequest) {
         consultantProfileId &&
         consultantProfileId !== session.user.consultantProfileId
       ) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: NO_STORE_HEADERS },
+        );
       }
       if (
         consulteeProfileId &&
         consulteeProfileId !== session.user.consulteeProfileId
       ) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: NO_STORE_HEADERS },
+        );
       }
       // No explicit side requested → union both identities the caller holds.
       applyOwnershipOr = !consultantProfileId && !consulteeProfileId;
@@ -94,7 +101,10 @@ export async function GET(request: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
 
@@ -210,20 +220,23 @@ export async function GET(request: NextRequest) {
       prisma.trial.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: trials,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: trials,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching trial sessions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial sessions" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

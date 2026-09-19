@@ -13,6 +13,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -37,7 +38,7 @@ export async function GET(
   if (!provider) {
     return NextResponse.json(
       { error: "SSO provider not found" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -58,27 +59,30 @@ export async function GET(
   // render the "configuration incomplete" state correctly.
   const acsUrl = type ? deriveAcsUrl(provider.providerId, type) : null;
 
-  return NextResponse.json({
-    provider: {
-      id: provider.id,
-      providerId: provider.providerId,
-      issuer: provider.issuer,
-      domain: provider.domain,
-      providerType: type,
-      acsUrl,
-      metadataUrl: deriveMetadataUrl(provider.providerId),
-      oidcConfig: isOwner
-        ? provider.oidcConfig
-        : provider.oidcConfig
-          ? "[redacted]"
-          : null,
-      samlConfig: isOwner
-        ? provider.samlConfig
-        : provider.samlConfig
-          ? "[redacted]"
-          : null,
+  return NextResponse.json(
+    {
+      provider: {
+        id: provider.id,
+        providerId: provider.providerId,
+        issuer: provider.issuer,
+        domain: provider.domain,
+        providerType: type,
+        acsUrl,
+        metadataUrl: deriveMetadataUrl(provider.providerId),
+        oidcConfig: isOwner
+          ? provider.oidcConfig
+          : provider.oidcConfig
+            ? "[redacted]"
+            : null,
+        samlConfig: isOwner
+          ? provider.samlConfig
+          : provider.samlConfig
+            ? "[redacted]"
+            : null,
+      },
     },
-  });
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 export async function DELETE(
@@ -151,22 +155,26 @@ export async function DELETE(
     notifyOrgSsoProviderDeleted(orgId, {
       orgName: access.org.name,
       providerId,
-      deletedByName:
-        access.session.user.name ?? access.session.user.email,
+      deletedByName: access.session.user.name ?? access.session.user.email,
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/settings?tab=sso`,
     }).catch((err) => {
-      Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+      Sentry.captureException(
+        err instanceof Error ? err : new Error(String(err)),
+        { tags: { subsystem: "organizations" } },
+      );
       console.error("[notifyOrgSsoProviderDeleted] failed:", err);
     });
 
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

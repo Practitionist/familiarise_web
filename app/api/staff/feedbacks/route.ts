@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "lib/prisma";
 import { PlatformFeedbackStatus, Prisma } from "@prisma/client";
 
@@ -62,29 +63,35 @@ export async function GET(req: NextRequest) {
         prisma.platformFeedback.count({ where: { status: "CLOSED" } }),
       ]);
 
-    return NextResponse.json({
-      feedbacks,
-      counts: {
-        total,
-        pending,
-        acknowledged,
-        inProgress,
-        resolved,
-        closed,
+    return NextResponse.json(
+      {
+        feedbacks,
+        counts: {
+          total,
+          pending,
+          acknowledged,
+          inProgress,
+          resolved,
+          closed,
+        },
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching feedbacks:", error);
     return NextResponse.json(
       { error: "Failed to fetch feedbacks" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma, DisputeStatus, PaymentGateway } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -80,21 +81,27 @@ export async function GET(req: NextRequest) {
         prisma.dispute.count({ where: { status: "WON" } }),
       ]);
 
-    return NextResponse.json({
-      disputes,
-      total,
-      urgentDisputes,
-      stats: { underReviewCount, wonCount },
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        disputes,
+        total,
+        urgentDisputes,
+        stats: { underReviewCount, wonCount },
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin disputes list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch disputes" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

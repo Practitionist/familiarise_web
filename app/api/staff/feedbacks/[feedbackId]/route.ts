@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "lib/prisma";
 import { PlatformFeedbackStatus } from "@prisma/client";
 
@@ -33,17 +34,22 @@ export async function GET(
     if (!feedback) {
       return NextResponse.json(
         { error: "Feedback not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json(feedback);
+    return NextResponse.json(feedback, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching feedback:", error);
     return NextResponse.json(
       { error: "Failed to fetch feedback" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -60,7 +66,10 @@ export async function PATCH(
     const body = await req.json();
 
     // Validate status if provided
-    if (body.status && !Object.values(PlatformFeedbackStatus).includes(body.status)) {
+    if (
+      body.status &&
+      !Object.values(PlatformFeedbackStatus).includes(body.status)
+    ) {
       return NextResponse.json({ error: "Invalid status" }, { status: 400 });
     }
 
@@ -83,7 +92,10 @@ export async function PATCH(
 
     return NextResponse.json(feedback);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error updating feedback:", error);
     return NextResponse.json(
       { error: "Failed to update feedback" },

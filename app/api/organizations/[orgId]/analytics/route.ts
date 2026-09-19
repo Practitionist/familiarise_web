@@ -20,6 +20,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { getOrgAnalytics } from "@/lib/data/org-analytics";
 
@@ -28,16 +29,20 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   if (access.error) return access.error;
 
   const analytics = await getOrgAnalytics(orgId);
   if (!analytics) {
     return NextResponse.json(
       { error: "Organization not found" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
-  return NextResponse.json(analytics);
+  return NextResponse.json(analytics, {
+    headers: NO_STORE_HEADERS,
+  });
 }

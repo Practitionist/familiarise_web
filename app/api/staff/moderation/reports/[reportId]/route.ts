@@ -3,6 +3,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { ModerationReportStatus } from "@prisma/client";
 
@@ -71,10 +72,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!report) {
-      return NextResponse.json({ error: "Report not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Report not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({ report });
+    return NextResponse.json({ report }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -83,7 +87,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching moderation report:", error);
     return NextResponse.json(
       { error: "Failed to fetch report" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

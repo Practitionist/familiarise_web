@@ -10,6 +10,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -32,7 +33,7 @@ export async function GET(
   if (!job) {
     return NextResponse.json(
       { error: "Export job not found" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
   if (job.status !== "READY" || !job.fileUrl) {
@@ -41,7 +42,7 @@ export async function GET(
         error: `Export is ${job.status}; download unavailable`,
         code: "EXPORT_NOT_READY",
       },
-      { status: 409 },
+      { status: 409, headers: NO_STORE_HEADERS },
     );
   }
   if (job.expiresAt && job.expiresAt < new Date()) {
@@ -50,7 +51,7 @@ export async function GET(
         error: "Export bundle has expired; request a fresh one",
         code: "EXPORT_EXPIRED",
       },
-      { status: 410 },
+      { status: 410, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -61,9 +62,15 @@ export async function GET(
       category: "SYSTEM",
       action: AUDIT_ACTIONS.SYSTEM.DATA_EXPORT_DOWNLOADED,
       description: `Downloaded export bundle ${exportId}`,
-      details: { exportId, fileSizeBytes: job.fileSizeBytes?.toString() ?? null },
+      details: {
+        exportId,
+        fileSizeBytes: job.fileSizeBytes?.toString() ?? null,
+      },
     },
   });
 
-  return NextResponse.json({ url: job.fileUrl, expiresAt: job.expiresAt });
+  return NextResponse.json(
+    { url: job.fileUrl, expiresAt: job.expiresAt },
+    { headers: NO_STORE_HEADERS },
+  );
 }

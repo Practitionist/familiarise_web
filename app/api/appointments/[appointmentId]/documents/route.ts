@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -33,7 +34,7 @@ export async function GET(
           message: "Please sign in to view documents",
           code: "UNAUTHORIZED",
         },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -46,7 +47,7 @@ export async function GET(
           message: "Appointment ID is required",
           code: "INVALID_INPUT",
         },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -157,7 +158,7 @@ export async function GET(
             : "This appointment doesn't exist or you don't have permission to view it. Please check the appointment details or contact support if you believe this is an error.",
           code: "NOT_FOUND",
         },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -172,7 +173,7 @@ export async function GET(
             "This appointment has been cancelled or closed, so its documents are no longer available.",
           code: "APPOINTMENT_TERMINAL",
         },
-        { status: 403 },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -221,38 +222,50 @@ export async function GET(
       });
     } catch (dbError) {
       console.error("Database error fetching documents:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
       // Return empty array instead of failing - documents folder might not exist yet
-      return NextResponse.json({
-        data: [],
-        message:
-          "No documents found for this appointment yet. Upload your first document to get started!",
-        appointmentTitle: isDevelopment
-          ? `${appointmentTitle} [DEV MODE]`
-          : appointmentTitle,
-        consultantName,
-      });
+      return NextResponse.json(
+        {
+          data: [],
+          message:
+            "No documents found for this appointment yet. Upload your first document to get started!",
+          appointmentTitle: isDevelopment
+            ? `${appointmentTitle} [DEV MODE]`
+            : appointmentTitle,
+          consultantName,
+        },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     const devModeMessage = isDevelopment
       ? " [DEV MODE - Access control bypassed]"
       : "";
 
-    return NextResponse.json({
-      data: documents,
-      count: documents.length,
-      message:
-        documents.length === 0
-          ? `No documents uploaded yet. You can upload documents like resumes, tax returns, or other files for review.${devModeMessage}`
-          : `Found ${documents.length} document${documents.length === 1 ? "" : "s"} for this appointment.${devModeMessage}`,
-      appointmentTitle: isDevelopment
-        ? `${appointmentTitle} [DEV MODE]`
-        : appointmentTitle,
-      consultantName,
-    });
+    return NextResponse.json(
+      {
+        data: documents,
+        count: documents.length,
+        message:
+          documents.length === 0
+            ? `No documents uploaded yet. You can upload documents like resumes, tax returns, or other files for review.${devModeMessage}`
+            : `Found ${documents.length} document${documents.length === 1 ? "" : "s"} for this appointment.${devModeMessage}`,
+        appointmentTitle: isDevelopment
+          ? `${appointmentTitle} [DEV MODE]`
+          : appointmentTitle,
+        consultantName,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {
@@ -267,7 +280,7 @@ export async function GET(
               "Unable to connect to the server. Please check your internet connection and try again.",
             code: "CONNECTION_ERROR",
           },
-          { status: 503 },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -282,7 +295,7 @@ export async function GET(
               "The document system is temporarily unavailable. Please try again in a few moments.",
             code: "DATABASE_ERROR",
           },
-          { status: 503 },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
     }
@@ -294,7 +307,7 @@ export async function GET(
           "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
         code: "UNKNOWN_ERROR",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -385,7 +398,9 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            validation.code === "FILE_TOO_LARGE" ? "File too large" : "Unsupported file type",
+            validation.code === "FILE_TOO_LARGE"
+              ? "File too large"
+              : "Unsupported file type",
           message: validation.message,
           code: validation.code,
         },
@@ -562,7 +577,12 @@ export async function POST(
       });
     } catch (uploadError) {
       console.error("File upload error:", uploadError);
-      Sentry.captureException(uploadError instanceof Error ? uploadError : new Error(String(uploadError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        uploadError instanceof Error
+          ? uploadError
+          : new Error(String(uploadError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       if (uploadError instanceof Error) {
         if (
@@ -635,49 +655,57 @@ export async function POST(
     try {
       document = await withVersionConflictRetry(() =>
         prisma.$transaction(async (tx) => {
-        let rootDocumentId: string | null = null;
-        let versionNo = 1;
-        if (revisionOf) {
-          const parent = await tx.appointmentDocument.findFirst({
-            where: { id: revisionOf, appointmentId, deletedAt: null },
-            select: { id: true, rootDocumentId: true },
+          let rootDocumentId: string | null = null;
+          let versionNo = 1;
+          if (revisionOf) {
+            const parent = await tx.appointmentDocument.findFirst({
+              where: { id: revisionOf, appointmentId, deletedAt: null },
+              select: { id: true, rootDocumentId: true },
+            });
+            if (!parent) throw new Error("INVALID_REVISION_TARGET");
+            rootDocumentId = parent.rootDocumentId ?? parent.id;
+            const aggregate = await tx.appointmentDocument.aggregate({
+              where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
+              _max: { versionNo: true },
+            });
+            versionNo = (aggregate._max.versionNo ?? 1) + 1;
+          }
+          return tx.appointmentDocument.create({
+            data: {
+              appointmentId,
+              fileName: uploadResult.fileName!,
+              originalName: file.name,
+              fileSize: uploadResult.fileSize!,
+              mimeType: uploadResult.mimeType!,
+              fileUrl: uploadResult.fileUrl!,
+              storagePath: uploadResult.storagePath!,
+              description: description?.trim() || null,
+              reviewStatus: "PENDING",
+              responseToDocumentId: revisionOf,
+              rootDocumentId,
+              versionNo,
+            },
           });
-          if (!parent) throw new Error("INVALID_REVISION_TARGET");
-          rootDocumentId = parent.rootDocumentId ?? parent.id;
-          const aggregate = await tx.appointmentDocument.aggregate({
-            where: { OR: [{ id: rootDocumentId }, { rootDocumentId }] },
-            _max: { versionNo: true },
-          });
-          versionNo = (aggregate._max.versionNo ?? 1) + 1;
-        }
-        return tx.appointmentDocument.create({
-          data: {
-            appointmentId,
-            fileName: uploadResult.fileName!,
-            originalName: file.name,
-            fileSize: uploadResult.fileSize!,
-            mimeType: uploadResult.mimeType!,
-            fileUrl: uploadResult.fileUrl!,
-            storagePath: uploadResult.storagePath!,
-            description: description?.trim() || null,
-            reviewStatus: "PENDING",
-            responseToDocumentId: revisionOf,
-            rootDocumentId,
-            versionNo,
-          },
-        });
         }),
       );
     } catch (dbError) {
       console.error("Database error saving document:", dbError);
-      Sentry.captureException(dbError instanceof Error ? dbError : new Error(String(dbError)), { tags: { subsystem: "appointments" } });
+      Sentry.captureException(
+        dbError instanceof Error ? dbError : new Error(String(dbError)),
+        { tags: { subsystem: "appointments" } },
+      );
 
       // Try to clean up uploaded file if database save failed
       try {
         await deleteAppointmentDocument(uploadResult.storagePath!);
       } catch (cleanupError) {
         console.error("Failed to cleanup uploaded file:", cleanupError);
-        Sentry.captureException(cleanupError instanceof Error ? cleanupError : new Error(String(cleanupError)), { tags: { subsystem: "appointments" } });
+        Sentry.captureException(
+          cleanupError instanceof Error
+            ? cleanupError
+            : new Error(String(cleanupError)),
+          { tags: { subsystem: "appointments" } },
+        );
       }
 
       if (
@@ -740,14 +768,18 @@ export async function POST(
           dashboardUrl: scopedHref({
             organizationId: appointment.organizationId,
             surface: "documents",
-            personal:
-              consultantProfileId
-                ? { kind: "consultant", profileId: consultantProfileId }
-                : undefined,
+            personal: consultantProfileId
+              ? { kind: "consultant", profileId: consultantProfileId }
+              : undefined,
           }),
         }).catch((notifyError) => {
           console.error("Failed to notify consultant of document", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+          Sentry.captureException(
+            notifyError instanceof Error
+              ? notifyError
+              : new Error(String(notifyError)),
+            { tags: { subsystem: "novu" } },
+          );
         }),
       );
     }
@@ -770,7 +802,10 @@ export async function POST(
     );
   } catch (error) {
     console.error("Error uploading document:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
 
     // Provide specific error messages based on error type
     if (error instanceof Error) {

@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getEarningsStats } from "@/lib/payments/payouts/earnings-service";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 
@@ -19,13 +20,16 @@ export async function GET(_req: NextRequest) {
 
     const stats = await getEarningsStats();
 
-    return NextResponse.json({ stats });
+    return NextResponse.json({ stats }, { headers: NO_STORE_HEADERS });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching earnings stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings stats" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

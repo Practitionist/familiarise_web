@@ -24,6 +24,7 @@ import {
   Prisma,
 } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   logTrialCompleted,
   logTrialScheduled,
@@ -138,7 +139,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!trial) {
       return NextResponse.json(
         { error: "Trial session not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -162,12 +163,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
       });
     }
 
-    return NextResponse.json({ data: trial });
+    return NextResponse.json({ data: trial }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("Error fetching trial session:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial session" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -5,11 +5,9 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { AppointmentIdParams } from "@/schemas/support";
-import {
-  parseRouteParams,
-  supportError,
-} from "@/lib/api/support-http";
+import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
   authorizeAppointment,
   appointmentAuthzError,
@@ -29,9 +27,15 @@ export async function GET(
   try {
     const auth = await authorizeAppointment(appointmentId);
     if ("code" in auth) {
-      return appointmentAuthzError(auth, { route: DETAIL_ROUTE, appointmentId });
+      return appointmentAuthzError(auth, {
+        route: DETAIL_ROUTE,
+        appointmentId,
+      });
     }
-    return NextResponse.json({ data: auth.detail });
+    return NextResponse.json(
+      { data: auth.detail },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

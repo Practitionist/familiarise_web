@@ -15,6 +15,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -32,7 +33,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "reimbursements.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "reimbursements.read",
+  });
   if (access.error) return access.error;
 
   // Conditional render: only orgs whose BillingAccount.fundingSource is
@@ -48,7 +51,7 @@ export async function GET(
         error:
           "Reimbursements view is only available for organizations on PERSONAL funding.",
       },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -61,7 +64,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const pagination = parsePagination(url);
@@ -186,18 +189,21 @@ export async function GET(
     perMember.set(row.user.id, entry);
   }
 
-  return NextResponse.json({
-    items,
-    total,
-    page: pagination.page,
-    perPage: pagination.pageSize,
-    // `totalPaise` stays the gross so existing readers keep their meaning;
-    // `totalNetPaise` is the figure payroll should actually transfer.
-    totalPaise,
-    totalRefundedPaise,
-    totalNetPaise,
-    byMember: Array.from(perMember.values()).sort(
-      (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
-    ),
-  });
+  return NextResponse.json(
+    {
+      items,
+      total,
+      page: pagination.page,
+      perPage: pagination.pageSize,
+      // `totalPaise` stays the gross so existing readers keep their meaning;
+      // `totalNetPaise` is the figure payroll should actually transfer.
+      totalPaise,
+      totalRefundedPaise,
+      totalNetPaise,
+      byMember: Array.from(perMember.values()).sort(
+        (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
+      ),
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

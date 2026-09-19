@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
@@ -181,7 +182,10 @@ export async function GET() {
       lastRun: executionMap.get(job.id)?.lastRun || null,
     }));
 
-    return NextResponse.json({ jobs: jobsWithStats });
+    return NextResponse.json(
+      { jobs: jobsWithStats },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -190,7 +194,7 @@ export async function GET() {
     console.error("Error fetching system jobs:", error);
     return NextResponse.json(
       { error: "Failed to fetch system jobs" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

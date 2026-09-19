@@ -13,6 +13,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -66,7 +67,10 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "billing.read", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    permission: "billing.read",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -96,7 +100,10 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({ data: invoices, meta: { total, page, perPage } });
+  return NextResponse.json(
+    { data: invoices, meta: { total, page, perPage } },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 export async function POST(
@@ -104,7 +111,9 @@ export async function POST(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgBillingAdminOrOwner(orgId, { canSponsor: true });
+  const access = await requireOrgBillingAdminOrOwner(orgId, {
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   // #677/PM-36 — invoice generation is a statutory-document write.
@@ -130,7 +139,9 @@ export async function POST(
       id: true,
       name: true,
       slug: true,
-      taxInfo: { select: { gstStateCode: true, gstin: true, hsnDefault: true } },
+      taxInfo: {
+        select: { gstStateCode: true, gstin: true, hsnDefault: true },
+      },
       dataResidencyRegion: true,
       billingAccountId: true,
       invoiceNumberPrefix: true,
@@ -156,7 +167,9 @@ export async function POST(
     }
     if (po.status !== "ACTIVE") {
       return NextResponse.json(
-        { error: `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against` },
+        {
+          error: `PurchaseOrder is ${po.status}; only ACTIVE POs can be invoiced against`,
+        },
         { status: 409 },
       );
     }
@@ -225,127 +238,131 @@ export async function POST(
   let invoice;
   try {
     invoice = await prisma.$transaction(async (tx) => {
-    // Per-org sequential numbering: counter row atomically reserves the
-    // next seq under (org, fiscal-year) so two concurrent POSTs can't
-    // collide on the @@unique([organizationId, invoiceNumber]) constraint.
-    const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
-      tx,
-      { id: org.id, slug: org.slug, invoiceNumberPrefix: org.invoiceNumberPrefix },
-      issuedAt,
-    );
-
-    // PO balance enforcement (race-safe). When the invoice is linked to
-    // a PO, atomically decrement `remainingAmountPaise` and fail closed
-    // (409 `PO_BALANCE_EXCEEDED`) if the PO is no longer ACTIVE or has
-    // insufficient remaining budget. Mirrors the wallet-debit pattern
-    // in `lib/api/organizations/wallet.ts`. Restoration on VOID /
-    // CANCELLED is handled in the PATCH route at
-    // `[invoiceId]/route.ts`.
-    if (body.purchaseOrderId) {
-      const claim = await tx.purchaseOrder.updateMany({
-        where: {
-          id: body.purchaseOrderId,
-          organizationId: orgId,
-          status: "ACTIVE",
-          // #1396 — repeated in the CAS predicate so the currency check above
-          // cannot be raced by a PATCH between the read and the claim.
-          currency: body.displayCurrency,
-          remainingAmountPaise: { gte: gst.totalPaise },
+      // Per-org sequential numbering: counter row atomically reserves the
+      // next seq under (org, fiscal-year) so two concurrent POSTs can't
+      // collide on the @@unique([organizationId, invoiceNumber]) constraint.
+      const { invoiceNumber, fiscalYear } = await generateOrgInvoiceNumber(
+        tx,
+        {
+          id: org.id,
+          slug: org.slug,
+          invoiceNumberPrefix: org.invoiceNumberPrefix,
         },
-        data: { remainingAmountPaise: { decrement: gst.totalPaise } },
-      });
-      if (claim.count !== 1) {
-        const err = new Error(
-          "PurchaseOrder balance insufficient or no longer ACTIVE",
-        );
-        Object.assign(err, {
-          httpStatus: 409,
-          code: "PO_BALANCE_EXCEEDED",
+        issuedAt,
+      );
+
+      // PO balance enforcement (race-safe). When the invoice is linked to
+      // a PO, atomically decrement `remainingAmountPaise` and fail closed
+      // (409 `PO_BALANCE_EXCEEDED`) if the PO is no longer ACTIVE or has
+      // insufficient remaining budget. Mirrors the wallet-debit pattern
+      // in `lib/api/organizations/wallet.ts`. Restoration on VOID /
+      // CANCELLED is handled in the PATCH route at
+      // `[invoiceId]/route.ts`.
+      if (body.purchaseOrderId) {
+        const claim = await tx.purchaseOrder.updateMany({
+          where: {
+            id: body.purchaseOrderId,
+            organizationId: orgId,
+            status: "ACTIVE",
+            // #1396 — repeated in the CAS predicate so the currency check above
+            // cannot be raced by a PATCH between the read and the claim.
+            currency: body.displayCurrency,
+            remainingAmountPaise: { gte: gst.totalPaise },
+          },
+          data: { remainingAmountPaise: { decrement: gst.totalPaise } },
         });
-        throw err;
+        if (claim.count !== 1) {
+          const err = new Error(
+            "PurchaseOrder balance insufficient or no longer ACTIVE",
+          );
+          Object.assign(err, {
+            httpStatus: 409,
+            code: "PO_BALANCE_EXCEEDED",
+          });
+          throw err;
+        }
       }
-    }
 
-    const created = await tx.organizationInvoice.create({
-      data: {
-        billingAccountId: org.billingAccountId!,
-        organizationId: orgId,
-        purchaseOrderId: body.purchaseOrderId ?? null,
-        contractId: body.contractId ?? null,
-        invoiceNumber,
-        fiscalYear,
-        status: body.issueImmediately ? "ISSUED" : "DRAFT",
-        displayCurrency: body.displayCurrency,
-        inrEquivalentPaise: gst.totalPaise,
-        subtotalPaise: gst.subtotalPaise,
-        igstPaise: gst.igstPaise,
-        cgstPaise: gst.cgstPaise,
-        sgstPaise: gst.sgstPaise,
-        totalPaise: gst.totalPaise,
-        taxRate: gst.igstPaise + gst.cgstPaise + gst.sgstPaise > 0 ? 0.18 : 0,
-        hsnCode: gst.hsnCode,
-        placeOfSupply: gst.placeOfSupply,
-        reverseCharge: gst.reverseCharge,
-        gstin: org.taxInfo?.gstin ?? null,
-        irpStatus: "PENDING",
-        autoGenerated: false,
-        issuedAt: body.issueImmediately ? new Date() : null,
-        dueDate: body.dueDate,
-        billingCycleStart: body.billingCycleStart ?? null,
-        billingCycleEnd: body.billingCycleEnd ?? null,
-        // #768 — line items as typed children (createMany inside the
-        // same transaction so a failed write rolls back atomically).
-        lineItems: {
-          create: body.items.map((item, idx) => ({
-            position: idx,
-            description: item.description,
-            quantity: item.quantity,
-            unitPricePaise: item.unitPrice,
-            paymentId: item.paymentId ?? null,
-          })),
-        },
-      },
-    });
-
-    await tx.orgAuditLog.create({
-      data: {
-        organizationId: orgId,
-        actorMembershipId: access.member.id,
-        category: "INVOICE",
-        action: AUDIT_ACTIONS.INVOICE.INVOICE_GENERATED,
-        description: `${body.issueImmediately ? "Issued" : "Drafted"} invoice ${invoiceNumber}`,
-        details: {
-          invoiceId: created.id,
+      const created = await tx.organizationInvoice.create({
+        data: {
+          billingAccountId: org.billingAccountId!,
+          organizationId: orgId,
+          purchaseOrderId: body.purchaseOrderId ?? null,
+          contractId: body.contractId ?? null,
           invoiceNumber,
-          totalPaise: created.totalPaise,
-          status: created.status,
-          placeOfSupply: created.placeOfSupply,
-        },
-      },
-    });
-
-    // Outbound webhook only on ISSUED transitions; a DRAFT invoice
-    // hasn't been "sent" yet — integrators should only see invoices
-    // they need to act on (booking entries, AP queues). Resending on
-    // a later DRAFT→ISSUED PATCH happens in the [invoiceId] route.
-    if (body.issueImmediately) {
-      await dispatchWebhookEvent({
-        prisma: tx,
-        organizationId: orgId,
-        eventType: "invoice.issued",
-        payload: {
-          invoiceId: created.id,
-          invoiceNumber: created.invoiceNumber,
-          totalPaise: created.totalPaise,
-          displayCurrency: created.displayCurrency,
-          dueDate: created.dueDate,
-          purchaseOrderId: created.purchaseOrderId,
-          contractId: created.contractId,
+          fiscalYear,
+          status: body.issueImmediately ? "ISSUED" : "DRAFT",
+          displayCurrency: body.displayCurrency,
+          inrEquivalentPaise: gst.totalPaise,
+          subtotalPaise: gst.subtotalPaise,
+          igstPaise: gst.igstPaise,
+          cgstPaise: gst.cgstPaise,
+          sgstPaise: gst.sgstPaise,
+          totalPaise: gst.totalPaise,
+          taxRate: gst.igstPaise + gst.cgstPaise + gst.sgstPaise > 0 ? 0.18 : 0,
+          hsnCode: gst.hsnCode,
+          placeOfSupply: gst.placeOfSupply,
+          reverseCharge: gst.reverseCharge,
+          gstin: org.taxInfo?.gstin ?? null,
+          irpStatus: "PENDING",
+          autoGenerated: false,
+          issuedAt: body.issueImmediately ? new Date() : null,
+          dueDate: body.dueDate,
+          billingCycleStart: body.billingCycleStart ?? null,
+          billingCycleEnd: body.billingCycleEnd ?? null,
+          // #768 — line items as typed children (createMany inside the
+          // same transaction so a failed write rolls back atomically).
+          lineItems: {
+            create: body.items.map((item, idx) => ({
+              position: idx,
+              description: item.description,
+              quantity: item.quantity,
+              unitPricePaise: item.unitPrice,
+              paymentId: item.paymentId ?? null,
+            })),
+          },
         },
       });
-    }
 
-    return created;
+      await tx.orgAuditLog.create({
+        data: {
+          organizationId: orgId,
+          actorMembershipId: access.member.id,
+          category: "INVOICE",
+          action: AUDIT_ACTIONS.INVOICE.INVOICE_GENERATED,
+          description: `${body.issueImmediately ? "Issued" : "Drafted"} invoice ${invoiceNumber}`,
+          details: {
+            invoiceId: created.id,
+            invoiceNumber,
+            totalPaise: created.totalPaise,
+            status: created.status,
+            placeOfSupply: created.placeOfSupply,
+          },
+        },
+      });
+
+      // Outbound webhook only on ISSUED transitions; a DRAFT invoice
+      // hasn't been "sent" yet — integrators should only see invoices
+      // they need to act on (booking entries, AP queues). Resending on
+      // a later DRAFT→ISSUED PATCH happens in the [invoiceId] route.
+      if (body.issueImmediately) {
+        await dispatchWebhookEvent({
+          prisma: tx,
+          organizationId: orgId,
+          eventType: "invoice.issued",
+          payload: {
+            invoiceId: created.id,
+            invoiceNumber: created.invoiceNumber,
+            totalPaise: created.totalPaise,
+            displayCurrency: created.displayCurrency,
+            dueDate: created.dueDate,
+            purchaseOrderId: created.purchaseOrderId,
+            contractId: created.contractId,
+          },
+        });
+      }
+
+      return created;
     });
   } catch (err) {
     const httpStatus =
@@ -362,7 +379,10 @@ export async function POST(
         { status: httpStatus },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 
@@ -380,9 +400,7 @@ export async function POST(
       dashboardUrl: `${origin}/dashboard/organization/${orgId}/billing`,
       // #438 — deep link to the PDF (route caches + 302s to a signed URL).
       pdfUrl: `${origin}/api/organizations/${orgId}/billing-account/invoices/${invoice.id}/pdf`,
-    }).catch((err) =>
-      console.error("[notifyOrgInvoiceIssued] failed:", err),
-    );
+    }).catch((err) => console.error("[notifyOrgInvoiceIssued] failed:", err));
   }
 
   return NextResponse.json({ invoice }, { status: 201 });

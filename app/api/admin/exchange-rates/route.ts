@@ -18,6 +18,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import {
   invalidateExchangeRateCache,
@@ -37,12 +38,15 @@ export async function GET() {
   if ("error" in auth) return auth.error;
 
   const info = getExchangeRateCacheInfo();
-  return NextResponse.json({
-    cached: info.cachedAt !== null,
-    cachedAt: info.cachedAt ? new Date(info.cachedAt).toISOString() : null,
-    ageMs: info.ageMs,
-    ageMinutes: info.ageMs !== null ? Math.round(info.ageMs / 60000) : null,
-  });
+  return NextResponse.json(
+    {
+      cached: info.cachedAt !== null,
+      cachedAt: info.cachedAt ? new Date(info.cachedAt).toISOString() : null,
+      ageMs: info.ageMs,
+      ageMinutes: info.ageMs !== null ? Math.round(info.ageMs / 60000) : null,
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 export async function POST() {
@@ -63,7 +67,10 @@ export async function POST() {
       refreshedAt: new Date().toISOString(),
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error refreshing exchange rate cache:", error);
     return NextResponse.json(
       { success: false, message: "Failed to refresh exchange rate cache" },

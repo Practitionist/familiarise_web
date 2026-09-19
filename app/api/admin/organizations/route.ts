@@ -8,6 +8,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
@@ -32,9 +33,7 @@ export async function GET(req: NextRequest) {
     Math.max(1, parseInt(url.searchParams.get("limit") ?? "25", 10)),
   );
 
-  const statusFilter = statusRaw
-    ? OrgStatusSchema.safeParse(statusRaw)
-    : null;
+  const statusFilter = statusRaw ? OrgStatusSchema.safeParse(statusRaw) : null;
 
   const where = {
     ...(statusFilter?.success ? { status: statusFilter.data } : {}),
@@ -42,7 +41,9 @@ export async function GET(req: NextRequest) {
       ? {
           OR: [
             { name: { contains: search, mode: "insensitive" as const } },
-            { billingEmail: { contains: search, mode: "insensitive" as const } },
+            {
+              billingEmail: { contains: search, mode: "insensitive" as const },
+            },
             { slug: { contains: search, mode: "insensitive" as const } },
           ],
         }
@@ -78,8 +79,11 @@ export async function GET(req: NextRequest) {
     }),
   ]);
 
-  return NextResponse.json({
-    data: organizations,
-    pagination: { total, page, limit, pages: Math.ceil(total / limit) },
-  });
+  return NextResponse.json(
+    {
+      data: organizations,
+      pagination: { total, page, limit, pages: Math.ceil(total / limit) },
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

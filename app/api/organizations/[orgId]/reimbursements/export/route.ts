@@ -6,6 +6,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -29,7 +30,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "reimbursements.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "reimbursements.read",
+  });
   if (access.error) return access.error;
 
   const billingAccount = await prisma.billingAccount.findUnique({
@@ -39,7 +42,7 @@ export async function GET(
   if (!billingAccount || billingAccount.fundingSource !== "PERSONAL") {
     return NextResponse.json(
       { error: "Reimbursements export only for PERSONAL-funded orgs." },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -52,7 +55,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 

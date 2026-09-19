@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
@@ -43,7 +44,10 @@ export async function GET(req: NextRequest) {
 
     if (view === "consultants") {
       const breakdown = await getConsultantTDSBreakdown(fy);
-      return NextResponse.json({ financialYear: fy, consultants: breakdown });
+      return NextResponse.json(
+        { financialYear: fy, consultants: breakdown },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     // Form 26Q filing view — ADMIN only (exposes decrypted PAN)
@@ -51,7 +55,7 @@ export async function GET(req: NextRequest) {
       if (session.user.role !== "ADMIN") {
         return NextResponse.json(
           { error: "Forbidden — Admin only for PAN access" },
-          { status: 403 },
+          { status: 403, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -110,11 +114,16 @@ export async function GET(req: NextRequest) {
         createdAt: r.createdAt,
       }));
 
-      return NextResponse.json({ financialYear: fy, records: form26qData });
+      return NextResponse.json(
+        { financialYear: fy, records: form26qData },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     const summary = await getTDSSummary(fy);
-    return NextResponse.json(summary);
+    return NextResponse.json(summary, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -123,7 +132,7 @@ export async function GET(req: NextRequest) {
     console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

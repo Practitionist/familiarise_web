@@ -18,6 +18,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -140,7 +141,9 @@ export async function GET() {
   // Body extracted to lib/data/org-workspace so the workspace home page's
   // SSR prefetch reads through the same code path (no SSR/CSR drift).
   const result = await getOperatorOrganizations(auth.session.user.id);
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: NO_STORE_HEADERS,
+  });
 }
 
 export async function POST(req: NextRequest) {

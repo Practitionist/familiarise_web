@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -128,37 +129,43 @@ export async function GET() {
     const avgSessionValue =
       paymentStats._count > 0 ? totalRevenue / paymentStats._count : 0;
 
-    return NextResponse.json({
-      // User stats
-      totalUsers,
-      totalConsultants,
-      totalConsultees,
-      totalStaff,
-      newUsersThisMonth,
-      activeConsultants,
-      activeConsultees,
+    return NextResponse.json(
+      {
+        // User stats
+        totalUsers,
+        totalConsultants,
+        totalConsultees,
+        totalStaff,
+        newUsersThisMonth,
+        activeConsultants,
+        activeConsultees,
 
-      // Session stats
-      totalSessions,
-      completedSessions,
-      upcomingSessions,
-      cancelledSessions,
+        // Session stats
+        totalSessions,
+        completedSessions,
+        upcomingSessions,
+        cancelledSessions,
 
-      // Revenue stats
-      totalRevenue,
-      revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
-      avgSessionValue,
-      totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
+        // Revenue stats
+        totalRevenue,
+        revenueThisMonth: sumPaise(revenueThisMonth._sum.amount),
+        avgSessionValue,
+        totalRefunds: sumPaise(refundTotal._sum?.amountPaise),
 
-      // Top domains
-      topDomains: formattedTopDomains,
-    });
+        // Top domains
+        topDomains: formattedTopDomains,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching analytics:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

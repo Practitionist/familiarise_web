@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import {
   requireApiAuth,
@@ -53,7 +54,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -66,7 +67,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -92,7 +93,10 @@ export async function GET(
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
     const scope: Scope = scopeResolution.scope;
@@ -101,15 +105,18 @@ export async function GET(
     // SSR hydration matches.
     const data = await readConsulteeEvents(consulteeId, scope);
 
-    return NextResponse.json({
-      data,
-      success: true,
-    });
+    return NextResponse.json(
+      {
+        data,
+        success: true,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     if (error instanceof ConsulteeProfileNotFoundError) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(
@@ -119,7 +126,7 @@ export async function GET(
     console.error("Error fetching consultee events:", error);
     return NextResponse.json(
       { error: "Failed to fetch consultee events" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

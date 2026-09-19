@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { LeadStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -23,13 +24,10 @@ export async function GET(request: NextRequest): Promise<Response> {
     const cursor = searchParams.get("cursor");
 
     // `in` accepts constructor/toString — validate against actual values.
-    if (
-      status &&
-      !Object.values(LeadStatus).includes(status as LeadStatus)
-    ) {
+    if (status && !Object.values(LeadStatus).includes(status as LeadStatus)) {
       return NextResponse.json(
         { error: `Unknown lead status "${status}"` },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -57,7 +55,10 @@ export async function GET(request: NextRequest): Promise<Response> {
     const nextCursor =
       leads.length === PAGE_SIZE ? leads[leads.length - 1].id : null;
 
-    return NextResponse.json({ leads, nextCursor });
+    return NextResponse.json(
+      { leads, nextCursor },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
     return NextResponse.json(
       { error: "Failed to load leads" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

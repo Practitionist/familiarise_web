@@ -12,6 +12,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgOwner } from "@/lib/auth-helpers";
@@ -35,7 +36,7 @@ export async function GET(
     where: { organizationId: orgId },
     orderBy: { scimGroupName: "asc" },
   });
-  return NextResponse.json({ data: mappings });
+  return NextResponse.json({ data: mappings }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(
@@ -87,11 +88,17 @@ export async function POST(
       (err as { code: string }).code === "P2002"
     ) {
       return NextResponse.json(
-        { error: `Group '${parsed.data.scimGroupName}' is already mapped`, code: "SCIM_GROUP_DUPLICATE" },
+        {
+          error: `Group '${parsed.data.scimGroupName}' is already mapped`,
+          code: "SCIM_GROUP_DUPLICATE",
+        },
         { status: 409 },
       );
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

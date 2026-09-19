@@ -13,7 +13,11 @@ import { getAppUrl } from "@/lib/url";
 function page(title: string, body: string, status: number): Response {
   return new Response(resultHtml(title, body), {
     status,
-    headers: { "Content-Type": "text/html; charset=utf-8" },
+    // Token-gated: mail scanners prefetch these links — never shared-cache.
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
   });
 }
 

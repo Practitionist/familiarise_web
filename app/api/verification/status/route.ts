@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 
@@ -17,7 +18,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -63,7 +64,7 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -75,28 +76,31 @@ export async function GET() {
 
     const latestRequest = consultantProfile.verificationRequests[0];
 
-    return NextResponse.json({
-      success: true,
-      data: {
-        profileId: consultantProfile.id,
-        isVerified: consultantProfile.isVerified,
-        verificationStatus: consultantProfile.verificationStatus,
-        linkedinUrl: user?.linkedinUrl,
-        latestRequest: latestRequest
-          ? {
-              id: latestRequest.id,
-              status: latestRequest.status,
-              submittedAt: latestRequest.submittedAt,
-              reviewedAt: latestRequest.reviewedAt,
-              reviewNotes: latestRequest.reviewNotes,
-              rejectionReason: latestRequest.rejectionReason,
-              feedbackDetails: latestRequest.feedbackDetails,
-              notes: latestRequest.notes,
-              documents: withDownloadUrls(latestRequest.documents),
-            }
-          : null,
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          profileId: consultantProfile.id,
+          isVerified: consultantProfile.isVerified,
+          verificationStatus: consultantProfile.verificationStatus,
+          linkedinUrl: user?.linkedinUrl,
+          latestRequest: latestRequest
+            ? {
+                id: latestRequest.id,
+                status: latestRequest.status,
+                submittedAt: latestRequest.submittedAt,
+                reviewedAt: latestRequest.reviewedAt,
+                reviewNotes: latestRequest.reviewNotes,
+                rejectionReason: latestRequest.rejectionReason,
+                feedbackDetails: latestRequest.feedbackDetails,
+                notes: latestRequest.notes,
+                documents: withDownloadUrls(latestRequest.documents),
+              }
+            : null,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -111,7 +115,7 @@ export async function GET() {
             ? error.message
             : "Failed to get verification status",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -35,6 +35,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -116,8 +117,11 @@ export async function GET(
     },
   });
 
-  return NextResponse.json({
-    data: sessions,
-    meta: { totalResults, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data: sessions,
+      meta: { totalResults, page, perPage },
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

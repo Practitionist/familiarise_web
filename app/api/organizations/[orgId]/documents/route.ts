@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { listDocumentsScoped } from "@/lib/api/scope/list-documents";
@@ -23,7 +24,9 @@ export async function GET(
   { params }: { params: Promise<{ orgId: string }> },
 ) {
   const { orgId } = await params;
-  const access = await requireOrgAccess(orgId, { permission: "operations.read" });
+  const access = await requireOrgAccess(orgId, {
+    permission: "operations.read",
+  });
   if (access.error) return access.error;
 
   const url = new URL(req.url);
@@ -33,7 +36,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const pagination = parsePagination(url);
@@ -45,5 +48,7 @@ export async function GET(
     page: pagination.page,
     perPage: pagination.pageSize,
   });
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: NO_STORE_HEADERS,
+  });
 }

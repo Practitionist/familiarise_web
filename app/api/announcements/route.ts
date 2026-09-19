@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS, PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import { unstable_cache, revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
@@ -46,10 +47,20 @@ export async function GET() {
   try {
     const announcements = await getActiveAnnouncements();
 
-    return NextResponse.json({
-      success: true,
-      data: announcements,
-    });
+    // Session-free public banner read: safe for shared caching. Matches the
+    // existing ANNOUNCEMENTS_TAG invalidation on the POST write below (and
+    // app/api/announcements/[id]/route.ts writes), so freshness still comes
+    // from revalidateTag. The degraded empty-banner branch below stays
+    // `no-store` on purpose (#1125).
+    return NextResponse.json(
+      {
+        success: true,
+        data: announcements,
+      },
+      {
+        headers: PUBLIC_LIST_HEADERS,
+      },
+    );
   } catch (error) {
     // The announcements banner is non-critical and polled often. A transient
     // pooler connect/read timeout (cross-region cold connect) should degrade to
@@ -68,7 +79,7 @@ export async function GET() {
       // that caused it. (#1125)
       return NextResponse.json(
         { success: true, data: [] },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(

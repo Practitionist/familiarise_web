@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -38,11 +39,12 @@ export async function GET(req: NextRequest) {
     200,
   );
   const statusParam = url.searchParams.get("status");
-  const status = statusParam
-    ? StatusSchema.safeParse(statusParam)
-    : undefined;
+  const status = statusParam ? StatusSchema.safeParse(statusParam) : undefined;
   if (status && !status.success) {
-    return NextResponse.json({ error: "Invalid status" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid status" },
+      { status: 400, headers: NO_STORE_HEADERS },
+    );
   }
 
   const rows = await prisma.failedEmail.findMany({
@@ -66,7 +68,7 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ data: rows });
+  return NextResponse.json({ data: rows }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(req: NextRequest) {

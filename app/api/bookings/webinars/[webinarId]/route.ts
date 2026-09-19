@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   requireApiAuth,
   isPrivileged,
@@ -39,7 +40,8 @@ export async function GET(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -47,13 +49,19 @@ export async function GET(
       },
     });
 
-    return NextResponse.json({ data: webinarData }, { status: 200 });
+    return NextResponse.json(
+      { data: webinarData },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Webinar not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -62,7 +70,7 @@ export async function GET(
     console.error("Error fetching webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -105,7 +113,10 @@ export async function PUT(
         select: { status: true },
       });
       if (!current) {
-        return NextResponse.json({ error: "Webinar not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Webinar not found" },
+          { status: 404 },
+        );
       }
       allowedFrom = EVENT_ALLOWED_FROM[requestedStatus];
       if (!allowedFrom.includes(current.status)) {
@@ -162,7 +173,8 @@ export async function PUT(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -284,7 +296,8 @@ export async function DELETE(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },

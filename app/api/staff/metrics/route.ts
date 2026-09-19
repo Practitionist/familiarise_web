@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -124,31 +125,37 @@ export async function GET() {
         Math.round((totalHours / recentResolvedTickets.length) * 10) / 10;
     }
 
-    return NextResponse.json({
-      supportMetrics: {
-        ticketsResolvedToday,
-        ticketsResolvedThisWeek,
-        ticketsResolvedThisMonth,
-        openTickets,
-        avgResponseTimeHours,
+    return NextResponse.json(
+      {
+        supportMetrics: {
+          ticketsResolvedToday,
+          ticketsResolvedThisWeek,
+          ticketsResolvedThisMonth,
+          openTickets,
+          avgResponseTimeHours,
+        },
+        userMetrics: {
+          usersHelpedThisWeek,
+          activeUsers,
+          newSignupsThisMonth,
+          totalUsers,
+        },
+        platformMetrics: {
+          totalAppointments,
+          pendingPayments: pendingAppointments,
+        },
       },
-      userMetrics: {
-        usersHelpedThisWeek,
-        activeUsers,
-        newSignupsThisMonth,
-        totalUsers,
-      },
-      platformMetrics: {
-        totalAppointments,
-        pendingPayments: pendingAppointments,
-      },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching staff analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch analytics" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

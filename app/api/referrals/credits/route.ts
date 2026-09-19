@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 import { getCreditHistory, getUserCredits } from "@/lib/referrals/service";
@@ -7,7 +8,10 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const [{ totalAvailable }, history] = await Promise.all([
@@ -15,18 +19,24 @@ export async function GET() {
       getCreditHistory(session.user.id),
     ]);
 
-    return NextResponse.json({
-      data: {
-        totalAvailable,
-        history,
+    return NextResponse.json(
+      {
+        data: {
+          totalAvailable,
+          history,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error fetching credits:", error);
     return NextResponse.json(
       { error: "Failed to fetch credits" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
@@ -31,13 +32,16 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json({
-      data: memberships.map((m) => ({
-        organizationId: m.organizationId,
-        orgName: m.organization.name,
-        role: m.role,
-      })),
-    });
+    return NextResponse.json(
+      {
+        data: memberships.map((m) => ({
+          organizationId: m.organizationId,
+          orgName: m.organization.name,
+          role: m.role,
+        })),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

@@ -12,6 +12,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { unsubscribe } from "@/lib/waitlist/service";
 import { getAppUrl } from "@/lib/url";
 
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest): Promise<Response> {
 
   // RFC 8058 wants a 200 regardless; mail clients treat anything else as a
   // broken unsubscribe and may report the sender.
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true }, { headers: NO_STORE_HEADERS });
 }
 
 function html(title: string, body: string, status: number): Response {
@@ -89,6 +90,12 @@ function html(title: string, body: string, status: number): Response {
     </div>
   </body>
 </html>`,
-    { status, headers: { "Content-Type": "text/html; charset=utf-8" } },
+    {
+      status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    },
   );
 }

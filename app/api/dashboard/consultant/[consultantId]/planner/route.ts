@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { Prisma } from "@prisma/client";
@@ -245,7 +246,7 @@ export async function GET(
     if (!consultantId) {
       return NextResponse.json(
         { error: "Consultant ID is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -276,7 +277,10 @@ export async function GET(
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
     // For Webinar (1:1 appointment) — `appointment.is.organizationId`.
@@ -480,10 +484,13 @@ export async function GET(
       participantCounts,
     };
 
-    return NextResponse.json({
-      data: plannerData,
-      success: true,
-    });
+    return NextResponse.json(
+      {
+        data: plannerData,
+        success: true,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -492,7 +499,7 @@ export async function GET(
     console.error("Error fetching planner data:", error);
     return NextResponse.json(
       { error: "Failed to fetch planner data" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

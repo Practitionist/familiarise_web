@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 /**
  * #775 — list the caller's outstanding CHARGE_MEMBER overage charges.
@@ -15,7 +16,10 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401, headers: NO_STORE_HEADERS },
+    );
   }
   const userId = session.user.id;
 
@@ -47,15 +51,18 @@ export async function GET() {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json({
-    charges: rows.map((r) => ({
-      id: r.id,
-      amountPaise: r.marginalPaise,
-      currency: r.currency,
-      status: r.chargeStatus,
-      programName: r.programAssignment.program.name,
-      orgName: r.programAssignment.program.contract.organization.name,
-      createdAt: r.createdAt,
-    })),
-  });
+  return NextResponse.json(
+    {
+      charges: rows.map((r) => ({
+        id: r.id,
+        amountPaise: r.marginalPaise,
+        currency: r.currency,
+        status: r.chargeStatus,
+        programName: r.programAssignment.program.name,
+        orgName: r.programAssignment.program.contract.organization.name,
+        createdAt: r.createdAt,
+      })),
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -24,7 +25,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       process.env.CRON_SECRET || process.env.VERCEL_CRON_SECRET;
 
     if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
     // The cron core is shared with the jobs/** entrypoint, which exits on
     // maintenance; this HTTP twin cannot exit, so it answers 503 instead.
@@ -43,27 +47,36 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     Sentry.logger.info("cron:mark-expired-recordings finished", {
       expiredCount,
     });
-    return NextResponse.json({
-      success: true,
-      expiredCount,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        expiredCount,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
     // skips with a 409 instead of double-running.
     if (error instanceof CronLockHeldError) {
-      return NextResponse.json({ error: error.message }, { status: 409 });
+      return NextResponse.json(
+        { error: error.message },
+        { status: 409, headers: NO_STORE_HEADERS },
+      );
     }
     if (error instanceof MaintenanceActiveError) {
       return NextResponse.json(
         { error: error.message, phase: error.phase },
-        { status: error.httpStatus },
+        { status: error.httpStatus, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(error, {
       tags: { subsystem: "cron", job: "mark-expired-recordings" },
     });
     streamLogger.error("Mark expired recordings cron failed", error);
-    return NextResponse.json({ error: "Cron job failed" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Cron job failed" },
+      { status: 500, headers: NO_STORE_HEADERS },
+    );
   }
 }
 

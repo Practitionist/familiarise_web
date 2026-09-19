@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
@@ -17,7 +18,10 @@ export async function GET(
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const { planId } = await params;
@@ -28,11 +32,20 @@ export async function GET(
     );
 
     if (result.status === "not_found")
-      return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Plan not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     if (result.status === "forbidden")
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
 
-    return NextResponse.json({ data: result.data });
+    return NextResponse.json(
+      { data: result.data },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -41,7 +54,7 @@ export async function GET(
     console.error("Error fetching webinar collaborators:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborators" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

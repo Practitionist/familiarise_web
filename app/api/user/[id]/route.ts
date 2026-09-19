@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { getUserDetails } from "@/lib/data/user-details";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { UserRole, Gender } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
@@ -36,21 +37,33 @@ export async function GET(
     const { id } = await params;
     const session = await getSession();
     if (!session || (session.user.id !== id && session.user.role !== "ADMIN")) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const user = await getUserDetails(id);
 
     if (!user) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "User not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({ data: user }, { status: 200 });
+    return NextResponse.json(
+      { data: user },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       {
         error:
@@ -58,7 +71,7 @@ export async function GET(
             ? error.message
             : "An error occurred while fetching the user",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -168,7 +181,10 @@ export async function PUT(
     return NextResponse.json({ data: updatedUser }, { status: 200 });
   } catch (error) {
     console.error("Error updating user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating the user" },
       { status: 500 },
@@ -197,7 +213,10 @@ export async function PATCH(
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error) {
     console.error("Error patching user professional background:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while updating professional background" },
       { status: 500 },
@@ -246,7 +265,9 @@ export async function DELETE(
       prisma.consultantProfile.findFirst({
         where: { userId: id },
         select: {
-          _count: { select: { earnings: true, payouts: true, tdsRecords: true } },
+          _count: {
+            select: { earnings: true, payouts: true, tdsRecords: true },
+          },
         },
       }),
     ]);
@@ -279,7 +300,10 @@ export async function DELETE(
     );
   } catch (error) {
     console.error("Error deleting user:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while deleting the user" },
       { status: 500 },

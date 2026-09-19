@@ -3,8 +3,12 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { validateTagName } from "@/utils/contentValidation";
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
+// Public taxonomy read (no session, no per-user data; varies by ?domainId=):
+// safe for shared caching.
 // ---------------------------------------------------------------------------
 // GET /api/user/content/tags?domainId={id}
 //
@@ -37,9 +41,12 @@ export async function GET(request: NextRequest) {
       orderBy: { name: "asc" },
     });
 
-    return NextResponse.json(tags);
+    return NextResponse.json(tags, { headers: PUBLIC_LIST_HEADERS });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "user" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "user" } },
+    );
     return apiError({ tag: "[Tags.GET]", error });
   }
 }
@@ -79,10 +86,7 @@ export async function POST(request: NextRequest) {
     // Validate tag name for format, gibberish, and profanity
     const validation = validateTagName(name);
     if (!validation.valid) {
-      return NextResponse.json(
-        { error: validation.error },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
     // Verify domain exists before upserting
@@ -90,10 +94,7 @@ export async function POST(request: NextRequest) {
       where: { id: domainId },
     });
     if (!domain) {
-      return NextResponse.json(
-        { error: "Domain not found" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "Domain not found" }, { status: 404 });
     }
 
     const tag = await prisma.tag.upsert({
@@ -102,6 +103,9 @@ export async function POST(request: NextRequest) {
       create: { name, domainId },
       select: { id: true, name: true, domainId: true },
     });
+
+    // The GET above is publicly cached: purge after the write commits.
+    revalidatePath("/api/user/content/tags");
 
     return NextResponse.json({ tag });
   } catch (error) {

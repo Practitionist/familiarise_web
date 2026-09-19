@@ -1,6 +1,7 @@
 import { RecordingConsentDecision } from "@prisma/client";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import { auth } from "@/lib/auth";
@@ -36,7 +37,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -45,10 +46,12 @@ export async function GET(
     if (!access.hasAccess) {
       return NextResponse.json(
         { error: access.message },
-        { status: access.reason === "not_found" ? 404 : 403 },
+        {
+          status: access.reason === "not_found" ? 404 : 403,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
-
 
     const notice = await getRecordingNotice(
       access.meetingId,
@@ -56,7 +59,9 @@ export async function GET(
       access.appointment,
     );
 
-    return NextResponse.json(notice);
+    return NextResponse.json(notice, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
     reportSentryError(error, {
       subsystem: "stream",
@@ -64,7 +69,7 @@ export async function GET(
     });
     return NextResponse.json(
       { error: "Could not load the recording notice" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -98,7 +103,6 @@ export async function POST(
         { status: 400 },
       );
     }
-
 
     const appointment = access.appointment;
     const notice = await getRecordingNotice(

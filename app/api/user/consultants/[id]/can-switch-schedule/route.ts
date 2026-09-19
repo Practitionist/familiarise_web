@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { checkActiveAppointments } from "../../utils/consultant-appointments";
 
 import { getSession } from "@/lib/auth-server";
@@ -15,7 +16,10 @@ export async function GET(
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const { id: consultantId } = await params;
@@ -29,34 +33,43 @@ export async function GET(
     if (!consultant) {
       return NextResponse.json(
         { error: "Consultant not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     // Only the owner may read their booking-load pre-flight; the count leaks
     // how busy a consultant is.
     if (consultant.userId !== session.user.id) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
     }
 
     // Check for active appointments using shared utility
     const activeAppointments = await checkActiveAppointments(consultantId);
 
     if (activeAppointments.hasActive) {
-      return NextResponse.json({
-        canSwitch: false,
-        reason: `Cannot switch schedule type while you have active appointments`,
-        details: activeAppointments.details,
-        breakdown: {
-          ...activeAppointments.breakdown,
-          total: activeAppointments.total,
+      return NextResponse.json(
+        {
+          canSwitch: false,
+          reason: `Cannot switch schedule type while you have active appointments`,
+          details: activeAppointments.details,
+          breakdown: {
+            ...activeAppointments.breakdown,
+            total: activeAppointments.total,
+          },
         },
-      });
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({
-      canSwitch: true,
-      currentScheduleType: consultant.scheduleType,
-    });
+    return NextResponse.json(
+      {
+        canSwitch: true,
+        currentScheduleType: consultant.scheduleType,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -65,7 +78,7 @@ export async function GET(
     console.error("Error checking schedule switch eligibility:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

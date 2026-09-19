@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { SystemJobStatus, Prisma } from "@prisma/client";
 
@@ -80,22 +81,28 @@ export async function GET(req: NextRequest) {
       errorLog: execution.errorLog,
     }));
 
-    return NextResponse.json({
-      executions: formattedExecutions,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        executions: formattedExecutions,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     console.error("Error fetching job executions:", error);
     return NextResponse.json(
       { error: "Failed to fetch job executions" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

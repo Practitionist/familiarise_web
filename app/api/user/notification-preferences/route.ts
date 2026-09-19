@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { z } from "zod";
 
@@ -31,24 +32,30 @@ export async function GET() {
             updates: false,
           },
         },
-        { status: 200 },
+        { status: 200, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json({
-      data: {
-        allNotifications: prefs.allNotifications,
-        mentions: prefs.mentions,
-        directMessages: prefs.directMessages,
-        updates: prefs.updates,
+    return NextResponse.json(
+      {
+        data: {
+          allNotifications: prefs.allNotifications,
+          mentions: prefs.mentions,
+          directMessages: prefs.directMessages,
+          updates: prefs.updates,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error fetching notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch notification preferences" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -103,7 +110,10 @@ export async function PUT(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error updating notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to update notification preferences" },

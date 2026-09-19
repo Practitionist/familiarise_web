@@ -10,6 +10,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma, { type Tx } from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -103,7 +104,7 @@ export async function GET(
   if (!access.org.canSponsor) {
     return NextResponse.json(
       { error: "Organization does not sponsor programs" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -124,12 +125,18 @@ export async function GET(
     },
   });
   if (!program) {
-    return NextResponse.json({ error: "Program not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Program not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
   // Surface the in-use lock so the edit dialog can disable money fields
   // without a second round-trip (#777 §B).
   const { locked } = await getProgramLockState(programId);
-  return NextResponse.json({ program: { ...program, locked } });
+  return NextResponse.json(
+    { program: { ...program, locked } },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 // TODO(#1332 server-actions): kept as a Route Handler + useMutation to match the

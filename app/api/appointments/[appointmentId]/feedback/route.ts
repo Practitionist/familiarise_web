@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -119,10 +120,13 @@ export async function GET(
       // A provider could otherwise infer a rater from ordering on a group call.
       orderBy: { createdAt: "asc" },
     });
-    return NextResponse.json({
-      data: feedback,
-      rateableSlotIds: rateable.map((s) => s.id),
-    });
+    return NextResponse.json(
+      {
+        data: feedback,
+        rateableSlotIds: rateable.map((s) => s.id),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

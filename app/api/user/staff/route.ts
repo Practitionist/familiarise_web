@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import bcrypt from "bcrypt";
@@ -23,15 +24,8 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const {
-      email,
-      password,
-      name,
-      phone,
-      address,
-      department,
-      position,
-    } = body;
+    const { email, password, name, phone, address, department, position } =
+      body;
 
     // Basic validation
     if (!email || !password || !name) {
@@ -87,7 +81,10 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("Error creating staff:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     // Provide a generic error message
     return NextResponse.json(
       { message: "Internal Server Error" },
@@ -120,13 +117,18 @@ export async function GET(_request: NextRequest) {
       },
     });
 
-    return NextResponse.json(staffUsers);
+    return NextResponse.json(staffUsers, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
     console.error("Failed to fetch staff users:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

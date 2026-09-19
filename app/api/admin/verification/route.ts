@@ -9,6 +9,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { ProfileVerificationStatus } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getVerificationQueue } from "@/lib/api/operators";
@@ -27,13 +28,18 @@ export async function GET(req: NextRequest) {
       limit: parseInt(searchParams.get("limit") || "20"),
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching verifications:", error);
     return NextResponse.json(
       { error: "Failed to fetch verifications" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

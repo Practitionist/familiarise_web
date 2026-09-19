@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
@@ -169,26 +170,29 @@ export async function GET(req: NextRequest) {
         statusCounts.find((s) => s.status === "ESCALATED")?._count.id || 0,
     };
 
-    return NextResponse.json({
-      reports: formattedReports,
-      counts,
-      // #1270 — banning is ADMIN-only (`users.moderate`), but the queue showed
-      // every moderator a Ban button that answered 403. Ship the capability so
-      // the UI can offer what the caller may actually do.
-      capabilities: {
-        canModerateUsers: hasBackofficePermission(
-          auth.session.user.role as UserRole,
-          "users.moderate",
-        ),
+    return NextResponse.json(
+      {
+        reports: formattedReports,
+        counts,
+        // #1270 — banning is ADMIN-only (`users.moderate`), but the queue showed
+        // every moderator a Ban button that answered 403. Ship the capability so
+        // the UI can offer what the caller may actually do.
+        capabilities: {
+          canModerateUsers: hasBackofficePermission(
+            auth.session.user.role as UserRole,
+            "users.moderate",
+          ),
+        },
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasMore: offset + limit < total,
+        },
       },
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + limit < total,
-      },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -197,7 +201,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching moderation reports:", error);
     return NextResponse.json(
       { error: "Failed to fetch moderation reports" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

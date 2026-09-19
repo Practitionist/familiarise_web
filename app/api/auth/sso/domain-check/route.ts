@@ -22,6 +22,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
@@ -33,17 +34,25 @@ const QuerySchema = z.object({
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
+// Pre-auth enumeration surface keyed by email domain: answers must never sit
+// in the shared cache (cross-user SSO routing + tenant enumeration).
+const noStoreJson = <T>(body: T, status = 200) =>
+  NextResponse.json(body, {
+    status,
+    headers: NO_STORE_HEADERS,
+  });
+
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const parsed = QuerySchema.safeParse({
     email: url.searchParams.get("email"),
   });
   if (!parsed.success) {
-    return NextResponse.json({ enforceSSO: false });
+    return noStoreJson({ enforceSSO: false });
   }
 
   const domain = parsed.data.email.split("@")[1]?.toLowerCase();
-  if (!domain) return NextResponse.json({ enforceSSO: false });
+  if (!domain) return noStoreJson({ enforceSSO: false });
 
   // Single source of truth for "is this domain enforced + by which org?"
   // (audit B.6). Returns null when any precondition fails: no verified
@@ -53,7 +62,7 @@ export async function GET(req: NextRequest) {
   // issue #673.
   const enforced = await lookupEnforcedOrg(prisma, domain);
   if (!enforced) {
-    return NextResponse.json({ enforceSSO: false });
+    return noStoreJson({ enforceSSO: false });
   }
 
   // Provider lookup is scoped to BOTH (domain, organizationId). The
@@ -67,7 +76,7 @@ export async function GET(req: NextRequest) {
     select: { providerId: true, samlConfig: true, oidcConfig: true },
   });
   if (!provider) {
-    return NextResponse.json({ enforceSSO: false });
+    return noStoreJson({ enforceSSO: false });
   }
 
   // Pre-flight integrity check on the stored cert. Legacy SsoProvider rows
@@ -85,7 +94,7 @@ export async function GET(req: NextRequest) {
     try {
       const parsed = JSON.parse(provider.samlConfig) as { cert?: string };
       if (!parsed.cert || !validateSamlCert(parsed.cert)) {
-        return NextResponse.json({
+        return noStoreJson({
           enforceSSO: true,
           providerMisconfigured: true,
           errorCode: "SSO_PROVIDER_MISCONFIGURED",
@@ -93,8 +102,11 @@ export async function GET(req: NextRequest) {
       }
     } catch (error) {
       // Stored config is not parseable JSON — also a misconfiguration.
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
-      return NextResponse.json({
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "auth" } },
+      );
+      return noStoreJson({
         enforceSSO: true,
         providerMisconfigured: true,
         errorCode: "SSO_PROVIDER_MISCONFIGURED",
@@ -116,7 +128,7 @@ export async function GET(req: NextRequest) {
   // first-timers (relative-path XSS-guarded there). The auto-joined membership
   // is committed in the same customSession request, so the org layout resolves.
   const orgHome = `/dashboard/organization/${enforced.organizationId}/home`;
-  return NextResponse.json({
+  return noStoreJson({
     enforceSSO: true,
     organizationName: org?.name ?? null,
     ssoBody: {

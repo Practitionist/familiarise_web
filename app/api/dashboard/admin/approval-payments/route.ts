@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -17,10 +18,16 @@ export async function GET() {
   try {
     const session = await getSession(true);
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
     if (session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
     }
 
     // Three fully independent reads — run concurrently instead of paying the
@@ -276,17 +283,20 @@ export async function GET() {
       );
     });
 
-    return NextResponse.json({
-      approvalPayments,
-      count: approvalPayments.length,
-      expiredCount: approvalPayments.filter((p) => p.isExpired).length,
-      expiringSoonCount: approvalPayments.filter(
-        (p) => p.isExpiringSoon && !p.isExpired,
-      ).length,
-      activeCount: approvalPayments.filter(
-        (p) => !p.isExpired && !p.isExpiringSoon,
-      ).length,
-    });
+    return NextResponse.json(
+      {
+        approvalPayments,
+        count: approvalPayments.length,
+        expiredCount: approvalPayments.filter((p) => p.isExpired).length,
+        expiringSoonCount: approvalPayments.filter(
+          (p) => p.isExpiringSoon && !p.isExpired,
+        ).length,
+        activeCount: approvalPayments.filter(
+          (p) => !p.isExpired && !p.isExpiringSoon,
+        ).length,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -299,7 +309,7 @@ export async function GET() {
         approvalPayments: [],
         count: 0,
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

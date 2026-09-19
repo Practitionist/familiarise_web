@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
@@ -82,7 +83,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid preview params", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -91,7 +92,10 @@ export async function GET(
     parsed.data.planId,
   );
   if (pricePaise == null) {
-    return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Plan not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
 
   const result = await previewOverageForBooking({
@@ -102,5 +106,7 @@ export async function GET(
     engagementsConsumed: parsed.data.sessions,
   });
 
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: NO_STORE_HEADERS,
+  });
 }

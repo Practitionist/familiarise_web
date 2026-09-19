@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
@@ -65,16 +66,24 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     });
 
     if (!payment) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Payment not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json(payment);
+    return NextResponse.json(payment, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin payment details error:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

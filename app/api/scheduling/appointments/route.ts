@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
     if (!allowed) {
       return NextResponse.json(
         { error: "Forbidden: must filter by your own profile" },
-        { status: 403 },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
   }
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (
@@ -106,19 +107,19 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (webinarStatus && !validEventStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (classStatus && !validEventStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -144,7 +145,10 @@ export async function GET(request: NextRequest) {
   if (!scopeResolution.ok) {
     return NextResponse.json(
       { error: scopeResolution.message, code: scopeResolution.code },
-      { status: scopeResolution.status },
+      {
+        status: scopeResolution.status,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
   try {
@@ -158,7 +162,7 @@ export async function GET(request: NextRequest) {
     if (!windowParse.success) {
       return NextResponse.json(
         { error: "window must be 'recent' or 'all'", code: "INVALID_WINDOW" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
     const window = windowParse.data;
@@ -204,15 +208,18 @@ export async function GET(request: NextRequest) {
         ? computeWeeklyConfirmedCallCounts(appointments, subscriptionId)
         : undefined;
 
-    return NextResponse.json({
-      data: appointments,
-      ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
-    });
+    return NextResponse.json(
+      {
+        data: appointments,
+        ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

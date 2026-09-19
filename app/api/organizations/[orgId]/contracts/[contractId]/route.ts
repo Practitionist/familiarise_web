@@ -11,6 +11,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -79,13 +80,19 @@ export async function GET(
     },
   });
   if (!contract) {
-    return NextResponse.json({ error: "Contract not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Contract not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
   // Surface the in-use lock so the detail/edit drawer can disable term
   // fields (effective dates, payment terms) without a second round-trip
   // (#777 §B). autoRenew stays editable regardless.
   const { locked } = await getContractLockState(contractId, contract.status);
-  return NextResponse.json({ contract: { ...contract, locked } });
+  return NextResponse.json(
+    { contract: { ...contract, locked } },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 // TODO(#1332 server-actions): kept as a Route Handler + useMutation to match the

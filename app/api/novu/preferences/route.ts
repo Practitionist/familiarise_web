@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
 import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
@@ -13,7 +14,10 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const preferences = await prisma.notificationPreference.findUnique({
@@ -22,38 +26,46 @@ export async function GET() {
 
     // Return defaults if no preferences exist yet
     if (!preferences) {
-      return NextResponse.json({
-        allNotifications: true,
-        inAppEnabled: true,
-        emailEnabled: true,
-        pushEnabled: false,
-        mentions: false,
-        directMessages: false,
-        updates: false,
-        appointmentReminders: true,
-        paymentNotifications: true,
-        supportUpdates: true,
-        feedbackAlerts: true,
-        trialNotifications: true,
-        subscriptionAlerts: true,
-        marketingEmails: false,
-        orgBillingAlerts: true,
-        orgMembershipAlerts: true,
-        orgProgramAlerts: true,
-        quietHoursEnabled: false,
-        quietHoursStart: null,
-        quietHoursEnd: null,
-        quietHoursTimezone: null,
-      });
+      return NextResponse.json(
+        {
+          allNotifications: true,
+          inAppEnabled: true,
+          emailEnabled: true,
+          pushEnabled: false,
+          mentions: false,
+          directMessages: false,
+          updates: false,
+          appointmentReminders: true,
+          paymentNotifications: true,
+          supportUpdates: true,
+          feedbackAlerts: true,
+          trialNotifications: true,
+          subscriptionAlerts: true,
+          marketingEmails: false,
+          orgBillingAlerts: true,
+          orgMembershipAlerts: true,
+          orgProgramAlerts: true,
+          quietHoursEnabled: false,
+          quietHoursStart: null,
+          quietHoursEnd: null,
+          quietHoursTimezone: null,
+        },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json(preferences);
+    return NextResponse.json(preferences, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to fetch notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch preferences" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -112,7 +124,10 @@ export async function PUT(req: NextRequest) {
 
     return NextResponse.json(updated);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "notifications" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "notifications" } },
+    );
     console.error("Failed to update notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to update preferences" },

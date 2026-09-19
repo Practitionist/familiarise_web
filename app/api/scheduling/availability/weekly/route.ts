@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { coalesceAndResolve } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { DayOfWeek, Prisma } from "@prisma/client";
@@ -22,7 +23,10 @@ import {
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
+import { revalidatePath } from "next/cache";
 
+// Session-free read keyed by ?consultantProfileId= (carries only the public
+// consultant name, no per-user data): safe for shared caching.
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -78,7 +82,7 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      { status: 200, headers: PUBLIC_LIST_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching weekly slots:", error);
@@ -227,7 +231,10 @@ export async function POST(req: NextRequest) {
     // coalescing rewrites the consultant's whole weekly set as
     // delete-then-recreate, so a half-applied rewrite on the bare client would
     // leave them with no availability at all (#1320).
-    return await withSerializableRetry(() =>
+    //
+    // The response is captured (not returned inline) so the publicly cached
+    // GET above is purged only AFTER the transaction commits.
+    const response = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
           // Cross-midnight-aware overlap check
@@ -290,6 +297,10 @@ export async function POST(req: NextRequest) {
         },
       ),
     );
+    if (response.status === 201) {
+      revalidatePath("/api/scheduling/availability/weekly");
+    }
+    return response;
   } catch (error) {
     console.error("Error creating weekly slot:", error);
     Sentry.captureException(

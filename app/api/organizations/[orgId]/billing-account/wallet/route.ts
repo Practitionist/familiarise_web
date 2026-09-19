@@ -12,6 +12,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -54,7 +55,7 @@ export async function GET(
   if (!ba) {
     return NextResponse.json(
       { error: "Organization does not have a BillingAccount" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
   if (ba.fundingSource !== "WALLET") {
@@ -63,7 +64,7 @@ export async function GET(
         error: "Wallet is only available for WALLET-funded accounts",
         currentFundingSource: ba.fundingSource,
       },
-      { status: 409 },
+      { status: 409, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -74,7 +75,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid pagination", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const { page, perPage } = parsed.data;
@@ -154,16 +155,19 @@ export async function GET(
     journalBalance - newerDelta,
   );
 
-  return NextResponse.json({
-    billingAccount: {
-      id: ba.id,
-      currency: ba.currency,
-      walletBalance: ba.walletBalance ?? 0,
-      minBalancePaise: ba.minBalancePaise,
-      autoTopUpEnabled: ba.autoTopUpEnabled,
-      autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
+  return NextResponse.json(
+    {
+      billingAccount: {
+        id: ba.id,
+        currency: ba.currency,
+        walletBalance: ba.walletBalance ?? 0,
+        minBalancePaise: ba.minBalancePaise,
+        autoTopUpEnabled: ba.autoTopUpEnabled,
+        autoTopUpAmountPaise: ba.autoTopUpAmountPaise,
+      },
+      ledger,
+      meta: { total, page, perPage },
     },
-    ledger,
-    meta: { total, page, perPage },
-  });
+    { headers: NO_STORE_HEADERS },
+  );
 }

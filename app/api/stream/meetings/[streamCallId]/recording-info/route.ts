@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -31,7 +32,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const { streamCallId } = await params;
@@ -113,7 +117,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!meeting) {
       return NextResponse.json(
         { error: "Meeting session not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -214,7 +218,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     if (!hasAccess) {
-      return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Access denied" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
     }
 
     if (viaOperatorGrant) {
@@ -238,13 +245,16 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // this can no longer disagree with the ownership check beside it.
     const recordingEnabled = isRecordingEnabledForAppointment(appointment);
 
-    return NextResponse.json({
-      meetingId: meeting.id,
-      recordingEnabled,
-      isRecording: meeting.isRecording,
-      recordingStartedAt: meeting.recordingStartedAt,
-      recordingStartedBy: meeting.recordingStartedBy,
-    });
+    return NextResponse.json(
+      {
+        meetingId: meeting.id,
+        recordingEnabled,
+        isRecording: meeting.isRecording,
+        recordingStartedAt: meeting.recordingStartedAt,
+        recordingStartedBy: meeting.recordingStartedBy,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -253,7 +263,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting meeting recording info:", error);
     return NextResponse.json(
       { error: "Failed to get recording info" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

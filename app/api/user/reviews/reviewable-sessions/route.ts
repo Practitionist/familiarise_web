@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest) {
     // Not having a consultee profile is not an error — it just means there is
     // nothing to review, and the card renders nothing.
     if (!consulteeProfileId) {
-      return NextResponse.json({ data: [] });
+      return NextResponse.json({ data: [] }, { headers: NO_STORE_HEADERS });
     }
 
     // #705 — the profile page asks about a CONSULTANT, not an appointment:
@@ -63,13 +64,16 @@ export async function GET(req: NextRequest) {
       // Filtered in the QUERY, not after it. `loadReviewableAppointments` caps
       // at the 50 newest bookings, so narrowing afterwards silently returned
       // nothing to anyone whose session with this expert sat outside that page.
-      return NextResponse.json({
-        data: await listReviewableSessions(
-          consulteeProfileId,
-          session.user.id,
-          consultantProfileId,
-        ),
-      });
+      return NextResponse.json(
+        {
+          data: await listReviewableSessions(
+            consulteeProfileId,
+            session.user.id,
+            consultantProfileId,
+          ),
+        },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     if (appointmentId) {
@@ -78,12 +82,18 @@ export async function GET(req: NextRequest) {
         session.user.id,
         appointmentId,
       );
-      return NextResponse.json({ data: one ? [one] : [] });
+      return NextResponse.json(
+        { data: one ? [one] : [] },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({
-      data: await listReviewableSessions(consulteeProfileId, session.user.id),
-    });
+    return NextResponse.json(
+      {
+        data: await listReviewableSessions(consulteeProfileId, session.user.id),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (cause) {
     return supportError({
       status: 500,

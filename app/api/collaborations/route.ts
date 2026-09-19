@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
@@ -16,7 +17,10 @@ export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const consultantProfile = await prisma.consultantProfile.findFirst({
@@ -24,14 +28,17 @@ export async function GET(request: NextRequest) {
     });
 
     if (!consultantProfile) {
-      return NextResponse.json({
-        data: {
-          webinarCollaborations: [],
-          classCollaborations: [],
-          hostedWebinarPlans: [],
-          hostedClassPlans: [],
+      return NextResponse.json(
+        {
+          data: {
+            webinarCollaborations: [],
+            classCollaborations: [],
+            hostedWebinarPlans: [],
+            hostedClassPlans: [],
+          },
         },
-      });
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
     const { searchParams } = request.nextUrl;
@@ -50,7 +57,10 @@ export async function GET(request: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
 
@@ -59,23 +69,29 @@ export async function GET(request: NextRequest) {
       getHostedCollaborations(consultantProfile.id, scopeResolution.scope),
     ]);
 
-    return NextResponse.json({
-      data: {
-        ...collaborations,
-        hostedWebinarPlans: hosted.webinarPlans,
-        hostedClassPlans: hosted.classPlans,
-        hostUser: {
-          name: session.user.name ?? null,
-          image: session.user.image ?? null,
+    return NextResponse.json(
+      {
+        data: {
+          ...collaborations,
+          hostedWebinarPlans: hosted.webinarPlans,
+          hostedClassPlans: hosted.classPlans,
+          hostUser: {
+            name: session.user.name ?? null,
+            image: session.user.image ?? null,
+          },
         },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "collaborations" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "collaborations" } },
+    );
     console.error("Error fetching collaborations:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborations" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
@@ -80,19 +81,25 @@ export async function GET(req: NextRequest) {
       prisma.payment.count({ where }),
     ]);
 
-    return NextResponse.json({
-      payments,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        payments,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Admin payments list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch payments" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

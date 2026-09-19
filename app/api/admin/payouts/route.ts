@@ -10,6 +10,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import {
   classifyError,
@@ -17,10 +18,7 @@ import {
 } from "@/lib/errors/classification/payment-error-classification";
 import { PayoutStatus } from "@prisma/client";
 import { createPayoutBatch } from "@/lib/payments/payouts";
-import {
-  requireAdminAuth,
-  requireBackofficeSurface,
-} from "@/lib/auth-helpers";
+import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
 
 /**
@@ -42,13 +40,18 @@ export async function GET(req: NextRequest) {
       offset: parseInt(searchParams.get("offset") || "0"),
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payouts" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -99,7 +102,10 @@ export async function POST(req: NextRequest) {
     logClassifiedError("Payouts", classified, error);
 
     if (classified.httpStatus >= 500) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "admin" } },
+      );
     }
 
     return NextResponse.json(

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { validateReferralCode } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
 import { Ratelimit } from "@upstash/ratelimit";
@@ -27,7 +28,10 @@ export async function GET(
         { error: "Too many requests. Please try again later." },
         {
           status: 429,
-          headers: { "X-RateLimit-Remaining": String(remaining) },
+          headers: {
+            "X-RateLimit-Remaining": String(remaining),
+            "Cache-Control": "no-store",
+          },
         },
       );
     }
@@ -37,16 +41,26 @@ export async function GET(
     if (!code) {
       return NextResponse.json(
         { error: "Code parameter is required" },
-        { status: 400 },
+        {
+          status: 400,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
 
     const referralCode = await validateReferralCode(code);
 
     if (!referralCode) {
-      return NextResponse.json({
-        data: { valid: false, referrerName: null },
-      });
+      return NextResponse.json(
+        {
+          data: { valid: false, referrerName: null },
+        },
+        {
+          // Brute-forceable lookup that names a user: rate-limited and never
+          // shared-cached.
+          headers: NO_STORE_HEADERS,
+        },
+      );
     }
 
     // Fetch referrer's name for the signup page banner
@@ -55,21 +69,32 @@ export async function GET(
       select: { name: true },
     });
 
-    return NextResponse.json({
-      data: {
-        valid: true,
-        referrerName: user?.name ?? null,
-        refereeReward: referralCode.refereeReward,
-        // FIX #437: Credits are now given after first booking, not on signup
-        rewardTiming: "after_first_booking",
+    return NextResponse.json(
+      {
+        data: {
+          valid: true,
+          referrerName: user?.name ?? null,
+          refereeReward: referralCode.refereeReward,
+          // FIX #437: Credits are now given after first booking, not on signup
+          rewardTiming: "after_first_booking",
+        },
       },
-    });
+      {
+        headers: NO_STORE_HEADERS,
+      },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "referrals" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "referrals" } },
+    );
     console.error("Error checking referral code:", error);
     return NextResponse.json(
       { error: "Failed to check referral code" },
-      { status: 500 },
+      {
+        status: 500,
+        headers: NO_STORE_HEADERS,
+      },
     );
   }
 }

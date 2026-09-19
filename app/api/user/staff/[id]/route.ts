@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { requireApiAuth, requireAdminAuth } from "@/lib/auth-helpers";
@@ -23,10 +24,7 @@ async function requireSelfOrAdmin(staffProfileId: string) {
   // Same 403 whether the profile is someone else's or absent — don't
   // confirm that an id exists to a caller who may not read it.
   return {
-    error: NextResponse.json(
-      { error: "Forbidden" },
-      { status: 403 },
-    ),
+    error: NextResponse.json({ error: "Forbidden" }, { status: 403 }),
   };
 }
 
@@ -57,16 +55,22 @@ export async function GET(
     if (!staffProfile) {
       return NextResponse.json(
         { error: "Staff profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json({ data: staffProfile }, { status: 200 });
+    return NextResponse.json(
+      { data: staffProfile },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     if (error instanceof Error) {
       console.error("Error: ", error.stack);
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error:
@@ -74,7 +78,7 @@ export async function GET(
             ? error.message
             : "Failed to get staff profile",
       },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -117,7 +121,10 @@ export async function POST(
     return NextResponse.json(createdStaffProfile, { status: 201 });
   } catch (error) {
     console.error("Error creating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while creating the staff profile",
@@ -167,7 +174,10 @@ export async function PATCH(
     return NextResponse.json(updatedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -301,7 +311,10 @@ export async function PUT(
     return NextResponse.json(freshStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error updating staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while updating the staff profile",
@@ -345,7 +358,10 @@ export async function DELETE(
     return NextResponse.json(deletedStaffProfile, { status: 200 });
   } catch (error) {
     console.error("Error deleting staff profile:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "staff" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "staff" } },
+    );
     return NextResponse.json(
       {
         error: "An unexpected error occurred while deleting the staff profile",

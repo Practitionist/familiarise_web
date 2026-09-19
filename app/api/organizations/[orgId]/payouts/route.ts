@@ -20,6 +20,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -39,11 +40,7 @@ const PayoutStatusSchema = z.enum([
   "CANCELLED",
 ]);
 
-const PaymentGatewaySchema = z.enum([
-  "STRIPE",
-  "RAZORPAY",
-  "CARD",
-]);
+const PaymentGatewaySchema = z.enum(["STRIPE", "RAZORPAY", "CARD"]);
 
 const CreatePayoutBodySchema = z
   .object({
@@ -66,7 +63,11 @@ const QuerySchema = z.object({
 
 // In-flight = held/reserved but not yet disbursed (mirrors the client's
 // former "Pending" card definition).
-const IN_FLIGHT_STATUSES: PayoutStatus[] = ["PENDING", "APPROVED", "PROCESSING"];
+const IN_FLIGHT_STATUSES: PayoutStatus[] = [
+  "PENDING",
+  "APPROVED",
+  "PROCESSING",
+];
 
 export async function GET(
   req: NextRequest,
@@ -79,7 +80,7 @@ export async function GET(
   if (!access.org.canHost) {
     return NextResponse.json(
       { error: "Organization does not host — no payouts to list" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -90,7 +91,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsedQuery.data;
@@ -114,8 +115,8 @@ export async function GET(
   // (ignores status/date filters) so the summary cards don't shift as the
   // table is filtered/paged — matching the client's original "stay on the
   // full set" intent.
-  const [payouts, total, paidAgg, pendingAgg, statusCounts] =
-    await Promise.all([
+  const [payouts, total, paidAgg, pendingAgg, statusCounts] = await Promise.all(
+    [
       prisma.organizationPayout.findMany({
         where,
         orderBy: { createdAt: "desc" },
@@ -143,27 +144,31 @@ export async function GET(
         where: { organizationId: orgId },
         _count: { id: true },
       }),
-    ]);
+    ],
+  );
 
   const counts = Object.fromEntries(
     statusCounts.map((s) => [s.status, s._count.id]),
   ) as Partial<Record<PayoutStatus, number>>;
   const totalCount = statusCounts.reduce((sum, s) => sum + s._count.id, 0);
 
-  return NextResponse.json({
-    data: payouts,
-    pagination: {
-      total,
-      limit: q.limit,
-      offset: q.offset,
-      hasMore: q.offset + q.limit < total,
+  return NextResponse.json(
+    {
+      data: payouts,
+      pagination: {
+        total,
+        limit: q.limit,
+        offset: q.offset,
+        hasMore: q.offset + q.limit < total,
+      },
+      stats: {
+        totalPaidPaise: sumPaise(paidAgg._sum.amountPaise),
+        pendingPaise: sumPaise(pendingAgg._sum.amountPaise),
+        counts: { ...counts, total: totalCount },
+      },
     },
-    stats: {
-      totalPaidPaise: sumPaise(paidAgg._sum.amountPaise),
-      pendingPaise: sumPaise(pendingAgg._sum.amountPaise),
-      counts: { ...counts, total: totalCount },
-    },
-  });
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 export async function POST(
@@ -246,11 +251,13 @@ export async function POST(
     // payout account, no READY earnings, etc.), so the existing branch
     // already maps it correctly.
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     throw err;
   }
 }

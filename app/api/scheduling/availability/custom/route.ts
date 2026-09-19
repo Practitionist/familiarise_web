@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import { coalesceAndResolveCustom } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
@@ -11,7 +12,10 @@ import {
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
+import { revalidatePath } from "next/cache";
 
+// Session-free read keyed by ?consultantProfileId= (carries only the public
+// consultant name, no per-user data): safe for shared caching.
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -84,7 +88,7 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      { status: 200, headers: PUBLIC_LIST_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -165,7 +169,10 @@ export async function POST(req: NextRequest) {
     // Overlap check, write and coalescing share one Serializable transaction:
     // coalescing deletes the folded rows and extends the survivor, so on the
     // bare client a failure between those writes destroys availability (#1320).
-    return await withSerializableRetry(() =>
+    //
+    // The response is captured (not returned inline) so the publicly cached
+    // GET above is purged only AFTER the transaction commits.
+    const response = await withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
           // Check for overlapping slots
@@ -232,6 +239,10 @@ export async function POST(req: NextRequest) {
         },
       ),
     );
+    if (response.status === 201) {
+      revalidatePath("/api/scheduling/availability/custom");
+    }
+    return response;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

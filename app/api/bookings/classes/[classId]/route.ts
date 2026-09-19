@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   requireApiAuth,
   isPrivileged,
@@ -44,7 +45,8 @@ export async function GET(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -52,19 +54,28 @@ export async function GET(
       },
     });
 
-    return NextResponse.json({ data: classData }, { status: 200 });
+    return NextResponse.json(
+      { data: classData },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2025"
     ) {
-      return NextResponse.json({ error: "Class not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Class not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -90,7 +101,9 @@ export async function PUT(
     // CLASS_EVENT_ALLOWED_FROM exists to prevent. The allowed-from set rides
     // the UPDATE's WHERE below, so a racing transition matches zero rows.
     const requestedStatus =
-      typeof body.status === "string" ? (body.status as ClassStatus) : undefined;
+      typeof body.status === "string"
+        ? (body.status as ClassStatus)
+        : undefined;
     if (
       requestedStatus &&
       !Object.values(ClassStatus).includes(requestedStatus)
@@ -161,7 +174,8 @@ export async function PUT(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -187,7 +201,10 @@ export async function PUT(
         { status: statusWriteAttempted ? 409 : 404 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
@@ -212,7 +229,11 @@ export async function DELETE(
     // Use DB-side existence checks to avoid loading all appointments into memory.
     const classOwnershipFilter = isPrivileged(session.user.role)
       ? {}
-      : { classPlan: { consultantProfileId: session.user.consultantProfileId ?? "__none__" } };
+      : {
+          classPlan: {
+            consultantProfileId: session.user.consultantProfileId ?? "__none__",
+          },
+        };
     const now = new Date();
 
     const classExists = await prisma.class.findUnique({
@@ -226,13 +247,20 @@ export async function DELETE(
     const hasActivePayments = !!(await prisma.class.findFirst({
       where: {
         id: classId,
-        appointment: { payment: { some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } } } },
+        appointment: {
+          payment: {
+            some: { paymentStatus: { notIn: ["FAILED", "EXPIRED"] } },
+          },
+        },
       },
       select: { id: true },
     }));
     if (hasActivePayments) {
       return NextResponse.json(
-        { error: "Cannot delete class with active payments. Cancel or refund first." },
+        {
+          error:
+            "Cannot delete class with active payments. Cancel or refund first.",
+        },
         { status: 400 },
       );
     }
@@ -283,7 +311,8 @@ export async function DELETE(
         appointment: {
           include: {
             occurrences: {
-              include: { // Changed from consulteeProfile to user
+              include: {
+                // Changed from consulteeProfile to user
               },
             },
           },
@@ -299,7 +328,10 @@ export async function DELETE(
     ) {
       return NextResponse.json({ error: "Class not found" }, { status: 404 });
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },

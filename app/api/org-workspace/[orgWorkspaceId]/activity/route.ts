@@ -21,6 +21,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
@@ -41,7 +42,10 @@ export async function GET(
   // `orgWorkspaceProfileId` is part of the customSession-augmented user
   // type (lib/auth.ts:522) — direct access is type-safe.
   if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
 
   const url = new URL(req.url);
@@ -51,7 +55,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsed.data;
@@ -64,5 +68,7 @@ export async function GET(
     q.cursor ?? null,
     q.limit,
   );
-  return NextResponse.json(result);
+  return NextResponse.json(result, {
+    headers: NO_STORE_HEADERS,
+  });
 }

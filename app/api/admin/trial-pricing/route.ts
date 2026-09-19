@@ -10,6 +10,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
@@ -27,12 +28,15 @@ export async function GET() {
 
   try {
     const minTrialPriceInPaise = await getMinTrialPriceInPaise();
-    return NextResponse.json({ minTrialPriceInPaise });
+    return NextResponse.json(
+      { minTrialPriceInPaise },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(error);
     return NextResponse.json(
       { error: "Failed to read trial pricing config" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

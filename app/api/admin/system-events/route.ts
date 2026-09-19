@@ -17,6 +17,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { Prisma, SystemEventSeverity } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsed.data;
@@ -69,10 +70,13 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({
-    data: events.map((e) => ({
-      ...e,
-      createdAt: e.createdAt.toISOString(),
-    })),
-  });
+  return NextResponse.json(
+    {
+      data: events.map((e) => ({
+        ...e,
+        createdAt: e.createdAt.toISOString(),
+      })),
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }

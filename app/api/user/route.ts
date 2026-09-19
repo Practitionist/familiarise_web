@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
@@ -8,7 +9,10 @@ export async function GET(req: NextRequest) {
   try {
     const session = await getSession();
     if (!session || session.user.role !== "ADMIN") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -46,14 +50,17 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200 },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error getting users:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching users" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -100,7 +107,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ data: newUser }, { status: 201 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "auth" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "auth" } },
+    );
     console.error("Error creating user:", error);
     return NextResponse.json(
       { error: "An error occurred while creating the user" },

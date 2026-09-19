@@ -14,6 +14,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
@@ -43,7 +44,12 @@ function readLink(request: NextRequest): { userId: string; valid: boolean } {
 }
 
 function toPage(query: string): NextResponse {
-  return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, 303);
+  // Token-gated one-click action: scanners prefetch these links, so neither
+  // the redirect nor the JSON may sit in a shared cache.
+  return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, {
+    status: 303,
+    headers: NO_STORE_HEADERS,
+  });
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
@@ -62,7 +68,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!valid) {
     return wantsHtml
       ? toPage("error=1")
-      : NextResponse.json({ error: "invalid link" }, { status: 400 });
+      : NextResponse.json(
+          { error: "invalid link" },
+          {
+            status: 400,
+            headers: NO_STORE_HEADERS,
+          },
+        );
   }
 
   try {

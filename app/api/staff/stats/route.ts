@@ -8,6 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getStaffStats } from "@/lib/data/staff-stats";
 
@@ -17,12 +18,14 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     const stats = await getStaffStats();
-    return NextResponse.json(stats);
+    return NextResponse.json(stats, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
     console.error("Error fetching staff stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch staff stats" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

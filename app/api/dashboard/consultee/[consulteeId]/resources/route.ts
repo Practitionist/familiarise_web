@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
@@ -189,7 +190,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -201,7 +202,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -430,7 +431,10 @@ export async function GET(
       ).filter(shouldInclude),
     };
 
-    return NextResponse.json({ data: transform, success: true });
+    return NextResponse.json(
+      { data: transform, success: true },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -439,7 +443,7 @@ export async function GET(
     console.error("Error fetching consultee resources:", error);
     return NextResponse.json(
       { error: "Failed to fetch resources" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

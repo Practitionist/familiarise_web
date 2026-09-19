@@ -12,6 +12,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
@@ -62,7 +63,10 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
 ): Promise<Response> {
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" },
+      { status: 401, headers: NO_STORE_HEADERS },
+    );
   }
 
   // Rate-limited per actor: rendering a PDF is expensive, and the bucket is
@@ -80,7 +84,7 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
           "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
-      { status: 503 },
+      { status: 503, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -91,12 +95,15 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
         error: "No such statutory document has been issued for this payment.",
         code: "INVOICE_NOT_ISSUED",
       },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
   if (doc.ownerUserId !== session.user.id && !isPrivileged(session.user.role)) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json(
+      { error: "Forbidden" },
+      { status: 403, headers: NO_STORE_HEADERS },
+    );
   }
 
   const cachedPath = doc.pdfStoragePath;
@@ -137,6 +144,9 @@ export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
         tags: { subsystem: "payments" },
       },
     );
-    return NextResponse.json({ error: args.failureMessage }, { status: 500 });
+    return NextResponse.json(
+      { error: args.failureMessage },
+      { status: 500, headers: NO_STORE_HEADERS },
+    );
   }
 }

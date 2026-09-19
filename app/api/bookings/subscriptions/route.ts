@@ -6,6 +6,7 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { addMonths } from "date-fns";
 import {
   notifySubscriptionStarted,
@@ -143,7 +144,10 @@ export async function GET(request: NextRequest) {
       if (!scopeResolution.ok) {
         return NextResponse.json(
           { error: scopeResolution.message, code: scopeResolution.code },
-          { status: scopeResolution.status },
+          {
+            status: scopeResolution.status,
+            headers: NO_STORE_HEADERS,
+          },
         );
       }
       // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
@@ -197,15 +201,18 @@ export async function GET(request: NextRequest) {
       prisma.subscription.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: subscriptions,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: subscriptions,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -214,7 +221,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscriptions" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

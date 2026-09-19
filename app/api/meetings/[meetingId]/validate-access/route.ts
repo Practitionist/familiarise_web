@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { resolveMeetingAccess } from "@/lib/meetings/access";
 import { reportSentryError } from "@/lib/observability/report";
@@ -28,7 +29,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { hasAccess: false, role: null, message: "Authentication required" },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -37,7 +38,7 @@ export async function GET(
     if (!meetingId) {
       return NextResponse.json(
         { hasAccess: false, role: null, message: "Meeting ID is required" },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -50,7 +51,10 @@ export async function GET(
         message: access.message,
         reason: access.reason,
       },
-      { status: access.reason === "not_found" ? 404 : 200 },
+      {
+        status: access.reason === "not_found" ? 404 : 200,
+        headers: NO_STORE_HEADERS,
+      },
     );
   } catch (error) {
     reportSentryError(error, {
@@ -59,7 +63,7 @@ export async function GET(
     });
     return NextResponse.json(
       { hasAccess: false, role: null, message: "Failed to validate access" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

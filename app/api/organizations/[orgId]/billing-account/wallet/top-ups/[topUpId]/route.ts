@@ -13,6 +13,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 
@@ -25,7 +26,10 @@ export async function GET(
   },
 ) {
   const { orgId, topUpId } = await params;
-  const access = await requireOrgAccess(orgId, { minimumRole: "MANAGER", canSponsor: true });
+  const access = await requireOrgAccess(orgId, {
+    minimumRole: "MANAGER",
+    canSponsor: true,
+  });
   if (access.error) return access.error;
 
   // `topUpId` is stored as WalletTopUp.providerOrderId (see the file
@@ -38,7 +42,10 @@ export async function GET(
     },
   });
   if (!topUp) {
-    return NextResponse.json({ error: "Top-up not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: "Top-up not found" },
+      { status: 404, headers: NO_STORE_HEADERS },
+    );
   }
 
   // WalletTopUp.status carries the lifecycle directly: PENDING until the
@@ -49,13 +56,16 @@ export async function GET(
       : topUp.status === "FAILED"
         ? "failed"
         : "pending";
-  return NextResponse.json({
-    topUp: {
-      topUpId: topUp.providerOrderId,
-      providerPaymentId: topUp.providerPaymentId,
-      status,
-      amountPaise: topUp.amountPaise,
-      createdAt: topUp.createdAt,
+  return NextResponse.json(
+    {
+      topUp: {
+        topUpId: topUp.providerOrderId,
+        providerPaymentId: topUp.providerPaymentId,
+        status,
+        amountPaise: topUp.amountPaise,
+        createdAt: topUp.createdAt,
+      },
     },
-  });
+    { headers: NO_STORE_HEADERS },
+  );
 }

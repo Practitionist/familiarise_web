@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -113,9 +114,7 @@ async function isAppointmentParticipant(
 
   // Check class ownership/collaboration
   if (appointment.class) {
-    if (
-      consultantProfileId === appointment.class.classPlan.consultantProfileId
-    )
+    if (consultantProfileId === appointment.class.classPlan.consultantProfileId)
       return true;
     if (
       consultantProfileId &&
@@ -128,9 +127,6 @@ async function isAppointmentParticipant(
 
   return false;
 }
-
-
-
 
 type _AppointmentInclude = Prisma.AppointmentGetPayload<{
   include: {
@@ -275,7 +271,10 @@ export async function GET(
         appointmentId,
       );
       if (!allowed) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden" },
+          { status: 403, headers: NO_STORE_HEADERS },
+        );
       }
     }
 
@@ -420,18 +419,23 @@ export async function GET(
     if (!appointment) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json({ data: appointment }, { status: 200 });
+    return NextResponse.json(
+      { data: appointment },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching appointment:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "scheduling" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "scheduling" } },
+    );
     return NextResponse.json(
       { error: "An error occurred while fetching the appointment" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
-

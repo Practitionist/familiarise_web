@@ -14,6 +14,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -92,9 +93,12 @@ export async function GET(
 
   // Redact-by-construction: the SELECT above never reads `secret`, so
   // there's no value to leak even by serialization mistake.
-  return NextResponse.json({
-    data: endpoints.map((e) => ({ ...e, secret: REDACTED_SECRET })),
-  });
+  return NextResponse.json(
+    {
+      data: endpoints.map((e) => ({ ...e, secret: REDACTED_SECRET })),
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 export async function POST(

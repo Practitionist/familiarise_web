@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { PaymentGateway, PayoutAccountType } from "@prisma/client";
 import { z } from "zod";
@@ -33,7 +34,10 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401, headers: NO_STORE_HEADERS },
+      );
     }
 
     // Get consultant profile
@@ -49,19 +53,25 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json({
-      accounts: consultantProfile.payoutAccounts,
-    });
+    return NextResponse.json(
+      {
+        accounts: consultantProfile.payoutAccounts,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching payout accounts:", error);
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     return NextResponse.json(
       { error: "Failed to fetch payout accounts" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -250,7 +260,10 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     return NextResponse.json(
       { error: "Failed to create payout account" },
       { status: 500 },

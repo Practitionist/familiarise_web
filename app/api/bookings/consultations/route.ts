@@ -6,6 +6,7 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
@@ -144,7 +145,10 @@ export async function GET(request: NextRequest) {
       if (!scopeResolution.ok) {
         return NextResponse.json(
           { error: scopeResolution.message, code: scopeResolution.code },
-          { status: scopeResolution.status },
+          {
+            status: scopeResolution.status,
+            headers: NO_STORE_HEADERS,
+          },
         );
       }
       // #674 B2B gap 9 — `orgMember` pins an org too: it is what an active
@@ -191,15 +195,18 @@ export async function GET(request: NextRequest) {
       prisma.consultation.count({ where: whereClause }),
     ]);
 
-    return NextResponse.json({
-      data: consultations,
-      meta: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
+    return NextResponse.json(
+      {
+        data: consultations,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -208,7 +215,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching consultations:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultations" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

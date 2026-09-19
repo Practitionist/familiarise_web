@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { listDateFilterSchema } from "@/schemas/list-date-filter";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
             "startDate and endDate must be valid ISO 8601 date-times",
           code: "INVALID_DATE",
         },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -97,7 +98,10 @@ export async function GET(request: NextRequest) {
     if (!scopeResolution.ok) {
       return NextResponse.json(
         { error: scopeResolution.message, code: scopeResolution.code },
-        { status: scopeResolution.status },
+        {
+          status: scopeResolution.status,
+          headers: NO_STORE_HEADERS,
+        },
       );
     }
     // `orgMember` pins an org exactly as `org` does — see scopeOrgId.
@@ -237,7 +241,10 @@ export async function GET(request: NextRequest) {
       transformNestedPlanTopics(w, "webinarPlan"),
     );
 
-    return NextResponse.json({ data: transformedWebinars }, { status: 200 });
+    return NextResponse.json(
+      { data: transformedWebinars },
+      { status: 200, headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -246,7 +253,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

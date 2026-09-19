@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import {
   liveParticipant,
@@ -89,18 +90,27 @@ export async function GET(
         ).values(),
       );
 
-      return NextResponse.json({
-        consultation,
-        participants: uniqueUsers,
-      });
+      return NextResponse.json(
+        {
+          consultation,
+          participants: uniqueUsers,
+        },
+        { headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({
-      consultation,
-      participants,
-    });
+    return NextResponse.json(
+      {
+        consultation,
+        participants,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANTS_GET]", error);
     return new NextResponse("Internal error", { status: 500 });
   }
@@ -159,7 +169,10 @@ export async function DELETE(
 
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("[CONSULTATION_PARTICIPANT_DELETE]", error);
     return new NextResponse("Internal error", { status: 500 });
   }

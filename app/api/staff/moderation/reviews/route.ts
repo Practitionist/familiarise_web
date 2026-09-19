@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", details: parsed.error.flatten() },
-        { status: 400 },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
     const { consultantProfileId, minRating, maxRating, page, limit } =
@@ -155,22 +156,25 @@ export async function GET(req: NextRequest) {
       ratingDistribution.map((r) => [r.rating, r._count.id]),
     );
 
-    return NextResponse.json({
-      reviews: formattedReviews,
-      distribution,
-      pagination: {
-        total,
-        page,
-        limit,
-        totalPages: Math.ceil(total / limit),
-        hasMore: offset + limit < total,
+    return NextResponse.json(
+      {
+        reviews: formattedReviews,
+        distribution,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          hasMore: offset + limit < total,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching reviews:", error);
     return NextResponse.json(
       { error: "Failed to fetch reviews" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

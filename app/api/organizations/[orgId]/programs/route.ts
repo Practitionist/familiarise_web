@@ -9,6 +9,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -187,7 +188,7 @@ export async function GET(
     // the nav treats this as "feature off" rather than "forbidden".
     return NextResponse.json(
       { error: "Organization does not sponsor — no programs to list" },
-      { status: 404 },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -244,7 +245,7 @@ export async function GET(
     };
   });
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

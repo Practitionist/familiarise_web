@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import {
   createSupportTicket,
@@ -53,7 +54,9 @@ export async function GET() {
       },
     });
 
-    return NextResponse.json(tickets);
+    return NextResponse.json(tickets, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (cause) {
     return supportError({
       status: 500,

@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -34,7 +35,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", code: "INVALID_INPUT" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const { page, perPage } = parsed.data;
@@ -78,5 +79,8 @@ export async function GET(
     planRef: resolveMaterialPlanRef(m),
   }));
 
-  return NextResponse.json({ items: shaped, total, page, perPage });
+  return NextResponse.json(
+    { items: shaped, total, page, perPage },
+    { headers: NO_STORE_HEADERS },
+  );
 }

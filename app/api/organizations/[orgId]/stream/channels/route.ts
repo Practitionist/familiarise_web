@@ -30,6 +30,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -61,7 +62,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -144,23 +145,29 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({
-      page,
-      pageSize: PAGE_SIZE,
-      // `hasMore` is best-effort — Stream doesn't return a total count.
-      // If we got a full page back, assume another exists.
-      hasMore: rows.length === PAGE_SIZE,
-      rows,
-    });
+    return NextResponse.json(
+      {
+        page,
+        pageSize: PAGE_SIZE,
+        // `hasMore` is best-effort — Stream doesn't return a total count.
+        // If we got a full page back, assume another exists.
+        hasMore: rows.length === PAGE_SIZE,
+        rows,
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "enterprise" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "enterprise" } },
+    );
     streamLogger.error("Failed to query org channels", err, { orgId, page });
     return NextResponse.json(
       {
         error: "Failed to query channels",
         detail: err instanceof Error ? err.message : "unknown",
       },
-      { status: 502 },
+      { status: 502, headers: NO_STORE_HEADERS },
     );
   }
 }

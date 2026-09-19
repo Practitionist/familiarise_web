@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 export async function GET(req: NextRequest) {
   try {
@@ -32,9 +33,21 @@ export async function GET(req: NextRequest) {
       },
     });
 
-    return NextResponse.json({ isDuplicate: !!existingClass }, { status: 200 });
+    return NextResponse.json(
+      { isDuplicate: !!existingClass },
+      {
+        status: 200,
+        // Owner-intent check with no auth: never shared-cache the oracle.
+        // (Whether this endpoint should require auth at all is a separate,
+        // product-level question — this header only stops CDN replay.)
+        headers: NO_STORE_HEADERS,
+      },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error checking duplicate class title:", error);
     return NextResponse.json(
       { error: "An error occurred while checking for duplicate class titles" },

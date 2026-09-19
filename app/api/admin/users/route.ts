@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma, UserRole } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -64,18 +65,24 @@ export async function GET(req: NextRequest) {
       prisma.user.count({ where }),
     ]);
 
-    return NextResponse.json({
-      users,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    });
+    return NextResponse.json(
+      {
+        users,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching users:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

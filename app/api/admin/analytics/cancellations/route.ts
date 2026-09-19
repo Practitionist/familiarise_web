@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -205,36 +206,42 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({
-      summary: {
-        totalCancellations,
-        cancellationRate: `${cancellationRate}%`,
-        totalBookingsInPeriod: totalBookings,
-        potentialRefundAmount,
-        actualRefundedAmount: sumPaise(refunds._sum?.amountPaise),
-        refundCount: refunds._count,
+    return NextResponse.json(
+      {
+        summary: {
+          totalCancellations,
+          cancellationRate: `${cancellationRate}%`,
+          totalBookingsInPeriod: totalBookings,
+          potentialRefundAmount,
+          actualRefundedAmount: sumPaise(refunds._sum?.amountPaise),
+          refundCount: refunds._count,
+        },
+        byReason,
+        byType,
+        monthlyTrend,
+        recentTrend: {
+          last7Days,
+          last30Days,
+          total: totalCancellations,
+        },
+        period: {
+          startDate: startDate.toISOString(),
+          endDate: endDate.toISOString(),
+        },
+        // Include available reasons for UI dropdown
+        availableReasons: Object.values(CancellationReason),
       },
-      byReason,
-      byType,
-      monthlyTrend,
-      recentTrend: {
-        last7Days,
-        last30Days,
-        total: totalCancellations,
-      },
-      period: {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-      },
-      // Include available reasons for UI dropdown
-      availableReasons: Object.values(CancellationReason),
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

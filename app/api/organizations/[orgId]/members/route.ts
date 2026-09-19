@@ -13,6 +13,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { MemberRoleSchema } from "@/lib/labels/org-labels";
 import prisma from "@/lib/prisma";
@@ -99,7 +100,7 @@ export async function GET(
   if (!parsedPagination.success) {
     return NextResponse.json(
       { error: "Invalid pagination", detail: parsedPagination.error.flatten() },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const { page, perPage } = parsedPagination.data;
@@ -154,10 +155,13 @@ export async function GET(
     }),
   ]);
 
-  return NextResponse.json({
-    data,
-    meta: { total, page, perPage },
-  });
+  return NextResponse.json(
+    {
+      data,
+      meta: { total, page, perPage },
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }
 
 /**

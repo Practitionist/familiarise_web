@@ -7,6 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { PayoutStatus } from "@prisma/client";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
@@ -30,12 +31,14 @@ export async function GET(req: NextRequest) {
       offset: parseInt(searchParams.get("offset") || "0"),
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json(result, {
+      headers: NO_STORE_HEADERS,
+    });
   } catch (error) {
     console.error("Error fetching payouts:", error);
     return NextResponse.json(
       { error: "Failed to fetch payouts" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

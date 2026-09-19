@@ -11,6 +11,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, UserRole } from "@prisma/client";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
@@ -35,7 +36,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Unauthorized - Admin access required" },
-        { status: 403 },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -62,29 +63,38 @@ export async function GET(
     });
 
     if (!payment) {
-      return NextResponse.json({ error: "Payment not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Payment not found" },
+        { status: 404, headers: NO_STORE_HEADERS },
+      );
     }
 
-    return NextResponse.json({
-      payment: {
-        id: payment.id,
-        amount: payment.amount,
-        currency: payment.currency,
-        paymentIntent: payment.paymentIntent,
-        paymentStatus: payment.paymentStatus,
-        description: payment.description,
-        userId: payment.userId,
-        appointmentId: payment.appointmentId,
-        createdAt: payment.createdAt,
-        hasAppointment: !!payment.appointment,
+    return NextResponse.json(
+      {
+        payment: {
+          id: payment.id,
+          amount: payment.amount,
+          currency: payment.currency,
+          paymentIntent: payment.paymentIntent,
+          paymentStatus: payment.paymentStatus,
+          description: payment.description,
+          userId: payment.userId,
+          appointmentId: payment.appointmentId,
+          createdAt: payment.createdAt,
+          hasAppointment: !!payment.appointment,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error fetching payment for recovery:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -213,7 +223,12 @@ export async function POST(
         appointment: updatedPayment?.appointment,
       });
     } catch (recoveryError) {
-      Sentry.captureException(recoveryError instanceof Error ? recoveryError : new Error(String(recoveryError)), { tags: { subsystem: "payments" } });
+      Sentry.captureException(
+        recoveryError instanceof Error
+          ? recoveryError
+          : new Error(String(recoveryError)),
+        { tags: { subsystem: "payments" } },
+      );
       console.error("Error during payment recovery:", recoveryError);
       return NextResponse.json(
         {

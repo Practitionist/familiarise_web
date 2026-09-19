@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
@@ -28,7 +29,7 @@ export async function GET(
           message: "Please sign in to view documents",
           code: "UNAUTHORIZED",
         },
-        { status: 401 },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -111,7 +112,7 @@ export async function GET(
             : "Document not found or access denied",
           code: "NOT_FOUND",
         },
-        { status: 404 },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -122,13 +123,16 @@ export async function GET(
       );
     }
 
-    return NextResponse.json({ data: document });
+    return NextResponse.json({ data: document }, { headers: NO_STORE_HEADERS });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error fetching document:", error);
     return NextResponse.json(
       { error: "Failed to fetch document" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }
@@ -291,7 +295,9 @@ export async function PATCH(
             },
             consultationPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -303,7 +309,9 @@ export async function PATCH(
             },
             subscriptionPlan: {
               select: {
-                consultantProfile: { select: { user: { select: { name: true } } } },
+                consultantProfile: {
+                  select: { user: { select: { name: true } } },
+                },
               },
             },
           },
@@ -336,14 +344,18 @@ export async function PATCH(
           dashboardUrl: scopedHref({
             organizationId: appointmentInfo?.organizationId,
             surface: "appointments",
-            personal:
-              consulteeProfileId
-                ? { kind: "consultee", profileId: consulteeProfileId }
-                : undefined,
+            personal: consulteeProfileId
+              ? { kind: "consultee", profileId: consulteeProfileId }
+              : undefined,
           }),
         }).catch((notifyError) => {
           console.error("Failed to notify consultee of review", notifyError);
-          Sentry.captureException(notifyError instanceof Error ? notifyError : new Error(String(notifyError)), { tags: { subsystem: "novu" } });
+          Sentry.captureException(
+            notifyError instanceof Error
+              ? notifyError
+              : new Error(String(notifyError)),
+            { tags: { subsystem: "novu" } },
+          );
         }),
       );
     }
@@ -357,7 +369,10 @@ export async function PATCH(
 
     return NextResponse.json({ data: updatedDocument });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error updating document review:", error);
     return NextResponse.json(
       { error: "Failed to update document review" },
@@ -474,7 +489,10 @@ export async function DELETE(
         : "Document deleted successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "appointments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "appointments" } },
+    );
     console.error("Error deleting document:", error);
     return NextResponse.json(
       { error: "Failed to delete document" },

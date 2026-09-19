@@ -10,6 +10,7 @@ import {
   AVAILABILITY_REFUSAL_STATUS,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
+import { revalidatePath } from "next/cache";
 
 /**
  * The tail both custom-slot edits share: reject an overlap with any other row,
@@ -95,6 +96,12 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    // NOTE: no public Cache-Control here on purpose. This read is
+    // session-free but serialises the FULL consultantProfile row
+    // (panNumber, TDS fields, MSME status) — per-user sensitive data that
+    // must never sit in shared cache. The collection GET
+    // (/api/scheduling/availability/custom) selects only the public name and
+    // is the cached one; its path is purged by the PUT/PATCH/DELETE below.
     const customSlot = await prisma.availabilityWindowCustom.findUnique({
       where: { id: id },
       include: {
@@ -211,10 +218,19 @@ export async function PUT(
     }
 
     // Uses the authoritative consultantProfileId from the existing row.
-    return await applyCustomSlotEdit(id, currentSlot.consultantProfileId, {
-      startsAt: startTime,
-      endsAt: endTime,
-    });
+    const response = await applyCustomSlotEdit(
+      id,
+      currentSlot.consultantProfileId,
+      {
+        startsAt: startTime,
+        endsAt: endTime,
+      },
+    );
+    // Purge only AFTER the edit transaction commits (and only on success).
+    if (response.status === 200) {
+      revalidatePath("/api/scheduling/availability/custom");
+    }
+    return response;
   } catch (error) {
     console.error("Error updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -321,10 +337,19 @@ export async function PATCH(
     }
 
     // Uses the authoritative consultantProfileId from the existing row.
-    return await applyCustomSlotEdit(id, currentSlot.consultantProfileId, {
-      startsAt: startTime,
-      endsAt: endTime,
-    });
+    const response = await applyCustomSlotEdit(
+      id,
+      currentSlot.consultantProfileId,
+      {
+        startsAt: startTime,
+        endsAt: endTime,
+      },
+    );
+    // Purge only AFTER the edit transaction commits (and only on success).
+    if (response.status === 200) {
+      revalidatePath("/api/scheduling/availability/custom");
+    }
+    return response;
   } catch (error) {
     console.error("Error partially updating custom slot:", error);
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -389,6 +414,9 @@ export async function DELETE(
       prisma,
       deletedSlot.consultantProfileId,
     );
+
+    // Purge after the delete commits: the collection GET is publicly cached.
+    revalidatePath("/api/scheduling/availability/custom");
 
     return NextResponse.json(
       {

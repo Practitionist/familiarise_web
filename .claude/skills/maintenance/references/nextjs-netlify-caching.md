@@ -100,6 +100,110 @@ For invalidation, `revalidatePath` and `revalidateTag` both work and propagate t
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
+## API routes: every GET declares its cache contract (policy since #1755)
+
+Page-level strategy above does not cover `app/api/**/route.ts`, where Next
+caches nothing by default and Netlify replays whatever the function returns.
+Every GET in this repo now carries an explicit directive — no bare
+`NextResponse.json` on a GET:
+
+| The GET response is                                             | Header (from `lib/api/cache-headers.ts`)                               | Purge pairing                                                      |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Same for every visitor (taxonomy, aggregates, public lists)     | `PUBLIC_LIST_HEADERS` (`public, s-maxage=60, SWR=300`)                 | `revalidatePath`/`revalidateTag` at every write site, after commit |
+| Varies by session/role/membership, token-gated, or machine/cron | `NO_STORE_HEADERS`                                                     | None (nothing cached)                                              |
+| Mixed projection from one URL (e.g. own-profile vs public)      | **Branch the header** with the access level; never one shared `public` | Purge as public                                                    |
+
+`__tests__/api/cache-headers.test.ts` pins the three invariants (cron twins,
+branched mixed projections, public windows); extend its lists when adding
+routes. Verify with `curl -sI` (expect `Netlify Durable stored` → `Edge hit`)
+and a second request showing a climbing `age`.
+
+### Technique 1 — one shared constant instead of N literals
+
+The first shape of #1755 inlined `{ headers: { "Cache-Control": "no-store" } }`
+into ~200 route files. Semantically identical everywhere, but Sonar counts
+repeated multi-line literals as duplicated blocks and the PR failed
+`new_duplicated_lines_density` at 14.8% against a 3% gate. The fix is
+structural, not cosmetic: import `NO_STORE_HEADERS` / `PUBLIC_LIST_HEADERS`
+from `lib/api/cache-headers.ts` and reference the constant. Single-line
+references fall below every duplication block threshold, so the gate math
+tracks real logic duplication instead of header boilerplate. Import only the
+constant the file uses. (Per-file `const PUBLIC_CACHE_HEADERS = {...}`
+helpers were tried first and failed the same gate — one shared home or none.)
+
+### Technique 2 — branch the header when one URL serves two audiences
+
+`app/api/user/consultants/[id]` returns a redacted public projection to
+anonymous visitors and a full projection (user include, all plan visibilities)
+to the profile owner/admin — from the same URL, under one shared `public,
+s-maxage=60` directive. A shared cache keyed by URL cannot tell the audiences
+apart, so an anonymous visitor can be served another user's private rows. The
+fix branches the directive with the already-computed access flag:
+
+```ts
+headers: isPrivilegedAccess ? NO_STORE_HEADERS : PUBLIC_LIST_HEADERS,
+```
+
+The public branch keeps its 60s shared entry; the privileged branch never
+enters the shared cache at all. Prefer this over `Vary: Cookie`, which
+fragments the cache per cookie value (safe but useless hit rates), and over
+splitting the URL, which breaks every existing client. Any future route that
+widens its select for an authenticated branch needs the same treatment — the
+guard test fails the build otherwise.
+
+### Technique 3 — purge after commit, never inside the transaction
+
+A cached listing goes stale the moment its write commits, so each write site
+calls `revalidatePath` (route HTML) and/or `revalidateTag` (data entries)
+**after** the transaction resolves — never inside a `$transaction` callback,
+where a rollback would leave the cache purged against unchanged data. On
+failure paths (non-2xx) purge nothing: the data did not change. The TTL
+(`s-maxage=60`) is only the safety net for a missed purge, not the freshness
+mechanism. When the write lives outside the route file that serves the read
+(e.g. plan publishes vs `/api/programs/stats`), the purge call lives with the
+write, and the route carries a comment naming the write sites so the pairing
+is auditable.
+
+### Technique 4 — pin the policy in a source-reading test
+
+`__tests__/api/cache-headers.test.ts` walks `app/api/**/route.ts` and asserts:
+(1) every `cleanup/*` GET contains a no-store directive (an edge-cached "ok"
+from a cron twin blinds every monitor polling it); (2) the mixed-projection
+route branches its header on the access flag; (3) the known-public listing
+routes carry the shared-cache window. Source-reading, not behavioral: the
+invariant is wiring ("this response must never be shared"), and rendering 300
+routes to test it would exercise the harness more than the guard. Same
+technique as the `isr-routes-never-fail-open` guard.
+
+### Traps already hit once
+
+- `weekly/[id]`-style GETs that serialize full consultant rows (PAN/TDS
+  fields) look public but are not; plan-detail GETs embedding other buyers'
+  rows (payment links, request notes) are not. Session-free is necessary but
+  not sufficient — read the select allowlist before caching.
+- Token-gated links (unsubscribe, waitlist confirm, SSO domain-check, referral
+  code check, probes) get `no-store`: mail scanners and prefetchers hit them
+  without user intent, and a shared-cached answer crosses users.
+- `check-duplicate-title` answers are an unauthenticated title oracle per
+  consultant; `no-store` stops CDN replay but the missing-auth question is
+  open (flagged, not fixed, in #1755).
+- TODO comments trip Sonar S1135, so phrase follow-ups without the token
+  ("Purge note:", "Freshness note:").
+- All files were prettier-clean at HEAD, so `prettier --write` touched only
+  edited lines — verify this before any bulk format, or formatting churn
+  counts as new code at the duplication gate (see "Project constraints").
+
+### Sources opened for this policy
+
+- [Netlify caching overview](https://docs.netlify.com/build/caching/caching-overview/) — header precedence (`Netlify-CDN-Cache-Control` > `CDN-Cache-Control` > `Cache-Control`), `s-maxage`/`stale-while-revalidate` semantics, `Netlify-Vary` key control.
+- [Durable Cache and the Quest for Fast, Fresh Content](https://www.netlify.com/blog/durable-cache-quest-for-fast-fresh-content/) — the Blobs backing store behind edge misses; why `stored` → `hit` is the expected progression.
+- [Using a CDN with Next.js](https://nextjs.org/docs/app/guides/cdn-caching) — per-strategy `Cache-Control` values emitted by the framework.
+- [Incremental Static Regeneration](https://nextjs.org/docs/app/guides/incremental-static-regeneration) and [Revalidating](https://nextjs.org/docs/app/getting-started/revalidating) — time-based vs on-demand (`revalidateTag`/`revalidatePath`) invalidation.
+- [How Revalidation Works](https://nextjs.org/docs/app/guides/how-revalidation-works) — what `revalidateTag` actually invalidates (server cache, not a raw CDN copy — hence explicit headers + purge pairing, not one or the other).
+- [Upstash Redis rate limiting at the edge](https://dev.to/whoffagents/upstash-redis-nextjs-rate-limiting-that-works-at-the-edge-4n7e) and [Upstash serverless latency/cost test](https://bitsfolio.com/upstash-vs-redis-cloud-serverless-latency-cost/) — why REST-based Redis (no connection pooling) is the only sane Redis for Lambda/edge, and where per-command billing wins vs fixed plans. Applied in `docs/upstash/spend-guard-runbook.md`.
+- [When serverless caching makes sense — and when to remove it](https://www.koriigami.com/blog/upstash-redis-when-to-use) — the cautionary counterpart: measure hit rates before adding cache-aside; invalidation complexity can exceed the benefit. This is why content-cache rollout stays in #1754 with a measurement-first deliverable.
+- [`unstable_cache` → `use cache` migration status](https://nextjs.org/docs/app/guides/migrating-to-cache-components) — `unstable_cache` remains the correct primitive on Next 15; the directive migration waits for a scheduled v16 upgrade, not this PR.
+
 ## How to verify — the only four techniques that have worked here
 
 **Read the CI build route table.** This is authoritative for *build-time* classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.

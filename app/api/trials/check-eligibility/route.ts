@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 /**
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   if (!consulteeProfileId || !consultantProfileId) {
     return NextResponse.json(
       { error: "consulteeProfileId and consultantProfileId are required" },
-      { status: 400 },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -36,7 +37,10 @@ export async function GET(request: NextRequest) {
       consulteeProfileId !== session.user.consulteeProfileId &&
       consultantProfileId !== session.user.consultantProfileId
     ) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      return NextResponse.json(
+        { error: "Forbidden" },
+        { status: 403, headers: NO_STORE_HEADERS },
+      );
     }
   }
 
@@ -76,7 +80,7 @@ export async function GET(request: NextRequest) {
       if (!plan) {
         return NextResponse.json(
           { error: "Subscription plan not found" },
-          { status: 404 },
+          { status: 404, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -108,35 +112,41 @@ export async function GET(request: NextRequest) {
         : null;
     const isEligible = !blockingTrial && planTrialEnabled;
 
-    return NextResponse.json({
-      data: {
-        isEligible,
-        hasExistingTrial: !!blockingTrial,
-        existingTrial: blockingTrial
-          ? {
-              id: blockingTrial.id,
-              status: blockingTrial.status,
-              subscriptionPlanId: blockingTrial.subscriptionPlanId,
-              requestedAt: blockingTrial.requestedAt,
-            }
-          : null,
-        planTrialEnabled,
-        planTrialDuration,
-        planTrialPriceInPaise,
-        plansWithTrialEnabled,
-        reason: !isEligible
-          ? blockingTrial
-            ? "You have already requested or completed a trial with this consultant"
-            : "This plan does not offer trials"
-          : null,
+    return NextResponse.json(
+      {
+        data: {
+          isEligible,
+          hasExistingTrial: !!blockingTrial,
+          existingTrial: blockingTrial
+            ? {
+                id: blockingTrial.id,
+                status: blockingTrial.status,
+                subscriptionPlanId: blockingTrial.subscriptionPlanId,
+                requestedAt: blockingTrial.requestedAt,
+              }
+            : null,
+          planTrialEnabled,
+          planTrialDuration,
+          planTrialPriceInPaise,
+          plansWithTrialEnabled,
+          reason: !isEligible
+            ? blockingTrial
+              ? "You have already requested or completed a trial with this consultant"
+              : "This plan does not offer trials"
+            : null,
+        },
       },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "trials" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "trials" } },
+    );
     console.error("Error checking trial eligibility:", error);
     return NextResponse.json(
       { error: "An error occurred while checking trial eligibility" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

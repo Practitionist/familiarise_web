@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -73,28 +74,31 @@ export async function GET(req: NextRequest) {
       _count: { id: true },
     });
 
-    return NextResponse.json({
-      stats: {
-        pendingReports,
-        pendingProfiles,
-        pendingReviews,
-        resolvedToday,
+    return NextResponse.json(
+      {
+        stats: {
+          pendingReports,
+          pendingProfiles,
+          pendingReviews,
+          resolvedToday,
+        },
+        reportsByType: reportsByType.map((r) => ({
+          type: r.type,
+          count: r._count.id,
+        })),
+        actionsByType: actionsByType.map((a) => ({
+          actionType: a.actionType,
+          count: a._count.id,
+        })),
+        period: { days, startDate, endDate: new Date() },
       },
-      reportsByType: reportsByType.map((r) => ({
-        type: r.type,
-        count: r._count.id,
-      })),
-      actionsByType: actionsByType.map((a) => ({
-        actionType: a.actionType,
-        count: a._count.id,
-      })),
-      period: { days, startDate, endDate: new Date() },
-    });
+      { headers: NO_STORE_HEADERS },
+    );
   } catch (error) {
     console.error("Error fetching moderation stats:", error);
     return NextResponse.json(
       { error: "Failed to fetch stats" },
-      { status: 500 },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

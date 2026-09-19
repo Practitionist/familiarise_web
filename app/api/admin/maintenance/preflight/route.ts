@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
@@ -62,14 +63,17 @@ export async function GET() {
     recommendation = "SAFE";
   }
 
-  return NextResponse.json({
-    activeCalls,
-    pendingPayments,
-    upcomingAppointments,
-    pendingPayouts,
-    openDisputes,
-    recommendation,
-    warnings,
-    checkedAt: now.toISOString(),
-  });
+  return NextResponse.json(
+    {
+      activeCalls,
+      pendingPayments,
+      upcomingAppointments,
+      pendingPayouts,
+      openDisputes,
+      recommendation,
+      warnings,
+      checkedAt: now.toISOString(),
+    },
+    { headers: NO_STORE_HEADERS },
+  );
 }
