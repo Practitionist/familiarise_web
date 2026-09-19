@@ -365,11 +365,14 @@ export interface SelectedSession {
 /**
  * Collapse selected 30-minute atoms into consecutive same-day sessions.
  * Pure: sorts a copy, never mutates. An atom joins the open run only when it
- * starts exactly when the run ends; any gap (or day change, which always
- * leaves a gap) opens a new session.
+ * starts exactly when the run ends *and* both fall on the same scheduling-
+ * timezone day (ADR B9): an overnight run crossing local midnight is two
+ * sessions, so the chip never attributes post-midnight time to the prior day.
+ * Without a zone the UTC day is used — pass the event's scheduling timezone.
  */
 export function groupSelectedIntoSessions(
   selectedSlots: CalendarInterval[],
+  schedulingTimezone?: string,
 ): SelectedSession[] {
   const sorted = [...selectedSlots].sort(
     (a, b) => a.startTime.getTime() - b.startTime.getTime(),
@@ -380,7 +383,13 @@ export function groupSelectedIntoSessions(
     if (
       open &&
       slot.startTime.getTime() === open.end.getTime() &&
-      slot.endTime.getTime() > open.end.getTime()
+      slot.endTime.getTime() > open.end.getTime() &&
+      (schedulingTimezone === undefined ||
+        ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
+          ScheduleCalculationService.dayKey(
+            slot.startTime,
+            schedulingTimezone,
+          ))
     ) {
       open.end = slot.endTime;
     } else {

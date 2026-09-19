@@ -1971,7 +1971,10 @@ export function UnifiedCalendar({
               className="flex flex-wrap items-center gap-1.5"
               aria-label="Selected times"
             >
-              {groupSelectedIntoSessions(selectedSlots).map((session) => {
+              {groupSelectedIntoSessions(
+                selectedSlots,
+                schedulingTimezone ?? gridZone,
+              ).map((session) => {
                 const zone = schedulingTimezone ?? gridZone;
                 const label = `${formatDayLabel(session.start, { zone })} · ${formatClockTime(session.start, { zone })}–${formatClockTime(session.end, { zone })}`;
                 return (
