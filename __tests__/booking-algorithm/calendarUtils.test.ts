@@ -924,4 +924,12 @@ describe("groupSelectedIntoSessions", () => {
     ]);
     expect(sessions).toHaveLength(1);
   });
+
+  it("splits a contiguous run crossing UTC midnight with no zone", () => {
+    const sessions = groupSelectedIntoSessions([
+      interval("2026-11-16T23:30:00Z", "2026-11-17T00:00:00Z"),
+      interval("2026-11-17T00:00:00Z", "2026-11-17T00:30:00Z"),
+    ]);
+    expect(sessions).toHaveLength(2);
+  });
 });

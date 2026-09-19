@@ -384,12 +384,14 @@ export function groupSelectedIntoSessions(
       open &&
       slot.startTime.getTime() === open.end.getTime() &&
       slot.endTime.getTime() > open.end.getTime() &&
-      (schedulingTimezone === undefined ||
-        ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
+      (schedulingTimezone
+        ? ScheduleCalculationService.dayKey(open.start, schedulingTimezone) ===
           ScheduleCalculationService.dayKey(
             slot.startTime,
             schedulingTimezone,
-          ))
+          )
+        : open.start.toISOString().slice(0, 10) ===
+          slot.startTime.toISOString().slice(0, 10))
     ) {
       open.end = slot.endTime;
     } else {
