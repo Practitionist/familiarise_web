@@ -22,12 +22,26 @@ import { PaymentStatus, PaymentGateway } from "@prisma/client";
 import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
 
 // Don't reconcile payments older than 7 days
 const MAX_AGE_DAYS = 7;
+
+// #1757 — a PENDING row this old whose id the gateway does not know is retired,
+// not re-reported every tick; younger ones may still be gateway lag.
+const DEFAULT_ORPHAN_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function orphanPendingMaxAgeMs(): number {
+  const raw = Number(process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS);
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_ORPHAN_PENDING_MAX_AGE_MS;
+}
 
 export interface PaymentReconciliationResult {
   success: boolean;
@@ -40,6 +54,9 @@ export interface PaymentReconciliationResult {
   /** #1708 — PENDING rows whose gateway id the gateway does not know. */
   unresolvableCount: number;
   unresolvable: string[];
+  /** #1757 — unknown-id rows past the orphan age, retired PENDING → EXPIRED. */
+  retiredCount: number;
+  retired: string[];
   errors: string[];
   timestamp: string;
 }
@@ -313,9 +330,12 @@ async function reconcilePaymentStatusUnlocked(
   let skippedCount = 0;
   let unresolvableCount = 0;
   const unresolvable: string[] = [];
+  let retiredCount = 0;
+  const retired: string[] = [];
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const orphanCutoff = new Date(Date.now() - orphanPendingMaxAgeMs());
 
   // Find stale PENDING payments
   const stalePendingPayments = await prisma.payment.findMany({
@@ -338,6 +358,30 @@ async function reconcilePaymentStatusUnlocked(
     take: opts.limit,
   });
 
+  // #1757 — the terminal cohort: PENDING rows older than the orphan age, which
+  // the window above never reaches. Only an unknown-id answer acts on them.
+  const orphanCandidates = await prisma.payment.findMany({
+    where: {
+      paymentStatus: PaymentStatus.PENDING,
+      createdAt: { lt: orphanCutoff },
+      paymentGateway: { in: [PaymentGateway.STRIPE, PaymentGateway.RAZORPAY] },
+      NOT: { paymentIntent: "" },
+    },
+    include: {
+      user: { select: { email: true, name: true } },
+      appointment: { select: { id: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: opts.limit,
+  });
+  const orphanCandidateIds = new Set(orphanCandidates.map((p) => p.id));
+  const cohort = [
+    ...stalePendingPayments,
+    ...orphanCandidates.filter(
+      (p) => !stalePendingPayments.some((s) => s.id === p.id),
+    ),
+  ];
+
   const razorpayConfigured = !!(
     process.env.RAZORPAY_KEY_ID &&
     (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
@@ -349,10 +393,10 @@ async function reconcilePaymentStatusUnlocked(
   }
 
   console.log(
-    `Found ${stalePendingPayments.length} stale PENDING payments to reconcile`,
+    `Found ${stalePendingPayments.length} stale PENDING payments to reconcile, ${orphanCandidates.length} orphan candidate(s) past the orphan age`,
   );
 
-  for (const payment of stalePendingPayments) {
+  for (const payment of cohort) {
     console.log(`\nReconciling payment ${payment.id}`);
     console.log(`   Gateway: ${payment.paymentGateway}`);
     console.log(`   Payment Intent: ${payment.paymentIntent}`);
@@ -390,8 +434,45 @@ async function reconcilePaymentStatusUnlocked(
     }
 
     // #1708 — an id the gateway does not know is terminal for this row, not a
-    // run failure; the row is only reported here, abandoned-payments owns expiry.
+    // run failure. #1757 — past the orphan age it is retired through the
+    // abandoned-payments unit (expire, credits, hold); younger rows are only
+    // reported, since the gateway may still be lagging.
     if (lookup.kind === "unknown_id") {
+      if (payment.createdAt < orphanCutoff) {
+        try {
+          const { outcome, errors: retireErrors } =
+            await retireOrphanPendingPayment(payment.id);
+          errors.push(...retireErrors);
+          if (outcome === "retired") {
+            console.warn(
+              `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
+            );
+            retiredCount++;
+            retired.push(payment.id);
+            await recordSystemEvent({
+              category: "PAYMENT",
+              severity: "WARN",
+              message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
+              context: {
+                paymentId: payment.id,
+                paymentGateway: payment.paymentGateway,
+                paymentIntent: payment.paymentIntent,
+                createdAt: payment.createdAt.toISOString(),
+              },
+            });
+          } else {
+            console.log(
+              `   Skipped: payment ${payment.id} already transitioned by another writer`,
+            );
+            skippedCount++;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`   Retire failed for ${payment.id}: ${msg}`);
+          errors.push(`Payment ${payment.id}: ${msg}`);
+        }
+        continue;
+      }
       console.warn(
         `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
       );
@@ -410,6 +491,19 @@ async function reconcilePaymentStatusUnlocked(
     }
 
     const gatewayStatus = lookup;
+
+    // An orphan candidate the gateway does know is outside the reconcile
+    // window above; it is left for that window's rules, not acted on here.
+    if (
+      orphanCandidateIds.has(payment.id) &&
+      !stalePendingPayments.some((s) => s.id === payment.id)
+    ) {
+      console.log(
+        `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
+      );
+      skippedCount++;
+      continue;
+    }
 
     console.log(`   Gateway status: ${gatewayStatus.status}`);
 
@@ -502,7 +596,7 @@ async function reconcilePaymentStatusUnlocked(
 
   // Summary
   console.log("\n📊 Payment Reconciliation Summary:");
-  console.log(`   Total processed: ${stalePendingPayments.length}`);
+  console.log(`   Total processed: ${cohort.length}`);
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Succeeded (needs review): ${succeededCount}`);
   console.log(`   Failed: ${failedCount}`);
@@ -511,6 +605,21 @@ async function reconcilePaymentStatusUnlocked(
   console.log(
     `   Unresolvable (gateway does not know the id): ${unresolvableCount}`,
   );
+  console.log(`   Retired (orphan past the age cutoff): ${retiredCount}`);
+
+  // One expected warning per run listing the ids, never one per row (#1757).
+  if (retiredCount > 0) {
+    reportSentryMessage(
+      `reconcile-payment-status: retired ${retiredCount} orphan PENDING payment(s) the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "reconcile-payment-status",
+        expected: true,
+        level: "warning",
+        extra: { retired },
+      },
+    );
+  }
 
   // One issue that counts up, not one event per row per tick.
   if (unresolvableCount > 0) {
@@ -534,7 +643,7 @@ async function reconcilePaymentStatusUnlocked(
 
   return {
     success: errors.length === 0,
-    totalProcessed: stalePendingPayments.length,
+    totalProcessed: cohort.length,
     reconciledCount,
     succeededCount,
     failedCount,
@@ -542,6 +651,8 @@ async function reconcilePaymentStatusUnlocked(
     skippedCount,
     unresolvableCount,
     unresolvable,
+    retiredCount,
+    retired,
     errors,
     timestamp: new Date().toISOString(),
   };

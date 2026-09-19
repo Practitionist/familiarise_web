@@ -66,7 +66,9 @@ jest.mock("../../lib/enterprise/system-events", () => ({
 }));
 jest.mock("../../lib/observability/report", () => ({
   reportSentryError: jest.fn(),
+  reportSentryMessage: jest.fn(),
 }));
+import { reportSentryMessage } from "../../lib/observability/report";
 
 const readRepoFile = (relativePath: string): string =>
   fs.readFileSync(path.join(process.cwd(), relativePath), "utf8");
@@ -397,6 +399,69 @@ describe("the supplier's own state", () => {
     } finally {
       process.env.SUPPLIER_STATE_CODE = previousEnv;
     }
+  });
+});
+
+/**
+ * #1757 — with PLATFORM_GSTIN unset the mint no-ops with a single console line
+ * per process, so on real traffic every capture accrued an un-invoiced supply
+ * silently. The no-op stays (fail-open pre-launch); it now also reports ONE
+ * expected Sentry warning per process naming the env, not one per capture.
+ */
+describe("the mint gate is visible (#1757)", () => {
+  it("two mints with no supplier → one CONSUMER_INVOICE_MINT_DISABLED warning", async () => {
+    (getPlatformSupplier as jest.Mock).mockReturnValue(null);
+    const create = jest.fn();
+    const paymentRow = {
+      id: "pay_unconfigured",
+      amount: 118_000,
+      taxAmount: 18_000,
+      currency: "INR",
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+      buyerCountry: "IN",
+      consumerStateCode: "29",
+      billableToOrgInvoiceId: null,
+      createdAt: new Date("2026-08-10T06:00:00Z"),
+      userId: "usr_1",
+      legs: [],
+      creditUsages: [],
+      user: {
+        id: "usr_1",
+        name: "A Buyer",
+        email: "buyer@example.com",
+        address: null,
+        city: null,
+        consulteeProfile: { billingStateCode: "29" },
+      },
+    };
+    const tx = {
+      consumerInvoice: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create,
+      },
+      payment: { findUnique: jest.fn().mockResolvedValue(paymentRow) },
+    } as unknown as Parameters<typeof mintConsumerInvoice>[0];
+
+    const first = await mintConsumerInvoice(tx, {
+      paymentId: "pay_unconfigured",
+    });
+    const second = await mintConsumerInvoice(tx, {
+      paymentId: "pay_unconfigured",
+    });
+
+    expect(first.consumerInvoiceId).toBeNull();
+    expect(second.consumerInvoiceId).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+    expect(reportSentryMessage).toHaveBeenCalledTimes(1);
+    expect(reportSentryMessage).toHaveBeenCalledWith(
+      "CONSUMER_INVOICE_MINT_DISABLED",
+      expect.objectContaining({
+        expected: true,
+        level: "warning",
+        extra: expect.objectContaining({ env: "PLATFORM_GSTIN" }),
+      }),
+    );
   });
 });
 

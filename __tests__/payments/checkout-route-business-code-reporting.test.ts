@@ -64,6 +64,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 
 import { POST } from "../../app/api/checkout/route";
+import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
 import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
 
 function checkoutRequest(body: Record<string, unknown> = {}) {
@@ -116,6 +117,29 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     const context = soleCaptureContext();
     expect(context.level).toBe("info");
     expect(context.tags?.expected).toBe("true");
+  });
+
+  // #1757 — "Webinar is full" was a bare Error; the prose classifier answered
+  // the buyer but checkout's outer catch paged it as a fault (FAMILIARISE_WEB-2J).
+  it("answers EVENT_FULL 409 as a modelled outcome, and the toast copy points at the way out", async () => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(new Error("Webinar is full"), {
+        httpStatus: 409,
+        code: "EVENT_FULL",
+      }),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.errorType).toBe("EVENT_FULL_ERROR");
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
+    expect(getErrorToast("EVENT_FULL_ERROR").description).toContain(
+      "join the waitlist",
+    );
   });
 
   it("still captures an unrecognised failure at Sentry's default level", async () => {

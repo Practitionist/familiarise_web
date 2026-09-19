@@ -1,17 +1,67 @@
 import { faker } from "@faker-js/faker";
-import { Currency, PaymentGateway, PayoutMethod } from "@prisma/client";
+import {
+  Currency,
+  EarningStatus,
+  PaymentGateway,
+  PayoutMethod,
+  PayoutStatus,
+} from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
   generateBatchId,
   generateIdempotencyKey,
-  generateRazorpayPayoutId,
-  generateStripePayoutId,
-  generatePayoutFailureReason,
   weightedRandom,
-  PAYOUT_STATUS_WEIGHTS,
   PAYOUT_PROVIDER_WEIGHTS,
 } from "./utils";
 import { sumPaise } from "../../lib/payments/utils/money";
+import { postLedgerTxn, type Posting } from "../../lib/payments/ledger/post";
+
+/**
+ * #1757 — statuses a seeded payout may take: only the ones the reconcilers
+ * accept without a gateway. PROCESSING with a fake po_/pout_ id failed
+ * reconcile-payout-status and handle-stuck-payouts on every run; FAILED rows
+ * were noise. No seeded payout carries a providerPayoutId.
+ */
+export const SEED_PAYOUT_STATUS_WEIGHTS = [
+  { value: PayoutStatus.COMPLETED, weight: 0.6 },
+  { value: PayoutStatus.APPROVED, weight: 0.2 },
+  { value: PayoutStatus.PENDING, weight: 0.2 },
+];
+
+/**
+ * #1757 — the journal a COMPLETED consultant payout must carry (`payout:<id>`,
+ * the shape handlePayoutWebhook posts): Dr CONSULTANT_PAYABLE / Cr CASH. Seeded
+ * payouts withhold no TDS, so cash equals the gross payable.
+ */
+export function buildSeedPayoutPostings(input: {
+  consultantProfileId: string;
+  amountPaise: number;
+}): Posting[] {
+  return [
+    {
+      account: {
+        kind: "CONSULTANT_PAYABLE",
+        consultantProfileId: input.consultantProfileId,
+      },
+      direction: "DEBIT",
+      amountPaise: input.amountPaise,
+    },
+    {
+      account: { kind: "CASH" },
+      direction: "CREDIT",
+      amountPaise: input.amountPaise,
+    },
+  ];
+}
+
+/** #1757 — earnings behind a payout are BATCHED until it completes, PAID after. */
+export function seedEarningStatusForPayout(
+  status: PayoutStatus,
+): EarningStatus {
+  return status === PayoutStatus.COMPLETED
+    ? EarningStatus.PAID
+    : EarningStatus.BATCHED;
+}
 
 /**
  * Determine payout method based on provider
@@ -24,16 +74,6 @@ function getPayoutMethod(provider: PaymentGateway): PayoutMethod {
   return faker.datatype.boolean({ probability: 0.7 })
     ? PayoutMethod.BANK_TRANSFER
     : PayoutMethod.UPI;
-}
-
-/**
- * Generate provider-specific payout ID
- */
-function generateProviderPayoutId(provider: PaymentGateway): string {
-  if (provider === PaymentGateway.STRIPE) {
-    return generateStripePayoutId();
-  }
-  return generateRazorpayPayoutId();
 }
 
 /**
@@ -123,28 +163,19 @@ export async function createPayouts(): Promise<void> {
       const provider = weightedRandom(PAYOUT_PROVIDER_WEIGHTS);
       const method = getPayoutMethod(provider);
       const currency = getCurrency(provider);
-      const status = weightedRandom(PAYOUT_STATUS_WEIGHTS);
+      const status = weightedRandom(SEED_PAYOUT_STATUS_WEIGHTS);
 
       // Generate dates based on status
       const createdAt = faker.date.recent({ days: 30 });
       let processedAt: Date | null = null;
       let approvedAt: Date | null = null;
       let approvedBy: string | null = null;
-      let failureReason: string | null = null;
-      let retryCount = 0;
 
       // Set fields based on status
       switch (status) {
         case "COMPLETED":
           approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60); // 1 hour after creation
           processedAt = new Date(approvedAt.getTime() + 1000 * 60 * 60 * 2); // 2 hours after approval
-          approvedBy =
-            adminUsers.length > 0
-              ? faker.helpers.arrayElement(adminUsers).id
-              : null;
-          break;
-        case "PROCESSING":
-          approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60);
           approvedBy =
             adminUsers.length > 0
               ? faker.helpers.arrayElement(adminUsers).id
@@ -157,59 +188,57 @@ export async function createPayouts(): Promise<void> {
               ? faker.helpers.arrayElement(adminUsers).id
               : null;
           break;
-        case "FAILED":
-          approvedAt = new Date(createdAt.getTime() + 1000 * 60 * 60);
-          processedAt = new Date(approvedAt.getTime() + 1000 * 60 * 60);
-          approvedBy =
-            adminUsers.length > 0
-              ? faker.helpers.arrayElement(adminUsers).id
-              : null;
-          failureReason = generatePayoutFailureReason();
-          retryCount = faker.number.int({ min: 1, max: 3 });
-          break;
-        // PENDING and CANCELLED don't need additional fields
+        // PENDING needs no additional fields
       }
 
-      // Create the payout
-      const payout = await prisma.consultantPayout.create({
-        data: {
-          consultantProfileId,
-          provider,
-          providerPayoutId:
-            status === "COMPLETED" ||
-            status === "PROCESSING" ||
-            status === "FAILED"
-              ? generateProviderPayoutId(provider)
-              : null,
-          amount: totalAmount,
-          currency,
-          status,
-          method,
-          batchId: generateBatchId(createdAt),
-          failureReason,
-          retryCount,
-          processedAt,
-          approvedAt,
-          approvedBy,
-          idempotencyKey: generateIdempotencyKey(),
-          createdAt,
-        },
+      const earningIds = earnings.map((e) => e.id);
+      const earningStatus = seedEarningStatusForPayout(status);
+
+      // One tx: the payout, its earnings link and (when COMPLETED) its
+      // `payout:<id>` journal, so a fresh seed reconciles with zero
+      // COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN findings (#1757).
+      await prisma.$transaction(async (tx) => {
+        const row = await tx.consultantPayout.create({
+          data: {
+            consultantProfileId,
+            provider,
+            providerPayoutId: null,
+            amount: totalAmount,
+            currency,
+            status,
+            method,
+            batchId: generateBatchId(createdAt),
+            failureReason: null,
+            retryCount: 0,
+            processedAt,
+            approvedAt,
+            approvedBy,
+            idempotencyKey: generateIdempotencyKey(),
+            createdAt,
+          },
+        });
+        await tx.consultantEarnings.updateMany({
+          where: { id: { in: earningIds } },
+          data: {
+            payoutId: row.id,
+            status: earningStatus,
+            paidAt: earningStatus === EarningStatus.PAID ? processedAt : null,
+          },
+        });
+        if (status === PayoutStatus.COMPLETED && totalAmount > 0) {
+          await postLedgerTxn(tx, {
+            idempotencyKey: `payout:${row.id}`,
+            kind: "PAYOUT",
+            payoutId: row.id,
+            postings: buildSeedPayoutPostings({
+              consultantProfileId,
+              amountPaise: totalAmount,
+            }),
+          });
+        }
       });
 
       payoutsCreated++;
-
-      // Link earnings to this payout
-      const earningIds = earnings.map((e) => e.id);
-      await prisma.consultantEarnings.updateMany({
-        where: {
-          id: {
-            in: earningIds,
-          },
-        },
-        data: {
-          payoutId: payout.id,
-        },
-      });
 
       earningsLinked += earningIds.length;
 

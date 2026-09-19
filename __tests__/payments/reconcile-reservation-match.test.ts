@@ -442,3 +442,52 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
     }
   });
 });
+
+/**
+ * #1757 — a real-id PENDING refund on a fenced gateway was skipped on every
+ * tick forever (the seed minted them on STRIPE). Past 24 h it is retired
+ * FAILED/GATEWAY_DISABLED through the PENDING-guarded CAS, which re-opens the
+ * refundable balance, and the run reports it once.
+ */
+describe("reconcilePendingRefunds — no live client past 24h (#1757)", () => {
+  test("a 3-day-old PENDING STRIPE refund with Stripe disabled → FAILED once", async () => {
+    const previous = process.env.STRIPE_ENABLED;
+    delete process.env.STRIPE_ENABLED;
+    try {
+      refundTable.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+        {
+          id: "row_stripe_old",
+          refundId: "re_real_old",
+          status: "PENDING",
+          amountPaise: 10_000,
+          createdAt: new Date(Date.now() - 72 * HOUR),
+          payment: { paymentGateway: "STRIPE" },
+        },
+      ]);
+
+      const result = await reconcilePendingRefunds();
+
+      expect(mockGet).not.toHaveBeenCalled();
+      expect(refundTable.updateMany).toHaveBeenCalledTimes(1);
+      expect(refundTable.updateMany).toHaveBeenCalledWith({
+        where: { id: "row_stripe_old", status: "PENDING" },
+        data: expect.objectContaining({
+          status: "FAILED",
+          failureReason: "GATEWAY_DISABLED",
+        }),
+      });
+      expect(result.failedGatewayDisabled).toBe(1);
+      expect(result.failedCount).toBe(1);
+      expect(result.skippedFenced).toBe(0);
+      expect(result.success).toBe(true);
+      expect(mockPage).toHaveBeenCalledTimes(1);
+      expect(mockPage.mock.calls[0][1]).toMatchObject({
+        expected: true,
+        extra: { retired: ["row_stripe_old"] },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.STRIPE_ENABLED;
+      else process.env.STRIPE_ENABLED = previous;
+    }
+  });
+});
