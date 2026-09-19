@@ -217,8 +217,14 @@ export async function GET(
       }),
 
       // #1675 — the rows the D2 filter below drops once the link lapses,
-      // shown as "expired, request again" instead of vanishing.
-      readLapsedPayLinks(consulteeId),
+      // shown as "expired, request again" instead of vanishing. Informational:
+      // a failure here must never hide a payable link or the cancel action.
+      readLapsedPayLinks(consulteeId).catch((err: unknown) => {
+        Sentry.captureException(err, {
+          tags: { subsystem: "dashboard", op: "lapsed-pay-links" },
+        });
+        return [];
+      }),
     ]);
 
     // Transform approval-pending consultations
