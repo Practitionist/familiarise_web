@@ -230,7 +230,13 @@ export async function POST(
     supplierState = supplierStateCode();
   } catch (err) {
     if (!(err instanceof SupplierStateMismatchError)) throw err;
-    return NextResponse.json({ error: err.message }, { status: 503 });
+    // The mismatch text names the GSTIN and the env value — ops detail, not
+    // something an org admin should read off a 503 (CodeRabbit on #1752).
+    Sentry.captureException(err, { tags: { subsystem: "billing" } });
+    return NextResponse.json(
+      { error: "Invoice service is temporarily unavailable." },
+      { status: 503 },
+    );
   }
   const gst = deriveGstBreakdown({
     subtotalPaise: subtotal,

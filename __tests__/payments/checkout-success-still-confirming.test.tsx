@@ -132,6 +132,26 @@ describe("checkout-success terminal states", () => {
     expect(container.textContent).not.toContain("Activated");
   });
 
+  // CodeRabbit on #1752 — an instant (wallet/credit) refund is already back;
+  // the page must not promise it is "on its way".
+  it("says refunded, not on its way, for a REFUNDED state", async () => {
+    global.fetch = jest.fn().mockResolvedValue(
+      verifyAnswer(200, {
+        appointmentType: "CONSULTATION",
+        status: "SUCCEEDED",
+        bookingState: "REFUNDED",
+      }),
+    ) as unknown as typeof fetch;
+
+    await act(async () => {
+      root.render(<CheckoutSuccessPage />);
+    });
+    await step(0);
+
+    expect(container.textContent).toContain("refunded in full");
+    expect(container.textContent).not.toContain("on its way");
+  });
+
   // #1586 P1-J32 — a typed 500 is the route failing, not the payment.
   it("keeps the confirming card on a VERIFICATION_FAILED 500", async () => {
     global.fetch = jest.fn().mockResolvedValue(

@@ -187,6 +187,16 @@ function CheckoutSuccessContent() {
           statusIcon: pendingIcon,
           statusText: "Refund pending",
         };
+      case "REFUNDED":
+        return {
+          title: "Payment received but the slot was taken — refunded in full",
+          description:
+            "Someone else confirmed this time first, so your booking could not be placed. Your payment has already been returned.",
+          nextSteps:
+            "Wallet and credit refunds are back already; a card refund shows on your statement within a few days. Pick another time whenever you're ready.",
+          statusIcon: pendingIcon,
+          statusText: "Refunded",
+        };
       default:
         return null;
     }

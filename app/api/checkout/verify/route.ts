@@ -20,7 +20,8 @@ export type BookingState =
   | "CONFIRMED"
   | "PENDING_APPROVAL"
   | "AWAITING_ALLOCATION"
-  | "REFUND_PENDING";
+  | "REFUND_PENDING"
+  | "REFUNDED";
 
 const VERIFY_INCLUDE = {
   user: true,
@@ -53,10 +54,15 @@ async function deriveBookingState(
 ): Promise<BookingState | null> {
   // One extra round-trip: a Phase-2 auto-refund (#837) is the only sign the
   // buyer's money is coming back while paymentStatus still says SUCCEEDED.
-  const refunds = await prisma.refund.count({
+  // Internal rails refund instantly, so a SUCCEEDED full refund is "returned",
+  // not "on its way"; a partial refund leaves the booking standing.
+  const refunds = await prisma.refund.findMany({
     where: { paymentId: payment.id, status: { in: ["PENDING", "SUCCEEDED"] } },
+    select: { status: true, amountPaise: true },
   });
-  if (refunds > 0) return "REFUND_PENDING";
+  if (refunds.some((r) => r.status === "PENDING")) return "REFUND_PENDING";
+  const returned = refunds.reduce((sum, r) => sum + r.amountPaise, 0);
+  if (refunds.length > 0 && returned >= payment.amount) return "REFUNDED";
   const appointment = payment.appointment;
   if (!appointment) return null;
   const request = appointment.consultation ?? appointment.subscription;

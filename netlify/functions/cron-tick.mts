@@ -197,7 +197,7 @@ async function hitTarget(
   baseUrl: string,
   secret: string,
   name: Target,
-): Promise<{ name: string; status: number }> {
+): Promise<{ name: string; status: number; maintenance?: boolean }> {
   const { url, timeoutMs } = targetRequest(baseUrl, name);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -207,9 +207,18 @@ async function hitTarget(
       headers: { Authorization: `Bearer ${secret}` },
       signal: controller.signal,
     });
-    return { name, status: res.status };
+    // Only the twin's own maintenance refusal carries `phase`; a platform or
+    // dependency 503 does not, and must stay visible as a failure (#1598 P1-W03).
+    let maintenance = false;
+    if (res.status === 503) {
+      const body = (await res.json().catch(() => null)) as {
+        phase?: unknown;
+      } | null;
+      maintenance = typeof body?.phase === "string";
+    }
+    return { name, status: res.status, maintenance };
   } catch {
-    return { name, status: 0 };
+    return { name, status: 0, maintenance: false };
   } finally {
     clearTimeout(timer);
   }
@@ -217,12 +226,16 @@ async function hitTarget(
 
 /**
  * Which bucket a target's status lands in; exported so a test can pin it.
- * 409 is the cron lock's loser and 503 is a twin refusing inside a
- * maintenance hold — both are expected, so neither is a failure (#1598 P1-W03).
+ * 409 is the cron lock's loser; a 503 whose body carries the maintenance
+ * `phase` is a twin refusing inside a hold — both expected, neither a failure.
+ * A bare 503 has no such marker and stays failed (#1598 P1-W03).
  */
-export function bucketFor(status: number): "ok" | "held" | "failed" {
+export function bucketFor(
+  status: number,
+  maintenance = false,
+): "ok" | "held" | "failed" {
   if (status === 200 || status === 207) return "ok";
-  if (status === 409 || status === 503) return "held";
+  if (status === 409 || (status === 503 && maintenance)) return "held";
   return "failed";
 }
 
@@ -273,7 +286,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
     // hitTarget never rejects, but a defensive fallback keeps a Promise API
     // surprise from throwing out of the handler instead of being counted.
     const status = result.status === "fulfilled" ? result.value.status : 0;
-    const bucket = bucketFor(status);
+    const maintenance =
+      result.status === "fulfilled" && result.value.maintenance === true;
+    const bucket = bucketFor(status, maintenance);
     if (bucket === "ok") ok.push(name);
     else if (bucket === "held") lockHeld.push(name);
     else failed.push({ name, status });
