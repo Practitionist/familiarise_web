@@ -16,6 +16,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -104,7 +105,7 @@ export async function GET(
       webinars: webinars.map((w) => ({ ...w, price: w.price.toString() })),
       classes: classes.map((c) => ({ ...c, price: c.price.toString() })),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

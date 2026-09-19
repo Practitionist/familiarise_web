@@ -22,6 +22,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { lookupEnforcedOrg } from "@/lib/sso/enforce-session";
@@ -38,7 +39,7 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "";
 const noStoreJson = <T>(body: T, status = 200) =>
   NextResponse.json(body, {
     status,
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 
 export async function GET(req: NextRequest) {

@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import prisma from "@/lib/prisma";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 /**
  * #775 — list the caller's outstanding CHARGE_MEMBER overage charges.
@@ -17,7 +18,7 @@ export async function GET() {
   if (!session?.user?.id) {
     return NextResponse.json(
       { error: "Authentication required" },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { status: 401, headers: NO_STORE_HEADERS },
     );
   }
   const userId = session.user.id;
@@ -62,6 +63,6 @@ export async function GET() {
         createdAt: r.createdAt,
       })),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

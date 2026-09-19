@@ -21,6 +21,10 @@ import { z } from "zod";
 import { experienceValidation } from "@/schemas/shared";
 import { checkActiveAppointments } from "../utils/consultant-appointments";
 import { getSession } from "@/lib/auth-server";
+import {
+  NO_STORE_HEADERS,
+  PUBLIC_LIST_HEADERS,
+} from "@/lib/api/cache-headers";
 import { purgeExpertSurfaces } from "@/lib/data/public-cache";
 import {
   removeCollaboratorStanding,
@@ -285,8 +289,8 @@ export async function GET(
           // or an anonymous visitor could be served another user's private
           // rows. The public projection keeps the shared 60s entry.
           "Cache-Control": isPrivilegedAccess
-            ? "private, no-store"
-            : "public, s-maxage=60, stale-while-revalidate=300",
+            ? NO_STORE_HEADERS["Cache-Control"]
+            : PUBLIC_LIST_HEADERS["Cache-Control"],
         },
       },
     );

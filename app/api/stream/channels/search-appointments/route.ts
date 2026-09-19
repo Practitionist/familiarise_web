@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
@@ -46,7 +47,7 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to search appointments" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
 
     if (!query || query.length < 2) {
       return NextResponse.json([], {
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       });
     }
 
@@ -502,7 +503,7 @@ export async function GET(request: NextRequest) {
     // boundary instead of arriving as `undefined` in the search dropdown.
     return NextResponse.json(
       AppointmentSearchResultSchema.array().parse(results.slice(0, 20)),
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -512,7 +513,7 @@ export async function GET(request: NextRequest) {
     console.error("Error searching appointments:", error);
     return NextResponse.json(
       { error: "Failed to search appointments" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -39,12 +40,12 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!dispute) {
       return NextResponse.json(
         { error: "Dispute not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(dispute, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Admin dispute details error:", error);
     return NextResponse.json(
       { error: "Failed to fetch dispute details" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

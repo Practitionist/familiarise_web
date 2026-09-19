@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { z } from "zod";
@@ -81,7 +82,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -93,7 +94,7 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -112,7 +113,7 @@ export async function GET() {
         udyamNumber: consultantProfile.udyamNumber,
         msmeWrittenAgreement: consultantProfile.writtenAgreementWithFamiliarise,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -122,7 +123,7 @@ export async function GET() {
     console.error("Tax info GET error:", error);
     return NextResponse.json(
       { error: "Failed to fetch tax info" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -28,6 +28,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { NotificationRoutingMode } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -75,7 +76,7 @@ export async function GET(
   if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
     return NextResponse.json(
       { error: "Not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -88,12 +89,12 @@ export async function GET(
       orgWorkspaceId,
     );
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch {
     return NextResponse.json(
       { error: "OrgWorkspaceProfile not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { searchUsersWithRelationships } from "@/actions/stream/chat/user.action";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { getSession } from "@/lib/auth-server";
 import { streamLogger } from "@/lib/stream-logger";
@@ -11,7 +12,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Authentication required" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
     if (!searchTerm) {
       return NextResponse.json(
         { success: false, error: "Search term is required" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
         success: true,
         users,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -60,7 +61,7 @@ export async function GET(req: NextRequest) {
     streamLogger.error("User search failed", error);
     return NextResponse.json(
       { success: false, error: (error as Error).message },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

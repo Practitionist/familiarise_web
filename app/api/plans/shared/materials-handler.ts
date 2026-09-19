@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -210,7 +211,7 @@ export async function handleGetMaterials(
           message: "Please sign in to view materials",
           code: "UNAUTHORIZED",
         },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -227,7 +228,7 @@ export async function handleGetMaterials(
           message: error || "You don't have permission to view these materials",
           code: "FORBIDDEN",
         },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -243,7 +244,7 @@ export async function handleGetMaterials(
 
     return NextResponse.json(
       { data: materials },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching materials:", error);
@@ -253,7 +254,7 @@ export async function handleGetMaterials(
         message: "Failed to fetch materials",
         code: "SERVER_ERROR",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

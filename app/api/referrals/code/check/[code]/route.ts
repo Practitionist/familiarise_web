@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { validateReferralCode } from "@/lib/referrals/service";
 import prisma from "@/lib/prisma";
 import { Ratelimit } from "@upstash/ratelimit";
@@ -42,7 +43,7 @@ export async function GET(
         { error: "Code parameter is required" },
         {
           status: 400,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -57,7 +58,7 @@ export async function GET(
         {
           // Brute-forceable lookup that names a user: rate-limited and never
           // shared-cached.
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -79,7 +80,7 @@ export async function GET(
         },
       },
       {
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       },
     );
   } catch (error) {
@@ -92,7 +93,7 @@ export async function GET(
       { error: "Failed to check referral code" },
       {
         status: 500,
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       },
     );
   }

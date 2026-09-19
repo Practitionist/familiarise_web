@@ -10,6 +10,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
@@ -32,13 +33,10 @@ export async function GET(
   if (!invitation) {
     return NextResponse.json(
       { error: "Invitation not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
-  return NextResponse.json(
-    { invitation },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ invitation }, { headers: NO_STORE_HEADERS });
 }
 
 export async function DELETE(

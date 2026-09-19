@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import { getUserReferrals } from "@/lib/referrals/service";
 
@@ -23,14 +24,14 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
     const referrals = await getUserReferrals(session.user.id);
     return NextResponse.json(
       { data: referrals },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -40,7 +41,7 @@ export async function GET() {
     console.error("Error fetching referrals:", error);
     return NextResponse.json(
       { error: "Failed to fetch referrals" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

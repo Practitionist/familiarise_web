@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 
@@ -17,7 +18,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { success: false, error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -63,7 +64,7 @@ export async function GET() {
     if (!consultantProfile) {
       return NextResponse.json(
         { success: false, error: "Consultant profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -98,7 +99,7 @@ export async function GET() {
             : null,
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -114,7 +115,7 @@ export async function GET() {
             ? error.message
             : "Failed to get verification status",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

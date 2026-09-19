@@ -14,6 +14,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { verifyEmailUnsubscribeToken } from "@/lib/email/unsubscribe";
@@ -47,7 +48,7 @@ function toPage(query: string): NextResponse {
   // the redirect nor the JSON may sit in a shared cache.
   return NextResponse.redirect(`${getAppUrl()}${PAGE_PATH}?${query}`, {
     status: 303,
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }
 
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           { error: "invalid link" },
           {
             status: 400,
-            headers: { "Cache-Control": "no-store" },
+            headers: NO_STORE_HEADERS,
           },
         );
   }

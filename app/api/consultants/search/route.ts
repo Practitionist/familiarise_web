@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import { searchLimiter, applyRateLimit, getClientIp } from "@/lib/rate-limit";
@@ -14,7 +15,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -23,10 +24,7 @@ export async function GET(req: NextRequest) {
     const excludeId = searchParams.get("excludeId");
 
     if (!query || query.length < 1) {
-      return NextResponse.json(
-        { data: [] },
-        { headers: { "Cache-Control": "no-store" } },
-      );
+      return NextResponse.json({ data: [] }, { headers: NO_STORE_HEADERS });
     }
 
     const consultants = await prisma.consultantProfile.findMany({
@@ -55,7 +53,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       { data: consultants },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -65,7 +63,7 @@ export async function GET(req: NextRequest) {
     console.error("Error searching consultants:", error);
     return NextResponse.json(
       { error: "Failed to search consultants" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

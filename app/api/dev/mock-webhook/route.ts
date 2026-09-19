@@ -21,6 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { handlePaymentSuccess } from "@/lib/payments/webhooks/handlers";
 import { refundEarnings } from "@/lib/payments/payouts/earnings-service";
@@ -409,7 +410,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(response, {
       status: response.success ? 200 : 400,
       // Dev-only doc/test endpoint: never cache.
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     console.error("Mock webhook error:", error);
@@ -429,7 +430,7 @@ export async function GET() {
       { error: "Not available" },
       {
         status: 403,
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       },
     );
   }
@@ -489,7 +490,7 @@ export async function GET() {
     },
     {
       // Dev-only doc endpoint: never cache.
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     },
   );
 }

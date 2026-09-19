@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth, requireBackofficeSurface } from "@/lib/auth-helpers";
 import { ENABLE_TDS_ADMIN_VIEW } from "@/lib/feature-flags";
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
       const breakdown = await getConsultantTDSBreakdown(fy);
       return NextResponse.json(
         { financialYear: fy, consultants: breakdown },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       if (session.user.role !== "ADMIN") {
         return NextResponse.json(
           { error: "Forbidden — Admin only for PAN access" },
-          { status: 403, headers: { "Cache-Control": "no-store" } },
+          { status: 403, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -115,13 +116,13 @@ export async function GET(req: NextRequest) {
 
       return NextResponse.json(
         { financialYear: fy, records: form26qData },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
     const summary = await getTDSSummary(fy);
     return NextResponse.json(summary, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -131,7 +132,7 @@ export async function GET(req: NextRequest) {
     console.error("Admin TDS API error:", error);
     return NextResponse.json(
       { error: "Failed to fetch TDS data" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

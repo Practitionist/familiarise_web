@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 /**
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
   if (!consulteeProfileId || !consultantProfileId) {
     return NextResponse.json(
       { error: "consulteeProfileId and consultantProfileId are required" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -38,7 +39,7 @@ export async function GET(request: NextRequest) {
     ) {
       return NextResponse.json(
         { error: "Forbidden" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
   }
@@ -79,7 +80,7 @@ export async function GET(request: NextRequest) {
       if (!plan) {
         return NextResponse.json(
           { error: "Subscription plan not found" },
-          { status: 404, headers: { "Cache-Control": "no-store" } },
+          { status: 404, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -135,7 +136,7 @@ export async function GET(request: NextRequest) {
             : null,
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -145,7 +146,7 @@ export async function GET(request: NextRequest) {
     console.error("Error checking trial eligibility:", error);
     return NextResponse.json(
       { error: "An error occurred while checking trial eligibility" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

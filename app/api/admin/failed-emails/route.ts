@@ -18,6 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -42,7 +43,7 @@ export async function GET(req: NextRequest) {
   if (status && !status.success) {
     return NextResponse.json(
       { error: "Invalid status" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -67,10 +68,7 @@ export async function GET(req: NextRequest) {
     },
   });
 
-  return NextResponse.json(
-    { data: rows },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: rows }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(req: NextRequest) {

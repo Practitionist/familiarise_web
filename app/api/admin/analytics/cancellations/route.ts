@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { CancellationReason } from "@prisma/client";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -230,7 +231,7 @@ export async function GET(req: NextRequest) {
         // Include available reasons for UI dropdown
         availableReasons: Object.values(CancellationReason),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -240,7 +241,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching cancellation analytics:", error);
     return NextResponse.json(
       { error: "Failed to fetch cancellation analytics" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

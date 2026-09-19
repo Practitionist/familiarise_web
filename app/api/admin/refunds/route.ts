@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma, RefundStatus, PaymentGateway } from "@prisma/client";
 import {
@@ -83,7 +84,7 @@ export async function GET(req: NextRequest) {
         limit,
         totalPages: Math.ceil(total / limit),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
     console.error("Admin refunds list error:", error);
     return NextResponse.json(
       { error: "Failed to fetch refunds" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

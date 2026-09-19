@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import prisma from "@/lib/prisma";
@@ -82,7 +83,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid preview params", detail: parsed.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -93,7 +94,7 @@ export async function GET(
   if (pricePaise == null) {
     return NextResponse.json(
       { error: "Plan not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -106,6 +107,6 @@ export async function GET(
   });
 
   return NextResponse.json(result, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

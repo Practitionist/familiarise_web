@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { UserRole } from "@prisma/client";
 import bcrypt from "bcrypt";
@@ -117,7 +118,7 @@ export async function GET(_request: NextRequest) {
     });
 
     return NextResponse.json(staffUsers, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     console.error("Failed to fetch staff users:", error);
@@ -127,7 +128,7 @@ export async function GET(_request: NextRequest) {
     );
     return NextResponse.json(
       { message: "Internal Server Error fetching staff" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

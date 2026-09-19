@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
@@ -73,6 +74,6 @@ export async function GET() {
       warnings,
       checkedAt: now.toISOString(),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

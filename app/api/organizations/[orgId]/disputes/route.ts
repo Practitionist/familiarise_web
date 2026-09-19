@@ -9,6 +9,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -47,7 +48,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsed.data;
@@ -73,8 +74,5 @@ export async function GET(
     },
   });
 
-  return NextResponse.json(
-    { data: disputes },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: disputes }, { headers: NO_STORE_HEADERS });
 }

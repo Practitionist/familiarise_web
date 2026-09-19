@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -30,7 +31,7 @@ export async function GET(req: NextRequest) {
     if (!paymentIntent) {
       return NextResponse.json(
         { error: "Payment intent ID is required" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -72,7 +73,7 @@ export async function GET(req: NextRequest) {
     if (!payment) {
       return NextResponse.json(
         { error: "Payment not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -80,7 +81,7 @@ export async function GET(req: NextRequest) {
     if (payment.userId !== session.user.id) {
       return NextResponse.json(
         { error: "Unauthorized access to payment" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -186,7 +187,7 @@ export async function GET(req: NextRequest) {
           message: getPaymentStatusMessage(payment.paymentStatus),
           ...(syncRetryAfter !== null ? { retryAfter: syncRetryAfter } : {}),
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -218,7 +219,7 @@ export async function GET(req: NextRequest) {
         currency: payment.currency,
         createdAt: payment.createdAt,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -228,7 +229,7 @@ export async function GET(req: NextRequest) {
     console.error("Payment verification error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

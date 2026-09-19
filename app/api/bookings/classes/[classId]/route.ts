@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, ClassStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   requireApiAuth,
   isPrivileged,
@@ -55,7 +56,7 @@ export async function GET(
 
     return NextResponse.json(
       { data: classData },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     if (
@@ -64,7 +65,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Class not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(
@@ -74,7 +75,7 @@ export async function GET(
     console.error(error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

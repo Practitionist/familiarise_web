@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import {
@@ -57,7 +58,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     if (!verification) {
       return NextResponse.json(
         { error: "Verification not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -68,7 +69,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
           documents: withDownloadUrls(verification.documents),
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -78,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching verification:", error);
     return NextResponse.json(
       { error: "Failed to fetch verification" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

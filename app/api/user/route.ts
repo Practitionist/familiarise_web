@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { UserRole } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
     if (!session || session.user.role !== "ADMIN") {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
     console.error("Error getting users:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching users" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

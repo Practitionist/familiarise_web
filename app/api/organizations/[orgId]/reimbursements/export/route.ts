@@ -6,6 +6,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -41,7 +42,7 @@ export async function GET(
   if (!billingAccount || billingAccount.fundingSource !== "PERSONAL") {
     return NextResponse.json(
       { error: "Reimbursements export only for PERSONAL-funded orgs." },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -54,7 +55,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 

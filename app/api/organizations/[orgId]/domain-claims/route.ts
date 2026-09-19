@@ -21,6 +21,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
@@ -56,10 +57,7 @@ export async function GET(
     orderBy: { claimedAt: "desc" },
   });
 
-  return NextResponse.json(
-    { data: claims },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: claims }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

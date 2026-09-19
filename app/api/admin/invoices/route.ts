@@ -9,6 +9,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { PaymentStatus } from "@prisma/client";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getOperatorInvoices } from "@/lib/api/operators";
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -43,7 +44,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching invoices:", error);
     return NextResponse.json(
       { error: "Failed to fetch invoices" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

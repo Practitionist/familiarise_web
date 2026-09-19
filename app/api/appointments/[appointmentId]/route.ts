@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { AppointmentIdParams } from "@/schemas/support";
 import { parseRouteParams, supportError } from "@/lib/api/support-http";
 import {
@@ -33,7 +34,7 @@ export async function GET(
     }
     return NextResponse.json(
       { data: auth.detail },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (cause) {
     return supportError({

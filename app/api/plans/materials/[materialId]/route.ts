@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import {
@@ -26,7 +27,7 @@ export async function GET(
           message: "Please sign in to view material",
           code: "UNAUTHORIZED",
         },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -74,7 +75,7 @@ export async function GET(
           message: "The requested material does not exist",
           code: "NOT_FOUND",
         },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -92,7 +93,7 @@ export async function GET(
           message: "You don't have permission to view this material",
           code: "FORBIDDEN",
         },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -106,7 +107,7 @@ export async function GET(
     } = material;
     return NextResponse.json(
       { data: materialData },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -120,7 +121,7 @@ export async function GET(
         message: "Failed to fetch material",
         code: "SERVER_ERROR",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

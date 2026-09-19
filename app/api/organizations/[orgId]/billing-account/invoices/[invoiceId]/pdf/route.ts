@@ -22,6 +22,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
@@ -71,7 +72,7 @@ export async function GET(
           "PLATFORM_GSTIN is not configured; the platform cannot issue statutory documents.",
         code: "SUPPLIER_GSTIN_UNCONFIGURED",
       },
-      { status: 503, headers: { "Cache-Control": "no-store" } },
+      { status: 503, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -91,7 +92,7 @@ export async function GET(
   if (!invoice) {
     return NextResponse.json(
       { error: "Invoice not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -105,7 +106,7 @@ export async function GET(
           "Invoice is still in DRAFT. Issue the invoice before generating a PDF.",
         code: "INVOICE_NOT_ISSUED",
       },
-      { status: 409, headers: { "Cache-Control": "no-store" } },
+      { status: 409, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -196,7 +197,7 @@ export async function GET(
         error: "Failed to generate invoice PDF",
         details: err instanceof Error ? err.message : undefined,
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

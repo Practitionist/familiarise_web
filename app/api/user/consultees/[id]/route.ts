@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import {
@@ -49,13 +50,13 @@ export async function GET(
     if (!consultee) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(
       { data: consultee },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -72,7 +73,7 @@ export async function GET(
             ? error.message
             : "Failed to get consultee profile",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

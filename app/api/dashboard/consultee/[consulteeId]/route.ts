@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
@@ -167,7 +168,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -177,7 +178,7 @@ export async function GET(
     if (!consulteeId) {
       return NextResponse.json(
         { error: "Consultee ID is required" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -190,7 +191,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -203,7 +204,7 @@ export async function GET(
     if (!isPrivileged && !ownsProfile) {
       return NextResponse.json(
         { error: "Forbidden" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -315,7 +316,7 @@ export async function GET(
           classes: classes || [],
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -329,7 +330,7 @@ export async function GET(
         error: "Failed to fetch events data",
         message: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

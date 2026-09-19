@@ -30,6 +30,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -61,7 +62,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -153,7 +154,7 @@ export async function GET(
         hasMore: rows.length === PAGE_SIZE,
         rows,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (err) {
     Sentry.captureException(
@@ -166,7 +167,7 @@ export async function GET(
         error: "Failed to query channels",
         detail: err instanceof Error ? err.message : "unknown",
       },
-      { status: 502, headers: { "Cache-Control": "no-store" } },
+      { status: 502, headers: NO_STORE_HEADERS },
     );
   }
 }

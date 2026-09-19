@@ -31,6 +31,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireBackofficeSurface } from "@/lib/auth-helpers";
@@ -187,13 +188,10 @@ export async function GET(req: NextRequest) {
     if (!report) {
       return NextResponse.json(
         { error: "Not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
-    return NextResponse.json(
-      { data: report },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data: report }, { headers: NO_STORE_HEADERS });
   }
 
   const limit = Math.min(
@@ -208,8 +206,5 @@ export async function GET(req: NextRequest) {
     take: limit,
   });
 
-  return NextResponse.json(
-    { data: reports },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: reports }, { headers: NO_STORE_HEADERS });
 }

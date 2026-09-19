@@ -15,6 +15,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -65,13 +66,10 @@ export async function GET(
   if (!invoice) {
     return NextResponse.json(
       { error: "Invoice not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
-  return NextResponse.json(
-    { invoice },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ invoice }, { headers: NO_STORE_HEADERS });
 }
 
 export async function PATCH(

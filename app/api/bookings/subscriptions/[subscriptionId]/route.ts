@@ -10,6 +10,7 @@ import {
 } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   ApprovalWindowLapsedError,
   createApprovalPaymentIntent,
@@ -154,7 +155,7 @@ export async function GET(
 
     return NextResponse.json(
       { data: subscriptionData },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     if (
@@ -163,7 +164,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Subscription not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(
@@ -173,7 +174,7 @@ export async function GET(
     console.error("Error fetching subscription:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the subscription" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

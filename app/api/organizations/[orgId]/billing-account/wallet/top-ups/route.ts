@@ -26,6 +26,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import prisma from "@/lib/prisma";
@@ -70,7 +71,7 @@ export async function GET(
   if (!ba || ba.fundingSource !== "WALLET") {
     return NextResponse.json(
       { error: "Wallet top-ups require WALLET funding" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -97,7 +98,7 @@ export async function GET(
       data: topUps,
       meta: { total, page, perPage },
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

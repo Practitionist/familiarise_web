@@ -20,6 +20,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { getOrgAnalytics } from "@/lib/data/org-analytics";
 
@@ -37,11 +38,11 @@ export async function GET(
   if (!analytics) {
     return NextResponse.json(
       { error: "Organization not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
   return NextResponse.json(analytics, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

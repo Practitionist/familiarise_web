@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS, PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import { unstable_cache, revalidateTag } from "next/cache";
 import prisma from "@/lib/prisma";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
@@ -57,9 +58,7 @@ export async function GET() {
         data: announcements,
       },
       {
-        headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-        },
+        headers: PUBLIC_LIST_HEADERS,
       },
     );
   } catch (error) {
@@ -80,7 +79,7 @@ export async function GET() {
       // that caused it. (#1125)
       return NextResponse.json(
         { success: true, data: [] },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(

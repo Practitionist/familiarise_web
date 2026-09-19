@@ -15,6 +15,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { randomUUID } from "crypto";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
@@ -66,10 +67,7 @@ export async function GET(
     };
   });
 
-  return NextResponse.json(
-    { data: augmented },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: augmented }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

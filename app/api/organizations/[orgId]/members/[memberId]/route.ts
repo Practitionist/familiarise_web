@@ -13,6 +13,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -110,7 +111,7 @@ export async function GET(
   if (!membership) {
     return NextResponse.json(
       { error: "Member not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -119,14 +120,11 @@ export async function GET(
   if (!isSelf && !isManagerPlus) {
     return NextResponse.json(
       { error: "Insufficient role to view other members" },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
+      { status: 403, headers: NO_STORE_HEADERS },
     );
   }
 
-  return NextResponse.json(
-    { membership },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ membership }, { headers: NO_STORE_HEADERS });
 }
 
 export async function PATCH(

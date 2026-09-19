@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { AppointmentsType } from "@prisma/client";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
     if (!allowed) {
       return NextResponse.json(
         { error: "Forbidden: must filter by your own profile" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
   }
@@ -69,7 +70,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid appointment type" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -97,7 +98,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid consultation status" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (
@@ -106,19 +107,19 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Invalid subscription status" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (webinarStatus && !validEventStatuses.includes(webinarStatus)) {
     return NextResponse.json(
       { error: "Invalid webinar status" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   if (classStatus && !validEventStatuses.includes(classStatus)) {
     return NextResponse.json(
       { error: "Invalid class status" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -146,7 +147,7 @@ export async function GET(request: NextRequest) {
       { error: scopeResolution.message, code: scopeResolution.code },
       {
         status: scopeResolution.status,
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       },
     );
   }
@@ -161,7 +162,7 @@ export async function GET(request: NextRequest) {
     if (!windowParse.success) {
       return NextResponse.json(
         { error: "window must be 'recent' or 'all'", code: "INVALID_WINDOW" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
     const window = windowParse.data;
@@ -212,13 +213,13 @@ export async function GET(request: NextRequest) {
         data: appointments,
         ...(weeklyConfirmedCallCounts ? { weeklyConfirmedCallCounts } : {}),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching appointments" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

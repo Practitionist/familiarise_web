@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma, WebinarStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   requireApiAuth,
   isPrivileged,
@@ -50,7 +51,7 @@ export async function GET(
 
     return NextResponse.json(
       { data: webinarData },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     if (
@@ -59,7 +60,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Webinar not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(
@@ -69,7 +70,7 @@ export async function GET(
     console.error("Error fetching webinar:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching the webinar" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

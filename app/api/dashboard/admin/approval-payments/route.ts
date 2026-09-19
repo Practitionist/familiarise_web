@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -19,13 +20,13 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
     if (session.user.role !== "ADMIN") {
       return NextResponse.json(
         { error: "Forbidden" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -294,7 +295,7 @@ export async function GET() {
           (p) => !p.isExpired && !p.isExpiringSoon,
         ).length,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -308,7 +309,7 @@ export async function GET() {
         approvalPayments: [],
         count: 0,
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

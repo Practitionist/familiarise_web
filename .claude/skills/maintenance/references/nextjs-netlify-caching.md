@@ -100,6 +100,32 @@ For invalidation, `revalidatePath` and `revalidateTag` both work and propagate t
 
 Documented adapter limitations worth remembering: pages set to the `edge` runtime actually run in the functions region, `beforeFiles` rewrites cannot point at static files in `public/`, and headers and redirects are evaluated after middleware.
 
+## API routes: every GET declares its cache contract (policy since #1755)
+
+Page-level strategy above does not cover `app/api/**/route.ts`, where Next
+caches nothing by default and Netlify replays whatever the function returns.
+Every GET in this repo now carries an explicit directive — no bare
+`NextResponse.json` on a GET:
+
+| The GET response is | Header (from `lib/api/cache-headers.ts`) | Purge pairing |
+|---|---|---|
+| Same for every visitor (taxonomy, aggregates, public lists) | `PUBLIC_LIST_HEADERS` (`public, s-maxage=60, SWR=300`) | `revalidatePath`/`revalidateTag` at every write site, after commit |
+| Varies by session/role/membership, token-gated, or machine/cron | `NO_STORE_HEADERS` | None (nothing cached) |
+| Mixed projection from one URL (e.g. own-profile vs public) | **Branch the header** with the access level; never one shared `public` | Purge as public |
+
+Import only the constant the file uses — a shared import keeps hundreds of
+routes from minting hundreds of identical literals, which trips the
+`new_duplicated_lines_density` gate. `__tests__/api/cache-headers.test.ts`
+pins the three invariants (cron twins, branched mixed projections, public
+windows); extend its lists when adding routes.
+
+Traps already hit once: `weekly/[id]`-style GETs that serialize full
+consultant rows (PAN/TDS fields) look public but are not; plan-detail GETs
+embedding other buyers' rows (payment links, request notes) are not; TODO
+comments trip Sonar S1135, so phrase follow-ups without the token. Verify with
+`curl -sI` (expect `Netlify Durable stored` → `Edge hit`) and a second request
+showing a climbing `age`.
+
 ## How to verify — the only four techniques that have worked here
 
 **Read the CI build route table.** This is authoritative for *build-time* classification — whether a route prerenders at build, and what revalidate the build applied — and it settled the #1110 dispute definitively. It is not authoritative for on-demand ISR, where a `●` route legitimately shows an empty Revalidate column and no build entries; confirm those at runtime from `cache-control` and a climbing `age` instead, as described in Step 2c. `○` means prerendered at build; `ƒ` means dynamic; the Revalidate column shows whether a `revalidate` export actually applied. Pull it from the `TypeScript, Tests & Build` check run with `gh run view --log` and paste the actual lines into your report. Never run `next build` locally — it is RAM-heavy and has taken this machine down.

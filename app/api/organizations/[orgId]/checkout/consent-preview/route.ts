@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
@@ -24,8 +25,5 @@ export async function GET(
     purposeCode: PURPOSE_CODES.SESSION_BOOKING,
   });
 
-  return NextResponse.json(
-    { hasConsent },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ hasConsent }, { headers: NO_STORE_HEADERS });
 }

@@ -9,16 +9,14 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 
 export async function GET() {
   const session = await getSession();
   if (!session?.user?.email) {
-    return NextResponse.json(
-      { invites: [] },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ invites: [] }, { headers: NO_STORE_HEADERS });
   }
 
   // E2E-audit P1 fix — expired invitations are no longer returned. The
@@ -68,6 +66,6 @@ export async function GET() {
         role: inv.role,
       })),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

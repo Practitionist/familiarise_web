@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { getSession } from "@/lib/auth-server";
 import { supportError } from "@/lib/api/support-http";
@@ -39,10 +40,7 @@ export async function GET(req: NextRequest) {
     // Not having a consultee profile is not an error — it just means there is
     // nothing to review, and the card renders nothing.
     if (!consulteeProfileId) {
-      return NextResponse.json(
-        { data: [] },
-        { headers: { "Cache-Control": "no-store" } },
-      );
+      return NextResponse.json({ data: [] }, { headers: NO_STORE_HEADERS });
     }
 
     // #705 — the profile page asks about a CONSULTANT, not an appointment:
@@ -74,7 +72,7 @@ export async function GET(req: NextRequest) {
             consultantProfileId,
           ),
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -86,7 +84,7 @@ export async function GET(req: NextRequest) {
       );
       return NextResponse.json(
         { data: one ? [one] : [] },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -94,7 +92,7 @@ export async function GET(req: NextRequest) {
       {
         data: await listReviewableSessions(consulteeProfileId, session.user.id),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (cause) {
     return supportError({

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { updateSubscriberPreferences } from "@/lib/novu/subscriber";
 import { NotificationPreferenceUpdateSchema } from "@/schemas/user";
@@ -15,7 +16,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -49,12 +50,12 @@ export async function GET() {
           quietHoursEnd: null,
           quietHoursTimezone: null,
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(preferences, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -64,7 +65,7 @@ export async function GET() {
     console.error("Failed to fetch notification preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch preferences" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

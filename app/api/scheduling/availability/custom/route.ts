@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import { coalesceAndResolveCustom } from "@/utils/scheduling-engine/mergeAdjacentWeeklyRows";
 import prisma from "@/lib/prisma";
@@ -15,10 +16,6 @@ import { revalidatePath } from "next/cache";
 
 // Session-free read keyed by ?consultantProfileId= (carries only the public
 // consultant name, no per-user data): safe for shared caching.
-const PUBLIC_CACHE_HEADERS = {
-  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-};
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -91,7 +88,7 @@ export async function GET(req: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { status: 200, headers: PUBLIC_CACHE_HEADERS },
+      { status: 200, headers: PUBLIC_LIST_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(

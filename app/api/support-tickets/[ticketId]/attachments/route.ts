@@ -5,6 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import {
   uploadSupportTicketAttachment,
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -53,7 +54,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!ticket) {
       return NextResponse.json(
         { error: "Ticket not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (ticket.userId !== session.user.id && !isStaffOrAdmin) {
       return NextResponse.json(
         { error: "Forbidden" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -70,10 +71,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       orderBy: { uploadedAt: "desc" },
     });
 
-    return NextResponse.json(
-      { attachments },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ attachments }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -82,7 +80,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching attachments:", error);
     return NextResponse.json(
       { error: "Failed to fetch attachments" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

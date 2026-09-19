@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import prisma from "@/lib/prisma";
 import {
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
             hostedClassPlans: [],
           },
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -58,7 +59,7 @@ export async function GET(request: NextRequest) {
         { error: scopeResolution.message, code: scopeResolution.code },
         {
           status: scopeResolution.status,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -80,7 +81,7 @@ export async function GET(request: NextRequest) {
           },
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -90,7 +91,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching collaborations:", error);
     return NextResponse.json(
       { error: "Failed to fetch collaborations" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

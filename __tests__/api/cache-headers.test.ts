@@ -31,11 +31,12 @@ const files = routeFiles(API_DIR).map((file) => ({
   rel: path.relative(process.cwd(), file).replace(/\\/g, "/"),
   src: readFileSync(file, "utf8"),
 }));
-
 const hasGet = (src: string) => /export\s+async\s+function\s+GET\b/.test(src);
-const hasNoStore = (src: string) => /no-store/.test(src);
-const hasPublicCache = (src: string) => /public,\s*s-maxage=/.test(src);
-
+// Accept the literal or the shared helper reference (lib/api/cache-headers).
+const hasNoStore = (src: string) =>
+  /no-store/.test(src) || src.includes("NO_STORE_HEADERS");
+const hasPublicCache = (src: string) =>
+  /public,\s*s-maxage=/.test(src) || src.includes("PUBLIC_LIST_HEADERS");
 describe("API cache directives", () => {
   it("finds the route files it is supposed to be guarding", () => {
     expect(files.length).toBeGreaterThan(200);
@@ -64,8 +65,10 @@ describe("API cache directives", () => {
       (f) => f.rel === "app/api/user/consultants/[id]/route.ts",
     );
     expect(file).toBeDefined();
-    expect(file!.src).toMatch(/isPrivilegedAccess[\s\S]{0,200}private/);
-    expect(file!.src).toMatch(/private,\s*no-store/);
+    expect(file!.src).toMatch(
+      /isPrivilegedAccess[\s\S]{0,300}NO_STORE_HEADERS/,
+    );
+    expect(file!.src).toMatch(/PUBLIC_LIST_HEADERS/);
   });
 
   it("public listings declare their shared cache window", () => {

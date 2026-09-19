@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 import { getStaffAppointments } from "@/lib/data/staff-appointments";
 import type { Scope } from "@/lib/api/scope/parse";
@@ -47,13 +48,13 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     console.error("Error fetching appointments:", error);
     return NextResponse.json(
       { error: "Failed to fetch appointments" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

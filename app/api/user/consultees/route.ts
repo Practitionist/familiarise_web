@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   requireApiAuth,
   isPrivileged,
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(consultees, {
       status: 200,
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
     console.error("Error getting consultees:", error);
     return NextResponse.json(
       { error: "Internal Server Error" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

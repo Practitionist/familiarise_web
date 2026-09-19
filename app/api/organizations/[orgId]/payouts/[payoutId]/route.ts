@@ -15,6 +15,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
@@ -69,13 +70,10 @@ export async function GET(
   if (!payout) {
     return NextResponse.json(
       { error: "Payout not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
-  return NextResponse.json(
-    { payout },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ payout }, { headers: NO_STORE_HEADERS });
 }
 
 export async function PATCH(

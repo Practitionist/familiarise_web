@@ -12,6 +12,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -114,7 +115,7 @@ export async function GET(
   if (!org) {
     return NextResponse.json(
       { error: "Organization not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -130,7 +131,7 @@ export async function GET(
         consultantProfileId: access.member.consultantProfileId,
       },
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

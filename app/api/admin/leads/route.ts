@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { LeadStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (status && !Object.values(LeadStatus).includes(status as LeadStatus)) {
       return NextResponse.json(
         { error: `Unknown lead status "${status}"` },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
     return NextResponse.json(
       { leads, nextCursor },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error(
@@ -67,7 +68,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     );
     return NextResponse.json(
       { error: "Failed to load leads" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

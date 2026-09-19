@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "lib/prisma";
 import { PlatformFeedbackStatus } from "@prisma/client";
 
@@ -33,12 +34,12 @@ export async function GET(
     if (!feedback) {
       return NextResponse.json(
         { error: "Feedback not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(feedback, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -48,7 +49,7 @@ export async function GET(
     console.error("Error fetching feedback:", error);
     return NextResponse.json(
       { error: "Failed to fetch feedback" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

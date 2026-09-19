@@ -3,15 +3,12 @@ import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import { validateTagName } from "@/utils/contentValidation";
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 // Public taxonomy read (no session, no per-user data; varies by ?domainId=):
 // safe for shared caching.
-const PUBLIC_CACHE_HEADERS = {
-  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-};
-
 // ---------------------------------------------------------------------------
 // GET /api/user/content/tags?domainId={id}
 //
@@ -44,7 +41,7 @@ export async function GET(request: NextRequest) {
       orderBy: { name: "asc" },
     });
 
-    return NextResponse.json(tags, { headers: PUBLIC_CACHE_HEADERS });
+    return NextResponse.json(tags, { headers: PUBLIC_LIST_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

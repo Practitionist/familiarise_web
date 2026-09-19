@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth, isPrivileged } from "@/lib/auth-helpers";
 
 /**
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest) {
   if (!consultantProfileId) {
     return NextResponse.json(
       { error: "consultantProfileId is required" },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
   ) {
     return NextResponse.json(
       { error: "Forbidden" },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
+      { status: 403, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -44,10 +45,7 @@ export async function GET(request: NextRequest) {
       counts.map((c) => [c.status, c._count.status]),
     );
 
-    return NextResponse.json(
-      { data },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -56,7 +54,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching trial stats:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching trial stats" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -8,6 +8,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
@@ -27,7 +28,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -47,7 +48,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!webinarPlan) {
       return NextResponse.json(
         { error: "Webinar plan not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -94,7 +95,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to these recordings" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -129,7 +130,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         recordings: formattedRecordings,
         total: formattedRecordings.length,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -139,7 +140,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting webinar plan recordings:", error);
     return NextResponse.json(
       { error: "Failed to get recordings" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

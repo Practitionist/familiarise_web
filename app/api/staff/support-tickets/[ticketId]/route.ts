@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { consultantPublicScalars } from "@/lib/data/consultant-public";
 import { Prisma, UserRole } from "@prisma/client";
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!ticket) {
       return NextResponse.json(
         { error: "Ticket not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -205,7 +206,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         linkedPayment,
         linkedRefund,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -215,7 +216,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching support ticket:", error);
     return NextResponse.json(
       { error: "Failed to fetch support ticket" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

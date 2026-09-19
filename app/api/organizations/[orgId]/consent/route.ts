@@ -19,6 +19,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -67,7 +68,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsedQuery.data;
@@ -89,10 +90,7 @@ export async function GET(
     take: q.limit,
   });
 
-  return NextResponse.json(
-    { data: consents },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: consents }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

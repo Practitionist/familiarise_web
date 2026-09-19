@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
 import { applyRateLimit, checkoutContextLimiter } from "@/lib/rate-limit";
@@ -10,7 +11,7 @@ export async function GET(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json(
       { error: "Unauthorized" },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { status: 401, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(taxContext, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     console.error("Checkout context error:", error);
     return NextResponse.json(
       { error: "Failed to resolve checkout tax context" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

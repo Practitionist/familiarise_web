@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -27,10 +28,7 @@ export async function GET() {
     orderBy: { requestedAt: "desc" },
     take: 10,
   });
-  return NextResponse.json(
-    { data: requests },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: requests }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(req: Request) {

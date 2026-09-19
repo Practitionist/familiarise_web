@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { EarningStatus } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
     if (!consultantProfile) {
       return NextResponse.json(
         { error: "Consultant profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest) {
         { error: scopeResolution.message, code: scopeResolution.code },
         {
           status: scopeResolution.status,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -104,7 +105,7 @@ export async function GET(req: NextRequest) {
         ...payload,
         livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
     console.error("Error fetching earnings:", error);
     return NextResponse.json(
       { error: "Failed to fetch earnings" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { checkActiveAppointments } from "../../utils/consultant-appointments";
 
 import { getSession } from "@/lib/auth-server";
@@ -17,7 +18,7 @@ export async function GET(
     if (!session) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -32,7 +33,7 @@ export async function GET(
     if (!consultant) {
       return NextResponse.json(
         { error: "Consultant not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     // Only the owner may read their booking-load pre-flight; the count leaks
@@ -40,7 +41,7 @@ export async function GET(
     if (consultant.userId !== session.user.id) {
       return NextResponse.json(
         { error: "Forbidden" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -58,7 +59,7 @@ export async function GET(
             total: activeAppointments.total,
           },
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -67,7 +68,7 @@ export async function GET(
         canSwitch: true,
         currentScheduleType: consultant.scheduleType,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -77,7 +78,7 @@ export async function GET(
     console.error("Error checking schedule switch eligibility:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

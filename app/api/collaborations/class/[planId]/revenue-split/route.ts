@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
 import { calculateRevenueSplit } from "@/lib/collaborators/service";
@@ -17,7 +18,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -32,7 +33,7 @@ export async function GET(
       if (!plan) {
         return NextResponse.json(
           { error: "Plan not found" },
-          { status: 404, headers: { "Cache-Control": "no-store" } },
+          { status: 404, headers: NO_STORE_HEADERS },
         );
       }
       const isOwner =
@@ -48,7 +49,7 @@ export async function GET(
         if (!collab) {
           return NextResponse.json(
             { error: "Forbidden" },
-            { status: 403, headers: { "Cache-Control": "no-store" } },
+            { status: 403, headers: NO_STORE_HEADERS },
           );
         }
       }
@@ -62,16 +63,13 @@ export async function GET(
     if (!amountParsed.success) {
       return NextResponse.json(
         { error: "amount must be an integer between 0 and 1,000,000,000" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
     const amount = amountParsed.data;
 
     const splits = await calculateRevenueSplit("class", planId, amount);
-    return NextResponse.json(
-      { data: splits },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data: splits }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -80,7 +78,7 @@ export async function GET(
     console.error("Error calculating revenue split:", error);
     return NextResponse.json(
       { error: "Failed to calculate revenue split" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

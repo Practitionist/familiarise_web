@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import prisma from "@/lib/prisma";
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -61,7 +62,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!recording) {
       return NextResponse.json(
         { error: "Recording not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -164,7 +165,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied to this recording" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -223,7 +224,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
               "Playback requires the recordings.play permission; staff receive metadata only.",
           },
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -239,7 +240,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
             "Recording has expired on Stream storage. Transfer to permanent storage or sync recordings.",
           expired: true,
         },
-        { status: 410, headers: { "Cache-Control": "no-store" } },
+        { status: 410, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -256,7 +257,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         },
         access: { level: "FULL" as const },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -266,7 +267,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

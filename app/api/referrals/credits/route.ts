@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import { getSession } from "@/lib/auth-server";
 import { getCreditHistory, getUserCredits } from "@/lib/referrals/service";
@@ -9,7 +10,7 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -25,7 +26,7 @@ export async function GET() {
           history,
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -35,7 +36,7 @@ export async function GET() {
     console.error("Error fetching credits:", error);
     return NextResponse.json(
       { error: "Failed to fetch credits" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

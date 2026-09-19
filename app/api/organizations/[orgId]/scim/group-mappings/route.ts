@@ -12,6 +12,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgOwner } from "@/lib/auth-helpers";
@@ -35,10 +36,7 @@ export async function GET(
     where: { organizationId: orgId },
     orderBy: { scimGroupName: "asc" },
   });
-  return NextResponse.json(
-    { data: mappings },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: mappings }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

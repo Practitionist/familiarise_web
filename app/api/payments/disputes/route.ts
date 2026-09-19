@@ -11,6 +11,7 @@ import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { evidenceDeadlinePassed } from "@/lib/payments/dispute-status";
 import { Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
@@ -50,7 +51,7 @@ export async function GET(req: NextRequest) {
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
     if (!user?.role || !hasBackofficePermission(user.role, "disputes.manage")) {
       return NextResponse.json(
         { error: "Forbidden - Admin access required" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -82,7 +83,7 @@ export async function GET(req: NextRequest) {
           error:
             "Only Stripe supports direct dispute API. Razorpay disputes are webhook-only.",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -96,7 +97,7 @@ export async function GET(req: NextRequest) {
           gateway: "STRIPE",
           count: disputes.length,
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     } else {
       // List all disputes from database
@@ -135,7 +136,7 @@ export async function GET(req: NextRequest) {
           })),
           count: disputes.length,
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
   } catch (error) {
@@ -150,7 +151,7 @@ export async function GET(req: NextRequest) {
         error:
           error instanceof Error ? error.message : "Failed to list disputes",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

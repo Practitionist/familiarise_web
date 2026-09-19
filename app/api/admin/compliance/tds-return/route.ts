@@ -15,6 +15,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", detail: parsed.error.flatten() },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
     const { financialYear, quarter } = parsed.data;
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
           error:
             "No return CSV for that quarter — run the tds-return-draft workflow first.",
         },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -93,7 +94,7 @@ export async function GET(req: NextRequest) {
     console.error("Error signing TDS return CSV:", error);
     return NextResponse.json(
       { error: "Failed to fetch the TDS return CSV" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

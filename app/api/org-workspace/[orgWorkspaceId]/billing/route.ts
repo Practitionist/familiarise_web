@@ -21,6 +21,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceBillingRollup } from "@/lib/data/org-workspace";
 
@@ -37,7 +38,7 @@ export async function GET(
   if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
     return NextResponse.json(
       { error: "Not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -47,6 +48,6 @@ export async function GET(
   // so only the authenticated userId is needed.
   const result = await getWorkspaceBillingRollup(auth.session.user.id);
   return NextResponse.json(result, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

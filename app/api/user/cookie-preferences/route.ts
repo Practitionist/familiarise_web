@@ -1,5 +1,6 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { z } from "zod";
 
@@ -21,7 +22,7 @@ export async function GET() {
     if (!prefs) {
       return NextResponse.json(
         { data: { essential: true, analytics: false, marketing: false } },
-        { status: 200, headers: { "Cache-Control": "no-store" } },
+        { status: 200, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -33,13 +34,13 @@ export async function GET() {
           marketing: prefs.marketing,
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching cookie preferences:", error);
     return NextResponse.json(
       { error: "Failed to fetch cookie preferences" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

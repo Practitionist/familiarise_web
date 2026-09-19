@@ -6,6 +6,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { WaitlistSource, WaitlistStatus } from "@prisma/client";
 import { z } from "zod";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     if (!parsed.success) {
       return NextResponse.json(
         { error: "Invalid query", details: parsed.error.flatten() },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     }
 
     return NextResponse.json(await listSubscribers(filters), {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -59,7 +60,7 @@ export async function GET(request: NextRequest): Promise<Response> {
     console.error("[admin/waitlist]", error);
     return NextResponse.json(
       { error: "Failed to load subscribers" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -14,6 +14,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
@@ -46,7 +47,7 @@ export async function GET(
   if (!access.org.canHost) {
     return NextResponse.json(
       { error: "Organization does not host (canHost=false)" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -72,12 +73,12 @@ export async function GET(
   if (!payoutAccount) {
     return NextResponse.json(
       { payoutAccount: null, exists: false },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   }
   return NextResponse.json(
     { payoutAccount, exists: true },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

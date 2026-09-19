@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
@@ -33,7 +34,7 @@ export async function GET(
           message: "Please sign in to view documents",
           code: "UNAUTHORIZED",
         },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -46,7 +47,7 @@ export async function GET(
           message: "Appointment ID is required",
           code: "INVALID_INPUT",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -157,7 +158,7 @@ export async function GET(
             : "This appointment doesn't exist or you don't have permission to view it. Please check the appointment details or contact support if you believe this is an error.",
           code: "NOT_FOUND",
         },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -172,7 +173,7 @@ export async function GET(
             "This appointment has been cancelled or closed, so its documents are no longer available.",
           code: "APPOINTMENT_TERMINAL",
         },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -236,7 +237,7 @@ export async function GET(
             : appointmentTitle,
           consultantName,
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -257,7 +258,7 @@ export async function GET(
           : appointmentTitle,
         consultantName,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching appointment documents:", error);
@@ -279,7 +280,7 @@ export async function GET(
               "Unable to connect to the server. Please check your internet connection and try again.",
             code: "CONNECTION_ERROR",
           },
-          { status: 503, headers: { "Cache-Control": "no-store" } },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -294,7 +295,7 @@ export async function GET(
               "The document system is temporarily unavailable. Please try again in a few moments.",
             code: "DATABASE_ERROR",
           },
-          { status: 503, headers: { "Cache-Control": "no-store" } },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
     }
@@ -306,7 +307,7 @@ export async function GET(
           "Something went wrong while loading your documents. Please refresh the page or try again later. If the problem persists, contact support.",
         code: "UNKNOWN_ERROR",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

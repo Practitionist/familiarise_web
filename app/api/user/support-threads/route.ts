@@ -7,6 +7,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
@@ -104,10 +105,7 @@ export async function GET(req: NextRequest) {
       },
     }));
 
-    return NextResponse.json(
-      { data },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data }, { headers: NO_STORE_HEADERS });
   } catch (cause) {
     return supportError({
       status: 500,

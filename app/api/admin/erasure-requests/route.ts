@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 
@@ -21,8 +22,5 @@ export async function GET() {
       user: { select: { id: true, name: true, email: true, erasedAt: true } },
     },
   });
-  return NextResponse.json(
-    { data: requests },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: requests }, { headers: NO_STORE_HEADERS });
 }

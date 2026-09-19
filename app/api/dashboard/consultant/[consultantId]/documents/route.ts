@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma, DocumentReviewStatus } from "@prisma/client";
 import { resolveOrgScope, scopeOrgId } from "@/lib/api/scope/parse";
@@ -19,7 +20,7 @@ export async function GET(
           message: "Please sign in to view documents for review",
           code: "UNAUTHORIZED",
         },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -32,7 +33,7 @@ export async function GET(
           message: "Consultant ID is required",
           code: "INVALID_INPUT",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -63,7 +64,7 @@ export async function GET(
           message: `"limit" must be an integer between 1 and ${MAX_LIMIT}.`,
           code: "INVALID_PAGINATION",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -74,7 +75,7 @@ export async function GET(
           message: `"offset" must be a non-negative integer.`,
           code: "INVALID_PAGINATION",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -128,7 +129,7 @@ export async function GET(
             "Unable to verify consultant access. Please try again in a few moments.",
           code: "DATABASE_ERROR",
         },
-        { status: 503, headers: { "Cache-Control": "no-store" } },
+        { status: 503, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -142,7 +143,7 @@ export async function GET(
               : "You don't have permission to view documents for this consultant profile. Please check that you're accessing the correct consultant dashboard.",
           code: "ACCESS_DENIED",
         },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -168,7 +169,7 @@ export async function GET(
         },
         {
           status: docScopeResolution.status,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -224,7 +225,7 @@ export async function GET(
             message: `Status "${status}" is not valid. Valid statuses are: ${validStatuses.join(", ")}`,
             code: "INVALID_FILTER",
           },
-          { status: 400, headers: { "Cache-Control": "no-store" } },
+          { status: 400, headers: NO_STORE_HEADERS },
         );
       }
     }
@@ -239,7 +240,7 @@ export async function GET(
             message: `Appointment type "${appointmentType}" is not valid. Valid types are: ${validTypes.join(", ")}`,
             code: "INVALID_FILTER",
           },
-          { status: 400, headers: { "Cache-Control": "no-store" } },
+          { status: 400, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -344,7 +345,7 @@ export async function GET(
             completedCount: 0,
           },
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -493,7 +494,7 @@ export async function GET(
         },
         metadata,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching consultant documents:", error);
@@ -515,7 +516,7 @@ export async function GET(
               "Unable to connect to the document system. Please check your internet connection and try again.",
             code: "CONNECTION_ERROR",
           },
-          { status: 503, headers: { "Cache-Control": "no-store" } },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
 
@@ -530,7 +531,7 @@ export async function GET(
               "The document review system is temporarily unavailable. Please try again in a few moments.",
             code: "DATABASE_ERROR",
           },
-          { status: 503, headers: { "Cache-Control": "no-store" } },
+          { status: 503, headers: NO_STORE_HEADERS },
         );
       }
     }
@@ -542,7 +543,7 @@ export async function GET(
           "Something went wrong while loading documents for review. Please refresh the page or try again later. If the problem persists, contact support.",
         code: "UNKNOWN_ERROR",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

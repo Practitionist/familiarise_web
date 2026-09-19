@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -272,7 +273,7 @@ export async function GET(
       if (!allowed) {
         return NextResponse.json(
           { error: "Forbidden" },
-          { status: 403, headers: { "Cache-Control": "no-store" } },
+          { status: 403, headers: NO_STORE_HEADERS },
         );
       }
     }
@@ -418,13 +419,13 @@ export async function GET(
     if (!appointment) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(
       { data: appointment },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     console.error("Error fetching appointment:", error);
@@ -434,7 +435,7 @@ export async function GET(
     );
     return NextResponse.json(
       { error: "An error occurred while fetching the appointment" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

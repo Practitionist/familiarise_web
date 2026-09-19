@@ -2,6 +2,7 @@
 // in (Prisma, Sentry, Better Auth), held but never executed. Same probe as bare.
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { reportSentryError } from "@/lib/observability/report";
@@ -27,6 +28,6 @@ export async function GET() {
   // Diagnostics must never be cached — see probe-bare.
   return NextResponse.json(
     { route: "probe-full", heldImports, ...report },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

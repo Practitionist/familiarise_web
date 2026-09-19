@@ -11,6 +11,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest) {
       { error: scopeResolution.message, code: scopeResolution.code },
       {
         status: scopeResolution.status,
-        headers: { "Cache-Control": "no-store" },
+        headers: NO_STORE_HEADERS,
       },
     );
   }
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const pagination = parsePagination(url);
@@ -78,6 +79,6 @@ export async function GET(req: NextRequest) {
     perPage: pagination.pageSize,
   });
   return NextResponse.json(result, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import {
@@ -318,7 +319,7 @@ export async function GET(
     if (!appointment) {
       return NextResponse.json(
         { error: "Appointment not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -341,7 +342,7 @@ export async function GET(
     if (!roles.isParticipant && !isPrivilegedUser && !isOrgAdminActor) {
       return NextResponse.json(
         { error: "You are not authorized to cancel this appointment" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -376,7 +377,7 @@ export async function GET(
           wholeEvent: true,
           attendeeCount: quote.attendeeCount,
         },
-        { headers: { "Cache-Control": "no-store" } },
+        { headers: NO_STORE_HEADERS },
       );
     }
 
@@ -387,7 +388,7 @@ export async function GET(
         roles,
         isPrivilegedUser,
       ),
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -396,7 +397,7 @@ export async function GET(
     );
     return NextResponse.json(
       { error: "Could not estimate the refund" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

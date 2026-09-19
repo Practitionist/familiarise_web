@@ -18,6 +18,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import {
   invalidateExchangeRateCache,
@@ -44,7 +45,7 @@ export async function GET() {
       ageMs: info.ageMs,
       ageMinutes: info.ageMs !== null ? Math.round(info.ageMs / 60000) : null,
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

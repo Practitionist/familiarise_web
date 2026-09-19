@@ -8,6 +8,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -50,7 +51,7 @@ export async function GET() {
   if (!userId && !sessionId) {
     return NextResponse.json(
       { error: "No identity" },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { status: 401, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -71,7 +72,7 @@ export async function GET() {
       marketing: false,
       functional: false,
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

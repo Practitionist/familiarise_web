@@ -5,6 +5,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
 
@@ -63,14 +64,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!user) {
       return NextResponse.json(
         { error: "User not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
-    return NextResponse.json(
-      { user },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ user }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -79,7 +77,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error fetching user details:", error);
     return NextResponse.json(
       { error: "Failed to fetch user details" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

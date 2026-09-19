@@ -2,6 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { listDateFilterSchema } from "@/schemas/list-date-filter";
 import { Prisma } from "@prisma/client";
 import { transformNestedPlanTopics } from "@/lib/topics";
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
             "startDate and endDate must be valid ISO 8601 date-times",
           code: "INVALID_DATE",
         },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -99,7 +100,7 @@ export async function GET(request: NextRequest) {
         { error: scopeResolution.message, code: scopeResolution.code },
         {
           status: scopeResolution.status,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -242,7 +243,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       { data: transformedWebinars },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -252,7 +253,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching webinars:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching webinars" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

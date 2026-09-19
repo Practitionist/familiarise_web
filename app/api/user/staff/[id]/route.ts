@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { requireApiAuth, requireAdminAuth } from "@/lib/auth-helpers";
@@ -54,13 +55,13 @@ export async function GET(
     if (!staffProfile) {
       return NextResponse.json(
         { error: "Staff profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
     return NextResponse.json(
       { data: staffProfile },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     if (error instanceof Error) {
@@ -77,7 +78,7 @@ export async function GET(
             ? error.message
             : "Failed to get staff profile",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

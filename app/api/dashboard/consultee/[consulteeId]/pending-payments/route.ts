@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
@@ -46,7 +47,7 @@ export async function GET(
     if (!consulteeProfile) {
       return NextResponse.json(
         { error: "Consultee profile not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -379,7 +380,7 @@ export async function GET(
         pendingPayments,
         count: pendingPayments.length,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -393,7 +394,7 @@ export async function GET(
         pendingPayments: [],
         count: 0,
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

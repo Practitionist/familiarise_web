@@ -24,6 +24,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
@@ -86,7 +87,7 @@ export async function GET(
   if (!parsedQuery.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsedQuery.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsedQuery.data;
@@ -102,7 +103,7 @@ export async function GET(
     if (!contract) {
       return NextResponse.json(
         { error: "Contract not found for this organization" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
   }
@@ -124,10 +125,7 @@ export async function GET(
     orderBy: [{ effectiveFrom: "desc" }],
   });
 
-  return NextResponse.json(
-    { data: rateCards },
-    { headers: { "Cache-Control": "no-store" } },
-  );
+  return NextResponse.json({ data: rateCards }, { headers: NO_STORE_HEADERS });
 }
 
 export async function POST(

@@ -8,6 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { RecordingTransferService } from "@/lib/stream/recording-transfer-service";
 import { streamLogger } from "@/lib/stream-logger";
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
     // The cron core is shared with the jobs/** entrypoint, which exits on
@@ -51,7 +52,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         success: true,
         expiredCount,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     // #476 — concurrent invocation (schedule overlap / manual re-run)
@@ -59,13 +60,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (error instanceof CronLockHeldError) {
       return NextResponse.json(
         { error: error.message },
-        { status: 409, headers: { "Cache-Control": "no-store" } },
+        { status: 409, headers: NO_STORE_HEADERS },
       );
     }
     if (error instanceof MaintenanceActiveError) {
       return NextResponse.json(
         { error: error.message, phase: error.phase },
-        { status: error.httpStatus, headers: { "Cache-Control": "no-store" } },
+        { status: error.httpStatus, headers: NO_STORE_HEADERS },
       );
     }
     Sentry.captureException(error, {
@@ -74,7 +75,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     streamLogger.error("Mark expired recordings cron failed", error);
     return NextResponse.json(
       { error: "Cron job failed" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

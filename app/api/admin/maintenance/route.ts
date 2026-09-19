@@ -10,6 +10,7 @@ import { runPostRecovery } from "@/actions/maintenance/post-recovery";
 import { MaintenancePhase } from "@prisma/client";
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import { createIncident, resolveIncident } from "@/lib/betterstack";
@@ -115,7 +116,7 @@ export async function GET() {
 
   return NextResponse.json(
     { state, history: recentWindows },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

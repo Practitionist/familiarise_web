@@ -6,6 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!session?.user) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!meeting) {
       return NextResponse.json(
         { error: "Meeting session not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -219,7 +220,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     if (!hasAccess) {
       return NextResponse.json(
         { error: "Access denied" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -252,7 +253,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         recordingStartedAt: meeting.recordingStartedAt,
         recordingStartedBy: meeting.recordingStartedBy,
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -262,7 +263,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     console.error("Error getting meeting recording info:", error);
     return NextResponse.json(
       { error: "Failed to get recording info" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

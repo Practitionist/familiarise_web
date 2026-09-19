@@ -21,6 +21,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { Prisma } from "@prisma/client";
 
@@ -94,7 +95,7 @@ export async function GET(
         : null,
       platformDefault: PLATFORM_DEFAULT_TERMS,
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

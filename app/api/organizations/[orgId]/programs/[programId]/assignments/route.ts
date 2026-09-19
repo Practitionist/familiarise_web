@@ -12,6 +12,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -43,7 +44,7 @@ export async function GET(
   if (!access.org.canSponsor) {
     return NextResponse.json(
       { error: "Organization does not sponsor programs" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -56,7 +57,7 @@ export async function GET(
   if (!program) {
     return NextResponse.json(
       { error: "Program not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -82,7 +83,7 @@ export async function GET(
 
   return NextResponse.json(
     { data: assignments },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }
 

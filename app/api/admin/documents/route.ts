@@ -17,6 +17,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -59,7 +60,7 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     Sentry.captureException(
@@ -68,7 +69,7 @@ export async function GET(req: NextRequest) {
     );
     return NextResponse.json(
       { error: "Failed to load documents" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

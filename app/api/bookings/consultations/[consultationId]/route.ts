@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import {
   ApprovalWindowLapsedError,
   createApprovalPaymentIntent,
@@ -151,7 +152,7 @@ export async function GET(
 
     return NextResponse.json(
       { data: consultationData },
-      { status: 200, headers: { "Cache-Control": "no-store" } },
+      { status: 200, headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     if (
@@ -160,7 +161,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Consultation not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
     console.error("Error fetching consultation:", error);
@@ -170,7 +171,7 @@ export async function GET(
     );
     return NextResponse.json(
       { error: "An error occurred while fetching the consultation" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

@@ -1,6 +1,7 @@
 import { RecordingConsentDecision } from "@prisma/client";
 import { headers } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 
 import { auth } from "@/lib/auth";
@@ -36,7 +37,7 @@ export async function GET(
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -47,7 +48,7 @@ export async function GET(
         { error: access.message },
         {
           status: access.reason === "not_found" ? 404 : 403,
-          headers: { "Cache-Control": "no-store" },
+          headers: NO_STORE_HEADERS,
         },
       );
     }
@@ -59,7 +60,7 @@ export async function GET(
     );
 
     return NextResponse.json(notice, {
-      headers: { "Cache-Control": "no-store" },
+      headers: NO_STORE_HEADERS,
     });
   } catch (error) {
     reportSentryError(error, {
@@ -68,7 +69,7 @@ export async function GET(
     });
     return NextResponse.json(
       { error: "Could not load the recording notice" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

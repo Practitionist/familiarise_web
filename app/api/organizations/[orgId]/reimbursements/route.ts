@@ -15,6 +15,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { requireOrgAccess } from "@/lib/auth-helpers";
@@ -50,7 +51,7 @@ export async function GET(
         error:
           "Reimbursements view is only available for organizations on PERSONAL funding.",
       },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -63,7 +64,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const pagination = parsePagination(url);
@@ -203,6 +204,6 @@ export async function GET(
         (a, b) => b.netReimbursablePaise - a.netReimbursablePaise,
       ),
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

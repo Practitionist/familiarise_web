@@ -18,6 +18,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { parseRouteParams } from "@/lib/api/support-http";
 import { OrgIdParams } from "@/schemas/support";
@@ -197,6 +198,6 @@ export async function GET(
         consultantsSuppressed,
       },
     },
-    { headers: { "Cache-Control": "no-store" } },
+    { headers: NO_STORE_HEADERS },
   );
 }

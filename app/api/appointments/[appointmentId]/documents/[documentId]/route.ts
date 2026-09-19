@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 
@@ -28,7 +29,7 @@ export async function GET(
           message: "Please sign in to view documents",
           code: "UNAUTHORIZED",
         },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -111,7 +112,7 @@ export async function GET(
             : "Document not found or access denied",
           code: "NOT_FOUND",
         },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -122,10 +123,7 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      { data: document },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data: document }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -134,7 +132,7 @@ export async function GET(
     console.error("Error fetching document:", error);
     return NextResponse.json(
       { error: "Failed to fetch document" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

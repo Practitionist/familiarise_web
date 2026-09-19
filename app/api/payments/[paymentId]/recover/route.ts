@@ -11,6 +11,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import prisma from "@/lib/prisma";
 import { PaymentStatus, UserRole } from "@prisma/client";
 import { validateWebhookMetadata } from "@/schemas/webhooks/metadata";
@@ -35,7 +36,7 @@ export async function GET(
     ) {
       return NextResponse.json(
         { error: "Unauthorized - Admin access required" },
-        { status: 403, headers: { "Cache-Control": "no-store" } },
+        { status: 403, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -64,7 +65,7 @@ export async function GET(
     if (!payment) {
       return NextResponse.json(
         { error: "Payment not found" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -83,7 +84,7 @@ export async function GET(
           hasAppointment: !!payment.appointment,
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -93,7 +94,7 @@ export async function GET(
     console.error("Error fetching payment for recovery:", error);
     return NextResponse.json(
       { error: "Failed to fetch payment details" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

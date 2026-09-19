@@ -9,6 +9,7 @@
 
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getStreamChatClient, isStreamConfigured } from "@/lib/stream-client";
 import { getSession } from "@/lib/auth-server";
 import { isPrivileged } from "@/lib/auth-helpers";
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
   if (!session?.user?.id) {
     return NextResponse.json(
       { error: "Unauthorized" },
-      { status: 401, headers: { "Cache-Control": "no-store" } },
+      { status: 401, headers: NO_STORE_HEADERS },
     );
   }
   if (!isPrivileged(session.user.role)) {
@@ -43,14 +44,14 @@ export async function GET(req: NextRequest) {
     });
     return NextResponse.json(
       { error: "Forbidden" },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
+      { status: 403, headers: NO_STORE_HEADERS },
     );
   }
 
   if (!isDev && !ALLOW_IN_PRODUCTION) {
     return NextResponse.json(
       { error: "Debug endpoint not available in production" },
-      { status: 403, headers: { "Cache-Control": "no-store" } },
+      { status: 403, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -67,7 +68,7 @@ export async function GET(req: NextRequest) {
       });
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
   }
@@ -76,7 +77,7 @@ export async function GET(req: NextRequest) {
     if (!isStreamConfigured()) {
       return NextResponse.json(
         { error: "Stream API keys not configured" },
-        { status: 500, headers: { "Cache-Control": "no-store" } },
+        { status: 500, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -86,7 +87,7 @@ export async function GET(req: NextRequest) {
     if (!userId) {
       return NextResponse.json(
         { error: "userId query parameter is required" },
-        { status: 400, headers: { "Cache-Control": "no-store" } },
+        { status: 400, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -106,7 +107,7 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json(
         { error: "User not found in database" },
-        { status: 404, headers: { "Cache-Control": "no-store" } },
+        { status: 404, headers: NO_STORE_HEADERS },
       );
     }
 
@@ -217,7 +218,7 @@ export async function GET(req: NextRequest) {
           },
         }),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -230,7 +231,7 @@ export async function GET(req: NextRequest) {
         error: "Debug request failed",
         details: error instanceof Error ? error.message : "Unknown error",
       },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

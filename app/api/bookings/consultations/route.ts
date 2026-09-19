@@ -6,6 +6,7 @@ import {
 } from "@/lib/booking/list-selects";
 import { Prisma, AppointmentStatus } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
 import { requestListOrderBy } from "@/lib/booking/list-query";
@@ -146,7 +147,7 @@ export async function GET(request: NextRequest) {
           { error: scopeResolution.message, code: scopeResolution.code },
           {
             status: scopeResolution.status,
-            headers: { "Cache-Control": "no-store" },
+            headers: NO_STORE_HEADERS,
           },
         );
       }
@@ -204,7 +205,7 @@ export async function GET(request: NextRequest) {
           totalPages: Math.ceil(total / limit),
         },
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
@@ -214,7 +215,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching consultations:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching consultations" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

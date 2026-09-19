@@ -11,6 +11,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -124,7 +125,7 @@ export async function GET(
         data: feedback,
         rateableSlotIds: rateable.map((s) => s.id),
       },
-      { headers: { "Cache-Control": "no-store" } },
+      { headers: NO_STORE_HEADERS },
     );
   } catch (cause) {
     return supportError({

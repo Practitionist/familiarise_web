@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requireOrgAccess } from "@/lib/auth-helpers";
 import { listRecordingsScoped } from "@/lib/api/scope/list-recordings";
@@ -43,7 +44,7 @@ export async function GET(
   if (!filters.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: filters.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const pagination = parsePagination(url);
@@ -56,6 +57,6 @@ export async function GET(
     perPage: pagination.pageSize,
   });
   return NextResponse.json(result, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

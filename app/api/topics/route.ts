@@ -1,12 +1,9 @@
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 
 // Public taxonomy read (no session, no per-user data): safe for shared caching.
-const PUBLIC_CACHE_HEADERS = {
-  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-};
-
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -69,7 +66,7 @@ export async function GET(request: NextRequest) {
 
       return NextResponse.json(
         { data: topicsWithCount },
-        { status: 200, headers: PUBLIC_CACHE_HEADERS },
+        { status: 200, headers: PUBLIC_LIST_HEADERS },
       );
     }
 
@@ -79,7 +76,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(
       { data: topics },
-      { status: 200, headers: PUBLIC_CACHE_HEADERS },
+      { status: 200, headers: PUBLIC_LIST_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(

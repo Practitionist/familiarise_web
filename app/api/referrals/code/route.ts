@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { getSession } from "@/lib/auth-server";
 import { getReferralCode, createReferralCode } from "@/lib/referrals/service";
 
@@ -9,15 +10,12 @@ export async function GET() {
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Unauthorized" },
-        { status: 401, headers: { "Cache-Control": "no-store" } },
+        { status: 401, headers: NO_STORE_HEADERS },
       );
     }
 
     const code = await getReferralCode(session.user.id);
-    return NextResponse.json(
-      { data: code },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.json({ data: code }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
@@ -26,7 +24,7 @@ export async function GET() {
     console.error("Error fetching referral code:", error);
     return NextResponse.json(
       { error: "Failed to fetch referral code" },
-      { status: 500, headers: { "Cache-Control": "no-store" } },
+      { status: 500, headers: NO_STORE_HEADERS },
     );
   }
 }

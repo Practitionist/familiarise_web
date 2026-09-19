@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 
 /**
  * Clears stale BetterAuth session cookies and redirects to /auth/signin.
@@ -23,6 +24,6 @@ export async function GET(request: Request) {
   const url = new URL("/auth/signin", request.url);
   // Session-teardown redirect: must never be served from a shared cache.
   return NextResponse.redirect(url, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }

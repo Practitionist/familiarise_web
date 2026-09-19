@@ -1,12 +1,9 @@
 import prisma from "@/lib/prisma";
 import { NextRequest, NextResponse } from "next/server";
+import { PUBLIC_LIST_HEADERS } from "@/lib/api/cache-headers";
 
 // Public taxonomy read (no session, no per-user data; varies by ?domainId=):
 // safe for shared caching.
-const PUBLIC_CACHE_HEADERS = {
-  "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-};
-
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -19,7 +16,7 @@ export async function GET(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(subDomains, { headers: PUBLIC_CACHE_HEADERS });
+    return NextResponse.json(subDomains, { headers: PUBLIC_LIST_HEADERS });
   } catch (error) {
     console.error("Error fetching subdomains:", error);
     return NextResponse.json(

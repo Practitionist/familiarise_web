@@ -21,6 +21,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { NO_STORE_HEADERS } from "@/lib/api/cache-headers";
 import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getWorkspaceActivity } from "@/lib/data/org-workspace";
@@ -43,7 +44,7 @@ export async function GET(
   if (auth.session.user.orgWorkspaceProfileId !== orgWorkspaceId) {
     return NextResponse.json(
       { error: "Not found" },
-      { status: 404, headers: { "Cache-Control": "no-store" } },
+      { status: 404, headers: NO_STORE_HEADERS },
     );
   }
 
@@ -54,7 +55,7 @@ export async function GET(
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Invalid query", detail: parsed.error.flatten() },
-      { status: 400, headers: { "Cache-Control": "no-store" } },
+      { status: 400, headers: NO_STORE_HEADERS },
     );
   }
   const q = parsed.data;
@@ -68,6 +69,6 @@ export async function GET(
     q.limit,
   );
   return NextResponse.json(result, {
-    headers: { "Cache-Control": "no-store" },
+    headers: NO_STORE_HEADERS,
   });
 }
