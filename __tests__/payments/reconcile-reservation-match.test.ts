@@ -20,18 +20,38 @@
  *     PENDING and page instead of guessing;
  *   - real-id PENDING rows are polled via getRefund and settled.
  */
-jest.mock("../../lib/prisma", () => ({
-  __esModule: true,
-  default: {
-    refund: {
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn().mockResolvedValue({}),
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      delete: jest.fn().mockResolvedValue({}),
+jest.mock("../../lib/prisma", () => {
+  const refund = {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+    update: jest.fn().mockResolvedValue({}),
+    updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    delete: jest.fn().mockResolvedValue({}),
+  };
+  return {
+    __esModule: true,
+    default: {
+      refund,
+      // #1589 N-P0-01 — the SUCCEEDED mark now runs in its own tx with the
+      // payer's notice; the tx sees the same refund table.
+      $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>
+        fn({ refund }),
+      ),
     },
-    $transaction: jest.fn(),
-  },
+  };
+});
+const mockNotifyRefundProcessed = jest.fn().mockResolvedValue(null);
+jest.mock("../../lib/novu/outbox", () => ({
+  attemptTrigger: jest.fn(),
+}));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { JOB: 1 },
+  MONEY_EMAIL_TYPES: { REFUND_PROCESSED: "REFUND_PROCESSED" },
+  sendRefundFailedEmail: jest.fn(),
+  stageRefundProcessedEmail: jest.fn().mockResolvedValue([]),
+}));
+jest.mock("../../lib/email/send-to-recipients", () => ({
+  attemptStaged: jest.fn(),
 }));
 jest.mock("../../lib/payments", () => ({
   listRefunds: jest.fn(),
@@ -43,6 +63,7 @@ jest.mock("../../lib/observability/report", () => ({
 }));
 jest.mock("../../lib/novu/service", () => ({
   notifyRefundFailed: jest.fn().mockResolvedValue(undefined),
+  notifyRefundProcessed: (...a: unknown[]) => mockNotifyRefundProcessed(...a),
 }));
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   // Passthrough — the lock machinery has its own suite; these tests own the
@@ -219,8 +240,14 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
           refundId: "rfnd_real",
           status: "PENDING",
           amountPaise: 10_000,
+          currency: "INR",
           createdAt: new Date(Date.now() - 3 * HOUR),
-          payment: { paymentGateway: "RAZORPAY" },
+          payment: {
+            id: "pay-9",
+            paymentGateway: "RAZORPAY",
+            userId: "user-9",
+            organizationId: null,
+          },
         },
       ]);
     mockGet.mockResolvedValueOnce({
@@ -240,6 +267,13 @@ describe("reconcilePendingRefunds real-id PENDING polling", () => {
         where: { id: "row_9" },
         data: expect.objectContaining({ status: "SUCCEEDED" }),
       }),
+    );
+    // #1589 N-P0-01 — the mark stands in for the lost webhook, so it owes the
+    // payer the same notice, staged through the mark's own tx.
+    expect(mockNotifyRefundProcessed).toHaveBeenCalledWith(
+      "user-9",
+      expect.objectContaining({ amount: 10_000, currency: "INR" }),
+      expect.objectContaining({ entityRef: "payment:pay-9" }),
     );
   });
 
