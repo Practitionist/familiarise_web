@@ -54,7 +54,11 @@ const HOUR_MS = 60 * 60 * 1000;
 const LONG_NOTE = "a".repeat(300);
 
 function consultationInput(notes: string): CheckoutInput {
-  const startsAt = new Date(Date.now() + 48 * HOUR_MS);
+  // On the :00/:30 grid — the schema refuses off-grid starts (#1583 E-P1-03).
+  const startsAt = new Date(
+    Math.ceil((Date.now() + 48 * HOUR_MS) / (30 * 60 * 1000)) *
+      (30 * 60 * 1000),
+  );
   const endsAt = new Date(startsAt.getTime() + HOUR_MS);
   return {
     appointmentType: "CONSULTATION",

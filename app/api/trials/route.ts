@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
 import { notifyTrialRequested } from "@/lib/novu";
 import { CreateTrialSchema } from "@/schemas/trials";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { trialRequestLimiter, applyRateLimit } from "@/lib/rate-limit";
 import { resolveOrgScope, scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { isUniqueViolation } from "@/lib/db/pg-errors";
@@ -28,10 +28,10 @@ export async function GET(request: NextRequest) {
   const sortOrder = searchParams.get("sortOrder") || "desc";
 
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const isPrivileged =
       session.user.role === "ADMIN" || session.user.role === "STAFF";
@@ -234,10 +234,9 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const body = await request.json();
     const result = CreateTrialSchema.safeParse(body);

@@ -21,13 +21,17 @@ import {
   AVAILABILITY_REFUSAL_STATUS,
 } from "@/lib/scheduling/availability-contract";
 import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
+import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    // #1583 D-P1-06 — the same validated, clamped paging the request lists
+    // got in #1704; a bad value is a 400, not NaN reaching Prisma.
+    const listQuery = parseRequestListQueryOrRespond(searchParams);
+    if (listQuery.response) return listQuery.response;
+    const { page, limit } = listQuery.query;
 
     if (!consultantProfileId) {
       return NextResponse.json(

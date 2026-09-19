@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
 import { apiError } from "@/lib/errors";
 import {
@@ -42,10 +42,10 @@ export async function POST(
 ) {
   try {
     const { appointmentId } = await params;
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
     const parsed = RespondSchema.safeParse(await request.json());
     if (!parsed.success) {
       return NextResponse.json(

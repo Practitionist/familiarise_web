@@ -7,8 +7,8 @@
  *
  * Covers:
  * - buildOccupiedAppointmentFilter: generates OR clause for all 5 event types
- * - Weekly unallocated route: excludes slots overlapping occupied appointments
- * - Custom unallocated route: excludes slots overlapping occupied appointments
+ * - Availability-with-allocation grid: excludes slots overlapping occupied
+ *   appointments (the legacy /api/scheduling/unallocated routes are deleted)
  * - Range overlap detection: partial, full, and enclosing overlaps
  * - Pagination accuracy: totalUnallocated counts reflect post-filter results
  *
@@ -141,9 +141,13 @@ describe("OCCUPIED_REQUEST_STATUSES", () => {
   });
 
   it("should NOT include terminal statuses", () => {
-    expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.CANCELLED);
+    expect(OCCUPIED_REQUEST_STATUSES).not.toContain(
+      AppointmentStatus.CANCELLED,
+    );
     expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.REJECTED);
-    expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.COMPLETED);
+    expect(OCCUPIED_REQUEST_STATUSES).not.toContain(
+      AppointmentStatus.COMPLETED,
+    );
     expect(OCCUPIED_REQUEST_STATUSES).not.toContain(AppointmentStatus.EXPIRED);
   });
 

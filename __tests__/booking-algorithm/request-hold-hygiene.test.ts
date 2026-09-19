@@ -143,16 +143,20 @@ describe("48h PENDING consultation expiry releases pinned slots", () => {
   });
 
   it("expires stale consultations by id and soft-cancels their tentative slots", async () => {
-    (prisma.consultation.findMany as jest.Mock).mockResolvedValue([
-      {
-        id: "c1",
-        appointment: { id: "apt-1", organizationId: null, occurrences: [] },
-        requestedBy: { user: { id: "u1", name: "Sam" } },
-        consultationPlan: { title: "Plan" },
-      },
-      { id: "c2", appointment: { id: "apt-2" } },
-      { id: "c3", appointment: null }, // slot-less placeholder
-    ]);
+    // Once: the 48 h cohort. The 7 d pay-link fallback reads the same table
+    // later in the run and now notifies too (#1589 N-P0-03), so it gets [].
+    (prisma.consultation.findMany as jest.Mock)
+      .mockResolvedValueOnce([
+        {
+          id: "c1",
+          appointment: { id: "apt-1", organizationId: null, occurrences: [] },
+          requestedBy: { user: { id: "u1", name: "Sam" } },
+          consultationPlan: { title: "Plan" },
+        },
+        { id: "c2", appointment: { id: "apt-2" } },
+        { id: "c3", appointment: null }, // slot-less placeholder
+      ])
+      .mockResolvedValue([]);
     // PR 2c — the sweep now refunds SUCCEEDED payments of expired rows.
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([]);
     (refundBookingPayment as jest.Mock).mockResolvedValue({

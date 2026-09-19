@@ -181,13 +181,6 @@ const SYSTEM_JOBS: SystemJob[] = [
     category: "Cleanup",
   },
   {
-    id: "stale-pending-consultations",
-    name: "Stale Pending Consultations",
-    description: "Cancel APPROVED consultations with no payment >7 days",
-    schedule: "Hourly",
-    category: "Cleanup",
-  },
-  {
     id: "expire-stale-requests",
     name: "Expire Stale Requests",
     description:

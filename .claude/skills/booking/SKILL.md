@@ -64,10 +64,11 @@ state. Wave 6 (#1333) widened that same pre-read to fetch the owning
 appointment, so `appointmentId` is stamped without a caller supplying it, and
 added `appendCreationHistory` — the one row that is not a transition, written
 from the literal `"CREATED"` in the same transaction as the create, because a
-booking that has never moved still needs a timeline. The three creation call
-sites are `app/api/scheduling/request-for-approval` and the consultation and
-subscription checkout handlers; the capture webhook's legacy creators do not
-write it yet.
+booking that has never moved still needs a timeline. The creation call
+sites are `app/api/scheduling/request-for-approval`, the consultation and
+subscription checkout handlers, and, as of 2026-09-19 (#1583 A-P1-06), the
+capture webhook's legacy consultation and subscription creators in
+`lib/payments/webhooks/handlers.ts` — every request birth now writes it.
 
 ### 2. Nothing that a Payment points at is ever deleted
 
@@ -173,6 +174,17 @@ claimed the row first could leave the consultee un-notified. The rule this
 generalizes to: when two sweeps can legally claim the same row, give them one
 shared CAS-plus-notice function, not two copies that only one of them
 remembers to notify from.
+
+As of 2026-09-19 (#1732, #1589 P-P1-01) a subscription's lapsed pay-link rides
+the exact same `expireLapsedPayLink` path a consultation's does — the
+`cleanupAbandonedPayments` cohort read was widened to subscriptions, closing
+the gap where a subscription's placeholder appointment has no tentative
+occurrence for the abandoned-payment cohort to match before allocation. The
+same date retired `cleanup-stale-pending-consultations` entirely: it CANCELled
+the same `APPROVED`/`APPROVED_PENDING_PAYMENT` unpaid-after-seven-days cohort
+`expire-stale-requests` EXPIREs, which was two sweeps and two terminal words
+for one event — the exact violation this rule exists to prevent. There is now
+one sweep pair and one outcome.
 
 ### 6. There are no backfill migrations
 

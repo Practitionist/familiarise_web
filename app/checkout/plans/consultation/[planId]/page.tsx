@@ -44,6 +44,8 @@ import { calculatePricing, formatPercentage } from "../../math";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useCheckoutTaxContext } from "../../useCheckoutTaxContext";
 import {
+  createRazorpayCheckoutHandlers,
+  createStripeCheckoutHandlers,
   mintClientIdempotencyKey,
   busyRetryToast,
   fetchCheckoutWithBusyRetry,
@@ -888,16 +890,12 @@ export default function ConsultationCheckoutPage({
                             organizationId: selectedOrganizationId ?? undefined,
                             ...billingState.bodyField,
                           })}
-                          onPaymentSuccess={(response: {
-                            razorpay_payment_id?: string;
-                            message?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Successful",
-                              description: `Payment ID: ${response.razorpay_payment_id ?? "N/A"}`,
-                            });
-                            window.location.href = "/dashboard";
-                          }}
+                          // #1591 J1-P0-01 — checkout-success polls verify;
+                          // /dashboard read as "I paid and got nothing".
+                          onPaymentSuccess={
+                            createRazorpayCheckoutHandlers(toast)
+                              .onPaymentSuccess
+                          }
                           disabled={isMaintenanceBlocked}
                           onPaymentError={(error: {
                             description?: string;
@@ -936,17 +934,9 @@ export default function ConsultationCheckoutPage({
                             organizationId: selectedOrganizationId ?? undefined,
                             ...billingState.bodyField,
                           })}
-                          onPaymentSuccess={(response: {
-                            message?: string;
-                          }) => {
-                            toast({
-                              title: "Payment Successful",
-                              description:
-                                response.message ||
-                                "Payment completed successfully",
-                            });
-                            window.location.href = "/dashboard";
-                          }}
+                          onPaymentSuccess={
+                            createStripeCheckoutHandlers(toast).onPaymentSuccess
+                          }
                           disabled={isMaintenanceBlocked}
                           onPaymentError={(error: {
                             message?: string;

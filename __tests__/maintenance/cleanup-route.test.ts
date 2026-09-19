@@ -82,6 +82,15 @@ describe("statusFor", () => {
     expect(statusFor({ success: true }, true)).toBe(207);
   });
 
+  it("answers 207, not 500, for a run that completed and found double bookings", () => {
+    // reconcile-occurrence-availability's twin: `success` is "the run
+    // completed"; findings are the needs-attention flag.
+    const result = { success: true, doubleBookingsDetected: 2 };
+    expect(statusFor(result, result.doubleBookingsDetected > 0)).toBe(207);
+    const failed = { success: false, doubleBookingsDetected: 2 };
+    expect(statusFor(failed, failed.doubleBookingsDetected > 0)).toBe(500);
+  });
+
   it("treats a result with no success field as successful", () => {
     // Several routes return counters only; absence is not failure.
     expect(statusFor({})).toBe(200);

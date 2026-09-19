@@ -69,8 +69,13 @@ jest.mock("../../lib/prisma", () => {
         appointment: { id: "appt-1" },
       }),
     },
+    // #1583 A-P0-05 — the occurrence release goes through
+    // transitionOccurrenceCompletion: a pre-read plus updateManyAndReturn.
     appointmentOccurrence: {
-      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      findMany: jest.fn().mockResolvedValue([]),
+      updateManyAndReturn: jest
+        .fn()
+        .mockResolvedValue([{ id: "occ-1", appointmentId: "appt-1" }]),
     },
     bookingStatusHistory: {
       create: jest.fn().mockResolvedValue({}),
