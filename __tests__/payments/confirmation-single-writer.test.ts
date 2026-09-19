@@ -60,9 +60,11 @@ jest.mock("../../lib/payments/core/razorpay", () => ({
     withRazorpaySdkTimeout(op, call),
 }));
 
-const getSession = jest.fn();
-jest.mock("../../lib/auth-server", () => ({
-  getSession: () => getSession(),
+// #1584 P1-AZ01 — both doors read force-fresh through requireApiAuth now;
+// the lookup is mocked one level down so the ban check itself is exercised.
+const lookupSession = jest.fn();
+jest.mock("../../lib/auth-session-lookup", () => ({
+  lookupSession: () => lookupSession(),
 }));
 
 // #1353 — the route now applies checkoutLimiter per user. In the shared CI
@@ -135,7 +137,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   afterCallbacks.length = 0;
   process.env.RAZORPAY_SECRET = SECRET;
-  getSession.mockResolvedValue({ user: { id: USER_ID } });
+  lookupSession.mockResolvedValue({
+    kind: "found",
+    session: { user: { id: USER_ID } },
+  });
   paymentsFetch.mockResolvedValue({
     id: PAY_ID,
     order_id: ORDER_ID,
@@ -270,6 +275,19 @@ describe("gateway-fetch failure", () => {
 });
 
 describe("signature and ownership are still enforced", () => {
+  // #1584 P1-AZ01 — a cookie-cached read let a banned session drive the capture.
+  it("answers 403 to a banned session before touching the pipeline", async () => {
+    lookupSession.mockResolvedValue({
+      kind: "found",
+      session: { user: { id: USER_ID, banned: true } },
+    });
+
+    const res = await POST(signedRequest());
+
+    expect(res.status).toBe(403);
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+
   it("rejects a bad signature without touching the pipeline", async () => {
     const req = new NextRequest(
       "https://x.test/api/checkout/verify-signature",

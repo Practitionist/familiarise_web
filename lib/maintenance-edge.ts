@@ -219,6 +219,11 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/collaborations",
   "/api/payments/disputes", // Block dispute handling mutations
   "/api/admin/payouts", // Block admin payout mutations
+  // #1598 P1-W02a — the admin refund front door, TDS filing marks and the
+  // wallet unfreeze are money writes too; GETs still pass via READ_ONLY_METHODS.
+  "/api/admin/refunds",
+  "/api/admin/tds",
+  "/api/admin/billing-accounts",
   // #1599 F-P0-03..05, F-P1-02/05/06 — money-writing doors the list missed:
   // an admin re-drive of a payment, a recording purchase, an overage order,
   // a seat removal (its DELETE refunds through refundRemovedAttendeeSeat),

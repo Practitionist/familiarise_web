@@ -501,6 +501,50 @@ export async function lockApprovalPaymentMint(
   }
 }
 
+/** #1584 P2-P0-02 — a second mint for the same (recording, buyer) is in flight. */
+export class RecordingPurchaseInProgressError extends Error {
+  readonly code = "RECORDING_PURCHASE_IN_PROGRESS" as const;
+  readonly httpStatus = 409 as const;
+  constructor() {
+    super("This purchase is already being started. Please try again.");
+    this.name = "RecordingPurchaseInProgressError";
+  }
+}
+
+/** Short-lived: one gateway order mint plus one row insert, no transaction. */
+export const RECORDING_PURCHASE_LOCK_TTL_MS = 30_000;
+
+/**
+ * #1584 P2-P0-02 — the replay-purchase mint atom, copying
+ * lockApprovalPaymentMint: `RecordingPurchase` has no unique on
+ * (recordingId, buyerId), so two overlapping POSTs each minted a payable
+ * order and the idempotent settle then confirmed both. Fail-closed when Redis
+ * is unhealthy; contention answers a typed 409 rather than a second order.
+ */
+export async function lockRecordingPurchase<T>(
+  recordingId: string,
+  buyerId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const key = `recording-purchase:${recordingId}:${buyerId}`;
+  let lock: ApprovalLock;
+  try {
+    lock = await acquireGuarded(
+      key,
+      RECORDING_PURCHASE_LOCK_TTL_MS,
+      "recording-purchase",
+    );
+  } catch (error) {
+    if (error instanceof BookingLockUnavailableError) throw error;
+    throw new RecordingPurchaseInProgressError();
+  }
+  try {
+    return await fn();
+  } finally {
+    await releaseLock(lock);
+  }
+}
+
 /**
  * Release an approval lock
  * @param lock - The lock instance to release

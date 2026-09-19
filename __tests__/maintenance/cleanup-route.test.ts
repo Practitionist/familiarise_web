@@ -17,6 +17,7 @@
 
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
+  captureMessage: jest.fn(),
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
@@ -46,6 +47,7 @@ jest.mock("../../lib/maintenance-cron", () => ({
 }));
 
 import type { NextRequest } from "next/server";
+import * as Sentry from "@sentry/nextjs";
 
 import {
   cleanupRoute,
@@ -253,5 +255,23 @@ describe("cleanupRoute", () => {
     expect(res.status).toBe(500);
     expect(body).toEqual({ error: "Failed to run the test job" });
     expect(JSON.stringify(body)).not.toContain("razorpayPayoutId");
+  });
+
+  // #1441 — a rethrown plain object used to reach Sentry as "[object Object]".
+  it("reports a thrown non-Error to Sentry with its code in the message", async () => {
+    const { POST } = cleanupRoute({
+      job: "test-job",
+      run: async () => {
+        throw { code: "REFUND_GATEWAY_TIMEOUT" };
+      },
+    });
+
+    await POST(request());
+
+    const [reported, ctx] = (Sentry.captureException as jest.Mock).mock
+      .calls[0];
+    expect(reported).toBeInstanceOf(Error);
+    expect(reported.message).toContain("REFUND_GATEWAY_TIMEOUT");
+    expect(ctx.tags).toMatchObject({ subsystem: "cron", job: "test-job" });
   });
 });

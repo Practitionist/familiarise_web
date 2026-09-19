@@ -419,6 +419,7 @@ function hydratePayment(p: Row): Row {
       })),
     bookingUtilization: state.bookingUtilizations.get(p.id as string) ?? null,
     refunds: state.refunds.filter((r) => r.paymentId === p.id),
+    disputes: state.disputes.filter((d) => d.paymentId === p.id),
   };
 }
 
@@ -1478,5 +1479,76 @@ describe("applyRefundCascade — gateway-cron entry path", () => {
     expect(result.consultantEarningsReversed).toBe(1);
     expect(result.organizationEarningsReversed).toBe(1);
     expect(state.consultantEarnings.get("ce-1")?.status).toBe("REFUNDED");
+  });
+
+  // #1582 C-P0-03 (owner decision Q3) — the PENDING-then-LOST window: a refund
+  // reserved before the dispute verdict must not reverse what the bank already
+  // pulled. The cascade clamps to the cumulative balance and records the shave.
+  it("clamps a ₹6000 cascade to ₹4000 when a ₹6000 dispute was already LOST, and records it", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    state.disputes.push({
+      paymentId: "pay-1",
+      amountPaise: 6000,
+      status: "LOST",
+    });
+    state.refunds.push({
+      id: "r-late",
+      paymentId: "pay-1",
+      amountPaise: 6000,
+      status: "SUCCEEDED",
+      refundId: "rfnd_late",
+    });
+    const before = state.billingAccounts.get("ba-1")!.walletBalance as number;
+
+    await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: "r-late",
+      amountPaise: 6000,
+      reason: "late refund",
+    });
+
+    // The WALLET leg was credited the clamped figure, not the requested one.
+    expect(state.billingAccounts.get("ba-1")!.walletBalance).toBe(
+      before + 4000,
+    );
+    expect(tx.systemEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          message: expect.stringContaining("REFUND_CASCADE_CLAMPED"),
+        }),
+      }),
+    );
+  });
+
+  // CodeRabbit on #1753 — a balance already consumed in full must produce a
+  // zero-effect cascade: a 0 reversal leg would trip the `reversal < 0`
+  // trigger at COMMIT and leave the refund re-cascading forever.
+  it("writes nothing when the LOST dispute already consumed the whole balance", async () => {
+    seedSinglePartyWalletPayment({ amount: 10000 });
+    state.disputes.push({
+      paymentId: "pay-1",
+      amountPaise: 10000,
+      status: "LOST",
+    });
+    state.refunds.push({
+      id: "r-late",
+      paymentId: "pay-1",
+      amountPaise: 6000,
+      status: "SUCCEEDED",
+      refundId: "rfnd_late",
+    });
+    const before = state.billingAccounts.get("ba-1")!.walletBalance as number;
+    const legsBefore = state.paymentLegs.length;
+
+    const result = await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: "r-late",
+      amountPaise: 6000,
+      reason: "late refund",
+    });
+
+    expect(result.legsReversed).toBe(0);
+    expect(state.paymentLegs.length).toBe(legsBefore);
+    expect(state.billingAccounts.get("ba-1")!.walletBalance).toBe(before);
   });
 });

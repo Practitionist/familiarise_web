@@ -123,7 +123,10 @@ jest.mock("../../schemas/webhooks/metadata", () => ({
   validateWebhookMetadata: (...a: unknown[]) => validateWebhookMetadata(...a),
 }));
 
-import { handlePaymentSuccess } from "../../lib/payments/webhooks/handlers";
+import {
+  handlePaymentFailure,
+  handlePaymentSuccess,
+} from "../../lib/payments/webhooks/handlers";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -288,5 +291,71 @@ describe("#1695 — a capture whose hold is already gone is claimed and refunded
       }),
     );
     expect(createEarningsFromPayment).not.toHaveBeenCalled();
+  });
+});
+
+describe("#1582 B-P0-01 — handlePaymentFailure is a CAS write", () => {
+  it("does not overwrite a row the capture won and never frees the hold", async () => {
+    // The in-tx read still says PENDING, but by the time the write lands the
+    // capture of a later attempt has set SUCCEEDED, so the CAS matches 0 rows.
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentStatus: "PENDING",
+      userId: "u1",
+      appointmentId: "appt1",
+      amount: 10000,
+      currency: "INR",
+      description: null,
+      user: { email: "buyer@example.com", name: "Buyer" },
+      appointment: { id: "appt1", appointmentType: "CONSULTATION" },
+    });
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentFailure("order1");
+
+    expect(paymentUpdateMany).toHaveBeenCalledTimes(1);
+    expect(paymentUpdateMany.mock.calls[0][0].where).toMatchObject({
+      id: "pay1",
+      paymentStatus: "PENDING",
+    });
+    expect(txPaymentUpdate).not.toHaveBeenCalled();
+    // cleanupFailedPaymentAppointment starts with the appointment read.
+    expect(appointmentFindUnique).not.toHaveBeenCalled();
+    expect(captureMessage).toHaveBeenCalledWith(
+      "payment.failed lost the race to a capture",
+      expect.anything(),
+    );
+  });
+});
+
+describe("#1582 B-P1-02 — in-tx system events ride the transaction client", () => {
+  it("a capture that loses the EXPIRED→SUCCEEDED claim records CAPTURE_AFTER_TERMINAL through tx", async () => {
+    paymentFindUnique.mockResolvedValue({
+      id: "pay1",
+      paymentIntent: "order1",
+      amount: 10000,
+      paymentStatus: "EXPIRED",
+      userId: "u1",
+      currency: "INR",
+      appointmentId: "appt1",
+      user: { email: "buyer@example.com", name: "Buyer", consulteeProfile: {} },
+    });
+    // The CAS on EXPIRED misses: another writer moved the row first.
+    paymentUpdateMany.mockResolvedValue({ count: 0 });
+
+    await handlePaymentSuccess(
+      "order1",
+      { appointmentType: "CONSULTATION" },
+      10000,
+    );
+
+    expect(recordSystemError).toHaveBeenCalledTimes(1);
+    const params = recordSystemError.mock.calls[0][0] as {
+      db?: unknown;
+      err?: Error;
+    };
+    // The prisma mock records the client: it is the tx stub, not the global.
+    expect(params.db).toBe(txStub);
+    expect(params.err?.message).toBe("CAPTURE_AFTER_TERMINAL_PAYMENT");
   });
 });

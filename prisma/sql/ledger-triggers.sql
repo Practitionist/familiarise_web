@@ -42,3 +42,35 @@ CREATE CONSTRAINT TRIGGER ledger_txn_balanced
   DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW
   EXECUTE FUNCTION assert_ledger_txn_balanced();
+-- SPLIT
+-- #1582 A-P0-02 (owner decision Q5) — the journal is append-only. Nothing in
+-- the codebase UPDATEs or DELETEs a LedgerEntry / LedgerTransaction (the
+-- balance fold in lib/payments/ledger/post.ts upserts LedgerAccountBalance,
+-- never an entry), so a raise trigger costs nothing and makes an edit
+-- impossible via raw SQL or a future code path. Same shape as
+-- review_revision_immutable in check-constraints.sql.
+DROP TRIGGER IF EXISTS ledger_entry_immutable ON "LedgerEntry";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_ledger_entry_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'LedgerEntry % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER ledger_entry_immutable
+  BEFORE UPDATE OR DELETE ON "LedgerEntry"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_ledger_entry_immutable();
+-- SPLIT
+DROP TRIGGER IF EXISTS ledger_transaction_immutable ON "LedgerTransaction";
+-- SPLIT
+CREATE OR REPLACE FUNCTION assert_ledger_transaction_immutable() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'LedgerTransaction % is immutable (% refused)', OLD."id", TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+-- SPLIT
+CREATE TRIGGER ledger_transaction_immutable
+  BEFORE UPDATE OR DELETE ON "LedgerTransaction"
+  FOR EACH ROW
+  EXECUTE FUNCTION assert_ledger_transaction_immutable();

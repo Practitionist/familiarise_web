@@ -84,6 +84,11 @@ const BLOCKED = [
   "/api/overage/ov_1/order",
   "/api/meetings/mtg_1/join",
   "/api/meetings/mtg_1/end",
+
+  // #1598 P1-W02a — admin money doors: refund front door, TDS marks, unfreeze.
+  "/api/admin/refunds",
+  "/api/admin/tds",
+  "/api/admin/billing-accounts/ba_1/unfreeze",
 ];
 
 const NOT_BLOCKED = [
@@ -144,6 +149,10 @@ describe("isWriteBlockedInDegraded", () => {
       false,
     );
     expect(isWriteBlockedInDegraded("/api/checkout/verify", "GET")).toBe(false);
+  });
+
+  it("leaves GET /api/admin/refunds readable (#1598 P1-W02a)", () => {
+    expect(isWriteBlockedInDegraded("/api/admin/refunds", "GET")).toBe(false);
   });
 
   it("leaves a GET on an org appointments route alone", () => {

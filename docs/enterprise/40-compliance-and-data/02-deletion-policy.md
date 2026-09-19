@@ -27,15 +27,15 @@ Every entity subject to soft-delete exposes a typed `status` enum with an explic
 
 Concrete examples from the codebase:
 
-| Entity | Status enum | Terminal values | Transition route |
-|---|---|---|---|
-| `Membership` | `MemberStatus` | `REMOVED` | `DELETE /api/organizations/[orgId]/members/[memberId]` flips to `REMOVED` |
-| `Organization` | `OrgStatus` | `DEACTIVATED` | `POST /api/admin/organizations/[orgId]/verify` with `action=DEACTIVATE` |
-| `Invitation` | (String) | `revoked`, `expired` | `DELETE /api/organizations/[orgId]/invitations/[invitationId]` → `revoked`; `cleanup-stale-invitations` cron → `expired` |
-| `Contract` | `ContractStatus` | `TERMINATED`, `EXPIRED` | `PATCH /api/organizations/[orgId]/contracts/[contractId]` with status transition |
-| `Program` | `ProgramStatus` + `archivedAt` | `CANCELLED`, `COMPLETED`; archive via `archivedAt` | `DELETE /api/organizations/[orgId]/programs/[programId]` → soft cancel if assignments exist; hard-delete only if zero assignments. Archive (`archivedAt`, #777 §B) is a separate **soft-hide** — it removes the program from active lists without ending it; once `configLockedAt` is set the program can never be hard-deleted (financial history rides on it). |
-| `OrganizationInvoice` | `OrgInvoiceStatus` | `VOID`, `CANCELLED`, `REFUNDED` | Status transitions via `PATCH` or webhook |
-| `SsoProvider` | (via delete with guard) | row removed | hard-delete here is a known exception — see Case 4 below |
+| Entity                | Status enum                    | Terminal values                                    | Transition route                                                                                                                                                                                                                                                                                                                                                 |
+| --------------------- | ------------------------------ | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Membership`          | `MemberStatus`                 | `REMOVED`                                          | `DELETE /api/organizations/[orgId]/members/[memberId]` flips to `REMOVED`                                                                                                                                                                                                                                                                                        |
+| `Organization`        | `OrgStatus`                    | `DEACTIVATED`                                      | `POST /api/admin/organizations/[orgId]/verify` with `action=DEACTIVATE`                                                                                                                                                                                                                                                                                          |
+| `Invitation`          | (String)                       | `revoked`, `expired`                               | `DELETE /api/organizations/[orgId]/invitations/[invitationId]` → `revoked`; `cleanup-stale-invitations` cron → `expired`                                                                                                                                                                                                                                         |
+| `Contract`            | `ContractStatus`               | `TERMINATED`, `EXPIRED`                            | `PATCH /api/organizations/[orgId]/contracts/[contractId]` with status transition                                                                                                                                                                                                                                                                                 |
+| `Program`             | `ProgramStatus` + `archivedAt` | `CANCELLED`, `COMPLETED`; archive via `archivedAt` | `DELETE /api/organizations/[orgId]/programs/[programId]` → soft cancel if assignments exist; hard-delete only if zero assignments. Archive (`archivedAt`, #777 §B) is a separate **soft-hide** — it removes the program from active lists without ending it; once `configLockedAt` is set the program can never be hard-deleted (financial history rides on it). |
+| `OrganizationInvoice` | `OrgInvoiceStatus`             | `VOID`, `CANCELLED`, `REFUNDED`                    | Status transitions via `PATCH` or webhook                                                                                                                                                                                                                                                                                                                        |
+| `SsoProvider`         | (via delete with guard)        | row removed                                        | hard-delete here is a known exception — see Case 4 below                                                                                                                                                                                                                                                                                                         |
 
 When you need to query "active rows only," filter by `status: { notIn: [/* terminal values */] }`. Active scope is enforced at the query site, not via Prisma middleware — explicit is better than magical.
 
@@ -49,7 +49,7 @@ Rows that exist purely as runtime state + have zero historical interest beyond t
 
 - **BetterAuth `Session` and `Account`** rows — deleted on logout or session expiry. No retention value.
 - **Tentative `AppointmentOccurrence`** rows — deleted when payment fails or the webhook rolls back an appointment (see `app/api/webhooks/utils.ts`, `lib/payments/webhooks/handlers.ts`).
-- **Abandoned `WalletTopUp` rows** (PENDING / FAILED) past the grace window — reaped by `cleanup-abandoned-org-top-ups` cron. The unconfirmed row is schema-level noise; the fact that a top-up was abandoned is captured in the audit log + the cron's output. A *confirmed* top-up is never reaped — it owns a balanced `TOPUP` journal transaction (`LedgerEntry` rows are immutable, see Case 3).
+- **Abandoned `WalletTopUp` rows** (PENDING / FAILED) past the grace window — reaped by `cleanup-abandoned-org-top-ups` cron. The unconfirmed row is schema-level noise; the fact that a top-up was abandoned is captured in the audit log + the cron's output. A _confirmed_ top-up is never reaped — it owns a balanced `TOPUP` journal transaction (`LedgerEntry` rows are immutable, see Case 3).
 
 ### Case 2 — DRAFT-only entities with no commercial commitment
 
@@ -62,7 +62,9 @@ The route handler is responsible for the precondition check:
 
 ```ts
 if (contract.status !== "DRAFT") {
-  throw Object.assign(new Error("Only DRAFT contracts can be deleted"), { httpStatus: 409 });
+  throw Object.assign(new Error("Only DRAFT contracts can be deleted"), {
+    httpStatus: 409,
+  });
 }
 await tx.contract.delete({ where: { id: contractId } });
 ```
@@ -100,19 +102,19 @@ entries remain for historical audit continuity.
 > precisely what resolves the collision in favour of retention for the
 > money rows. The two-table double-entry journal makes the collision
 > non-negotiable on one side: `LedgerEntry` is `onDelete: Restrict` on
-> *both* its transaction and account FK, and reversals are explicit
+> _both_ its transaction and account FK, and reversals are explicit
 > counter-transactions — there is no code path that edits or deletes a
 > posted money row. So erasure could not be "delete the rows that mention
 > the user." The resolution (shipped in `e40914fa`,
 > `lib/compliance/erasure/scrub-user.ts`) is **pseudonymize the actor,
 > retain the money**: overwrite the `User`'s identifiers with
 > deterministic tombstones, stamp a one-way `pseudonymousId =
-> sha256(userId + ERASURE_SALT)`, and leave every `Payment` /
+sha256(userId + ERASURE_SALT)`, and leave every `Payment` /
 > `OrganizationInvoice` / `OrganizationPayout` / ledger row intact — the
 > tombstoned identity is enough to de-link the human while keeping the
 > books auditable. The companion read-side guard,
 > `lib/enterprise/audit-sanitize.ts` (hardened in `bd61b3fb`), keeps the
-> *next* leak from happening in reverse: it redacts engineering noise
+> _next_ leak from happening in reverse: it redacts engineering noise
 > (Prisma errors, stack frames) out of the org-visible audit projection
 > so an erased-user investigation can't surface raw internals. Two
 > mechanisms, one principle: the row survives, the identity does not.
@@ -127,7 +129,7 @@ everywhere), and a `member.removed` webhook fires to IIT Madras with
 `source: "dpdp_erasure"` so any SCIM/HRIS downstream deprovisions too.
 What **survives**: the `LedgerTransaction`/`LedgerEntry` rows for every
 booking they paid for (immutable, retained), and a `USER_ERASURE_PROCESSED`
-audit row on the org — *pseudonymized*, but kept past the user's own
+audit row on the org — _pseudonymized_, but kept past the user's own
 erasure as the regulatory evidence-of-erasure record. The student is
 gone; the org's books and the proof-of-compliance are not.
 
@@ -158,7 +160,7 @@ as the grievance ceiling), publish both, and monitor the 30-day target
 externally from `requestedAt`, alerting ops when a request is within
 seven days of expiry.
 
-> **What does *not* apply to us: the Third Schedule three-year
+> **What does _not_ apply to us: the Third Schedule three-year
 > auto-erase.** The DPDP Rules 2025 Third Schedule imposes a
 > three-year erase-after-inactivity clock, but only on three enumerated
 > large-scale classes — e-commerce and social-media intermediaries with
@@ -186,17 +188,26 @@ seven days of expiry.
 The single source of truth is `lib/compliance/erasure/scrub-user.ts`.
 Summary table:
 
-| Field / Table | Action |
-|---|---|
-| `User.name` | `"Erased User <8-char hash>"` |
-| `User.email` | `erased-<16-char hash>@erased.invalid` |
-| `User.image, phone, address, bio, linkedinUrl, dateOfBirth` | NULL |
-| `User.erasedAt` | `now()` |
-| `User.pseudonymousId` | `sha256(userId + ERASURE_SALT)` |
-| `Membership[].status` | `ERASED` |
-| `ConsultantProfile.headline, videoIntroUrl` | NULL |
-| `Session` + `Account` rows | hard-deleted (forces sign-out) |
+| Field / Table                                                                                               | Action                                                          |
+| ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `User.name`                                                                                                 | `"Erased User <8-char hash>"`                                   |
+| `User.email`                                                                                                | `erased-<16-char hash>@erased.invalid`                          |
+| `User.image, phone, address, bio, linkedinUrl, dateOfBirth`                                                 | NULL                                                            |
+| `User.erasedAt`                                                                                             | `now()`                                                         |
+| `User.pseudonymousId`                                                                                       | `sha256(userId + ERASURE_SALT)`                                 |
+| `Membership[].status`                                                                                       | `ERASED`                                                        |
+| `ConsultantProfile.headline, videoIntroUrl`                                                                 | NULL, `deletedAt` stamped                                       |
+| `ConsulteeProfile.goals`                                                                                    | NULL                                                            |
+| `Trial.notes` (written by this user's consultee profile)                                                    | NULL                                                            |
+| `Consultation.requestNotes` (requested by this user)                                                        | NULL                                                            |
+| `Session` + `Account` rows                                                                                  | hard-deleted (forces sign-out)                                  |
 | `Payment*`, `OrganizationInvoice`, `OrganizationPayout`, journal rows (`LedgerTransaction` / `LedgerEntry`) | **retained** (`LedgerEntry` is immutable, `onDelete: Restrict`) |
+
+#### Money-in-flight refusal (#1598 P4-P0-05)
+
+The process route refuses to scrub a user while their money cannot yet be settled. `moneyInFlightForUser` counts four things — `ConsultantPayout` rows in `PENDING`/`APPROVED`/`PROCESSING`, `ConsultantEarnings` in `READY`/`BATCHED`, `OrganizationInvoice` rows in `ISSUED`/`OVERDUE` on an organisation where the user is the sole active `OWNER`, and disputes on the user's payments that are still contested — and if any count is non-zero the route answers `ERASURE_BLOCKED_MONEY_IN_FLIGHT` rather than running the scrub. Pseudonymising the actor behind an unpaid payout or a live dispute would sever the identity the money is waiting on, so the admin has to let the payout land, the earnings settle, the invoice close, or the dispute resolve first, then re-run the request.
+
+`derivePseudonym` also refuses outright in production when `ERASURE_SALT` is unset, rather than falling back to the public source-code default: a pseudonym keyed on a salt anyone can read in the repository is reversible by anyone with the source, which defeats the point of pseudonymising the actor in the first place. The public fallback still applies outside production, so local development and CI do not need the secret configured.
 
 #### Cross-feature interactions
 
@@ -287,15 +298,15 @@ Routes that hard-delete are listed below. The ones marked `OK` match the policy 
 
 Each org-namespaced delete route is audited against the four-case deletion policy above; the Verdict column records whether it matches (OK), requires follow-up (REVIEW), or follows the hybrid hard/soft logic the policy allows.
 
-| Route | Entity | Action | Verdict |
-|---|---|---|---|
-| `DELETE /organizations/[orgId]/domain-claims/[domain]` | `OrgDomainClaim` | hard-delete | OK — Case 4 |
-| `DELETE /organizations/[orgId]/sso/providers/[providerId]` | `SsoProvider` | hard-delete | OK — Case 4 |
-| `DELETE /organizations/[orgId]/contracts/[contractId]` | `Contract` | hard-delete (DRAFT-only) | OK — Case 2 |
-| `DELETE /organizations/[orgId]/programs/[programId]` | `Program` | soft / hard depending on assignments | OK — hybrid, correct policy |
-| `DELETE /organizations/[orgId]/members/[memberId]` | `Membership` | soft (status=REMOVED) | OK — default soft-delete |
-| `DELETE /organizations/[orgId]/invitations/[invitationId]` | `Invitation` | soft (status=revoked) | OK — default soft-delete |
-| `DELETE /organizations/[orgId]` | `Organization` | hard-delete with reference check | REVIEW — see below |
+| Route                                                      | Entity           | Action                               | Verdict                     |
+| ---------------------------------------------------------- | ---------------- | ------------------------------------ | --------------------------- |
+| `DELETE /organizations/[orgId]/domain-claims/[domain]`     | `OrgDomainClaim` | hard-delete                          | OK — Case 4                 |
+| `DELETE /organizations/[orgId]/sso/providers/[providerId]` | `SsoProvider`    | hard-delete                          | OK — Case 4                 |
+| `DELETE /organizations/[orgId]/contracts/[contractId]`     | `Contract`       | hard-delete (DRAFT-only)             | OK — Case 2                 |
+| `DELETE /organizations/[orgId]/programs/[programId]`       | `Program`        | soft / hard depending on assignments | OK — hybrid, correct policy |
+| `DELETE /organizations/[orgId]/members/[memberId]`         | `Membership`     | soft (status=REMOVED)                | OK — default soft-delete    |
+| `DELETE /organizations/[orgId]/invitations/[invitationId]` | `Invitation`     | soft (status=revoked)                | OK — default soft-delete    |
+| `DELETE /organizations/[orgId]`                            | `Organization`   | hard-delete with reference check     | REVIEW — see below          |
 
 **`DELETE /organizations/[orgId]` review**: this route hard-deletes an Organization only when zero references exist (no memberships, no invoices, no contracts, no programs). In practice any org that was ever ACTIVE has references, so the delete almost always fails — correct behavior. The policy-compliant alternative is to flip `status = DEACTIVATED` (already possible via `POST /admin/organizations/[orgId]/verify`). Recommend documenting this in the route header + deprecating the hard-delete path; track as follow-up issue.
 
@@ -303,16 +314,16 @@ Each org-namespaced delete route is audited against the four-case deletion polic
 
 Out of this epic's scope but observed during the grep:
 
-| Route | Entity | Action | Verdict |
-|---|---|---|---|
-| `DELETE /plans/webinars/[webinarPlanId]` | `WebinarPlan` | hard-delete | REVIEW — plans carry booking history; should be soft-delete via `isActive` flag |
-| `DELETE /plans/classes/[classPlanId]` | `ClassPlan` | hard-delete | REVIEW — same |
-| `DELETE /plans/consultations/[consultationPlanId]` | `ConsultationPlan` | hard-delete | REVIEW — same |
-| `DELETE /plans/subscriptions/[subscriptionPlanId]` | `SubscriptionPlan` | hard-delete | REVIEW — same |
-| `DELETE /user/[id]` | `User` | hard-delete | REVIEW — user hard-delete should be gated to DPDP §12 only; general self-delete should be soft |
-| `DELETE /user/consultants/[id]` | `ConsultantProfile` | hard-delete | REVIEW — profiles are long-lived; soft-delete via `isActive` recommended |
-| `DELETE /user/consultees/[id]` | `ConsulteeProfile` | hard-delete | REVIEW — same |
-| `DELETE /events/webinars/[webinarId]` | `Webinar` | hard-delete | REVIEW — events have booking history |
+| Route                                              | Entity              | Action      | Verdict                                                                                        |
+| -------------------------------------------------- | ------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| `DELETE /plans/webinars/[webinarPlanId]`           | `WebinarPlan`       | hard-delete | REVIEW — plans carry booking history; should be soft-delete via `isActive` flag                |
+| `DELETE /plans/classes/[classPlanId]`              | `ClassPlan`         | hard-delete | REVIEW — same                                                                                  |
+| `DELETE /plans/consultations/[consultationPlanId]` | `ConsultationPlan`  | hard-delete | REVIEW — same                                                                                  |
+| `DELETE /plans/subscriptions/[subscriptionPlanId]` | `SubscriptionPlan`  | hard-delete | REVIEW — same                                                                                  |
+| `DELETE /user/[id]`                                | `User`              | hard-delete | REVIEW — user hard-delete should be gated to DPDP §12 only; general self-delete should be soft |
+| `DELETE /user/consultants/[id]`                    | `ConsultantProfile` | hard-delete | REVIEW — profiles are long-lived; soft-delete via `isActive` recommended                       |
+| `DELETE /user/consultees/[id]`                     | `ConsulteeProfile`  | hard-delete | REVIEW — same                                                                                  |
+| `DELETE /events/webinars/[webinarId]`              | `Webinar`           | hard-delete | REVIEW — events have booking history                                                           |
 
 **Follow-up work**: each REVIEW row above is a candidate for a small refactor PR. None are urgent for the enterprise launch — the routes work today, they just have a policy mismatch that will bite us later. Track under the `Enterprise` + `tech-debt` labels.
 
@@ -321,16 +332,16 @@ Out of this epic's scope but observed during the grep:
 Five vectors are guarded inside transactions; three more were closed in
 the cleanup PR following the foundation work. The full list:
 
-| # | Vector | Guard | Test |
-|---|--------|-------|------|
-| 1 | Demote the only ACTIVE OWNER | PATCH `/members/[memberId]` runs `count(role=OWNER, status=ACTIVE)` inside a Serializable transaction; refuses if the demotion leaves zero. | `__tests__/enterprise/member-anti-lockout.test.ts` |
-| 2 | Remove the only ACTIVE OWNER | Same route, same guard — `status: REMOVED` is treated identically to a demote. | Same |
-| 3 | Hard-delete the last verified domain claim on an `enforceSSO=true` org | Domain-claim `DELETE` rejects when the result would leave zero verified claims AND the org enforces SSO. | Manual (no unit test today) |
-| 4 | Hard-delete the last `SsoProvider` on an `enforceSSO=true` org | SSO provider `DELETE` rejects when the result would leave zero registered providers AND the org enforces SSO. | Manual |
-| 5 | Cascade-orphan an org via member soft-delete | All member removal goes through `status=REMOVED`, never raw `DELETE`. The soft-delete keeps audit + payment FKs intact. | Same as #1 |
-| 6 | **Bulk member operations** | `/api/organizations/[orgId]/members/bulk` returns a deterministic `405` with `BULK_REMOVAL_NOT_SUPPORTED`. Closes the door on a future loop-bypass that skips the per-member Serializable guard. | `__tests__/enterprise/anti-lockout-gaps.test.ts` |
-| 7 | **Terminate ACTIVE contract with live assignments** | Contract `PATCH status=TERMINATED` refuses when `programAssignment.count(periodEnd >= now)` > 0 on the contract's programs. Forces operator to cancel assignments (or wait for cycle roll) so checkout can't 500 on orphaned-assignment lookup. | Same |
-| 8 | **Hard-delete program with utilization history** | Program `DELETE` runs at Serializable isolation, and refuses both when `_count.assignments > 0` *and* when any `BookingUtilization` row still references the program. The audit trail and refund path both rely on the FK target staying alive. | Same |
+| #   | Vector                                                                 | Guard                                                                                                                                                                                                                                           | Test                                               |
+| --- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| 1   | Demote the only ACTIVE OWNER                                           | PATCH `/members/[memberId]` runs `count(role=OWNER, status=ACTIVE)` inside a Serializable transaction; refuses if the demotion leaves zero.                                                                                                     | `__tests__/enterprise/member-anti-lockout.test.ts` |
+| 2   | Remove the only ACTIVE OWNER                                           | Same route, same guard — `status: REMOVED` is treated identically to a demote.                                                                                                                                                                  | Same                                               |
+| 3   | Hard-delete the last verified domain claim on an `enforceSSO=true` org | Domain-claim `DELETE` rejects when the result would leave zero verified claims AND the org enforces SSO.                                                                                                                                        | Manual (no unit test today)                        |
+| 4   | Hard-delete the last `SsoProvider` on an `enforceSSO=true` org         | SSO provider `DELETE` rejects when the result would leave zero registered providers AND the org enforces SSO.                                                                                                                                   | Manual                                             |
+| 5   | Cascade-orphan an org via member soft-delete                           | All member removal goes through `status=REMOVED`, never raw `DELETE`. The soft-delete keeps audit + payment FKs intact.                                                                                                                         | Same as #1                                         |
+| 6   | **Bulk member operations**                                             | `/api/organizations/[orgId]/members/bulk` returns a deterministic `405` with `BULK_REMOVAL_NOT_SUPPORTED`. Closes the door on a future loop-bypass that skips the per-member Serializable guard.                                                | `__tests__/enterprise/anti-lockout-gaps.test.ts`   |
+| 7   | **Terminate ACTIVE contract with live assignments**                    | Contract `PATCH status=TERMINATED` refuses when `programAssignment.count(periodEnd >= now)` > 0 on the contract's programs. Forces operator to cancel assignments (or wait for cycle roll) so checkout can't 500 on orphaned-assignment lookup. | Same                                               |
+| 8   | **Hard-delete program with utilization history**                       | Program `DELETE` runs at Serializable isolation, and refuses both when `_count.assignments > 0` _and_ when any `BookingUtilization` row still references the program. The audit trail and refund path both rely on the FK target staying alive. | Same                                               |
 
 The two unguarded vectors (#9 contract concurrent termination, #10
 batched program-config edits) are not user-exposed in the v1 UI and

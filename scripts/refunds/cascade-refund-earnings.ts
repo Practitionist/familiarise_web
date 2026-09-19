@@ -24,6 +24,7 @@ import { Prisma, RefundStatus } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
 import { applyRefundCascade } from "../../lib/payments/operations/refund";
+import { withSerializableRetry } from "../../lib/db/serializable-retry";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 export interface RefundEarningCascadeResult {
@@ -90,21 +91,24 @@ async function cascadeRefundToEarningsUnlocked(
 
   for (const refund of refundsToProcess) {
     try {
-      await prisma.$transaction(
-        async (tx) => {
-          await applyRefundCascade(tx, {
-            paymentId: refund.paymentId,
-            refundId: refund.id,
-            amountPaise: refund.amountPaise,
-            reason: refund.reason ?? "Gateway refund cascade",
-            initiatedByUserId: null, // gateway-initiated
-          });
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          maxWait: 10_000,
-          timeout: 15_000,
-        },
+      // #1582 C-P1-01d — bounded P2034 retry, as on the webhook dispute path.
+      await withSerializableRetry(() =>
+        prisma.$transaction(
+          async (tx) => {
+            await applyRefundCascade(tx, {
+              paymentId: refund.paymentId,
+              refundId: refund.id,
+              amountPaise: refund.amountPaise,
+              reason: refund.reason ?? "Gateway refund cascade",
+              initiatedByUserId: null, // gateway-initiated
+            });
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 10_000,
+            timeout: 15_000,
+          },
+        ),
       );
       console.log(`Cascade applied for refund ${refund.id}`);
       updatedCount++;

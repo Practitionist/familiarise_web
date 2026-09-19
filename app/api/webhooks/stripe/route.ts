@@ -14,6 +14,7 @@ import {
   isDbHealthy,
 } from "../utils";
 import { scrubWebhookPayload } from "@/lib/logging/webhook-scrub";
+import { MAX_WEBHOOK_BODY_BYTES } from "@/lib/webhooks/read-body";
 import {
   stripeBaseEventSchema,
   stripePaymentIntentSucceededEventSchema,
@@ -33,7 +34,31 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { isValid, body } = await verifyWebhookSignature(req, secret, "stripe");
+  // #1582 F-P1-01a — same two-layer cap as the Razorpay route: an honest
+  // Content-Length is refused unread; a missing or understated one is caught
+  // by readBodyWithinCap inside verifyWebhookSignature.
+  const declaredBytes = Number(req.headers.get("content-length"));
+  if (
+    Number.isFinite(declaredBytes) &&
+    declaredBytes > MAX_WEBHOOK_BODY_BYTES
+  ) {
+    console.warn(
+      `Rejected oversized Stripe webhook body: ${declaredBytes} bytes`,
+    );
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
+
+  const { isValid, body, oversized } = await verifyWebhookSignature(
+    req,
+    secret,
+    "stripe",
+  );
+  if (oversized) {
+    console.warn(
+      `Rejected oversized Stripe webhook body: over ${MAX_WEBHOOK_BODY_BYTES} bytes`,
+    );
+    return NextResponse.json({ error: "Payload too large" }, { status: 413 });
+  }
   if (!isValid) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
