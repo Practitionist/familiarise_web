@@ -3111,7 +3111,11 @@ export async function handleCheckout(
       select: { role: true, status: true, id: true },
     });
     if (!callerMembership || callerMembership.status !== "ACTIVE") {
-      throw new Error("You are not an active member of this organization.");
+      // qa-1753 — the pre-tx twin of the in-tx check carries the same code.
+      throw Object.assign(
+        new Error("You are not an active member of this organization."),
+        { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
+      );
     }
 
     // #701 — DPDP consent gate. The member is having a session booked + paid on

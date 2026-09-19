@@ -152,11 +152,14 @@ export async function POST(
       );
     }
 
-    // Check if appointment already exists
+    // Already linked: the same answer the CAS miss gives below (qa-1753).
     if (payment.appointmentId) {
       return NextResponse.json(
-        { error: "Payment already has an appointment linked" },
-        { status: 400 },
+        {
+          error: "Payment already has an appointment linked",
+          code: "ALREADY_RECOVERED",
+        },
+        { status: 409 },
       );
     }
 
