@@ -1,23 +1,60 @@
 /**
- * Cron Job: Expire Stale Credits
- * Zeros out remaining balance on credits past their expiry date.
- * Run daily via cron: npx tsx scripts/referrals/expire-credits.ts
+ * Expire Stale Credits - Core Logic
+ *
+ * Zeros `remainingAmount` on referral credits past their `expiresAt`. Expired
+ * credits are already unusable (filtered at read), so this is bookkeeping that
+ * keeps balances honest; it moves no money.
+ *
+ * This module exports the core function. It is imported by:
+ * - jobs/referrals/expire-credits.ts (GitHub Actions)
+ *
+ * Schedule: Daily
  */
 
+import prisma from "../../lib/prisma";
+import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { expireStaleCredits } from "@/lib/referrals/service";
 
-async function main() {
-  console.log("🔄 Starting credit expiry job...");
-
-  try {
-    const expiredCount = await expireStaleCredits();
-    console.log(`✅ Expired ${expiredCount} stale credits.`);
-  } catch (error) {
-    console.error("❌ Failed to expire credits:", error);
-    process.exit(1);
-  }
-
-  process.exit(0);
+export interface ExpireCreditsResult {
+  success: boolean;
+  expiredCount: number;
+  errors: string[];
+  timestamp: string;
 }
 
-main();
+// #1757 — this script had no workflow and no ticker target, so it never ran.
+// Locked like its siblings so a schedule and a manual dispatch cannot overlap;
+// fail-open: the write is idempotent (an already-zeroed row matches nothing).
+export async function expireCredits(): Promise<ExpireCreditsResult> {
+  return withCronLock("expire-credits", { failMode: "open" }, () =>
+    expireCreditsUnlocked(),
+  );
+}
+
+async function expireCreditsUnlocked(): Promise<ExpireCreditsResult> {
+  const errors: string[] = [];
+  let expiredCount = 0;
+
+  try {
+    expiredCount = await expireStaleCredits();
+    console.log(`✅ Expired ${expiredCount} stale credit(s).`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    errors.push(message);
+    console.error(`❌ Failed to expire credits: ${message}`);
+  }
+
+  return {
+    success: errors.length === 0,
+    expiredCount,
+    errors,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Disconnect from database - call this when done
+ */
+export async function disconnectDatabase(): Promise<void> {
+  await prisma.$disconnect();
+}
