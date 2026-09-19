@@ -123,14 +123,3 @@ export function validateDiscountCurrency(
   const discountCurrency = discount.currency || "INR";
   return discountCurrency === planCurrency;
 }
-
-/**
- * Validate that referral credits can be applied to a payment.
- * Credits must be in the same currency as the payment.
- */
-export function validateCreditCurrency(
-  creditCurrency: string,
-  paymentCurrency: string,
-): boolean {
-  return creditCurrency === paymentCurrency;
-}

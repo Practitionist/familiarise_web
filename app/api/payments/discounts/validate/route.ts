@@ -4,10 +4,14 @@ import prisma from "@/lib/prisma";
 import { DiscountType } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { discountLimiter, applyRateLimit } from "@/lib/rate-limit";
+import { computeDiscountPaise } from "@/lib/payments/pricing/derive-checkout-amount";
+import { validateDiscountCurrency } from "@/lib/payments/validation/currency-guards";
 
 interface ValidateDiscountRequest {
   code: string;
   amount?: number; // Optional: base amount to calculate discount
+  /** Plan price currency; settlement is INR-only so it defaults to INR. */
+  currency?: string;
 }
 
 interface DiscountCodeResponse {
@@ -41,6 +45,7 @@ export async function POST(request: NextRequest) {
 
     const body: ValidateDiscountRequest = await request.json();
     const { code, amount } = body;
+    const planCurrency = body.currency ?? "INR";
 
     if (!code || typeof code !== "string") {
       return NextResponse.json<DiscountCodeResponse>(
@@ -96,28 +101,42 @@ export async function POST(request: NextRequest) {
       (discountCode.discountValue < 1 || discountCode.discountValue > 100)
     ) {
       return NextResponse.json<DiscountCodeResponse>(
-        { valid: false, message: "This discount code has an invalid configuration" },
+        {
+          valid: false,
+          message: "This discount code has an invalid configuration",
+        },
         { status: 400 },
       );
     }
 
-    // Calculate discount amount if base amount provided
+    // #1584 P1-FX04c — the same guard checkout applies: a FIXED_AMOUNT code in
+    // another currency previews as invalid here instead of failing at charge.
+    if (
+      !validateDiscountCurrency(
+        {
+          discountType: discountCode.discountType,
+          currency: discountCode.currency,
+        },
+        planCurrency,
+      )
+    ) {
+      return NextResponse.json<DiscountCodeResponse>(
+        {
+          valid: false,
+          message: "This discount code is for a different currency",
+        },
+        { status: 400 },
+      );
+    }
+
+    // #1584 P1-FX04c — one discount arithmetic, shared with checkout.
     let discountAmount: number | undefined;
     if (amount && amount > 0) {
-      if (discountCode.discountType === DiscountType.PERCENTAGE) {
-        discountAmount = Math.round(
-          (amount * discountCode.discountValue) / 100,
-        );
-        // Apply max discount cap if set
-        if (
-          discountCode.maxDiscount !== null &&
-          discountAmount > discountCode.maxDiscount
-        ) {
-          discountAmount = discountCode.maxDiscount;
-        }
-      } else if (discountCode.discountType === DiscountType.FIXED_AMOUNT) {
-        discountAmount = Math.min(discountCode.discountValue, amount);
-      }
+      discountAmount = computeDiscountPaise(amount, {
+        discountType: discountCode.discountType,
+        discountValue: discountCode.discountValue,
+        maxDiscount: discountCode.maxDiscount,
+      });
     }
 
     return NextResponse.json<DiscountCodeResponse>({
@@ -130,7 +149,10 @@ export async function POST(request: NextRequest) {
       message: "Discount code applied successfully",
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "payments" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "payments" } },
+    );
     console.error("Error validating discount code:", error);
     return NextResponse.json<DiscountCodeResponse>(
       { valid: false, message: "Failed to validate discount code" },
