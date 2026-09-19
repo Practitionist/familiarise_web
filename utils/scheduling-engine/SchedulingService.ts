@@ -4293,10 +4293,11 @@ export class SchedulingService {
   /**
    * Delete existing appointments for an event
    *
-   * @param onlyTentative - If true, only delete tentative AppointmentOccurrence records,
-   *                        preserving confirmed slots and their parent appointments.
+   * @param onlyTentative - If true, only delete RELEASED AppointmentOccurrence records
+   *                        (tentative + RESCHEDULED + live), preserving confirmed slots,
+   *                        fresh tentative holds and their parent appointments.
    *                        Appointments are only deleted if they have zero remaining slots
-   *                        after tentative slot removal. This is used for partial reschedules.
+   *                        after released-slot removal. This is used for partial reschedules.
    * @param preservePastSlots - If true (and onlyTentative is false), only delete future slots,
    *                            preserving past confirmed slots and their Meeting records.
    *                            Used for in-progress reallocation of classes/subscriptions.
@@ -4359,34 +4360,42 @@ export class SchedulingService {
       const enrolledUserIdSet = new Set<string>();
       const freed: { ordinal: number; startsAt: Date }[] = [];
       for (const appointment of appointments) {
-        const hasConfirmed = appointment.occurrences.some(
-          (slot) => !slot.isTentative,
+        // Released rows only: a reschedule frees what it released, never a
+        // fresh request's tentative holds or crud-with-plan placeholders that
+        // happen to coexist on the same event.
+        const released = appointment.occurrences.filter(
+          isReleasedForReschedule,
         );
-        const hasTentative = appointment.occurrences.some(
-          (slot) => slot.isTentative,
-        );
+        const hasTentative = released.length > 0;
 
         if (hasTentative) {
           deletedAppointmentIds.push(appointment.id);
-          for (const slot of appointment.occurrences) {
-            if (slot.isTentative) freed.push(slot);
+          for (const slot of released) {
+            freed.push(slot);
           }
           // Collect the seat holders before the appointment may be deleted
           // (their participant rows cascade with it).
           for (const seat of appointment.participants) {
             enrolledUserIdSet.add(seat.userId);
           }
-          // Delete only tentative slots using a direct query (not stale IDs)
+          // Delete only released slots using a direct query (not stale IDs).
+          // The WHERE mirrors isReleasedForReschedule: tentative +
+          // RESCHEDULED + live.
           await tx.appointmentOccurrence.deleteMany({
             where: {
               appointmentId: appointment.id,
               isTentative: true,
+              completionStatus: "RESCHEDULED",
+              deletedAt: null,
             },
           });
 
-          // If no confirmed slots exist, delete the now-empty appointment —
-          // unless payments reference it (B8): the empty shell is cheaper
-          // than a destroyed audit trail; the orphan sweep reports it.
+          // If no occurrences remain after the released ones are removed,
+          // delete the now-empty appointment — unless payments reference it
+          // (B8): the empty shell is cheaper than a destroyed audit trail;
+          // the orphan sweep reports it. A surviving fresh hold or confirmed
+          // slot keeps the wrapper: deleting it would cascade-destroy rows
+          // this reschedule did not release.
           //
           // B-P1-05 (#1189 audit) — the payment guard rides IN the delete's
           // WHERE clause rather than trusting `_count.payment` above. That
@@ -4396,16 +4405,20 @@ export class SchedulingService {
           // delete would cascade-destroy a payment that did not exist when we
           // looked. Zero rows deleted means a payment appeared: keep the
           // appointment exactly like the payment-bearing path.
-          const deletedAppointment = !hasConfirmed
-            ? await tx.appointment.deleteMany({
-                where: { id: appointment.id, payment: { none: {} } },
-              })
-            : null;
+          const hasRemaining = appointment.occurrences.some(
+            (slot) => !isReleasedForReschedule(slot),
+          );
+          const deletedAppointment =
+            !hasRemaining
+              ? await tx.appointment.deleteMany({
+                  where: { id: appointment.id, payment: { none: {} } },
+                })
+              : null;
           if (
-            (hasConfirmed || deletedAppointment?.count === 0) &&
+            (hasRemaining || deletedAppointment?.count === 0) &&
             (eventType === "consultation" || eventType === "webinar")
           ) {
-            // #898 — the appointment is kept (confirmed slots remain, or the
+            // #898 — the appointment is kept (unreleased slots remain, or the
             // payment guard fired). For a 1:1 event it still holds the @unique
             // event FK, so the allocator must REUSE it; a fresh create P2002s.
             reusableAppointmentId = appointment.id;
