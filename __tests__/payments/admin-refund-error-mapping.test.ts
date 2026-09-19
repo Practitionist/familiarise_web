@@ -71,6 +71,25 @@ jest.mock("../../lib/payments/operations/refund", () => {
 // org-funded intents reverse in-ledger; the same spy answers it.
 jest.mock("../../lib/payments/operations/booking-refund", () => ({
   refundBookingPayment: (...args: unknown[]) => refundPayment(...args),
+  fundingRailForIntent: (intent: string) =>
+    intent.startsWith("org_") ? "INTERNAL" : "GATEWAY",
+}));
+
+// #1586 — the whole-event receipt for INTERNAL seats (parity with #1740 M9).
+const notifyRefundProcessed = jest.fn(async (_userId: string) => null);
+const sendRefundProcessedEmail = jest.fn(async () => ({}));
+jest.mock("../../lib/novu", () => ({
+  notifyRefundProcessed: (...args: unknown[]) =>
+    notifyRefundProcessed(...(args as [string])),
+}));
+jest.mock("../../lib/novu/workflows", () => ({
+  notificationScope: () => ({}),
+}));
+jest.mock("../../lib/url", () => ({ getAppUrl: () => "http://localhost" }));
+jest.mock("../../lib/email", () => ({
+  EMAIL_BUDGET_MS: { REQUEST: 1 },
+  sendRefundProcessedEmail: (...args: unknown[]) =>
+    sendRefundProcessedEmail(...(args as [])),
 }));
 
 const refundWholeEventPayments = jest.fn();
@@ -111,6 +130,11 @@ jest.mock("../../lib/prisma", () => ({
     },
   },
 }));
+
+import prisma from "../../lib/prisma";
+const refundFindMany = (
+  prisma as unknown as { refund: { findMany: jest.Mock } }
+).refund.findMany;
 
 import { NextRequest } from "next/server";
 import { POST } from "../../app/api/admin/refunds/route";
@@ -253,6 +277,45 @@ describe("the success paths are unchanged", () => {
       alreadyRefunded: true,
       refunded: 0,
     });
+  });
+
+  // #1586 — the whole-event INTERNAL seats were the one refund with no receipt.
+  it("stages one refund notice per org_ seat and none for a gateway seat", async () => {
+    refundWholeEventPayments.mockResolvedValue({
+      refundsIssued: 3,
+      refundedPaise: 30000,
+      childRefundIds: ["rf_1", "rf_2", "rf_3"],
+      failures: [],
+      skippedAlreadyRefunded: 0,
+      alreadyRefunded: false,
+    });
+    const seat = (id: string, paymentIntent: string) => ({
+      amountPaise: 10000,
+      payment: {
+        id: `pay_${id}`,
+        userId: `user_${id}`,
+        organizationId: "org_1",
+        currency: "INR",
+        paymentIntent,
+      },
+    });
+    refundFindMany.mockResolvedValueOnce([
+      seat("1", "org_wallet_abc"),
+      seat("2", "org_invoice_def"),
+      seat("3", "order_gateway_ghi"),
+    ]);
+
+    const res = await POST(
+      refundRequest({ classId: "class_1", reason: "cancelled" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(notifyRefundProcessed).toHaveBeenCalledTimes(2);
+    expect(notifyRefundProcessed.mock.calls.map((c) => c[0])).toEqual([
+      "user_1",
+      "user_2",
+    ]);
+    expect(sendRefundProcessedEmail).toHaveBeenCalledTimes(2);
   });
 
   it("rejects a payload naming more than one target", async () => {

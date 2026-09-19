@@ -80,7 +80,7 @@ import {
   attemptStaged as attemptStagedEmails,
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
-import { applyReversal } from "./reversal-engine";
+import { applyReversal, postPayoutClawback } from "./reversal-engine";
 import { RefundValidationError, refundPayment } from "./refund";
 
 /**
@@ -501,6 +501,13 @@ async function reverseFreeCreditSettlement(
             initiatedByUserId: input.initiatedByUserId,
           } as Prisma.InputJsonValue,
         },
+      });
+      // #1582 C-P1-02c — journal the clawback in the same tx as the counter.
+      await postPayoutClawback(tx, {
+        refundId: input.refundId,
+        payoutId: orgEarn.orgPayoutId,
+        amountPaise: orgEarn.orgSharePaise,
+        organizationId: orgEarn.organizationId,
       });
     }
   }

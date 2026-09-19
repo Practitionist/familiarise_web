@@ -9,7 +9,15 @@
  * burned sequence number) and a no-op for non-invoiced payments. Mocked tx.
  */
 
-import { mintRefundCreditNote } from "@/lib/payments/operations/refund";
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemError: jest.fn().mockResolvedValue(undefined),
+  recordSystemEvent: jest.fn().mockResolvedValue(undefined),
+}));
+
+import {
+  mintInvoiceRefundCreditNote,
+  mintRefundCreditNote,
+} from "@/lib/payments/operations/refund";
 
 function mockTx(opts: {
   payment: {
@@ -31,6 +39,8 @@ function mockTx(opts: {
     creditNote: {
       findUnique: jest.fn().mockResolvedValue(opts.existingCreditNote ?? null),
       create: creditNoteCreate,
+      // #1582 C-P0-01 — the cumulative cap reads what was already issued.
+      aggregate: jest.fn().mockResolvedValue({ _sum: { totalPaise: null } }),
     },
     organizationInvoice: {
       findUnique: jest.fn().mockResolvedValue(
@@ -171,5 +181,54 @@ describe("mintRefundCreditNote", () => {
     });
     expect(res.creditNoteId).toBeNull();
     expect(tx._creditNoteCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("cumulative credit-note cap (#1582 C-P0-01)", () => {
+  it("clamps the second of two ₹600 notes on a ₹1000 invoice to ₹400 and refuses a third", async () => {
+    const issued: number[] = [];
+    const tx = mockTx({
+      payment: null,
+      invoice: {
+        id: "inv1",
+        organizationId: "org1",
+        status: "ISSUED",
+        issuedAt: new Date("2026-05-01T00:00:00.000Z"),
+        totalPaise: 100_000,
+        igstPaise: 0,
+        cgstPaise: 7_627,
+        sgstPaise: 7_627,
+      },
+    });
+    tx.creditNote.aggregate.mockImplementation(async () => ({
+      _sum: {
+        totalPaise: issued.length ? issued.reduce((a, b) => a + b) : null,
+      },
+    }));
+    tx._creditNoteCreate.mockImplementation(async ({ data }) => {
+      issued.push(data.totalPaise);
+      return { id: `cn-${issued.length}` };
+    });
+    const mint = (refundId: string) =>
+      mintInvoiceRefundCreditNote(tx as never, {
+        invoiceId: "inv1",
+        refundId,
+        amountPaise: 60_000,
+        reason: "test",
+      });
+
+    const first = await mint("ref1");
+    const second = await mint("ref2");
+    const third = await mint("ref3");
+
+    expect(first).toEqual({ creditNoteId: "cn-1" });
+    expect(second).toEqual({ creditNoteId: "cn-2" });
+    expect(issued).toEqual([60_000, 40_000]);
+    const clamped = tx._creditNoteCreate.mock.calls[1][0].data;
+    expect(clamped.subtotalPaise + clamped.cgstPaise + clamped.sgstPaise).toBe(
+      40_000,
+    );
+    expect(third).toEqual({ creditNoteId: null, outcome: "FULLY_CREDITED" });
+    expect(tx._creditNoteCreate).toHaveBeenCalledTimes(2);
   });
 });

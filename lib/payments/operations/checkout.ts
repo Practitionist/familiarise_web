@@ -190,6 +190,22 @@ const SUPERSEDED_HOLD_NOTE =
   "Superseded by a newer checkout attempt for the same booking";
 
 /**
+ * #1582 B-P1-01b — coded refusals raised INSIDE the checkout transaction that
+ * are modelled outcomes (tagged expected at Sentry). The overage-funding codes
+ * stay out on purpose: they mean a programme is configured in a shape we
+ * cannot collect on and must keep paging.
+ */
+const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "ORG_NOT_OPERATIONAL",
+  "ORG_CANNOT_SPONSOR",
+  "ORG_MEMBERSHIP_REQUIRED",
+  "ORG_CREDIT_LIMIT_REACHED",
+  "CONSULTANT_NOT_ON_PANEL",
+  "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+  "CREDIT_SHORTFALL",
+]);
+
+/**
  * Build payment metadata for both payment intents and webhook handlers
  * Ensures consistency between payment creation and mock payment flows.
  *
@@ -1066,8 +1082,11 @@ export async function calculateAmountAndValidate(
             priceCurrency,
           )
         ) {
-          throw new Error(
-            "Discount code currency does not match plan currency",
+          // #1586 J32 — its prose matched the "discount code" AVAILABILITY
+          // pattern and told the buyer the plan was gone.
+          throw Object.assign(
+            new Error("Discount code currency does not match plan currency"),
+            { httpStatus: 400, code: "DISCOUNT_CURRENCY_MISMATCH" },
           );
         }
 
@@ -1999,13 +2018,23 @@ async function revalidateInsideLock(
         where: { id: orgContext.organizationId },
         select: { status: true, canSponsor: true },
       });
+      // #1582 B-P1-01b — registered codes rethrow unchanged through the tx
+      // catch (isBusinessErrorCode) instead of collapsing to 500 UNKNOWN.
       if (
         !org ||
-        !org.canSponsor ||
         (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION")
       ) {
-        throw new Error(
-          "This organization can no longer sponsor bookings. Please refresh and try again.",
+        throw Object.assign(
+          new Error(
+            "This organization can no longer sponsor bookings. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_NOT_OPERATIONAL" },
+        );
+      }
+      if (!org.canSponsor) {
+        throw Object.assign(
+          new Error("This organization is not configured to sponsor bookings."),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
         );
       }
       const membership = await tx.membership.findUnique({
@@ -2013,7 +2042,10 @@ async function revalidateInsideLock(
         select: { status: true },
       });
       if (membership?.status !== "ACTIVE") {
-        throw new Error("You are not an active member of this organization.");
+        throw Object.assign(
+          new Error("You are not an active member of this organization."),
+          { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
+        );
       }
       if (orgContext.programAssignmentId) {
         const assignment = await tx.programAssignment.findFirst({
@@ -2105,8 +2137,11 @@ async function revalidateInsideLock(
           (row) => row.consultantProfileId === plan.consultantProfileId,
         )
       ) {
-        throw new Error(
-          "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+        throw Object.assign(
+          new Error(
+            "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+          ),
+          { httpStatus: 409, code: "CONSULTANT_NOT_ON_PANEL" },
         );
       }
     }
@@ -2125,8 +2160,11 @@ async function revalidateInsideLock(
         select: { id: true },
       });
       if (exclusive) {
-        throw new Error(
-          "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+        throw Object.assign(
+          new Error(
+            "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+          ),
+          { httpStatus: 409, code: "CONSULTANT_EXCLUSIVE_ENGAGEMENT" },
         );
       }
     }
@@ -3046,14 +3084,21 @@ export async function handleCheckout(
     // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
     // under the credit-limit gate (#687 invoice-fraud guard). Anything
     // else still requires fully ACTIVE status.
+    // #1582 B-P1-01c — typed 403s; the pre-tx twins of the in-tx re-checks.
     if (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION") {
-      throw new Error(
-        `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+      throw Object.assign(
+        new Error(
+          `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+        ),
+        { httpStatus: 403, code: "ORG_NOT_OPERATIONAL" },
       );
     }
     if (!org.canSponsor) {
-      throw new Error(
-        "This organization is not configured to sponsor bookings (canSponsor=false).",
+      throw Object.assign(
+        new Error(
+          "This organization is not configured to sponsor bookings (canSponsor=false).",
+        ),
+        { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
       );
     }
 
@@ -3094,7 +3139,11 @@ export async function handleCheckout(
       select: { role: true, status: true, id: true },
     });
     if (!callerMembership || callerMembership.status !== "ACTIVE") {
-      throw new Error("You are not an active member of this organization.");
+      // qa-1753 — the pre-tx twin of the in-tx check carries the same code.
+      throw Object.assign(
+        new Error("You are not an active member of this organization."),
+        { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
+      );
     }
 
     // #701 — DPDP consent gate. The member is having a session booked + paid on
@@ -3155,8 +3204,11 @@ export async function handleCheckout(
       if (effectiveLimit !== null) {
         const exposure = await readInvoiceExposurePaise(prisma, org.id);
         if (exposure >= effectiveLimit) {
-          throw new Error(
-            `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+          throw Object.assign(
+            new Error(
+              `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+            ),
+            { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
           );
         }
       }
@@ -3574,8 +3626,11 @@ export async function handleCheckout(
               // a concurrent sibling's just-committed accrual is visible — SSI then
               // aborts the loser of a racing pair instead of both straddling the cap.
               if (exposure >= creditEffectiveLimit) {
-                throw new Error(
-                  `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+                throw Object.assign(
+                  new Error(
+                    `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
+                  ),
+                  { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
                 );
               }
             }
@@ -4062,9 +4117,13 @@ export async function handleCheckout(
               // The payment intent was created with a reduced amount based on TX1's
               // credit calculation, so proceeding would undercharge the user.
               if (actualCredits < creditsApplied) {
-                throw new Error(
-                  `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
-                    `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                // #1586 J32 — a modelled race, answered 409 + retryAfter.
+                throw Object.assign(
+                  new Error(
+                    `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
+                      `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                  ),
+                  { httpStatus: 409, code: "CREDIT_SHORTFALL", retryAfter: 2 },
                 );
               }
               actualCreditsApplied = creditsApplied; // In paise
@@ -4352,6 +4411,10 @@ export async function handleCheckout(
         // through on its registered code; tagging is a separate list by
         // design, so without this line the routine refusal kept paging.
         dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
+        // #1582 B-P1-01b — the in-tx org/panel/credit refusals and the
+        // CREDIT_SHORTFALL race are answers, not faults.
+        (typeof dbErrorCode === "string" &&
+          IN_TX_MODELLED_REFUSAL_CODES.has(dbErrorCode)) ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
             // Word-bounded: bare `includes` let "full" match "successful" and
