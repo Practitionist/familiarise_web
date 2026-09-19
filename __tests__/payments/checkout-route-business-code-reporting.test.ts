@@ -139,6 +139,47 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
   });
 });
 
+// #1582 B-P1-01b/c, #1564, #1586 J32 — the refusals that were still bare
+// Errors (500 UNKNOWN + a Sentry fault each) now carry registered codes.
+describe("every newly typed refusal answers its own status, tagged expected", () => {
+  const cases: Array<[string, number, string]> = [
+    ["ORG_NOT_OPERATIONAL", 403, "ORG_NOT_OPERATIONAL_ERROR"],
+    ["ORG_CANNOT_SPONSOR", 403, "ORG_CANNOT_SPONSOR_ERROR"],
+    ["ORG_MEMBERSHIP_REQUIRED", 403, "ORG_MEMBERSHIP_REQUIRED_ERROR"],
+    ["ORG_CREDIT_LIMIT_REACHED", 402, "ORG_CREDIT_LIMIT_REACHED_ERROR"],
+    ["CONSULTANT_NOT_ON_PANEL", 409, "CONSULTANT_NOT_ON_PANEL_ERROR"],
+    [
+      "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+      409,
+      "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
+    ],
+    ["CURRENCY_UNSUPPORTED", 422, "CURRENCY_UNSUPPORTED_ERROR"],
+    ["NON_INR_SETTLEMENT", 422, "CURRENCY_UNSUPPORTED_ERROR"],
+    ["CREDIT_SHORTFALL", 409, "CREDIT_SHORTFALL_ERROR"],
+    ["DISCOUNT_CURRENCY_MISMATCH", 400, "DISCOUNT_CURRENCY_MISMATCH_ERROR"],
+  ];
+
+  it.each(cases)("%s → %i %s", async (code, httpStatus, errorType) => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(new Error(`internal detail for ${code}`), {
+        code,
+        httpStatus,
+      }),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(httpStatus);
+    expect(body.errorType).toBe(errorType);
+    // The registered userMessage replaces the thrown (internal) message.
+    expect(body.error).not.toContain("internal detail");
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
+  });
+});
+
 // #1583 C-P1-04 — two concurrent same-key checkouts: the loser's Payment
 // create dies on the clientIdempotencyKey unique. The route has always had a
 // replay branch for that P2002, but handleCheckout rewrapped the Prisma error

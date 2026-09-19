@@ -133,12 +133,11 @@ export type Finding = {
     // transaction: the cash left but the payable was never cleared in the journal.
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
     // #1408 — an OrganizationPayout whose `clawbackAmountPaise` exceeds the
-    // CASH DEBIT its `clawback:*` postings actually recorded. Only
-    // reversePayoutClawback posts one, and it does so best-effort inside a
-    // try/catch; the two other writers of `clawbackAmountPaise` (refund.ts and
-    // booking-refund.ts) post nothing at all. The money row and the journal are
-    // a dual write with no transaction spanning them, so this is the detector
-    // for the gap — total (nothing posted) and partial (a later clawback's
+    // CASH DEBIT its `clawback:*` postings actually recorded. The posting
+    // rethrows since #1740 and all three writers of `clawbackAmountPaise`
+    // (reversal-engine, refund.ts, booking-refund.ts) post it in the same tx
+    // since #1582 C-P1-02c, so a gap now means legacy drift or a bypassed
+    // write — total (nothing posted) and partial (a later clawback's
     // posting lost) share the kind and differ only in `deltaPaise`.
     | "LEDGER_DUAL_WRITE_GAP"
     // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
@@ -208,7 +207,7 @@ export type ReconcileReport = {
 /**
  * #1408 — the clawback dual-write gap, compared on AMOUNTS rather than on the
  * presence of a posting. `clawbackAmountPaise` is a running total: a payout
- * clawed back twice whose second posting was swallowed still carries a
+ * clawed back twice whose second posting was lost still carries a
  * `clawback:*` transaction, so a payout-id Set reads it as clean. The CASH
  * DEBIT is the authoritative leg — it is the money that came back — so the sum
  * of those legs is what the stamped counter is measured against. Pure, so the
@@ -1105,6 +1104,29 @@ async function stepEarningsLedger(
   return pageResult(bookingTxns, done, take, cursor);
 }
 
+/**
+ * #1582 (owner decision Q2) — Phase 2 of confirmation is post-commit by
+ * design (ADR 21; the addendum lands in PR-G): earnings commit in Phase 1 and
+ * the BOOKING journal follows, so a payment younger than this is in flight,
+ * not a finding. Two ticker intervals by default.
+ */
+const DEFAULT_UNJOURNALED_GRACE_MS = 30 * 60 * 1000;
+const configuredGraceMs = Number(process.env.RECONCILE_UNJOURNALED_GRACE_MS);
+// A malformed or negative env value falls back to the two-ticker default.
+export const RECONCILE_UNJOURNALED_GRACE_MS =
+  Number.isFinite(configuredGraceMs) && configuredGraceMs >= 0
+    ? configuredGraceMs
+    : DEFAULT_UNJOURNALED_GRACE_MS;
+
+/** Q2 — an unjournaled payment is a finding only once the grace has lapsed. */
+export function isPastUnjournaledGrace(
+  paymentUpdatedAt: Date,
+  now: Date = new Date(),
+  graceMs: number = RECONCILE_UNJOURNALED_GRACE_MS,
+): boolean {
+  return now.getTime() - paymentUpdatedAt.getTime() >= graceMs;
+}
+
 // #773/#778 §G — earnings-bearing payments with no booking journal txn.
 // Now that the multi-collaborator path posts its own balanced booking txn,
 // this count must be ZERO: any excess over RECONCILE_UNJOURNALED_MAX
@@ -1122,9 +1144,21 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
     select: { paymentId: true },
     distinct: ["paymentId"],
   });
-  const unjournaled = earningsPaymentRows.filter(
+  const candidates = earningsPaymentRows.filter(
     (e) => e.paymentId && !coveredPaymentIds.has(e.paymentId),
   );
+  // Q2 — skip payments still inside the post-commit grace window.
+  const candidateRows = await prisma.payment.findMany({
+    where: { id: { in: candidates.map((e) => e.paymentId!) } },
+    select: { id: true, updatedAt: true },
+  });
+  const now = new Date();
+  const settledIds = new Set(
+    candidateRows
+      .filter((p) => isPastUnjournaledGrace(p.updatedAt, now))
+      .map((p) => p.id),
+  );
+  const unjournaled = candidates.filter((e) => settledIds.has(e.paymentId!));
   const earningsPaymentsWithoutBookingTxn = unjournaled.length;
   const unjournaledMax = Number(process.env.RECONCILE_UNJOURNALED_MAX ?? 0);
   if (earningsPaymentsWithoutBookingTxn > unjournaledMax) {
@@ -1136,7 +1170,7 @@ async function stepUnjournaledEarnings(ctx: StepCtx): Promise<void> {
       details: {
         unit: "payments",
         samplePaymentIds: unjournaled.slice(0, 10).map((e) => e.paymentId),
-        note: "Earnings-bearing payments missing a BOOKING ledger transaction exceed the allowed threshold (#773).",
+        note: "Earnings-bearing payments older than the post-commit grace window missing a BOOKING ledger transaction exceed the allowed threshold (#773; Q2 grace via RECONCILE_UNJOURNALED_GRACE_MS).",
       },
     });
   }
@@ -1238,11 +1272,11 @@ async function stepCompletedOrgPayouts(ctx: StepCtx): Promise<void> {
 }
 
 // #1408 — the clawback dual-write. A refund against an already-paid org
-// payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
-// but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
-// reversePayoutClawback posts it inside a try/catch that swallows the
-// failure, and refund.ts / booking-refund.ts never post it at all. The
-// stamped payout then claims cash was recovered that the journal has never
+// payout stamps `clawbackAmountPaise` on the payout and writes an audit row;
+// the matching `Dr CASH / Cr ORG_PAYABLE` reversal rethrows since #1740 and
+// both refund paths post it in the same tx since #1582 C-P1-02c, so a gap
+// today is legacy drift or a bypassed write, not the design. The stamped
+// payout then claims cash was recovered that the journal has never
 // seen. Matched on the soft link plus the `clawback:` key prefix because the
 // full key embeds the refund id, which the payout row does not carry — and
 // compared on summed amounts, not presence, since the counter is cumulative
