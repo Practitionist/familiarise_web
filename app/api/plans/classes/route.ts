@@ -12,6 +12,7 @@ import {
   buildPlanOrderBy,
   paginatedResponse,
   rankAndPaginate,
+  getClassTrendingRank,
 } from "../shared/plan-filters";
 import {
   requireApiAuth,
@@ -67,54 +68,10 @@ export async function GET(request: NextRequest) {
     };
 
     // For trending sort, use a two-step Prisma approach:
-    // 1. Lightweight select (IDs + nested slot rows only) to rank by how many
-    //    SESSIONS the plan's classes had scheduled in the window
+    // 1. Ranked ids from the cached 60s scan
     // 2. Fetch full plan data only for the paginated slice
     if (sort === "trending") {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
-      const plansForRanking = await prisma.classPlan.findMany({
-        where,
-        select: {
-          id: true,
-          classes: {
-            select: {
-              appointment: {
-                select: {
-                  id: true,
-                  // #1554 — one row per held call, so the count is the rows.
-                  _count: {
-                    select: {
-                      occurrences: {
-                        where: {
-                          createdAt: { gte: thirtyDaysAgo },
-                          deletedAt: null,
-                          completionStatus: {
-                            notIn: ["CANCELLED", "RESCHEDULED"],
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      });
-
-      // The ranking measures how much of a plan is running: one occurrence
-      // row is one held call (#1554), so the live rows are the count.
-      const ranked = plansForRanking
-        .map((p) => ({
-          id: p.id,
-          count: p.classes.reduce(
-            (sum, cls) => sum + (cls.appointment?._count.occurrences ?? 0),
-            0,
-          ),
-        }))
-        .sort((a, b) => b.count - a.count);
+      const ranked = await getClassTrendingRank(JSON.stringify(where));
 
       return rankAndPaginate(
         ranked,

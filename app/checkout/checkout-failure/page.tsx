@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
+import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -96,7 +97,9 @@ function CheckoutFailureContent() {
             <div className="space-y-4">
               {commonFailureReasons.map((reason, index) => (
                 <div key={index} className="border-l-4 border-border pl-4">
-                  <h4 className="font-medium text-foreground">{reason.title}</h4>
+                  <h4 className="font-medium text-foreground">
+                    {reason.title}
+                  </h4>
                   <p className="text-sm text-muted-foreground">
                     {reason.description}
                   </p>
@@ -161,12 +164,12 @@ function CheckoutFailureContent() {
         <div className="mt-6 text-center text-sm text-muted-foreground">
           <p>
             Need immediate assistance?{" "}
-            <a
+            <Link
               href="/dashboard"
               className="text-foreground font-medium hover:underline"
             >
               Contact our support team
-            </a>
+            </Link>
           </p>
         </div>
       </div>

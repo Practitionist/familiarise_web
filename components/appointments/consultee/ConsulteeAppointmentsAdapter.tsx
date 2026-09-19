@@ -242,13 +242,14 @@ export function useConsulteeAppointmentsAdapter(options?: {
     // dialog — the detail page hosts the card with accept/decline/withdraw.
     const proposalTarget = rowProposalTarget(vm);
     if (proposalTarget && consulteeId && !inactive) {
+      const proposalHref = `/dashboard/consultee/${consulteeId}/appointments/${proposalTarget.appointmentId}`;
       items.push({
         key: "reschedule-proposal",
         label: "Review reschedule request",
-        onClick: () =>
-          router.push(
-            `/dashboard/consultee/${consulteeId}/appointments/${proposalTarget.appointmentId}`,
-          ),
+        // href is the prefetchable path; onClick stays as the fallback for
+        // button-only renderers (Sheet/detail) that cannot host a link.
+        href: proposalHref,
+        onClick: () => router.push(proposalHref),
       });
     }
     // #1005 — kind-gate: only offer actions the server will honour.
@@ -262,19 +263,19 @@ export function useConsulteeAppointmentsAdapter(options?: {
       isApprovedStatus(vm.status) &&
       occurrencesAllowReschedule(slots)
     ) {
+      // A page, not a dialog: choosing a time is a full-width task, and a
+      // URL means a half-finished choice survives a refresh. The returnTo
+      // query rides along literally; only the base path prefetches.
+      const rescheduleHref = `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule${
+        options?.rescheduleReturnTo
+          ? `?returnTo=${encodeURIComponent(options.rescheduleReturnTo)}`
+          : ""
+      }`;
       items.push({
         key: "reschedule",
         label: "Reschedule",
-        // A page, not a dialog: choosing a time is a full-width task, and a
-        // URL means a half-finished choice survives a refresh.
-        onClick: () =>
-          router.push(
-            `/dashboard/consultee/${consulteeId}/appointments/${vm.appointmentId}/reschedule${
-              options?.rescheduleReturnTo
-                ? `?returnTo=${encodeURIComponent(options.rescheduleReturnTo)}`
-                : ""
-            }`,
-          ),
+        href: rescheduleHref,
+        onClick: () => router.push(rescheduleHref),
       });
     }
     const destructive = consulteeDestructiveAction(vm.kind);

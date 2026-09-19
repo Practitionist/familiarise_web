@@ -16,6 +16,7 @@ import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PricingOption } from "../defaults";
 import { TIntervalTiming } from "@/types/slots";
@@ -84,6 +85,7 @@ export default function ConsultationPricingToggle({
   onRefreshSlots,
 }: Readonly<ConsultationPricingToggleProps>) {
   const { data: session } = useSession();
+  const router = useRouter();
   const { toast } = useToast();
   const { formatPrice } = useCurrency();
   // Track the active plan by id so plans that share a duration (e.g. two
@@ -142,8 +144,7 @@ export default function ConsultationPricingToggle({
     return brokenDownSlots.map((slot) => ({
       ...slot,
       _isPast:
-        new Date(slot.startsAt).getTime() <
-        now + MINIMUM_BOOKING_LEAD_TIME_MS,
+        new Date(slot.startsAt).getTime() < now + MINIMUM_BOOKING_LEAD_TIME_MS,
     }));
   }, [slotTimings, selectedDuration, timezone, selectedDate]);
 
@@ -222,7 +223,9 @@ export default function ConsultationPricingToggle({
         },
       });
       const callbackUrl = `${window.location.pathname}${window.location.search}`;
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+      router.push(
+        `/auth/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`,
+      );
       return;
     }
 
@@ -365,214 +368,216 @@ export default function ConsultationPricingToggle({
         {consultationOptions.map((option) => {
           const isActive = activeConsultationOption === option.id;
           return (
-          <motion.div
-            key={option.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{
-              opacity: isActive ? 1 : 0,
-              y: 0,
-            }}
-            transition={{ duration: 0.2 }}
-            className={isActive ? "block" : "hidden"}
-          >
-            {/* Pricing content — no nested dark card, lives directly in glass parent */}
-            <div className="space-y-1">
-              <h3 className="text-lg font-bold text-white">{option.title}</h3>
-              <p className="text-xs text-zinc-500">{option.description}</p>
-            </div>
-
-            <div className="flex items-end gap-2 my-5">
-              <span className="text-5xl font-bold tracking-tight text-white">
-                {formatPrice(option.price)}
-              </span>
-              <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
-            </div>
-
-            {option.features && option.features.length > 0 && (
-              <>
-                <div className="border-t border-white/[0.06] mb-4" />
-                <div className="space-y-2 mb-5">
-                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
-                    Includes
-                  </p>
-                  <ul className="space-y-2">
-                    {option.features.map((feature, index) => (
-                      <li
-                        key={`feature-${index}`}
-                        className="text-zinc-200 flex items-center text-sm"
-                      >
-                        <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </>
-            )}
-
-            {/* Two CTAs: read first, or book now. The toggle stays a chooser
-                and hands detail off to the plan page. */}
-            <Button
-              asChild
-              variant="outline"
-              className="w-full mb-3 bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
+            <motion.div
+              key={option.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{
+                opacity: isActive ? 1 : 0,
+                y: 0,
+              }}
+              transition={{ duration: 0.2 }}
+              className={isActive ? "block" : "hidden"}
             >
-              <Link href={`/explore/programs/plans/consultations/${option.id}`}>
-                Open details
-              </Link>
-            </Button>
+              {/* Pricing content — no nested dark card, lives directly in glass parent */}
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-white">{option.title}</h3>
+                <p className="text-xs text-zinc-500">{option.description}</p>
+              </div>
 
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button
-                  className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-                  onClick={handleBookNowClick}
-                >
-                  Book Now
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
-                <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
-                  <DialogTitle className="text-xl lg:text-2xl font-semibold">
-                    Book {option.title} Consultation
-                  </DialogTitle>
-                  <DialogDescription className="text-zinc-400 text-base">
-                    Select a date and time for your {option.duration}{" "}
-                    consultation
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
-                  {/* Calendar Section */}
-                  <div>
-                    <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
-                      <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                      Select a Date
-                    </h3>
-                    <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
-                      <div className="flex justify-between items-center mb-5">
-                        <Button
-                          variant="ghost"
-                          size="default"
-                          className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                          onClick={() =>
-                            setCurrentDate(
-                              new Date(
-                                currentDate.getFullYear(),
-                                currentDate.getMonth() - 1,
-                                1,
-                              ),
-                            )
-                          }
+              <div className="flex items-end gap-2 my-5">
+                <span className="text-5xl font-bold tracking-tight text-white">
+                  {formatPrice(option.price)}
+                </span>
+                <span className="text-zinc-500 text-sm mb-1.5">/ session</span>
+              </div>
+
+              {option.features && option.features.length > 0 && (
+                <>
+                  <div className="border-t border-white/[0.06] mb-4" />
+                  <div className="space-y-2 mb-5">
+                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                      Includes
+                    </p>
+                    <ul className="space-y-2">
+                      {option.features.map((feature, index) => (
+                        <li
+                          key={`feature-${index}`}
+                          className="text-zinc-200 flex items-center text-sm"
                         >
-                          &lt;
-                        </Button>
-                        <span className="font-semibold text-white text-lg">
-                          {currentDate.toLocaleString("default", {
-                            month: "long",
-                            year: "numeric",
-                          })}
-                        </span>
-                        <Button
-                          variant="ghost"
-                          size="default"
-                          className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                          onClick={() =>
-                            setCurrentDate(
-                              new Date(
-                                currentDate.getFullYear(),
-                                currentDate.getMonth() + 1,
-                                1,
-                              ),
-                            )
-                          }
-                        >
-                          &gt;
-                        </Button>
-                      </div>
-                      <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
-                        <div>Mo</div>
-                        <div>Tu</div>
-                        <div>We</div>
-                        <div>Th</div>
-                        <div>Fr</div>
-                        <div>Sa</div>
-                        <div>Su</div>
-                      </div>
-                      <div className="grid grid-cols-7 gap-2">
-                        {renderCalendar()}
-                      </div>
-                    </div>
+                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
+                </>
+              )}
 
-                  {/* Available Slots Section */}
-                  <div>
-                    <div className="flex items-center justify-between mb-5">
-                      <h3 className="text-lg font-semibold flex items-center text-white">
-                        <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
-                        Available {selectedDuration} hour Slots
+              {/* Two CTAs: read first, or book now. The toggle stays a chooser
+                and hands detail off to the plan page. */}
+              <Button
+                asChild
+                variant="outline"
+                className="w-full mb-3 bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
+              >
+                <Link
+                  href={`/explore/programs/plans/consultations/${option.id}`}
+                >
+                  Open details
+                </Link>
+              </Button>
+
+              <Dialog>
+                <DialogTrigger asChild>
+                  <Button
+                    className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                    onClick={handleBookNowClick}
+                  >
+                    Book Now
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-[700px] lg:max-w-[950px] xl:max-w-[1050px] max-h-[85vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl">
+                  <DialogHeader className="p-6 lg:p-8 border-b border-zinc-800">
+                    <DialogTitle className="text-xl lg:text-2xl font-semibold">
+                      Book {option.title} Consultation
+                    </DialogTitle>
+                    <DialogDescription className="text-zinc-400 text-base">
+                      Select a date and time for your {option.duration}{" "}
+                      consultation
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
+                    {/* Calendar Section */}
+                    <div>
+                      <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
+                        <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                        Select a Date
                       </h3>
-                      {onRefreshSlots && (
-                        <button
-                          type="button"
-                          className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
-                          title="Refresh slot availability"
-                          onClick={async () => {
-                            setIsRefreshing(true);
-                            try {
-                              await onRefreshSlots();
-                            } finally {
-                              setIsRefreshing(false);
+                      <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
+                        <div className="flex justify-between items-center mb-5">
+                          <Button
+                            variant="ghost"
+                            size="default"
+                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
+                            onClick={() =>
+                              setCurrentDate(
+                                new Date(
+                                  currentDate.getFullYear(),
+                                  currentDate.getMonth() - 1,
+                                  1,
+                                ),
+                              )
                             }
-                          }}
-                          disabled={isRefreshing}
-                        >
-                          <RefreshCw
-                            className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
-                          />
-                        </button>
-                      )}
-                    </div>
-                    {consultantDetails?.scheduleType && (
-                      <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
-                        <p className="text-sm text-zinc-400">
-                          This consultant prefers{" "}
-                          <span
-                            className={`px-2 py-1 rounded text-xs font-medium ${
-                              consultantDetails.scheduleType === "WEEKLY"
-                                ? "bg-zinc-700 text-zinc-300"
-                                : "bg-zinc-700 text-zinc-300"
-                            }`}
                           >
-                            {consultantDetails.scheduleType === "WEEKLY"
-                              ? "📅 Weekly"
-                              : "🎯 Custom"}
-                          </span>{" "}
-                          scheduling
-                        </p>
+                            &lt;
+                          </Button>
+                          <span className="font-semibold text-white text-lg">
+                            {currentDate.toLocaleString("default", {
+                              month: "long",
+                              year: "numeric",
+                            })}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="default"
+                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
+                            onClick={() =>
+                              setCurrentDate(
+                                new Date(
+                                  currentDate.getFullYear(),
+                                  currentDate.getMonth() + 1,
+                                  1,
+                                ),
+                              )
+                            }
+                          >
+                            &gt;
+                          </Button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
+                          <div>Mo</div>
+                          <div>Tu</div>
+                          <div>We</div>
+                          <div>Th</div>
+                          <div>Fr</div>
+                          <div>Sa</div>
+                          <div>Su</div>
+                        </div>
+                        <div className="grid grid-cols-7 gap-2">
+                          {renderCalendar()}
+                        </div>
                       </div>
-                    )}
-                    <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
-                      {availableSlots.length > 0 ? (
-                        <>
-                          {availableSlots.map((slot, index) => {
-                            const isSelected =
-                              selectedSlot?.slotId === slot.slotId &&
-                              selectedSlot?.localStartTime ===
-                                slot.localStartTime;
-                            const isPast = slot._isPast;
-                            const bookingStatus =
-                              slot.bookingStatus || "available";
-                            const isFullyBooked =
-                              bookingStatus === "fully-booked";
-                            const isPartiallyBooked =
-                              bookingStatus === "partially-booked";
-                            const isAllocated = slot.isAllocated;
-                            const isDisabled = isPast || isFullyBooked;
+                    </div>
 
-                            return (
-                              <button
-                                key={`${slot.slotId}-${index}`}
-                                className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
+                    {/* Available Slots Section */}
+                    <div>
+                      <div className="flex items-center justify-between mb-5">
+                        <h3 className="text-lg font-semibold flex items-center text-white">
+                          <ClockIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
+                          Available {selectedDuration} hour Slots
+                        </h3>
+                        {onRefreshSlots && (
+                          <button
+                            type="button"
+                            className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-700/50 transition-colors"
+                            title="Refresh slot availability"
+                            onClick={async () => {
+                              setIsRefreshing(true);
+                              try {
+                                await onRefreshSlots();
+                              } finally {
+                                setIsRefreshing(false);
+                              }
+                            }}
+                            disabled={isRefreshing}
+                          >
+                            <RefreshCw
+                              className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+                            />
+                          </button>
+                        )}
+                      </div>
+                      {consultantDetails?.scheduleType && (
+                        <div className="mb-4 p-3 bg-zinc-800/40 rounded-xl border border-zinc-700/50">
+                          <p className="text-sm text-zinc-400">
+                            This consultant prefers{" "}
+                            <span
+                              className={`px-2 py-1 rounded text-xs font-medium ${
+                                consultantDetails.scheduleType === "WEEKLY"
+                                  ? "bg-zinc-700 text-zinc-300"
+                                  : "bg-zinc-700 text-zinc-300"
+                              }`}
+                            >
+                              {consultantDetails.scheduleType === "WEEKLY"
+                                ? "📅 Weekly"
+                                : "🎯 Custom"}
+                            </span>{" "}
+                            scheduling
+                          </p>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-1 gap-3 max-h-[350px] overflow-y-auto pr-2">
+                        {availableSlots.length > 0 ? (
+                          <>
+                            {availableSlots.map((slot, index) => {
+                              const isSelected =
+                                selectedSlot?.slotId === slot.slotId &&
+                                selectedSlot?.localStartTime ===
+                                  slot.localStartTime;
+                              const isPast = slot._isPast;
+                              const bookingStatus =
+                                slot.bookingStatus || "available";
+                              const isFullyBooked =
+                                bookingStatus === "fully-booked";
+                              const isPartiallyBooked =
+                                bookingStatus === "partially-booked";
+                              const isAllocated = slot.isAllocated;
+                              const isDisabled = isPast || isFullyBooked;
+
+                              return (
+                                <button
+                                  key={`${slot.slotId}-${index}`}
+                                  className={`w-full p-4 text-base font-medium transition-all duration-200 rounded-xl text-left
                                     ${
                                       isSelected
                                         ? "bg-white text-zinc-900 shadow-md ring-2 ring-white"
@@ -584,111 +589,111 @@ export default function ConsultationPricingToggle({
                                               ? "bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20"
                                               : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-400"
                                     }`}
-                                onClick={() =>
-                                  !isDisabled && setSelectedSlot(slot)
-                                }
-                                disabled={isDisabled}
-                              >
-                                <div className="flex items-center">
-                                  <ClockIcon className="mr-3 h-5 w-5 opacity-70" />
-                                  <div className="flex-1">
-                                    <div className="flex items-center gap-2">
-                                      <span>
-                                        {slot.localStartTime} -{" "}
-                                        {slot.localEndTime}
+                                  onClick={() =>
+                                    !isDisabled && setSelectedSlot(slot)
+                                  }
+                                  disabled={isDisabled}
+                                >
+                                  <div className="flex items-center">
+                                    <ClockIcon className="mr-3 h-5 w-5 opacity-70" />
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2">
+                                        <span>
+                                          {slot.localStartTime} -{" "}
+                                          {slot.localEndTime}
+                                        </span>
+                                        {slot.type && (
+                                          <span className="px-2 py-0.5 rounded text-xs bg-zinc-700/50 text-zinc-400">
+                                            {slot.type === "WEEKLY"
+                                              ? "📅"
+                                              : "🎯"}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {isPast && (
+                                      <span className="ml-auto text-xs font-medium text-zinc-500">
+                                        Past
                                       </span>
-                                      {slot.type && (
-                                        <span className="px-2 py-0.5 rounded text-xs bg-zinc-700/50 text-zinc-400">
-                                          {slot.type === "WEEKLY"
-                                            ? "📅"
-                                            : "🎯"}
+                                    )}
+                                    {isFullyBooked && !isPast && (
+                                      <span className="ml-auto text-xs font-medium text-rose-400">
+                                        Fully booked
+                                      </span>
+                                    )}
+                                    {isPartiallyBooked &&
+                                      !isPast &&
+                                      !isAllocated && (
+                                        <span className="ml-auto text-xs font-medium text-amber-400">
+                                          Partially booked
                                         </span>
                                       )}
-                                    </div>
+                                    {isAllocated &&
+                                      !isPast &&
+                                      !isFullyBooked && (
+                                        <span className="ml-auto text-xs font-medium text-amber-400">
+                                          Request approval
+                                        </span>
+                                      )}
                                   </div>
-                                  {isPast && (
-                                    <span className="ml-auto text-xs font-medium text-zinc-500">
-                                      Past
-                                    </span>
-                                  )}
-                                  {isFullyBooked && !isPast && (
-                                    <span className="ml-auto text-xs font-medium text-rose-400">
-                                      Fully booked
-                                    </span>
-                                  )}
-                                  {isPartiallyBooked &&
-                                    !isPast &&
-                                    !isAllocated && (
-                                      <span className="ml-auto text-xs font-medium text-amber-400">
-                                        Partially booked
-                                      </span>
-                                    )}
-                                  {isAllocated &&
-                                    !isPast &&
-                                    !isFullyBooked && (
-                                      <span className="ml-auto text-xs font-medium text-amber-400">
-                                        Request approval
-                                      </span>
-                                    )}
-                                </div>
-                              </button>
-                            );
-                          })}
-                          {/* Legend strip */}
-                          <div className="flex flex-wrap gap-3 pt-3 border-t border-zinc-800/50 mt-1">
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />{" "}
-                              Available
+                                </button>
+                              );
+                            })}
+                            {/* Legend strip */}
+                            <div className="flex flex-wrap gap-3 pt-3 border-t border-zinc-800/50 mt-1">
+                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />{" "}
+                                Available
+                              </div>
+                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                                <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />{" "}
+                                Partially booked
+                              </div>
+                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                                <div className="w-2.5 h-2.5 rounded-full bg-rose-400" />{" "}
+                                Fully booked
+                              </div>
+                              <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+                                <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />{" "}
+                                Past
+                              </div>
                             </div>
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <div className="w-2.5 h-2.5 rounded-full bg-amber-400" />{" "}
-                              Partially booked
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <div className="w-2.5 h-2.5 rounded-full bg-rose-400" />{" "}
-                              Fully booked
-                            </div>
-                            <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-                              <div className="w-2.5 h-2.5 rounded-full bg-zinc-600" />{" "}
-                              Past
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <p className="text-zinc-500 text-sm py-4 text-center">
-                          No available slots for the selected date.
-                        </p>
-                      )}
+                          </>
+                        ) : (
+                          <p className="text-zinc-500 text-sm py-4 text-center">
+                            No available slots for the selected date.
+                          </p>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-                <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
-                  {(paused || cta.hint) && (
-                    <p className="text-xs text-zinc-400 text-right">
-                      {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
-                    </p>
-                  )}
-                  <Button
-                    className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
-                    onClick={
-                      cta.action === "request"
-                        ? handleRequestForApproval
-                        : () => handleConsultationBooking(option.id)
-                    }
-                    disabled={
-                      !selectedSlot ||
-                      paused ||
-                      isRequestingApproval ||
-                      (selectedSlot as SlotWithStatus)?._isPast ||
-                      selectedSlot?.bookingStatus === "fully-booked"
-                    }
-                  >
-                    {isRequestingApproval ? "Submitting..." : cta.label}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </motion.div>
+                  <div className="bg-zinc-800/50 px-6 lg:px-8 py-5 flex flex-col items-end gap-2 rounded-b-2xl border-t border-zinc-800">
+                    {(paused || cta.hint) && (
+                      <p className="text-xs text-zinc-400 text-right">
+                        {paused ? CONSULTANT_PAUSED_HINT : cta.hint}
+                      </p>
+                    )}
+                    <Button
+                      className="bg-white text-zinc-900 hover:bg-zinc-100 font-medium px-8 h-12 text-base"
+                      onClick={
+                        cta.action === "request"
+                          ? handleRequestForApproval
+                          : () => handleConsultationBooking(option.id)
+                      }
+                      disabled={
+                        !selectedSlot ||
+                        paused ||
+                        isRequestingApproval ||
+                        (selectedSlot as SlotWithStatus)?._isPast ||
+                        selectedSlot?.bookingStatus === "fully-booked"
+                      }
+                    >
+                      {isRequestingApproval ? "Submitting..." : cta.label}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </motion.div>
           );
         })}
       </div>

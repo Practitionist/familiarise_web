@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { canViewPlanDetail } from "@/lib/data/plan-viewable";
+import { getSession } from "@/lib/auth-server";
+import { reportSentryError } from "@/lib/observability/report";
 import { getWebinarPlanDetail } from "@/lib/data/plan-details";
 import { WebinarDetails } from "./components/WebinarDetails";
 
@@ -12,7 +14,15 @@ export default async function WebinarDetailsPage({
   params: Promise<{ webinarPlanId: string }>;
 }>) {
   const { webinarPlanId } = await params;
-  const webinarData = await getWebinarPlanDetail(webinarPlanId);
+  // The plan read is keyed on the URL id and the session read on the cookie —
+  // independent, so they run concurrently; the gate reuses the session.
+  const [webinarData, session] = await Promise.all([
+    getWebinarPlanDetail(webinarPlanId),
+    getSession().catch((error) => {
+      reportSentryError(error, { subsystem: "plans", expected: true });
+      return null;
+    }),
+  ]);
 
   if (!webinarData) {
     notFound();
@@ -21,7 +31,7 @@ export default async function WebinarDetailsPage({
   // #726 — a detail page is reachable by id, so it needs the same
   // gate the list surfaces get: ORG_ONLY stays inside the owning org, and an
   // archived plan is not a live page.
-  if (!(await canViewPlanDetail(webinarData))) {
+  if (!(await canViewPlanDetail(webinarData, session))) {
     notFound();
   }
 
