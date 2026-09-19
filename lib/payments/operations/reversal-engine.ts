@@ -373,41 +373,66 @@ async function reversePayoutClawback(
     },
   });
 
+  await postPayoutClawback(tx, {
+    refundId: input.refundId,
+    payoutId: orgPayoutId,
+    amountPaise: input.amountPaise,
+    organizationId,
+  });
+
+  return true;
+}
+
+/**
+ * The clawback journal: `Dr CASH / Cr ORG_PAYABLE`, idempotent on
+ * `clawback:<refundId>:<payoutId>`. #1582 C-P1-02c — shared by the dispute
+ * path and both refund paths so the counter the reconciler compares against
+ * (`stepClawbackGap`) always has a matching posting. INR-only, so the ledger
+ * account currency is left unset as post.ts documents.
+ */
+export async function postPayoutClawback(
+  tx: Tx,
+  input: {
+    refundId: string;
+    payoutId: string;
+    amountPaise: number;
+    organizationId: string;
+  },
+): Promise<void> {
+  const { refundId, payoutId, amountPaise, organizationId } = input;
   // The counter-post is part of the reversal, not a side effect: report, then
   // rethrow so the enclosing tx rolls back — an unbalanced journal never commits (#1583 C-P1-09).
   try {
     await postLedgerTxn(tx, {
-      idempotencyKey: `clawback:${input.refundId}:${orgPayoutId}`,
+      idempotencyKey: `clawback:${refundId}:${payoutId}`,
       kind: "ORG_PAYOUT",
-      payoutId: orgPayoutId,
+      payoutId,
       postings: [
         {
           account: { kind: "CASH" },
           direction: "DEBIT",
-          amountPaise: input.amountPaise,
+          amountPaise,
         },
         {
           account: { kind: "ORG_PAYABLE", organizationId },
           direction: "CREDIT",
-          amountPaise: input.amountPaise,
+          amountPaise,
         },
       ],
     });
   } catch (err) {
     reportSentryError(err, { subsystem: "payments", level: "fatal" });
     console.error(
-      `[ledger] payout clawback posting FAILED for payout ${orgPayoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
+      `[ledger] payout clawback posting FAILED for payout ${payoutId} (refund tx rolls back): ${err instanceof Error ? err.message : String(err)}`,
     );
     // #776 — page immediately on dual-write drift; fire-and-forget.
     void recordSystemError({
       organizationId,
       category: "LEDGER",
-      summary: `Payout clawback ledger posting failed for payout ${orgPayoutId}`,
+      summary: `Payout clawback ledger posting failed for payout ${payoutId}`,
       err,
-      context: { orgPayoutId, refundId: input.refundId },
+      context: { orgPayoutId: payoutId, refundId },
     }).catch(() => {});
     throw err;
   }
-
-  return true;
 }

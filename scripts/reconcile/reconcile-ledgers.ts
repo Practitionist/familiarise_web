@@ -133,12 +133,11 @@ export type Finding = {
     // transaction: the cash left but the payable was never cleared in the journal.
     | "COMPLETED_PAYOUT_WITHOUT_LEDGER_TXN"
     // #1408 — an OrganizationPayout whose `clawbackAmountPaise` exceeds the
-    // CASH DEBIT its `clawback:*` postings actually recorded. Only
-    // reversePayoutClawback posts one, and it does so best-effort inside a
-    // try/catch; the two other writers of `clawbackAmountPaise` (refund.ts and
-    // booking-refund.ts) post nothing at all. The money row and the journal are
-    // a dual write with no transaction spanning them, so this is the detector
-    // for the gap — total (nothing posted) and partial (a later clawback's
+    // CASH DEBIT its `clawback:*` postings actually recorded. The posting
+    // rethrows since #1740 and all three writers of `clawbackAmountPaise`
+    // (reversal-engine, refund.ts, booking-refund.ts) post it in the same tx
+    // since #1582 C-P1-02c, so a gap now means legacy drift or a bypassed
+    // write — total (nothing posted) and partial (a later clawback's
     // posting lost) share the kind and differ only in `deltaPaise`.
     | "LEDGER_DUAL_WRITE_GAP"
     // #780 — a stored money value approaching/beyond Number.MAX_SAFE_INTEGER.
@@ -208,7 +207,7 @@ export type ReconcileReport = {
 /**
  * #1408 — the clawback dual-write gap, compared on AMOUNTS rather than on the
  * presence of a posting. `clawbackAmountPaise` is a running total: a payout
- * clawed back twice whose second posting was swallowed still carries a
+ * clawed back twice whose second posting was lost still carries a
  * `clawback:*` transaction, so a payout-id Set reads it as clean. The CASH
  * DEBIT is the authoritative leg — it is the money that came back — so the sum
  * of those legs is what the stamped counter is measured against. Pure, so the
@@ -1238,11 +1237,11 @@ async function stepCompletedOrgPayouts(ctx: StepCtx): Promise<void> {
 }
 
 // #1408 — the clawback dual-write. A refund against an already-paid org
-// payout stamps `clawbackAmountPaise` on the payout and writes an audit row,
-// but the matching `Dr CASH / Cr ORG_PAYABLE` reversal is a separate write:
-// reversePayoutClawback posts it inside a try/catch that swallows the
-// failure, and refund.ts / booking-refund.ts never post it at all. The
-// stamped payout then claims cash was recovered that the journal has never
+// payout stamps `clawbackAmountPaise` on the payout and writes an audit row;
+// the matching `Dr CASH / Cr ORG_PAYABLE` reversal rethrows since #1740 and
+// both refund paths post it in the same tx since #1582 C-P1-02c, so a gap
+// today is legacy drift or a bypassed write, not the design. The stamped
+// payout then claims cash was recovered that the journal has never
 // seen. Matched on the soft link plus the `clawback:` key prefix because the
 // full key embeds the refund id, which the payout row does not carry — and
 // compared on summed amounts, not presence, since the counter is cumulative

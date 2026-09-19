@@ -64,6 +64,8 @@ import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
+// Late-bound cycle: reversal-engine imports applyRefundCascade from here.
+import { postPayoutClawback } from "./reversal-engine";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
 import { generateOrgCreditNoteNumber } from "@/lib/payments/billing/credit-note-numbering";
 import { mintConsumerCreditNote } from "@/lib/payments/billing/consumer-invoice";
@@ -1174,6 +1176,16 @@ export async function applyRefundCascade(
             initiatedByUserId: input.initiatedByUserId ?? null,
           } as Prisma.InputJsonValue,
         },
+      });
+
+      // #1582 C-P1-02c — the counter above and this posting are one write; a
+      // failed post rolls the tx back (parity with #1740 M5) rather than
+      // leaving a LEDGER_DUAL_WRITE_GAP for the reconciler to find.
+      await postPayoutClawback(tx, {
+        refundId: input.refundId,
+        payoutId: orgEarn.orgPayoutId,
+        amountPaise: orgShareRev,
+        organizationId: orgEarn.organizationId,
       });
 
       clawbackInitiated = true;
