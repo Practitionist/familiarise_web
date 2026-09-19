@@ -15,11 +15,15 @@
 import prisma from "@/lib/prisma";
 import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
 import { validatePlanCurrency } from "@/lib/payments/validation/currency-guards";
+import { deriveCheckoutAmount } from "@/lib/payments/pricing/derive-checkout-amount";
+import { detectBuyerCountry } from "@/lib/payments/tax/buyer-country";
+import { appointmentTypeToServiceType } from "@/lib/payments/tax/tax-engine";
 import {
   AppointmentStatus,
   Currency,
   PaymentGateway,
   PaymentStatus,
+  Prisma,
   TrialStatus,
 } from "@prisma/client";
 import {
@@ -70,6 +74,7 @@ export interface CreateApprovalPaymentParams {
 export interface ApprovalPaymentResult {
   paymentIntentId: string;
   checkoutUrl: string;
+  /** What the buyer is charged: list price plus GST (#1583 C-P0-01). */
   amount: number;
   currency: Currency;
 }
@@ -107,6 +112,23 @@ export class ApprovalWindowLapsedError extends Error {
       "The payment window for this approval has lapsed. Ask the consultee to submit the request again.",
     );
     this.name = "ApprovalWindowLapsedError";
+  }
+}
+
+/**
+ * #1589 T-P0-02 — two accepts raced past the mint lock and the second create
+ * died on Payment's [userId, appointmentId] unique. That is a state conflict
+ * the caller resolves by retrying (the retry reuses the winner's row), so it
+ * carries a 409 like ApprovalLockLostError rather than surfacing as a 500.
+ */
+export class ApprovalPaymentExistsError extends Error {
+  readonly code = "APPROVAL_PAYMENT_EXISTS";
+  readonly httpStatus = 409;
+  constructor() {
+    super(
+      "A payment link for this request was just created by another action. Refresh to see it.",
+    );
+    this.name = "ApprovalPaymentExistsError";
   }
 }
 
@@ -154,6 +176,34 @@ export async function createApprovalPaymentIntent(
   );
 
   try {
+    // BUG-D: Validate user has consultee profile (required for webhook to succeed)
+    const user = await prisma.user.findUnique({
+      where: { id: params.userId },
+      include: { consulteeProfile: true },
+    });
+
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    if (!user.consulteeProfile) {
+      throw new Error(
+        "User does not have a consultee profile. Please complete profile setup first.",
+      );
+    }
+
+    // #1583 C-P0-01 — the same taxed figure checkout derives, computed before
+    // the reuse decision below so a live row is compared against it.
+    const buyerCountry = detectBuyerCountry({ userCountry: user.country });
+    const {
+      amount,
+      originalAmount,
+      taxAmount,
+      isInternational,
+      currency,
+      plan,
+    } = await calculateAmount(params, buyerCountry);
+
     // FIX Issue #7 / #1181 — duplicate-payment guard, now live for every
     // approval arm: the walk below reads the payments hanging off the
     // request's own appointment(s), which only match once the mint threads
@@ -186,6 +236,11 @@ export async function createApprovalPaymentIntent(
           throw new ApprovalWindowLapsedError();
         }
         remintIntoPaymentId = existingPayment.id;
+      } else if (existingPayment.amount !== amount) {
+        // #1583 C-P0-01 — a live row frozen at a different figure (a pre-tax
+        // mint) would charge the stale number; re-mint into it instead, the
+        // same way checkout supersedes an amount-mismatched open order.
+        remintIntoPaymentId = existingPayment.id;
       } else {
         // #1181 — a live PENDING payment from a previous mint attempt is
         // reused, not duplicated. Before the appointment back-link existed
@@ -203,27 +258,8 @@ export async function createApprovalPaymentIntent(
       }
     }
 
-    // BUG-D: Validate user has consultee profile (required for webhook to succeed)
-    const user = await prisma.user.findUnique({
-      where: { id: params.userId },
-      include: { consulteeProfile: true },
-    });
-
-    if (!user) {
-      throw new Error("User not found");
-    }
-
-    if (!user.consulteeProfile) {
-      throw new Error(
-        "User does not have a consultee profile. Please complete profile setup first.",
-      );
-    }
-
-    // Get plan and calculate amount
-    const { amount, currency, plan } = await calculateAmount(params);
-
     // Build metadata for webhook processing
-    const metadata = buildApprovalMetadata(params);
+    const metadata = buildApprovalMetadata(params, { taxAmount });
 
     // Create payment intent with gateway. Imported here, not at module load:
     // the barrel evaluates the Razorpay core and its #1219 test-key guard.
@@ -253,7 +289,10 @@ export async function createApprovalPaymentIntent(
           paymentStatus: PaymentStatus.PENDING,
           expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
           amount,
-          originalAmount: amount,
+          originalAmount,
+          taxAmount,
+          buyerCountry,
+          isInternational,
           currency,
           description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
           paymentGateway: params.paymentGateway,
@@ -275,40 +314,55 @@ export async function createApprovalPaymentIntent(
     }
 
     // Store payment record in database
-    await prisma.payment.create({
-      data: {
-        amount,
-        originalAmount: amount, // No discounts/credits in approval flow
-        currency,
-        description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
-        paymentMethod: "card",
-        paymentIntent: paymentResponse.id,
-        paymentGateway: params.paymentGateway,
-        paymentStatus: PaymentStatus.PENDING,
-        organizationId: params.organizationId ?? null,
-        userId: params.userId,
-        expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
-        isMockPayment: false,
-        // #1181 — the request-time appointment anchors capture to the NEW
-        // flow (confirm the existing row, never create a twin). Null only
-        // when the caller genuinely had no appointment to offer.
-        appointmentId: params.appointmentId ?? null,
-        // Every Payment must carry at least one PaymentLeg
-        // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
-        // writes it at creation so the invariant holds before capture, and
-        // this flow was the one gateway path that never did. Always CARD: the
-        // approval flow charges the buyer even when an org is tagged (the
-        // wallet-debit/skip-gateway parity is #1166). Nested so a Payment can
-        // never exist legless.
-        legs: {
-          create: {
-            source: "CARD",
-            amountPaise: amount,
-            sourceRef: paymentResponse.id,
+    try {
+      await prisma.payment.create({
+        data: {
+          // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
+          // stays the list price, which is what earnings read as the base.
+          amount,
+          originalAmount,
+          taxAmount,
+          buyerCountry,
+          isInternational,
+          currency,
+          description: `Payment for ${params.appointmentType.toLowerCase()} - ${plan.title}`,
+          paymentMethod: "card",
+          paymentIntent: paymentResponse.id,
+          paymentGateway: params.paymentGateway,
+          paymentStatus: PaymentStatus.PENDING,
+          organizationId: params.organizationId ?? null,
+          userId: params.userId,
+          expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_WINDOW_MS),
+          isMockPayment: false,
+          // #1181 — the request-time appointment anchors capture to the NEW
+          // flow (confirm the existing row, never create a twin). Null only
+          // when the caller genuinely had no appointment to offer.
+          appointmentId: params.appointmentId ?? null,
+          // Every Payment must carry at least one PaymentLeg
+          // (docs/enterprise/10-money-and-ledger/09-payment-legs.md); checkout
+          // writes it at creation so the invariant holds before capture, and
+          // this flow was the one gateway path that never did. Always CARD: the
+          // approval flow charges the buyer even when an org is tagged (the
+          // wallet-debit/skip-gateway parity is #1166). Nested so a Payment can
+          // never exist legless.
+          legs: {
+            create: {
+              source: "CARD",
+              amountPaise: amount,
+              sourceRef: paymentResponse.id,
+            },
           },
         },
-      },
-    });
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === "P2002"
+      ) {
+        throw new ApprovalPaymentExistsError();
+      }
+      throw err;
+    }
 
     return {
       paymentIntentId: paymentResponse.id,
@@ -325,14 +379,57 @@ export async function createApprovalPaymentIntent(
 // Helper Functions
 // ============================================================================
 
+/** The taxed figure and its parts, derived exactly as checkout derives them. */
+interface ApprovalAmount {
+  /** Charged to the buyer: list price plus tax. */
+  amount: number;
+  /** The list price, before tax — the consultant's earnings base. */
+  originalAmount: number;
+  taxAmount: number;
+  isInternational: boolean;
+  currency: Currency;
+  plan: { title: string };
+}
+
+/**
+ * #1583 C-P0-01 — the pay-link charges the same tax as checkout by calling the
+ * one price derivation (`deriveCheckoutAmount`). No discount code and no
+ * referral credits ride a pay-link (owner decision Q3), so those inputs are
+ * deliberately absent.
+ */
+async function priceWithTax(
+  basePaise: number,
+  buyerCountry: string,
+  appointmentType: CreateApprovalPaymentParams["appointmentType"],
+): Promise<
+  Pick<
+    ApprovalAmount,
+    "amount" | "originalAmount" | "taxAmount" | "isInternational"
+  >
+> {
+  const derived = await deriveCheckoutAmount({
+    basePaise,
+    buyerCountry,
+    // A trial is a taster of a subscription plan, so it is taxed as one.
+    serviceType: appointmentTypeToServiceType(
+      appointmentType === "TRIAL" ? "SUBSCRIPTION" : appointmentType,
+    ),
+  });
+  return {
+    amount: derived.amount,
+    originalAmount: derived.originalAmount,
+    taxAmount: derived.taxAmount,
+    isInternational: derived.isInternational,
+  };
+}
+
 /**
  * Calculate payment amount from plan
  */
-async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
-  amount: number;
-  currency: Currency;
-  plan: { title: string };
-}> {
+async function calculateAmount(
+  params: CreateApprovalPaymentParams,
+  buyerCountry: string,
+): Promise<ApprovalAmount> {
   if (params.appointmentType === "TRIAL") {
     // A trial is priced by its parent subscription plan's trialPriceInPaise,
     // NOT the plan price — the trial is a taster of that plan, not the plan.
@@ -362,7 +459,11 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
     validatePlanCurrency(currency); // see the note on the CONSULTATION branch
 
     return {
-      amount: Number(plan.trialPriceInPaise),
+      ...(await priceWithTax(
+        Number(plan.trialPriceInPaise),
+        buyerCountry,
+        params.appointmentType,
+      )),
       currency,
       plan: { title: `${plan.title} — trial` },
     };
@@ -396,7 +497,7 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
     validatePlanCurrency(currency);
 
     return {
-      amount: plan.price,
+      ...(await priceWithTax(plan.price, buyerCountry, params.appointmentType)),
       currency,
       plan: { title: plan.title },
     };
@@ -420,7 +521,7 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
     validatePlanCurrency(currency); // see the note on the CONSULTATION branch
 
     return {
-      amount: plan.price,
+      ...(await priceWithTax(plan.price, buyerCountry, params.appointmentType)),
       currency,
       plan: { title: plan.title },
     };
@@ -433,6 +534,7 @@ async function calculateAmount(params: CreateApprovalPaymentParams): Promise<{
  */
 function buildApprovalMetadata(
   params: CreateApprovalPaymentParams,
+  pricing: { taxAmount: number },
 ): Record<string, string> {
   const metadata: Record<string, string> = {
     appointmentType: params.appointmentType,
@@ -440,6 +542,9 @@ function buildApprovalMetadata(
     planId: params.planId,
     notes: params.notes || "",
     isApprovalFlow: "true", // Flag to indicate this is from approval flow
+    // #1583 C-P0-01 — readable on the gateway order; the webhook's Zod
+    // schema strips unknown keys, so this rides alongside the routing keys.
+    taxAmount: String(pricing.taxAmount),
   };
 
   // #1181 — absent, never the string "pending". The real anchor lives on the

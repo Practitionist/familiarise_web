@@ -125,11 +125,22 @@ jest.mock("../../lib/redis", () => ({
   releaseLock: jest.fn(async () => undefined),
 }));
 
+// #1583 C-P0-01 — an export is zero-rated only under a valid platform LUT;
+// toggled per test so the non-IN pin is about the country, not the env.
+let lutValid = false;
+jest.mock("../../lib/compliance/lut", () => ({
+  __esModule: true,
+  hasValidPlatformLut: () => lutValid,
+}));
+
+import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
+  ApprovalPaymentExistsError,
   ApprovalWindowLapsedError,
   createApprovalPaymentIntent,
 } from "../../lib/payments/operations/approval-payment";
+import { deriveCheckoutAmount } from "../../lib/payments/pricing/derive-checkout-amount";
 
 const mockedPaymentCreate = prisma.payment.create as jest.Mock;
 const mockedPaymentUpdate = prisma.payment.update as jest.Mock;
@@ -148,13 +159,17 @@ function freshState(): State {
   };
 }
 
+/** ₹5,000 list price plus 18% GST for an IN buyer (#1583 C-P0-01). */
+const TAXED_PLAN_PAISE = 590_000;
+
 beforeEach(() => {
   state = freshState();
+  lutValid = false;
   jest.clearAllMocks();
   mockCreatePaymentIntent.mockResolvedValue({
     id: "order_new",
     client_secret: "order_new",
-    amount: 500_000,
+    amount: TAXED_PLAN_PAISE,
     currency: "INR",
     status: "created",
   });
@@ -190,7 +205,7 @@ describe("approval mint threads appointmentId (#1181)", () => {
     const created = mockedPaymentCreate.mock.calls[0][0].data;
     expect(created.appointmentId).toBe(APPT_CUID);
     expect(created.paymentStatus).toBe(PaymentStatus.PENDING);
-    expect(created.amount).toBe(500_000);
+    expect(created.amount).toBe(TAXED_PLAN_PAISE);
   });
 
   it("omits the metadata key entirely when there is no appointment yet", async () => {
@@ -213,7 +228,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
       {
         paymentStatus: PaymentStatus.PENDING,
         paymentIntent: "order_existing",
-        amount: 500_000,
+        amount: TAXED_PLAN_PAISE,
         currency: Currency.INR,
       },
     ];
@@ -225,11 +240,40 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     expect(result).toEqual({
       paymentIntentId: "order_existing",
       checkoutUrl: "order_existing",
-      amount: 500_000,
+      amount: TAXED_PLAN_PAISE,
       currency: Currency.INR,
     });
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
+  });
+
+  // #1583 C-P0-01 — a live row minted before tax parity carries the pre-tax
+  // figure; handing it back would charge the stale number.
+  it("re-mints into a live PENDING row whose frozen amount differs from the taxed figure", async () => {
+    state.appointmentPayments = [
+      {
+        id: "pay-pretax",
+        paymentStatus: PaymentStatus.PENDING,
+        paymentIntent: "order_pretax",
+        amount: 500_000,
+        currency: Currency.INR,
+        expiresAt: new Date(Date.now() + 60_000),
+      },
+    ];
+
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.paymentIntentId).toBe("order_new");
+    expect(result.amount).toBe(TAXED_PLAN_PAISE);
+    expect(mockedPaymentCreate).not.toHaveBeenCalled();
+    const [{ where, data }] = mockedPaymentUpdate.mock.calls[0];
+    expect(where).toEqual({ id: "pay-pretax" });
+    expect(data).toMatchObject({
+      amount: TAXED_PLAN_PAISE,
+      originalAmount: 500_000,
+      taxAmount: 90_000,
+    });
+    expect(data.legs.updateMany.data.amountPaise).toBe(TAXED_PLAN_PAISE);
   });
 
   it("refuses when the appointment's payment already SUCCEEDED", async () => {
@@ -348,7 +392,7 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     state.trialPayment = {
       paymentStatus: PaymentStatus.PENDING,
       paymentIntent: "order_trial_live",
-      amount: 250_000,
+      amount: 295_000, // ₹2,500 trial plus 18% GST
       currency: Currency.INR,
     };
 
@@ -362,6 +406,93 @@ describe("duplicate-payment guard sees approval payments (#1181)", () => {
     expect(result.paymentIntentId).toBe("order_trial_live");
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
     expect(mockedPaymentCreate).not.toHaveBeenCalled();
+  });
+});
+
+// #1583 C-P0-01 — the pay-link charged the pre-tax list price while checkout
+// charged list plus GST, so the same plan cost 18% less through approval and
+// the platform ate the tax. The mint now calls the one price derivation.
+describe("approval pay-links charge the same tax as checkout (#1583 C-P0-01)", () => {
+  beforeEach(() => {
+    state.consultationPlan = {
+      title: "Career Clarity",
+      price: 100_000,
+      priceCurrency: Currency.INR,
+    };
+  });
+
+  it("an IN buyer pays ₹1,000 plus 18% GST, and the CARD leg carries the taxed figure", async () => {
+    state.user = {
+      id: CUID,
+      country: "IN",
+      consulteeProfile: { id: "consultee-1" },
+    };
+
+    const result = await createApprovalPaymentIntent(mintParams());
+
+    expect(result.amount).toBe(118_000);
+    const created = mockedPaymentCreate.mock.calls[0][0].data;
+    expect(created).toMatchObject({
+      amount: 118_000,
+      originalAmount: 100_000,
+      taxAmount: 18_000,
+      isInternational: false,
+      buyerCountry: "IN",
+    });
+    expect(created.legs.create.amountPaise).toBe(118_000);
+    // The gateway is asked for the taxed figure, and the order notes carry it.
+    const intentArg = mockCreatePaymentIntent.mock.calls[0][0];
+    expect(intentArg.amount).toBe(118_000);
+    expect(intentArg.metadata.taxAmount).toBe("18000");
+  });
+
+  it("a non-IN buyer under a valid LUT is zero-rated and flagged international", async () => {
+    lutValid = true;
+    state.user = {
+      id: CUID,
+      country: "GB",
+      consulteeProfile: { id: "consultee-1" },
+    };
+
+    await createApprovalPaymentIntent(mintParams());
+
+    expect(mockedPaymentCreate.mock.calls[0][0].data).toMatchObject({
+      amount: 100_000,
+      originalAmount: 100_000,
+      taxAmount: 0,
+      isInternational: true,
+      buyerCountry: "GB",
+    });
+  });
+
+  it("a ₹0 base derives 0/0/0 — the derivation adds no tax to nothing", async () => {
+    // The mint itself still refuses a free trial before pricing it (the accept
+    // path schedules those directly); this pins the derivation the mint shares.
+    const derived = await deriveCheckoutAmount({
+      basePaise: 0,
+      buyerCountry: "IN",
+    });
+    expect(derived).toMatchObject({
+      amount: 0,
+      originalAmount: 0,
+      taxAmount: 0,
+    });
+  });
+
+  // #1589 T-P0-02 — a concurrent double-accept: the loser's create dies on
+  // Payment's [userId, appointmentId] unique and must surface as a 409.
+  it("maps the unique-pair P2002 on create to ApprovalPaymentExistsError", async () => {
+    mockedPaymentCreate.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError("unique", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: { target: ["userId", "appointmentId"] },
+      }),
+    );
+
+    await expect(createApprovalPaymentIntent(mintParams())).rejects.toThrow(
+      ApprovalPaymentExistsError,
+    );
   });
 });
 
