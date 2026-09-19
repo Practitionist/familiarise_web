@@ -16,7 +16,8 @@
  *
  * Deliberately dependency-free: no `@netlify/functions` import, only
  * `process.env` and the global `fetch`/`AbortController` the Netlify
- * Functions runtime already provides.
+ * Functions runtime already provides. The one exception is a lazy
+ * `@sentry/node` import on the missing-secret path (#1582 F-P2-02).
  *
  * #1686 — the tick always answers 200; see {@link statusFor} for why a 5xx
  * from a scheduled function costs three invocations and reports nothing.
@@ -214,14 +215,38 @@ async function hitTarget(
   }
 }
 
+/**
+ * Which bucket a target's status lands in; exported so a test can pin it.
+ * 409 is the cron lock's loser and 503 is a twin refusing inside a
+ * maintenance hold — both are expected, so neither is a failure (#1598 P1-W03).
+ */
+export function bucketFor(status: number): "ok" | "held" | "failed" {
+  if (status === 200 || status === 207) return "ok";
+  if (status === 409 || status === 503) return "held";
+  return "failed";
+}
+
+/** #1582 F-P2-02 — a missing secret is a silent fleet outage; page Sentry, not just the log. */
+async function alertMissingSecret(error: string): Promise<void> {
+  try {
+    const Sentry = await import("@sentry/node");
+    Sentry.init({ dsn: process.env.SENTRY_DSN, tracesSampleRate: 0 });
+    Sentry.captureMessage(error, "fatal");
+    await Sentry.flush(2_000);
+  } catch (err) {
+    console.error(JSON.stringify({ event: "cron-tick", sentry: String(err) }));
+  }
+}
+
 export default async function cronTick(_req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) {
     const error =
       "CRON_SECRET is not set — the ticker cannot authenticate to /api/cleanup/*";
     console.error(JSON.stringify({ event: "cron-tick", error }));
+    await alertMissingSecret(error);
     // #1686 — a 5xx would only be re-invoked three times against the same
-    // missing secret; the log line is the signal.
+    // missing secret; the log line and the Sentry message are the signal.
     return jsonResponse({ error }, 200);
   }
 
@@ -248,8 +273,9 @@ export default async function cronTick(_req: Request): Promise<Response> {
     // hitTarget never rejects, but a defensive fallback keeps a Promise API
     // surprise from throwing out of the handler instead of being counted.
     const status = result.status === "fulfilled" ? result.value.status : 0;
-    if (status === 200 || status === 207) ok.push(name);
-    else if (status === 409) lockHeld.push(name);
+    const bucket = bucketFor(status);
+    if (bucket === "ok") ok.push(name);
+    else if (bucket === "held") lockHeld.push(name);
     else failed.push({ name, status });
   });
 
