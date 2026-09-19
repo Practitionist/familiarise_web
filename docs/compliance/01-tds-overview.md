@@ -84,6 +84,12 @@ The deprecated `tds-service.ts` consultant path historically _skipped_ deduction
 
 The table carries both rails at once. `consultantProfileId` and `organizationId` are each nullable and exactly one is set on any row, which `tds_record_deductee_xor` enforces in the database; a second constraint, `tds_record_payout_rail_matches`, prevents a row from citing the payout of the rail it does not belong to. The org rail has its own unique key over `(organizationId, financialYear, quarter, orgPayoutId, isReversal)` rather than sharing the consultant one, because Postgres treats NULLs as distinct and a shared key would silently dedupe nothing. `TdsAdjustment` is widened the same way, so a reversal on either rail produces the revised-statement line the return generator exports.
 
+Both rails now derive the financial year and the quarter from the **completion instant** of the payout, not from the moment the batch job happens to run. The org rail has done this since #1354; the consultant rail was fixed to match (#1582 E-P0-02), because taking the quarter from "now" let a late-March batch that settled in April file against a financial-year-quarter pair that does not exist (FY 2025-26 Q1). `ConsultantPayout.tdsFinancialYear` still stamps the batch time for audit purposes, but the `TDSRecord` itself is keyed to when the money actually completed.
+
+### `TDS_ENGINE` — which withholding math runs
+
+`TDS_ENGINE` selects the consultant-payout withholding engine and defaults to `"194O"`: pure Section 194-O semantics, matching the e-commerce-operator posture this document sets out. `TDS_ENGINE=LEGACY` reverts to the older ₹50,000-gate behaviour and is deprecated — it now takes an explicit opt-in rather than being the default (owner decision 2026-09-19, Q4). A second, independent flag, `ENABLE_TDS_194O_GROSS`, switches the 194-O base from the platform's net commission to the full gross sale amount; it only takes effect when `TDS_ENGINE` is not `LEGACY`, and it stays gated behind chartered-accountant sign-off before it is turned on in production — see the flag table in [the payout go-live runbook](../enterprise/50-operations/06-live-payout-go-live-runbook.md).
+
 ## Gap
 
 Re-verified against code 2026-06-05. Several rows from the original audit are now **fixed** (struck) because the canonical lib was corrected under #771/#737/#738; the live gaps are the consultant-path consolidation, the 194J split, and the §393 code mapping.
