@@ -24,6 +24,13 @@
 # how the request authenticates; no auth header is needed), an item header
 # `{"type":"event"}`, and the event JSON whose `event_id` matches the header.
 # A sink that fails is itself a red step: a dead sink must be visible.
+#
+# The DSN must name a project that exists. On 2026-09-20 the local `.env`
+# SENTRY_DSN pointed at project 4509348818124800, which exists in no
+# organisation: Relay answers 200 on the first envelope (accepted, then
+# dropped) and `403 … with_reason: ProjectId` once its cache is warm, which is
+# exactly the 403 the Actions runs saw. Rotate the secret to the live
+# familiarise_web DSN (project 4511593990914048); see 07-required-secrets.md.
 set -euo pipefail
 
 JOB_NAME="${1:-unknown job}"
