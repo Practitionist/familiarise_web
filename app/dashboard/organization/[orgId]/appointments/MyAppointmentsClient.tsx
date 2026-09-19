@@ -108,8 +108,8 @@ function resolveIdentity(
     // it's the consultee.
     const counterpart =
       viewerId === consulteeUserId
-        ? consultantUser?.name ?? consultantUser?.email ?? null
-        : consulteeUser?.name ?? consulteeUser?.email ?? null;
+        ? (consultantUser?.name ?? consultantUser?.email ?? null)
+        : (consulteeUser?.name ?? consulteeUser?.email ?? null);
     return {
       title,
       counterpart,
@@ -132,10 +132,18 @@ function resolveIdentity(
     );
   }
   if (item.webinar) {
-    return pick(item.webinar.webinarPlan?.title ?? "Webinar", item.webinar.webinarPlan, null);
+    return pick(
+      item.webinar.webinarPlan?.title ?? "Webinar",
+      item.webinar.webinarPlan,
+      null,
+    );
   }
   if (item.class) {
-    return pick(item.class.classPlan?.title ?? "Class", item.class.classPlan, null);
+    return pick(
+      item.class.classPlan?.title ?? "Class",
+      item.class.classPlan,
+      null,
+    );
   }
   return {
     title: "Session",
@@ -153,7 +161,9 @@ function displaySlot(slots: MyAppointmentSlot[]): MyAppointmentSlot | null {
     (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
   );
   const upcoming = sorted.find((s) => {
-    const end = s.endsAt ? new Date(s.endsAt).getTime() : new Date(s.startsAt).getTime();
+    const end = s.endsAt
+      ? new Date(s.endsAt).getTime()
+      : new Date(s.startsAt).getTime();
     return end >= now;
   });
   return upcoming ?? sorted[sorted.length - 1];
@@ -191,7 +201,10 @@ export function MyAppointmentsClient({
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
-  const handleJoin = async (item: MyAppointmentItem, slot: MyAppointmentSlot) => {
+  const handleJoin = async (
+    item: MyAppointmentItem,
+    slot: MyAppointmentSlot,
+  ) => {
     setJoiningId(item.id);
     const identity = resolveIdentity(item, viewerId);
     const appointment: MeetingAppointment = {
@@ -238,8 +251,10 @@ export function MyAppointmentsClient({
     );
   }
 
+  // Keyed by page so ?page= navigation remounts the rows instead of reusing
+  // the previous page's row state (e.g. a stuck per-row Join spinner).
   return (
-    <div className="space-y-4">
+    <div key={page} className="space-y-4">
       <ul className="space-y-3">
         {items.map((item) => {
           const identity = resolveIdentity(item, viewerId);
@@ -277,7 +292,9 @@ export function MyAppointmentsClient({
                     cancel or hand over a document for a session the org paid
                     for. Details carries all of that. */}
                 <Button asChild variant="outline" size="sm">
-                  <Link href={`/dashboard/organization/${orgId}/appointments/${item.id}`}>
+                  <Link
+                    href={`/dashboard/organization/${orgId}/appointments/${item.id}`}
+                  >
                     Details
                   </Link>
                 </Button>

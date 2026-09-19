@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -96,7 +96,6 @@ export function PendingPaymentsWidget({
   consulteeId,
 }: PendingPaymentsWidgetProps) {
   const { formatPrice } = useCurrency();
-  const router = useRouter();
   const queryClient = useQueryClient();
   const [cancellingId, setCancellingId] = useState<string | null>(null);
   const [cancelNotice, setCancelNotice] = useState<string | null>(null);
@@ -424,36 +423,47 @@ export function PendingPaymentsWidget({
                         )}
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      onClick={() => {
-                        // #1167 — a trial has a branded checkout page of our
-                        // own (`payment.id` IS the Trial id here), which
-                        // shows the amount, the duration and the hold deadline
-                        // before handing off to the gateway. Everything else
-                        // still opens the gateway link directly.
-                        if (payment.type === "trial") {
-                          router.push(`/checkout/plans/trial/${payment.id}`);
-                          return;
-                        }
-                        if (
-                          payment.paymentUrl &&
-                          /^https?:\/\//.test(payment.paymentUrl)
-                        ) {
-                          window.open(
-                            payment.paymentUrl,
-                            "_blank",
-                            "noopener,noreferrer",
-                          );
-                        }
-                      }}
-                    >
-                      Pay Now
-                      {payment.type !== "trial" && (
+                    {/* #1167 — a trial has a branded checkout page of our
+                        own (`payment.id` IS the Trial id here), which
+                        shows the amount, the duration and the hold deadline
+                        before handing off to the gateway: a prefetching
+                        Link. Everything else still opens the gateway link
+                        directly in a new tab. */}
+                    {payment.type === "trial" ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <Link href={`/checkout/plans/trial/${payment.id}`}>
+                          Pay Now
+                        </Link>
+                      </Button>
+                    ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <a
+                          href={payment.paymentUrl as string}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          Pay Now
+                          <ExternalLink className="ml-1 h-3 w-3" />
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        disabled
+                        className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
+                      >
+                        Pay Now
                         <ExternalLink className="ml-1 h-3 w-3" />
-                      )}
-                    </Button>
+                      </Button>
+                    )}
                   </span>
                 )}
               </div>
@@ -467,14 +477,14 @@ export function PendingPaymentsWidget({
       {pendingPayments.length > 1 && (
         <div className="px-5 py-3 border-t border-amber-100">
           <Button
+            asChild
             variant="ghost"
             size="sm"
             className="w-full text-amber-800 hover:text-amber-900 hover:bg-amber-100 text-xs font-semibold"
-            onClick={() =>
-              router.push(`/dashboard/consultee/${consulteeId}/payments`)
-            }
           >
-            View All Payments
+            <Link href={`/dashboard/consultee/${consulteeId}/payments`}>
+              View All Payments
+            </Link>
           </Button>
         </div>
       )}

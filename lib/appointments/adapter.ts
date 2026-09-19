@@ -29,6 +29,12 @@ export interface OverflowItem {
   key: string;
   label: string;
   onClick: () => void;
+  /**
+   * Prefetchable internal href for page navigations (reschedule/review).
+   * Renderers that can host a link (RowOverflowMenu) prefer this over
+   * onClick; button-only renderers keep using onClick as the fallback.
+   */
+  href?: string;
   destructive?: boolean;
   disabled?: boolean;
 }
