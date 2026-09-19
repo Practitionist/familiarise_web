@@ -54,26 +54,35 @@ async function notifyInternalSeatRefunds(childRefundIds: string[]) {
       Sentry.captureException(err, { tags: { subsystem: "admin" } });
       return [];
     });
-  for (const refund of refunds) {
-    const payment = refund.payment;
-    if (!payment || fundingRailForIntent(payment.paymentIntent) !== "INTERNAL")
-      continue;
-    await notifyRefundProcessed(payment.userId, {
-      ...notificationScope(payment.organizationId),
-      amount: refund.amountPaise,
-      currency: payment.currency,
-      dashboardUrl: `${getAppUrl()}/dashboard`,
-    }).catch(() => {});
-    await sendRefundProcessedEmail(
-      {
-        userId: payment.userId,
-        paymentId: payment.id,
-        amountPaise: refund.amountPaise,
-        currency: payment.currency,
-      },
-      { budgetMs: EMAIL_BUDGET_MS.REQUEST },
-    ).catch(() => {});
-  }
+  // Fan out rather than serialise: each send carries its own deadline, so the
+  // admin response waits one budget, not one per seat (CodeRabbit on #1753).
+  await Promise.allSettled(
+    refunds.flatMap((refund) => {
+      const payment = refund.payment;
+      if (
+        !payment ||
+        fundingRailForIntent(payment.paymentIntent) !== "INTERNAL"
+      )
+        return [];
+      return [
+        notifyRefundProcessed(payment.userId, {
+          ...notificationScope(payment.organizationId),
+          amount: refund.amountPaise,
+          currency: payment.currency,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch(() => {}),
+        sendRefundProcessedEmail(
+          {
+            userId: payment.userId,
+            paymentId: payment.id,
+            amountPaise: refund.amountPaise,
+            currency: payment.currency,
+          },
+          { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+        ).catch(() => {}),
+      ];
+    }),
+  );
 }
 
 export async function GET(req: NextRequest) {

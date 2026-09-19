@@ -90,7 +90,7 @@ function derivePseudonym(userId: string): string {
 export interface MoneyInFlight {
   /** ConsultantPayout rows in PENDING/APPROVED/PROCESSING for the user's profile. */
   consultantPayouts: number;
-  /** ConsultantEarnings in READY/BATCHED — money owed but not yet paid out. */
+  /** ConsultantEarnings not yet paid out — every non-terminal status matures into money owed. */
   unsettledEarnings: number;
   /** ISSUED/OVERDUE OrganizationInvoice rows on orgs where the user is the only OWNER. */
   orgInvoicesAsSoleOwner: number;
@@ -119,7 +119,9 @@ export async function moneyInFlightForUser(
       db.consultantEarnings.count({
         where: {
           consultantProfile: { userId },
-          status: { in: ["READY", "BATCHED"] },
+          status: {
+            in: ["PENDING", "PENDING_TRUST", "HELD", "READY", "BATCHED"],
+          },
         },
       }),
       db.dispute.count({

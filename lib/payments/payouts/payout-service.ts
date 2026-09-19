@@ -1217,8 +1217,10 @@ export async function handlePayoutWebhook(
       // so year and quarter both come from the completion instant, never from
       // the batch-time stamp (a March batch settling in April would file
       // FY 2025-26 Q1). `tdsFinancialYear` stays the audit stamp of the batch.
-      const financialYear = getIndianFinancialYear();
-      const quarter = getIndianFYQuarter();
+      // One instant for both halves — two clock reads could straddle 1 April.
+      const completedAt = new Date();
+      const financialYear = getIndianFinancialYear(completedAt);
+      const quarter = getIndianFYQuarter(completedAt);
       const { start, end } = getFYDateRange(financialYear);
       const previousCompletedPayouts = await tx.consultantPayout.aggregate({
         where: {

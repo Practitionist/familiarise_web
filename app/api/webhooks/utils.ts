@@ -658,6 +658,8 @@ export async function handleRefundCreated(
     prisma.$transaction(
       async (tx) => {
         stagedEmails = [];
+        // A retried attempt must not inherit a bell staged by the aborted one.
+        stagedNotification = null;
         // Find the payment (B2C appointment path).
         //
         // #1353 — match on EITHER id. A refund webhook carries only the gateway's

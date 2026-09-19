@@ -84,7 +84,8 @@ describe("EARNINGS_WITHOUT_BOOKING_TXN honours the post-commit grace window", ()
   const minutesAgo = (m: number) => new Date(now.getTime() - m * 60_000);
 
   it("a 10-minute-old gap is not a finding; a 40-minute-old one is", () => {
-    expect(isPastUnjournaledGrace(minutesAgo(10), now)).toBe(false);
-    expect(isPastUnjournaledGrace(minutesAgo(40), now)).toBe(true);
+    const grace = 30 * 60 * 1000;
+    expect(isPastUnjournaledGrace(minutesAgo(10), now, grace)).toBe(false);
+    expect(isPastUnjournaledGrace(minutesAgo(40), now, grace)).toBe(true);
   });
 });
