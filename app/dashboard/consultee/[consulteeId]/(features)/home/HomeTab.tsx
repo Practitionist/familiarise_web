@@ -20,7 +20,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/utils/tailwind";
-import { PendingPaymentsWidget } from "./PendingPaymentsWidget";
+import {
+  PendingPaymentsWidget,
+  fetchPendingPayments,
+} from "./PendingPaymentsWidget";
 import { format, differenceInHours, differenceInDays } from "date-fns";
 import { useState, useMemo, useRef } from "react";
 // #248: do NOT statically import the Stream SDK (useStreamVideoClient) or
@@ -807,20 +810,16 @@ export default function HomeTab({
   );
 
   // Same query key PendingPaymentsWidget uses, so react-query serves both
-  // from one cache entry instead of fetching the list twice.
+  // from one cache entry instead of fetching the list twice — hence the same
+  // queryFn, so whichever observer fetches first caches the one shape (#1675).
   const { data: pendingPayments } = useQuery({
     queryKey: ["pending-payments", consulteeId],
     // Shares the key (and cache entry) with PendingPaymentsWidget, which keeps
     // its own 30s + focus-refetch for the money-critical surface; this reader
     // only derives counts, so a longer stale window avoids a second fetch.
     staleTime: 2 * 60_000,
-    queryFn: async (): Promise<Array<{ amount: number }>> => {
-      const res = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch pending payments");
-      return (await res.json()).pendingPayments || [];
-    },
+    queryFn: () => fetchPendingPayments(consulteeId),
+    select: (payload) => payload.pendingPayments,
   });
 
   const actionItems = useMemo(

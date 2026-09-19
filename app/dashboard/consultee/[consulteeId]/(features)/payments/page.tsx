@@ -69,7 +69,7 @@ export default function PaymentsPage({ params }: Readonly<PageProps>) {
 
   return (
     <DashboardErrorBoundary>
-      <PaymentsTab data={paymentsData} />
+      <PaymentsTab data={paymentsData} consulteeId={consulteeId} />
     </DashboardErrorBoundary>
   );
 }

@@ -100,8 +100,6 @@ graph LR
         B[releaseEarningsFromHold]
         C[getConsultantEarnings]
         D[refundEarnings]
-        E[holdEarnings]
-        F[releaseHeldEarnings]
     end
 
     PM[Payment Model] --> A
@@ -109,20 +107,18 @@ graph LR
     B --> CE
     CE --> C
     CE --> D
-    CE --> E
-    E --> F
 ```
 
 **Key Functions:**
 
-| Function                    | Purpose                                 | Trigger                  |
-| --------------------------- | --------------------------------------- | ------------------------ |
-| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`. | Webhook: payment.success |
-| `releaseEarningsFromHold`   | PENDING → READY after hold period       | Cron: hourly             |
-| `getConsultantEarnings`     | Fetch earnings for dashboard            | API request              |
+| Function                    | Purpose                                                                                                                                                                                                                       | Trigger                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `createEarningsFromPayment` | Create earnings record(s) with hold period. For WEBINAR/CLASS with collaborators, creates multi-party earnings via `calculateRevenueSplit()`.                                                                                 | Webhook: payment.success             |
+| `releaseEarningsFromHold`   | PENDING → READY after hold period                                                                                                                                                                                             | Cron: hourly                         |
+| `getConsultantEarnings`     | Fetch earnings for dashboard                                                                                                                                                                                                  | API request                          |
 | `refundEarnings`            | Proportional or full reversal of earnings. Accepts `refundAmount`/`paymentAmount` for partial refunds. Tracks cumulative reversals via `refundedShareAmount`. Supports `forceRefund: true` for PAID earnings (lost disputes). | Webhook: refund, Cron: lost disputes |
-| `holdEarnings`              | READY → HELD on dispute                 | Webhook: dispute         |
-| `releaseHeldEarnings`       | HELD → READY when dispute resolved      | Admin action             |
+
+`holdEarnings` and `releaseHeldEarnings` no longer exist as separate functions in `earnings-service.ts`. The `READY → HELD` and `HELD → READY` transitions are now inline CAS `updateMany` writes inside the dispute webhook handler in `app/api/webhooks/utils.ts`, made directly against `ConsultantEarnings` and `OrganizationEarnings` at dispute creation and resolution rather than through a named service function.
 
 ---
 
@@ -154,13 +150,13 @@ graph LR
 
 **Key Functions:**
 
-| Function                 | Purpose                                | Trigger        |
-| ------------------------ | -------------------------------------- | -------------- |
-| `checkPayoutEligibility` | Validate consultant can receive payout | Batch creation |
-| `createPayoutBatch`      | Group READY earnings into payouts      | Cron: weekly   |
-| `approvePayout`          | Admin approves pending payout          | Admin action   |
-| `rejectPayout`           | Admin rejects with reason              | Admin action   |
-| `processApprovedPayouts` | Send to payment provider               | Cron: weekly   |
+| Function                 | Purpose                                                                                                                       | Trigger        |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `checkPayoutEligibility` | Validate consultant can receive payout                                                                                        | Batch creation |
+| `createPayoutBatch`      | Group READY earnings into payouts                                                                                             | Cron: weekly   |
+| `approvePayout`          | Admin approves pending payout                                                                                                 | Admin action   |
+| `rejectPayout`           | Admin rejects with reason                                                                                                     | Admin action   |
+| `processApprovedPayouts` | Send to payment provider                                                                                                      | Cron: weekly   |
 | `handlePayoutWebhook`    | Update status from provider. Uses atomic `updateMany` with `status: { notIn: [COMPLETED, CANCELLED] }` guard for idempotency. | Webhook event  |
 
 ---

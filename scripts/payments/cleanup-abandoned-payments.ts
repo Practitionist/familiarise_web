@@ -338,6 +338,33 @@ function lapsedLinkNotice(
 }
 
 /**
+ * What one cleanup unit needs loaded: the PENDING payments it expires, the
+ * parties a lapsed pay-link notice names, and the hold it releases.
+ */
+const ABANDONED_INCLUDE = {
+  payment: {
+    where: { paymentStatus: PaymentStatus.PENDING },
+  },
+  // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
+  // it sends after commit names these parties.
+  consultation: {
+    include: {
+      ...LAPSED_LINK_PARTIES,
+      consultationPlan: LAPSED_LINK_PLAN_SELECT,
+    },
+  },
+  subscription: {
+    include: {
+      ...LAPSED_LINK_PARTIES,
+      subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+    },
+  },
+  webinar: true,
+  class: true,
+  occurrences: true,
+} satisfies Prisma.AppointmentInclude;
+
+/**
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
  */
@@ -381,28 +408,7 @@ function findAbandonedAppointments(limit?: number) {
         { class: { isNot: null } },
       ],
     },
-    include: {
-      payment: {
-        where: { paymentStatus: PaymentStatus.PENDING },
-      },
-      // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
-      // it sends after commit names these parties.
-      consultation: {
-        include: {
-          ...LAPSED_LINK_PARTIES,
-          consultationPlan: LAPSED_LINK_PLAN_SELECT,
-        },
-      },
-      subscription: {
-        include: {
-          ...LAPSED_LINK_PARTIES,
-          subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
-        },
-      },
-      webinar: true,
-      class: true,
-      occurrences: true,
-    },
+    include: ABANDONED_INCLUDE,
   });
 }
 
@@ -784,6 +790,70 @@ async function cleanupAbandonedAppointment(
     );
     return { outcome: "skipped", notice: null };
   }
+}
+
+/**
+ * #1757 — retire ONE PENDING payment the gateway has no record of, through the
+ * same per-appointment unit the abandoned sweep runs (expire the row, hand back
+ * referral credits, release the hold or seat). Rows with no `expiresAt` and no
+ * tentative hold never enter that sweep's cohort, which is why
+ * reconcile-payment-status calls this directly once the row is old enough.
+ * A payment with no appointment holds nothing: it is expired and its credits
+ * are reversed inside one transaction.
+ */
+export async function retireOrphanPendingPayment(
+  paymentId: string,
+): Promise<{ outcome: "retired" | "skipped"; errors: string[] }> {
+  const appointment = await prisma.appointment.findFirst({
+    where: {
+      payment: {
+        some: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
+      },
+    },
+    include: { ...ABANDONED_INCLUDE, _count: { select: { payment: true } } },
+  });
+
+  if (appointment) {
+    // #1761 CodeRabbit — a sibling SUCCEEDED/PENDING payment means this
+    // appointment isn't the orphan's alone to tear down; leave it be.
+    if (appointment._count.payment > 1) {
+      return {
+        outcome: "skipped",
+        errors: [
+          `Appointment ${appointment.id} has ${appointment._count.payment} payments; not retiring orphan ${paymentId}`,
+        ],
+      };
+    }
+    // Only the orphan row is expired; a sibling PENDING checkout is left alone.
+    const scoped: AbandonedAppointment = {
+      ...appointment,
+      payment: appointment.payment.filter((p) => p.id === paymentId),
+    };
+    const failures: FailureSink = { messages: [], count: 0 };
+    const { outcome, notice } = await cleanupAbandonedAppointment(
+      scoped,
+      failures,
+    );
+    if (outcome === "cleaned" && notice) {
+      await notifyConsulteeRequestExpired(notice);
+    }
+    return {
+      outcome: outcome === "cleaned" ? "retired" : "skipped",
+      errors: failures.messages,
+    };
+  }
+
+  const claimed = await prisma.$transaction(async (tx) => {
+    // Conditional on PENDING: a capture racing this keeps SUCCEEDED.
+    const { count } = await tx.payment.updateMany({
+      where: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
+      data: { paymentStatus: PaymentStatus.EXPIRED },
+    });
+    if (count === 0) return false;
+    await reverseCreditsForPayment(paymentId, tx);
+    return true;
+  });
+  return { outcome: claimed ? "retired" : "skipped", errors: [] };
 }
 
 /**

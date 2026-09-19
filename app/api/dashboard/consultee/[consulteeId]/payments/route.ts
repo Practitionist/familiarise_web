@@ -93,7 +93,15 @@ export async function GET(
         include: {
           appointment: {
             select: {
+              id: true,
               appointmentType: true,
+              // #1675 — the buyer's own support thread on this booking, when
+              // one exists, is where a failed refund's "Contact support" goes.
+              supportThreads: {
+                where: { userId },
+                select: { id: true },
+                take: 1,
+              },
               consultation: {
                 select: {
                   consultationPlan: { select: { title: true } },
@@ -211,6 +219,8 @@ export async function GET(
         paymentMethod: p.paymentMethod,
         paymentGateway: p.paymentGateway,
         appointmentType: apt?.appointmentType || null,
+        appointmentId: apt?.id ?? null,
+        hasSupportThread: (apt?.supportThreads.length ?? 0) > 0,
         planTitle,
         // Org-funding marker — drives the "Sponsored · <Org>" badge on
         // the consultee payments table row. Same convention as the
@@ -237,8 +247,12 @@ export async function GET(
     // number), NOT from the capped display list. `?? 0` on the nullable
     // sums; Number() because aggregations bypass the money result
     // extensions and return raw BigInt.
-    const totalCredits = creditAgg._sum.amount ? Number(creditAgg._sum.amount) : 0;
-    const usedCredits = creditAgg._sum.usedAmount ? Number(creditAgg._sum.usedAmount) : 0;
+    const totalCredits = creditAgg._sum.amount
+      ? Number(creditAgg._sum.amount)
+      : 0;
+    const usedCredits = creditAgg._sum.usedAmount
+      ? Number(creditAgg._sum.usedAmount)
+      : 0;
     const remainingCredits = creditAgg._sum.remainingAmount
       ? Number(creditAgg._sum.remainingAmount)
       : 0;

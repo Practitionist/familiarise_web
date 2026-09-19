@@ -22,21 +22,15 @@ import { PayoutStatus, PaymentGateway } from "@prisma/client";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { handlePayoutWebhook } from "@/lib/payments/payouts";
 import { resolveRazorpayXCredentials } from "@/lib/payments/payouts/razorpay-payouts";
-
-// #677 PM-15 — narrow PayoutStatus to the status union handlePayoutWebhook
-// accepts. mapGatewayStatus only ever returns these four, so the rest map to
-// undefined (treated as "no canonical transition" at the call site).
-const WEBHOOK_STATUS_MAP: Partial<
-  Record<
-    PayoutStatus,
-    "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED"
-  >
-> = {
-  [PayoutStatus.COMPLETED]: "COMPLETED",
-  [PayoutStatus.PROCESSING]: "PROCESSING",
-  [PayoutStatus.FAILED]: "FAILED",
-  [PayoutStatus.CANCELLED]: "CANCELLED",
-};
+import {
+  type PayoutLookup,
+  WEBHOOK_STATUS_MAP,
+  getStripePayoutStatus,
+  getRazorpayPayoutStatus,
+  mapGatewayStatus,
+  retireUnknownGatewayPayout,
+} from "@/lib/payments/payouts/payout-gateway-lookup";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only reconcile payouts older than 48 hours (give webhooks time)
 const MIN_AGE_HOURS = 48;
@@ -51,157 +45,12 @@ export interface PayoutReconciliationResult {
   completedCount: number;
   failedCount: number;
   skippedCount: number;
+  /** #1757 — rows retired FAILED because the gateway does not know their id. */
+  retiredCount: number;
+  retired: string[];
   discrepancies: string[];
   errors: string[];
   timestamp: string;
-}
-
-/**
- * Query Stripe for payout/transfer status
- */
-async function getStripePayoutStatus(
-  providerPayoutId: string,
-): Promise<{ status: string; failureMessage?: string } | null> {
-  const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
-  if (!stripeSecretKey) {
-    console.warn("Stripe credentials not configured");
-    return null;
-  }
-
-  try {
-    const Stripe = (await import("stripe")).default;
-    const stripe = new Stripe(stripeSecretKey);
-
-    // Check if it's a transfer (tr_) or payout (po_)
-    if (providerPayoutId.startsWith("tr_")) {
-      const transfer = await stripe.transfers.retrieve(providerPayoutId);
-      return {
-        status: transfer.reversed ? "reversed" : "paid",
-      };
-    } else if (providerPayoutId.startsWith("po_")) {
-      const payout = await stripe.payouts.retrieve(providerPayoutId);
-      return {
-        status: payout.status,
-        failureMessage: payout.failure_message || undefined,
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.error(`Failed to get Stripe payout status: ${error}`);
-    return null;
-  }
-}
-
-/**
- * Query RazorpayX for payout status
- */
-async function getRazorpayPayoutStatus(
-  providerPayoutId: string,
-): Promise<{ status: string; failureReason?: string; utr?: string } | null> {
-  // #1407 — the same resolver the disbursement path uses. Reading
-  // RAZORPAY_KEY_ID/RAZORPAY_SECRET here authenticated as the checkout
-  // merchant, not the RazorpayX one, so on an account with distinct X keys
-  // every lookup 401s and this reconciliation is silently dead while it
-  // looks green. (#677 PM-1 kept the RAZORPAY_SECRET fallback, inside the
-  // resolver now.)
-  const { keyId, keySecret } = resolveRazorpayXCredentials();
-
-  if (!keyId || !keySecret) {
-    console.warn("RazorpayX credentials not configured");
-    return null;
-  }
-
-  try {
-    const response = await fetch(
-      `https://api.razorpay.com/v1/payouts/${providerPayoutId}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-        },
-      },
-    );
-
-    if (!response.ok) {
-      console.error(`RazorpayX API error: ${response.status}`);
-      return null;
-    }
-
-    const payout = await response.json();
-    return {
-      status: payout.status,
-      failureReason: payout.failure_reason,
-      // #677 PM-15 — RazorpayX returns the bank UTR on a processed payout;
-      // capture it so the COMPLETED delegation can persist the reference.
-      utr: payout.utr,
-    };
-  } catch (error) {
-    console.error(`Failed to get RazorpayX payout status: ${error}`);
-    return null;
-  }
-}
-
-/**
- * Map gateway payout status to our PayoutStatus
- */
-function mapGatewayStatus(
-  gateway: PaymentGateway,
-  status: string,
-): PayoutStatus | null {
-  if (gateway === PaymentGateway.STRIPE) {
-    switch (status.toLowerCase()) {
-      case "paid":
-        return PayoutStatus.COMPLETED;
-      case "pending":
-        return PayoutStatus.PROCESSING;
-      case "in_transit":
-        return PayoutStatus.PROCESSING;
-      case "canceled":
-        return PayoutStatus.CANCELLED;
-      case "failed":
-        return PayoutStatus.FAILED;
-      // This poller only walks PENDING/PROCESSING payouts, where the PAYOUT
-      // ledger txn was never posted — a gateway "reversed" here is a net-zero
-      // round trip, so FAILED handling (unlink earnings, reverse TDS) is the
-      // correct accounting. Post-COMPLETED reversals arrive via the
-      // payout.reversed webhook → markConsultantPayoutReversed (#812), which
-      // does post the counter-txn. The failureReason records the distinction.
-      case "reversed":
-        return PayoutStatus.FAILED;
-      default:
-        return null;
-    }
-  } else if (gateway === PaymentGateway.RAZORPAY) {
-    switch (status.toLowerCase()) {
-      case "processed":
-        return PayoutStatus.COMPLETED;
-      case "processing":
-        return PayoutStatus.PROCESSING;
-      case "queued":
-        return PayoutStatus.PROCESSING;
-      case "pending":
-        return PayoutStatus.PROCESSING;
-      case "rejected":
-        return PayoutStatus.FAILED;
-      // #1407 — RazorpayX returns `failed` for a payout the bank refused after
-      // it was queued, and the arm had only `rejected`. That is precisely the
-      // cohort this sweep walks, so the payout fell through as an unknown
-      // status and was skipped: PENDING/PROCESSING forever, earnings still
-      // batched against money that never left. The Stripe arm has always
-      // mapped it. FAILED delegation un-batches the earnings and reverses TDS.
-      case "failed":
-        return PayoutStatus.FAILED;
-      case "reversed":
-        return PayoutStatus.FAILED;
-      case "cancelled":
-        return PayoutStatus.CANCELLED;
-      default:
-        return null;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -210,8 +59,10 @@ function mapGatewayStatus(
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function reconcilePayoutStatus(): Promise<PayoutReconciliationResult> {
-  return withCronLock("reconcile-payout-status", { failMode: "closed", ttlMs: LONG_JOB_TTL_MS }, () =>
-    reconcilePayoutStatusUnlocked(),
+  return withCronLock(
+    "reconcile-payout-status",
+    { failMode: "closed", ttlMs: LONG_JOB_TTL_MS },
+    () => reconcilePayoutStatusUnlocked(),
   );
 }
 
@@ -222,6 +73,8 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
   let completedCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
+  let retiredCount = 0;
+  const retired: string[] = [];
 
   const minAge = new Date(Date.now() - MIN_AGE_HOURS * 60 * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
@@ -284,34 +137,49 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     }
 
     // Query gateway for actual status
-    let gatewayStatus: {
-      status: string;
-      failureMessage?: string;
-      failureReason?: string;
-      utr?: string;
-    } | null = null;
+    let lookup: PayoutLookup | null = null;
 
     if (payout.provider === PaymentGateway.STRIPE) {
-      gatewayStatus = await getStripePayoutStatus(payout.providerPayoutId);
+      lookup = await getStripePayoutStatus(payout.providerPayoutId);
     } else if (payout.provider === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
         skippedCount++;
         continue;
       }
-      gatewayStatus = await getRazorpayPayoutStatus(payout.providerPayoutId);
+      lookup = await getRazorpayPayoutStatus(payout.providerPayoutId);
     } else {
       console.log(`   Skipping - unsupported gateway: ${payout.provider}`);
       skippedCount++;
       continue;
     }
 
-    if (!gatewayStatus) {
+    // #1757 — an id the gateway has no record of is terminal for this row, not
+    // a run failure: FAILED via the canonical handler (releases earnings, TDS).
+    if (lookup?.kind === "unknown_id") {
+      await retireUnknownGatewayPayout(
+        {
+          provider: payout.provider,
+          providerPayoutId: payout.providerPayoutId,
+        },
+        lookup.detail,
+      );
+      retiredCount++;
+      retired.push(payout.id);
+      continue;
+    }
+
+    if (!lookup || lookup.kind === "gateway_error") {
       console.log(`   Could not get status from gateway - skipping`);
-      errors.push(`Payout ${payout.id}: Could not query gateway status`);
+      const detailSuffix = lookup ? ` (${lookup.detail})` : "";
+      errors.push(
+        `Payout ${payout.id}: Could not query gateway status${detailSuffix}`,
+      );
       skippedCount++;
       continue;
     }
+
+    const gatewayStatus = lookup;
 
     console.log(`   Gateway status: ${gatewayStatus.status}`);
 
@@ -396,6 +264,22 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     discrepancies.forEach((d) => console.log(`   - ${d}`));
   }
 
+  console.log(`   Retired (gateway does not know the id): ${retiredCount}`);
+
+  // One expected warning per run, never one per row per tick (#1757).
+  if (retiredCount > 0) {
+    reportSentryMessage(
+      `reconcile-payout-status: retired ${retiredCount} payout(s) whose gateway id the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "reconcile-payout-status",
+        expected: true,
+        level: "warning",
+        extra: { retired },
+      },
+    );
+  }
+
   return {
     success: errors.length === 0,
     totalProcessed: stalePayouts.length,
@@ -404,6 +288,8 @@ async function reconcilePayoutStatusUnlocked(): Promise<PayoutReconciliationResu
     failedCount,
     skippedCount,
     discrepancies,
+    retiredCount,
+    retired,
     errors,
     timestamp: new Date().toISOString(),
   };
