@@ -304,6 +304,50 @@ function slotRunWindow(
   };
 }
 
+/**
+ * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
+ * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
+ * plus invoices already issued and unpaid. Both credit-limit gates read this.
+ */
+export async function readInvoiceExposurePaise(
+  db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
+  organizationId: string,
+): Promise<number> {
+  const [accrualAgg, outstandingAgg] = await Promise.all([
+    db.paymentLeg.aggregate({
+      where: {
+        source: {
+          in: [
+            "INVOICE_ACCRUAL",
+            "OVERAGE_INVOICE_ACCRUAL",
+            // Refunds append negative *_REVERSAL siblings (#786); without them
+            // a refunded seat kept counting against the limit.
+            "INVOICE_ACCRUAL_REVERSAL",
+            "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+          ],
+        },
+        payment: {
+          organizationId,
+          paymentStatus: "SUCCEEDED",
+          billableToOrgInvoiceId: null,
+        },
+      },
+      _sum: { amountPaise: true },
+    }),
+    db.organizationInvoice.aggregate({
+      where: {
+        organizationId,
+        status: { in: ["ISSUED", "OVERDUE"] },
+      },
+      _sum: { totalPaise: true },
+    }),
+  ]);
+  return (
+    sumPaise(accrualAgg._sum.amountPaise) +
+    sumPaise(outstandingAgg._sum.totalPaise)
+  );
+}
+
 export async function findReusablePendingOrderPayment(
   db: Pick<typeof prisma, "payment">,
   params: {
@@ -3078,29 +3122,7 @@ export async function handleCheckout(
       creditEffectiveLimit = effectiveLimit;
 
       if (effectiveLimit !== null) {
-        const [accrualAgg, outstandingAgg] = await Promise.all([
-          prisma.paymentLeg.aggregate({
-            where: {
-              source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
-              payment: {
-                organizationId: org.id,
-                paymentStatus: "SUCCEEDED",
-                billableToOrgInvoiceId: null,
-              },
-            },
-            _sum: { amountPaise: true },
-          }),
-          prisma.organizationInvoice.aggregate({
-            where: {
-              organizationId: org.id,
-              status: { in: ["ISSUED", "OVERDUE"] },
-            },
-            _sum: { totalPaise: true },
-          }),
-        ]);
-        const exposure =
-          sumPaise(accrualAgg._sum.amountPaise) +
-          sumPaise(outstandingAgg._sum.totalPaise);
+        const exposure = await readInvoiceExposurePaise(prisma, org.id);
         if (exposure >= effectiveLimit) {
           throw new Error(
             `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
@@ -3513,31 +3535,10 @@ export async function handleCheckout(
               creditEffectiveLimit !== null &&
               organizationId
             ) {
-              const [accrualAgg, outstandingAgg] = await Promise.all([
-                tx.paymentLeg.aggregate({
-                  where: {
-                    source: {
-                      in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"],
-                    },
-                    payment: {
-                      organizationId,
-                      paymentStatus: "SUCCEEDED",
-                      billableToOrgInvoiceId: null,
-                    },
-                  },
-                  _sum: { amountPaise: true },
-                }),
-                tx.organizationInvoice.aggregate({
-                  where: {
-                    organizationId,
-                    status: { in: ["ISSUED", "OVERDUE"] },
-                  },
-                  _sum: { totalPaise: true },
-                }),
-              ]);
-              const exposure =
-                sumPaise(accrualAgg._sum.amountPaise) +
-                sumPaise(outstandingAgg._sum.totalPaise);
+              const exposure = await readInvoiceExposurePaise(
+                tx,
+                organizationId,
+              );
               // Same gate as the pre-lock check (>= limit), re-run inside the tx so
               // a concurrent sibling's just-committed accrual is visible — SSI then
               // aborts the loser of a racing pair instead of both straddling the cap.
