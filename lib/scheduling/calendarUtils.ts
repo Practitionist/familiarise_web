@@ -369,6 +369,9 @@ export interface SelectedSession {
  * timezone day (ADR B9): an overnight run crossing local midnight is two
  * sessions, so the chip never attributes post-midnight time to the prior day.
  * Without a zone the UTC day is used — pass the event's scheduling timezone.
+ * Callers must pass the SAME resolved zone they format the chip with
+ * (`schedulingTimezone ?? gridZone`): grouping and labelling share one
+ * day-boundary by construction, so a chip's day always owns both atoms.
  */
 export function groupSelectedIntoSessions(
   selectedSlots: CalendarInterval[],
