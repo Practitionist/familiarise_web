@@ -47,7 +47,6 @@ export interface RequestDecision {
 }
 
 export interface NeedsYouCalloutProps {
-  role: "consultee" | "consultant";
   presentation: BookingPresentation;
   names: { payer: string; consultant: string };
   heldCount: number;
@@ -105,13 +104,19 @@ function TimeLeft({ deadline }: { deadline: Date }) {
   return (
     <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums text-amber-800 dark:text-amber-300">
       <Timer className="h-3.5 w-3.5" />
-      {h > 0 ? `${h}h ${m}m left` : m > 0 ? `${m}m left` : "under a minute left"}
+      {h > 0
+        ? `${h}h ${m}m left`
+        : m > 0
+          ? `${m}m left`
+          : "under a minute left"}
     </span>
   );
 }
 
 /** "₹6,000 + 18% GST" from the row's own split; the base alone when there is no tax. */
-function gstSplit(pending: NonNullable<NeedsYouCalloutProps["pending"]>): string {
+function gstSplit(
+  pending: NonNullable<NeedsYouCalloutProps["pending"]>,
+): string {
   const tax = Number(pending.taxAmount ?? 0);
   const base = Number(pending.amount) - tax;
   if (tax <= 0 || base <= 0) return "";
@@ -142,7 +147,11 @@ function ApproveOrDecline({
     try {
       // No override from here: the Requests page's dialog shows the
       // out-of-hours verdicts and owns "Override and Allocate".
-      const result = await approveRequestedTimes(decision.request, attemptKeyRef, false);
+      const result = await approveRequestedTimes(
+        decision.request,
+        attemptKeyRef,
+        false,
+      );
       const conflict = classifyRequestedConflict(result);
       if (conflict === "stale") {
         toast(requestChangedElsewhere());
@@ -155,17 +164,30 @@ function ApproveOrDecline({
         return;
       }
       if (conflict === "stay-open") {
-        toast(allocationFailedWithCode(result.error ?? "Failed to allocate slots", result.errorCode));
+        toast(
+          allocationFailedWithCode(
+            result.error ?? "Failed to allocate slots",
+            result.errorCode,
+          ),
+        );
         return;
       }
-      if (!result.success) throw new Error(result.error || "Failed to allocate slots");
+      if (!result.success)
+        throw new Error(result.error || "Failed to allocate slots");
       toast(timesConfirmed());
       decision.onDecided();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-        tags: { subsystem: "client", feature: "scheduling" },
-      });
-      toast(allocationFailed(error instanceof Error ? error.message : "Failed to allocate slots"));
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "client", feature: "scheduling" },
+        },
+      );
+      toast(
+        allocationFailed(
+          error instanceof Error ? error.message : "Failed to allocate slots",
+        ),
+      );
     } finally {
       setApproving(false);
     }
@@ -175,16 +197,23 @@ function ApproveOrDecline({
     setDeclining(true);
     try {
       await declineRequest(decision.request);
-      toast({ title: "Request declined", description: "The request has been declined." });
+      toast({
+        title: "Request declined",
+        description: "The request has been declined.",
+      });
       setDeclineOpen(false);
       decision.onDecided();
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), {
-        tags: { subsystem: "client" },
-      });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          tags: { subsystem: "client" },
+        },
+      );
       toast({
         title: "Couldn't decline request",
-        description: error instanceof Error ? error.message : "Failed to decline request",
+        description:
+          error instanceof Error ? error.message : "Failed to decline request",
         variant: "destructive",
       });
     } finally {
@@ -203,8 +232,14 @@ function ApproveOrDecline({
       actions={
         <>
           {decision.canApproveRequestedTimes ? (
-            <Button size="sm" disabled={approving || declining} onClick={() => void approve()}>
-              {approving ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+            <Button
+              size="sm"
+              disabled={approving || declining}
+              onClick={() => void approve()}
+            >
+              {approving ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : null}
               Approve
             </Button>
           ) : (
@@ -221,17 +256,22 @@ function ApproveOrDecline({
           >
             Decline…
           </Button>
-          <AlertDialog open={declineOpen} onOpenChange={(open) => !declining && setDeclineOpen(open)}>
+          <AlertDialog
+            open={declineOpen}
+            onOpenChange={(open) => !declining && setDeclineOpen(open)}
+          >
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>Decline this request?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {names.payer} will be told you declined, and the held slots are released. This
-                  rejects the whole booking request.
+                  {names.payer} will be told you declined, and the held slots
+                  are released. This rejects the whole booking request.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={declining}>Keep request</AlertDialogCancel>
+                <AlertDialogCancel disabled={declining}>
+                  Keep request
+                </AlertDialogCancel>
                 <AlertDialogAction
                   className="bg-red-600 text-white hover:bg-red-700"
                   disabled={declining}
@@ -250,11 +290,17 @@ function ApproveOrDecline({
     >
       {names.payer} is waiting for your answer.{held}
       {!decision.canApproveRequestedTimes && (
-        <span className="text-muted-foreground"> No times were requested — approving sets them.</span>
+        <span className="text-muted-foreground">
+          {" "}
+          No times were requested — approving sets them.
+        </span>
       )}
       <span className="block text-xs text-muted-foreground">
         Times outside your hours?{" "}
-        <Link href={decision.requestsHref} className="underline underline-offset-4">
+        <Link
+          href={decision.requestsHref}
+          className="underline underline-offset-4"
+        >
           Review on the Requests page
         </Link>
         .
@@ -268,7 +314,17 @@ function ApproveOrDecline({
  * `presentation.nextAction`. Renders nothing when there is nothing to do.
  */
 export function NeedsYouCallout(props: NeedsYouCalloutProps) {
-  const { presentation, names, heldCount, pending, onPay, requestAgainHref, decision, onHelp, children } = props;
+  const {
+    presentation,
+    names,
+    heldCount,
+    pending,
+    onPay,
+    requestAgainHref,
+    decision,
+    onHelp,
+    children,
+  } = props;
   const { nextAction, bookingState } = presentation;
   const deadline = nextAction.deadline;
 
@@ -286,7 +342,10 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
       );
     case "PAY": {
       if (!pending) return null;
-      const amount = formatCurrencyAmount(Number(pending.amount), pending.currency);
+      const amount = formatCurrencyAmount(
+        Number(pending.amount),
+        pending.currency,
+      );
       return (
         <Shell
           onHelp={onHelp}
@@ -335,7 +394,9 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
     case "RATE":
       return children ? (
         <Shell onHelp={onHelp} actions={children}>
-          {nextAction.kind === "JOIN" ? "Your session is open." : "How did it go?"}
+          {nextAction.kind === "JOIN"
+            ? "Your session is open."
+            : "How did it go?"}
         </Shell>
       ) : null;
     default:

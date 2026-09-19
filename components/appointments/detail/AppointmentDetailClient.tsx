@@ -652,7 +652,6 @@ export function AppointmentDetailClient({
         </div>
 
         <NeedsYouCallout
-          role={role}
           presentation={presentation}
           names={names}
           heldCount={heldCount}

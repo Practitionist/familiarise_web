@@ -58,7 +58,11 @@ const base = (
   ...over,
 });
 
-// state · money · consultant next · consultee next · session row
+const req = (status: string) => ({ status, kind: "SUBSCRIPTION" });
+const paid = [pay("SUCCEEDED", 708_000)];
+const confirmed = [slot(false)];
+
+// state · fixture · money · consultant next · consultee next · session row · label
 const TABLE: [
   string,
   Partial<BookingPresentationInput>,
@@ -80,7 +84,7 @@ const TABLE: [
   [
     "AWAITING_PAYMENT",
     {
-      request: { status: "APPROVED_PENDING_PAYMENT", kind: "SUBSCRIPTION" },
+      request: req("APPROVED_PENDING_PAYMENT"),
       payments: [pay("PENDING", 708_000, { expiresAt: IN_4D })],
     },
     "DUE",
@@ -92,7 +96,7 @@ const TABLE: [
   [
     "PAYMENT_LAPSED",
     {
-      request: { status: "EXPIRED", kind: "SUBSCRIPTION" },
+      request: req("EXPIRED"),
       payments: [pay("EXPIRED", 708_000, { expiresAt: PAST })],
       holdExpiresAt: PAST,
     },
@@ -105,9 +109,9 @@ const TABLE: [
   [
     "CONFIRMED",
     {
-      request: { status: "APPROVED", kind: "SUBSCRIPTION" },
-      occurrences: [slot(false)],
-      payments: [pay("SUCCEEDED", 708_000)],
+      request: req("APPROVED"),
+      occurrences: confirmed,
+      payments: paid,
       holdExpiresAt: null,
     },
     "PAID",
@@ -119,9 +123,9 @@ const TABLE: [
   [
     "AWAITING_ALLOCATION",
     {
-      request: { status: "APPROVED", kind: "SUBSCRIPTION" },
+      request: req("APPROVED"),
       occurrences: [],
-      payments: [pay("SUCCEEDED", 708_000)],
+      payments: paid,
       holdExpiresAt: null,
     },
     "PAID",
@@ -133,9 +137,9 @@ const TABLE: [
   [
     "COMPLETED",
     {
-      request: { status: "COMPLETED", kind: "SUBSCRIPTION" },
+      request: req("COMPLETED"),
       occurrences: [slot(false, PAST)],
-      payments: [pay("SUCCEEDED", 708_000)],
+      payments: paid,
       holdExpiresAt: null,
     },
     "PAID",
@@ -147,8 +151,8 @@ const TABLE: [
   [
     "CANCELLED",
     {
-      request: { status: "CANCELLED", kind: "SUBSCRIPTION" },
-      payments: [pay("SUCCEEDED", 708_000)],
+      request: req("CANCELLED"),
+      payments: paid,
       refunds: [{ amountPaise: 708_000, status: "PENDING" }],
       holdExpiresAt: null,
     },
@@ -160,10 +164,7 @@ const TABLE: [
   ],
   [
     "DECLINED",
-    {
-      request: { status: "REJECTED", kind: "SUBSCRIPTION" },
-      holdExpiresAt: null,
-    },
+    { request: req("REJECTED"), holdExpiresAt: null },
     "NOT_DUE",
     "NONE",
     "REQUEST_AGAIN",
@@ -188,10 +189,12 @@ describe("deriveBookingPresentation — the eight booking states", () => {
       expect(asConsultant.moneyState.state).toBe(moneyKind);
       expect(asConsultant.nextAction.kind).toBe(consultantNext);
       expect(asConsultee.nextAction.kind).toBe(consulteeNext);
-      if (row)
-        expect(asConsultant.sessionRowLabel(input.occurrences[0])).toBe(row);
+      const rowLabel = input.occurrences[0]
+        ? asConsultant.sessionRowLabel(input.occurrences[0])
+        : "";
+      expect(rowLabel).toBe(row);
       // The session row never carries a money word; the badge is one or two words.
-      if (row) expect(row.toLowerCase()).not.toMatch(/pay|paid|₹/);
+      expect(rowLabel.toLowerCase()).not.toMatch(/pay|paid|₹/);
       expect(label.split(" ").length).toBeLessThanOrEqual(2);
     },
   );
