@@ -74,6 +74,16 @@ const BLOCKED = [
   "/api/organizations/org_1/members/bulk-import",
   "/api/organizations/org_1/invitations",
   "/api/organizations/org_1/invitations/inv_1",
+
+  // #1599 — real paths, and the doors the list used to miss.
+  "/api/bookings/consultations/0b6f4a1e-2c3d-4e5f-8a9b-0c1d2e3f4a5b/allocate",
+  "/api/collaborations/collab_1/respond",
+  "/api/participants/webinar/web_1",
+  "/api/payments/pay_1/recover",
+  "/api/recordings/rec_1/purchase",
+  "/api/overage/ov_1/order",
+  "/api/meetings/mtg_1/join",
+  "/api/meetings/mtg_1/end",
 ];
 
 const NOT_BLOCKED = [
@@ -94,6 +104,10 @@ const NOT_BLOCKED = [
   // Neighbours that share a textual prefix but not a path segment.
   "/api/checkouts",
   "/api/appointments/appt_1/rescheduled",
+  // The old entry named a directory that does not exist (#1599 F-P0-02).
+  "/api/collaborators",
+  // Recording consent is not a money door; only join and end are.
+  "/api/meetings/mtg_1/recording-consent",
 ];
 
 describe("isWriteBlockedInDegraded", () => {
@@ -117,6 +131,20 @@ describe("isWriteBlockedInDegraded", () => {
       }
     },
   );
+
+  // #1599 R-P0-02 — GET /api/checkout/verify?sync=true drives the capture
+  // pipeline, so DEGRADED must answer it the way it answers the POST doors.
+  it("blocks the syncing verify GET and allows the plain one", () => {
+    const sync = new URLSearchParams("intent=order_1&sync=true");
+    const plain = new URLSearchParams("intent=order_1");
+    expect(isWriteBlockedInDegraded("/api/checkout/verify", "GET", sync)).toBe(
+      true,
+    );
+    expect(isWriteBlockedInDegraded("/api/checkout/verify", "GET", plain)).toBe(
+      false,
+    );
+    expect(isWriteBlockedInDegraded("/api/checkout/verify", "GET")).toBe(false);
+  });
 
   it("leaves a GET on an org appointments route alone", () => {
     // The one case the org additions must not regress: reading an org's

@@ -73,22 +73,9 @@ import { withCronLock } from "@/lib/cron/with-cron-lock";
 
 import { requireAdminAuth } from "@/lib/auth-helpers";
 import { getMaintenanceState } from "@/lib/maintenance-edge";
-
-// Financial job IDs that must not run during DEGRADED maintenance.
-// These interact with payment gateways or mutate financial state.
-const FINANCIAL_JOB_IDS = new Set([
-  "cleanup-abandoned-payments",
-  "cleanup-approval-payments",
-  "reconcile-refunds",
-  "cascade-refund-earnings",
-  "handle-lost-disputes",
-  "create-payout-batch",
-  "process-payouts",
-  "handle-stuck-payouts",
-  "release-earnings",
-  "reconcile-payment-status",
-  "reconcile-payout-status",
-]);
+// #1599 F-P1-03 — one money list: the gate below derives from
+// FINANCIAL_JOB_NAMES instead of a second, drifting copy (11 vs 24 names).
+import { isFinancialJob } from "@/lib/maintenance-cron";
 
 // Job ID to function mapping
 type JobResult = {
@@ -392,11 +379,7 @@ const JOB_FUNCTIONS: Record<string, JobFunction> = {
       "transfer-expiring-recordings",
       { failMode: "open" },
       () =>
-        RecordingTransferService.processExpiringRecordings(
-          14,
-          10,
-          "PERMANENT",
-        ),
+        RecordingTransferService.processExpiringRecordings(14, 10, "PERMANENT"),
     );
     return {
       success: result.failed === 0,
@@ -484,7 +467,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // 5. Check maintenance mode — block financial jobs in DEGRADED
     const maintenanceState = await getMaintenanceState();
-    if (maintenanceState.phase === "DEGRADED" && FINANCIAL_JOB_IDS.has(jobId)) {
+    if (maintenanceState.phase === "DEGRADED" && isFinancialJob(jobId)) {
       return NextResponse.json(
         {
           error: `Job "${jobId}" is blocked during DEGRADED maintenance to protect payment integrity. End maintenance mode first.`,
@@ -517,7 +500,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(result);
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "admin" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "admin" } },
+    );
     console.error("[System Jobs] Error running job:", error);
     return NextResponse.json(
       {
