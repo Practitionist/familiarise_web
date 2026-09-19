@@ -33,6 +33,7 @@ import {
   refundStatusBadge,
   resolveSponsoringOrgName,
 } from "@/lib/labels/session-labels";
+import { FailedRefundNote } from "./FailedRefundNote";
 
 interface RefundItem {
   id: string;
@@ -52,6 +53,9 @@ interface PaymentItem {
   paymentMethod: string | null;
   paymentGateway: string;
   appointmentType: string | null;
+  appointmentId: string | null;
+  /** #1675 — the buyer already has a support thread on this booking. */
+  hasSupportThread: boolean;
   planTitle: string;
   organizationId: string | null;
   discount: {
@@ -235,8 +239,21 @@ function renderInvoiceCell(payment: PaymentItem) {
   );
 }
 
-export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
+export function PaymentsTab({
+  data,
+  consulteeId,
+}: {
+  data: PaymentsData | undefined;
+  consulteeId: string;
+}) {
   const { formatPrice } = useCurrency();
+  // #1675 — a failed refund's next step: the booking's own support thread
+  // when the buyer already opened one (B2C only — org-hosted sessions have no
+  // detail page, ADR 20), else the Support hub where they can start it.
+  const supportHrefFor = (payment: PaymentItem) =>
+    payment.hasSupportThread && payment.appointmentId && !payment.organizationId
+      ? `/dashboard/consultee/${consulteeId}/appointments/${payment.appointmentId}`
+      : `/dashboard/consultee/${consulteeId}/support`;
 
   // #1396 — `formatPrice` assumes INR paise and applies the viewer's FX rate,
   // so a payment already denominated in another currency was converted a second
@@ -244,7 +261,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
   // below were rendered unconverted. The three disagreed on the same row. This
   // is the guard `PendingPaymentsWidget` already uses: only INR amounts go
   // through the converter, everything else renders in its own currency.
-  const formatPaymentAmount = (paise: number, currency: string | null | undefined) =>
+  const formatPaymentAmount = (
+    paise: number,
+    currency: string | null | undefined,
+  ) =>
     currency && currency.toUpperCase() !== "INR"
       ? formatAmountInCurrency(paise, currency)
       : formatPrice(paise);
@@ -312,7 +332,9 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                 title={`Sponsored by ${sponsoringOrgName}`}
               >
                 <Building2 className="h-3 w-3 shrink-0" />
-                <span className="truncate">Sponsored · {sponsoringOrgName}</span>
+                <span className="truncate">
+                  Sponsored · {sponsoringOrgName}
+                </span>
               </Badge>
             ) : null;
           })()}
@@ -350,7 +372,8 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           {payment.taxAmount && payment.taxAmount > 0 && (
             <span className="block text-xs text-muted-foreground/70">
               incl.{" "}
-              {formatPaymentAmount(payment.taxAmount ?? 0, payment.currency)} GST
+              {formatPaymentAmount(payment.taxAmount ?? 0, payment.currency)}{" "}
+              GST
             </span>
           )}
           {payment.discount && (
@@ -395,7 +418,10 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
             <StatusBadge {...paymentStatusBadge(displayStatus)} size="sm" />
             {payment.refundedPaise > 0 && (
               <span className="block text-xs text-muted-foreground whitespace-nowrap">
-                {formatAmountInCurrency(payment.refundedPaise, payment.currency)}{" "}
+                {formatAmountInCurrency(
+                  payment.refundedPaise,
+                  payment.currency,
+                )}{" "}
                 refunded
               </span>
             )}
@@ -428,6 +454,14 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
                     {refund.reason}
                   </span>
                 )}
+                <FailedRefundNote
+                  status={refund.status}
+                  amountText={formatAmountInCurrency(
+                    refund.amountPaise,
+                    payment.currency,
+                  )}
+                  supportHref={supportHrefFor(payment)}
+                />
               </li>
             ))}
           </ul>
@@ -536,7 +570,9 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
       key: "date",
       header: "Date",
       cell: (usage) => (
-        <span className="text-muted-foreground">{formatDate(usage.usedAt)}</span>
+        <span className="text-muted-foreground">
+          {formatDate(usage.usedAt)}
+        </span>
       ),
     },
     {
@@ -592,14 +628,16 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
             </p>
           ) : (
             <div className="space-y-0.5">
-              {Array.from(totalsByCurrency.entries()).map(([currency, entry]) => (
-                <p
-                  key={currency}
-                  className="text-2xl font-bold text-foreground leading-tight"
-                >
-                  {formatAmountInCurrency(entry.total, currency)}
-                </p>
-              ))}
+              {Array.from(totalsByCurrency.entries()).map(
+                ([currency, entry]) => (
+                  <p
+                    key={currency}
+                    className="text-2xl font-bold text-foreground leading-tight"
+                  >
+                    {formatAmountInCurrency(entry.total, currency)}
+                  </p>
+                ),
+              )}
             </div>
           )}
           <p className="text-xs text-muted-foreground/70 mt-1">
@@ -626,7 +664,9 @@ export function PaymentsTab({ data }: { data: PaymentsData | undefined }) {
           <p className="text-2xl font-bold text-green-600 dark:text-green-400">
             {formatPrice(data.creditSummary.remaining)}
           </p>
-          <p className="text-xs text-muted-foreground/70 mt-1">Available to use</p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            Available to use
+          </p>
         </div>
       </div>
 

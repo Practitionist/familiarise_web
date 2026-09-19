@@ -6,7 +6,8 @@
  * #1675 / #1586 P1-J13 — a terminal money state is shown in plain words with
  * a next step, never dropped. U1: only the pay-link lapse (the
  * APPROVED_PENDING_PAYMENT → EXPIRED edge) becomes a Home row, and that row
- * carries the "Request again" link.
+ * carries the "Request again" link. U2: a FAILED refund gets the support line,
+ * a SUCCEEDED one does not.
  */
 
 import * as React from "react";
@@ -16,6 +17,7 @@ import {
   type ExpiredRequestRow,
 } from "@/lib/dashboard/lapsed-pay-links";
 import { LapsedPayLinkRow } from "@/app/dashboard/consultee/[consulteeId]/(features)/home/LapsedPayLinkRow";
+import { FailedRefundNote } from "@/app/dashboard/consultee/[consulteeId]/(features)/payments/FailedRefundNote";
 
 const NOW = new Date("2026-09-20T12:00:00Z");
 const expiredRow = (
@@ -52,5 +54,28 @@ describe("U1 — lapsed pay-link row", () => {
     );
     expect(html).toContain('href="/explore/experts/cp-1"');
     expect(html).toContain("Request again");
+  });
+});
+
+describe("U2 — failed refund line", () => {
+  const props = {
+    amountText: "₹1,200.00",
+    supportHref: "/dashboard/x/support",
+  };
+
+  it("FAILED renders the line and the support link", () => {
+    const html = renderToStaticMarkup(
+      <FailedRefundNote status="FAILED" {...props} />,
+    );
+    expect(html).toContain("We couldn&#x27;t return ₹1,200.00");
+    expect(html).toContain("3 working days");
+    expect(html).toContain('href="/dashboard/x/support"');
+    expect(html).toContain("Contact support");
+  });
+
+  it("SUCCEEDED renders nothing", () => {
+    expect(
+      renderToStaticMarkup(<FailedRefundNote status="SUCCEEDED" {...props} />),
+    ).toBe("");
   });
 });
