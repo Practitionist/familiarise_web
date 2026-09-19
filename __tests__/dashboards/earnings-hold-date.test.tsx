@@ -39,7 +39,8 @@ const response = {
       consultantSharePaise: 1000,
       platformFeePaise: 200,
       status: "PENDING",
-      holdUntil: "2026-09-26T12:00:00.000Z",
+      // A future hold (the panel hides one that has already matured).
+      holdUntil: new Date(Date.now() + 7 * 86_400_000).toISOString(),
       createdAt: "2026-09-19T12:00:00.000Z",
       role: "OWNER",
       shareBps: 10000,
@@ -94,5 +95,5 @@ it("renders the hold date on a PENDING row", async () => {
     });
   }
 
-  expect(container.textContent).toContain("available on 26 Sep 2026");
+  expect(container.textContent).toMatch(/available on \d{1,2} \w{3} \d{4}/);
 });

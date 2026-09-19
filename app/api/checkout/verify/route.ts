@@ -60,9 +60,14 @@ async function deriveBookingState(
     where: { paymentId: payment.id, status: { in: ["PENDING", "SUCCEEDED"] } },
     select: { status: true, amountPaise: true },
   });
-  if (refunds.some((r) => r.status === "PENDING")) return "REFUND_PENDING";
-  const returned = refunds.reduce((sum, r) => sum + r.amountPaise, 0);
-  if (refunds.length > 0 && returned >= payment.amount) return "REFUNDED";
+  // Only a refund that covers the whole charge means the booking is gone; a
+  // partial one (a shaved seat, a reschedule delta) leaves it standing.
+  const covered = refunds.reduce((sum, r) => sum + r.amountPaise, 0);
+  if (refunds.length > 0 && covered >= payment.amount) {
+    return refunds.some((r) => r.status === "PENDING")
+      ? "REFUND_PENDING"
+      : "REFUNDED";
+  }
   const appointment = payment.appointment;
   if (!appointment) return null;
   const request = appointment.consultation ?? appointment.subscription;
