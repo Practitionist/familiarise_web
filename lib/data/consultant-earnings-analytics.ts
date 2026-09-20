@@ -14,6 +14,7 @@ import {
 } from "@/lib/payments/payouts/payout-service";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
 import {
+  payoutNet,
   sanitizePayoutFailure,
   sumEarningBuckets,
   type BucketSums,
@@ -162,9 +163,13 @@ async function getConsultantBucketTotals(
       },
       _sum: { consultantSharePaise: true, refundedShareAmount: true },
     }),
-    prisma.consultantPayout.aggregate({
+    // Not `_sum: { netAmount }`: a payout completed after a failed attempt can
+    // carry netAmount null (payout-service nulls it on failure/reversal), and
+    // the row shows amount − tdsDeducted for it, so the tile must too. Payout
+    // counts are small (one batch a week at most), so the rows are reduced here.
+    prisma.consultantPayout.findMany({
       where: { consultantProfileId, status: "COMPLETED" },
-      _sum: { netAmount: true },
+      select: { amount: true, tdsDeducted: true, netAmount: true },
     }),
   ]);
   const sums = sumEarningBuckets(
@@ -176,7 +181,17 @@ async function getConsultantBucketTotals(
     })),
     [],
   );
-  return { ...sums, paidOut: sumPaise(paid._sum.netAmount) };
+  const paidOut = paid.reduce(
+    (acc, p) =>
+      acc +
+      payoutNet({
+        amount: sumPaise(p.amount),
+        tdsDeducted: sumPaise(p.tdsDeducted),
+        netAmount: p.netAmount === null ? null : sumPaise(p.netAmount),
+      }),
+    0,
+  );
+  return { ...sums, paidOut };
 }
 
 /**

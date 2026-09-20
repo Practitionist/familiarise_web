@@ -189,6 +189,21 @@ describe("nextPayoutCopy and the tile sums", () => {
       net: 99_900,
     });
   });
+
+  it("a zero row and a zero payout add nothing; a row refunded to its share nets to zero", () => {
+    expect(
+      sumEarningBuckets(
+        [earning("READY", { consultantSharePaise: 0 })],
+        [payout("COMPLETED", { amount: 0, tdsDeducted: 0, netAmount: 0 })],
+      ),
+    ).toEqual({ available: 0, pending: 0, paidOut: 0 });
+    // refundEarnings caps the reversal at the share (earnings-service.ts), so
+    // the floor a row can reach is exactly zero.
+    expect(
+      sumEarningBuckets([earning("READY", { refundedShareAmount: 80_000 })], [])
+        .available,
+    ).toBe(0);
+  });
 });
 
 describe("the consultant payout read never names gateway internals", () => {

@@ -24,6 +24,16 @@ export const BUCKET_LABEL: Record<EarningBucket, string> = {
   REFUNDED: "Refunded",
 };
 
+/**
+ * The segmented list's words. The third segment lists EVERY payout with its
+ * state (Queued / On its way / Paid / Failed / Returned), so it is "Payouts";
+ * the tile keeps "Paid out" for its COMPLETED-only sum (QA #1774 case 3).
+ */
+export const SEGMENT_LABEL: Record<EarningBucket, string> = {
+  ...BUCKET_LABEL,
+  PAID_OUT: "Payouts",
+};
+
 export interface EarningRowInput {
   status: EarningStatus;
   holdUntil: Date | string | null;
@@ -289,13 +299,22 @@ export function nextPayoutCopy(now: Date, livePayoutsEnabled: boolean): string {
   return `Paid every Monday · next: ${formatInTimeZone(nextPayoutBatchAt(now), "UTC", "EEE d MMM")}`;
 }
 
+/**
+ * What a payout row is worth to the bank. `netAmount` is nulled on the
+ * failure/reversal paths (payout-service.ts) and a later COMPLETED can leave
+ * it null, so the fallback is the same arithmetic the row and the tile use.
+ */
+export const payoutNet = (
+  p: Pick<PayoutRowInput, "amount" | "tdsDeducted" | "netAmount">,
+): number => p.netAmount ?? p.amount - p.tdsDeducted;
+
 /** Share → TDS at the stamped rate (s.194-O) → net, for the walk sheet. */
 export function moneyWalk(p: PayoutRowInput): MoneyWalk {
   return {
     share: p.amount,
     tds: p.tdsDeducted,
     tdsRateBps: p.tdsRateAppliedBps ?? 0,
-    net: p.netAmount ?? p.amount - p.tdsDeducted,
+    net: payoutNet(p),
   };
 }
 

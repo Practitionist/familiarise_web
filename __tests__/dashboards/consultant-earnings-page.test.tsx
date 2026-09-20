@@ -136,7 +136,7 @@ it("sums the three tiles, shows the hold date and the sponsor, and never a raw e
   expect(html).not.toMatch(/\b(READY|BATCHED|PENDING_TRUST|PROCESSING|HELD)\b/);
 });
 
-it("the Pending and Paid-out segments carry the hold date, the sponsor and the walk", () => {
+it("the Pending and Payouts segments carry the hold date, the sponsor and the walk", () => {
   const pending = render(
     <EarningsBuckets
       consultantId="c_1"
@@ -157,6 +157,13 @@ it("the Pending and Paid-out segments carry the hold date, the sponsor and the w
     />,
   );
   expect(paid).toContain("Paid 15 Sep · UTR UTR9");
+  // The segment lists every payout with its state, so it is "Payouts"; the
+  // tile keeps "Paid out" for its COMPLETED-only sum (QA #1774 case 3).
+  expect(paid).toContain(">Payouts<span");
+  expect(paid).toContain("Every payout and where it is");
+  expect(paid).toContain("Paid out");
+  expect(paid).not.toContain('role="tab"');
+  expect(paid).toContain('aria-pressed="true"');
 
   const walk = render(<PayoutWalkBody payout={data.payouts[0]} />);
   expect(walk).toContain("₹799.20");

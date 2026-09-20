@@ -22,7 +22,7 @@ import {
 export function EarningsSummaryPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
-  const { data: session } = useSession();
+  const { data: session, isPending: isSessionPending } = useSession();
   // The route is session-scoped while the server seed is keyed by the URL's
   // consultantId (see AnalyticsPageClient): a privileged viewer's refetch would
   // fetch THEIR earnings under this consultant's key, so refetching is gated.
@@ -48,6 +48,10 @@ export function EarningsSummaryPanel({
     });
 
   if (isLoading && !data) return <EarningsSkeleton />;
+  // The query is disabled until the session names the owner, so `isLoading`
+  // is false while the session is pending; without this the panel is blank
+  // whenever the server seed failed.
+  if (isSessionPending && !data) return <EarningsSkeleton />;
 
   if (error && !data) {
     return (
@@ -71,7 +75,17 @@ export function EarningsSummaryPanel({
       />
     );
   }
-  if (!data) return null;
+  // Seed failed and the viewer is not the owner (ADMIN/STAFF inspecting), so
+  // no client refetch will ever fill this in; say so instead of a blank panel.
+  if (!data) {
+    return (
+      <EmptyState
+        icon={AlertTriangle}
+        title="Couldn't load these earnings"
+        description="Refresh the page to try again."
+      />
+    );
+  }
 
   return (
     <EarningsBuckets

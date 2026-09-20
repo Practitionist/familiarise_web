@@ -31,6 +31,7 @@ import {
   BUCKET_LABEL,
   EARNINGS_FETCH_CAP,
   PAYOUT_ZONE,
+  SEGMENT_LABEL,
   deriveEarningPresentation,
   derivePayoutPresentation,
   nextPayoutCopy,
@@ -45,10 +46,11 @@ import { PayoutWalkSheet } from "./PayoutWalkSheet";
 
 /**
  * #1675 / #1527 W2 PR-Y — the Earnings summary: three tiles (Available ·
- * Pending · Paid out) and ONE segmented list, every word from
- * `lib/dashboard/earnings-state.ts`. An earning row walks the money (price →
- * platform fee → your share) and names the sponsor when an organisation paid;
- * a Paid-out row is a payout with its share → TDS → net walk in a sheet.
+ * Pending · Paid out) and ONE segmented list (Available · Pending · Payouts),
+ * every word from `lib/dashboard/earnings-state.ts`. An earning row walks the
+ * money (price → platform fee → your share) and names the sponsor when an
+ * organisation paid; a Payouts row is a payout with its share → TDS → net walk
+ * in a sheet.
  */
 
 /** Dates arrive as strings over JSON and as Dates from the RSC seed. */
@@ -107,19 +109,23 @@ export function EarningsSkeleton() {
 export function EarningsBuckets({
   consultantId,
   data,
-  now = new Date(),
+  now: nowProp,
   isStale = false,
   initialSegment = "AVAILABLE",
 }: Readonly<{
   consultantId: string;
   data: EarningsResponse;
-  /** Injected by the pin; the page passes the clock. */
+  /** Injected by the pin; otherwise the clock is read once per mount. */
   now?: Date;
   isStale?: boolean;
   initialSegment?: Segment;
 }>) {
   const [segment, setSegment] = useState<Segment>(initialSegment);
   const [page, setPage] = useState(0);
+  // One instant per mount: a fresh `new Date()` per render would invalidate
+  // the memos below on every render and let a row flip its hold line mid-view.
+  const [mountedAt] = useState(() => new Date());
+  const now = nowProp ?? mountedAt;
   // Default to FALSE: a missing flag reads "disbursement may not be live",
   // never "your money is on its way" (#776 §B).
   const live = data.livePayoutsEnabled ?? false;
@@ -171,7 +177,7 @@ export function EarningsBuckets({
     segmentBody = (
       <EmptyState
         icon={Wallet}
-        title={`Nothing ${BUCKET_LABEL[segment].toLowerCase()} right now`}
+        title={`Nothing ${SEGMENT_LABEL[segment].toLowerCase()} right now`}
         description={
           segment === "AVAILABLE"
             ? "Earnings move here once their hold clears."
@@ -251,8 +257,9 @@ export function EarningsBuckets({
         />
       </DashboardGrid>
 
+      {/* A filter over one list, not tab panels: pressed buttons, not tabs. */}
       <div
-        role="tablist"
+        role="group"
         aria-label="Earnings"
         className="mt-6 inline-flex rounded-lg bg-muted p-1"
       >
@@ -260,8 +267,7 @@ export function EarningsBuckets({
           <button
             key={s}
             type="button"
-            role="tab"
-            aria-selected={segment === s}
+            aria-pressed={segment === s}
             onClick={() => select(s)}
             className={cn(
               "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
@@ -270,13 +276,18 @@ export function EarningsBuckets({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            {BUCKET_LABEL[s]}
+            {SEGMENT_LABEL[s]}
             <span className="ml-1.5 text-xs text-muted-foreground">
               {counts[s]}
             </span>
           </button>
         ))}
       </div>
+      {segment === "PAID_OUT" && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          Every payout and where it is
+        </p>
+      )}
 
       <div
         className={cn(
