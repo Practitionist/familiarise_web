@@ -118,11 +118,13 @@ async function findPayments(userId: string, consulteeId: string, scope: Scope) {
   return prisma.payment.findMany({
     // The org-scope filter (#674) and the ownership bind: rows of the user who
     // owns this profile. A CHARGE_MEMBER co-pay rides on its parent's line
-    // (#775), so side-charges are not listed twice.
+    // (#775), so side-charges are not listed twice; a soft-deleted row is a
+    // removed row (#781 §B), as the seat-payments read already treats it.
     where: {
       userId,
       user: { consulteeProfileId: consulteeId },
       parentPaymentId: null,
+      deletedAt: null,
       ...scopeToWhereOrgId(scope),
     },
     select: {
