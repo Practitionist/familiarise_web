@@ -8,6 +8,7 @@ import {
   Home,
   MessageSquare,
   CalendarCheck,
+  CalendarClock,
   CalendarRange,
   Inbox,
   Users,
@@ -79,6 +80,9 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
     label: "Services",
     items: [
       { name: "Event Planner", icon: CalendarRange, path: "planner" },
+      // #1785 — Availability is a daily work surface, not a preference, so it
+      // left Settings for the sidebar (where Calendly and Cal.com keep it too).
+      { name: "Availability", icon: CalendarClock, path: "availability" },
       { name: "Requests", icon: Inbox, path: "requests" },
       { name: "Collaborations", icon: Users, path: "collaborations" },
     ],
@@ -119,7 +123,8 @@ const NAV_GROUPS: CollapsibleSidebarGroup[] = [
   },
 ];
 
-// Mobile bottom-tab configuration — 5 most-accessed consultant pages.
+// Mobile bottom-tab configuration — 5 most-accessed consultant pages. Five is
+// the cap; Availability stays reachable from the sidebar drawer (#1785).
 const MOBILE_TABS: { label: string; path: string; Icon: LucideIcon }[] = [
   { label: "Home", path: "home", Icon: Home },
   { label: "Appointments", path: "appointments", Icon: CalendarCheck },
@@ -145,6 +150,7 @@ const PAGE_LABELS: Record<string, string> = {
   webinar: "Webinar",
   offerings: "Offerings",
   planner: "Event Planner",
+  availability: "Availability",
   requests: "Requests",
   // Task routes hanging off a record id. Without these the trail ends on the
   // raw lowercase segment ("timings").

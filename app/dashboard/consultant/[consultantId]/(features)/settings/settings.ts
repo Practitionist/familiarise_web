@@ -249,3 +249,17 @@ export const getMonthYearString = (date: Date) => {
     year: "numeric",
   });
 };
+
+/**
+ * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are
+ * gone (#1785). Availability left Settings for the sidebar; every other key
+ * stays a Settings destination. Unknown keys fall back to the hub itself.
+ */
+export function settingsTabRedirect(
+  basePath: string,
+  tab: string | null | undefined,
+): string | null {
+  if (!tab) return null;
+  if (tab === "availability") return `${basePath}/availability`;
+  return null;
+}
