@@ -45,6 +45,12 @@ jest.mock("../../lib/prisma", () => {
         created.push(data);
         return { id: `earn-${created.length}`, ...data };
       }),
+      // Tranche 0 is created alone (its id is the owner id); the rest land in
+      // one createMany.
+      createMany: jest.fn(async ({ data }: { data: EarningsCreate[] }) => {
+        created.push(...data);
+        return { count: data.length };
+      }),
     },
     appointment: {
       findUnique: jest.fn(async () => ({ subscription: subscriptionRow })),

@@ -203,6 +203,23 @@ describe("quoteBookingRefund — #1766 unused sessions against the plan", () => 
     expect(plan({ isConsultantInitiated: true }).refundPaise).toBe(8_000);
   });
 
+  it("a never-scheduled session takes the ladder's infinite-notice rung, not a hardcoded 100%", () => {
+    const strict = terms({
+      policyId: "policy-strict",
+      source: "ORG",
+      tiers: [
+        { hoursBefore: 72, refundPct: 80 },
+        { hoursBefore: 0, refundPct: 10 },
+      ],
+      consultantInitiatedPct: 90,
+    });
+    // Seven never scheduled at the 80% top rung, one in an hour at 10%.
+    expect(plan({ policy: strict }).refundPaise).toBe(5_600 + 100);
+    expect(
+      plan({ policy: strict, isConsultantInitiated: true }).refundPaise,
+    ).toBe(7_200);
+  });
+
   it("6 of 144 allocated, 3 delivered, 3 far out: 141 sessions come back, not half", () => {
     const quote = plan({
       grossPaise: 144_000,

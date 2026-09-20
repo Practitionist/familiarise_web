@@ -843,22 +843,29 @@ export async function createEarningsFromPayment({
                 },
                 ...tail,
               ];
-              for (const [k, row] of rows.entries()) {
-                const earnings = await tx.consultantEarnings.create({
-                  data: {
-                    consultantProfileId,
-                    paymentId: payment.id,
-                    grossAmount: row.gross,
-                    platformFeePaise: row.fee,
-                    consultantSharePaise: row.share,
-                    appointmentOccurrenceId: anchor.appointmentOccurrenceId,
-                    cycleOrdinal: k,
-                    status: initialEarningStatus,
-                    holdUntil: null,
-                    currency: "INR",
-                  },
+              const trancheData = (
+                k: number,
+                row: { gross: number; fee: number; share: number },
+              ) => ({
+                consultantProfileId,
+                paymentId: payment.id,
+                grossAmount: row.gross,
+                platformFeePaise: row.fee,
+                consultantSharePaise: row.share,
+                appointmentOccurrenceId: anchor.appointmentOccurrenceId,
+                cycleOrdinal: k,
+                status: initialEarningStatus,
+                holdUntil: null,
+                currency: "INR" as const,
+              });
+              const first = await tx.consultantEarnings.create({
+                data: trancheData(0, rows[0]),
+              });
+              ownerId = first.id;
+              if (rows.length > 1) {
+                await tx.consultantEarnings.createMany({
+                  data: rows.slice(1).map((row, i) => trancheData(i + 1, row)),
                 });
-                if (k === 0) ownerId = earnings.id;
               }
             } else {
               // Single-owner payment (no collaborators or not a webinar/class)

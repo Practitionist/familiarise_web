@@ -252,19 +252,31 @@ function quoteUnusedSessions(
       ? (scheduled[0] - now) / 3_600_000
       : Number.POSITIVE_INFINITY;
 
-  // Sessions per tier, in basis points; the never-scheduled remainder sits in
-  // the 100% bucket with the scheduled sessions the ladder also clears.
+  // Sessions per tier, in basis points; the never-scheduled remainder has
+  // infinite notice, so it lands in whatever rung the ladder gives that.
   const perBps = new Map<number, number>();
-  const bump = (bps: number, n: number) =>
-    perBps.set(bps, (perBps.get(bps) ?? 0) + n);
-  if (neverScheduled > 0) bump(10_000, neverScheduled);
+  const bump = (pct: number, n: number) =>
+    perBps.set(
+      Math.round(pct * 100),
+      (perBps.get(Math.round(pct * 100)) ?? 0) + n,
+    );
+  if (neverScheduled > 0) {
+    bump(
+      computeRefundPct(
+        input.policy,
+        Number.POSITIVE_INFINITY,
+        input.isConsultantInitiated,
+      ),
+      neverScheduled,
+    );
+  }
   for (const startsAt of scheduled) {
     const pct = computeRefundPct(
       input.policy,
       (startsAt - now) / 3_600_000,
       input.isConsultantInitiated,
     );
-    bump(Math.round(pct * 100), 1);
+    bump(pct, 1);
   }
 
   const gross = BigInt(input.grossPaise);

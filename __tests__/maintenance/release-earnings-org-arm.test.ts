@@ -85,6 +85,13 @@ const mockedPrisma = prisma as unknown as {
 };
 
 describe("#1471 — release-earnings releases host-organization earnings", () => {
+  afterEach(() => {
+    // The consultant arm is a stubbed empty table except where a case
+    // installs its own; restore it whether or not that case passed.
+    mockedPrisma.consultantEarnings.findMany.mockResolvedValue([]);
+    mockedPrisma.consultantEarnings.updateMany.mockResolvedValue({ count: 0 });
+  });
+
   beforeEach(() => {
     releasedIds.length = 0;
     mockedPrisma.$transaction.mockImplementation(async (fn: unknown) =>
@@ -183,8 +190,6 @@ describe("#1471 — release-earnings releases host-organization earnings", () =>
 
     expect(result.releasedCount).toBe(1);
     expect(claimed).toEqual(["ce_stamped_past"]);
-    consultantMocks.findMany.mockResolvedValue([]);
-    consultantMocks.updateMany.mockResolvedValue({ count: 0 });
   });
 
   it("applies the ticker limit to the organization arm as its own budget", async () => {
