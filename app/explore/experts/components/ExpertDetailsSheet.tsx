@@ -48,6 +48,14 @@ export default function ExpertDetailsSheet({
   const profileHref = consultant ? `/explore/experts/${consultant.id}` : "#";
   const plans = consultant?.subscriptionPlans ?? [];
   const cheapest = plans.length > 0 ? [...plans].sort((a, b) => a.price - b.price)[0] : null;
+  // Cheapest 1:1 session — one headline line so the drawer answers "what does
+  // a single session cost" where the Book button lives. Full 1:1 catalog
+  // stays on the profile page.
+  const oneOnOne = consultant?.consultationPlans ?? [];
+  const cheapestOneOnOne =
+    oneOnOne.length > 0
+      ? [...oneOnOne].sort((a, b) => a.price - b.price)[0]
+      : null;
   // Cheapest trial across plans (mirrors ConsultantCard's trialOffer) — first
   // in array order is not the headline offer when plans are unsorted.
   const trialPlan =
@@ -376,6 +384,19 @@ export default function ExpertDetailsSheet({
                       : "Free intro call available"}
                   </p>
                 )}
+                <p className="mt-2 border-t border-border pt-2 text-sm text-muted-foreground">
+                  {cheapestOneOnOne ? (
+                    <>
+                      1:1 session from{" "}
+                      <span className="font-semibold text-foreground">
+                        {formatPrice(cheapestOneOnOne.price)}
+                      </span>{" "}
+                      / {cheapestOneOnOne.durationInHours}h
+                    </>
+                  ) : (
+                    "No 1:1 sessions listed — see profile for options."
+                  )}
+                </p>
               </div>
             </div>
 

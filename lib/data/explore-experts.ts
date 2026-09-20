@@ -48,6 +48,19 @@ export const consultantListInclude = {
   subDomains: { select: { id: true, name: true } },
   tags: { select: { id: true, name: true } },
   reviews: { where: { deletedAt: null }, select: { rating: true }, take: 10 },
+  // 1:1 consultation plans — cheapest-first headline for the drawer only.
+  // Mirrors subscriptionPlans (take 5, no visibility filter) so the listing
+  // treats both rails identically; the drawer renders one summary line.
+  consultationPlans: {
+    select: {
+      id: true,
+      title: true,
+      price: true,
+      priceCurrency: true,
+      durationInHours: true,
+    },
+    take: 5,
+  },
   subscriptionPlans: {
     select: {
       id: true,
@@ -156,6 +169,14 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
     subDomains: c.subDomains,
     tags: c.tags,
     reviews: c.reviews,
+    consultationPlans: c.consultationPlans.map((p) => ({
+      id: p.id,
+      title: p.title,
+      // BigInt (paise) → Number for serialization; fits Number.MAX_SAFE_INTEGER.
+      price: Number(p.price),
+      priceCurrency: p.priceCurrency,
+      durationInHours: p.durationInHours,
+    })),
     subscriptionPlans: c.subscriptionPlans.map((p) => ({
       id: p.id,
       title: p.title,
