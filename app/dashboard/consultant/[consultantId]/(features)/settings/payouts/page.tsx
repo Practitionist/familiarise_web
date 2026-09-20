@@ -8,7 +8,8 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
 import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 
-import { GetPaidClient, payoutSetupQueryKey } from "./GetPaidClient";
+import { GetPaidClient } from "./GetPaidClient";
+import { payoutSetupQueryKey } from "./payout-setup-keys";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;

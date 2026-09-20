@@ -35,6 +35,8 @@ jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
 }));
 
 import * as React from "react";
+import { readFileSync } from "fs";
+import path from "path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import prisma from "@/lib/prisma";
@@ -306,5 +308,25 @@ describe("Y2-3 Home needs-you row", () => {
       deriveConsultantActionItems({ ...base, livePayoutsEnabled: true })[0]
         .title,
     ).toBe("Add your bank account to get paid");
+  });
+});
+
+describe("Y2-2 the server page imports no client-module function", () => {
+  it("page.tsx takes only the default component from GetPaidClient.tsx and its key from a directive-free module", () => {
+    const dir = path.join(
+      process.cwd(),
+      "app/dashboard/consultant/[consultantId]/(features)/settings/payouts",
+    );
+    const page = readFileSync(path.join(dir, "page.tsx"), "utf8");
+    // FAMILIARISE_WEB-5Q: calling a `"use client"` export from the RSC 500s
+    // on every load. Only the component may cross that line.
+    const fromClient = page.match(
+      /import\s*\{([^}]*)\}\s*from\s*"\.\/GetPaidClient"/,
+    );
+    expect(fromClient?.[1].trim()).toBe("GetPaidClient");
+    expect(page).toContain('from "./payout-setup-keys"');
+    const keys = readFileSync(path.join(dir, "payout-setup-keys.ts"), "utf8");
+    expect(keys).not.toMatch(/^"use client"/m);
+    expect(keys).not.toMatch(/^import /m);
   });
 });

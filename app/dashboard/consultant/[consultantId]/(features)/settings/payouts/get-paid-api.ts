@@ -11,8 +11,7 @@ import type { ReversePennyDropOutcome } from "@/lib/payments/payouts/reverse-pen
 export type PayoutSetup = ConsultantPayoutSetup;
 export type PayoutAccountView = PayoutSetup["accounts"][number];
 
-export const payoutSetupQueryKey = (consultantId: string) =>
-  ["consultant-payout-setup", consultantId] as const;
+export { payoutSetupQueryKey } from "./payout-setup-keys";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 

@@ -25,8 +25,6 @@ import { PayoutAccountForm, ReverifyAccountButton } from "./PayoutAccountForm";
 import { ReversePennyDrop } from "./ReversePennyDrop";
 import { TaxInfoForm } from "./TaxInfoForm";
 
-export { payoutSetupQueryKey };
-
 /** The account card's four faces; the step list and the badge read the same word. */
 type AccountFace = "NONE" | "PENDING" | "VERIFIED" | "FAILED";
 
