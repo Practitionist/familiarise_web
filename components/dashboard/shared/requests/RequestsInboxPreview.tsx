@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import {
@@ -62,9 +63,17 @@ export function RequestsInboxPreview({
   };
   const query = useQuery({
     queryKey: inboxQueryKey(queryArgs),
-    queryFn: async (): Promise<RequestsInboxPayload> => {
+    queryFn: async ({ signal }): Promise<RequestsInboxPayload> => {
+      // A stalled cold instance must surface as an error with a Retry, not
+      // as skeletons that never leave (QA #1783 case 9).
       const response = await fetch(
         `/api/bookings/inbox?${inboxQueryString(queryArgs)}`,
+        {
+          signal:
+            typeof AbortSignal.any === "function"
+              ? AbortSignal.any([signal, AbortSignal.timeout(20_000)])
+              : signal,
+        },
       );
       const body = (await response.json().catch(() => ({}))) as {
         error?: string;
@@ -79,6 +88,7 @@ export function RequestsInboxPreview({
     },
     enabled: consultantId !== "",
     staleTime: 30_000,
+    retry: 1,
   });
 
   // A disabled query never leaves pending; nothing to show without an id.
@@ -95,9 +105,20 @@ export function RequestsInboxPreview({
   }
   if (query.isError) {
     return (
-      <p className="p-4 text-sm text-destructive">
-        {query.error instanceof Error ? query.error.message : "Could not load"}
-      </p>
+      <div className="space-y-2 p-4 text-sm">
+        <p className="text-destructive">
+          {query.error instanceof Error && query.error.name !== "TimeoutError"
+            ? query.error.message
+            : "Requests took too long to load."}
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void query.refetch()}
+        >
+          Retry
+        </Button>
+      </div>
     );
   }
   const rows = query.data.rows.slice(0, PREVIEW_ROWS);
