@@ -120,9 +120,7 @@ describe("POST programs — funding-aware overage default", () => {
     );
 
     const res = await programsPOST(
-      makeRequest(
-        seatBody({ maxOveragePerCyclePaise: 1_000_000 }),
-      ) as never,
+      makeRequest(seatBody({ maxOveragePerCyclePaise: 1_000_000 })) as never,
       { params: Promise.resolve({ orgId: "org-1" }) } as never,
     );
 
@@ -132,14 +130,41 @@ describe("POST programs — funding-aware overage default", () => {
     expect(data.licensedSeatConfig.create.overageBehavior).toBe("CHARGE_ORG");
   });
 
+  // #1744 — CHARGE_MEMBER is refused at configuration time on every rail
+  // until an earnings hold exists (owner decision 2026-09-20).
+  it("INVOICE + explicit CHARGE_MEMBER → 400 INVALID_OVERAGE_CONFIG", async () => {
+    mockedPrisma.contract.findUnique.mockResolvedValueOnce(
+      contractRow("INVOICE"),
+    );
+
+    const res = await programsPOST(
+      makeRequest(
+        seatBody({
+          overageBehavior: "CHARGE_MEMBER",
+          maxOveragePerCyclePaise: 1_000_000,
+        }),
+      ) as never,
+      { params: Promise.resolve({ orgId: "org-1" }) } as never,
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("INVALID_OVERAGE_CONFIG");
+    expect(body.error).toContain("not available yet");
+    expect(mockedPrisma.program.create).not.toHaveBeenCalled();
+  });
+
   it("INVOICE + omitted behaviour + no breaker → 400 OVERAGE_BREAKER_REQUIRED", async () => {
     mockedPrisma.contract.findUnique.mockResolvedValueOnce(
       contractRow("INVOICE"),
     );
 
-    const res = await programsPOST(makeRequest(seatBody()) as never, {
-      params: Promise.resolve({ orgId: "org-1" }),
-    } as never);
+    const res = await programsPOST(
+      makeRequest(seatBody()) as never,
+      {
+        params: Promise.resolve({ orgId: "org-1" }),
+      } as never,
+    );
 
     expect(res.status).toBe(400);
     const body = await res.json();
@@ -153,9 +178,7 @@ describe("POST programs — funding-aware overage default", () => {
     );
 
     const res = await programsPOST(
-      makeRequest(
-        seatBody({ coveredEngagementsPerCycle: null }),
-      ) as never,
+      makeRequest(seatBody({ coveredEngagementsPerCycle: null })) as never,
       { params: Promise.resolve({ orgId: "org-1" }) } as never,
     );
 

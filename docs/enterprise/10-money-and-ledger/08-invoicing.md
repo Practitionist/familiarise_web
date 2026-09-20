@@ -206,6 +206,8 @@ if (claim.count !== 1) throw { httpStatus: 409, code: "PO_BALANCE_EXCEEDED" };
 
 The predicate is the lock: two POSTs racing for the last ₹1 can't both win (`claim.count = 1` for exactly one). When `remainingAmountPaise` hits zero the PO goes `CLOSED`. **Restoration:** the PATCH route runs the inverse increment when an invoice goes `VOID`/`CANCELLED` with a PO attached (only restores what was decremented, gated by the transition allow-list). UI copy for `PO_BALANCE_EXCEEDED` lives in `lib/labels/org-errors.ts`. Regression coverage: `__tests__/enterprise/po-balance-enforcement.test.ts`.
 
+The three-way match applies to manually created invoices only. The monthly accrual rollup (`rollupOrgInvoiceAccruals`) and the subscription-invoice cron issue their invoices with `purchaseOrderId` null and draw nothing down, so an organisation whose members book on the INVOICE rail can have its purchase order balance untouched while accrual invoices accumulate against it. Extending the draw-down to auto-generated invoices is the open item under #1744; until it lands, an organisation that must invoice against a PO should raise those invoices by hand. Since #1744 the rollup does raise the same `invoice.issued` webhook and owner notice as a manual invoice, so integrators see both kinds.
+
 ---
 
 ## 7. Dunning — chasing an overdue invoice (#779 §A)

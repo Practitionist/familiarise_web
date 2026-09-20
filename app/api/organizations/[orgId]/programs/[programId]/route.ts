@@ -17,6 +17,7 @@ import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
 import { overageBehaviorUnsupportedReason } from "@/lib/enterprise/reachable-paths";
+import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
 const ProgramStatusSchema = z.enum([
@@ -316,6 +317,8 @@ async function applyProgramPatch(
         data: { status: "CANCELLED", periodEnd: new Date() },
       });
       assignmentsCancelled = cascaded.count;
+      // #1744 row 3 — each cancelled assignment gives its billed seat back.
+      await releaseSeatsForClosedAssignments(tx, programId, cascaded.count);
     }
 
     await tx.orgAuditLog.create({

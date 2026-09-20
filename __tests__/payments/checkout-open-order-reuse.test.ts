@@ -177,6 +177,7 @@ import {
 import {
   handleCheckout,
   readInvoiceExposurePaise,
+  assertWithinInvoiceCreditLimit,
 } from "../../lib/payments/operations/checkout";
 
 // ---------------------------------------------------------------------------
@@ -476,6 +477,22 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
 
     // Only the un-reversed overage accrual and the unpaid invoice remain.
     expect(exposure).toBe(35_000);
+  });
+
+  // #1744 row 4 — the booking itself counts, and the copy is in rupees.
+  it("₹49,999 outstanding + a ₹10 booking is refused against a ₹50,000 limit", () => {
+    expect(() =>
+      assertWithinInvoiceCreditLimit(49_999_00, 10_00, 50_000_00),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ORG_CREDIT_LIMIT_REACHED",
+        httpStatus: 402,
+        message: expect.stringContaining("₹50,000"),
+      }),
+    );
+    expect(() =>
+      assertWithinInvoiceCreditLimit(49_990_00, 10_00, 50_000_00),
+    ).not.toThrow();
   });
 });
 

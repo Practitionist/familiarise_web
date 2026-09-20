@@ -903,9 +903,8 @@ function CreateProgramDialog({
                 <SelectItem value="BLOCK">
                   Block — reject booking once the cap is hit
                 </SelectItem>
-                <SelectItem value="CHARGE_MEMBER">
-                  Charge member — learner pays the overage on their own card
-                </SelectItem>
+                {/* #1744 — CHARGE_MEMBER is refused by the server until an
+                    earnings hold exists; a new programme never offers it. */}
                 <SelectItem value="CHARGE_ORG">
                   Charge org — added to the next invoice
                 </SelectItem>
@@ -1348,9 +1347,14 @@ function EditProgramDialog({
                   <SelectItem value="BLOCK">
                     Block — reject booking once the cap is hit
                   </SelectItem>
-                  <SelectItem value="CHARGE_MEMBER">
-                    Charge member — learner pays the overage on their own card
-                  </SelectItem>
+                  {/* #1744 — shown only while the saved value is still
+                      CHARGE_MEMBER, so the operator can see it and switch away. */}
+                  {overageBehavior === "CHARGE_MEMBER" && (
+                    <SelectItem value="CHARGE_MEMBER" disabled>
+                      Charge member — no longer offered; switch to Block or
+                      Charge org
+                    </SelectItem>
+                  )}
                   <SelectItem value="CHARGE_ORG">
                     Charge org — added to the next invoice
                   </SelectItem>

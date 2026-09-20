@@ -98,16 +98,28 @@ export function isReachableOrgFundingPath(
  * refinement) and the patch route (an inline `fail()`) can raise it in their own
  * shape without either of them owning the rule.
  */
+/**
+ * #1744 (owner decision 2026-09-20) — CHARGE_MEMBER is refused on EVERY rail
+ * until an earnings hold exists. The member's side-charge is collected after
+ * the session (or never: the 14-day timeout only flips `chargeStatus`), while
+ * the consultant's earnings are computed on the full price and the org is
+ * invoiced only the covered part — an unsecured write-off of `basePaise`.
+ * Existing PENDING member overages keep settling; only new configuration is
+ * refused. Exported so the refusal copy and the audit share one sentence.
+ */
+export const CHARGE_MEMBER_NEEDS_EARNINGS_HOLD =
+  "Charging members for bookings past the programme cap is not available yet: the member pays after the session, so the consultant would be paid for money that may never arrive. " +
+  "Choose CHARGE_ORG to bill the organisation for the over-cap portion, or BLOCK to stop over-cap bookings.";
+
 export function overageBehaviorUnsupportedReason(
   fundingSource: FundingSource | null,
   overageBehavior: OverageBehavior,
   overageSurchargeBps?: number | null,
 ): string | null {
-  if (fundingSource === "WALLET" && overageBehavior === "CHARGE_MEMBER") {
-    return (
-      "A wallet-funded organisation cannot charge members for bookings past the programme cap, because the wallet debit has already collected the whole booking price and the member credit-back is not implemented (#715). " +
-      "Choose CHARGE_ORG, which is collected by that same wallet debit, or BLOCK to stop over-cap bookings."
-    );
+  // #1744 — first, so the rail-specific WALLET/LICENSE reasons below never
+  // describe a behaviour that is refused everywhere.
+  if (overageBehavior === "CHARGE_MEMBER") {
+    return CHARGE_MEMBER_NEEDS_EARNINGS_HOLD;
   }
   // #1458 — CHARGE_ORG on the wallet rail is collectable only while the marginal
   // is a slice of the price the wallet already debited. A surcharge is a markup

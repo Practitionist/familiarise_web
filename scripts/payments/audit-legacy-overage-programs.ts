@@ -8,17 +8,24 @@
  *     markup on top of the debited price)
  *   - LICENSE + anything but BLOCK (a flat fee moves no money per booking)
  *
+ * #1744 added a fourth: CHARGE_MEMBER on ANY rail, until an earnings hold
+ * exists (the member pays after the session; the consultant is paid on the
+ * full price). Existing PENDING member overages keep settling.
+ *
  * Programmes created before those guards fail closed at *checkout* with
  * 409 `OVERAGE_CHARGE_MEMBER_UNSUPPORTED` / `OVERAGE_UNSUPPORTED_FUNDING` —
- * after the member has already picked a slot. This read-only audit lists
- * every live programme tripping the rule so ops can migrate (re-fund or
- * re-behave) instead of serving members a permanent 409.
+ * after the member has already picked a slot. This audit lists every live
+ * programme tripping the rule so ops can migrate (re-fund or re-behave)
+ * instead of serving members a permanent 409, and records one WARN
+ * SystemEvent per programme so the finding survives the terminal (#1744).
+ * The org's own action centre shows the same programmes to its owners.
  *
  * Run: `npx tsx scripts/payments/audit-legacy-overage-programs.ts`
  */
 
 import prisma from "@/lib/prisma";
 import { overageBehaviorUnsupportedReason } from "@/lib/enterprise/reachable-paths";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 
 export interface LegacyOverageProgram {
   programId: string;
@@ -38,10 +45,14 @@ export interface LegacyOverageAuditResult {
 }
 
 /**
- * Read-only: scans live programmes and returns the ones whose overage
- * configuration is refused by `overageBehaviorUnsupportedReason`.
+ * Scans live programmes and returns the ones whose overage configuration is
+ * refused by `overageBehaviorUnsupportedReason`. With `record` it also writes
+ * one WARN SystemEvent per refused programme (category OVERAGE); the scan
+ * itself never writes.
  */
-export async function auditLegacyOveragePrograms(): Promise<LegacyOverageAuditResult> {
+export async function auditLegacyOveragePrograms(
+  opts: { record?: boolean } = {},
+): Promise<LegacyOverageAuditResult> {
   const programs = await prisma.program.findMany({
     where: { status: "ACTIVE", archivedAt: null },
     select: {
@@ -94,6 +105,18 @@ export async function auditLegacyOveragePrograms(): Promise<LegacyOverageAuditRe
     }
   }
 
+  if (opts.record) {
+    for (const row of refused) {
+      await recordSystemEvent({
+        organizationId: row.organizationId,
+        category: "OVERAGE",
+        severity: "WARN",
+        message: `Programme ${row.programName} (${row.programId}) is configured ${row.overageBehavior} on the ${row.fundingSource ?? "unknown"} rail, which is refused at configuration time — switch it to BLOCK or CHARGE_ORG`,
+        context: row as unknown as Record<string, unknown>,
+      });
+    }
+  }
+
   return { checked: programs.length, refused };
 }
 
@@ -101,7 +124,7 @@ export async function auditLegacyOveragePrograms(): Promise<LegacyOverageAuditRe
 // exiting (and assigns exitCode instead of calling process.exit) so buffered
 // stdout flushes and the Prisma pool closes cleanly.
 if (import.meta.url === `file://${process.argv[1]}`) {
-  auditLegacyOveragePrograms()
+  auditLegacyOveragePrograms({ record: true })
     .then(async (result) => {
       console.log(
         `Checked ${result.checked} live programme(s): ${result.refused.length} refused configuration(s).`,

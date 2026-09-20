@@ -221,8 +221,22 @@ the behaviour each one triggers.
 | Value           | Behaviour                                                                 |
 |-----------------|---------------------------------------------------------------------------|
 | `BLOCK`         | Checkout returns 402. `ProgramAssignmentLimitError` in `lib/api/organizations/program-helpers.ts`. |
-| `CHARGE_MEMBER` | Learner pays the overage on their own card. Recorded as `wasOverage=true` on the `BookingUtilization`. |
+| `CHARGE_MEMBER` | Refused at configuration time on every funding rail (#1744, owner decision 2026-09-20); see the paragraph below the table. Programmes saved before the guard still settle their existing PENDING member charges. |
 | `CHARGE_ORG`    | Overage is rolled into the next `OrganizationInvoice` cycle via a distinct `PaymentLeg.source = OVERAGE_INVOICE_ACCRUAL` leg (kept separate from the base `INVOICE_ACCRUAL` so the `@@unique([paymentId, source])` doesn't collide). |
+
+`CHARGE_MEMBER` is refused because it is an unsecured write-off. The member's
+side-charge is collected only when the member opens the pay surface, and the
+fourteen-day timeout merely flips the event's `chargeStatus` to `FAILED`, while
+the consultant's earnings are computed on the full booking price and the
+organisation is invoiced only the covered part. Until an earnings hold exists
+that parks the consultant's share of `basePaise` until the side-charge is
+`CHARGED`, `overageBehaviorUnsupportedReason` in `lib/enterprise/reachable-paths.ts`
+returns `CHARGE_MEMBER_NEEDS_EARNINGS_HOLD` for the value on any rail, the
+create and patch routes answer 400 `INVALID_OVERAGE_CONFIG`, the programmes
+page no longer offers the option for a new programme, and a programme saved
+before the guard is listed in the organisation's action centre and by
+`scripts/payments/audit-legacy-overage-programs.ts`, which records one
+`SystemEvent` per such programme.
 
 Each overage materialises an `OverageEvent` row carrying
 `basePaise` / `surchargePaise` / `marginalPaise` (marginal = base +
