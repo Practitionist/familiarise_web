@@ -9,11 +9,16 @@
  * profile, so a custom-availability week folds to its own shape.
  */
 
+/** Unset (absent) for the plain "Unavailable" band; "outsidePeriod" for a
+ * band whose only live cells are outside the booking's scheduling period
+ * (#1764/#1766). */
+export type RowBandVariant = "outsidePeriod";
+
 export type RowSegment =
   /** Rows `from` to `to` (exclusive) render as normal grid rows. */
   | { kind: "rows"; from: number; to: number }
   /** Rows `from` to `to` (exclusive) fold into one strip. */
-  | { kind: "band"; from: number; to: number };
+  | { kind: "band"; from: number; to: number; variant?: RowBandVariant };
 
 export interface FoldedRows {
   segments: RowSegment[];
@@ -22,27 +27,46 @@ export interface FoldedRows {
 }
 
 /**
- * `live[i]` is true when row `i` has at least one live cell across the week.
- * A week with no live rows folds nothing — hiding every row would leave the
- * consultant a blank grid with no way to see where the day even is.
+ * `live[i]` is true when row `i` has at least one live cell across the week
+ * that is NOT merely "outside the scheduling period" — an in-period
+ * available/booked/this-event cell. `outsidePeriod[i]`, if given, is true
+ * when a dead row's only live cells are outside-period ones, so it bands
+ * separately from a genuinely unpublished row (#1764/#1766). A week with no
+ * live rows folds nothing — hiding every row would leave the consultant a
+ * blank grid with no way to see where the day even is.
  */
-export function foldDeadHourBands(live: readonly boolean[]): FoldedRows {
-  if (!live.some(Boolean)) {
+export function foldDeadHourBands(
+  live: readonly boolean[],
+  outsidePeriod?: readonly boolean[],
+): FoldedRows {
+  if (!live.some(Boolean) && !outsidePeriod?.some(Boolean)) {
     return {
       segments: [{ kind: "rows", from: 0, to: live.length }],
       allDead: true,
     };
   }
 
+  const variantAt = (row: number): RowBandVariant | undefined =>
+    outsidePeriod?.[row] ? "outsidePeriod" : undefined;
+
   const segments: RowSegment[] = [];
   let index = 0;
   while (index < live.length) {
     const kind = live[index] ? "rows" : "band";
+    const variant = kind === "band" ? variantAt(index) : undefined;
     const from = index;
-    while (index < live.length && (live[index] ? "rows" : "band") === kind) {
+    while (
+      index < live.length &&
+      (live[index] ? "rows" : "band") === kind &&
+      (kind !== "band" || variantAt(index) === variant)
+    ) {
       index += 1;
     }
-    segments.push({ kind, from, to: index });
+    segments.push(
+      kind === "band"
+        ? { kind, from, to: index, variant }
+        : { kind, from, to: index },
+    );
   }
   return { segments, allDead: false };
 }

@@ -30,6 +30,7 @@ import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 
 interface PendingPayment {
@@ -76,6 +77,45 @@ export async function fetchPendingPayments(
     pendingPayments: data.pendingPayments || [],
     lapsedPayLinks: data.lapsedPayLinks || [],
   };
+}
+
+/**
+ * #1675 — the row's words come from the one derivation the detail page uses:
+ * an approved, unpaid request is AWAITING_PAYMENT and its action is "Pay ₹X".
+ */
+function rowPresentation(payment: PendingPayment) {
+  return deriveBookingPresentation(
+    {
+      appointmentType: payment.type.toUpperCase(),
+      request: {
+        status: "APPROVED_PENDING_PAYMENT",
+        kind: payment.type.toUpperCase(),
+        requestedAt: payment.approvedAt,
+      },
+      occurrences: [],
+      payments: [
+        {
+          id: payment.id,
+          paymentStatus: "PENDING",
+          paymentMethod: "CARD",
+          paymentGateway: "RAZORPAY",
+          receiptUrl: null,
+          consumerInvoice: null,
+          amount: payment.amount,
+          currency: payment.currency || "INR",
+          createdAt: payment.approvedAt,
+          expiresAt: payment.expiresAt,
+        },
+      ],
+      refunds: [],
+      disputes: [],
+      childPayments: [],
+      sponsorOrgName: null,
+      holdExpiresAt: payment.expiresAt,
+      names: { payer: "you", consultant: payment.consultantName },
+    },
+    "CONSULTEE",
+  );
 }
 
 type PendingCancelTarget =
@@ -320,6 +360,17 @@ export function PendingPaymentsWidget({
       <div className="divide-y divide-amber-100 flex-1">
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
+          const { bookingState, nextAction } = rowPresentation(payment);
+          // #1763 — `nextAction.label` runs its own `money()` helper, so an
+          // INR row diverged from the row's own `formatPrice` amount above.
+          const isNonInr =
+            payment.currency && payment.currency.toUpperCase() !== "INR";
+          const payLabel =
+            nextAction.kind !== "PAY"
+              ? "Pay now"
+              : isNonInr
+                ? nextAction.label
+                : formatPrice(payment.amount);
 
           return (
             <div key={payment.id} className="px-5 py-3.5">
@@ -361,7 +412,7 @@ export function PendingPaymentsWidget({
                     </span>
                   ) : (
                     <span>
-                      Approved{" "}
+                      {bookingState.label} · approved{" "}
                       {formatDistanceToNow(new Date(payment.approvedAt), {
                         addSuffix: true,
                       })}
@@ -436,7 +487,7 @@ export function PendingPaymentsWidget({
                         className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
                       >
                         <Link href={`/checkout/plans/trial/${payment.id}`}>
-                          Pay Now
+                          {payLabel}
                         </Link>
                       </Button>
                     ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
@@ -450,7 +501,7 @@ export function PendingPaymentsWidget({
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Pay Now
+                          {payLabel}
                           <ExternalLink className="ml-1 h-3 w-3" />
                         </a>
                       </Button>
@@ -460,7 +511,7 @@ export function PendingPaymentsWidget({
                         disabled
                         className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
                       >
-                        Pay Now
+                        {payLabel}
                         <ExternalLink className="ml-1 h-3 w-3" />
                       </Button>
                     )}

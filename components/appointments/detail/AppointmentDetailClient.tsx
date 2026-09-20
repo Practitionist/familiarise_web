@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarX,
@@ -26,7 +26,15 @@ import { throwSupportError } from "@/lib/support/error-copy";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
-import { eventUnionStatusBadge } from "@/lib/appointments/status";
+import {
+  presentationNames,
+  toPresentationInput,
+} from "@/lib/appointments/presentation-input";
+import {
+  deriveBookingPresentation,
+  toneBadge,
+  type BookingStateKind,
+} from "@/lib/dashboard/money-state";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
 import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
@@ -36,9 +44,10 @@ import {
   recordingStatusBadge,
   resolveSponsoringOrgName,
 } from "@/lib/labels/session-labels";
+import { AppointmentsType } from "@prisma/client";
 import { useSession } from "@/lib/auth-client";
-import { useHoldCountdown } from "@/hooks/useHoldCountdown";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   isGroupKind,
   isSingleSessionKind,
@@ -60,6 +69,8 @@ import {
   isDeadOccurrence,
   isOccurrenceOver,
 } from "@/lib/appointments/occurrences";
+import { NeedsYouCallout } from "./NeedsYouCallout";
+import { TimelineStrip } from "./TimelineStrip";
 import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
@@ -72,34 +83,14 @@ import { useSessionFeedback } from "@/hooks/useSessionFeedback";
 
 const PARTICIPANTS_PREVIEW = 5;
 
-/**
- * #1428 — the single answer to "what may the payer do about this tentative
- * hold right now", so the timeline row and the payment card cannot drift.
- *
- * Past `Payment.expiresAt` the hold is already DEAD for availability
- * (`buildDeadHoldFilter`, utils/scheduling-engine/occupancyPolicy.ts counts a
- * PENDING payment with a lapsed window as free), so another buyer can take
- * the slot before any sweep runs. Checkout also refuses to resume a stale
- * order (`findReusablePendingOrderPayment` matches only `expiresAt > now`)
- * and mints a fresh one instead. Paying the old link would therefore capture
- * onto a released slot and land in the #1439 terminal-race refund — so the
- * lapsed state offers a new checkout, not the dead "Pay now".
- */
-type TentativeHoldCta = "PAY" | "REBOOK" | "NONE";
-
-function tentativeHoldCta(args: {
-  isConsultee: boolean;
-  holdDeadline: Date | null;
-  holdExpired: boolean;
-  pendingPaymentUrl: string | null;
-}): TentativeHoldCta {
-  // The consultant sees held slots read-only; only the payer gets an action.
-  if (!args.isConsultee) return "NONE";
-  // No deadline at all is not a lapse — useHoldCountdown reports a null
-  // deadline as expired, which would otherwise mis-read as "released".
-  if (args.holdDeadline !== null && args.holdExpired) return "REBOOK";
-  return args.pendingPaymentUrl ? "PAY" : "NONE";
-}
+// #1675 — booking states from which the booking is a sold, scheduled thing:
+// the progress bar and "Cancel booking" appear from here on; a request has
+// Decline (consultant) instead.
+const POST_APPROVAL = new Set<BookingStateKind>([
+  "CONFIRMED",
+  "AWAITING_ALLOCATION",
+  "COMPLETED",
+]);
 
 function initials(name: string): string {
   return name
@@ -247,6 +238,8 @@ interface AppointmentDetailClientProps {
   /** Consultant-only: participants management link resolver. */
   participantsHref?: (detail: TAppointmentDetail) => string | null;
   joinWindowMs?: number;
+  /** Consultant-only: the dashboard whose Requests/allocate pages answer a request. */
+  consultantId?: string;
 }
 
 export function AppointmentDetailClient({
@@ -257,9 +250,11 @@ export function AppointmentDetailClient({
   renderDocuments,
   participantsHref,
   joinWindowMs,
+  consultantId,
 }: AppointmentDetailClientProps) {
   const { data: session } = useSession();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const {
     data: detail,
     isLoading,
@@ -282,26 +277,10 @@ export function AppointmentDetailClient({
   useSetBreadcrumbLabel(mapped?.vm.title);
 
   const payments = detail?.appointment.payment ?? [];
-  // #1428 — the tentative-hold deadline: the soonest still-pending payment
-  // guarding a held slot on this booking. Derived ABOVE the loading/error
-  // returns because useHoldCountdown below it is a hook and may not sit
-  // behind a conditional return.
-  const holdDeadline =
-    payments
-      .filter((p) => p.paymentStatus === "PENDING" && p.expiresAt)
-      .map((p) => new Date(p.expiresAt!))
-      .sort((a, b) => a.getTime() - b.getTime())[0] ?? null;
-  const { isExpired: holdExpired } = useHoldCountdown(holdDeadline);
   // One support sheet, two doors: "Get help" opens on the intent chips,
   // "Problem with this charge" opens already on PAYMENT_STATUS.
   const [help, setHelp] = useState<{ open: boolean; seed?: string }>({
     open: false,
-  });
-  const tentativeCta = tentativeHoldCta({
-    isConsultee: role === "consultee",
-    holdDeadline,
-    holdExpired,
-    pendingPaymentUrl: mapped?.vm.pendingPaymentUrl ?? null,
   });
 
   if (isLoading && !detail) {
@@ -333,22 +312,110 @@ export function AppointmentDetailClient({
 
   const { vm, recordings } = mapped;
   const action = adapter.primaryAction(vm);
-  // #1163 — the proposal card below IS the answer surface; the adapter's
-  // "Review reschedule request" list affordance would only link back here.
-  // "Report issue" opens the same per-appointment support thread as the
-  // "Get help" button beside it — one entry point on this page.
-  const overflow = adapter
-    .overflowItems(vm)
-    .filter(
-      (item) => item.key !== "reschedule-proposal" && item.key !== "report",
-    );
-  const badge = eventUnionStatusBadge(vm.status);
   const orgName =
     detail.appointment.organization?.name ??
     resolveSponsoringOrgName(
       vm.organizationId,
       session?.user?.organizationMemberships ?? [],
     );
+  const viewerId = session?.user?.id ?? null;
+  const pendingRow =
+    payments.find((p) => p.paymentStatus === "PENDING") ?? null;
+  const paidRow = payments.find((p) => p.paymentStatus === "SUCCEEDED") ?? null;
+  // Who funded THIS row. A seat on someone else's webinar is sponsored by the
+  // attendee's own organisation, which is not the event's tag.
+  const sponsorOf = (p: { organizationId: string | null }) =>
+    (p.organizationId &&
+    p.organizationId !== detail.appointment.organization?.id
+      ? resolveSponsoringOrgName(
+          p.organizationId,
+          session?.user?.organizationMemberships ?? [],
+        )
+      : orgName) ?? "the organisation";
+  // #1675 — ONE derivation of the booking's state, its money and this
+  // viewer's next action; every block below reads it, none reads an enum.
+  const names = presentationNames(detail, {
+    role,
+    name: session?.user?.name ?? null,
+  });
+  const presentation = deriveBookingPresentation(
+    toPresentationInput(detail, {
+      viewerId,
+      names,
+      sponsorOrgName: paidRow ? sponsorOf(paidRow) : orgName,
+    }),
+    role === "consultant" ? "CONSULTANT" : "CONSULTEE",
+    { joinWindowMs },
+  );
+  const { bookingState, moneyState, nextAction } = presentation;
+  const postApproval = POST_APPROVAL.has(bookingState.state);
+  // #1163 — the proposal card below IS the answer surface; the adapter's
+  // "Review reschedule request" list affordance would only link back here.
+  // "Report issue" opens the same per-appointment support thread as the
+  // "Get help" button beside it — one entry point on this page.
+  // #1675 — "Cancel booking" only from CONFIRMED on: the consultant answers
+  // a request with Decline, and the payer's exit from one is a withdrawal.
+  const overflow = adapter
+    .overflowItems(vm)
+    .filter(
+      (item) => item.key !== "reschedule-proposal" && item.key !== "report",
+    )
+    .filter(
+      (item) => item.key !== "cancel" || postApproval || role === "consultee",
+    )
+    .map((item) =>
+      item.key === "cancel" && !postApproval
+        ? { ...item, label: "Withdraw request" }
+        : item,
+    );
+  // #1675 — a destructive overflow item (Withdraw/Cancel) no longer sits at
+  // the front of the action bar next to Approve/Pay; it renders last, past
+  // "Get help", where the row's other destructive secondary actions live.
+  const overflowPrimary = overflow.filter((item) => !item.destructive);
+  const overflowSecondary = overflow.filter((item) => item.destructive);
+  const heldCount = detail.appointment.occurrences.filter(
+    (o) => o.isTentative && !isDeadOccurrence(o),
+  ).length;
+  // #1675 — one session-count story: a plan's own header reads the held/plan
+  // progress the money line no longer repeats, instead of a second, plain
+  // total. SonarCloud (PR #1767) flagged the inline nested ternary this
+  // replaced.
+  const usesSessionProgress =
+    (vm.kind === "SUBSCRIPTION" || vm.kind === "CLASS") &&
+    !!presentation.sessionProgress;
+  const groupCountLine = usesSessionProgress
+    ? presentation.sessionProgress
+    : `${vm.group?.total ?? 0} session${vm.group?.total === 1 ? "" : "s"}`;
+  // The consultant's answer to a request, through the Requests page's own
+  // mutations (request-decision.ts); no times → the allocator sets them.
+  const request =
+    detail.appointment.consultation ?? detail.appointment.subscription;
+  const requestKind = detail.appointment.consultation
+    ? AppointmentsType.CONSULTATION
+    : AppointmentsType.SUBSCRIPTION;
+  const decision =
+    role === "consultant" && request && consultantId
+      ? {
+          request: {
+            id: request.id,
+            type: requestKind,
+            tentativeSlotCount: detail.appointment.occurrences.filter(
+              (o) => o.isTentative,
+            ).length,
+          },
+          canApproveRequestedTimes:
+            request.bookingSource === "REQUEST_SUBMITTED" &&
+            heldCount > 0 &&
+            !detail.appointment.occurrences.some(isReleasedForReschedule),
+          allocateHref: `/dashboard/consultant/${consultantId}/requests/${request.id}/allocate?type=${requestKind.toLowerCase()}`,
+          requestsHref: `/dashboard/consultant/${consultantId}/requests`,
+          onDecided: () => {
+            void queryClient.invalidateQueries({
+              queryKey: ["appointment-detail", appointmentId],
+            });
+          },
+        }
+      : undefined;
   const participants = Array.from(
     new Map(
       detail.appointment.participants.map((seat) => [seat.user.id, seat.user]),
@@ -378,22 +445,11 @@ export function AppointmentDetailClient({
   // confirmation" never offered.
   const openProposal = detail.appointment.rescheduleRequests?.[0] ?? null;
   const showSeatSummary = role === "consultant" && isGroup;
-  const viewerId = session?.user?.id ?? null;
   // Sponsorship is what the money says, not the org tag: checkout stamps
   // `Appointment.organizationId` on a PERSONAL-funded booking too, and that
   // member paid their own card. A group event keeps the tag as its label.
   const sponsoredBy =
     orgName && (isGroup || payments.some(isSponsoredPayment)) ? orgName : null;
-  // Who funded THIS row. A seat on someone else's webinar is sponsored by the
-  // attendee's own organisation, which is not the event's tag.
-  const sponsorOf = (p: { organizationId: string | null }) =>
-    (p.organizationId &&
-    p.organizationId !== detail.appointment.organization?.id
-      ? resolveSponsoringOrgName(
-          p.organizationId,
-          session?.user?.organizationMemberships ?? [],
-        )
-      : orgName) ?? "the organisation";
   // Did the viewer pay anything on this page themselves? Names the money door.
   const hasOwnCharge = payments.some(
     (p) =>
@@ -415,6 +471,16 @@ export function AppointmentDetailClient({
     !isDeadOccurrence(soleSession) &&
     getOccurrenceVMJoinState(soleSession, { joinWindowMs }) !== "joinable" &&
     isOccurrenceOver(soleSession);
+  // The one session's stars belong in the needs-you slot only while a rating
+  // would be accepted (or one exists to show); otherwise nothing is due.
+  const rateableSole =
+    !!soleSession &&
+    soleSessionOver &&
+    !sessionFeedback.isError &&
+    (sessionFeedback.rateable.has(soleSession.occurrenceId) ||
+      (sessionFeedback.ratings[soleSession.occurrenceId] ?? null) !== null)
+      ? soleSession
+      : null;
   const anchorSession = vm.nextAt
     ? vm.occurrences.find((s) => s.startsAt.getTime() === vm.nextAt?.getTime())
     : undefined;
@@ -466,7 +532,11 @@ export function AppointmentDetailClient({
                 <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                   {KIND_LABEL[vm.kind]}
                 </span>
-                <StatusBadge {...badge} withDot size="sm" />
+                <StatusBadge
+                  {...toneBadge(bookingState.tone, bookingState.label)}
+                  withDot
+                  size="sm"
+                />
                 {sponsoredBy && (
                   <span className="rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300 px-1.5 py-px text-[10px] font-medium">
                     Sponsored · {sponsoredBy}
@@ -476,6 +546,7 @@ export function AppointmentDetailClient({
               <p className="text-sm text-muted-foreground mt-1">
                 with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
+                {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
               {vm.nextAt && (
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
@@ -510,33 +581,33 @@ export function AppointmentDetailClient({
           {/* Actions — full-width bar so buttons aren't cramped beside the title.
               Always rendered: "Get help" is available on every appointment. */}
           <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-            {action.kind !== "view" && (
+            {/* #1675 — the needs-you callout owns Pay/Join/Approve; the bar
+                keeps only what it does not (Set schedule). */}
+            {action.kind !== "view" && nextAction.kind === "NONE" && (
               <RowPrimaryAction action={action} size="default" />
             )}
             {/* #705 — with the Sessions card folded away, the rating of the
                 one session that happened takes the primary slot. Same gates
                 as the session row: attended (or nobody could have recorded
                 it), never on a dead or still-running call. */}
-            {soleSession && soleSessionOver && !sessionFeedback.isError && (
-              <SoleSessionRating
-                appointmentId={appointmentId}
-                session={soleSession}
-                role={role}
-                feedback={sessionFeedback}
-              />
-            )}
-            {overflow.map((item) => (
+            {soleSession &&
+              soleSessionOver &&
+              !sessionFeedback.isError &&
+              nextAction.kind !== "RATE" && (
+                <SoleSessionRating
+                  appointmentId={appointmentId}
+                  session={soleSession}
+                  role={role}
+                  feedback={sessionFeedback}
+                />
+              )}
+            {overflowPrimary.map((item) => (
               <Button
                 key={item.key}
                 variant="outline"
                 size="sm"
                 disabled={item.disabled}
                 onClick={item.onClick}
-                className={
-                  item.destructive
-                    ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                    : undefined
-                }
               >
                 {item.label}
               </Button>
@@ -549,6 +620,18 @@ export function AppointmentDetailClient({
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
             </Button>
+            {overflowSecondary.map((item) => (
+              <Button
+                key={item.key}
+                variant="outline"
+                size="sm"
+                disabled={item.disabled}
+                onClick={item.onClick}
+                className="text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+              >
+                {item.label}
+              </Button>
+            ))}
           </div>
 
           {soleSession && soleSessionOver && sessionFeedback.isError && (
@@ -565,7 +648,7 @@ export function AppointmentDetailClient({
             isOrgContext={!!orgName}
           />
 
-          {vm.group && vm.group.total > 0 && (
+          {vm.group && vm.group.total > 0 && postApproval && (
             <div className="mt-4 pt-4 border-t border-border">
               <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
                 <span>Program progress</span>
@@ -587,6 +670,35 @@ export function AppointmentDetailClient({
             </div>
           )}
         </div>
+
+        <NeedsYouCallout
+          presentation={presentation}
+          names={names}
+          heldCount={heldCount}
+          pending={pendingRow}
+          onPay={openPendingPayment}
+          requestAgainHref={
+            vm.consultantProfileId
+              ? `/explore/experts/${vm.consultantProfileId}`
+              : null
+          }
+          decision={decision}
+          onHelp={() => setHelp({ open: true })}
+        >
+          {nextAction.kind === "JOIN" && action.kind === "join" ? (
+            <RowPrimaryAction action={action} size="default" />
+          ) : nextAction.kind === "RATE" && rateableSole ? (
+            <SoleSessionRating
+              appointmentId={appointmentId}
+              session={rateableSole}
+              role={role}
+              feedback={sessionFeedback}
+            />
+          ) : null}
+        </NeedsYouCallout>
+
+        {/* A seat on a group event is bought, not requested: no path to draw. */}
+        {!isGroup && <TimelineStrip events={presentation.timeline} />}
 
         {openProposal && (
           <RescheduleProposalCard
@@ -611,20 +723,34 @@ export function AppointmentDetailClient({
                 on screen twice: a private per-call rating on each session row
                 and a public review card above them, neither anchored to what
                 the user thought they were rating. What stays here is a link. */}
-            {role === "consultee" && vm.consultantProfileId && (
-              <p className="text-sm text-muted-foreground">
-                Reviewed this expert?{" "}
-                <Link
-                  href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  Write or update your review on their profile
-                </Link>
-                .
-              </p>
-            )}
+            {/* #1300/#1542/#1675 — asking before a session has actually run
+                invites a review of a call that never happened; the prompt
+                waits for the derived state or a completed occurrence. */}
+            {role === "consultee" &&
+              vm.consultantProfileId &&
+              (bookingState.state === "COMPLETED" ||
+                detail.appointment.occurrences.some(
+                  (o) => o.completionStatus === "COMPLETED",
+                )) && (
+                <p className="text-sm text-muted-foreground">
+                  Reviewed this expert?{" "}
+                  <Link
+                    href={`/explore/experts/${vm.consultantProfileId}#reviews`}
+                    className="font-medium text-foreground underline underline-offset-4"
+                  >
+                    Write or update your review on their profile
+                  </Link>
+                  .
+                </p>
+              )}
             {!soleSession && (
-              <Section title="Sessions">
+              <Section
+                title={
+                  heldCount > 0 && !postApproval
+                    ? `Sessions · ${heldCount} held`
+                    : "Sessions"
+                }
+              >
                 {/* Without this the stars below simply disappeared (or showed
                   empty) on a call the viewer had already rated, which reads as
                   "your rating never happened". */}
@@ -681,13 +807,9 @@ export function AppointmentDetailClient({
                         : undefined
                     }
                     showHeld
-                    holdDeadline={holdDeadline}
-                    // #1428 — consultee sees the CTA while the window is live;
-                    // the consultant, and anyone once the hold has lapsed, sees
-                    // the same held row read-only ("awaiting payment").
-                    onCompletePayment={
-                      tentativeCta === "PAY" ? openPendingPayment : undefined
-                    }
+                    // #1675 — schedule words only; the pay verb is in the
+                    // needs-you slot above.
+                    heldRowLabel={presentation.sessionRowLabel}
                   />
                 ) : (
                   <p className="text-xs text-muted-foreground">
@@ -759,158 +881,102 @@ export function AppointmentDetailClient({
               </Section>
             )}
             <Section title={showSeatSummary ? "Payments" : "Payment"}>
-              {payments.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  {showSeatSummary
-                    ? "No seat has been paid for yet."
-                    : "No payment is attached to this booking."}
-                </p>
+              {showSeatSummary ? (
+                payments.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No seat has been paid for yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
+                    <span className="font-medium text-foreground tabular-nums">
+                      {seatSummary.paid} of {participants.length} seat
+                      {participants.length === 1 ? "" : "s"} paid
+                    </span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="tabular-nums text-foreground">
+                      {formatCurrencyAmount(
+                        seatSummary.collectedPaise,
+                        seatSummary.currency,
+                      )}{" "}
+                      collected
+                    </span>
+                    {seatSummary.pending > 0 && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">
+                          {seatSummary.pending} awaiting payment
+                        </span>
+                      </>
+                    )}
+                    {seatSummary.lapsed > 0 && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">
+                          {seatSummary.lapsed} lapsed
+                        </span>
+                      </>
+                    )}
+                    {seatSummary.refunded > 0 && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">
+                          {seatSummary.refunded} refunded
+                        </span>
+                      </>
+                    )}
+                    {seatSummary.otherCurrency > 0 && (
+                      <>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-muted-foreground">
+                          {seatSummary.otherCurrency} in another currency
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )
               ) : (
                 <div className="space-y-2">
-                  {showSeatSummary ? (
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm">
-                      <span className="font-medium text-foreground tabular-nums">
-                        {seatSummary.paid} of {participants.length} seat
-                        {participants.length === 1 ? "" : "s"} paid
-                      </span>
-                      <span className="text-muted-foreground">·</span>
-                      <span className="tabular-nums text-foreground">
-                        {formatCurrencyAmount(
-                          seatSummary.collectedPaise,
-                          seatSummary.currency,
-                        )}{" "}
-                        collected
-                      </span>
-                      {seatSummary.pending > 0 && (
-                        <>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="text-muted-foreground">
-                            {seatSummary.pending} awaiting payment
-                          </span>
-                        </>
-                      )}
-                      {seatSummary.lapsed > 0 && (
-                        <>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="text-muted-foreground">
-                            {seatSummary.lapsed} lapsed
-                          </span>
-                        </>
-                      )}
-                      {seatSummary.refunded > 0 && (
-                        <>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="text-muted-foreground">
-                            {seatSummary.refunded} refunded
-                          </span>
-                        </>
-                      )}
-                      {seatSummary.otherCurrency > 0 && (
-                        <>
-                          <span className="text-muted-foreground">·</span>
-                          <span className="text-muted-foreground">
-                            {seatSummary.otherCurrency} in another currency
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  ) : (
-                    payments.map((payment) => {
-                      // The member did not pay a sponsored booking, so no
-                      // amount: the organisation's price on their page reads
-                      // as a bug. What they DID pay themselves — a CHARGE_MEMBER
-                      // overage side-charge — is its own line with its receipt.
-                      // The consultant keeps the amount; it is what was sold.
-                      const sponsored =
-                        role === "consultee" && isSponsoredPayment(payment);
-                      const own = payment.childPayments.filter(
-                        (c) => c.userId === viewerId,
-                      );
-                      return (
-                        <div key={payment.id} className="space-y-2">
-                          {sponsored ? (
-                            <p className="text-sm text-foreground">
-                              Sponsored by <strong>{sponsorOf(payment)}</strong>
-                              .
-                            </p>
-                          ) : (
-                            <MoneyLine payment={payment} />
-                          )}
-                          {own.map((c) => (
-                            <MoneyLine key={c.id} payment={c} />
-                          ))}
-                          {!sponsored && isSponsoredPayment(payment) && (
-                            <p className="text-xs text-muted-foreground">
-                              Sponsored by <strong>{sponsorOf(payment)}</strong>
-                              .
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                  {/* The locked money door: the same support sheet as "Get
-                      help", opened already on PAYMENT_STATUS. */}
-                  {role === "consultee" && (
-                    <button
-                      type="button"
-                      className="text-xs font-medium text-foreground underline underline-offset-4"
-                      onClick={() =>
-                        setHelp({ open: true, seed: "PAYMENT_STATUS" })
-                      }
-                    >
-                      {hasOwnCharge
-                        ? "Problem with this charge"
-                        : "Problem with this booking"}
-                    </button>
-                  )}
-                  {/* #1428 — TENTATIVE (held pending payment) reaches this
-                      branch too now, gated by the same `tentativeHoldCta`
-                      the timeline row uses; PAY_NOW's existing (role-agnostic)
-                      behaviour is unchanged. */}
-                  {((vm.needsActionReason === "PAY_NOW" &&
-                    vm.pendingPaymentUrl) ||
-                    (vm.needsActionReason === "TENTATIVE" &&
-                      tentativeCta === "PAY")) && (
-                    <Button
-                      size="sm"
-                      className="w-full bg-amber-500 hover:bg-amber-600 text-white dark:bg-amber-600 dark:hover:bg-amber-500"
-                      onClick={openPendingPayment}
-                    >
-                      <CreditCard className="h-4 w-4 mr-2" />
-                      Pay Now to Confirm
-                    </Button>
-                  )}
-                  {vm.needsActionReason === "TENTATIVE" &&
-                    tentativeCta === "REBOOK" && (
-                      <div className="space-y-2 rounded-lg border border-border bg-muted px-3 py-2">
-                        <p className="text-xs text-muted-foreground">
-                          The payment window for this hold closed, so the slot
-                          is released unless you book it again.
-                        </p>
-                        {/* Back to the consultant's profile rather than a
-                            deep link to the old slot: that time may already
-                            be taken, and the picker is where a live one is
-                            chosen. */}
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full"
-                          asChild
-                        >
-                          <Link
-                            href={
-                              vm.consultantProfileId
-                                ? `/explore/experts/${vm.consultantProfileId}`
-                                : "/explore/experts"
-                            }
-                          >
-                            <CreditCard className="h-4 w-4 mr-2" />
-                            Start a new checkout
-                          </Link>
-                        </Button>
-                      </div>
+                  {/* #1675 — money is ONE line (locked 2026-09-13): the
+                      derived state's words, the receipt, the money door. */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+                    <span className="text-foreground">{moneyState.line}</span>
+                    {paidRow && receiptHref(paidRow) && (
+                      <a
+                        href={receiptHref(paidRow)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs font-medium text-foreground underline underline-offset-4"
+                      >
+                        View receipt
+                      </a>
                     )}
+                    {role === "consultee" && (
+                      <button
+                        type="button"
+                        className="text-xs font-medium text-foreground underline underline-offset-4"
+                        onClick={() =>
+                          setHelp({ open: true, seed: "PAYMENT_STATUS" })
+                        }
+                      >
+                        {hasOwnCharge
+                          ? "Problem with this charge"
+                          : "Problem with this booking"}
+                      </button>
+                    )}
+                  </div>
+                  {moneyState.detail && (
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {moneyState.detail}
+                    </p>
+                  )}
+                  {/* A CHARGE_MEMBER co-pay the viewer paid themselves keeps
+                      its own line with its receipt (#775). */}
+                  {payments
+                    .flatMap((p) => p.childPayments)
+                    .filter((c) => c.userId === viewerId)
+                    .map((c) => (
+                      <MoneyLine key={c.id} payment={c} />
+                    ))}
                 </div>
               )}
             </Section>

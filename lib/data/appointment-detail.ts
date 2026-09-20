@@ -13,7 +13,7 @@
 
 import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
-import type { AppointmentFeedbackRole } from "@prisma/client";
+import type { AppointmentFeedbackRole, RefundStatus } from "@prisma/client";
 import { toPlain } from "@/lib/data/serialize";
 
 const userSelect = {
@@ -55,6 +55,9 @@ const consulteeProfileSelect = {
   select: { id: true, userId: true, user: userSelect },
 } as const;
 
+// A mutable array: Prisma's `in` rejects the readonly tuple `as const` makes.
+const LIVE_REFUND_STATUSES: RefundStatus[] = ["PENDING", "SUCCEEDED"];
+
 /**
  * What a payer may read of their own row: the amount line, the rail it rode,
  * and the receipt behind it. One Payment per attendee per appointment, so the
@@ -64,6 +67,8 @@ const consulteeProfileSelect = {
 const paymentDisplaySelect = {
   id: true,
   amount: true,
+  // #1675 — the pay-link copy names the base and the GST on top of it.
+  taxAmount: true,
   currency: true,
   paymentStatus: true,
   paymentMethod: true,
@@ -74,11 +79,13 @@ const paymentDisplaySelect = {
   // #1365 — the buyer's tax invoice is the receipt; a link, not the row.
   consumerInvoice: { select: { id: true } },
   // `PaymentStatus` never reaches REFUNDED; the shown status is derived from
-  // the refunds that went through (lib/appointments/seat-payments.ts).
+  // the refunds that went through (lib/appointments/seat-payments.ts). A
+  // PENDING one rides along so the money line can say "on its way" (#1675).
   refunds: {
-    where: { deletedAt: null, status: "SUCCEEDED" as const },
-    select: { amountPaise: true },
+    where: { deletedAt: null, status: { in: LIVE_REFUND_STATUSES } },
+    select: { amountPaise: true, status: true },
   },
+  disputes: { select: { status: true } },
 } as const;
 
 const collaboratorsInclude = {
@@ -182,6 +189,12 @@ export async function readAppointmentDetail(appointmentId: string) {
         },
       },
       occurrences: slotsInclude,
+      // #1675 / #1760 — the EXPIRED edge tells a lapsed pay link apart from
+      // a request nobody answered (lib/dashboard/money-state.ts).
+      statusHistory: {
+        where: { toStatus: "EXPIRED" },
+        select: { fromStatus: true, toStatus: true },
+      },
       // #1554 — the roster: every live seat holder, with display fields.
       participants: {
         where: liveParticipant(),
