@@ -37,12 +37,14 @@ import { useSession } from "@/lib/auth-client";
 import { getAppointmentStatus } from "../../utils/appointmentHelpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { MonthlyEarning } from "@/lib/data/consultant-earnings-analytics";
+import { BUCKET_LABEL } from "@/lib/dashboard/earnings-state";
 
 interface EarningsAnalyticsResponse {
   summary: {
     totalEarnings: number;
     pendingEarnings: number;
     readyEarnings: number;
+    batchedEarnings: number;
     paidEarnings: number;
     heldEarnings: number;
     pendingTrustEarnings: number;
@@ -187,9 +189,13 @@ export default function AnalyticsPageClient({
                 thisMonth ? `${thisMonth.count} earning sessions` : undefined
               }
             />
+            {/* #1675 PR-Y — the Summary tab's word and its membership
+                (READY + BATCHED), so the two tabs agree. */}
             <StatCard
-              title="Ready for Payout"
-              value={formatInr(summary?.readyEarnings ?? 0)}
+              title={BUCKET_LABEL.AVAILABLE}
+              value={formatInr(
+                (summary?.readyEarnings ?? 0) + (summary?.batchedEarnings ?? 0),
+              )}
               icon={Wallet}
               variant="success"
             />
