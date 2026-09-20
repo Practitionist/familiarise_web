@@ -87,12 +87,10 @@ jest.mock("../../lib/prisma", () => {
         }),
       },
       consultantProfile: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({
-            msmeStatus: "NONE",
-            writtenAgreementWithFamiliarise: false,
-          }),
+        findUnique: jest.fn().mockResolvedValue({
+          msmeStatus: "NONE",
+          writtenAgreementWithFamiliarise: false,
+        }),
       },
       $transaction: jest.fn(async (fn: (t: unknown) => Promise<unknown>) =>
         fn(tx),
