@@ -136,6 +136,48 @@ export {
 } from "./earning-status";
 import { assertEarningStatusTransitionLegal } from "./earning-status";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
+import {
+  sessionsTotalOf,
+  subscriptionTranches,
+  type SubscriptionTranches,
+} from "@/lib/booking/entitlement";
+
+/**
+ * #1766 — the cycle shape a subscription's earnings are split into: one
+ * PENDING tranche per cycle, stamped by the completion path when the cycle's
+ * last session completes. Null for anything that is not a subscription with
+ * a plan, so the caller falls back to the single whole-purchase row.
+ */
+async function resolveSubscriptionTranches(
+  tx: Tx,
+  appointmentId: string | null | undefined,
+): Promise<SubscriptionTranches | null> {
+  if (!appointmentId) return null;
+  const appointment = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      subscription: {
+        select: {
+          sessionsTotal: true,
+          subscriptionPlan: {
+            select: {
+              totalSessions: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  const sub = appointment?.subscription;
+  if (!sub) return null;
+  const tranches = subscriptionTranches(
+    sub.subscriptionPlan,
+    sessionsTotalOf(sub),
+  );
+  return tranches.total > 0 ? tranches : null;
+}
 
 // ============================================
 // Org Split Resolution
@@ -760,23 +802,82 @@ export async function createEarningsFromPayment({
               );
             }
           } else {
-            // Single-owner payment (no collaborators or not a webinar/class)
-            const earnings = await tx.consultantEarnings.create({
-              data: {
-                consultantProfileId,
-                paymentId: payment.id,
-                grossAmount,
-                platformFeePaise,
-                consultantSharePaise: totalConsultantPool,
-                appointmentOccurrenceId: anchor.appointmentOccurrenceId,
-                // #687 E-02 — see multi-party branch above.
-                status: initialEarningStatus,
-                holdUntil,
-                currency: "INR",
-              },
-            });
+            // #1766 — a subscription is delivered-enforced escrow: one PENDING
+            // tranche per cycle, holdUntil NULL until the cycle's last session
+            // completes (settleSubscriptionCycle stamps it). Shares are floored
+            // per tranche and every residual paisa lands on tranche 0, so the
+            // rows sum to the fee and the pool exactly (EARNINGS_LEDGER_DRIFT).
+            const tranches =
+              appointmentType === "SUBSCRIPTION"
+                ? await resolveSubscriptionTranches(tx, payment.appointmentId)
+                : null;
+            if (tranches) {
+              const perTranche = (k: number) => ({
+                gross: prorate(
+                  grossAmount,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+                fee: prorate(
+                  platformFeePaise,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+                share: prorate(
+                  totalConsultantPool,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+              });
+              const tail = Array.from({ length: tranches.count - 1 }, (_, i) =>
+                perTranche(i + 1),
+              );
+              const sumOf = (key: "gross" | "fee" | "share") =>
+                tail.reduce((acc, t) => acc + t[key], 0);
+              const rows = [
+                {
+                  gross: grossAmount - sumOf("gross"),
+                  fee: platformFeePaise - sumOf("fee"),
+                  share: totalConsultantPool - sumOf("share"),
+                },
+                ...tail,
+              ];
+              for (const [k, row] of rows.entries()) {
+                const earnings = await tx.consultantEarnings.create({
+                  data: {
+                    consultantProfileId,
+                    paymentId: payment.id,
+                    grossAmount: row.gross,
+                    platformFeePaise: row.fee,
+                    consultantSharePaise: row.share,
+                    appointmentOccurrenceId: anchor.appointmentOccurrenceId,
+                    cycleOrdinal: k,
+                    status: initialEarningStatus,
+                    holdUntil: null,
+                    currency: "INR",
+                  },
+                });
+                if (k === 0) ownerId = earnings.id;
+              }
+            } else {
+              // Single-owner payment (no collaborators or not a webinar/class)
+              const earnings = await tx.consultantEarnings.create({
+                data: {
+                  consultantProfileId,
+                  paymentId: payment.id,
+                  grossAmount,
+                  platformFeePaise,
+                  consultantSharePaise: totalConsultantPool,
+                  appointmentOccurrenceId: anchor.appointmentOccurrenceId,
+                  // #687 E-02 — see multi-party branch above.
+                  status: initialEarningStatus,
+                  holdUntil,
+                  currency: "INR",
+                },
+              });
 
-            ownerId = earnings.id;
+              ownerId = earnings.id;
+            }
           }
 
           // Create OrganizationEarnings row for the HOST/HYBRID org (3-way split).
