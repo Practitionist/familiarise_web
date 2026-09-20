@@ -42,10 +42,15 @@ import {
   intervalCountOf,
   intervalStartsOf,
   isDeadOccurrence,
+  liveOccurrenceWhere,
   nextOrdinal,
   SCHEDULING_INTERVAL_MS,
 } from "@/lib/appointments/occurrences";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import {
   matchesPreferredDays,
   maxPreferenceScore,
@@ -852,6 +857,76 @@ export class SchedulingService {
   }
 
   /**
+   * #1766 — a subscription with held (confirmed, live) sessions and no
+   * reschedule in flight is placing its NEXT CYCLE: additive, never a replan.
+   */
+  private static isSubscriptionTopUp(
+    eventType: EventType,
+    existingConfirmedSessionCount: number,
+    isReschedule: boolean,
+  ): boolean {
+    return (
+      eventType === "subscription" &&
+      existingConfirmedSessionCount > 0 &&
+      !isReschedule
+    );
+  }
+
+  /**
+   * The session count a top-up reports against. A subscription owes
+   * held + `nextBatch` (#1766, one cycle at a time); a class still owes the
+   * plan's whole total (#1206).
+   */
+  private static topUpTargetSessions(
+    eventType: EventType,
+    config: EventConfig,
+    existingConfirmedSessionCount: number,
+    slotsPerCall: number,
+  ): number {
+    if (
+      eventType === "subscription" &&
+      config.cycleTargetSessions !== undefined
+    ) {
+      return existingConfirmedSessionCount + config.cycleTargetSessions;
+    }
+    return Math.ceil(
+      ScheduleCalculationService.calculateRequiredSlots(eventType, config) /
+        slotsPerCall,
+    );
+  }
+
+  /**
+   * #1766 — in-txn twin of the cycle arithmetic: the batch size was derived
+   * from the held count read outside the transaction, so a second tab that
+   * appended in between must 409 rather than pre-schedule the cycle after.
+   */
+  private static async assertHeldSessionCountInTx(
+    tx: Tx,
+    eventType: EventType,
+    eventId: string,
+    expected: number,
+  ): Promise<void> {
+    const relationField = this.getEventRelationField(eventType);
+    const held = await tx.appointmentOccurrence.count({
+      where: {
+        ...liveOccurrenceWhere,
+        isTentative: false,
+        appointment: {
+          [`${relationField}Id`]: eventId,
+          deletedAt: null,
+        } as Prisma.AppointmentWhereInput,
+      },
+    });
+    if (held !== expected) {
+      throw new AllocationConflictError(
+        `Sessions changed in another session ` +
+          `(expected ${expected} held, found ${held}). Reload and try again.`,
+        "RESCHEDULE_STATE_CHANGED",
+      );
+    }
+  }
+
+  /**
    * #1012 — stale-tab reschedule precondition. The page that opened the
    * allocate dialog captured the tentative count; if another tab already
    * finished (or mutated) the reschedule, that count no longer matches and
@@ -1040,14 +1115,20 @@ export class SchedulingService {
   ): Promise<Partial<AllocationResult>> {
     if (!isRecurringEventType(eventType)) return {};
 
+    // #1766 — a subscription's total is the frozen entitlement, not the plan.
+    const subscriptionRow =
+      eventType === "subscription"
+        ? await db.subscription.findUnique({
+            where: { id: eventId },
+            select: {
+              sessionsTotal: true,
+              subscriptionPlan: { select: { totalSessions: true } },
+            },
+          })
+        : null;
     const requiredSessions =
       eventType === "subscription"
-        ? (
-            await db.subscription.findUnique({
-              where: { id: eventId },
-              select: { subscriptionPlan: { select: { totalSessions: true } } },
-            })
-          )?.subscriptionPlan?.totalSessions
+        ? subscriptionRow && sessionsTotalOf(subscriptionRow)
         : (
             await db.class.findUnique({
               where: { id: eventId },
@@ -1187,8 +1268,7 @@ export class SchedulingService {
   ): number {
     return appointments.reduce(
       (count, appointment) =>
-        count +
-        appointment.occurrences.filter(isReleasedForReschedule).length,
+        count + appointment.occurrences.filter(isReleasedForReschedule).length,
       0,
     );
   }
@@ -1416,7 +1496,9 @@ export class SchedulingService {
 
       // Multi-tab guard: a fresh dialog allocation must 409 if another
       // session already allocated this event (re-checked in-txn below).
-      if (initialAllocation) {
+      // #1766 — a subscription decides after its rows are read: with held
+      // sessions the next cycle appends, so the flag is ignored there.
+      if (initialAllocation && eventType !== "subscription") {
         await this.assertNoConfirmedSlots(prisma, eventType, eventId);
       }
 
@@ -1521,7 +1603,6 @@ export class SchedulingService {
           );
         }
       }
-      const isTopUp = topUp === true;
 
       // 1 occurrence = 1 session (#1554), the same identity the reschedule
       // branch below counts on. Counted by row rather than by dividing an
@@ -1530,14 +1611,26 @@ export class SchedulingService {
       const existingConfirmedSessionCount = existingAppointments
         .flatMap((a) => a.occurrences)
         .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+      // #1766 — a subscription with held sessions is ALWAYS additive: the
+      // next cycle appends; the delete-and-replan path is for classes only.
+      const isTopUp =
+        topUp === true ||
+        this.isSubscriptionTopUp(
+          eventType,
+          existingConfirmedSessionCount,
+          isReschedule,
+        );
       const topUpPlanSessions = isTopUp
-        ? Math.ceil(
-            ScheduleCalculationService.calculateRequiredSlots(
-              eventType,
-              config,
-            ) / slotsPerCall,
+        ? this.topUpTargetSessions(
+            eventType,
+            config,
+            existingConfirmedSessionCount,
+            slotsPerCall,
           )
         : 0;
+      if (initialAllocation && eventType === "subscription" && !isTopUp) {
+        await this.assertNoConfirmedSlots(prisma, eventType, eventId);
+      }
       /**
        * The answer a top-up gives when it writes nothing — the plan is already
        * whole, or the consultant's availability still has no room for the rest.
@@ -1763,9 +1856,20 @@ export class SchedulingService {
             eventType,
             eventId,
             idempotencyKey,
-            isFreshAllocation,
+            // #1766 — a next-cycle append is not a fresh allocation.
+            isFreshAllocation && !isTopUp,
           );
           if (lockedReplay) return lockedReplay;
+          // #1766 — a stale tab must not append a second cycle: re-count the
+          // held sessions under the advisory lock before writing.
+          if (isTopUp) {
+            await SchedulingService.assertHeldSessionCountInTx(
+              tx,
+              eventType,
+              eventId,
+              existingConfirmedSessionCount,
+            );
+          }
 
           // Defense-in-depth: re-check conflicts INSIDE the txn (envelope-scoped,
           // indexed, cheap). The reads ran out-of-txn under the locks, so for
@@ -2075,7 +2179,8 @@ export class SchedulingService {
 
       // Multi-tab guard: a fresh dialog allocation must 409 if another
       // session already allocated this event (re-checked in-txn below).
-      if (initialAllocation) {
+      // #1766 — a subscription decides after its rows are read (see below).
+      if (initialAllocation && eventType !== "subscription") {
         await this.assertNoConfirmedSlots(prisma, eventType, eventId);
       }
 
@@ -2166,6 +2271,20 @@ export class SchedulingService {
       const existingNonTentativeSlotCount =
         this.confirmedIntervalsOf(existingAppointments);
 
+      // #1766 — see autoAllocate: held sessions on a subscription mean the
+      // next cycle is being appended, so nothing is deleted or excluded.
+      const existingConfirmedSessionCount = existingAppointments
+        .flatMap((a) => a.occurrences)
+        .filter((s) => !s.isTentative && !isDeadOccurrence(s)).length;
+      const isTopUp = this.isSubscriptionTopUp(
+        eventType,
+        existingConfirmedSessionCount,
+        isReschedule,
+      );
+      if (initialAllocation && eventType === "subscription" && !isTopUp) {
+        await this.assertNoConfirmedSlots(prisma, eventType, eventId);
+      }
+
       // ADR B10, derived rather than trusted. The client set initialAllocation
       // only when tentativeSlotCount === 0, but EVERY pending request already
       // carries tentative slots (request-for-approval and unpaid checkout both
@@ -2176,7 +2295,8 @@ export class SchedulingService {
       // key (#860, narrowed by #1319), so two tabs are only serialized by the
       // in-txn advisory lock this gates.
       const isFreshAllocation =
-        initialAllocation === true || existingNonTentativeSlotCount === 0;
+        !isTopUp &&
+        (initialAllocation === true || existingNonTentativeSlotCount === 0);
 
       // Detect in-progress reallocation: past confirmed slots exist for recurring events
       const now = new Date();
@@ -2188,15 +2308,16 @@ export class SchedulingService {
           );
       const isInProgressReallocation =
         !isReschedule &&
+        !isTopUp &&
         pastConfirmedSlotCount > 0 &&
         isRecurringEventType(eventType);
 
       // What to leave out of conflict detection and the weekly/daily limits
       // (#1554 — see autoAllocate: a reschedule excludes the tentative
-      // occurrences being replaced, anything else the whole wrapper).
-      const appointmentIdsToExclude = isReschedule
-        ? []
-        : existingAppointments.map((a) => a.id);
+      // occurrences being replaced, a top-up nothing, anything else the
+      // whole wrapper).
+      const appointmentIdsToExclude =
+        isReschedule || isTopUp ? [] : existingAppointments.map((a) => a.id);
       const occurrenceIdsToExclude = isReschedule
         ? this.releasedOccurrenceIdsOf(existingAppointments)
         : [];
@@ -2227,6 +2348,21 @@ export class SchedulingService {
               `This reschedule requires exactly ${rescheduleRequired} slots ` +
                 `(replacing ${rescheduleSessions} session(s)), ` +
                 `but ${slots.length} were provided.`,
+            );
+          }
+        } else if (isTopUp) {
+          // #1766 — exactly this cycle's batch; the held sessions stay put.
+          const cycleTarget =
+            this.topUpTargetSessions(
+              eventType,
+              config,
+              existingConfirmedSessionCount,
+              slotsPerCall,
+            ) - existingConfirmedSessionCount;
+          if (slots.length !== cycleTarget * slotsPerCall) {
+            throw new AllocationValidationError(
+              `This cycle takes exactly ${cycleTarget} session(s) ` +
+                `(${cycleTarget * slotsPerCall} slots), but ${slots.length} were provided.`,
             );
           }
         } else if (isInProgressReallocation) {
@@ -2300,6 +2436,15 @@ export class SchedulingService {
             isFreshAllocation,
           );
           if (lockedReplay) return lockedReplay;
+          // #1766 — see autoAllocate: a stale tab must not append twice.
+          if (isTopUp) {
+            await SchedulingService.assertHeldSessionCountInTx(
+              tx,
+              eventType,
+              eventId,
+              existingConfirmedSessionCount,
+            );
+          }
 
           // Defense-in-depth conflict re-check inside the txn (see autoAllocate).
           const recheck = await new ScheduleValidationService(
@@ -2343,18 +2488,21 @@ export class SchedulingService {
           // For reschedules: only delete tentative slots (preserve confirmed ones)
           // For in-progress: only delete future slots (preserve past confirmed ones)
           // For initial allocation: delete all
+          // #1766 top-up: nothing — the next cycle appends to the wrapper.
           const {
             enrolledUserIds,
             deletedAppointmentIds,
             freedOrdinals,
             reusableAppointmentId,
-          } = await this.deleteExistingAppointments(
-            tx,
-            eventType,
-            eventId,
-            isReschedule,
-            isInProgressReallocation,
-          );
+          } = isTopUp
+            ? SchedulingService.nothingDeleted()
+            : await this.deleteExistingAppointments(
+                tx,
+                eventType,
+                eventId,
+                isReschedule,
+                isInProgressReallocation,
+              );
 
           // Create appointments
           const appointments = await this.createAppointments(
@@ -4308,6 +4456,20 @@ export class SchedulingService {
    * @returns freedOrdinals - #1554: the ordinals of the occurrence rows this
    *   call deleted, in start order, so their replacements inherit them.
    */
+  /** #1766 — the delete step's shape when a top-up deletes nothing. */
+  private static nothingDeleted(): {
+    enrolledUserIds: string[];
+    deletedAppointmentIds: string[];
+    freedOrdinals: number[];
+    reusableAppointmentId?: string;
+  } {
+    return {
+      enrolledUserIds: [],
+      deletedAppointmentIds: [],
+      freedOrdinals: [],
+    };
+  }
+
   private static async deleteExistingAppointments(
     tx: Tx,
     eventType: EventType,
@@ -4408,12 +4570,11 @@ export class SchedulingService {
           const hasRemaining = appointment.occurrences.some(
             (slot) => !isReleasedForReschedule(slot),
           );
-          const deletedAppointment =
-            !hasRemaining
-              ? await tx.appointment.deleteMany({
-                  where: { id: appointment.id, payment: { none: {} } },
-                })
-              : null;
+          const deletedAppointment = !hasRemaining
+            ? await tx.appointment.deleteMany({
+                where: { id: appointment.id, payment: { none: {} } },
+              })
+            : null;
           if (
             (hasRemaining || deletedAppointment?.count === 0) &&
             (eventType === "consultation" || eventType === "webinar")
@@ -4853,14 +5014,25 @@ export class SchedulingService {
         });
         if (!event) return null;
         consultantProfile = event.subscriptionPlan?.consultantProfile;
+        // #1766 — one counter: the frozen entitlement and the current cycle
+        // decide how many sessions this run may place and in which window.
+        const entitlement = subscriptionEntitlement({
+          sessionsTotal: sessionsTotalOf(event),
+          sessionsPerWeek: event.subscriptionPlan.sessionsPerWeek,
+          durationInMonths: event.subscriptionPlan.durationInMonths,
+          occurrences: event.appointment?.occurrences ?? [],
+          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt,
+          schedulingTimezone: event.schedulingTimezone,
+        });
         config = {
           durationInMonths: event.subscriptionPlan?.durationInMonths,
           sessionsPerWeek: event.subscriptionPlan?.sessionsPerWeek,
           sessionDurationInHours:
             event.subscriptionPlan?.sessionDurationInHours,
-          totalSessions: event.subscriptionPlan?.totalSessions,
-          schedulingPeriodStartsAt: event.schedulingPeriodStartsAt ?? undefined,
-          schedulingPeriodEndsAt: event.schedulingPeriodEndsAt ?? undefined,
+          totalSessions: entitlement.total,
+          cycleTargetSessions: entitlement.cycle.nextBatch,
+          schedulingPeriodStartsAt: entitlement.cycle.windowStart,
+          schedulingPeriodEndsAt: entitlement.cycle.windowEnd,
           schedulingTimezone: event.schedulingTimezone ?? undefined,
         };
         consulteeUserId = event.requestedBy?.user?.id;

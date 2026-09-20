@@ -406,6 +406,8 @@ const createSubscriptionAppointment = (
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
         schedulingTimezone: "UTC",
+        // #1766 — the entitlement is snapshotted at purchase.
+        sessionsTotal: selectedPlan.totalSessions,
       },
     },
   };

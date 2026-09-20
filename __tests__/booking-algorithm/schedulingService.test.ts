@@ -198,20 +198,42 @@ function makeConsultationEvent(overrides: any = {}) {
   };
 }
 
+// #1766 — the allocator places ONE CYCLE (`sessionsPerWeek` sessions) at a
+// time against the frozen entitlement, so a fixture's period no longer sets
+// the required count: `sessionsPerWeek` does.
 function makeSubscriptionEvent(overrides: any = {}) {
   return {
     id: "sub-1",
+    sessionsTotal: null,
     subscriptionPlan: {
       consultantProfileId: "consultant-profile-1",
       durationInMonths: 1,
       sessionsPerWeek: 1,
       sessionDurationInHours: 1,
+      totalSessions: 4,
       consultantProfile: makeConsultantProfile(),
     },
     requestedBy: { user: { id: "consultee-1" } },
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
-    schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"), // 1 week → requires 2 slots
+    schedulingPeriodEndsAt: new Date("2025-01-10T00:00:00Z"),
+    schedulingTimezone: "UTC",
     appointments: [],
+    ...overrides,
+  };
+}
+
+/** A plan whose first cycle takes `sessionsPerWeek` sessions (#1766). */
+function subscriptionPlanOf(
+  sessionsPerWeek: number,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    consultantProfileId: "consultant-profile-1",
+    durationInMonths: 1,
+    sessionsPerWeek,
+    sessionDurationInHours: 1,
+    totalSessions: sessionsPerWeek * 4,
+    consultantProfile: makeConsultantProfile(),
     ...overrides,
   };
 }
@@ -627,13 +649,11 @@ describe("Manual allocation", () => {
 
   it("creates ONE wrapper with one occurrence per call for a multi-call subscription", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
-      makeSubscriptionEvent({
-        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
-      }),
+      makeSubscriptionEvent({ subscriptionPlan: subscriptionPlanOf(2) }),
     );
 
     // #1554 — 4 slots → one Appointment carrying 2 occurrences (1hr sessions),
-    // ordinal 1..N, each spanning its real end.
+    // ordinal 1..N, each spanning its real end. #1766 — both in cycle one.
     await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-1",
@@ -641,8 +661,8 @@ describe("Manual allocation", () => {
       slots: [
         "2025-01-06T10:00:00Z",
         "2025-01-06T10:30:00Z",
-        "2025-01-13T10:00:00Z",
-        "2025-01-13T10:30:00Z",
+        "2025-01-07T10:00:00Z",
+        "2025-01-07T10:30:00Z",
       ],
     });
 
@@ -656,8 +676,8 @@ describe("Manual allocation", () => {
       }),
       expect.objectContaining({
         ordinal: 2,
-        startsAt: new Date("2025-01-13T10:00:00Z"),
-        endsAt: new Date("2025-01-13T11:00:00Z"),
+        startsAt: new Date("2025-01-07T10:00:00Z"),
+        endsAt: new Date("2025-01-07T11:00:00Z"),
       }),
     ]);
   });
@@ -1416,17 +1436,13 @@ describe("Auto allocation", () => {
   it("still caps subscriptions at one session per day", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        subscriptionPlan: {
-          consultantProfileId: "consultant-profile-1",
-          durationInMonths: 1,
-          sessionsPerWeek: 3,
-          sessionDurationInHours: 1,
+        subscriptionPlan: subscriptionPlanOf(3, {
           consultantProfile: makeConsultantProfile({
             availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 12),
             ],
           }),
-        },
+        }),
         schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2025-01-13T00:00:00Z"),
         appointment: null,
@@ -1440,12 +1456,13 @@ describe("Auto allocation", () => {
       mode: "auto",
     });
 
-    // 2 weeks × 3 sessions × 2 slots = 12 slots demanded, but a subscription
-    // holds at most ONE session per day (MAX_SUBSCRIPTION_SESSIONS_PER_DAY)
-    // and only one Monday exists in the window → auto must refuse rather
-    // than stack same-day sessions the validator would reject.
+    // One cycle of 3 sessions × 2 slots = 6 slots demanded (#1766), but a
+    // subscription holds at most ONE session per day
+    // (MAX_SUBSCRIPTION_SESSIONS_PER_DAY) and only one Monday exists in the
+    // window → auto must refuse rather than stack same-day sessions the
+    // validator would reject.
     expect(result.success).toBe(false);
-    expect(result.error).toContain("Could only find 2 of 12");
+    expect(result.error).toContain("Could only find 2 of 6");
   });
 
   // ── Bounded occupancy reads (#908 family): selection only needs FUTURE
@@ -1533,20 +1550,13 @@ describe("Auto allocation", () => {
     expect(result.success).toBe(true);
   });
 
-  it("should reject slots outside scheduling period for subscription", async () => {
-    // Create subscription with narrow period that doesn't match availability
+  it("rolls a lapsed stored period forward to now instead of refusing (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        // Period is in the past — no slots can be "in the future" AND in this period
+        // The buyer's original ask is in the past; the cycle window is derived
+        // from max(stored start, last held session, now), so this still places.
         schedulingPeriodStartsAt: new Date("2024-01-06T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2024-02-02T23:59:59Z"),
-        subscriptionPlan: {
-          consultantProfileId: "consultant-profile-1",
-          durationInMonths: 1,
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-          consultantProfile: makeConsultantProfile(),
-        },
       }),
     );
 
@@ -1556,9 +1566,7 @@ describe("Auto allocation", () => {
       mode: "auto",
     });
 
-    expect(result.success).toBe(false);
-    // Should fail because no future slots exist in past period
-    expect(result.error).toBeDefined();
+    expect(result.success).toBe(true);
   });
 
   it("should update webinar status to SCHEDULED", async () => {
@@ -1626,7 +1634,7 @@ describe("fetchEventData - config extraction", () => {
     expect(result.error).toContain("Consultant profile not found");
   });
 
-  it("should throw for invalid date range (start >= end)", async () => {
+  it("ignores a reversed stored period: the window is derived (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         schedulingPeriodStartsAt: new Date("2025-02-01T00:00:00Z"),
@@ -1641,9 +1649,7 @@ describe("fetchEventData - config extraction", () => {
       slots: ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"],
     });
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("Invalid date range");
-    expect(result.error).toContain("must be before");
+    expect(result.success).toBe(true);
   });
 
   it("should extract durationInHours for consultation config", async () => {
@@ -1821,18 +1827,11 @@ describe("updateEventStatus", () => {
     expect(updateData.schedulingPeriodStartsAt).toBeUndefined();
   });
 
-  it("should create scheduling period for subscription when not configured", async () => {
+  it("never rewrites the stored period from a slot (#1766: the window is derived)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
         schedulingPeriodStartsAt: null,
         schedulingPeriodEndsAt: null,
-        subscriptionPlan: {
-          consultantProfileId: "consultant-profile-1",
-          durationInMonths: 1,
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
-          consultantProfile: makeConsultantProfile(),
-        },
       }),
     );
 
@@ -1844,8 +1843,8 @@ describe("updateEventStatus", () => {
     });
 
     const updateData = mockTx.subscription.updateMany.mock.calls[0][0].data;
-    expect(updateData.schedulingPeriodStartsAt).toBeDefined();
-    expect(updateData.schedulingPeriodEndsAt).toBeDefined();
+    expect(updateData.schedulingPeriodStartsAt).toBeUndefined();
+    expect(updateData.schedulingPeriodEndsAt).toBeUndefined();
   });
 
   it("should set SCHEDULED for webinar without scheduling period", async () => {
@@ -1977,9 +1976,7 @@ describe("updateEventStatus", () => {
 describe("createAppointments - grouping and validation", () => {
   it("should group 4 slots into 2 occurrences on one wrapper for 1-hour sessions", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
-      makeSubscriptionEvent({
-        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 4 slots
-      }),
+      makeSubscriptionEvent({ subscriptionPlan: subscriptionPlanOf(2) }),
     );
 
     await SchedulingService.allocate({
@@ -1989,8 +1986,8 @@ describe("createAppointments - grouping and validation", () => {
       slots: [
         "2025-01-06T10:00:00Z",
         "2025-01-06T10:30:00Z",
-        "2025-01-13T10:00:00Z",
-        "2025-01-13T10:30:00Z",
+        "2025-01-07T10:00:00Z",
+        "2025-01-07T10:30:00Z",
       ],
     });
 
@@ -2000,20 +1997,16 @@ describe("createAppointments - grouping and validation", () => {
       mockTx.appointment.create.mock.calls[0][0].data.occurrences.create;
     expect(rows).toHaveLength(2);
     expect(rows[0].endsAt).toEqual(new Date("2025-01-06T11:00:00Z"));
-    expect(rows[1].startsAt).toEqual(new Date("2025-01-13T10:00:00Z"));
+    expect(rows[1].startsAt).toEqual(new Date("2025-01-07T10:00:00Z"));
   });
 
   it("should group 6 slots into 2 occurrences on one wrapper for 1.5-hour sessions", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        subscriptionPlan: {
-          consultantProfileId: "consultant-profile-1",
-          durationInMonths: 1,
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1.5, // 3 slots per call
-          consultantProfile: makeConsultantProfile(),
-        },
-        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → requires 6 slots
+        // 3 slots per call
+        subscriptionPlan: subscriptionPlanOf(2, {
+          sessionDurationInHours: 1.5,
+        }),
       }),
     );
 
@@ -2025,9 +2018,9 @@ describe("createAppointments - grouping and validation", () => {
         "2025-01-06T10:00:00Z",
         "2025-01-06T10:30:00Z",
         "2025-01-06T11:00:00Z",
-        "2025-01-13T10:00:00Z",
-        "2025-01-13T10:30:00Z",
-        "2025-01-13T11:00:00Z",
+        "2025-01-07T10:00:00Z",
+        "2025-01-07T10:30:00Z",
+        "2025-01-07T11:00:00Z",
       ],
     });
 
@@ -2756,40 +2749,45 @@ describe("deleteExistingAppointments", () => {
   // true, routing the zero-slot paid placeholder through this branch; without
   // the guard its unconditional delete would trip the same Payment→
   // ConsultantEarnings FK rollback as B8.
-  it("#898: preservePastSlots preserves a payment-bearing placeholder (defense-in-depth)", async () => {
+  it("#898/#1766: a subscription with a held session appends its next cycle and deletes nothing", async () => {
+    const pastSession = {
+      id: "past-1",
+      ordinal: 1,
+      isTentative: false,
+      completionStatus: "COMPLETED",
+      startsAt: new Date("2024-12-30T10:00:00Z"),
+      endsAt: new Date("2024-12-30T11:00:00Z"),
+    };
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        schedulingPeriodEndsAt: new Date("2025-01-17T00:00:00Z"), // 2 weeks → 4 slots
+        appointment: { occurrences: [pastSession], payment: [] },
       }),
     );
 
-    // A sibling appointment with a completed (past) session → in-progress
-    // reallocation; plus the paid zero-slot placeholder that must survive.
-    // #1554 — the held hour is ONE 10:00–11:00 row. The plan owes 4 intervals
-    // (2 weeks × 1 call × 2), the past row covers 2, so exactly 2 future
-    // intervals are expected: a row-counted guard would demand 3.
+    // The past session used to route this through the in-progress replan,
+    // whose delete needed a guard for the paid placeholder (#898). Under
+    // #1766 the held session means the next cycle simply appends: no delete
+    // step runs at all, so both rows survive by construction.
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "past-session-apt",
-        occurrences: [
-          {
-            id: "past-1",
-            ordinal: 1,
-            isTentative: false,
-            startsAt: new Date("2024-12-30T10:00:00Z"),
-            endsAt: new Date("2024-12-30T11:00:00Z"),
-          },
-        ],
+        occurrences: [pastSession],
         participants: [{ userId: "consultant-1" }, { userId: "consultee-1" }],
-        _count: { payment: 0 },
-      },
-      {
-        id: "paid-placeholder",
-        occurrences: [],
-        participants: [],
         _count: { payment: 1 },
       },
     ]);
+    mockTx.appointment.findFirst.mockResolvedValue({
+      id: "past-session-apt",
+      cancellationPolicyId: null,
+    });
+    mockTx.appointmentOccurrence.count.mockResolvedValue(1);
+    mockTx.appointmentOccurrence.aggregate.mockResolvedValue({
+      _max: { ordinal: 1 },
+    });
+    mockTx.appointment.update.mockResolvedValue({
+      id: "past-session-apt",
+      occurrences: [pastSession, { id: "occ-2", ordinal: 2 }],
+    });
 
     const result = await SchedulingService.allocate({
       eventType: "subscription",
@@ -2800,15 +2798,14 @@ describe("deleteExistingAppointments", () => {
 
     expect(result.error).toBeUndefined();
     expect(result.success).toBe(true);
-    // The paid placeholder reaches preservePastSlots with no slots left, but the
-    // guard keeps it (an unconditional delete would FK-rollback the tx).
-    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
-      where: { id: "paid-placeholder" },
-    });
-    // The past session is preserved too (its past slots remain).
-    expect(mockTx.appointment.delete).not.toHaveBeenCalledWith({
-      where: { id: "past-session-apt" },
-    });
+    expect(mockTx.appointment.delete).not.toHaveBeenCalled();
+    expect(mockTx.appointment.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.appointmentOccurrence.deleteMany).not.toHaveBeenCalled();
+    expect(
+      mockTx.appointment.update.mock.calls[0][0].data.occurrences.create.map(
+        (row: { ordinal: number }) => row.ordinal,
+      ),
+    ).toEqual([2]);
   });
 });
 
@@ -3252,20 +3249,16 @@ describe("Auto allocation - timezone day shift", () => {
 // ── Allocation-resilience: cause-specific error codes ────────────────────────
 
 describe("allocation resilience — error codes", () => {
-  it("PERIOD_ENDED when scheduling period is in the past", async () => {
+  it("a lapsed stored period is not PERIOD_ENDED for a subscription: the cycle window rolls to now (#1766)", async () => {
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscriptionEvent({
-        subscriptionPlan: {
-          consultantProfileId: "consultant-profile-1",
-          durationInMonths: 1,
-          sessionsPerWeek: 1,
-          sessionDurationInHours: 1,
+        subscriptionPlan: subscriptionPlanOf(1, {
           consultantProfile: makeConsultantProfile({
             availabilityWindowsWeekly: [
               makeWeeklyAvailabilitySlot(DayOfWeek.MONDAY, 9, 10),
             ],
           }),
-        },
+        }),
         // Period ended before "now" (2025-01-01)
         schedulingPeriodStartsAt: new Date("2024-01-01T00:00:00Z"),
         schedulingPeriodEndsAt: new Date("2024-02-01T00:00:00Z"),
@@ -3280,9 +3273,8 @@ describe("allocation resilience — error codes", () => {
       mode: "auto",
     });
 
-    expect(result.success).toBe(false);
-    expect(result.errorCode).toBe("PERIOD_ENDED");
-    expect(result.error).toContain("scheduling period ended");
+    expect(result.success).toBe(true);
+    expect(result.errorCode).toBeUndefined();
   });
 
   it("SLOT_SHORTAGE when period is future but availability falls short", async () => {
@@ -3322,8 +3314,8 @@ describe("allocation resilience — error codes", () => {
 // ─── #1206 — partial allocation ─────────────────────────────────────────────
 
 describe("#1206 partial allocation", () => {
-  // A plan sold 6 sessions; the consultant published one hour a week inside a
-  // three-week period. The whole plan cannot fit, some of it can.
+  // A plan sold 6 sessions at 3 a week; the consultant published one hour a
+  // week. #1766 — the first CYCLE asks for 3; only one of them fits.
   const shortOnAvailability = () =>
     makeSubscriptionEvent({
       subscriptionPlan: {
@@ -3357,10 +3349,10 @@ describe("#1206 partial allocation", () => {
 
     expect(result.success).toBe(false);
     expect(result.errorCode).toBe("SLOT_SHORTAGE");
-    expect(result.requiredSessions).toBe(6);
+    expect(result.requiredSessions).toBe(3);
     // The offer the consultant is shown; > 0 or there is nothing to offer.
     expect(result.placeableSessions).toBeGreaterThan(0);
-    expect(result.placeableSessions).toBeLessThan(6);
+    expect(result.placeableSessions).toBeLessThan(3);
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
   });
 
@@ -3383,8 +3375,8 @@ describe("#1206 partial allocation", () => {
     expect(result.partial).toBe(true);
     // LOAD-BEARING: the confirm dialog promises the number the refusal named.
     expect(result.placedSessions).toBe(refusal.placeableSessions);
-    expect(result.requiredSessions).toBe(6);
-    expect(result.unplacedSessions).toBe(6 - (result.placedSessions ?? 0));
+    expect(result.requiredSessions).toBe(3);
+    expect(result.unplacedSessions).toBe(3 - (result.placedSessions ?? 0));
     // #1554 — one wrapper, one occurrence per placed session; the rest stay
     // unallocated.
     expect(mockTx.appointment.create).toHaveBeenCalledTimes(1);

@@ -176,6 +176,10 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Consultant Books Through Their Organisation",
     description: null,
   },
+  [ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE]: {
+    title: "You Already Have This Plan",
+    description: null,
+  },
   [ErrorTypes.CURRENCY_UNSUPPORTED]: {
     title: "Currency Not Supported",
     description: null,

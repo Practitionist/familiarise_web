@@ -130,6 +130,8 @@ export function makeSubscriptionPlan(overrides: Record<string, any> = {}) {
     sessionsPerWeek: 2,
     sessionDurationInHours: 1,
     durationInMonths: 1,
+    // #1766 — the entitlement a row without `sessionsTotal` falls back to.
+    totalSessions: 8,
     ...overrides,
   };
 }

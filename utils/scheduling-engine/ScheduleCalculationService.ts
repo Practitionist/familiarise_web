@@ -5,7 +5,12 @@
  * Handles week counting, slot requirements, progress tracking, and grouping logic.
  */
 
-import { EventType, EventConfig, BookableInterval, ProgressInfo } from "./types";
+import {
+  EventType,
+  EventConfig,
+  BookableInterval,
+  ProgressInfo,
+} from "./types";
 
 /** Weekday name → index for Intl "short" weekday parts. */
 const WEEKDAY_INDEX: Record<string, number> = {
@@ -31,7 +36,10 @@ export class ScheduleCalculationService {
 
   // Intl.DateTimeFormat construction is expensive and the keys are computed
   // in per-click loops; cache one formatter per timezone.
-  private static readonly dateFormatters = new Map<string, Intl.DateTimeFormat>();
+  private static readonly dateFormatters = new Map<
+    string,
+    Intl.DateTimeFormat
+  >();
 
   private static getDateFormatter(timeZone: string): Intl.DateTimeFormat {
     let formatter = this.dateFormatters.get(timeZone);
@@ -133,7 +141,7 @@ export class ScheduleCalculationService {
   }
 
   /**
-* Wall-clock hour and weekday of an instant, as read in `timeZone` (ADR B9).
+   * Wall-clock hour and weekday of an instant, as read in `timeZone` (ADR B9).
    *
    * #1065 — the allocator scores "morning"/"weekend" with this rather than
    * Date#getHours()/getDay(), which answer in whatever timezone the Node
@@ -264,7 +272,9 @@ export class ScheduleCalculationService {
   ): Date {
     const { year, month, day, weekday } = this.getCalendarParts(d, timeZone);
     const sundayLocalMidnightAsUtc = Date.UTC(year, month - 1, day - weekday);
-    return new Date(this.zonedMidnightInstant(sundayLocalMidnightAsUtc, timeZone));
+    return new Date(
+      this.zonedMidnightInstant(sundayLocalMidnightAsUtc, timeZone),
+    );
   }
 
   /**
@@ -415,6 +425,12 @@ export class ScheduleCalculationService {
         }
 
         const slotsPerCall = Math.ceil(sessionDuration / 0.5);
+
+        // #1766 — one cycle at a time: the entitlement helper already said how
+        // many sessions this run may place.
+        if (config.cycleTargetSessions !== undefined) {
+          return config.cycleTargetSessions * slotsPerCall;
+        }
 
         // Use totalSessions from plan if available (authoritative plan-defined count).
         // This prevents week-boundary edge cases where countWeeks > plan's totalSessions

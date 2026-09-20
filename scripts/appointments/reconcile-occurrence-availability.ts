@@ -32,6 +32,10 @@ import {
   buildOccupiedAppointmentFilter,
   OCCUPIED_EVENT_STATUSES,
 } from "@/utils/scheduling-engine/occupancyPolicy";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import type { EventConfig } from "@/utils/scheduling-engine/types";
@@ -611,8 +615,8 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       where: {
         status: AppointmentStatus.APPROVED,
         deletedAt: null,
-        // Nothing can be placed in a window that has closed.
-        schedulingPeriodEndsAt: { gt: now },
+        // #1766 — no stored-window bound: the row keeps the first cycle only
+        // and the cycle in play is derived below from the entitlement.
         // #1554 — one live wrapper holding a confirmed occurrence and no
         // tentative one (a reschedule or a checkout hold in flight).
         appointment: {
@@ -626,30 +630,28 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
       select: {
         id: true,
         updatedAt: true,
+        sessionsTotal: true,
         schedulingPeriodStartsAt: true,
-        schedulingPeriodEndsAt: true,
+        schedulingTimezone: true,
         subscriptionPlan: {
           select: {
             consultantProfileId: true,
             durationInMonths: true,
             sessionsPerWeek: true,
-            sessionDurationInHours: true,
             totalSessions: true,
           },
         },
-        // The confirmed-session count is the wrapper's live confirmed rows
-        // (#1554: one occurrence = one session).
+        // #1766 — the wrapper's rows feed the one entitlement counter; a
+        // subscription is short only when its CURRENT cycle is short.
         appointment: {
           select: {
-            _count: {
+            occurrences: {
               select: {
-                occurrences: {
-                  where: {
-                    isTentative: false,
-                    deletedAt: null,
-                    completionStatus: { notIn: ["CANCELLED", "RESCHEDULED"] },
-                  },
-                },
+                startsAt: true,
+                endsAt: true,
+                completionStatus: true,
+                isTentative: true,
+                deletedAt: true,
               },
             },
           },
@@ -662,23 +664,24 @@ async function collectTopUpCandidates(now: Date): Promise<TopUpCandidate[]> {
 
     for (const subscription of subscriptions) {
       const plan = subscription.subscriptionPlan;
-      const required = requiredSessionsFor("subscription", {
-        durationInMonths: plan.durationInMonths,
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: sessionsTotalOf(subscription),
         sessionsPerWeek: plan.sessionsPerWeek,
-        sessionDurationInHours: plan.sessionDurationInHours,
-        totalSessions: plan.totalSessions,
+        durationInMonths: plan.durationInMonths,
+        occurrences: subscription.appointment?.occurrences ?? [],
         schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
-        schedulingPeriodEndsAt: subscription.schedulingPeriodEndsAt,
+        schedulingTimezone: subscription.schedulingTimezone,
+        now,
       });
-      const confirmed = subscription.appointment?._count.occurrences ?? 0;
-      if (required === null || confirmed >= required) continue;
+      if (entitlement.cycle.nextBatch === 0) continue;
       candidates.push({
         eventType: "subscription",
         eventId: subscription.id,
         consultantProfileId: plan.consultantProfileId,
         updatedAt: subscription.updatedAt,
-        confirmedSessions: confirmed,
-        requiredSessions: required,
+        confirmedSessions: entitlement.held,
+        // The same cumulative target the allocator's top-up arm reports.
+        requiredSessions: entitlement.held + entitlement.cycle.nextBatch,
       });
     }
     if (subscriptions.length < TOP_UP_SCAN_LIMIT) break;
