@@ -87,6 +87,7 @@ export default function HomePageClient({
         pendingRequestsCount={dashboardData.pendingRequestsCount ?? 0}
         awaitingPayment={dashboardData.awaitingPayment}
         orgSessions={dashboardData.orgSessions}
+        nextCycles={dashboardData.nextCycles}
         responseRate={dashboardData.responseRate}
         viewerZone={viewerZone}
         performanceSnapshot={dashboardData.performanceSnapshot}
