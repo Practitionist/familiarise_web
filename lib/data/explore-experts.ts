@@ -47,7 +47,14 @@ export const consultantListInclude = {
   domain: { select: { id: true, name: true } },
   subDomains: { select: { id: true, name: true } },
   tags: { select: { id: true, name: true } },
-  reviews: { where: { deletedAt: null }, select: { rating: true }, take: 10 },
+  // Newest-first: the drawer labels this a "recent sample", so order before
+  // truncating — without it any 10 ratings could stand in for the latest.
+  reviews: {
+    where: { deletedAt: null },
+    orderBy: { createdAt: "desc" },
+    select: { rating: true },
+    take: 10,
+  },
   // 1:1 consultation plans — cheapest-first headline for the drawer only.
   // Mirrors subscriptionPlans (take 5, no visibility filter) so the listing
   // treats both rails identically; the drawer renders one summary line.
@@ -59,6 +66,9 @@ export const consultantListInclude = {
       priceCurrency: true,
       durationInHours: true,
     },
+    // Cheapest-first: the drawer prints "starts from" off the taken rows, so
+    // the take must hold the catalogue minimum, not an arbitrary five.
+    orderBy: { price: "asc" },
     take: 5,
   },
   subscriptionPlans: {
@@ -76,6 +86,9 @@ export const consultantListInclude = {
       trialEnabled: true,
       trialPriceInPaise: true,
     },
+    // Cheapest-first like consultationPlans: card/drawer "starts from" and
+    // trial headlines must see the catalogue minimum, not an arbitrary five.
+    orderBy: { price: "asc" },
     take: 5,
   },
 } satisfies Prisma.ConsultantProfileInclude;
@@ -345,8 +358,19 @@ export async function fetchExpertsMetadata() {
               }
             }
             return out;
-          } catch {
-            return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+          } catch (error) {
+            // Fail-soft ONLY on the missing-column case (P2022): the column
+            // lands via db push after merge. Anything else (notably transient
+            // pooler failures) must throw so the build retry and error
+            // paths run — and a swallowed transient must never become a
+            // "successful" zero-count cached for 300s.
+            if (
+              error instanceof Prisma.PrismaClientKnownRequestError &&
+              error.code === "P2022"
+            ) {
+              return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+            }
+            throw error;
           }
         })(),
         prisma.domain.findMany({

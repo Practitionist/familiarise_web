@@ -162,7 +162,7 @@ export const ConsultantCard = memo(function ConsultantCard({
   consultant,
   metadata: _metadata,
   onSelect,
-}: ConsultantCardProps) {
+}: Readonly<ConsultantCardProps>) {
   const { formatPrice } = useCurrency();
   const profileHref = `/explore/experts/${consultant.id}`;
 
@@ -208,37 +208,37 @@ export const ConsultantCard = memo(function ConsultantCard({
   return (
     <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info. Clicking anywhere here (except the
-            nested org-badge link) opens the quick-view drawer; the primary
-            CTA on the right navigates to the full profile page. Keyboard:
-            Enter/Space on the section opens the drawer too. */}
+        {/* Left Section: Consultant Info. Clicking anywhere here (except
+            nested links/buttons) opens the quick-view drawer; the primary
+            CTA on the right navigates to the full profile page. No
+            role="button" on the container — button semantics would flatten
+            the nested org-badge link for assistive tech — so keyboard/AT
+            users get the native Quick view button in the header instead. */}
         <div
           className={`relative flex-grow ${onSelect ? "cursor-pointer" : ""}`}
           {...(onSelect
             ? {
-                role: "button",
-                tabIndex: 0,
-                "aria-label": `Quick view ${consultant.user.name}'s details`,
                 onClick: (e: React.MouseEvent) => {
-                  // Let nested interactive elements (org badge link) behave
-                  // normally instead of opening the drawer.
+                  // Let nested interactive elements (org badge link, Quick
+                  // view button) behave normally instead of opening the
+                  // drawer twice.
                   if ((e.target as HTMLElement).closest("a,button")) return;
                   onSelect(consultant);
-                },
-                onKeyDown: (e: React.KeyboardEvent) => {
-                  if (
-                    (e.key === "Enter" || e.key === " ") &&
-                    !(e.target as HTMLElement).closest("a,button")
-                  ) {
-                    e.preventDefault();
-                    onSelect(consultant);
-                  }
                 },
               }
             : {})}
         >
           {/* Header */}
           <div className="flex items-start gap-4 mb-6">
+            {onSelect && (
+              <button
+                type="button"
+                onClick={() => onSelect(consultant)}
+                className="absolute right-0 top-0 z-10 rounded-lg px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                Quick view
+              </button>
+            )}
             <div className="relative h-20 w-20 flex-shrink-0">
               <Image
                 alt={`Portrait of ${consultant.user.name}`}

@@ -29,7 +29,7 @@ export default function ExpertsInteractiveContent({
   metadata,
   trendingExperts,
   newestExperts,
-}: ExpertsInteractiveContentProps) {
+}: Readonly<ExpertsInteractiveContentProps>) {
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
   const browseSectionRef = useRef<HTMLDivElement>(null);
   const { formatPrice } = useCurrency();

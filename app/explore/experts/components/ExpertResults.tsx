@@ -59,7 +59,7 @@ function ExpertResultsImpl({
   groupByDomainId,
   sentinelRef,
   onSelect,
-}: ExpertResultsProps) {
+}: Readonly<ExpertResultsProps>) {
   const grouped = groupConsultantsByDomain(consultants);
   const showEmpty = consultants.length === 0 && !isLoading && !isRefetching;
 

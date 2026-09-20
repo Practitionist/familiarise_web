@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import {
@@ -22,6 +23,17 @@ const LIST_CACHE_HEADERS = {
 
 const VALID_AFFILIATIONS = new Set(["independent", "agency"]);
 const VALID_ORG_KINDS = new Set(["AGENCY", "ENTERPRISE", "SOLO_PRACTICE"]);
+
+// orgSlug is the only new filter taking an arbitrary caller string straight
+// into `slug:` and the Netlify-Vary cache key — unbounded values mean free
+// cache pollution on a public endpoint. Constrain to the slug shape (invalid
+// coerces to null, matching every other filter on this route, never a 400).
+const ORG_SLUG = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(/^[a-z0-9-]+$/);
 
 export async function GET(request: NextRequest) {
   // Hoisted out of the try so the fail-open branch can echo them back in `meta`.
@@ -51,7 +63,8 @@ export async function GET(request: NextRequest) {
       : null;
     const rawOrgKind = searchParams.get("orgKind");
     const orgKind = VALID_ORG_KINDS.has(rawOrgKind ?? "") ? rawOrgKind : null;
-    const orgSlug = searchParams.get("orgSlug") || null;
+    const orgSlug =
+      ORG_SLUG.safeParse(searchParams.get("orgSlug") ?? "").data ?? null;
 
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
@@ -241,6 +254,21 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
+    // Pre-migration rollout: `?orgKind=` on a DB without Organization.kind
+    // raises P2022. Answer that exact case with an empty list (no-store),
+    // not a 500 — the disabled UI pills don't protect direct query-string
+    // callers. Scoped to P2022-with-orgKind only; every other defect still
+    // captures + surfaces below.
+    if (
+      VALID_ORG_KINDS.has(searchParams.get("orgKind") ?? "") &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2022"
+    ) {
+      return NextResponse.json(
+        { data: [], meta: { total: 0, page, limit, totalPages: 0 } },
+        { headers: { "Cache-Control": "no-store" } },
+      );
+    }
     // Cross-region pooler cold-connect timeouts (#932, FAMILIARISE_WEB-9) are a
     // known, tracked transient — degrade this public list to empty rather than a
     // 500 + captured error. Real defects still capture + surface. Mirrors the

@@ -136,8 +136,11 @@ export default function StickyFilterBar({
 
         {/* Row 2: affiliation tabs (part of the settings panel) + org-kind */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* role="group", not tablist: these filter the list in place, they
+              don't switch tabpanels, so tab semantics (with their arrow-key
+              contract) would be a lie. */}
           <div
-            role="tablist"
+            role="group"
             aria-label="Affiliation"
             className="inline-flex items-center gap-1 rounded-xl border border-border bg-muted p-1"
           >
@@ -147,8 +150,7 @@ export default function StickyFilterBar({
               return (
                 <button
                   key={String(value)}
-                  role="tab"
-                  aria-selected={isActive}
+                  aria-pressed={isActive}
                   onClick={() => selectAffiliation(value)}
                   className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all sm:px-4 ${
                     isActive
