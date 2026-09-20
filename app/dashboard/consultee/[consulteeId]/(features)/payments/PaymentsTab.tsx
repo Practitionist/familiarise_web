@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
@@ -8,16 +8,11 @@ import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import type {
   ConsulteeCreditRow,
   ConsulteeCreditUsageRow,
-  ConsulteePaymentRow,
   ConsulteePaymentsPayload,
 } from "@/lib/data/consultee-payments";
 import { motion } from "framer-motion";
 import { useCurrency } from "@/hooks/useCurrency";
-import { cn } from "@/utils/tailwind";
-import { CreditCard, Gift, Tag, ArrowUpDown, Building2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { useSession } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
+import { CreditCard, Gift } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -25,27 +20,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   ResponsiveTable,
   type ResponsiveColumn,
 } from "@/components/ui/responsive-table";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { StatusBadge } from "@/components/dashboard/StatusBadge";
-import {
-  paymentStatusBadge,
-  refundStatusBadge,
-  resolveSponsoringOrgName,
-} from "@/lib/labels/session-labels";
-import { FailedRefundNote } from "./FailedRefundNote";
 import { NeedsYouBand } from "./NeedsYouBand";
+import { PaymentsHistoryList } from "./PaymentsHistoryList";
 
-type PaymentItem = ConsulteePaymentRow;
 type CreditItem = ConsulteeCreditRow;
 type CreditUsageItem = ConsulteeCreditUsageRow;
 type PaymentsData = ConsulteePaymentsPayload;
@@ -56,63 +37,6 @@ function formatDate(date: Date | string): string {
     month: "short",
     year: "numeric",
   });
-}
-
-const GATEWAY_LABELS: Record<string, string> = {
-  STRIPE: "Stripe",
-  RAZORPAY: "Razorpay",
-};
-
-function formatGateway(gateway: string): string {
-  return GATEWAY_LABELS[gateway] || gateway;
-}
-
-function formatDateTime(date: Date | string): string {
-  return new Date(date).toLocaleDateString("en-IN", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
-}
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = date.getTime() - now.getTime();
-  const absDiffMs = Math.abs(diffMs);
-  const isPast = diffMs < 0;
-
-  const minutes = Math.floor(absDiffMs / (1000 * 60));
-  const hours = Math.floor(absDiffMs / (1000 * 60 * 60));
-  const days = Math.floor(absDiffMs / (1000 * 60 * 60 * 24));
-
-  let relative: string;
-  if (minutes < 1) relative = "just now";
-  else if (minutes < 60) relative = `${minutes}m`;
-  else if (hours < 24) relative = `${hours}h ${minutes % 60}m`;
-  else relative = `${days}d ago`;
-
-  if (minutes < 1) return relative;
-  return isPast ? `${relative} ago` : `in ${relative}`;
-}
-
-/**
- * Derive UI display status: start from the server's refund-aware
- * `displayStatus` (REFUNDED / PARTIALLY_REFUNDED / PaymentStatus); if
- * PENDING but expiresAt is past, show EXPIRED so the user doesn't see a
- * misleading amber "PENDING" badge while the cleanup cron hasn't run yet.
- */
-function getDisplayStatus(payment: PaymentItem): string {
-  const base = payment.status;
-  if (base !== "PENDING") return base;
-
-  const expiresAt = payment.expiresAt
-    ? new Date(payment.expiresAt)
-    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
-
-  return expiresAt <= new Date() ? "EXPIRED" : "PENDING";
 }
 
 /**
@@ -130,51 +54,6 @@ function formatAmountInCurrency(paise: number, currency: string): string {
   } catch {
     return `${currency} ${(paise / 100).toFixed(2)}`;
   }
-}
-
-function getExpiryInfo(payment: PaymentItem): {
-  datetime: string;
-  relative: string;
-  isExpired: boolean;
-} | null {
-  // Show expiry info for PENDING (countdown) and EXPIRED (how long ago)
-  if (payment.status !== "PENDING" && payment.status !== "EXPIRED") return null;
-
-  const expiresAt = payment.expiresAt
-    ? new Date(payment.expiresAt)
-    : new Date(new Date(payment.createdAt).getTime() + 30 * 60 * 1000);
-
-  return {
-    datetime: formatDateTime(expiresAt.toISOString()),
-    relative: formatRelativeTime(expiresAt),
-    isExpired: expiresAt <= new Date(),
-  };
-}
-
-/**
- * #1365 — the buyer's own tax invoice for a payment. Defined at module scope
- * rather than inside the tab so it is not re-created on every render (S6478).
- * An empty cell means the booking was org-sponsored and is invoiced to the
- * organization instead, which is the correct answer rather than a missing
- * document.
- */
-function renderInvoiceCell(payment: PaymentItem) {
-  if (!payment.consumerInvoice) {
-    return <span className="text-muted-foreground/70">&mdash;</span>;
-  }
-  return (
-    <a
-      href={`/api/payments/${payment.id}/invoice/pdf`}
-      className="whitespace-nowrap text-sm font-medium text-foreground underline underline-offset-4 hover:text-muted-foreground"
-    >
-      {/* Explicit separator: JSX strips the newline between a text node and
-          the element after it, so the words would otherwise run together. */}
-      Download{" "}
-      <span className="text-xs text-muted-foreground">
-        {payment.consumerInvoice.invoiceNumber}
-      </span>
-    </a>
-  );
 }
 
 async function fetchConsulteePayments(
@@ -238,32 +117,6 @@ function PaymentsTabBody({
   consulteeId: string;
 }) {
   const { formatPrice } = useCurrency();
-  // #1675 — a failed refund's next step: the booking's own support thread
-  // when the buyer already opened one (B2C only — org-hosted sessions have no
-  // detail page, ADR 20), else the Support hub where they can start it.
-  const supportHrefFor = (payment: PaymentItem) =>
-    payment.hasSupportThread && payment.appointmentId && !payment.organizationId
-      ? `/dashboard/consultee/${consulteeId}/appointments/${payment.appointmentId}`
-      : `/dashboard/consultee/${consulteeId}/support`;
-
-  // #1396 — `formatPrice` assumes INR paise and applies the viewer's FX rate,
-  // so a payment already denominated in another currency was converted a second
-  // time and relabelled, while its refunds and the per-currency total right
-  // below were rendered unconverted. The three disagreed on the same row. This
-  // is the guard `PendingPaymentsWidget` already uses: only INR amounts go
-  // through the converter, everything else renders in its own currency.
-  const formatPaymentAmount = (
-    paise: number,
-    currency: string | null | undefined,
-  ) =>
-    currency && currency.toUpperCase() !== "INR"
-      ? formatAmountInCurrency(paise, currency)
-      : formatPrice(paise);
-  const { data: session } = useSession();
-  // Resolve a payment's `organizationId` to a displayable org name for
-  // the "Sponsored · <Org>" badge — same convention as the appointments
-  // / home surfaces.
-  const orgMemberships = session?.user?.organizationMemberships ?? [];
 
   // Net successful spend grouped per currency — a USD payment must never be
   // summed into an INR total, and refunded amounts don't count as spend.
@@ -279,219 +132,6 @@ function PaymentsTabBody({
     }
     return map;
   }, [data]);
-
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [sortDir, setSortDir] = useState<"desc" | "asc">("desc");
-
-  const filteredPayments = useMemo(() => {
-    let result = data?.payments ?? [];
-    if (statusFilter !== "all") {
-      result = result.filter((p) => getDisplayStatus(p) === statusFilter);
-    }
-    if (typeFilter !== "all") {
-      result = result.filter(
-        (p) => p.appointmentType?.toUpperCase() === typeFilter,
-      );
-    }
-    result = [...result].sort((a, b) => {
-      const diff =
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      return sortDir === "asc" ? diff : -diff;
-    });
-    return result;
-  }, [data, statusFilter, typeFilter, sortDir]);
-
-  const paymentColumns: ResponsiveColumn<PaymentItem>[] = [
-    {
-      key: "plan",
-      header: "Plan",
-      primary: true,
-      cell: (payment) => (
-        <div className="max-w-[220px]">
-          <div className="truncate font-medium text-foreground">
-            {payment.planTitle}
-          </div>
-          {(() => {
-            const sponsoringOrgName = resolveSponsoringOrgName(
-              payment.organizationId,
-              orgMemberships,
-            );
-            return sponsoringOrgName ? (
-              <Badge
-                className="mt-1 text-[10px] font-semibold px-2 py-0.5 bg-muted text-muted-foreground border-0 rounded-md inline-flex items-center gap-1 max-w-full"
-                title={`Sponsored by ${sponsoringOrgName}`}
-              >
-                <Building2 className="h-3 w-3 shrink-0" />
-                <span className="truncate">
-                  Sponsored · {sponsoringOrgName}
-                </span>
-              </Badge>
-            ) : null;
-          })()}
-        </div>
-      ),
-    },
-    {
-      key: "date",
-      header: "Date",
-      cell: (payment) => (
-        <span className="text-muted-foreground whitespace-nowrap">
-          {formatDate(payment.createdAt)}
-        </span>
-      ),
-    },
-    {
-      key: "type",
-      header: "Type",
-      cell: (payment) => (
-        <span className="text-muted-foreground whitespace-nowrap capitalize">
-          {payment.appointmentType?.toLowerCase() || "—"}
-        </span>
-      ),
-    },
-    {
-      key: "amount",
-      header: "Amount",
-      headClassName: "text-right",
-      className: "text-right",
-      cell: (payment) => (
-        <span className="whitespace-nowrap">
-          <span className="font-medium text-foreground">
-            {formatPaymentAmount(payment.amount, payment.currency)}
-          </span>
-          {payment.taxAmount && payment.taxAmount > 0 && (
-            <span className="block text-xs text-muted-foreground/70">
-              incl.{" "}
-              {formatPaymentAmount(payment.taxAmount ?? 0, payment.currency)}{" "}
-              GST
-            </span>
-          )}
-          {payment.discount && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="inline-flex items-center text-foreground ml-1 cursor-help">
-                    <Tag className="w-3 h-3" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>
-                    &ldquo;{payment.discount.code}&rdquo;
-                    {" — "}
-                    {payment.discount.type === "PERCENTAGE"
-                      ? `${payment.discount.value}% off`
-                      : `${formatPaymentAmount(payment.discount.value, payment.currency)} off`}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </span>
-      ),
-    },
-    {
-      key: "method",
-      header: "Method",
-      cell: (payment) => (
-        <span className="text-muted-foreground whitespace-nowrap text-xs">
-          {formatGateway(payment.paymentGateway)}
-        </span>
-      ),
-    },
-    {
-      key: "status",
-      header: "Status",
-      cell: (payment) => {
-        const displayStatus = getDisplayStatus(payment);
-        return (
-          <div className="space-y-1">
-            <StatusBadge {...paymentStatusBadge(displayStatus)} size="sm" />
-            {payment.refundedPaise > 0 && (
-              <span className="block text-xs text-muted-foreground whitespace-nowrap">
-                {formatAmountInCurrency(
-                  payment.refundedPaise,
-                  payment.currency,
-                )}{" "}
-                refunded
-              </span>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      key: "refunds",
-      header: "Refunds",
-      cell: (payment) => {
-        if (payment.refunds.length === 0) {
-          return <span className="text-muted-foreground/70">&mdash;</span>;
-        }
-        return (
-          <ul className="space-y-1.5">
-            {payment.refunds.map((refund) => (
-              <li key={refund.id} className="whitespace-nowrap">
-                <StatusBadge {...refundStatusBadge(refund.status)} size="sm" />
-                <span className="ml-1.5 text-xs text-muted-foreground">
-                  {formatAmountInCurrency(refund.amountPaise, payment.currency)}
-                  {" · "}
-                  {formatDate(refund.createdAt)}
-                </span>
-                {refund.reason && (
-                  <span
-                    className="block text-xs text-muted-foreground/70 max-w-[200px] truncate"
-                    title={refund.reason}
-                  >
-                    {refund.reason}
-                  </span>
-                )}
-                <FailedRefundNote
-                  status={refund.status}
-                  amountText={formatAmountInCurrency(
-                    refund.amountPaise,
-                    payment.currency,
-                  )}
-                  supportHref={supportHrefFor(payment)}
-                />
-              </li>
-            ))}
-          </ul>
-        );
-      },
-    },
-    {
-      key: "invoice",
-      header: "Tax invoice",
-      cell: renderInvoiceCell,
-    },
-    {
-      key: "expires",
-      header: "Expires",
-      cell: (payment) => {
-        const expiry = getExpiryInfo(payment);
-        if (!expiry) {
-          return <span className="text-muted-foreground/70">&mdash;</span>;
-        }
-        return (
-          <div className="whitespace-nowrap">
-            <span className="text-xs text-muted-foreground">
-              {expiry.datetime}
-            </span>
-            <span
-              className={cn(
-                "block text-xs",
-                expiry.isExpired
-                  ? "text-muted-foreground/70"
-                  : "text-amber-600 dark:text-amber-400",
-              )}
-            >
-              {expiry.relative}
-            </span>
-          </div>
-        );
-      },
-    },
-  ];
 
   const creditColumns: ResponsiveColumn<CreditItem>[] = [
     {
@@ -663,7 +303,7 @@ function PaymentsTabBody({
         <TabsList>
           <TabsTrigger value="payments">
             <CreditCard className="w-4 h-4 mr-1.5" />
-            Transactions
+            Payments
           </TabsTrigger>
           <TabsTrigger value="credits">
             <Gift className="w-4 h-4 mr-1.5" />
@@ -671,71 +311,13 @@ function PaymentsTabBody({
           </TabsTrigger>
         </TabsList>
 
-        {/* Payments (merged transactions + invoices) */}
+        {/* #1675 X3 — Needs you (only when non-empty) + History */}
         <TabsContent value="payments">
           <NeedsYouBand consulteeId={consulteeId} />
-          {data.payments.length === 0 ? (
-            <EmptyState message="No payments yet" />
-          ) : (
-            <div className="space-y-3">
-              {/* Filter / Sort bar */}
-              <div className="flex flex-wrap items-center gap-3">
-                <Select value={statusFilter} onValueChange={setStatusFilter}>
-                  <SelectTrigger className="w-full sm:w-[150px]">
-                    <SelectValue placeholder="Status" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    <SelectItem value="SUCCEEDED">Succeeded</SelectItem>
-                    <SelectItem value="REFUNDED">Refunded</SelectItem>
-                    <SelectItem value="PARTIALLY_REFUNDED">
-                      Partially refunded
-                    </SelectItem>
-                    <SelectItem value="PENDING">Pending</SelectItem>
-                    <SelectItem value="FAILED">Failed</SelectItem>
-                    <SelectItem value="EXPIRED">Expired</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger className="w-full sm:w-[170px]">
-                    <SelectValue placeholder="Type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All types</SelectItem>
-                    <SelectItem value="CONSULTATION">Consultation</SelectItem>
-                    <SelectItem value="SUBSCRIPTION">Subscription</SelectItem>
-                    <SelectItem value="WEBINAR">Webinar</SelectItem>
-                    <SelectItem value="CLASS">Class</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setSortDir((d) => (d === "desc" ? "asc" : "desc"))
-                  }
-                  className="gap-1.5"
-                >
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                  {sortDir === "desc" ? "Newest first" : "Oldest first"}
-                </Button>
-              </div>
-
-              {filteredPayments.length === 0 ? (
-                <EmptyState message="No transactions match the selected filters" />
-              ) : (
-                <div className="bg-card rounded-xl border border-border p-2 sm:p-3">
-                  <ResponsiveTable<PaymentItem>
-                    columns={paymentColumns}
-                    rows={filteredPayments}
-                    getRowId={(p) => p.id}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+          <PaymentsHistoryList
+            payments={data.payments}
+            consulteeId={consulteeId}
+          />
         </TabsContent>
 
         {/* Credits */}
@@ -779,13 +361,5 @@ function PaymentsTabBody({
         </TabsContent>
       </Tabs>
     </motion.div>
-  );
-}
-
-function EmptyState({ message }: { message: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center py-12 bg-card rounded-xl border border-border">
-      <p className="text-muted-foreground">{message}</p>
-    </div>
   );
 }
