@@ -376,6 +376,16 @@ export function AppointmentDetailClient({
   const heldCount = detail.appointment.occurrences.filter(
     (o) => o.isTentative && !isDeadOccurrence(o),
   ).length;
+  // #1675 — one session-count story: a plan's own header reads the held/plan
+  // progress the money line no longer repeats, instead of a second, plain
+  // total. SonarCloud (PR #1767) flagged the inline nested ternary this
+  // replaced.
+  const usesSessionProgress =
+    (vm.kind === "SUBSCRIPTION" || vm.kind === "CLASS") &&
+    !!presentation.sessionProgress;
+  const groupCountLine = usesSessionProgress
+    ? presentation.sessionProgress
+    : `${vm.group?.total ?? 0} session${vm.group?.total === 1 ? "" : "s"}`;
   // The consultant's answer to a request, through the Requests page's own
   // mutations (request-decision.ts); no times → the allocator sets them.
   const request =
@@ -536,15 +546,7 @@ export function AppointmentDetailClient({
               <p className="text-sm text-muted-foreground mt-1">
                 with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
-                {vm.group && vm.group.total > 0
-                  ? // #1675 — one session-count story: a plan's own header
-                    // reads the held/plan progress the money line no longer
-                    // repeats, instead of a second, plain total.
-                    (vm.kind === "SUBSCRIPTION" || vm.kind === "CLASS") &&
-                    presentation.sessionProgress
-                    ? ` · ${presentation.sessionProgress}`
-                    : ` · ${vm.group.total} session${vm.group.total === 1 ? "" : "s"}`
-                  : ""}
+                {vm.group && vm.group.total > 0 ? ` · ${groupCountLine}` : ""}
               </p>
               {vm.nextAt && (
                 <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">

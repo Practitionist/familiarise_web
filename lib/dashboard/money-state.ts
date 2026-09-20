@@ -527,8 +527,11 @@ function deriveMoney(
     // #1675 — one session-count story: the header owns "<held> of <plan>
     // sessions"; this line only prices the plan, so it no longer repeats a
     // second, differently-worded count.
+    // CodeRabbit (PR #1767) — sessions <= 0 would divide by zero into an
+    // Infinity unit price; a plan row is never supposed to carry that, but
+    // this line no longer trusts it blindly.
     const detail =
-      input.plan && Number(input.plan.pricePaise) > 0
+      input.plan && Number(input.plan.pricePaise) > 0 && input.plan.sessions > 0
         ? `${money(input.plan.pricePaise, input.plan.currency)} for the plan · ${input.plan.sessions} sessions · ${money(Number(input.plan.pricePaise) / input.plan.sessions, input.plan.currency)} each`
         : undefined;
     const line = you
