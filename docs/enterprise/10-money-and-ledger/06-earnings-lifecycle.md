@@ -71,6 +71,22 @@ The **`READY → BATCHED → PAID`** progression is where this doc hands off to 
 
 The transitions into **`REFUNDED`** are driven by `refundEarnings` and are covered in §5. The guard `assertEarningStatusTransitionLegal` (`lib/payments/payouts/earning-status.ts`) makes `REFUNDED` terminal and permits a `PAID` row to move only to `REFUNDED` — any other transition out of `PAID`, or any transition out of `REFUNDED`, throws `IllegalEarningStatusTransitionError`. This is what stops a settled row, which has already triggered a real bank transfer and a TDS deduction, from being silently rewritten.
 
+### 2.1 What the consultant sees — the three buckets
+
+The consultant Earnings page (`app/dashboard/consultant/[consultantId]/(features)/earnings/`) never shows these enum names. Since PR-Y (#1675, #1527 W2) every row passes through `deriveEarningPresentation` in `lib/dashboard/earnings-state.ts`, a pure module that maps the seven statuses onto three tiles — Available, Pending, Paid out — plus a Refunded segment that appears only when a refunded row exists. The table below is that map; the tone names the badge colour from `money-state.ts`, and the line is the one sentence shown under the badge.
+
+| `EarningStatus` | Bucket    | Badge                                                                    | Tone    | Line under the badge                                                                            |
+| --------------- | --------- | ------------------------------------------------------------------------ | ------- | ----------------------------------------------------------------------------------------------- |
+| `READY`         | Available | Available                                                                | info    | "Goes out in your next payout", or "Reserved for you until payouts begin" while the flag is off |
+| `BATCHED`       | Available | "In this week's payout" when `ENABLE_LIVE_PAYOUTS` is on, else Available | info    | "Locked into this week's payout run", or the reserved line while the flag is off                |
+| `PENDING`       | Pending   | Pending                                                                  | neutral | "available on <date>" from `holdUntil`; "releasing shortly" once it has passed                  |
+| `HELD`          | Pending   | On hold                                                                  | caution | Names the dispute when `preDisputeStatus` is set, otherwise an account review                   |
+| `PENDING_TRUST` | Pending   | Waiting for <Org>                                                        | neutral | "Waiting for <Org>'s first paid invoice"                                                        |
+| `PAID`          | Paid out  | Paid                                                                     | success | "Paid out to your bank"                                                                         |
+| `REFUNDED`      | Refunded  | Refunded                                                                 | caution | "Returned to the client"                                                                        |
+
+The Available tile sums the consultant share of `READY` and `BATCHED` rows less `refundedShareAmount`; the Pending tile sums the three waiting states the same way; the Paid out tile sums `netAmount`, or `amount − tdsDeducted` where `netAmount` is null, over `COMPLETED` `ConsultantPayout` rows, which is what actually reached the bank after TDS. These are whole-account figures computed in the read (`getConsultantBucketTotals`), not a total of the page of rows the list happens to show. The Available tile's subtitle comes from `nextPayoutCopy`: "Payouts begin at launch — your balance is safe with us" while `ENABLE_LIVE_PAYOUTS` is off, and "Paid every Monday · next: <date>" from the mirrored `PAYOUT_BATCH_UTC` constant (Monday 20:00 UTC, the schedule of `create-payout-batch.yml`) once it is on.
+
 ---
 
 ## 3. `PENDING_TRUST` — the #687 invoice-fraud guard

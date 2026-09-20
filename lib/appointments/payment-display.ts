@@ -34,7 +34,13 @@ const ORG_LEG_SOURCES = new Set([
 /** The values checkout writes; anything else (seed strings) is the payer's own. */
 const ORG_METHODS = new Set(["WALLET", "INVOICE", "LICENSE"]);
 
-export function paymentFunding(p: PaymentDisplayLike): PaymentFunding {
+/** The two fields the funding rule reads; an earner-side row need carry no more. */
+export type PaymentFundingLike = Pick<
+  PaymentDisplayLike,
+  "legs" | "paymentMethod"
+>;
+
+export function paymentFunding(p: PaymentFundingLike): PaymentFunding {
   const legs = p.legs ?? [];
   if (legs.length > 0) {
     if (legs.some((l) => ORG_LEG_SOURCES.has(l.source))) return "ORG";
@@ -46,7 +52,7 @@ export function paymentFunding(p: PaymentDisplayLike): PaymentFunding {
   return "SELF";
 }
 
-export const isSponsoredPayment = (p: PaymentDisplayLike): boolean =>
+export const isSponsoredPayment = (p: PaymentFundingLike): boolean =>
   paymentFunding(p) === "ORG";
 
 const GATEWAY_NAME: Record<string, string> = {

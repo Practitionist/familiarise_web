@@ -1555,3 +1555,46 @@ export async function getPayoutStats() {
     },
   };
 }
+
+// ============================================
+// Consultant-facing payout history (#1675 PR-Y)
+// ============================================
+
+/**
+ * The earner-safe payout select: the money walk (share → TDS → net), the
+ * dates, the failure reason and the UTR. Never `providerPayoutId`, the dedupe
+ * key or batch internals — the UTR is the only gateway reference a consultant
+ * needs to trace a transfer with their bank.
+ */
+export const CONSULTANT_PAYOUT_SELECT = {
+  id: true,
+  status: true,
+  amount: true,
+  tdsDeducted: true,
+  netAmount: true,
+  tdsRateAppliedBps: true,
+  tdsFinancialYear: true,
+  processedAt: true,
+  gatewayUtr: true,
+  failureReason: true,
+  mustPayByDate: true,
+  createdAt: true,
+} as const;
+
+/** Newest first; a plain read on the global client, never inside a transaction. */
+export async function getConsultantPayouts(
+  consultantProfileId: string,
+  options: { take?: number } = {},
+) {
+  const { take = 50 } = options;
+  return prisma.consultantPayout.findMany({
+    where: { consultantProfileId },
+    select: CONSULTANT_PAYOUT_SELECT,
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+}
+
+export type ConsultantPayoutRow = Awaited<
+  ReturnType<typeof getConsultantPayouts>
+>[number];
