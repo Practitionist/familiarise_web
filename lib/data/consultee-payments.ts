@@ -16,9 +16,9 @@ import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId, type Scope } from "@/lib/api/scope/parse";
 import { refundedPaise } from "@/lib/appointments/seat-payments";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
+import { lifecycleOf, planOf } from "@/lib/appointments/presentation-input";
 import {
   requestHoldDeadline,
-  type BookingPresentationInput,
   type PaymentInput,
   type PaymentRowInput,
 } from "@/lib/dashboard/money-state";
@@ -205,55 +205,6 @@ function toPaymentInput(
     createdAt: p.createdAt,
     expiresAt: p.expiresAt,
   };
-}
-
-/** The lifecycle row and the enum family its status belongs to. */
-function lifecycleOf(a: Lifecycle): BookingPresentationInput["request"] {
-  if (a.trial) {
-    return {
-      status: a.trial.status,
-      kind: "TRIAL",
-      requestedAt: a.trial.requestedAt,
-    };
-  }
-  const request = a.consultation ?? a.subscription;
-  if (request) {
-    return {
-      status: request.status,
-      kind: a.consultation ? "CONSULTATION" : "SUBSCRIPTION",
-      requestedAt: request.requestedAt,
-    };
-  }
-  const event = a.webinar ?? a.class;
-  return event
-    ? { status: event.status, kind: a.webinar ? "WEBINAR" : "CLASS" }
-    : null;
-}
-
-function planOf(a: Lifecycle): BookingPresentationInput["plan"] {
-  if (a.trial) {
-    const p = a.trial.subscriptionPlan;
-    return {
-      pricePaise: p.trialPriceInPaise,
-      currency: p.priceCurrency,
-      sessions: 1,
-    };
-  }
-  if (a.subscription) {
-    const p = a.subscription.subscriptionPlan;
-    return {
-      pricePaise: p.price,
-      currency: p.priceCurrency,
-      sessions: p.totalSessions,
-    };
-  }
-  const p =
-    a.consultation?.consultationPlan ??
-    a.webinar?.webinarPlan ??
-    a.class?.classPlan;
-  return p
-    ? { pricePaise: p.price, currency: p.priceCurrency, sessions: 1 }
-    : null;
 }
 
 function planRow(a: Lifecycle | null) {
