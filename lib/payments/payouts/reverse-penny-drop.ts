@@ -16,6 +16,7 @@
 
 import prisma from "@/lib/prisma";
 import { Refusal } from "@/lib/errors/refusal";
+import { PaymentError } from "@/lib/payments/core/types";
 import { PaymentGateway, PayoutAccountType } from "@prisma/client";
 import { PAYOUT_ACCOUNT_SAFE_SELECT } from "@/lib/data/consultant-payout-setup";
 import {
@@ -57,15 +58,39 @@ function requireRazorpayX() {
   return getRazorpayPayoutsService();
 }
 
+/**
+ * The feature is enabled per RazorpayX account on request and is absent in
+ * test mode, so a gateway refusal here is a modelled outcome with a manual
+ * path beside it, not a fault worth a 500.
+ */
+async function gatewayCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (error instanceof PaymentError) {
+      throw new Refusal({
+        code: "RPD_UNAVAILABLE",
+        httpStatus: 503,
+        userMessage:
+          "The ₹1 verification is not available right now; add your account manually below.",
+        devMessage: `reverse penny drop refused by RazorpayX: ${error.code} — ${error.message}`,
+      });
+    }
+    throw error;
+  }
+}
+
 export async function startReversePennyDrop(
   consultantProfileId: string,
 ): Promise<ReversePennyDropStart> {
   const razorpayX = requireRazorpayX();
-  const validation = await razorpayX.createReversePennyDrop({
-    // The id is the ownership proof the poll step checks against.
-    referenceId: consultantProfileId,
-    notes: { purpose: "consultant_payout_account_rpd" },
-  });
+  const validation = await gatewayCall(() =>
+    razorpayX.createReversePennyDrop({
+      // The id is the ownership proof the poll step checks against.
+      referenceId: consultantProfileId,
+      notes: { purpose: "consultant_payout_account_rpd" },
+    }),
+  );
   if (!validation.upiIntent) {
     throw new Refusal({
       code: "RPD_NO_INTENT",
@@ -87,7 +112,9 @@ export async function settleReversePennyDrop(
   validationId: string,
 ): Promise<ReversePennyDropOutcome> {
   const razorpayX = requireRazorpayX();
-  const validation = await razorpayX.fetchFundAccountValidation(validationId);
+  const validation = await gatewayCall(() =>
+    razorpayX.fetchFundAccountValidation(validationId),
+  );
 
   if (validation.referenceId !== consultantProfileId) {
     throw new Refusal({

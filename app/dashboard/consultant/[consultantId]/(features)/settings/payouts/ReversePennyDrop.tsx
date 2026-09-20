@@ -6,6 +6,7 @@ import { QrCode } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
+import { ApiResponseError } from "@/lib/fetch-helpers";
 
 import {
   pollReversePennyDrop,
@@ -95,8 +96,16 @@ export function ReversePennyDrop({
           description: `Payouts will go to •••• ${outcome.account.accountNumberLast4 ?? ""}.`,
         });
         onVerifiedRef.current?.();
-      } catch {
-        // A transient poll failure is not an answer; the next tick retries.
+      } catch (error) {
+        // A typed refusal (not yours, gateway off) ends the wait; a network
+        // blip is not an answer and the next tick retries.
+        if (
+          error instanceof ApiResponseError &&
+          (error.status === 404 || error.status === 503)
+        ) {
+          clearInterval(timer);
+          setPhase({ kind: "failed", reason: error.message });
+        }
       }
     }, POLL_MS);
     return () => {
