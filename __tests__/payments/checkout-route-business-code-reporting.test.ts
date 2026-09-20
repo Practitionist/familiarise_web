@@ -170,7 +170,6 @@ describe("every newly typed refusal answers its own status, tagged expected", ()
     ["ORG_NOT_OPERATIONAL", 403, "ORG_NOT_OPERATIONAL_ERROR"],
     ["ORG_CANNOT_SPONSOR", 403, "ORG_CANNOT_SPONSOR_ERROR"],
     ["ORG_MEMBERSHIP_REQUIRED", 403, "ORG_MEMBERSHIP_REQUIRED_ERROR"],
-    ["ORG_CREDIT_LIMIT_REACHED", 402, "ORG_CREDIT_LIMIT_REACHED_ERROR"],
     ["CONSULTANT_NOT_ON_PANEL", 409, "CONSULTANT_NOT_ON_PANEL_ERROR"],
     [
       "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
@@ -198,6 +197,30 @@ describe("every newly typed refusal answers its own status, tagged expected", ()
     expect(body.errorType).toBe(errorType);
     // The registered userMessage replaces the thrown (internal) message.
     expect(body.error).not.toContain("internal detail");
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
+  });
+
+  // #1744 row 4 — the credit-limit refusal has no registry userMessage: the
+  // site's rupee sentence must reach the caller unchanged, still 402 + expected.
+  it("ORG_CREDIT_LIMIT_REACHED passes the rupee-formatted sentence through", async () => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "This booking would take the organisation past its invoice credit limit of ₹50,000 (₹49,999 already outstanding). Outstanding invoices must be paid before new bookings.",
+        ),
+        { code: "ORG_CREDIT_LIMIT_REACHED", httpStatus: 402 },
+      ),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(body.errorType).toBe("ORG_CREDIT_LIMIT_REACHED_ERROR");
+    expect(body.error).toContain("₹50,000");
+    expect(body.error).not.toMatch(/paise/i);
     const context = soleCaptureContext();
     expect(context.level).toBe("info");
     expect(context.tags?.expected).toBe("true");

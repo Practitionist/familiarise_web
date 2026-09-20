@@ -398,12 +398,12 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     userMessage:
       "You are not an active member of this organisation, so it cannot sponsor this booking.",
   },
+  // #1744 row 4 — no userMessage: the thrown sentence names the rupee limit
+  // and the outstanding figure (assertWithinInvoiceCreditLimit).
   {
     code: "ORG_CREDIT_LIMIT_REACHED",
     errorType: ErrorTypes.ORG_CREDIT_LIMIT_REACHED,
     httpStatus: 402,
-    userMessage:
-      "Your organisation has reached its invoice credit limit. Outstanding invoices must be paid before new sponsored bookings.",
   },
   {
     code: "CONSULTANT_NOT_ON_PANEL",

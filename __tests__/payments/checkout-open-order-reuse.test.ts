@@ -491,6 +491,11 @@ describe("readInvoiceExposurePaise nets accrual reversals", () => {
       }),
     );
     expect(() =>
+      assertWithinInvoiceCreditLimit(49_999_00, 10_00, 50_000_00),
+    ).toThrow(
+      expect.not.objectContaining({ message: expect.stringMatching(/paise/i) }),
+    );
+    expect(() =>
       assertWithinInvoiceCreditLimit(49_990_00, 10_00, 50_000_00),
     ).not.toThrow();
   });
