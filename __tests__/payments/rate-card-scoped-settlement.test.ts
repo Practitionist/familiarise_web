@@ -231,6 +231,35 @@ describe("#1335 — scoped rate cards reach settlement only behind the flag", ()
     expect(wheres.every((w: CardWhere) => w.planId === null)).toBe(true);
   });
 
+  it("an ORGANIZATION-recipient snapshot carries bps that sum to 10000 (#1584 P1-EC01)", async () => {
+    // The org absorbs the consultant slice; the persisted bps used to keep
+    // the card's 10/80 split next to consultantSharePaise: 0.
+    tx.membership.findFirst.mockResolvedValue({
+      id: "mem-1",
+      rateCardOverrideId: null,
+      payoutRecipient: "ORGANIZATION",
+      organization: { id: ORG },
+    });
+
+    await settle();
+
+    expect(capturedOrgEarnings).toHaveLength(1);
+    const snap = capturedOrgEarnings[0] as {
+      platformBpsApplied: number;
+      orgBpsApplied: number;
+      consultantBpsApplied: number;
+    };
+    expect(snap.consultantBpsApplied).toBe(0);
+    expect(snap.orgBpsApplied).toBe(9000);
+    expect(
+      snap.platformBpsApplied + snap.orgBpsApplied + snap.consultantBpsApplied,
+    ).toBe(10_000);
+    expect(capturedOrgEarnings[0]).toMatchObject({
+      consultantSharePaise: 0,
+      orgSharePaise: 90_000,
+    });
+  });
+
   it("never forwards a contract owned by another org", async () => {
     process.env.RATE_CARD_SCOPED_RESOLUTION = "on";
     // The booking is program-funded, but the sponsoring contract belongs to a

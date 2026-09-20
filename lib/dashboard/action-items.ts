@@ -135,6 +135,10 @@ export interface ConsultantActionInput {
   documentsAwaitingReview?: number;
   upcomingSessions: ImminentSession[];
   basePath: string;
+  /** #1675 PR-Y2 — earnings exist and no verified payout account can take them. */
+  payoutSetupNeeded?: boolean;
+  /** Words the row: before launch the account is collected ahead of the flag. */
+  livePayoutsEnabled?: boolean;
 }
 
 export function deriveConsultantActionItems({
@@ -142,6 +146,8 @@ export function deriveConsultantActionItems({
   documentsAwaitingReview = 0,
   upcomingSessions,
   basePath,
+  payoutSetupNeeded = false,
+  livePayoutsEnabled = true,
 }: ConsultantActionInput): ActionItem[] {
   const items: ActionItem[] = [];
 
@@ -150,6 +156,23 @@ export function deriveConsultantActionItems({
     `${basePath}/appointments`,
   );
   if (imminent) items.push(imminent);
+
+  // Money already earned with nowhere to go outranks new work: the fix is one
+  // form, and every payout batch until then skips this consultant.
+  if (payoutSetupNeeded) {
+    items.push({
+      key: "payout-setup",
+      severity: "warning",
+      title: livePayoutsEnabled
+        ? "Add your bank account to get paid"
+        : "Add your bank account — payouts begin at launch",
+      body: livePayoutsEnabled
+        ? "You have earnings waiting; payouts start once an account is verified."
+        : "You have earnings waiting; a verified account now means you are in the first batch.",
+      ctaLabel: "Set up",
+      ctaHref: `${basePath}/settings/payouts`,
+    });
+  }
 
   if (pendingApprovals > 0) {
     items.push({

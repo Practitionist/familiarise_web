@@ -30,6 +30,8 @@ import { isValidGstin } from "@/lib/compliance/gst";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
+import { attemptOnboardingEmail, stageOrgCreatedEmail } from "@/lib/email";
+import { scheduleAfter } from "@/lib/api/after-safe";
 
 // PROJECT is reserved in the Prisma enum for the v2 milestone workflow
 // (scoped project-billing engine), but not accepted at the API boundary
@@ -107,18 +109,16 @@ const CreateBodySchema = z
       .string()
       .nullable()
       .optional()
-      .refine(
-        (v) => v === null || v === undefined || isValidGstin(v),
-        { message: "INVALID_GSTIN_FORMAT" },
-      ),
+      .refine((v) => v === null || v === undefined || isValidGstin(v), {
+        message: "INVALID_GSTIN_FORMAT",
+      }),
     pan: z
       .string()
       .nullable()
       .optional()
-      .refine(
-        (v) => v === null || v === undefined || isValidPan(v),
-        { message: "INVALID_PAN_FORMAT" },
-      ),
+      .refine((v) => v === null || v === undefined || isValidPan(v), {
+        message: "INVALID_PAN_FORMAT",
+      }),
     requiresPO: z.boolean().default(false),
   })
   .refine((v) => v.canSponsor || v.canHost, {
@@ -229,7 +229,10 @@ export async function POST(req: NextRequest) {
           paymentTermsDays: body.paymentTermsDays ?? 30,
           // #768 — branding fields live on OrgBrandingProfile. Upserted
           // below in the same transaction when any branding column is set.
-          ...(body.description || body.industry || body.website || body.sizeBucket
+          ...(body.description ||
+          body.industry ||
+          body.website ||
+          body.sizeBucket
             ? {
                 brandingProfile: {
                   create: {
@@ -337,15 +340,32 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      // P3 email twin: confirmation to the creator, staged inside this
+      // transaction so the row exists iff the organisation does; the vendor
+      // attempt runs in after() below.
+      const stagedCreated = await stageOrgCreatedEmail(
+        {
+          userId: auth.session.user.id,
+          orgId: org.id,
+          orgName: org.name,
+          dashboardUrl: `/dashboard/organization/${org.id}/home`,
+        },
+        tx,
+      );
+
       return {
         organization: org,
         billingAccountId,
         membership,
         orgWorkspaceProfileId: orgWorkspace.id,
+        stagedCreated,
       };
     });
 
-    return NextResponse.json(result, { status: 201 });
+    const { stagedCreated, ...responseBody } = result;
+    scheduleAfter(() => attemptOnboardingEmail(stagedCreated));
+
+    return NextResponse.json(responseBody, { status: 201 });
   } catch (err) {
     // Centralised error mapper. Every branch returns a structured envelope
     // so the wizard never falls through to its generic "Failed to create

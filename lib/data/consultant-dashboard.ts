@@ -22,11 +22,23 @@ import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
 import {
+  consultationRequestWhere,
+  nextCycleSubscriptionWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
+  readPayoutSetupNeeded,
+  subscriptionRequestWhere,
 } from "@/lib/data/needs-you";
+import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
+import { reportSentryError } from "@/lib/observability/report";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
+import { getConsultantResponseRate } from "@/lib/booking/response-rate";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { toPlain } from "@/lib/data/serialize";
 import type { TConsultantDashboardResponse } from "@/types/consultant-events";
@@ -53,6 +65,10 @@ const pendingUserSelect = {
 /** Home surfaces a handful of cards — history lives on /appointments. */
 const HOME_APPOINTMENTS_TAKE = 20;
 const HOME_PENDING_TAKE = 20;
+/** The "Awaiting payment" pipeline row shows a count and the first three. */
+const HOME_AWAITING_PAYMENT_TAKE = 3;
+/** Home is a personal (B2C) surface; every request read below pins it. */
+const PERSONAL_SCOPE = { kind: "personal" } as const;
 
 /**
  * #1166 ORG-1 — personal Home is B2C only (ADR 19), matching the sibling
@@ -63,6 +79,85 @@ const HOME_PENDING_TAKE = 20;
  */
 const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 
+/** The "Organisation sessions" strip shows the next few, not the book. */
+const HOME_ORG_SESSIONS_TAKE = 5;
+/** The "Next cycle" strip shows the first few plans that need scheduling. */
+const HOME_NEXT_CYCLE_TAKE = 5;
+/** Candidates read before the JS `remaining > 0` filter (#1766). */
+const HOME_NEXT_CYCLE_SCAN = 50;
+
+/**
+ * #1766 — subscriptions whose live cycle is finished and whose entitlement
+ * is not: derived at read time, no job. Two steps because the predicate can
+ * say "delivered, nothing live" but only the helper can say "sessions left";
+ * top-level, never inside a transaction (PG_POOL_MAX=1).
+ */
+async function readNextCycles(
+  consultantProfileId: string,
+  now: Date,
+): Promise<TConsultantDashboardResponse["nextCycles"]> {
+  const candidates = await prisma.subscription.findMany({
+    where: nextCycleSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
+    select: {
+      id: true,
+      sessionsTotal: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
+      subscriptionPlan: {
+        select: {
+          title: true,
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
+        },
+      },
+      requestedBy: { select: { user: { select: { name: true } } } },
+      appointment: {
+        select: {
+          occurrences: {
+            select: {
+              completionStatus: true,
+              isTentative: true,
+              deletedAt: true,
+              startsAt: true,
+              endsAt: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: "asc" },
+    take: HOME_NEXT_CYCLE_SCAN,
+  });
+  return candidates
+    .map((row) => {
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: sessionsTotalOf(row),
+        sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
+        durationInMonths: row.subscriptionPlan.durationInMonths,
+        occurrences: row.appointment?.occurrences ?? [],
+        schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
+        schedulingTimezone: row.schedulingTimezone,
+        now,
+      });
+      return {
+        subscriptionId: row.id,
+        consulteeName: row.requestedBy?.user?.name ?? "Consultee",
+        planTitle: row.subscriptionPlan.title,
+        nextBatch: entitlement.cycle.nextBatch,
+        held: entitlement.held,
+        total: entitlement.total,
+        windowStart: entitlement.cycle.windowStart,
+        windowEnd: entitlement.cycle.windowEnd,
+        remaining: entitlement.remaining,
+        href: `/dashboard/consultant/${encodeURIComponent(consultantProfileId)}/requests/${encodeURIComponent(row.id)}/allocate?type=subscription`,
+      };
+    })
+    .filter((row) => row.remaining > 0)
+    .slice(0, HOME_NEXT_CYCLE_TAKE)
+    .map(({ remaining: _remaining, ...row }) => row);
+}
+
 /**
  * Every appointment this consultant owns or collaborates on. Shared by the
  * Home display read and the active-clients count so the two can never drift.
@@ -70,55 +165,70 @@ const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 const consultantAppointmentScope = (consultantProfileId: string) =>
   ({
     ...PERSONAL_ORG_PIN,
-    OR: [
-      {
-        consultation: {
-          consultationPlan: { consultantProfileId },
-          status: "APPROVED" as const,
-        },
-      },
-      {
-        subscription: {
-          subscriptionPlan: { consultantProfileId },
-          status: "APPROVED" as const,
-        },
-      },
-      {
-        webinar: {
-          webinarPlan: { consultantProfileId },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        // Collaborated webinars (co-host, moderator, etc.)
-        webinar: {
-          webinarPlan: {
-            collaborators: {
-              some: { consultantProfileId, status: "ACCEPTED" as const },
-            },
-          },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        class: {
-          classPlan: { consultantProfileId },
-          status: "SCHEDULED" as const,
-        },
-      },
-      {
-        // Collaborated classes (co-instructor, TA, etc.)
-        class: {
-          classPlan: {
-            collaborators: {
-              some: { consultantProfileId, status: "ACCEPTED" as const },
-            },
-          },
-          status: "SCHEDULED" as const,
-        },
-      },
-    ],
+    OR: consultantDeliveryArms(consultantProfileId),
   }) satisfies Prisma.AppointmentWhereInput;
+
+/**
+ * #1703 B13 — the same delivery predicate with the personal pin inverted:
+ * an org-funded session this consultant must still show up for. Read as
+ * metadata only (ADR 20): org name, time, join state.
+ */
+const consultantOrgAppointmentScope = (consultantProfileId: string) =>
+  ({
+    organizationId: { not: null },
+    OR: consultantDeliveryArms(consultantProfileId),
+  }) satisfies Prisma.AppointmentWhereInput;
+
+const consultantDeliveryArms = (
+  consultantProfileId: string,
+): Prisma.AppointmentWhereInput[] => [
+  {
+    consultation: {
+      consultationPlan: { consultantProfileId },
+      status: "APPROVED" as const,
+    },
+  },
+  {
+    subscription: {
+      subscriptionPlan: { consultantProfileId },
+      status: "APPROVED" as const,
+    },
+  },
+  {
+    webinar: {
+      webinarPlan: { consultantProfileId },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    // Collaborated webinars (co-host, moderator, etc.)
+    webinar: {
+      webinarPlan: {
+        collaborators: {
+          some: { consultantProfileId, status: "ACCEPTED" as const },
+        },
+      },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    class: {
+      classPlan: { consultantProfileId },
+      status: "SCHEDULED" as const,
+    },
+  },
+  {
+    // Collaborated classes (co-instructor, TA, etc.)
+    class: {
+      classPlan: {
+        collaborators: {
+          some: { consultantProfileId, status: "ACCEPTED" as const },
+        },
+      },
+      status: "SCHEDULED" as const,
+    },
+  },
+];
 
 const appointmentInclude = {
   occurrences: {
@@ -174,6 +284,9 @@ const appointmentInclude = {
       },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
+      // #1766 — Home's session progress reads the frozen entitlement.
+      sessionsTotal: true,
+      schedulingTimezone: true,
       status: true,
     },
   },
@@ -332,6 +445,38 @@ function getRelativeTime(date: Date): string {
   }
 }
 
+/** Request rows in the Home widget's display shape, newest first. */
+function toRequestRows(
+  consultations: DashboardConsultation[],
+  subscriptions: DashboardSubscription[],
+) {
+  return [
+    ...consultations.map((consultation) => ({
+      id: consultation.id,
+      type: "Consultation",
+      name: consultation.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: consultation.requestedAt,
+    })),
+    ...subscriptions.map((subscription) => ({
+      id: subscription.id,
+      type: "Subscription",
+      name: subscription.requestedBy?.user?.name ?? "Unknown",
+      requestedAt: subscription.requestedAt,
+    })),
+  ]
+    .sort(
+      (a, b) =>
+        new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
+    )
+    .map((row) => ({
+      id: row.id,
+      type: row.type,
+      name: row.name,
+      date: formatDate(row.requestedAt),
+      time: formatTime(row.requestedAt),
+    }));
+}
+
 // =============================================================================
 // Shared Read
 // =============================================================================
@@ -368,25 +513,69 @@ export async function getConsultantDashboard(
     now.getMonth(),
     now.getDate(),
   );
-  const soonestSlots = await prisma.appointmentOccurrence.findMany({
-    where: {
-      deletedAt: null,
-      // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
-      // APPROVED parent; without this guard it seeded "Today's Appointments"
-      // with a session that no longer exists. Tentative holds belong to the
-      // Requests tab, not the home calendar.
-      completionStatus: "SCHEDULED",
-      isTentative: false,
-      endsAt: { gte: startOfToday },
-      appointment: consultantAppointmentScope(consultantProfileId),
-    },
-    select: { appointmentId: true },
-    orderBy: { startsAt: "asc" },
-    take: HOME_APPOINTMENTS_TAKE * 5,
-  });
+  // The two head reads are independent (same scope inputs, no data flow
+  // between them) — fire together instead of serially. Each is one indexed
+  // round trip; serialising them doubled the pooler wait on every home load.
+  const [soonestSlots, orgSessionRows] = await Promise.all([
+    prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        // B7 — a released (RESCHEDULED) slot keeps its original startsAt on an
+        // APPROVED parent; without this guard it seeded "Today's Appointments"
+        // with a session that no longer exists. Tentative holds belong to the
+        // Requests tab, not the home calendar.
+        completionStatus: "SCHEDULED",
+        isTentative: false,
+        endsAt: { gte: startOfToday },
+        appointment: consultantAppointmentScope(consultantProfileId),
+      },
+      select: { appointmentId: true },
+      orderBy: { startsAt: "asc" },
+      take: HOME_APPOINTMENTS_TAKE * 5,
+    }),
+    // #1703 B13 — the next org-funded sessions this consultant delivers. Same
+    // occurrence predicate as above with the org pin inverted; metadata only.
+    prisma.appointmentOccurrence.findMany({
+      where: {
+        deletedAt: null,
+        completionStatus: "SCHEDULED",
+        isTentative: false,
+        endsAt: { gte: startOfToday },
+        appointment: consultantOrgAppointmentScope(consultantProfileId),
+      },
+      select: {
+        id: true,
+        appointmentId: true,
+        startsAt: true,
+        endsAt: true,
+        isTentative: true,
+        completionStatus: true,
+        meeting: { select: { id: true, endedAt: true, endedReason: true } },
+        appointment: {
+          select: {
+            organizationId: true,
+            organization: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: { startsAt: "asc" },
+      take: HOME_ORG_SESSIONS_TAKE,
+    }),
+  ]);
   const homeAppointmentIds = [
     ...new Set(soonestSlots.map((s) => s.appointmentId)),
   ].slice(0, HOME_APPOINTMENTS_TAKE);
+  const orgSessions = orgSessionRows.map((row) => ({
+    occurrenceId: row.id,
+    appointmentId: row.appointmentId,
+    organizationId: row.appointment.organizationId ?? "",
+    organizationName: row.appointment.organization?.name ?? "Organisation",
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    isTentative: row.isTentative,
+    completionStatus: row.completionStatus,
+    meeting: row.meeting,
+  }));
 
   // PERFORMANCE FIX #364: Use direct Prisma queries instead of internal HTTP fetches
   // This eliminates network overhead and reduces response time significantly
@@ -397,6 +586,10 @@ export async function getConsultantDashboard(
     pendingSubscriptions,
     pendingConsultationCount,
     pendingSubscriptionCount,
+    awaitingPaymentConsultations,
+    awaitingPaymentSubscriptions,
+    awaitingPaymentConsultationCount,
+    awaitingPaymentSubscriptionCount,
     recentActivities,
     earningsThisMonth,
     earningsLastMonth,
@@ -448,40 +641,20 @@ export async function getConsultantDashboard(
         class: { select: { id: true } },
       },
     }),
-    // Fetch pending consultations
+    // Pending previews. #1703 — the list reads the SAME predicate and window
+    // as the badge count below (no 90-day floor: the badge never had one, and
+    // the expiry sweep bounds PENDING at 48 h anyway), so the preview can no
+    // longer disagree with the number beside it.
     prisma.consultation.findMany({
-      where: {
-        consultationPlan: {
-          consultantProfile: {
-            id: consultantProfileId,
-          },
-        },
-        status: "PENDING",
-        // TTFB bound: approvals widget surfaces actionable recent requests;
-        // a 90-day-old PENDING request is stale.
-        requestedAt: { gte: ninetyDaysAgo },
-      },
+      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingConsultationInclude,
-      orderBy: {
-        requestedAt: "desc",
-      },
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
     }),
-    // Fetch pending subscriptions
     prisma.subscription.findMany({
-      where: {
-        subscriptionPlan: {
-          consultantProfileId,
-        },
-        status: "PENDING",
-        // TTFB bound: approvals widget surfaces actionable recent requests;
-        // a 90-day-old PENDING request is stale.
-        requestedAt: { gte: ninetyDaysAgo },
-      },
+      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
       include: pendingSubscriptionInclude,
-      orderBy: {
-        requestedAt: "desc",
-      },
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
       take: HOME_PENDING_TAKE,
     }),
     // The approvals badge is a total, not a list length. Counting the capped
@@ -498,14 +671,47 @@ export async function getConsultantDashboard(
     // pending request belongs to that org's dashboard and must not inflate this
     // badge while the card underneath it excludes the same row.
     prisma.consultation.count({
-      where: pendingConsultationWhere(consultantProfileId, {
-        kind: "personal",
-      }),
+      where: pendingConsultationWhere(consultantProfileId, PERSONAL_SCOPE),
     }),
     prisma.subscription.count({
-      where: pendingSubscriptionWhere(consultantProfileId, {
-        kind: "personal",
-      }),
+      where: pendingSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
+    }),
+    // #1703 — approved-but-unpaid rows are neither pending nor bookable, so
+    // consultantAppointmentScope (APPROVED only) never showed them anywhere on
+    // Home. A small pipeline row keeps them out of Today/Upcoming.
+    prisma.consultation.findMany({
+      where: consultationRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+      include: pendingConsultationInclude,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      take: HOME_AWAITING_PAYMENT_TAKE,
+    }),
+    prisma.subscription.findMany({
+      where: subscriptionRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+      include: pendingSubscriptionInclude,
+      orderBy: [{ requestedAt: "desc" }, { id: "desc" }],
+      take: HOME_AWAITING_PAYMENT_TAKE,
+    }),
+    prisma.consultation.count({
+      where: consultationRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
+    }),
+    prisma.subscription.count({
+      where: subscriptionRequestWhere(
+        consultantProfileId,
+        PERSONAL_SCOPE,
+        "APPROVED_PENDING_PAYMENT",
+      ),
     }),
     // Fetch recent activities
     prisma.activityLog.findMany({
@@ -668,6 +874,11 @@ export async function getConsultantDashboard(
             endDate: new Date(
               appointment.subscription.schedulingPeriodEndsAt,
             ).toISOString(),
+            // #1766 — the entitlement inputs calculateSessionProgress reads.
+            sessionsTotal: appointment.subscription.sessionsTotal,
+            schedulingPeriodStartsAt:
+              appointment.subscription.schedulingPeriodStartsAt,
+            schedulingTimezone: appointment.subscription.schedulingTimezone,
           }
         : undefined,
       webinar: appointment.webinar
@@ -697,42 +908,34 @@ export async function getConsultantDashboard(
     }),
   );
 
-  // Transform approvals (same logic as fetchHelpers.ts)
-  const consultationApprovals = pendingConsultations.map(
-    (consultation: DashboardConsultation) => ({
-      id: consultation.id,
-      type: "Consultation",
-      name: consultation.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: consultation.requestedAt,
+  // #1703 D4 — read-only on the requests card; two indexed history reads.
+  const responseRate = await getConsultantResponseRate(
+    consultantProfileId,
+    now,
+  );
+  // #1766 — the next-cycle strip; sequential like the read above.
+  const nextCycles = await readNextCycles(consultantProfileId, now);
+
+  // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
+  // reads above; a failure degrades to no row, never to a broken Home.
+  const payoutSetup = {
+    needed: await readPayoutSetupNeeded(consultantProfileId).catch((error) => {
+      reportSentryError(error, { subsystem: "payments", expected: true });
+      return false;
     }),
-  );
+    href: payoutSettingsHref(consultantProfileId),
+    // Server-only flag, so it rides the payload to word the row.
+    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+  };
 
-  const subscriptionApprovals = pendingSubscriptions.map(
-    (subscription: DashboardSubscription) => ({
-      id: subscription.id,
-      type: "Subscription",
-      name: subscription.requestedBy?.user?.name ?? "Unknown",
-      requestedAt: subscription.requestedAt,
-    }),
-  );
-
-  // Sort by requestedAt (ISO string) for type safety
-  const sortedApprovals = [
-    ...consultationApprovals,
-    ...subscriptionApprovals,
-  ].sort(
-    (a, b) =>
-      new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime(),
-  );
-
-  // Map to display format for response
-  const approvals = sortedApprovals.map((approval) => ({
-    id: approval.id,
-    type: approval.type,
-    name: approval.name,
-    date: formatDate(approval.requestedAt),
-    time: formatTime(approval.requestedAt),
-  }));
+  const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
+  const awaitingPayment = {
+    count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
+    items: toRequestRows(
+      awaitingPaymentConsultations,
+      awaitingPaymentSubscriptions,
+    ).slice(0, HOME_AWAITING_PAYMENT_TAKE),
+  };
 
   // Total pending requests, independent of how many the widget lists.
   const pendingRequestsCount =
@@ -841,6 +1044,11 @@ export async function getConsultantDashboard(
     activities,
     approvals,
     pendingRequestsCount,
+    awaitingPayment,
+    orgSessions,
+    nextCycles,
+    responseRate,
+    payoutSetup,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

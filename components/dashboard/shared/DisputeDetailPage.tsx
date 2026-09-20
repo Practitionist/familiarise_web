@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -130,7 +130,6 @@ export function DisputeDetailPage({
   queryKeyPrefix = "dispute",
 }: DisputeDetailPageProps) {
   const { toast } = useToast();
-  const router = useRouter();
   const queryClient = useQueryClient();
 
   const [customerName, setCustomerName] = useState("");
@@ -231,23 +230,20 @@ export function DisputeDetailPage({
     dispute.status === "WARNING_NEEDS_RESPONSE";
   const canSubmitEvidence =
     allowEvidenceSubmission &&
-    [
-      "NEEDS_RESPONSE",
-      "WARNING_NEEDS_RESPONSE",
-      "UNDER_REVIEW",
-    ].includes(dispute.status);
+    ["NEEDS_RESPONSE", "WARNING_NEEDS_RESPONSE", "UNDER_REVIEW"].includes(
+      dispute.status,
+    );
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.push(`${basePath}/disputes`)}
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
+          <Button asChild variant="ghost">
+            <Link href={`${basePath}/disputes`}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back
+            </Link>
           </Button>
           <div>
             <h1 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">

@@ -2,6 +2,12 @@ import prisma from "@/lib/prisma";
 import { toPlain } from "@/lib/data/serialize";
 import type { OccurrenceLike } from "@/lib/appointments/view-model";
 import type { AppointmentStatus } from "@prisma/client";
+import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 
 /**
  * The one pending request the allocate page is placing.
@@ -29,8 +35,11 @@ export interface AllocationRequest {
   durationInMonths?: number;
   totalSessions?: number;
   schedulingTimezone?: string;
+  /** #1766 — the current cycle's window, not the stored (first-cycle) period. */
   allowedStart?: Date;
   allowedEnd?: Date;
+  /** #1766 — the one counter the page's heading and batch size read. */
+  entitlement?: SubscriptionEntitlement;
   /**
    * Some slot is released and awaiting a new time, i.e. this is a partial
    * reschedule rather than a fresh allocation — which is exactly when the
@@ -77,6 +86,7 @@ export async function readAllocationRequest(
         schedulingPeriodStartsAt: true,
         schedulingPeriodEndsAt: true,
         schedulingTimezone: true,
+        sessionsTotal: true,
         requestedBy: requestedBySelect,
         subscriptionPlan: {
           select: {
@@ -96,6 +106,15 @@ export async function readAllocationRequest(
     if (!subscription?.subscriptionPlan) return null;
 
     const plan = subscription.subscriptionPlan;
+    const occurrences = subscription.appointment?.occurrences ?? [];
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: sessionsTotalOf(subscription),
+      sessionsPerWeek: plan.sessionsPerWeek,
+      durationInMonths: plan.durationInMonths,
+      occurrences,
+      schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+      schedulingTimezone: subscription.schedulingTimezone,
+    });
     return toPlain<AllocationRequest>({
       id: subscription.id,
       eventType: "subscription",
@@ -107,12 +126,13 @@ export async function readAllocationRequest(
       sessionDurationInHours: plan.sessionDurationInHours,
       sessionsPerWeek: plan.sessionsPerWeek,
       durationInMonths: plan.durationInMonths,
-      totalSessions: plan.totalSessions,
+      totalSessions: entitlement.total,
       schedulingTimezone: subscription.schedulingTimezone,
-      allowedStart: subscription.schedulingPeriodStartsAt,
-      allowedEnd: subscription.schedulingPeriodEndsAt,
+      allowedStart: entitlement.cycle.windowStart,
+      allowedEnd: entitlement.cycle.windowEnd,
+      entitlement,
       hasReleasedSlots:
-        subscription.appointment?.occurrences.some((slot) => slot.isTentative) ??
+        subscription.appointment?.occurrences.some(isReleasedForReschedule) ??
         false,
       slots: subscription.appointment?.occurrences ?? [],
     });
@@ -146,9 +166,9 @@ export async function readAllocationRequest(
     consulteeUserId: consultation.requestedBy?.userId,
     consulteeName: consultation.requestedBy?.user?.name,
     durationInHours: plan.durationInHours,
-    hasReleasedSlots: (
-      consultation.appointment?.occurrences ?? []
-    ).some((slot) => slot.isTentative),
+    hasReleasedSlots: (consultation.appointment?.occurrences ?? []).some(
+      isReleasedForReschedule,
+    ),
     slots: consultation.appointment?.occurrences ?? [],
   });
 }

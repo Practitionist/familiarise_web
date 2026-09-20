@@ -23,6 +23,12 @@ import {
   unlockApproval,
 } from "@/utils/appointmentlock";
 import { transitionConsultationRequest } from "@/lib/booking/transitions";
+import {
+  refuseMalformedEventId,
+  refusePlanNotOwned,
+} from "@/lib/booking/request-route-guards";
+import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
@@ -36,6 +42,7 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { reportSentryError } from "@/lib/observability/report";
+import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 
 /**
  * Type for consultation with all related details needed for payment processing.
@@ -50,14 +57,16 @@ type ConsultationWithDetails = Prisma.Result<
         include: {
           consultantProfile: {
             include: {
-              user: true;
+              user: {
+                select: { id: true; name: true; email: true; image: true };
+              };
             };
           };
         };
       };
       requestedBy: {
         include: {
-          user: true;
+          user: { select: { id: true; name: true; email: true; image: true } };
         };
       };
       appointment: {
@@ -81,6 +90,8 @@ export async function GET(
     const { session } = authResult;
 
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
     const consultationData = await prisma.consultation.findUniqueOrThrow({
       where: { id: consultationId },
       include: {
@@ -172,6 +183,8 @@ export async function PUT(
     const { session } = authResult;
 
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
 
     // Fetch the consultation to check ownership
     const existingConsultation = await prisma.consultation.findUnique({
@@ -182,6 +195,8 @@ export async function PUT(
             consultantProfile: true,
           },
         },
+        // bookingOrgId's fallback when the plan carries no org.
+        appointment: { select: { organizationId: true } },
       },
     });
 
@@ -235,6 +250,23 @@ export async function PUT(
       );
     }
     const validatedBody = parseResult.data;
+
+    // #1704 — a planId is only accepted from the same consultant as the
+    // request; connecting any plan let a request migrate to another seller.
+    const planRefusal = await refusePlanNotOwned(
+      validatedBody.planId,
+      {
+        consultantProfileId:
+          existingConsultation.consultationPlan?.consultantProfileId,
+        organizationId: bookingOrgId(existingConsultation),
+      },
+      () =>
+        prisma.consultationPlan.findUnique({
+          where: { id: validatedBody.planId },
+          select: { consultantProfileId: true, organizationId: true },
+        }),
+    );
+    if (planRefusal) return planRefusal;
 
     const consultationData = await prisma.consultation.update({
       where: { id: consultationId },
@@ -347,8 +379,14 @@ export async function PATCH(
     if (authResult.error) return authResult.error;
     const { session } = authResult;
 
+    // #831 — the list PATCH had a limiter; the heavier detail PATCH did not.
+    const rl = await applyRateLimit(eventMutationLimiter, session.user.id);
+    if (rl) return rl;
+
     const body = await request.json();
     const { consultationId } = await params;
+    const malformedId = refuseMalformedEventId(consultationId);
+    if (malformedId) return malformedId;
 
     const consultationPatchSchema = z.object({
       status: z.nativeEnum(AppointmentStatus),
@@ -372,14 +410,14 @@ export async function PATCH(
           include: {
             consultantProfile: {
               include: {
-                user: true,
+                user: PARTY_USER_SELECT,
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: true,
+            user: PARTY_USER_SELECT,
           },
         },
       },
@@ -472,14 +510,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -531,14 +569,14 @@ export async function PATCH(
                   include: {
                     consultantProfile: {
                       include: {
-                        user: true,
+                        user: PARTY_USER_SELECT,
                       },
                     },
                   },
                 },
                 requestedBy: {
                   include: {
-                    user: true,
+                    user: PARTY_USER_SELECT,
                   },
                 },
                 appointment: {
@@ -601,14 +639,14 @@ export async function PATCH(
                         include: {
                           consultantProfile: {
                             include: {
-                              user: true,
+                              user: PARTY_USER_SELECT,
                             },
                           },
                         },
                       },
                       requestedBy: {
                         include: {
-                          user: true,
+                          user: PARTY_USER_SELECT,
                         },
                       },
                       appointment: {
@@ -733,8 +771,15 @@ export async function PATCH(
         };
 
         try {
-          await prisma.consultation.update({
-            where: { id: consultationId },
+          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
+          // mint landing after the lapse sweep EXPIRED the request must not
+          // re-arm a link; zero rows is reported, never thrown.
+          const persisted = await prisma.consultation.updateMany({
+            where: {
+              id: consultationId,
+              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+              pendingPaymentUrl: null,
+            },
             data: {
               pendingPaymentUrl: paymentResult.checkoutUrl,
               requestNotes: result.data.requestNotes
@@ -742,9 +787,25 @@ export async function PATCH(
                 : `[System] Payment link generated and sent to user.`,
             },
           });
+          if (persisted.count === 0) {
+            // The request moved since the mint (lapsed, paid, or a sibling
+            // persisted first): the orphaned order is tombstoned and only a
+            // link still live on the row may reach the consultee.
+            const outcome = await reconcileOrphanedPayLink({
+              kind: "consultation",
+              id: consultationId,
+              paymentIntentId: paymentResult.paymentIntentId,
+              checkoutUrl: paymentResult.checkoutUrl,
+            });
+            mintedLink = outcome.url
+              ? { ...mintedLink, paymentUrl: outcome.url }
+              : null;
+          }
         } catch (persistError) {
-          // The link is live and rides the response + email; only the
-          // dashboard copy is missing.
+          // The row's state is unproven, so the link is not delivered; the
+          // consultant re-approves and the retry reuses the same PENDING
+          // intent (#1181), so nothing is minted twice.
+          mintedLink = null;
           console.error(
             `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
             persistError instanceof Error
@@ -759,35 +820,40 @@ export async function PATCH(
           );
         }
 
-        try {
-          await sendPaymentLinkEmail({
-            email: result.data.requestedBy.user.email || "",
-            name: result.data.requestedBy.user.name || "User",
-            consultantName:
-              result.data.consultationPlan.consultantProfile.user.name ||
-              "Consultant",
-            appointmentType: "consultation" as const,
-            amount: paymentResult.amount,
-            currency: paymentResult.currency,
-            paymentUrl: paymentResult.checkoutUrl,
-            expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-          });
-          console.log(
-            `📧 Payment link email sent for consultation ${consultationId}`,
-          );
-        } catch (emailError) {
-          // Link exists on the dashboard via pendingPaymentUrl; email is
-          // best-effort.
-          console.error(
-            `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
-            emailError instanceof Error ? emailError.message : "Unknown error",
-          );
-          Sentry.captureException(
-            emailError instanceof Error
-              ? emailError
-              : new Error(String(emailError)),
-            { tags: { subsystem: "bookings" } },
-          );
+        // Only a link that is live on the row is mailed (#1583 A-P0-06).
+        if (mintedLink) {
+          try {
+            await sendPaymentLinkEmail({
+              email: result.data.requestedBy.user.email || "",
+              name: result.data.requestedBy.user.name || "User",
+              consultantName:
+                result.data.consultationPlan.consultantProfile.user.name ||
+                "Consultant",
+              appointmentType: "consultation" as const,
+              amount: paymentResult.amount,
+              currency: paymentResult.currency,
+              paymentUrl: mintedLink.paymentUrl,
+              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+            });
+            console.log(
+              `📧 Payment link email sent for consultation ${consultationId}`,
+            );
+          } catch (emailError) {
+            // Link exists on the dashboard via pendingPaymentUrl; email is
+            // best-effort.
+            console.error(
+              `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
+              emailError instanceof Error
+                ? emailError.message
+                : "Unknown error",
+            );
+            Sentry.captureException(
+              emailError instanceof Error
+                ? emailError
+                : new Error(String(emailError)),
+              { tags: { subsystem: "bookings" } },
+            );
+          }
         }
       }
 

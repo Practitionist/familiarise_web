@@ -125,7 +125,11 @@ function txStub() {
       aggregate: jest.fn(async () => ({ _sum: { totalPaise: null } })),
     },
     walletTopUp: { findFirst: jest.fn(async () => null) },
-    organizationInvoice: { findFirst: jest.fn(async () => null) },
+    organizationInvoice: {
+      findFirst: jest.fn(async () => null),
+      update: jest.fn(async () => ({})),
+    },
+    ledgerTransaction: { findUnique: jest.fn(async () => null) },
     billingAccount: {
       findFirst: jest.fn(async () => null),
       findUniqueOrThrow: jest.fn(),
@@ -166,6 +170,7 @@ type TransactionFn = (
   fn(txStub());
 
 import { handleRefundCreated } from "../../app/api/webhooks/utils";
+import { walletCredit } from "../../lib/api/organizations/wallet";
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -293,5 +298,50 @@ describe("handleRefundCreated status transition guard", () => {
 
     expect(applyRefundCascade).not.toHaveBeenCalled();
     expect(store.refunds).toHaveLength(1);
+  });
+});
+
+// #1128 (owner decision Q7) — the invoice-refund block used to swallow a
+// failed journal / wallet credit, committing the credit note with no money
+// truth behind it and nothing for a sweep to find.
+describe("an invoice refund whose wallet credit fails aborts the transaction", () => {
+  test("a throwing walletCredit propagates so the tx rolls back — no committed CN", async () => {
+    const tx = txStub();
+    tx.organizationInvoice.findFirst.mockResolvedValue({
+      id: "inv_1",
+      organizationId: "org_1",
+      invoiceNumber: "INV-1",
+      totalPaise: 100_000,
+      status: "PAID",
+    } as never);
+    tx.billingAccount.findFirst.mockResolvedValue({
+      id: "ba_1",
+      fundingSource: "WALLET",
+    } as never);
+    (walletCredit as jest.Mock).mockRejectedValueOnce(
+      new Error("wallet cache write failed"),
+    );
+    let committed = false;
+    (prisma as unknown as { $transaction: TransactionFn }).$transaction =
+      async (fn) => {
+        const result = await fn(tx);
+        committed = true;
+        return result;
+      };
+
+    await expect(
+      handleRefundCreated(
+        "rfnd_inv_1",
+        "order_unknown",
+        10_000,
+        "INR",
+        "processed",
+        "RAZORPAY",
+        "pay_inv_1",
+      ),
+    ).rejects.toThrow("wallet cache write failed");
+
+    // The callback threw before the transaction could commit the CN.
+    expect(committed).toBe(false);
   });
 });

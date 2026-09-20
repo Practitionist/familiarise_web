@@ -21,6 +21,9 @@ export const ErrorTypes = {
   // Business-logic rejections (expected — user can fix or retry differently)
   EVENT_EXPIRED: "EVENT_EXPIRED_ERROR",
   AVAILABILITY: "AVAILABILITY_ERROR",
+  // #1757 — a webinar or class at capacity. Coded so the checkout catches
+  // report it expected; the "full" prose pattern below still classifies old callers.
+  EVENT_FULL: "EVENT_FULL_ERROR",
   DUPLICATE_REGISTRATION: "DUPLICATE_REGISTRATION_ERROR",
   NOT_FOUND: "NOT_FOUND_ERROR",
   REFUND_BLOCKED: "REFUND_BLOCKED_ERROR",
@@ -57,11 +60,33 @@ export const ErrorTypes = {
   // than an ops reconciliation. The checkout route reaches this through
   // `ErrorTypes`, so the value is free to keep the `_ERROR` suffix.
   WALLET_INSUFFICIENT_FUNDS: "WALLET_INSUFFICIENT_FUNDS_ERROR",
+  // #1582 B-P1-01b/c, #1564, #1586 J32 — the org-sponsorship, panel, currency
+  // and credit refusals checkout still threw as bare Errors (500 UNKNOWN).
+  ORG_NOT_OPERATIONAL: "ORG_NOT_OPERATIONAL_ERROR",
+  ORG_CANNOT_SPONSOR: "ORG_CANNOT_SPONSOR_ERROR",
+  ORG_MEMBERSHIP_REQUIRED: "ORG_MEMBERSHIP_REQUIRED_ERROR",
+  ORG_CREDIT_LIMIT_REACHED: "ORG_CREDIT_LIMIT_REACHED_ERROR",
+  CONSULTANT_NOT_ON_PANEL: "CONSULTANT_NOT_ON_PANEL_ERROR",
+  CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
+  // #1766 — the buyer already holds this plan with entitlement left.
+  SUBSCRIPTION_ALREADY_ACTIVE: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
+  CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
+  CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
+  DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
+  // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
+  // string straight to the toast map as `code` when verify answers non-2xx.
+  VERIFICATION_FAILED: "VERIFICATION_FAILED",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
   PAYMENT_PROCESSING: "PAYMENT_PROCESSING_ERROR",
   DATABASE: "DATABASE_ERROR",
+  // Contended checkout locks answer 409 with these literal codes (the route
+  // forwards error.code, not an ErrorTypes value). Registered so the second
+  // attempt — or a busy answer without retryAfter — gets a "still busy,
+  // card not charged" toast instead of UNKNOWN.
+  EVENT_CHECKOUT_BUSY: "EVENT_CHECKOUT_BUSY",
+  CONSULTEE_BOOKING_BUSY: "CONSULTEE_BOOKING_BUSY",
 
   // Catch-all
   UNKNOWN: "UNKNOWN_ERROR",
@@ -225,6 +250,15 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     errorType: ErrorTypes.WALLET_FROZEN,
     httpStatus: 409,
   },
+  // #1757 — "Webinar is full" / "Class is full" were bare Errors: the prose
+  // classifier answered 409-ish AVAILABILITY to the buyer, but checkout's outer
+  // catch only recognises registered codes and paged every one as a fault
+  // (FAMILIARISE_WEB-2J).
+  {
+    code: "EVENT_FULL",
+    errorType: ErrorTypes.EVENT_FULL,
+    httpStatus: 409,
+  },
   {
     code: "SELF_BOOKING",
     errorType: ErrorTypes.SELF_BOOKING,
@@ -306,6 +340,124 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     httpStatus: 409,
     userMessage:
       "We couldn't process the refund automatically; support has been notified.",
+  },
+  // #1584 P2-P0-02 — the replay-purchase mint lock; a second overlapping
+  // POST is told to retry instead of being handed a second payable order.
+  {
+    code: "RECORDING_PURCHASE_IN_PROGRESS",
+    errorType: ErrorTypes.LOCK_CONTENTION,
+    httpStatus: 409,
+  },
+  // #1598 P4-P0-05 — erasure refused while payouts, earnings, invoices or
+  // disputes are still moving for the user; the route answers the code with
+  // the counts, registered for parity.
+  {
+    code: "ERASURE_BLOCKED_MONEY_IN_FLIGHT",
+    errorType: ErrorTypes.REFUND_BLOCKED,
+    httpStatus: 409,
+    userMessage:
+      "Erasure is blocked while money is in flight for this user; settle the listed items first.",
+  },
+  // #1440 — the admin recovery route lost the link-write CAS (or the row was
+  // already linked): an answer, not a fault.
+  {
+    code: "ALREADY_RECOVERED",
+    errorType: ErrorTypes.LOCK_CONTENTION,
+    httpStatus: 409,
+    userMessage: "This payment already has an appointment linked.",
+  },
+  // #1584 P1-GW01c — an org payout batch asked for a gateway that cannot
+  // disburse it; the route answers the code directly, registered for parity.
+  {
+    code: "GATEWAY_UNSUPPORTED_FOR_PAYOUT",
+    errorType: ErrorTypes.GATEWAY_UNAVAILABLE,
+    httpStatus: 400,
+    userMessage:
+      "Organisation payouts disburse through RazorpayX only; choose RAZORPAY.",
+  },
+  // #1582 B-P1-01b/c — org-sponsorship refusals thrown inside and before the
+  // checkout transaction. Each names the admin who can act; none is a fault.
+  {
+    code: "ORG_NOT_OPERATIONAL",
+    errorType: ErrorTypes.ORG_NOT_OPERATIONAL,
+    httpStatus: 403,
+    userMessage:
+      "Your organisation cannot sponsor bookings right now. Ask your organisation admin, or book this session yourself.",
+  },
+  {
+    code: "ORG_CANNOT_SPONSOR",
+    errorType: ErrorTypes.ORG_CANNOT_SPONSOR,
+    httpStatus: 403,
+    userMessage:
+      "Your organisation is not set up to sponsor bookings. Ask your billing admin to enable sponsorship, or book this session yourself.",
+  },
+  {
+    code: "ORG_MEMBERSHIP_REQUIRED",
+    errorType: ErrorTypes.ORG_MEMBERSHIP_REQUIRED,
+    httpStatus: 403,
+    userMessage:
+      "You are not an active member of this organisation, so it cannot sponsor this booking.",
+  },
+  {
+    code: "ORG_CREDIT_LIMIT_REACHED",
+    errorType: ErrorTypes.ORG_CREDIT_LIMIT_REACHED,
+    httpStatus: 402,
+    userMessage:
+      "Your organisation has reached its invoice credit limit. Outstanding invoices must be paid before new sponsored bookings.",
+  },
+  {
+    code: "CONSULTANT_NOT_ON_PANEL",
+    errorType: ErrorTypes.CONSULTANT_NOT_ON_PANEL,
+    httpStatus: 409,
+    userMessage:
+      "This consultant is not on your organisation's approved panel for this programme. Choose a listed consultant or ask your organisation admin.",
+  },
+  {
+    code: "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+    errorType: ErrorTypes.CONSULTANT_EXCLUSIVE_ENGAGEMENT,
+    httpStatus: 409,
+    userMessage:
+      "This consultant works exclusively through their organisation; their independent plans cannot be booked.",
+  },
+  // #1766 — no userMessage: the thrown sentence names the sessions left.
+  {
+    code: "SUBSCRIPTION_ALREADY_ACTIVE",
+    errorType: ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE,
+    httpStatus: 409,
+  },
+  // #1564 — a non-INR plan price or settlement is a configuration the platform
+  // does not offer, not a crash; 422 like the other unsupported-config codes.
+  {
+    code: "CURRENCY_UNSUPPORTED",
+    errorType: ErrorTypes.CURRENCY_UNSUPPORTED,
+    httpStatus: 422,
+    userMessage:
+      "This plan is priced in a currency we cannot charge yet. Your card was not charged.",
+  },
+  {
+    code: "NON_INR_SETTLEMENT",
+    errorType: ErrorTypes.CURRENCY_UNSUPPORTED,
+    httpStatus: 422,
+    userMessage:
+      "Payments settle in Indian rupees only, so this amount cannot be charged. Your card was not charged.",
+  },
+  // #1586 J32 — a concurrent checkout consumed the credits this order was
+  // priced with; the tx aborts and a retry re-prices. Carries retryAfter.
+  {
+    code: "CREDIT_SHORTFALL",
+    errorType: ErrorTypes.CREDIT_SHORTFALL,
+    httpStatus: 409,
+    userMessage:
+      "Your available credits changed while this booking was being priced. Please try again — your card was not charged.",
+  },
+  // Its old message matched the "discount code" prose pattern and answered
+  // AVAILABILITY with "No Longer Available", which is the wrong story.
+  {
+    code: "DISCOUNT_CURRENCY_MISMATCH",
+    errorType: ErrorTypes.DISCOUNT_CURRENCY_MISMATCH,
+    httpStatus: 400,
+    userMessage:
+      "This discount code is for a different currency and cannot be applied to this plan.",
   },
 ] as const;
 

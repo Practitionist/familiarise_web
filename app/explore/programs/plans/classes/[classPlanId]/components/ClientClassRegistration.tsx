@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -32,6 +34,7 @@ export function ClientClassRegistration({
   const { id: classId, price, classes } = plan;
   const startDate = classes?.[0]?.schedulingPeriodStartsAt;
   const { data: session } = useSession();
+  const router = useRouter();
   const { formatPrice } = useCurrency();
 
   // Defer auth + timezone until after hydration to avoid mismatch
@@ -62,16 +65,18 @@ export function ClientClassRegistration({
   });
   const isFull = capacity.isFull;
 
+  const checkoutUrl = `/checkout/plans/class/${classId}`;
+  // Preserve the checkout destination as a RELATIVE callbackUrl (the sign-in
+  // page drops absolute URLs) so a first-timer lands on checkout after auth +
+  // onboarding.
+  const signInHref = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+
   const handleRegistration = () => {
-    const checkoutUrl = `/checkout/plans/class/${classId}`;
     if (!isLoggedIn) {
-      // Preserve the checkout destination as a RELATIVE callbackUrl (the sign-in
-      // page drops absolute URLs) so a first-timer lands on checkout after auth +
-      // onboarding.
-      window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+      router.push(signInHref);
       return;
     }
-    window.location.href = checkoutUrl;
+    router.push(checkoutUrl);
   };
 
   if (!isLoggedIn) {
@@ -103,13 +108,21 @@ export function ClientClassRegistration({
               Please sign in to register for this class.
             </p>
           )}
-          <Button
-            onClick={handleRegistration}
-            className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-            disabled={signInButtonDisabled}
-          >
-            {signInButtonText}
-          </Button>
+          {signInButtonDisabled ? (
+            <Button
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              disabled
+            >
+              {signInButtonText}
+            </Button>
+          ) : (
+            <Button
+              onClick={handleRegistration}
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+            >
+              {signInButtonText}
+            </Button>
+          )}
         </CardContent>
       </Card>
     );
@@ -190,10 +203,12 @@ export function ClientClassRegistration({
       </CardContent>
       <CardFooter>
         <Button
-          onClick={handleRegistration}
+          asChild
           className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
         >
-          Pay {formatPrice(price)} & Register Now
+          <Link href={checkoutUrl} prefetch>
+            Pay {formatPrice(price)} & Register Now
+          </Link>
         </Button>
       </CardFooter>
     </Card>

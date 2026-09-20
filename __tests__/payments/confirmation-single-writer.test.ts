@@ -44,18 +44,27 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
 }));
 
 const paymentsFetch = jest.fn();
+const ordersFetch = jest.fn();
+const withRazorpaySdkTimeout = jest.fn((_op: string, call: () => unknown) =>
+  call(),
+);
 jest.mock("../../lib/payments/core/razorpay", () => ({
   razorpayClient: {
     payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
   },
   getRazorpayClient: () => ({
     payments: { fetch: (...a: unknown[]) => paymentsFetch(...a) },
+    orders: { fetch: (...a: unknown[]) => ordersFetch(...a) },
   }),
+  withRazorpaySdkTimeout: (op: string, call: () => unknown) =>
+    withRazorpaySdkTimeout(op, call),
 }));
 
-const getSession = jest.fn();
-jest.mock("../../lib/auth-server", () => ({
-  getSession: () => getSession(),
+// #1584 P1-AZ01 — both doors read force-fresh through requireApiAuth now;
+// the lookup is mocked one level down so the ban check itself is exercised.
+const lookupSession = jest.fn();
+jest.mock("../../lib/auth-session-lookup", () => ({
+  lookupSession: () => lookupSession(),
 }));
 
 // #1353 — the route now applies checkoutLimiter per user. In the shared CI
@@ -90,9 +99,11 @@ jest.mock("../../lib/prisma", () => ({
   },
 }));
 
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { POST } from "../../app/api/checkout/verify-signature/route";
+import { GET as verifyGet } from "../../app/api/checkout/verify/route";
+import { applyRateLimit } from "../../lib/rate-limit";
 
 const SECRET = "test_secret";
 const ORDER_ID = "order_ABC123";
@@ -126,7 +137,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   afterCallbacks.length = 0;
   process.env.RAZORPAY_SECRET = SECRET;
-  getSession.mockResolvedValue({ user: { id: USER_ID } });
+  lookupSession.mockResolvedValue({
+    kind: "found",
+    session: { user: { id: USER_ID } },
+  });
   paymentsFetch.mockResolvedValue({
     id: PAY_ID,
     order_id: ORDER_ID,
@@ -261,6 +275,19 @@ describe("gateway-fetch failure", () => {
 });
 
 describe("signature and ownership are still enforced", () => {
+  // #1584 P1-AZ01 — a cookie-cached read let a banned session drive the capture.
+  it("answers 403 to a banned session before touching the pipeline", async () => {
+    lookupSession.mockResolvedValue({
+      kind: "found",
+      session: { user: { id: USER_ID, banned: true } },
+    });
+
+    const res = await POST(signedRequest());
+
+    expect(res.status).toBe(403);
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+
   it("rejects a bad signature without touching the pipeline", async () => {
     const req = new NextRequest(
       "https://x.test/api/checkout/verify-signature",
@@ -294,5 +321,59 @@ describe("signature and ownership are still enforced", () => {
 
     expect(res.status).toBe(403);
     expect(routeCapturedPayment).not.toHaveBeenCalled();
+  });
+});
+
+// #1592 S-P0-05 / #1599 F-P0-02 — the on-demand sync is the third writer that
+// funnels into routeCapturedPayment, and it was the one a client could drive
+// without a budget or a bound on the gateway read.
+describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => {
+  const verifyRequest = () =>
+    new NextRequest(
+      `https://x.test/api/checkout/verify?payment_intent=${ORDER_ID}&sync=true`,
+    );
+
+  beforeEach(() => {
+    findUnique.mockResolvedValue({
+      ...pendingPayment(),
+      paymentIntent: ORDER_ID,
+      appointment: null,
+    });
+    ordersFetch.mockResolvedValue({ status: "created", notes: {} });
+  });
+
+  it("skips the gateway when the sync budget is spent and answers the poller's keep-waiting 400 with retryAfter", async () => {
+    (applyRateLimit as jest.Mock).mockResolvedValueOnce(
+      NextResponse.json(
+        { error: "Too many requests", code: "RATE_LIMITED" },
+        { status: 429, headers: { "Retry-After": "42" } },
+      ),
+    );
+
+    const res = await verifyGet(verifyRequest());
+    const body = await res.json();
+
+    expect(applyRateLimit).toHaveBeenCalledWith(
+      expect.anything(),
+      `verify-sync:${USER_ID}`,
+    );
+    expect(ordersFetch).not.toHaveBeenCalled();
+    expect(routeCapturedPayment).not.toHaveBeenCalled();
+    // The success page treats 400 as "still processing"; a 429 it would
+    // render as a failure over a payment that may already be captured.
+    expect(res.status).toBe(400);
+    expect(body).toMatchObject({ status: "PENDING", retryAfter: 42 });
+  });
+
+  it("wraps the order read in the SDK timeout when the budget allows it", async () => {
+    const res = await verifyGet(verifyRequest());
+
+    expect(withRazorpaySdkTimeout).toHaveBeenCalledWith(
+      "orders.fetch",
+      expect.any(Function),
+    );
+    expect(ordersFetch).toHaveBeenCalledWith(ORDER_ID);
+    expect(res.status).toBe(400);
+    expect((await res.json()).retryAfter).toBeUndefined();
   });
 });

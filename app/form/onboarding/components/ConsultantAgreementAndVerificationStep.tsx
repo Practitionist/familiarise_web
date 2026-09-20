@@ -1,6 +1,12 @@
 "use client";
 
 import * as Sentry from "@sentry/nextjs";
+import { FieldError } from "@/components/ui/field-error";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import {
+  isLinkedinProfileUrl,
+  LINKEDIN_PROFILE_URL_HINT,
+} from "@/schemas/user";
 import React, { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,7 +43,9 @@ export default function ConsultantAgreementAndVerificationStep({
 
   // Verification state
   const [linkedinUrl, setLinkedinUrl] = useState(
-    formData.verificationLinkedinUrl || "",
+    // Pre-filled from step 0's LinkedIn field so nobody types the same URL
+    // twice; both land on User.linkedinUrl server-side (wizard UI audit).
+    formData.verificationLinkedinUrl || formData.linkedinUrl || "",
   );
   const [notes, setNotes] = useState(formData.verificationNotes || "");
   const [documents, setDocuments] = useState<UploadedDocument[]>(
@@ -47,11 +55,7 @@ export default function ConsultantAgreementAndVerificationStep({
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const validateLinkedIn = (url: string) => {
-    if (!url) return true;
-    const linkedinRegex = /^https?:\/\/(www\.)?linkedin\.com\/in\/[\w-]+\/?$/i;
-    return linkedinRegex.test(url);
-  };
+  const validateLinkedIn = (url: string) => !url || isLinkedinProfileUrl(url);
 
   const handleUpload = useCallback(
     async (file: File): Promise<UploadedDocument> => {
@@ -89,7 +93,10 @@ export default function ConsultantAgreementAndVerificationStep({
         method: "DELETE",
       });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
       console.error("Failed to delete verification document:", error);
     }
   }, []);
@@ -101,12 +108,14 @@ export default function ConsultantAgreementAndVerificationStep({
     // Validate agreement
     if (!termsChecked || !privacyChecked) {
       setError("You must accept both terms and privacy policy to continue.");
+      scrollToFirstErrorSoon();
       return;
     }
 
     // Validate LinkedIn URL if provided
     if (linkedinUrl && !validateLinkedIn(linkedinUrl)) {
-      setError("Please enter a valid LinkedIn profile URL");
+      setError(LINKEDIN_PROFILE_URL_HINT);
+      scrollToFirstErrorSoon();
       return;
     }
 
@@ -178,10 +187,7 @@ export default function ConsultantAgreementAndVerificationStep({
             We use your LinkedIn profile to verify your professional background.
           </p>
           {linkedinUrl && !validateLinkedIn(linkedinUrl) && (
-            <p className="text-xs text-red-500">
-              Please enter a valid LinkedIn URL (e.g.,
-              https://linkedin.com/in/username)
-            </p>
+            <FieldError message={LINKEDIN_PROFILE_URL_HINT} />
           )}
         </div>
 
@@ -212,7 +218,7 @@ export default function ConsultantAgreementAndVerificationStep({
             disabled={isUploading}
           />
           <p className="text-xs text-muted-foreground">
-            Accepted formats: PDF, PNG, JPG, JPEG (max 10MB per file)
+            Accepted formats: PDF, PNG, JPG/JPEG, WEBP (max 10MB per file)
           </p>
         </div>
 
@@ -270,7 +276,8 @@ export default function ConsultantAgreementAndVerificationStep({
         <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
           <li>Our team will review your LinkedIn profile and documents</li>
           <li>
-            You&apos;ll receive an email notification once the review is complete
+            You&apos;ll receive an email notification once the review is
+            complete
           </li>
           <li>
             Once verified, your profile will be visible in the consultant
@@ -285,7 +292,7 @@ export default function ConsultantAgreementAndVerificationStep({
 
       {/* Error Display */}
       {error && (
-        <Alert variant="destructive">
+        <Alert variant="destructive" data-field-error="" tabIndex={-1}>
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}

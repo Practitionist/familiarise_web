@@ -8,11 +8,11 @@ This is intentional: payment webhooks are critical for completing transactions a
 
 ## Webhook Handlers
 
-| Gateway           | Route                              | Signature Verification             | Idempotency                               |
-| ----------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
-| **Stripe**        | `POST /api/webhooks/stripe`        | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
-| **Razorpay**      | `POST /api/webhooks/razorpay`      | HMAC SHA256 signature              | `logWebhookEvent()` with gateway event ID |
-| **Stream.io**     | `POST /api/stream/webhooks/`       | HMAC SHA256 (constant-time)        | `logWebhookEvent()` with event ID         |
+| Gateway       | Route                         | Signature Verification             | Idempotency                               |
+| ------------- | ----------------------------- | ---------------------------------- | ----------------------------------------- |
+| **Stripe**    | `POST /api/webhooks/stripe`   | `stripe.webhooks.constructEvent()` | `logWebhookEvent()` with gateway event ID |
+| **Razorpay**  | `POST /api/webhooks/razorpay` | HMAC SHA256 signature              | `logWebhookEvent()` with gateway event ID |
+| **Stream.io** | `POST /api/stream/webhooks/`  | HMAC SHA256 (constant-time)        | `logWebhookEvent()` with event ID         |
 
 ## Stripe Webhook Events Handled
 
@@ -114,4 +114,4 @@ If any of these operations reference a table or column that was changed by the m
 2. **Check webhook logs post-maintenance** -- see [Post-Maintenance Recovery](./07-post-maintenance-recovery.md)
 3. **If migrating WebhookEvent table**: Consider temporarily disabling the idempotency check, or migrate the table first in a separate step
 4. **Monitor Stripe dashboard** during and after maintenance for failed deliveries
-5. **Future improvement**: Add a `SELECT 1` health check before processing each webhook event, returning 503 to trigger gateway retry if DB is unhealthy
+5. **Implemented**: `POST /api/webhooks/razorpay` calls `isDbHealthy()` (`app/api/webhooks/utils.ts`, a `SELECT 1` probe) before processing each event and answers 503 on a DB failure, so Razorpay retries the delivery instead of the handler failing against an unavailable database.

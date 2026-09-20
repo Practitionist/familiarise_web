@@ -1,6 +1,7 @@
 import redis, {
   acquireLock,
   releaseLock,
+  renewLock,
   isMockRedis,
   checkRedisHealth,
   isRedisCircuitOpen,
@@ -158,6 +159,12 @@ export async function withCronLock<T>(
   const startedAtMs = Date.now();
   await touchHeartbeat(jobName);
   const executionId = await recordJobStart(jobName);
+  const renewal = startLockRenewal(
+    jobName,
+    key,
+    token,
+    opts.ttlMs ?? DEFAULT_TTL_MS,
+  );
 
   try {
     const result = await fn();
@@ -167,6 +174,38 @@ export async function withCronLock<T>(
     await recordJobFinish(jobName, executionId, startedAtMs, err);
     throw err;
   } finally {
+    renewal.stop();
     await releaseLock(key, token); // never throws; TTL is the safety net
   }
+}
+
+/**
+ * #1696 — the lock used to be a fixed grant with no renewal, so a run that
+ * outlived its TTL (the reconcile family under a slow pool) kept working
+ * while a second entry started beside it. Re-arm the grant to the full TTL
+ * every third of it; a renewal that answers false means ownership is gone,
+ * which is logged once — the job is mid-flight and its CAS guards are what
+ * make a double-run safe, never this lock (ADR 13). Unref'd so an idle
+ * timer never keeps a one-shot process alive.
+ */
+function startLockRenewal(
+  jobName: string,
+  key: string,
+  token: string,
+  ttlMs: number,
+): { stop: () => void } {
+  let lost = false;
+  const timer = setInterval(
+    async () => {
+      if (lost) return;
+      const renewed = await renewLock(key, token, ttlMs);
+      if (!renewed) {
+        lost = true;
+        console.warn(`[${jobName}] cron lock renewal failed — ownership lost`);
+      }
+    },
+    Math.max(1_000, Math.floor(ttlMs / 3)),
+  );
+  timer.unref?.();
+  return { stop: () => clearInterval(timer) };
 }

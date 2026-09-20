@@ -393,6 +393,55 @@ export function sendNewBookingRequestEmail(
   );
 }
 
+// ── Unscheduled-subscription nudge (#1703) ─────────────────────────────────
+
+export interface UnscheduledSubscriptionNudgeEmailArgs {
+  subscriptionId: string;
+  consultantUserId: string;
+  consulteeName: string;
+  planTitle: string;
+  nudgeDays: number;
+  timingsUrl: string;
+}
+
+/** The email twin of `notifyUnscheduledSubscriptionNudge`; one per stage. */
+/** #1703 — the sweep's once-guard reads the staged row by these two. */
+export const SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE =
+  "SUBSCRIPTION_UNSCHEDULED_NUDGE";
+export function unscheduledNudgeEntityRef(
+  subscriptionId: string,
+  nudgeDays: number,
+): string {
+  return `subscription:${subscriptionId}:day${nudgeDays}`;
+}
+
+export function sendUnscheduledSubscriptionNudgeEmail(
+  args: UnscheduledSubscriptionNudgeEmailArgs,
+  budgetMs: number,
+): Promise<SendToRecipientsResult> {
+  return guarded(
+    {
+      emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
+      category: "appointments",
+      entityRef: unscheduledNudgeEntityRef(args.subscriptionId, args.nudgeDays),
+      subject: () =>
+        `${args.consulteeName}'s subscription is waiting for session times`,
+      render: (r) =>
+        React.createElement(NewBookingRequestEmail, {
+          consultantName: greet(r),
+          consulteeName: args.consulteeName,
+          planTitle: args.planTitle,
+          appointmentType: "subscription",
+          reviewUrl: absolute(args.timingsUrl),
+          unsubscribeUrl: r.unsubscribeUrl,
+          nudgeDays: args.nudgeDays,
+        }),
+    },
+    [args.consultantUserId],
+    budgetMs,
+  );
+}
+
 // ── Trial scheduled ─────────────────────────────────────────────────────────
 
 export interface TrialScheduledEmailArgs {

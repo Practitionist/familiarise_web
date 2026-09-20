@@ -46,6 +46,48 @@ the allocator agree on what is free for both parties — adds a second
 `appointment.findMany` and about five more statements on top of the totals
 above.
 
+## Bounding the poll itself (#1703, 2026-09-18/19)
+
+Two guards were added around the endpoint rather than inside its query plan,
+because the failure they close is a caller asking for too much, not the query
+being slow. `MAX_AVAILABILITY_WINDOW_DAYS = 31` in the route refuses a window
+wider than a month: the grid's cost is proportional to window width, so a
+caller asking for a whole scheduling period (six or twelve months) ran past
+the roughly 26-second edge-function ceiling and got a bare timeout instead of
+a JSON error. Every real client asks for a day, a week or a month, so the
+refusal only ever catches a caller that should have paginated. Separately,
+`availabilityGridLimiter` in `middleware.ts` caps the route at 120 requests a
+minute per IP, and every `429` it returns carries the server's own
+`Retry-After`, which the client's availability poller reads before it decides
+how long to back off — jittered by ±10-15 seconds per tick so a fleet of
+tabs recovering from a shared 429 does not re-synchronise into the next one.
+
+## The marker's window scope carries a version string (`av3`)
+
+The window-scoped tuple described in the section above (#1697 item 1) is
+this train's own change, landed in #1721: the marker moved from a
+consultant-wide scope to the requested-window scope, because the
+consultant-wide scope turned one booking into a simultaneous full-grid
+re-demand from every open calendar for that consultant, all serialised on a
+pool of one. `MARKER_VERSION = "av3"` (`lib/scheduling/availabilityGridMarker.ts`)
+is folded into the ETag alongside the tuple, so a client holding a stale
+pre-window-scoping tag can never collide with the new shape's tag.
+
+## A conditional GET that computes the right tag and still never 304s (#1723)
+
+The marker was verified correct on this train — week A's ETag stays stable
+across an unrelated week-B booking, and week B's own tag changes — but the
+conditional-GET path built on it does not close the loop. A request carrying
+the exact `If-None-Match` value the previous response returned still gets a
+full `200` with the full body, reproduced with curl and with node's `fetch`,
+with and without a session cookie, on both a deploy preview and production.
+Every poller and every focus-refetch is therefore paying the full read this
+page measures, on every tick, rather than the one-statement marker read the
+conditional GET exists to substitute. The fix is filed as #1723 rather than
+guessed at here; the suspects are ordered in that issue, starting with
+whether Netlify's request adapter for a `cache-control: private` route even
+forwards `if-none-match` into `NextRequest.headers`.
+
 ## The plan of the occupancy query
 
 Prisma compiles the occupancy filter into a single `SELECT` over `Appointment`
@@ -97,9 +139,12 @@ is currently serialized, sent and re-parsed on a poll that changed nothing.
 
 ## The change marker
 
-The conditional GET added in this pull request answers "has anything this
-response depends on changed?" in a single statement before any of the work
-above happens, and returns `304 Not Modified` when the answer is no. The marker
+The conditional GET added in this pull request is designed to answer "has
+anything this response depends on changed?" in a single statement before any
+of the work above happens, and to return `304 Not Modified` when the answer is
+no; as the previous section records, the 304 arm does not fire on the deployed
+platform today (#1723), so the marker currently buys the stable tag but not the
+skipped read. The marker
 lives in `lib/scheduling/availabilityGridMarker.ts` and is deliberately one raw
 `SELECT` rather than ten Prisma aggregates: cost here is round trips, and ten
 aggregates would be ten round trips, which is slower than the query the marker
@@ -119,16 +164,19 @@ parameters into a strong ETag:
    of those rows. The count is what catches a deletion: removing an older row
    leaves the maximum timestamp untouched, and without the count the grid
    would answer 304 for a calendar that just lost a window.
-3. The maximum `AppointmentOccurrence.updatedAt` over the appointments that reach
-   this consultant. Reachability is the union of the denormalized
-   `consultantProfileId` (#440), the `user` edge to the consultant, and — when
-   the request names one — the `user` edge to the consultee. The allocator
-   stamps both keys on every slot it writes, so this set is the same set the
-   occupancy query paints from.
+3. The maximum `AppointmentOccurrence.updatedAt` over the occurrence rows that
+   overlap the requested window and belong to an appointment that reaches this
+   consultant, together with the count of those rows. Reachability is the same
+   set the occupancy query paints from: the denormalized `consultantProfileId`
+   (#440), the consultant's own seat, the consultee's seat when the request
+   names one, ownership through one of the consultant's plans, and an ACCEPTED
+   co-host seat; every candidate must also own at least one occurrence that
+   overlaps the window. The count is what catches a reschedule that moves a run
+   out of the window in place, because the maximum over the survivors does not
+   move (#1697 item 1).
 4. The maximum `updatedAt` over the parent request rows of those same
-   appointments, plus the request rows belonging to the consultant's own plans.
-   This is what catches a status flip that starts or stops occupying a cell
-   without rewriting the slot.
+   appointments. This is what catches a status flip that starts or stops
+   occupying a cell without rewriting the slot.
 5. The maximum `Payment.updatedAt` over those same appointments, so a capture
    that flips a payment without rewriting the slot or the request still moves
    the tag.
@@ -150,10 +198,14 @@ subquery, the minimum moves to the next hold or to null, and the ETag changes.
 
 Two things, both deliberate, and both in the safe direction.
 
-The marker is conservative rather than exact. It is scoped to a consultant, not
-to the requested window, so an edit to a booking six months away invalidates
-this week's grid. That costs one unnecessary recompute; it can never serve a
-stale 304.
+The marker is conservative rather than exact. As of #1697 it is scoped to the
+requested window as well as to the consultant, because the consultant-only
+scope turned one booking into a simultaneous full-grid re-demand from every
+open calendar for that consultant, all serialised on a pool of one. An edit to
+a booking in another week now leaves this week's tag alone; an edit inside the
+window still recomputes even when the changed cell is not painted. The
+availability and co-host arms remain consultant-wide, because a weekly row or
+a seat can change what any window paints.
 
 Authorization is not in the marker at all, and does not need to be. The route
 computes the ETag **after** its permission gates, so a caller who has lost org

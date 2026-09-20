@@ -33,6 +33,7 @@ export default function DetailPageClient({
         adapter={adapter}
         backHref={`/dashboard/consultant/${consultantId}/appointments`}
         joinWindowMs={CONSULTANT_JOIN_WINDOW_MS}
+        consultantId={consultantId}
         renderDocuments={(vm) => {
           const canUpload =
             supportsDocuments(vm.kind) && isConfirmedStatus(vm.status);

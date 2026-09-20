@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
+import {
+  ReferralCreditsBlock,
+  useReferralCreditsBalance,
+} from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import {
@@ -18,6 +21,7 @@ import {
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -100,9 +104,12 @@ export default function ClassCheckoutPage({
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
-  const [planData, setPlanData] = useState<PlanResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance(
+      checkoutTaxContext.referralCreditsLoaded,
+      checkoutTaxContext.referralCreditsPaise,
+    );
+  const [staleError, setStaleError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   const isProcessingRef = useRef(false);
   const [processingGateway, setProcessingGateway] = useState<string | null>(
@@ -120,8 +127,6 @@ export default function ClassCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
   const {
@@ -134,6 +139,61 @@ export default function ClassCheckoutPage({
     const result = searchParamsSchema.safeParse(resolvedSearchParams);
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
+
+  // Stable string for the query key below.
+  const searchParamsString = useMemo(() => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(resolvedSearchParams)) {
+      if (Array.isArray(value)) {
+        for (const v of value) params.append(key, v);
+      } else if (value !== undefined) {
+        params.append(key, value);
+      }
+    }
+    return params.toString();
+  }, [resolvedSearchParams]);
+
+  // ONE cached read for the mount fetch (was a bare useEffect fetch).
+  // Discount validation stays a click-time POST in handleApplyDiscount.
+  const checkoutPlanQuery = useQuery({
+    queryKey: ["checkout-plan", resolvedParams.planId, searchParamsString],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<PlanResponse> => {
+      const response = await fetch(
+        `/api/plans/classes/${resolvedParams.planId}`,
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.data?.consultantProfile?.user) {
+        throw new Error("Consultant details not found");
+      }
+
+      return data;
+    },
+  });
+
+  const planData = checkoutPlanQuery.data ?? null;
+  const isLoading = checkoutPlanQuery.isPending;
+  const error =
+    staleError ??
+    (checkoutPlanQuery.error
+      ? checkoutPlanQuery.error instanceof Error
+        ? checkoutPlanQuery.error.message
+        : "An unexpected error occurred. Please try again."
+      : null);
+
+  // Plan-load failures report exactly as the old fetch catch did.
+  useEffect(() => {
+    if (checkoutPlanQuery.error) {
+      reportPaymentsError(checkoutPlanQuery.error);
+      console.error("Error fetching plan data:", checkoutPlanQuery.error);
+    }
+  }, [checkoutPlanQuery.error]);
 
   // Derive the first available class ID — used by both component renders and handleCheckout
   const availableClassId = useMemo(() => {
@@ -187,27 +247,6 @@ export default function ClassCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Fetch available referral credits
-  useEffect(() => {
-    async function fetchCredits() {
-      try {
-        const response = await fetch("/api/referrals/credits/available");
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableCredits(
-            data.data.totalAvailable || 0, // already in paise
-          );
-        }
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching referral credits:", error);
-      } finally {
-        setIsLoadingCredits(false);
-      }
-    }
-    fetchCredits();
-  }, []);
 
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
   const handleCheckoutSuccess = useMemo(
@@ -335,40 +374,6 @@ export default function ClassCheckoutPage({
     ],
   );
 
-  useEffect(() => {
-    async function fetchPlanData() {
-      setIsLoading(true);
-      try {
-        const endpoint = `/api/plans/classes/${resolvedParams.planId}`;
-
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.data?.consultantProfile?.user) {
-          throw new Error("Consultant details not found");
-        }
-
-        setPlanData(data);
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching plan data:", error);
-        setError(
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred. Please try again.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchPlanData();
-  }, [resolvedParams.planId]);
-
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
   const pricing = useMemo(() => {
@@ -411,7 +416,7 @@ export default function ClassCheckoutPage({
         (c) => c.status === "SCHEDULED" || c.status === "IN_PROGRESS",
       );
       if (!hasAvailable) {
-        setError(
+        setStaleError(
           "No available class sessions. All sessions may be full, cancelled, or completed.",
         );
       }
@@ -674,33 +679,14 @@ export default function ClassCheckoutPage({
           </div>
         </div>
         <Separator className="bg-border" />
-        <div className="grid gap-4">
-          <div className="font-semibold">Referral Credits</div>
-          {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">
-              Loading credits...
-            </div>
-          ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
-              <div className="min-w-0">
-                <div className="font-medium text-foreground">
-                  {formatPrice(availableCredits)} available
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Apply to this purchase
-                </div>
-              </div>
-              <Switch
-                checked={useReferralCredits}
-                onCheckedChange={setUseReferralCredits}
-              />
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No referral credits available
-            </div>
-          )}
-        </div>
+        <ReferralCreditsBlock
+          availableCredits={availableCredits}
+          isLoadingCredits={isLoadingCredits}
+          creditsLoadFailed={creditsLoadFailed}
+          useReferralCredits={useReferralCredits}
+          onCheckedChange={setUseReferralCredits}
+          formatPrice={formatPrice}
+        />
       </div>
       <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
         <Card className="border-border shadow-sm">

@@ -11,6 +11,7 @@ import {
 import redis, {
   acquireLock,
   releaseLock,
+  renewLock,
   isMockRedis,
   checkRedisHealth,
 } from "../../lib/redis";
@@ -26,6 +27,8 @@ jest.mock("../../lib/redis", () => ({
   default: { set: jest.fn() },
   acquireLock: jest.fn(),
   releaseLock: jest.fn().mockResolvedValue(undefined),
+  // #1696 — the grant is re-armed every third of its TTL while the job runs.
+  renewLock: jest.fn().mockResolvedValue(true),
   isMockRedis: jest.fn(),
   checkRedisHealth: jest.fn(),
   // Breaker state probe — the wrapper consults this to tell a genuinely-held
@@ -74,6 +77,31 @@ describe("withCronLock", () => {
       15 * 60 * 1000,
     );
     expect(mockRelease).toHaveBeenCalledWith("cron:lock:dunning", "token-1");
+  });
+
+  it("re-arms the grant every third of the TTL while the job runs, and stops on exit (#1696)", async () => {
+    jest.useFakeTimers();
+    try {
+      let finish: () => void = () => {};
+      const running = withCronLock(
+        "reconcile",
+        { failMode: "closed", ttlMs: 30 * 60 * 1000 },
+        () => new Promise<void>((resolve) => (finish = resolve)),
+      );
+      await jest.advanceTimersByTimeAsync(10 * 60 * 1000 + 1);
+      expect(renewLock).toHaveBeenCalledWith(
+        "cron:lock:reconcile",
+        "token-1",
+        30 * 60 * 1000,
+      );
+      finish();
+      await running;
+      const renewals = (renewLock as jest.Mock).mock.calls.length;
+      await jest.advanceTimersByTimeAsync(60 * 60 * 1000);
+      expect(renewLock).toHaveBeenCalledTimes(renewals);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("honours a custom TTL", async () => {

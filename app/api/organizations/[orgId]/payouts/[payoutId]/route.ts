@@ -17,7 +17,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { requireOrgAccess, requireOrgOwner } from "@/lib/auth-helpers";
+import { requireOrgAccess } from "@/lib/auth-helpers";
 // Why: payout PATCH covers state mutations (mark sent, cancel) which are
 // finance-team actions; allow BILLING_ADMIN alongside OWNER.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
@@ -163,10 +163,11 @@ export async function PATCH(
             organizationId: orgId,
             actorMembershipId: access.member.id,
             category: "PAYOUT",
+            // #1584 P1-AU01 — a manual move is an override, not an initiation.
             action:
               body.status === "CANCELLED"
                 ? AUDIT_ACTIONS.PAYOUT.PAYOUT_CANCELLED
-                : AUDIT_ACTIONS.PAYOUT.PAYOUT_INITIATED,
+                : AUDIT_ACTIONS.PAYOUT.PAYOUT_STATUS_OVERRIDDEN,
             description: `Payout ${payoutId}: ${current.status} → ${body.status}`,
             details: {
               payoutId,
@@ -184,11 +185,13 @@ export async function PATCH(
     return NextResponse.json({ payout: updated });
   } catch (err) {
     if (err instanceof Error && "httpStatus" in err) {
-      const status =
-        typeof err.httpStatus === "number" ? err.httpStatus : 500;
+      const status = typeof err.httpStatus === "number" ? err.httpStatus : 500;
       return NextResponse.json({ error: err.message }, { status });
     }
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     throw err;
   }
 }

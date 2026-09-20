@@ -14,11 +14,13 @@
  * IN-PROGRESS has a five-minute staleness escape so a crashed `after()` cannot
  * wedge an event forever. Two defects lived in that escape:
  *
- *   1. The retry path reset `processed` and `error` but NOT `receivedAt`. The
- *      staleness check measures `now - receivedAt`, so a retried row was
+ *   1. The retry path reset `processed` and `error` but NOT the claim stamp.
+ *      The staleness check measures the claim's age, so a retried row was
  *      instantly older than the threshold — the in-progress guard fell open for
  *      exactly the rows it exists to protect, and the sweeper could pick up an
- *      event another worker was mid-way through.
+ *      event another worker was mid-way through. Since #1589 M-P0-03 that
+ *      stamp is `claimedAt`, never `receivedAt`, so a re-drive cannot reset
+ *      the sweeper's 168 h give-up.
  *   2. Both escapes read the row, decided, then wrote. Check-then-act: two
  *      workers both observe "stale", both write, both believe they own it, and
  *      the handler runs twice. For an attendance write or a moderation action
@@ -62,25 +64,26 @@ beforeEach(() => {
 });
 
 describe("the FAILED -> retry path", () => {
-  it("moves receivedAt forward, so the row is not instantly stale", async () => {
+  it("moves claimedAt forward and leaves receivedAt alone", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",
       processed: true,
       error: "boom",
       receivedAt: SIX_MINUTES_AGO,
+      claimedAt: null,
     });
 
     const res = await logWebhookEvent("stream", "e1", "call.ended", {});
 
     expect(res.isNew).toBe(true);
     const data = mockUpdateMany.mock.calls[0][0].data;
-    expect(data.receivedAt).toBeInstanceOf(Date);
-    // Not the original — that was the bug: the retried row kept a timestamp
+    expect(data.claimedAt).toBeInstanceOf(Date);
+    // Not the original — that was the bug: the retried row kept a stamp
     // already past the staleness threshold, so the very next caller treated an
     // actively-processing event as abandoned.
-    expect(data.receivedAt.getTime()).toBeGreaterThan(
-      SIX_MINUTES_AGO.getTime(),
-    );
+    expect(data.claimedAt.getTime()).toBeGreaterThan(SIX_MINUTES_AGO.getTime());
+    // #1589 M-P0-03 — receivedAt is the give-up clock; a re-drive never resets it.
+    expect(data.receivedAt).toBeUndefined();
   });
 
   it("claims conditionally, so a racing worker loses", async () => {
@@ -104,22 +107,23 @@ describe("the FAILED -> retry path", () => {
 });
 
 describe("the IN-PROGRESS staleness escape", () => {
-  it("scopes the claim to the timestamp it read", async () => {
+  it("scopes the claim to the stamp it read", async () => {
     mockFindUnique.mockResolvedValue({
       id: "r1",
       processed: false,
       error: null,
-      receivedAt: SIX_MINUTES_AGO,
+      receivedAt: new Date(Date.now() - 60 * 60 * 1000),
+      claimedAt: SIX_MINUTES_AGO,
     });
 
     const res = await logWebhookEvent("stream", "e1", "call.ended", {});
 
     expect(res.isNew).toBe(true);
-    // The read timestamp is in the WHERE. That is what makes exactly one of two
+    // The read stamp is in the WHERE. That is what makes exactly one of two
     // racing workers win, instead of both.
     expect(mockUpdateMany.mock.calls[0][0].where).toMatchObject({
       eventId: "e1",
-      receivedAt: SIX_MINUTES_AGO,
+      claimedAt: SIX_MINUTES_AGO,
     });
   });
 
@@ -142,7 +146,8 @@ describe("the IN-PROGRESS staleness escape", () => {
       id: "r1",
       processed: false,
       error: null,
-      receivedAt: ONE_MINUTE_AGO,
+      receivedAt: SIX_MINUTES_AGO,
+      claimedAt: ONE_MINUTE_AGO,
     });
 
     const res = await logWebhookEvent("stream", "e1", "call.ended", {});
@@ -189,7 +194,9 @@ describe("closing a delivery out", () => {
     // nothing would ever revisit it.
     await markWebhookEventProcessed("e1", "");
     expect(mockUpdate.mock.calls[0][0].data.error).not.toBeNull();
-    expect(mockUpdate.mock.calls[0][0].data.error).toBe("unknown handler error");
+    expect(mockUpdate.mock.calls[0][0].data.error).toBe(
+      "unknown handler error",
+    );
   });
 
   it("keeps a real error message intact", async () => {

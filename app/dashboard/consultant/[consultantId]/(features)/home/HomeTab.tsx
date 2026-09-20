@@ -10,11 +10,8 @@ import { Button } from "@/components/ui/button";
 // are acquired lazily inside the Join handler (only when a user clicks Join).
 import { useLazyJoinMeeting } from "@/hooks/scheduling/useLazyJoinMeeting";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import {
-  DashboardContent,
-} from "@/components/dashboard/PageScaffold";
+import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { DataCard, EmptyState } from "@/components/dashboard/DataCard";
 import {
   Calendar,
@@ -34,7 +31,6 @@ import {
 } from "@/components/ui/tooltip";
 import {
   calculateSessionProgress,
-  formatAppointmentTime,
   getAppointmentStatus,
   getAppointmentTypeAndPlan,
   getConsumeeImage,
@@ -57,7 +53,12 @@ import {
   eventUnionStatusBadge,
   isConfirmedStatus,
 } from "@/lib/appointments/status";
-import { getProximityLabel } from "@/lib/appointments/occurrences";
+import {
+  CONSULTANT_JOIN_WINDOW_MS,
+  getOccurrenceJoinState,
+  getProximityLabel,
+  type OccurrenceJoinState,
+} from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
@@ -68,12 +69,37 @@ import { FinancialSummary } from "./FinancialSummary";
 import type {
   TPerformanceSnapshot,
   TFinancialSummary,
+  TConsultantDashboardResponse,
 } from "@/types/consultant-events";
+import { formatForViewer, type ViewerZone } from "@/lib/time/viewer-zone";
+
+/** One pattern for both Home lists; the zone label rides along when the
+ * viewer has no saved zone (docs/booking/19-dst-and-timezone-posture.md). */
+const HOME_TIME_PATTERN = "EEE, MMM d, h:mm a";
+/** The next-cycle window is a date range, no clock (#1766). */
+const HOME_DATE_PATTERN = "MMM d";
+
+const ORG_JOIN_STATE_LABEL: Record<OccurrenceJoinState, string> = {
+  joinable: "Open to join",
+  countdown: "Upcoming",
+  ended: "Ended",
+  disabled: "Not joinable",
+};
 
 interface HomeTabProps {
   appointments: TAppointment[];
   consultantId: string;
   pendingRequestsCount?: number;
+  awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
+  orgSessions?: TConsultantDashboardResponse["orgSessions"];
+  /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
+  payoutSetup: TConsultantDashboardResponse["payoutSetup"];
+  /** Subscriptions whose next cycle is waiting on this consultant. #1766 */
+  nextCycles?: TConsultantDashboardResponse["nextCycles"];
+  /** Read-only metric on the requests card; absent on older payloads. #1703 */
+  responseRate?: TConsultantDashboardResponse["responseRate"];
+  /** From the RSC page, so server and client format one wall clock. #1703 */
+  viewerZone: ViewerZone;
   performanceSnapshot?: TPerformanceSnapshot;
   financialSummary?: TFinancialSummary;
 }
@@ -91,14 +117,24 @@ const fadeInUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.4 } },
 };
 
+// Prefetching row link: the upcoming-session row used to SPA-push on click,
+// so the appointments page always loaded cold. motion(Link) keeps the exact
+// hover animation while making it a real anchor Next prefetches.
+const MotionLink = motion(Link);
+
 export function HomeTab({
   appointments,
   consultantId,
   pendingRequestsCount = 0,
+  awaitingPayment,
+  orgSessions = [],
+  payoutSetup,
+  nextCycles = [],
+  responseRate,
+  viewerZone,
   performanceSnapshot,
   financialSummary,
 }: Readonly<HomeTabProps>) {
-  const router = useRouter();
   const joinMeeting = useLazyJoinMeeting();
   const { data: session } = useSession();
   // Sponsoring-org lookup for the indigo "Sponsored · <Org>" badge —
@@ -117,16 +153,19 @@ export function HomeTab({
     joinableSlot?: TAppointment["occurrences"][number],
   ) => void joinMeeting(appointment, joinableSlot);
 
-  const expandedAppointments = useMemo(() => appointments || [], [appointments]);
+  const expandedAppointments = useMemo(
+    () => appointments || [],
+    [appointments],
+  );
 
   const APPOINTMENT_DISPLAY_LIMIT = 8;
 
   const allTodayAppointments = useMemo(
     () =>
-      getTodayAppointments(expandedAppointments).filter(
+      getTodayAppointments(expandedAppointments, viewerZone.zone).filter(
         (appointment) => getAppointmentStatus(appointment) !== "Completed",
       ),
-    [expandedAppointments],
+    [expandedAppointments, viewerZone.zone],
   );
 
   const todayAppointments = useMemo(
@@ -164,7 +203,6 @@ export function HomeTab({
       .slice(0, 5);
   }, [allUpcomingAppointments]);
 
-
   // "Needs you now" — derived from data already on the page, so no extra
   // fetch. The rows go over whole, ids and ends included: these are raw
   // 30-minute slot rows, and without them a two-hour booking reported its
@@ -183,8 +221,10 @@ export function HomeTab({
           })),
         ),
         basePath: `/dashboard/consultant/${consultantId}`,
+        payoutSetupNeeded: payoutSetup?.needed ?? false,
+        livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
       }),
-    [allUpcomingAppointments, pendingRequestsCount, consultantId],
+    [allUpcomingAppointments, pendingRequestsCount, consultantId, payoutSetup],
   );
 
   return (
@@ -303,7 +343,11 @@ export function HomeTab({
                             <Clock className="h-3.5 w-3.5" />
                             <span>
                               {startTime
-                                ? formatAppointmentTime(startTime.toISOString())
+                                ? formatForViewer(
+                                    startTime,
+                                    viewerZone,
+                                    HOME_TIME_PATTERN,
+                                  )
                                 : "TBD"}
                             </span>
                           </div>
@@ -378,7 +422,8 @@ export function HomeTab({
                         </div>
                       );
                     })}
-                    {allTodayAppointments.length > APPOINTMENT_DISPLAY_LIMIT && (
+                    {allTodayAppointments.length >
+                      APPOINTMENT_DISPLAY_LIMIT && (
                       <div className="pt-3 text-center">
                         <Link
                           href={`/dashboard/consultant/${consultantId}/appointments`}
@@ -397,12 +442,16 @@ export function HomeTab({
                     action={
                       <div className="flex gap-2">
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                          <Link
+                            href={`/dashboard/consultant/${consultantId}/planner`}
+                          >
                             Set up availability
                           </Link>
                         </Button>
                         <Button variant="outline" size="sm" asChild>
-                          <Link href={`/dashboard/consultant/${consultantId}/appointments`}>
+                          <Link
+                            href={`/dashboard/consultant/${consultantId}/appointments`}
+                          >
                             View all appointments
                           </Link>
                         </Button>
@@ -438,15 +487,11 @@ export function HomeTab({
                       } = calculateSessionProgress(groupAppointments);
 
                       return (
-                        <motion.div
+                        <MotionLink
                           key={groupKey}
+                          href={`/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`}
                           whileHover={{ x: 4 }}
                           className="group flex items-center gap-4 p-3 rounded-xl hover:bg-zinc-50 cursor-pointer transition-all"
-                          onClick={() =>
-                            router.push(
-                              `/dashboard/consultant/${consultantId}/appointments?highlight=${encodeURIComponent(groupKey)}`,
-                            )
-                          }
                         >
                           <Avatar className="h-10 w-10">
                             <AvatarImage
@@ -501,7 +546,11 @@ export function HomeTab({
                             </div>
                             <p className="text-sm text-zinc-500">
                               {startTime
-                                ? formatAppointmentTime(startTime.toISOString())
+                                ? formatForViewer(
+                                    startTime,
+                                    viewerZone,
+                                    HOME_TIME_PATTERN,
+                                  )
                                 : "TBD"}
                             </p>
                             {isRecurring && (
@@ -535,7 +584,7 @@ export function HomeTab({
                           </div>
 
                           <ChevronRight className="h-5 w-5 text-zinc-300 group-hover:text-zinc-500 transition-colors" />
-                        </motion.div>
+                        </MotionLink>
                       );
                     })}
                   </div>
@@ -546,7 +595,9 @@ export function HomeTab({
                     description="Your schedule is clear for now"
                     action={
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/consultant/${consultantId}/planner`}>
+                        <Link
+                          href={`/dashboard/consultant/${consultantId}/planner`}
+                        >
                           Set up availability
                         </Link>
                       </Button>
@@ -572,15 +623,167 @@ export function HomeTab({
                 viewAllLink={`/dashboard/consultant/${consultantId}/requests`}
                 viewAllText="View all requests"
               >
+                {/* #1703 D4 — a consultant's own number, no ranking use yet. */}
+                {responseRate?.withinTargetPct !== null &&
+                  responseRate?.withinTargetPct !== undefined && (
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      You answer {responseRate.withinTargetPct}% of requests
+                      within a day
+                      <span className="text-muted-foreground/70">
+                        {" "}
+                        (last 30 days, {responseRate.total} answered)
+                      </span>
+                    </p>
+                  )}
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
                   <RequestSchedulingTabMini />
                 </div>
               </DataCard>
 
-              {/* Financial Summary */}
-              {financialSummary && (
-                <FinancialSummary {...financialSummary} />
+              {/* #1703 — approved but unpaid: not pending, not bookable, so
+                  neither list above shows them. A pipeline row, not a mix
+                  into Today/Upcoming. */}
+              {awaitingPayment && awaitingPayment.count > 0 && (
+                <DataCard
+                  title="Awaiting payment"
+                  icon={Clock}
+                  headerAction={
+                    <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
+                      {awaitingPayment.count}
+                    </Badge>
+                  }
+                  viewAllLink={`/dashboard/consultant/${consultantId}/appointments?tab=needsAction`}
+                  viewAllText="View all"
+                >
+                  <ul className="divide-y divide-border text-sm">
+                    {awaitingPayment.items.map((item) => (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">
+                            {item.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {item.type} &middot; requested {item.date}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          Payment required
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </DataCard>
               )}
+
+              {/* #1766 — a plan whose live cycle is done and whose entitlement
+                  is not: derived at read time, so the row disappears the
+                  moment the next batch is placed. Same pipeline-row shape as
+                  "Awaiting payment"; the link is the existing allocate route. */}
+              {nextCycles.length > 0 && (
+                <DataCard
+                  title="Next cycle to schedule"
+                  icon={Clock}
+                  headerAction={
+                    <Badge className="bg-amber-100 text-amber-700 hover:bg-amber-100">
+                      {nextCycles.length}
+                    </Badge>
+                  }
+                >
+                  <ul className="divide-y divide-border text-sm">
+                    {nextCycles.map((row) => (
+                      <li
+                        key={row.subscriptionId}
+                        className="flex items-center justify-between gap-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-foreground">
+                            {row.consulteeName} &middot; {row.planTitle}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Schedule the next {row.nextBatch} session
+                            {row.nextBatch === 1 ? "" : "s"} &middot;{" "}
+                            {formatForViewer(
+                              row.windowStart,
+                              viewerZone,
+                              HOME_DATE_PATTERN,
+                            )}{" "}
+                            –{" "}
+                            {formatForViewer(
+                              row.windowEnd,
+                              viewerZone,
+                              HOME_DATE_PATTERN,
+                            )}{" "}
+                            &middot; {row.held} of {row.total} scheduled
+                          </p>
+                        </div>
+                        <Button asChild variant="outline" size="sm">
+                          <Link href={row.href}>Schedule</Link>
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </DataCard>
+              )}
+
+              {/* #1703 B13 — org-funded sessions this consultant delivers.
+                  Home pins personal scope everywhere else (ADR 19), so
+                  without this strip a session they must show up for never
+                  appeared. Metadata only (ADR 20): org, time, join state. */}
+              {orgSessions.length > 0 && (
+                <DataCard title="Organisation sessions" icon={Building2}>
+                  <ul className="divide-y divide-border text-sm">
+                    {orgSessions.map((session) => {
+                      const joinState = getOccurrenceJoinState(
+                        { id: session.occurrenceId, ...session },
+                        { joinWindowMs: CONSULTANT_JOIN_WINDOW_MS },
+                      );
+                      const membership = orgMemberships.find(
+                        (m) => m.organizationId === session.organizationId,
+                      );
+                      return (
+                        <li
+                          key={session.occurrenceId}
+                          className="flex items-center justify-between gap-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-foreground">
+                              {session.organizationName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatForViewer(
+                                session.startsAt,
+                                viewerZone,
+                                HOME_TIME_PATTERN,
+                              )}
+                            </p>
+                          </div>
+                          {/* The org dashboard owns the session; only a
+                              member can open it there. */}
+                          {membership ? (
+                            <Button asChild variant="outline" size="sm">
+                              <Link
+                                href={`/dashboard/organization/${session.organizationId}/appointments`}
+                              >
+                                {ORG_JOIN_STATE_LABEL[joinState]}
+                              </Link>
+                            </Button>
+                          ) : (
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {ORG_JOIN_STATE_LABEL[joinState]}
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </DataCard>
+              )}
+
+              {/* Financial Summary */}
+              {financialSummary && <FinancialSummary {...financialSummary} />}
             </motion.div>
           </div>
         </motion.div>

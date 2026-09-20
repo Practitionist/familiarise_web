@@ -27,6 +27,10 @@ const mockRecordSystemError = jest.fn();
 const mockGetSession = jest.fn();
 const mockMembershipFindUnique = jest.fn();
 
+const globalAppointmentFindFirst = jest.fn(
+  async (...a: unknown[]) => (await mockAppointmentFindMany(...a))[0] ?? null,
+);
+
 /** Flipped by the $transaction stub, mirroring the slot terminalisation. */
 let txCommitted = false;
 
@@ -50,6 +54,11 @@ const txStub = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
+  // #1766 — a subscription cancel stamps the undelivered earnings tranches in
+  // the same transaction.
+  consultantEarnings: {
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
@@ -64,6 +73,14 @@ const txStub = {
     findMany: jest.fn().mockResolvedValue([]),
     findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
+  // #1695 — the refund context is read on the TRANSACTION client, under the
+  // appointment lock and before the CAS, so it still sees live slots.
+  appointment: {
+    findFirst: jest.fn(
+      async (...a: unknown[]) =>
+        (await mockAppointmentFindMany(...a))[0] ?? null,
+    ),
   },
 };
 
@@ -80,9 +97,9 @@ jest.mock("../../lib/prisma", () => ({
     appointment: {
       findUnique: (...a: unknown[]) => mockAppointmentFindUnique(...a),
       findMany: (...a: unknown[]) => mockAppointmentFindMany(...a),
-      // #1554 — the refund context reads the ONE wrapper.
-      findFirst: async (...a: unknown[]) =>
-        (await mockAppointmentFindMany(...a))[0] ?? null,
+      // #1554 — the refund context reads the ONE wrapper; #1695 moved that
+      // read onto the tx client, so this one must stay silent.
+      findFirst: (...a: unknown[]) => globalAppointmentFindFirst(...a),
     },
     payment: { findMany: (...a: unknown[]) => mockPaymentFindMany(...a) },
     dispute: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -225,6 +242,11 @@ function bookingRows(opts: {
   /** Defaults to a gateway-funded payment. */
   paymentAmount?: number;
   paymentIntent?: string;
+  /**
+   * #1766 — the plan entitlement the unused-session quote measures against.
+   * Defaults to every slot the fixture holds, which is the pre-Z2 denominator.
+   */
+  sessionsTotal?: number;
 }) {
   const live = (opts.liveSlotHours ?? []).map((h) => ({
     startsAt: new Date(Date.now() + h * HOUR),
@@ -258,6 +280,12 @@ function bookingRows(opts: {
             },
           ],
       occurrences: [...done, ...gone, ...unverified, ...live],
+      subscription: {
+        sessionsTotal:
+          opts.sessionsTotal ??
+          done.length + gone.length + unverified.length + live.length,
+        subscriptionPlan: { totalSessions: 0 },
+      },
     },
   ];
 }
@@ -499,10 +527,11 @@ describe("subscriptions", () => {
     const res = await cancelHandler(makeRequest(), makeParams(APPT));
     const body = await res.json();
 
-    // 4 sessions bought, 2 still owed: the 100% tier applies to HALF the price.
-    // Against a completed+live denominator of 3 this would pay floor(2/3) —
-    // ₹833 more than the plan's per-session price justifies.
-    expect(body.refund.amountRefundedPaise).toBe(GROSS / 2);
+    // 4 sessions bought, 1 delivered: the cancelled session went back to the
+    // entitlement (#1766 — no consumed counter), so THREE are owed, two on the
+    // calendar at the 100% tier and one never scheduled at full notice. The
+    // plan is the denominator: 3/4 of the price, never 2/3 of a shrunken one.
+    expect(body.refund.amountRefundedPaise).toBe((GROSS * 3) / 4);
     expect(body.refund.amountRefundedPaise).not.toBe(
       Math.floor((GROSS * 2) / 3),
     );
@@ -764,6 +793,25 @@ describe("failure modes leave the cancellation standing", () => {
 
     expect(body.refund).toBeNull();
     expect(mockRefundBookingPayment).not.toHaveBeenCalled();
+  });
+
+  it("quotes from a read taken inside the lock, on the transaction client (#1695)", async () => {
+    mockGetSession.mockResolvedValue(sessionAs("consultee"));
+    mockAppointmentFindUnique.mockResolvedValue(consultationAppointment());
+    mockAppointmentFindMany.mockImplementation(async () =>
+      bookingRows({ liveSlotHours: [120] }),
+    );
+
+    const res = await cancelHandler(makeRequest(), makeParams(APPT));
+
+    expect(res.status).toBe(200);
+    // The tx client served the read; the global client never did, so a
+    // reschedule or capture landing before the lock is seen by the quote.
+    expect(txStub.appointment.findFirst).toHaveBeenCalledTimes(1);
+    expect(globalAppointmentFindFirst).not.toHaveBeenCalled();
+    expect(mockRefundBookingPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: GROSS }),
+    );
   });
 
   it("does not refund when the cancel loses its CAS race", async () => {

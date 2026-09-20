@@ -132,6 +132,24 @@ async function sendRemindersForWindow(window: {
               },
             },
           },
+          // #1589 N-P1-02 — a trial's held call is a non-tentative SCHEDULED
+          // occurrence from acceptance on; the status gate is on the trial.
+          trial: {
+            select: {
+              status: true,
+              subscriptionPlan: {
+                select: {
+                  title: true,
+                  consultantProfile: {
+                    select: { userId: true, user: { select: { name: true } } },
+                  },
+                },
+              },
+              consulteeProfile: {
+                select: { userId: true, user: { select: { name: true } } },
+              },
+            },
+          },
         },
       },
     },
@@ -233,6 +251,21 @@ async function sendRemindersForWindow(window: {
         userIds.push(
           ...(await planCollaborators("class", apt.class.classPlanId)),
         );
+      } else if (apt.trial) {
+        // An AWAITING_PAYMENT trial still holds its occurrence; only a
+        // SCHEDULED (paid or free) trial gets the reminder pair.
+        if (apt.trial.status !== "SCHEDULED") continue;
+        appointmentType = "trial";
+        planTitle = apt.trial.subscriptionPlan?.title ?? "Trial";
+        consultantName =
+          apt.trial.subscriptionPlan?.consultantProfile?.user?.name ??
+          "Consultant";
+        consulteeName = apt.trial.consulteeProfile?.user?.name ?? "Consultee";
+        const cId = apt.trial.subscriptionPlan?.consultantProfile?.userId;
+        const eId = apt.trial.consulteeProfile?.userId;
+        consultantUserId = cId;
+        if (cId) userIds.push(cId);
+        if (eId) userIds.push(eId);
       }
 
       // Deduplicate user IDs

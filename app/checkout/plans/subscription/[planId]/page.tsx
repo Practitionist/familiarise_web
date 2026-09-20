@@ -5,10 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { useMaintenanceGuard } from "@/hooks/useMaintenanceGuard";
+import {
+  ReferralCreditsBlock,
+  useReferralCreditsBalance,
+} from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   CheckoutInput,
   SubscriptionSearchParams,
@@ -28,6 +32,8 @@ import { ConsultantProfile, SubscriptionPlan } from "@prisma/client";
 import { CreditCard as CreditCardIcon } from "lucide-react";
 import { CompanyLogo } from "@/components/ui/company-logo";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import RazorpayCheckout from "../../../components/RazorpayCheckout";
 import StripeCheckout from "../../../components/StripeCheckout";
 import {
@@ -80,12 +86,16 @@ export default function SubscriptionCheckoutPage({
   // Next.js 15 Synchronous params and searchParams
   const resolvedParams = use(params);
   const resolvedSearchParams = use(searchParams);
+  const router = useRouter();
 
   const { formatPrice, currency } = useCurrency();
   const checkoutTaxContext = useCheckoutTaxContext();
-  const [planData, setPlanData] = useState<SubscriptionResponse | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { availableCredits, isLoadingCredits, creditsLoadFailed } =
+    useReferralCreditsBalance(
+      checkoutTaxContext.referralCreditsLoaded,
+      checkoutTaxContext.referralCreditsPaise,
+    );
+  const [staleError, setStaleError] = useState<string | null>(null);
   const [isCheckoutProcessing, setIsCheckoutProcessing] = useState(false);
   // #828 — useState's lazy initializer runs once per mount.
   const [idempotencyKey] = useState(mintClientIdempotencyKey);
@@ -105,8 +115,6 @@ export default function SubscriptionCheckoutPage({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<
     string | null
   >(null);
-  const [availableCredits, setAvailableCredits] = useState(0);
-  const [isLoadingCredits, setIsLoadingCredits] = useState(true);
 
   const { toast } = useToast();
   const {
@@ -121,33 +129,91 @@ export default function SubscriptionCheckoutPage({
     return result.success ? result.data : null;
   }, [resolvedSearchParams]);
 
-  // E2E-audit P0 fix — derive a default scheduling period when the buyer
-  // arrives without one. The plan-detail "Subscribe" CTA links here bare,
-  // and every payment control renders null in that case: no button, no
-  // error — a dead end that middleware faithfully preserves through sign-in
-  // as callbackUrl. A subscription is a fixed-term engagement, so defaulting
-  // the window to "starting now, one plan-duration long" matches what the
-  // expert-page flow collects explicitly; the server still re-validates the
-  // window against the plan inside the checkout transaction.
-  const effectiveSearchParams = useMemo((): SubscriptionSearchParams | null => {
-    if (
-      validatedSearchParams?.schedulingPeriodStartsAt &&
-      validatedSearchParams?.schedulingPeriodEndsAt
-    ) {
-      return validatedSearchParams;
+  // Stable string for the query key below.
+  const searchParamsString = useMemo(() => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(resolvedSearchParams)) {
+      if (Array.isArray(value)) {
+        for (const v of value) params.append(key, v);
+      } else if (value !== undefined) {
+        params.append(key, value);
+      }
     }
+    return params.toString();
+  }, [resolvedSearchParams]);
+
+  // ONE cached read for the mount fetch (was a bare useEffect fetch).
+  // Discount validation stays a click-time POST in handleApplyDiscount.
+  const checkoutPlanQuery = useQuery({
+    queryKey: ["checkout-plan", resolvedParams.planId, searchParamsString],
+    staleTime: 60_000,
+    retry: false,
+    queryFn: async (): Promise<SubscriptionResponse> => {
+      const response = await fetch(
+        `/api/plans/subscriptions/${resolvedParams.planId}`,
+      );
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data.data.consultantProfile?.user) {
+        throw new Error("Consultant details not found");
+      }
+
+      return data;
+    },
+  });
+
+  const planData = checkoutPlanQuery.data ?? null;
+  const isLoading = checkoutPlanQuery.isPending;
+  const error =
+    staleError ??
+    (checkoutPlanQuery.error
+      ? checkoutPlanQuery.error instanceof Error
+        ? checkoutPlanQuery.error.message
+        : "An unexpected error occurred. Please try again."
+      : null);
+
+  // Plan-load failures report exactly as the old fetch catch did.
+  useEffect(() => {
+    if (checkoutPlanQuery.error) {
+      reportPaymentsError(checkoutPlanQuery.error);
+      console.error("Error fetching plan data:", checkoutPlanQuery.error);
+    }
+  }, [checkoutPlanQuery.error]);
+
+  // E2E-audit P0 fix — derive a default start when the buyer arrives
+  // without one (the plan-detail "Subscribe" CTA links here bare), so the
+  // payment controls never render null. #1766 — only the START travels: the
+  // window is the first cycle and the server derives it in the consultant's
+  // zone; a client end is ignored there, so none is minted here.
+  const effectiveSearchParams = useMemo((): SubscriptionSearchParams | null => {
     if (!validatedSearchParams) return null;
-    const months = planData?.data?.durationInMonths;
-    if (!months || months <= 0) return null;
-    const startsAt = new Date();
-    const endsAt = new Date(startsAt);
-    endsAt.setMonth(endsAt.getMonth() + months);
+    const { schedulingPeriodEndsAt: _ignored, ...rest } = validatedSearchParams;
     return {
-      ...validatedSearchParams,
-      schedulingPeriodStartsAt: startsAt.toISOString(),
-      schedulingPeriodEndsAt: endsAt.toISOString(),
+      ...rest,
+      schedulingPeriodStartsAt:
+        rest.schedulingPeriodStartsAt ?? new Date().toISOString(),
     };
-  }, [validatedSearchParams, planData?.data?.durationInMonths]);
+  }, [validatedSearchParams]);
+
+  // The first cycle as the buyer will see it, in the browser's zone (display
+  // only; the persisted window is the server's).
+  const firstCycle = useMemo(() => {
+    const plan = planData?.data;
+    const start = effectiveSearchParams?.schedulingPeriodStartsAt;
+    if (!plan || !start) return null;
+    return firstCycleWindow(
+      {
+        sessionsPerWeek: plan.sessionsPerWeek ?? 1,
+        durationInMonths: plan.durationInMonths ?? 1,
+      },
+      new Date(start),
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
+  }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -193,27 +259,6 @@ export default function SubscriptionCheckoutPage({
       setIsApplyingDiscount(false);
     }
   };
-
-  // Fetch available referral credits
-  useEffect(() => {
-    async function fetchCredits() {
-      try {
-        const response = await fetch("/api/referrals/credits/available");
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableCredits(
-            data.data.totalAvailable || 0, // already in paise
-          );
-        }
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching referral credits:", error);
-      } finally {
-        setIsLoadingCredits(false);
-      }
-    }
-    fetchCredits();
-  }, []);
 
   // Create utility functions using the toast instance
   const handleApiError = useMemo(() => createHandleApiError(toast), [toast]);
@@ -276,22 +321,15 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Subscription plan not found");
         }
 
-        if (
-          !effectiveSearchParams.schedulingPeriodStartsAt ||
-          !effectiveSearchParams.schedulingPeriodEndsAt
-        ) {
-          throw new Error(
-            "Scheduling period dates are required for subscriptions",
-          );
+        if (!effectiveSearchParams.schedulingPeriodStartsAt) {
+          throw new Error("A start date is required for subscriptions");
         }
 
-        // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(
-          effectiveSearchParams.schedulingPeriodEndsAt,
-        );
-        if (periodEnd.getTime() < Date.now()) {
+        // Staleness check: the first cycle the buyer was shown must not have
+        // fully elapsed before they paid.
+        if (firstCycle && firstCycle.end.getTime() < Date.now()) {
           throw new Error(
-            "The scheduling period has expired. Please go back and select new dates.",
+            "The start date has passed. Please go back and pick a new one.",
           );
         }
 
@@ -300,7 +338,6 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           schedulingPeriodStartsAt:
             effectiveSearchParams.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: effectiveSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -353,7 +390,7 @@ export default function SubscriptionCheckoutPage({
           });
 
           setTimeout(() => {
-            window.location.href = "/dashboard";
+            router.push("/dashboard");
           }, 2000);
         } else if (!data.success) {
           handleApiError({ error: data.error, errorType: data.errorType });
@@ -380,50 +417,18 @@ export default function SubscriptionCheckoutPage({
       maintenanceBlockReason,
       planData?.data?.id,
       toast,
+      router,
       appliedDiscount,
       useReferralCredits,
       selectedOrganizationId,
       billingState.bodyField,
       effectiveSearchParams,
+      firstCycle,
       currency,
       handleApiError,
       makeCheckoutRequest,
     ],
   );
-
-  useEffect(() => {
-    async function fetchPlanData() {
-      setIsLoading(true);
-      try {
-        const endpoint = `/api/plans/subscriptions/${resolvedParams.planId}`;
-
-        const response = await fetch(endpoint);
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const data = await response.json();
-
-        if (!data.data.consultantProfile?.user) {
-          throw new Error("Consultant details not found");
-        }
-
-        setPlanData(data);
-      } catch (error) {
-        reportPaymentsError(error);
-        console.error("Error fetching plan data:", error);
-        setError(
-          error instanceof Error
-            ? error.message
-            : "An unexpected error occurred. Please try again.",
-        );
-      } finally {
-        setIsLoading(false);
-      }
-    }
-
-    fetchPlanData();
-  }, [resolvedParams.planId]);
 
   // Calculate pricing using the proper math functions
   // NOTE: This must be before early returns to maintain consistent hook order
@@ -458,16 +463,15 @@ export default function SubscriptionCheckoutPage({
     checkoutTaxContext.exportZeroRated,
   ]);
 
-  // Periodic staleness check: warn if scheduling period has expired
+  // Periodic staleness check: warn once the first cycle has elapsed.
   useEffect(() => {
-    const periodEndStr = effectiveSearchParams?.schedulingPeriodEndsAt;
-    if (!periodEndStr) return;
+    const cycleEnd = firstCycle?.end;
+    if (!cycleEnd) return;
 
     const checkStaleness = () => {
-      const periodEnd = new Date(periodEndStr);
-      if (periodEnd.getTime() < Date.now()) {
-        setError(
-          "The scheduling period has expired. Please go back and select new dates.",
+      if (cycleEnd.getTime() < Date.now()) {
+        setStaleError(
+          "The start date has passed. Please go back and pick a new one.",
         );
       }
     };
@@ -475,7 +479,7 @@ export default function SubscriptionCheckoutPage({
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [effectiveSearchParams?.schedulingPeriodEndsAt]);
+  }, [firstCycle?.end]);
 
   if (isLoading) {
     return <CheckoutPlanSkeleton />;
@@ -567,30 +571,37 @@ export default function SubscriptionCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
           <div className="grid gap-2">
-            {/* Scheduling Period — shown for the buyer-provided window or
-                the derived default (E2E-audit P0 fix) */}
+            {/* Start + first cycle (#1766): the buyer picked a start; the
+                consultant schedules one cycle at a time from it. */}
             {typeof effectiveSearchParams?.schedulingPeriodStartsAt ===
-              "string" &&
-              typeof effectiveSearchParams?.schedulingPeriodEndsAt ===
-                "string" && (
-                <>
+              "string" && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground">Starts</div>
+                  <div className="text-right text-sm">
+                    {new Date(
+                      effectiveSearchParams.schedulingPeriodStartsAt,
+                    ).toLocaleDateString()}
+                  </div>
+                </div>
+                {firstCycle && (
                   <div className="flex items-center justify-between">
-                    <div className="text-muted-foreground">
-                      Scheduling Period
-                    </div>
+                    <div className="text-muted-foreground">First cycle</div>
                     <div className="text-right text-sm">
-                      {new Date(
-                        effectiveSearchParams.schedulingPeriodStartsAt,
-                      ).toLocaleDateString()}{" "}
-                      →{" "}
-                      {new Date(
-                        effectiveSearchParams.schedulingPeriodEndsAt,
-                      ).toLocaleDateString()}
+                      {firstCycle.start.toLocaleDateString()} →{" "}
+                      {firstCycle.end.toLocaleDateString()} ·{" "}
+                      {planData?.data?.sessionsPerWeek || 1} session
+                      {(planData?.data?.sessionsPerWeek || 1) === 1
+                        ? ""
+                        : "s"}{" "}
+                      per cycle · {planData?.data?.totalSessions ?? "—"} in the
+                      plan
                     </div>
                   </div>
-                  <Separator className="bg-border" />
-                </>
-              )}
+                )}
+                <Separator className="bg-border" />
+              </>
+            )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
               <div>{planData?.data?.durationInMonths || 1} months</div>
@@ -737,33 +748,14 @@ export default function SubscriptionCheckoutPage({
           </div>
         </div>
         <Separator className="bg-border" />
-        <div className="grid gap-4">
-          <div className="font-semibold">Referral Credits</div>
-          {isLoadingCredits ? (
-            <div className="text-sm text-muted-foreground">
-              Loading credits...
-            </div>
-          ) : availableCredits > 0 ? (
-            <div className="flex items-center justify-between gap-3 bg-muted p-3 rounded-lg border border-border">
-              <div className="min-w-0">
-                <div className="font-medium text-foreground">
-                  {formatPrice(availableCredits)} available
-                </div>
-                <div className="text-sm text-muted-foreground">
-                  Apply to this purchase
-                </div>
-              </div>
-              <Switch
-                checked={useReferralCredits}
-                onCheckedChange={setUseReferralCredits}
-              />
-            </div>
-          ) : (
-            <div className="text-sm text-muted-foreground">
-              No referral credits available
-            </div>
-          )}
-        </div>
+        <ReferralCreditsBlock
+          availableCredits={availableCredits}
+          isLoadingCredits={isLoadingCredits}
+          creditsLoadFailed={creditsLoadFailed}
+          useReferralCredits={useReferralCredits}
+          onCheckedChange={setUseReferralCredits}
+          formatPrice={formatPrice}
+        />
       </div>
       <div className="flex flex-col gap-8 p-6 sm:p-8 bg-card">
         <Card className="border-border shadow-sm">
@@ -880,7 +872,6 @@ export default function SubscriptionCheckoutPage({
                   {gateway.isActive ? (
                     <div className="flex gap-2">
                       {effectiveSearchParams?.schedulingPeriodStartsAt &&
-                      effectiveSearchParams?.schedulingPeriodEndsAt &&
                       gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
@@ -889,8 +880,6 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt:
-                              effectiveSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId
@@ -904,7 +893,6 @@ export default function SubscriptionCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        effectiveSearchParams?.schedulingPeriodEndsAt &&
                         gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
@@ -913,8 +901,6 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "STRIPE",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt:
-                              effectiveSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId

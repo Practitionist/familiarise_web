@@ -23,7 +23,11 @@ import {
   type TimePickerSubject,
   type SlotPreference,
 } from "@/components/scheduling/time-picker-policy";
-import { resolveFocusTarget } from "@/lib/scheduling/time-picker-focus";
+import {
+  resolveFocusTarget,
+  type TimePickerFocus,
+} from "@/lib/scheduling/time-picker-focus";
+import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { cn } from "@/utils/tailwind";
 
 /**
@@ -55,6 +59,28 @@ const DAYS_OPTIONS = [
   { value: "WEEKENDS", label: "Weekends" },
 ] as const;
 
+/** Un-nests the submit button's title so every disabled state names its fix. */
+function submitButtonTitle(state: {
+  isSubmitting: boolean;
+  selectionIncomplete: boolean;
+  proposedCount: number;
+  allowReleaseWithoutTime: boolean;
+}): string {
+  if (state.isSubmitting) {
+    return "Submitting — wait for the current attempt to finish.";
+  }
+  if (state.selectionIncomplete) {
+    // Name "Any time works" only where the policy actually offers it.
+    return state.allowReleaseWithoutTime
+      ? "Select a time for every session, or choose Any time works."
+      : "Select a time for every session.";
+  }
+  if (state.proposedCount === 0) {
+    return "Pick at least one replacement time first.";
+  }
+  return "Submit the selected times.";
+}
+
 export interface TimePickerProps {
   policy: TimePickerPolicy;
   subject: TimePickerSubject;
@@ -63,6 +89,25 @@ export interface TimePickerProps {
   /** Back out. Also wired to the allocate grid's own Cancel button. */
   onCancel?: () => void;
   className?: string;
+  /**
+   * Where the status legend renders. "top" (default) keeps it above the grid
+   * (#1064: a key below the fold explains nothing); "bottom" puts it between
+   * the grid and the action footer, which stays on screen — used by the
+   * allocate page to reclaim top space for the heatmap itself.
+   */
+  legendPosition?: "top" | "bottom";
+  /**
+   * A caller-pinned instant that outranks the resolved focus — the confirm
+   * dialog's hand-off lands the grid on the consultee's requested slot so the
+   * conflicting cell is in view (#1703 F2/F5).
+   */
+  focusAt?: Date;
+  /**
+   * The viewer's zone from the RSC page (`getViewerZone`), so the grid is
+   * drawn in the same zone the rest of the page renders (#1703 QA-1). When
+   * absent the session hook supplies it; the browser zone is the last resort.
+   */
+  viewerZone?: string | null;
 }
 
 export function TimePicker({
@@ -71,7 +116,13 @@ export function TimePicker({
   isSubmitting = false,
   onCancel,
   className,
+  legendPosition = "top",
+  focusAt,
+  viewerZone,
 }: Readonly<TimePickerProps>) {
+  const sessionViewer = useViewerZone();
+  const gridViewerZone =
+    viewerZone ?? (sessionViewer.own ? sessionViewer.zone : null);
   const sessions = React.useMemo(
     () => groupReleasableSessions(subject.slots ?? []),
     [subject.slots],
@@ -81,9 +132,12 @@ export function TimePicker({
   // against a moving `now` would let the grid drift under a consultant who
   // left the tab open (#1073).
   const [openedAt] = React.useState(() => new Date());
-  const focus = React.useMemo(
-    () => resolveFocusTarget(subject, openedAt),
-    [subject, openedAt],
+  const focus = React.useMemo<TimePickerFocus>(
+    () =>
+      focusAt
+        ? { at: focusAt, precision: "session" }
+        : resolveFocusTarget(subject, openedAt),
+    [focusAt, subject, openedAt],
   );
 
   const [releaseMode, setReleaseMode] = React.useState<ReleaseMode>("entire");
@@ -156,6 +210,10 @@ export function TimePicker({
   };
 
   const isSelectMode = policy.calendarMode === "select";
+  const showConsultantLegend =
+    policy.kind === "RESCHEDULE_CONSULTANT" ||
+    policy.kind === "MANAGE_TIMINGS" ||
+    policy.kind === "ALLOCATE";
 
   return (
     <DesktopOnlyNotice className={cn("min-h-0 gap-4", className)}>
@@ -163,8 +221,8 @@ export function TimePicker({
         <div className="shrink-0 rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/40 dark:bg-amber-900/20">
           <p className="text-xs text-amber-800 dark:text-amber-300">
             <strong>Note:</strong> sessions cannot be moved within{" "}
-            {policy.minLeadHours} hours of their start time, and rescheduling
-            is not refunded.
+            {policy.minLeadHours} hours of their start time, and rescheduling is
+            not refunded.
           </p>
         </div>
       )}
@@ -190,11 +248,16 @@ export function TimePicker({
               : `Pick ${sessionsBeingMoved} times. `}
           </span>
         )}
-        {policy.pickerHint}
+        {/* The allocate page carries no separate heading (the breadcrumb
+            names the booking), so the hint also says who the task is for. */}
+        {policy.kind === "ALLOCATE" && subject.consulteeName
+          ? `Choose the times for ${subject.consulteeName}'s booking. Green is free for both of you; anything else is already taken.`
+          : policy.pickerHint}
       </p>
 
       <SafeUnifiedCalendar
         className="min-h-0 flex-1"
+        legendPosition={legendPosition}
         consultantId={subject.consultantProfileId}
         eventType={subject.eventType}
         eventId={subject.eventId}
@@ -203,11 +266,7 @@ export function TimePicker({
         // Consultant surfaces (allocate / manage timings / propose) paint
         // Selected / Being moved / This booking. Consultee reschedule stays
         // on the buyer legend even when eventId is set for status-grid paint.
-        showConsultantLegend={
-          policy.kind === "RESCHEDULE_CONSULTANT" ||
-          policy.kind === "MANAGE_TIMINGS" ||
-          policy.kind === "ALLOCATE"
-        }
+        showConsultantLegend={showConsultantLegend}
         sessionDurationInHours={subject.sessionDurationInHours}
         durationInHours={subject.durationInHours}
         sessionsPerWeek={subject.sessionsPerWeek}
@@ -220,6 +279,7 @@ export function TimePicker({
         // starting position, and re-aiming the grid while someone is reading
         // it is worse than the empty night rows it replaces (#1073).
         focus={focus}
+        viewerZone={gridViewerZone}
         // Fresh allocations only: a partial reschedule legitimately keeps
         // confirmed slots and must not trip the guard.
         initialAllocation={
@@ -259,7 +319,10 @@ export function TimePicker({
             <div className="mr-auto flex flex-wrap items-center gap-2">
               <span className="text-sm text-muted-foreground">Ideally</span>
               <Select value={timeOfDay} onValueChange={setTimeOfDay}>
-                <SelectTrigger className="h-9 w-[9.5rem]" aria-label="Preferred time of day">
+                <SelectTrigger
+                  className="h-9 w-[9.5rem]"
+                  aria-label="Preferred time of day"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -271,7 +334,10 @@ export function TimePicker({
                 </SelectContent>
               </Select>
               <Select value={days} onValueChange={setDays}>
-                <SelectTrigger className="h-9 w-[8rem]" aria-label="Preferred days">
+                <SelectTrigger
+                  className="h-9 w-[8rem]"
+                  aria-label="Preferred days"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -293,7 +359,11 @@ export function TimePicker({
           )}
 
           {onCancel && (
-            <Button variant="outline" onClick={onCancel} disabled={isSubmitting}>
+            <Button
+              variant="outline"
+              onClick={onCancel}
+              disabled={isSubmitting}
+            >
               Cancel
             </Button>
           )}
@@ -317,6 +387,12 @@ export function TimePicker({
             disabled={
               isSubmitting || selectionIncomplete || proposedSlots.length === 0
             }
+            title={submitButtonTitle({
+              isSubmitting,
+              selectionIncomplete,
+              proposedCount: proposedSlots.length,
+              allowReleaseWithoutTime: policy.allowReleaseWithoutTime,
+            })}
           >
             {isSubmitting ? (
               <>

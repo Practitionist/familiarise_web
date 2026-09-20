@@ -11,7 +11,7 @@
 | **Scheduling period**    | None                      | Required [startDate, endDate]                            | None                      | Required [startDate, endDate]                               | None                             |
 | **Appointments created** | 1                         | 1 per call (many)                                        | 1                         | 1 per session (many)                                        | 1                                |
 | **Weekly limit**         | N/A                       | `sessionsPerWeek` (0-7)                                  | N/A                       | `sessionsPerWeek`                                           | N/A                              |
-| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)    |
+| **Status field**         | `status`                  | `status`                                                 | `status`                  | `status`                                                    | `status` (TrialStatus)           |
 | **Allocation modes**     | auto, manual, requested   | auto, manual, requested                                  | auto, manual              | auto, manual                                                | Consultant-scheduled             |
 | **Min duration**         | 0.5h                      | 0.5h per session                                         | 0.5h                      | 0.5h per session                                            | 0.5h (fixed)                     |
 | **Payment**              | Required                  | Required                                                 | Required                  | Required                                                    | Free                             |
@@ -52,17 +52,19 @@ flowchart TD
 Recurring sessions over a period of months. Most complex event type.
 
 **Config**: `sessionDurationInHours` (per call) + `durationInMonths` + `sessionsPerWeek` (0-7) + `schedulingPeriodStartsAt/EndsAt`
-**Total calls**: `countWeeks(startDate, endDate) * sessionsPerWeek`
-**Total slots**: `totalCalls * Math.ceil(sessionDurationInHours / 0.5)`
+**Total calls**: `Subscription.sessionsTotal`, the entitlement frozen at purchase (#1766); a pre-#1766 row falls back to `plan.totalSessions`
+**Slots this run**: `nextBatch * Math.ceil(sessionDurationInHours / 0.5)`, where `nextBatch` is the current cycle's remaining capacity from `subscriptionEntitlement`
+
+Since #1766 the stored `schedulingPeriodStartsAt/EndsAt` describe the first cycle only, and the validated period is the current cycle's window, which starts at the latest of the stored start, the last held session's end and now and runs one cycle in the scheduling timezone. The plan-total gate compares every live call plus the proposed ones against `sessionsTotal`, so a call delivered in an earlier cycle still draws down the entitlement even though it sits outside the window in view.
 
 **Rules**:
 
-- All slots within scheduling period [startDate, endDate]
+- All slots within the current cycle's window (`SubscriptionValidationResult.subscriptionPeriod`)
 - Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `ScheduleCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
 - Weekly limit: `sessionsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`ScheduleCalculationService.weekKey()`)
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
-**Important**: Total weeks uses `ScheduleCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
+**Important**: The weekly cap still buckets by Sunday-to-Saturday scheduling-timezone weeks, while a cycle window is seven zone-days from wherever the last held session ended. A window that straddles two Sunday weeks therefore only has room in the days of the week that is not already at its cap.
 
 ```mermaid
 flowchart TD
@@ -305,3 +307,5 @@ Specific date/time ranges stored in `AvailabilityWindowCustom`:
 - Validated using overlap detection: `proposedStart < availEnd AND availStart < proposedEnd`
 
 The `scheduleType` field on `ConsultantProfile` determines which availability set is used.
+
+Every write to either table — the onboarding wizard, the settings page, and the per-row `/api/scheduling/availability/*` routes — validates through the one contract in `lib/scheduling/availability-contract.ts` (window length, order, overlap, no already-ended custom window, at least one window for the chosen type). The WEEKLY↔CUSTOM switch is blocked while anything is booked; shrinking hours within a type is allowed and reported. The rules and the switch guard are documented in [docs/onboarding/03-availability-contract.md](../onboarding/03-availability-contract.md).

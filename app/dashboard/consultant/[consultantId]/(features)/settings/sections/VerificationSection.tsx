@@ -22,16 +22,19 @@ import {
   XCircle,
 } from "lucide-react";
 import type { ConsultantVerificationStatus } from "@prisma/client";
+import type { UploadedDocument } from "@/components/verification/VerificationDocumentUpload";
 import type { TConsultantProfile } from "types/consultant";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import { useVerificationStatus } from "../../../hooks/useVerificationStatus";
 import { useSession } from "@/lib/auth-client";
+import {
+  VERIFICATION_DOCUMENT_ISSUE_FIX,
+  VERIFICATION_DOCUMENT_ISSUE_LABEL,
+} from "@/lib/labels/verification-labels";
 
-interface VerificationDocument {
-  id?: string;
-  status: string;
-}
+/** The uploader's row; "uploaded" is the only state that carries an id worth sending. */
+type VerificationDocument = Pick<UploadedDocument, "status"> & { id?: string };
 
 interface VerificationSubmitData {
   verificationLinkedinUrl?: string;
@@ -133,11 +136,14 @@ export function VerificationSection({
   const handleVerificationSubmit = async (data: VerificationSubmitData) => {
     setIsResubmitting(true);
     try {
+      // "uploaded" is the uploader's settled state (uploading | uploaded |
+      // error); the filter used to test "completed", which never occurs, so a
+      // re-filed request carried no documents (wizard UI audit, 2026-09-18).
       const documentIds =
         data.verificationDocuments
           ?.filter(
             (doc): doc is Required<VerificationDocument> =>
-              doc.status === "completed" && !!doc.id,
+              doc.status === "uploaded" && !!doc.id,
           )
           .map((doc) => doc.id) || [];
 
@@ -288,6 +294,21 @@ export function VerificationSection({
                                   <p className="font-medium text-amber-900">
                                     {doc.originalName || doc.fileName}
                                   </p>
+                                  {doc.issue && (
+                                    <p className="text-amber-800 mt-0.5">
+                                      {
+                                        VERIFICATION_DOCUMENT_ISSUE_LABEL[
+                                          doc.issue
+                                        ]
+                                      }
+                                      {" — "}
+                                      {
+                                        VERIFICATION_DOCUMENT_ISSUE_FIX[
+                                          doc.issue
+                                        ]
+                                      }
+                                    </p>
+                                  )}
                                   {doc.staffFeedback && (
                                     <p className="text-amber-700 mt-0.5">
                                       {doc.staffFeedback}

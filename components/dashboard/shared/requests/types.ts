@@ -1,6 +1,15 @@
 import { AppointmentStatus, OccurrenceCompletionStatus } from "@prisma/client";
 
 // --- API Response Type Definitions ---
+
+/** The page envelope both list routes return beside `data` (#1704). */
+export interface ListMeta {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
 interface UserInfo {
   id: string;
   name: string;
@@ -71,7 +80,8 @@ export interface SubscriptionApiResponse {
   subscriptionPlan?: SubscriptionPlanInfo;
   requestedBy: RequestedBy;
   requestedAt: string;
-  appointments?: AppointmentInfo[];
+  /** The one wrapper (#1554); the list select is singular. */
+  appointment?: AppointmentInfo;
   status: AppointmentStatus;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source enum
   // Correct field names from Prisma Subscription model
@@ -79,6 +89,8 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
   /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
   schedulingTimezone?: string;
+  /** #1766 — the entitlement frozen at purchase (null on pre-#1766 rows). */
+  sessionsTotal?: number | null;
   /** What the consultee said when booking. */
   requestNotes?: string | null;
 }

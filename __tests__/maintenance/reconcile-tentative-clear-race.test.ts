@@ -113,3 +113,129 @@ describe("reconcile-occurrence-availability × tentative-clear race (#1424)", ()
     warn.mockRestore();
   });
 });
+
+describe("reconcile-occurrence-availability result semantics (QA #1741)", () => {
+  it("reports a completed run with findings as success: true, not a failed run", async () => {
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    const overlap = (id: string, appointmentId: string) => ({
+      id,
+      appointmentId,
+      startsAt: new Date("2026-10-01T10:00:00Z"),
+      endsAt: new Date("2026-10-01T11:00:00Z"),
+      appointment: {
+        consultation: {
+          consultationPlan: {
+            consultantProfile: {
+              id: "cp-1",
+              user: { id: "u-c", name: "Olivia", email: "o@x.test" },
+            },
+          },
+        },
+        subscription: null,
+        webinar: null,
+        class: null,
+        trial: null,
+      },
+    });
+    // First read: the tentative-clear cohort (empty); second: the double-
+    // booking page with two overlapping occurrences for one consultant.
+    (prisma.appointmentOccurrence.findMany as jest.Mock)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        overlap("occ-1", "apt-1"),
+        overlap("occ-2", "apt-2"),
+      ]);
+    (
+      prisma as unknown as { systemEvent: { findFirst: jest.Mock } }
+    ).systemEvent = { findFirst: jest.fn().mockResolvedValue({ id: "seen" }) };
+
+    const result = await reconcileOccurrenceAvailability();
+
+    expect(result.doubleBookingsDetected).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("reconcile-occurrence-availability × top-up cohort (#1766)", () => {
+  const HOUR = 60 * 60 * 1000;
+  const allocate = jest.requireMock(
+    "../../utils/scheduling-engine/SchedulingService",
+  ).SchedulingService.allocate as jest.Mock;
+
+  /** A held subscription at 2/week: `statuses` are its wrapper's rows. */
+  function heldSubscription(id: string, statuses: string[]) {
+    return {
+      id,
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+      sessionsTotal: 24,
+      schedulingPeriodStartsAt: new Date("2026-01-05T00:00:00Z"),
+      schedulingTimezone: "UTC",
+      subscriptionPlan: {
+        consultantProfileId: "cp-1",
+        durationInMonths: 3,
+        sessionsPerWeek: 2,
+        // Edited after purchase: the frozen 24 must win over this 48.
+        totalSessions: 48,
+      },
+      appointment: {
+        occurrences: statuses.map((completionStatus, i) => ({
+          startsAt: new Date(Date.now() - (statuses.length - i) * 24 * HOUR),
+          endsAt: new Date(
+            Date.now() - (statuses.length - i) * 24 * HOUR + HOUR,
+          ),
+          completionStatus,
+          isTentative: false,
+          deletedAt: null,
+        })),
+      },
+    };
+  }
+
+  beforeEach(() => {
+    jest.spyOn(console, "log").mockImplementation(() => {});
+    // The consultant published availability after the rows' last attempt.
+    (prisma.availabilityWindowWeekly.groupBy as jest.Mock).mockResolvedValue([
+      { consultantProfileId: "cp-1", _max: { updatedAt: new Date() } },
+    ]);
+    allocate.mockResolvedValue({ success: true, noChange: true });
+  });
+
+  it("uses the frozen sessionsTotal (24), so a spent plan is not a candidate even though the edited plan says 48", async () => {
+    (prisma.subscription.findMany as jest.Mock).mockResolvedValueOnce([
+      heldSubscription("sub-spent", Array(24).fill("COMPLETED")),
+    ]);
+
+    await reconcileOccurrenceAvailability();
+
+    expect(allocate).not.toHaveBeenCalled();
+    const { select, where } = (prisma.subscription.findMany as jest.Mock).mock
+      .calls[0][0];
+    expect(select.sessionsTotal).toBe(true);
+    // The stored first-cycle window no longer bounds the cohort.
+    expect(where.schedulingPeriodEndsAt).toBeUndefined();
+  });
+
+  it("names a plan whose CURRENT cycle is short, and only that one", async () => {
+    (prisma.subscription.findMany as jest.Mock).mockResolvedValueOnce([
+      // Cycle two fully placed: nextBatch 0 → an hourly silent no-change before.
+      heldSubscription("sub-whole", [
+        ...Array(2).fill("COMPLETED"),
+        "SCHEDULED",
+        "SCHEDULED",
+      ]),
+      // Cycle two half placed: one session owed.
+      heldSubscription("sub-short", [
+        ...Array(2).fill("COMPLETED"),
+        "SCHEDULED",
+      ]),
+    ]);
+
+    await reconcileOccurrenceAvailability();
+
+    expect(allocate).toHaveBeenCalledTimes(1);
+    expect(allocate).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: "sub-short", topUp: true }),
+    );
+  });
+});

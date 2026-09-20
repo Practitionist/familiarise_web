@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { CalendarDays, List } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -55,8 +49,7 @@ const EMPTY_COPY: Record<TabValue, { title: string; description: string }> = {
   },
   needsAction: {
     title: "Nothing needs your attention",
-    description:
-      "Payments, approvals, and scheduling tasks will collect here.",
+    description: "Payments, approvals, and scheduling tasks will collect here.",
   },
   past: {
     title: "No past appointments",
@@ -119,6 +112,8 @@ interface AppointmentsShellProps {
   /** Row id (VM id) to flash + scroll to (consultant ?highlight= deep-link). */
   highlightedId?: string | null;
   extraTabs?: AppointmentsExtraTab[];
+  /** Under the bucket tabs: the consultant's window notice + "Load older". */
+  footer?: ReactNode;
 }
 
 export function AppointmentsShell({
@@ -129,6 +124,7 @@ export function AppointmentsShell({
   notices,
   highlightedId = null,
   extraTabs = [],
+  footer,
 }: AppointmentsShellProps) {
   const searchParams = useSearchParams();
   const { data: session } = useSession();
@@ -280,7 +276,12 @@ export function AppointmentsShell({
 
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex items-center justify-between gap-3 flex-wrap">
-          <TabsList className={cn("flex-wrap h-auto", view === "calendar" && "opacity-60")}>
+          <TabsList
+            className={cn(
+              "flex-wrap h-auto",
+              view === "calendar" && "opacity-60",
+            )}
+          >
             {TABS.map(({ value, label }) => (
               <TabsTrigger key={value} value={value} className="gap-1.5">
                 {label}
@@ -348,6 +349,7 @@ export function AppointmentsShell({
         )}
 
         {notices && !onExtraTab && <div className="mt-4">{notices}</div>}
+        {footer && !onExtraTab && footer}
 
         {extraTabs.map(({ value, content }) => (
           <TabsContent key={value} value={value} className="mt-4">
@@ -387,7 +389,9 @@ export function AppointmentsShell({
         onOpenChange={(open) => !open && setSheetVm(null)}
         adapter={adapter}
         sponsoredLabel={
-          activeSheetVm ? resolveSponsoredLabel(activeSheetVm.organizationId) : null
+          activeSheetVm
+            ? resolveSponsoredLabel(activeSheetVm.organizationId)
+            : null
         }
         joinWindowMs={joinWindowMs}
       />

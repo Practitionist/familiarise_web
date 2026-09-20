@@ -117,6 +117,8 @@ describe("#1012 expectedTentativeSlotCount", () => {
 
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(409);
+    // Clients branch on this code, never on the sentence.
+    expect(result.errorCode).toBe("RESCHEDULE_STATE_CHANGED");
     expect(result.error).toMatch(/Reschedule state changed/);
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });

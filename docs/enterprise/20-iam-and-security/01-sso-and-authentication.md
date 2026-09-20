@@ -679,6 +679,27 @@ Every typed HTTP error the SSO + auth routes emit. Each `code` is the stable con
 
 **Adding a new code:** stable `UPPER_SNAKE_CASE` constant (no version prefix); pick the status (`400` malformed body · `403` auth gate · `409` state conflict · `422` precondition failed); `throw Object.assign(new Error("CODE"), { httpStatus, code })`; add a row here + to `ORG_ERROR_COPY`; add a test asserting `status` + `body.code`.
 
+## Email and password error copy
+
+The five public auth pages (`app/auth/{signin,signup,forgot-password,reset-password,verify-email}`) turn a Better Auth client error into the sentence the customer reads through one helper, `lib/labels/auth-errors.ts::humanizeAuthError(flow, error)`, keyed on the server's `code` first and the HTTP status second. The pages used to guess from the message text, and the wrong-password message ("Invalid email or password") matched a branch that tested for "invalid" and "email", so every wrong password read as "Please enter a valid email address." The table below lists every code the four Better Auth routes can emit for these flows (verified against `@better-auth/core` 1.6.5 `error/codes` and `better-auth/api/routes/{sign-in,sign-up,password,email-verification}`), plus our own hook and limiter codes, and what the customer now sees.
+
+| Code | HTTP | Emitted by | The customer reads |
+|---|---|---|---|
+| `INVALID_EMAIL` | 400 | sign-in, sign-up | "Enter a valid email address." under the email field. |
+| `INVALID_EMAIL_OR_PASSWORD` | 401 | sign-in: unknown address, no credential account, wrong password | "That email and password don't match — check both and try again, or use Forgot password?" under the password field. The server deliberately answers all three the same way; the copy never hints that the account does not exist, and it does not mention Google or SSO either — the provider buttons on the same page already cover the no-password account. |
+| `EMAIL_NOT_VERIFIED` | 403 | sign-in | The page switches to its resend state. |
+| `BANNED_USER` | 403 | sign-in (admin plugin) | "This account is suspended" with the support address. |
+| `SSO_REQUIRED` | 403 | session creation (our hook) | "Use your organisation's sign-in." |
+| `USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL` | 422 | sign-up — only when email verification is not required; with it on, a duplicate signup returns the generic success so the address cannot be probed | "This email already has an account — sign in or reset your password." |
+| `PASSWORD_TOO_SHORT` / `PASSWORD_TOO_LONG` / `INVALID_PASSWORD` | 400 | sign-up, reset | "Use at least 8 / at most 128 characters" under the password field. |
+| `INVALID_TOKEN` | 400 | reset (`?error=INVALID_TOKEN` on the link, or the form) and the verify link | Reset: "links last 30 minutes and work once — request a new one." Verify: "request a fresh one below." |
+| `TOKEN_EXPIRED`, `USER_NOT_FOUND`, `EMAIL_MISMATCH`, `EMAIL_ALREADY_VERIFIED` | 400/401 | verify link, resend with a session | A per-code sentence; the resend button stays. |
+| `VALIDATION_ERROR` / `MISSING_FIELD` | 400 | any (zod before the route) | Read by field from `[body.email]` / `[body.password]`; the raw message is never echoed. |
+| `RATE_LIMITED` (ours) or any 429 | 429 | `authLimiter` | "Too many attempts. Wait a minute." |
+| status 0 or 5xx (incl. `SESSION_LOOKUP_FAILED` 503) | — | network, upstream | "We couldn't reach the sign-in service. Nothing was changed." |
+
+Two flows have no error to map. `requestPasswordReset` answers 200 with the same body whether or not the address exists, so the page's success copy says "if an account exists for this address"; `sendVerificationEmail` without a session answers 200 for an unknown or already-verified address and sends nothing, so the resend copy says "if the address belongs to an unverified account". The referral code on sign-up is checked as it is typed against `GET /api/referrals/code/check/[code]` (debounced, read-only, a limiter answer falls back to "unknown"), so a mistyped code is reported at the field instead of being dropped silently at onboarding.
+
 ## Testing SSO locally
 
 Real IdPs cost iteration time. Four approaches, top-down — each catches bugs the one above can't:

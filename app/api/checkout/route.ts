@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
     // Validate request body
     const body = await req.json();
     const validatedData = checkoutSchema.parse(body);
+
     // Only allow mock payments in development — prevent client-side bypass in production
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
@@ -118,9 +119,17 @@ export async function POST(req: NextRequest) {
     }
     // ZodError from checkoutSchema.parse() — extract first human-readable message
     if (error instanceof ZodError) {
-      const firstMessage = error.issues[0]?.message ?? "Invalid request";
+      const firstIssue = error.issues[0];
+      const firstMessage = firstIssue?.message ?? "Invalid request";
       const lowerMsg = firstMessage.toLowerCase();
+      // #1583 E-P1-03 — a typed slot refusal (grid / lead time) rides
+      // `params.code` from the schema; the message heuristics stay for the rest.
+      const typedCode =
+        firstIssue?.code === "custom" && firstIssue.params?.code
+          ? String(firstIssue.params.code)
+          : null;
       const isAvailability =
+        typedCode !== null ||
         lowerMsg.includes("slot") ||
         lowerMsg.includes("passed") ||
         lowerMsg.includes("too soon") ||
@@ -129,6 +138,7 @@ export async function POST(req: NextRequest) {
         {
           error: firstMessage,
           errorType: isAvailability ? "AVAILABILITY_ERROR" : "UNKNOWN_ERROR",
+          ...(typedCode ? { code: typedCode } : {}),
           timestamp: new Date().toISOString(),
         },
         { status: 400 },
@@ -287,10 +297,14 @@ export async function POST(req: NextRequest) {
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 
+    // A coded refusal that names a retry window (CREDIT_SHORTFALL after a
+    // concurrent spend, #1582 B-P1-01) lets the client auto-retry once.
+    const retryAfter = (error as { retryAfter?: unknown } | null)?.retryAfter;
     return NextResponse.json(
       {
         error: classified.errorMessage,
         errorType: classified.errorType,
+        ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         timestamp: new Date().toISOString(),
       },
       { status: classified.httpStatus },

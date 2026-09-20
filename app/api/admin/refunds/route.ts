@@ -11,10 +11,79 @@ import {
   RefundValidationError,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  fundingRailForIntent,
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
 import { refundWholeEventPayments } from "@/lib/payments/operations/event-refunds";
 import { withIdempotency } from "@/lib/api/idempotency";
 import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
+import { notifyRefundProcessed } from "@/lib/novu";
+import { notificationScope } from "@/lib/novu/workflows";
+import { getAppUrl } from "@/lib/url";
+import { EMAIL_BUDGET_MS, sendRefundProcessedEmail } from "@/lib/email";
+
+/**
+ * #1586 / parity with #1740 M9 — the payer's receipt for the whole-event
+ * INTERNAL seats. The single-payment door and the CREDITS seats stage their
+ * notice inside `refundBookingPayment`; GATEWAY seats are told by the
+ * `refund.processed` webhook (#1671), so they are skipped here to avoid a
+ * double notice. Only the CLASS_MULTI reversal of org-funded seats told
+ * nobody. Post-commit and best-effort: a receipt never fails a settled refund.
+ */
+async function notifyInternalSeatRefunds(childRefundIds: string[]) {
+  if (childRefundIds.length === 0) return;
+  // The refunds are settled; a failed receipt lookup is reported, never thrown.
+  const refunds = await prisma.refund
+    .findMany({
+      where: { id: { in: childRefundIds } },
+      select: {
+        amountPaise: true,
+        payment: {
+          select: {
+            id: true,
+            userId: true,
+            organizationId: true,
+            currency: true,
+            paymentIntent: true,
+          },
+        },
+      },
+    })
+    .catch((err: unknown) => {
+      Sentry.captureException(err, { tags: { subsystem: "admin" } });
+      return [];
+    });
+  // Fan out rather than serialise: each send carries its own deadline, so the
+  // admin response waits one budget, not one per seat (CodeRabbit on #1753).
+  await Promise.allSettled(
+    refunds.flatMap((refund) => {
+      const payment = refund.payment;
+      if (
+        !payment ||
+        fundingRailForIntent(payment.paymentIntent) !== "INTERNAL"
+      )
+        return [];
+      return [
+        notifyRefundProcessed(payment.userId, {
+          ...notificationScope(payment.organizationId),
+          amount: refund.amountPaise,
+          currency: payment.currency,
+          dashboardUrl: `${getAppUrl()}/dashboard`,
+        }).catch(() => {}),
+        sendRefundProcessedEmail(
+          {
+            userId: payment.userId,
+            paymentId: payment.id,
+            amountPaise: refund.amountPaise,
+            currency: payment.currency,
+          },
+          { budgetMs: EMAIL_BUDGET_MS.REQUEST },
+        ).catch(() => {}),
+      ];
+    }),
+  );
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -178,6 +247,18 @@ export async function POST(req: NextRequest) {
           `admin whole-event refund: ${body.reason}`,
           initiatedByUserId,
         );
+        // #1583 C-P0-03 — a repeat is idempotent because every rail clamps to
+        // the refundable balance, so no parent CAS is needed: answer 200, never
+        // a 500 and never a second cascade.
+        if (summary.alreadyRefunded && summary.refundsIssued === 0) {
+          return NextResponse.json({
+            kind: eventKind,
+            summary,
+            alreadyRefunded: true,
+            refunded: 0,
+          });
+        }
+        await notifyInternalSeatRefunds(summary.childRefundIds);
         return NextResponse.json({ kind: eventKind, summary });
       },
     );

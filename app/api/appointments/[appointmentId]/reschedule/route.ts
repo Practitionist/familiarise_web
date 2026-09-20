@@ -9,8 +9,7 @@ import prisma from "@/lib/prisma";
 import { liveParticipant } from "@/lib/booking/participants";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/lib/auth-server";
-import { isPrivileged } from "@/lib/auth-helpers";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import type {
   Prisma,
   RescheduleInitiatorRole,
@@ -97,10 +96,10 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
     // #1319 — this route triggers refunds/reallocation and had no limiter.
     const limited = await applyRateLimit(eventMutationLimiter, session.user.id);
     if (limited) return limited;
@@ -460,15 +459,19 @@ export async function POST(
                 slotIds && slotIds.length > 0,
               );
               if (isPartialSubscriptionReschedule) {
-                const live = await tx.subscription.count({
+                // #1583 A-P0-03 — a locking touch, not a count: the UPDATE
+                // holds the parent row lock until commit, so a lockless sweep
+                // cannot terminalise it between this check and the commit.
+                const live = await tx.subscription.updateMany({
                   where: {
                     id: appointment.subscription.id,
                     status: { in: [...RESCHEDULABLE_FROM] },
                   },
+                  data: { updatedAt: new Date() },
                 });
-                // No status moves on this path, so there is nothing to CAS and
-                // nothing to record; the throw only reuses the 409 below.
-                if (live === 0) {
+                // No status moves on this path, so nothing to record; the
+                // throw only reuses the 409 below.
+                if (live.count === 0) {
                   throw new IllegalTransitionError("Subscription", "PENDING");
                 }
               } else {

@@ -16,6 +16,7 @@ export const { GET, POST } = cleanupRoute({
   summarize: (r) => ({
     consultationsExpired: r.consultationsExpired,
     subscriptionsExpired: r.subscriptionsExpired,
+    subscriptionNudgesSent: r.subscriptionNudgesSent,
     paymentPendingExpired: r.paymentPendingExpired,
   }),
   failureMessage: "Failed to expire stale requests",

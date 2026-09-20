@@ -19,14 +19,29 @@
 
 import prisma from "../../lib/prisma";
 import { PaymentStatus, PaymentGateway } from "@prisma/client";
+import * as Sentry from "@sentry/nextjs";
 import { withCronLock, LONG_JOB_TTL_MS } from "@/lib/cron/with-cron-lock";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
+import { retireOrphanPendingPayment } from "./cleanup-abandoned-payments";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Only reconcile payments older than 5 minutes (give webhooks time)
 const MIN_AGE_MINUTES = 5;
 
 // Don't reconcile payments older than 7 days
 const MAX_AGE_DAYS = 7;
+
+// #1757 — a PENDING row this old whose id the gateway does not know is retired,
+// not re-reported every tick; younger ones may still be gateway lag.
+const DEFAULT_ORPHAN_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+function orphanPendingMaxAgeMs(): number {
+  const raw = Number(process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS);
+  return Number.isFinite(raw) && raw > 0
+    ? raw
+    : DEFAULT_ORPHAN_PENDING_MAX_AGE_MS;
+}
 
 export interface PaymentReconciliationResult {
   success: boolean;
@@ -36,8 +51,37 @@ export interface PaymentReconciliationResult {
   failedCount: number;
   expiredCount: number;
   skippedCount: number;
+  /** #1708 — PENDING rows whose gateway id the gateway does not know. */
+  unresolvableCount: number;
+  unresolvable: string[];
+  /** #1757 — unknown-id rows past the orphan age, retired PENDING → EXPIRED. */
+  retiredCount: number;
+  retired: string[];
   errors: string[];
   timestamp: string;
+}
+
+// #1708 — `unknown_id` (the gateway has no record of the id; terminal per row)
+// is kept apart from `gateway_error` (unreachable, down or bad auth; retried).
+type GatewayLookup =
+  | {
+      kind: "status";
+      status: string;
+      failureMessage?: string;
+      paymentId?: string;
+      /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
+      notes?: Record<string, string>;
+      /** Captured amount in paise, for the parity check. */
+      amountPaise?: number;
+    }
+  | { kind: "unknown_id"; detail: string }
+  | { kind: "gateway_error"; detail: string };
+
+// Matched on the error's own fields, not `instanceof` against the lazily
+// imported SDK — the same posture as cleanup-abandoned-payments (#1464).
+function isStripeUnknownId(error: unknown): boolean {
+  const e = error as { code?: unknown; statusCode?: unknown } | null;
+  return e?.code === "resource_missing" || e?.statusCode === 404;
 }
 
 export interface ReconcilePaymentStatusOptions {
@@ -51,11 +95,14 @@ export interface ReconcilePaymentStatusOptions {
  */
 async function getStripePaymentStatus(
   paymentIntent: string,
-): Promise<{ status: string; failureMessage?: string } | null> {
+): Promise<GatewayLookup> {
   const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
   if (!stripeSecretKey) {
     console.warn("Stripe credentials not configured");
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: "Stripe credentials not configured",
+    };
   }
 
   try {
@@ -75,6 +122,7 @@ async function getStripePaymentStatus(
       const intentRef = session.payment_intent;
       if (!intentRef) {
         return {
+          kind: "status",
           status: session.status === "expired" ? "canceled" : "processing",
         };
       }
@@ -83,6 +131,7 @@ async function getStripePaymentStatus(
           ? await stripe.paymentIntents.retrieve(intentRef)
           : intentRef;
       return {
+        kind: "status",
         status: pi.status,
         failureMessage: pi.last_payment_error?.message ?? undefined,
       };
@@ -90,26 +139,26 @@ async function getStripePaymentStatus(
 
     const pi = await stripe.paymentIntents.retrieve(paymentIntent);
     return {
+      kind: "status",
       status: pi.status,
       failureMessage: pi.last_payment_error?.message,
     };
   } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (isStripeUnknownId(error)) {
+      return { kind: "unknown_id", detail };
+    }
     console.error(`Failed to get Stripe payment status: ${error}`);
-    return null;
+    return { kind: "gateway_error", detail };
   }
 }
 
 /**
  * Query Razorpay for order/payment status
  */
-async function getRazorpayPaymentStatus(orderId: string): Promise<{
-  status: string;
-  paymentId?: string;
-  /** `notes` off the captured payment — selects the handler in routeCapturedPayment. */
-  notes?: Record<string, string>;
-  /** Captured amount in paise, for the parity check. */
-  amountPaise?: number;
-} | null> {
+async function getRazorpayPaymentStatus(
+  orderId: string,
+): Promise<GatewayLookup> {
   const keyId = process.env.RAZORPAY_KEY_ID;
   // #677 PM-1 — prod env defines RAZORPAY_SECRET (the canonical name the
   // core lib reads); reading only RAZORPAY_KEY_SECRET silently disabled
@@ -119,7 +168,10 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
 
   if (!keyId || !keySecret) {
     console.warn("Razorpay credentials not configured");
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: "Razorpay credentials not configured",
+    };
   }
 
   try {
@@ -135,8 +187,15 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
     );
 
     if (!orderResponse.ok) {
-      console.error(`Razorpay order API error: ${orderResponse.status}`);
-      return null;
+      // Razorpay answers 400 BAD_REQUEST_ERROR, not 404, for an order id it
+      // has no record of; 401/403 is our key, anything else is their side.
+      const { status } = orderResponse;
+      const description = await razorpayErrorDescription(orderResponse);
+      if (status === 400 || status === 404) {
+        return { kind: "unknown_id", detail: `${status} ${description}` };
+      }
+      console.error(`Razorpay order API error: ${status} ${description}`);
+      return { kind: "gateway_error", detail: `${status} ${description}` };
     }
 
     const order = await orderResponse.json();
@@ -160,6 +219,7 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
         );
         if (capturedPayment) {
           return {
+            kind: "status",
             status: "captured",
             paymentId: capturedPayment.id,
             notes: Object.fromEntries(
@@ -174,10 +234,29 @@ async function getRazorpayPaymentStatus(orderId: string): Promise<{
       }
     }
 
-    return { status: order.status };
+    return { kind: "status", status: order.status };
   } catch (error) {
     console.error(`Failed to get Razorpay payment status: ${error}`);
-    return null;
+    return {
+      kind: "gateway_error",
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/** Razorpay's error body is `{ error: { code, description } }`; tolerate anything else. */
+async function razorpayErrorDescription(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as {
+      error?: { code?: unknown; description?: unknown };
+    };
+    const code = body?.error?.code;
+    const description = body?.error?.description;
+    return [code, description]
+      .filter((v): v is string => typeof v === "string")
+      .join(": ");
+  } catch {
+    return "";
   }
 }
 
@@ -249,9 +328,14 @@ async function reconcilePaymentStatusUnlocked(
   let failedCount = 0;
   let expiredCount = 0;
   let skippedCount = 0;
+  let unresolvableCount = 0;
+  const unresolvable: string[] = [];
+  let retiredCount = 0;
+  const retired: string[] = [];
 
   const minAge = new Date(Date.now() - MIN_AGE_MINUTES * 60 * 1000);
   const maxAge = new Date(Date.now() - MAX_AGE_DAYS * 24 * 60 * 60 * 1000);
+  const orphanCutoff = new Date(Date.now() - orphanPendingMaxAgeMs());
 
   // Find stale PENDING payments
   const stalePendingPayments = await prisma.payment.findMany({
@@ -274,6 +358,30 @@ async function reconcilePaymentStatusUnlocked(
     take: opts.limit,
   });
 
+  // #1757 — the terminal cohort: PENDING rows older than the orphan age, which
+  // the window above never reaches. Only an unknown-id answer acts on them.
+  const orphanCandidates = await prisma.payment.findMany({
+    where: {
+      paymentStatus: PaymentStatus.PENDING,
+      createdAt: { lt: orphanCutoff },
+      paymentGateway: { in: [PaymentGateway.STRIPE, PaymentGateway.RAZORPAY] },
+      NOT: { paymentIntent: "" },
+    },
+    include: {
+      user: { select: { email: true, name: true } },
+      appointment: { select: { id: true } },
+    },
+    orderBy: { createdAt: "asc" },
+    take: opts.limit,
+  });
+  const orphanCandidateIds = new Set(orphanCandidates.map((p) => p.id));
+  const cohort = [
+    ...stalePendingPayments,
+    ...orphanCandidates.filter(
+      (p) => !stalePendingPayments.some((s) => s.id === p.id),
+    ),
+  ];
+
   const razorpayConfigured = !!(
     process.env.RAZORPAY_KEY_ID &&
     (process.env.RAZORPAY_SECRET ?? process.env.RAZORPAY_KEY_SECRET)
@@ -285,10 +393,10 @@ async function reconcilePaymentStatusUnlocked(
   }
 
   console.log(
-    `Found ${stalePendingPayments.length} stale PENDING payments to reconcile`,
+    `Found ${stalePendingPayments.length} stale PENDING payments to reconcile, ${orphanCandidates.length} orphan candidate(s) past the orphan age`,
   );
 
-  for (const payment of stalePendingPayments) {
+  for (const payment of cohort) {
     console.log(`\nReconciling payment ${payment.id}`);
     console.log(`   Gateway: ${payment.paymentGateway}`);
     console.log(`   Payment Intent: ${payment.paymentIntent}`);
@@ -302,19 +410,13 @@ async function reconcilePaymentStatusUnlocked(
       continue;
     }
 
-    // Query gateway for actual status
-    let gatewayStatus: {
-      status: string;
-      failureMessage?: string;
-      paymentId?: string;
-      // Razorpay only — carried so a SUCCEEDED reconcile can drive the
-      // confirmation pipeline instead of writing the status (ADR 21).
-      notes?: Record<string, string>;
-      amountPaise?: number;
-    } | null = null;
+    // Query gateway for actual status. Razorpay's `notes`/`amountPaise` ride
+    // along so a SUCCEEDED reconcile can drive the confirmation pipeline
+    // instead of writing the status (ADR 21).
+    let lookup: GatewayLookup;
 
     if (payment.paymentGateway === PaymentGateway.STRIPE) {
-      gatewayStatus = await getStripePaymentStatus(payment.paymentIntent);
+      lookup = await getStripePaymentStatus(payment.paymentIntent);
     } else if (payment.paymentGateway === PaymentGateway.RAZORPAY) {
       if (!razorpayConfigured) {
         console.log(`   Skipping - Razorpay credentials not configured`);
@@ -322,7 +424,7 @@ async function reconcilePaymentStatusUnlocked(
         continue;
       }
       // For Razorpay, paymentIntent might be orderId
-      gatewayStatus = await getRazorpayPaymentStatus(payment.paymentIntent);
+      lookup = await getRazorpayPaymentStatus(payment.paymentIntent);
     } else {
       console.log(
         `   Skipping - unsupported gateway: ${payment.paymentGateway}`,
@@ -331,9 +433,74 @@ async function reconcilePaymentStatusUnlocked(
       continue;
     }
 
-    if (!gatewayStatus) {
+    // #1708 — an id the gateway does not know is terminal for this row, not a
+    // run failure. #1757 — past the orphan age it is retired through the
+    // abandoned-payments unit (expire, credits, hold); younger rows are only
+    // reported, since the gateway may still be lagging.
+    if (lookup.kind === "unknown_id") {
+      if (payment.createdAt < orphanCutoff) {
+        try {
+          const { outcome, errors: retireErrors } =
+            await retireOrphanPendingPayment(payment.id);
+          errors.push(...retireErrors);
+          if (outcome === "retired") {
+            console.warn(
+              `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - retired PENDING → EXPIRED`,
+            );
+            retiredCount++;
+            retired.push(payment.id);
+            await recordSystemEvent({
+              category: "PAYMENT",
+              severity: "WARN",
+              message: `PAYMENT_ORPHAN_RETIRED: ${payment.id} (${payment.paymentGateway} ${payment.paymentIntent}): ${lookup.detail}`,
+              context: {
+                paymentId: payment.id,
+                paymentGateway: payment.paymentGateway,
+                paymentIntent: payment.paymentIntent,
+                createdAt: payment.createdAt.toISOString(),
+              },
+            });
+          } else {
+            console.log(
+              `   Skipped: payment ${payment.id} already transitioned by another writer`,
+            );
+            skippedCount++;
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`   Retire failed for ${payment.id}: ${msg}`);
+          errors.push(`Payment ${payment.id}: ${msg}`);
+        }
+        continue;
+      }
+      console.warn(
+        `   Gateway does not know ${payment.paymentIntent} (${lookup.detail}) - reported, not retried as a failure`,
+      );
+      unresolvableCount++;
+      unresolvable.push(payment.id);
+      continue;
+    }
+
+    if (lookup.kind === "gateway_error") {
       console.log(`   Could not get status from gateway - skipping`);
-      errors.push(`Payment ${payment.id}: Could not query gateway status`);
+      errors.push(
+        `Payment ${payment.id}: Could not query gateway status (${lookup.detail})`,
+      );
+      skippedCount++;
+      continue;
+    }
+
+    const gatewayStatus = lookup;
+
+    // An orphan candidate the gateway does know is outside the reconcile
+    // window above; it is left for that window's rules, not acted on here.
+    if (
+      orphanCandidateIds.has(payment.id) &&
+      !stalePendingPayments.some((s) => s.id === payment.id)
+    ) {
+      console.log(
+        `   Gateway knows the id (${gatewayStatus.status}) - outside the reconcile window, skipping`,
+      );
       skippedCount++;
       continue;
     }
@@ -429,12 +596,43 @@ async function reconcilePaymentStatusUnlocked(
 
   // Summary
   console.log("\n📊 Payment Reconciliation Summary:");
-  console.log(`   Total processed: ${stalePendingPayments.length}`);
+  console.log(`   Total processed: ${cohort.length}`);
   console.log(`   Reconciled: ${reconciledCount}`);
   console.log(`   Succeeded (needs review): ${succeededCount}`);
   console.log(`   Failed: ${failedCount}`);
   console.log(`   Expired: ${expiredCount}`);
   console.log(`   Skipped: ${skippedCount}`);
+  console.log(
+    `   Unresolvable (gateway does not know the id): ${unresolvableCount}`,
+  );
+  console.log(`   Retired (orphan past the age cutoff): ${retiredCount}`);
+
+  // One expected warning per run listing the ids, never one per row (#1757).
+  if (retiredCount > 0) {
+    reportSentryMessage(
+      `reconcile-payment-status: retired ${retiredCount} orphan PENDING payment(s) the gateway does not know`,
+      {
+        subsystem: "payments",
+        op: "reconcile-payment-status",
+        expected: true,
+        level: "warning",
+        extra: { retired },
+      },
+    );
+  }
+
+  // One issue that counts up, not one event per row per tick.
+  if (unresolvableCount > 0) {
+    Sentry.captureMessage(
+      `reconcile-payment-status: ${unresolvableCount} pending payments have gateway ids the gateway does not know`,
+      {
+        level: "warning",
+        fingerprint: ["reconcile-payment-status", "unresolvable"],
+        tags: { subsystem: "payments" },
+        extra: { unresolvable },
+      },
+    );
+  }
 
   if (succeededCount > 0) {
     console.log(
@@ -445,12 +643,16 @@ async function reconcilePaymentStatusUnlocked(
 
   return {
     success: errors.length === 0,
-    totalProcessed: stalePendingPayments.length,
+    totalProcessed: cohort.length,
     reconciledCount,
     succeededCount,
     failedCount,
     expiredCount,
     skippedCount,
+    unresolvableCount,
+    unresolvable,
+    retiredCount,
+    retired,
     errors,
     timestamp: new Date().toISOString(),
   };

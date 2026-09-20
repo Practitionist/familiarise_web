@@ -26,6 +26,8 @@ So the missing piece was never a table. It was a scheduler that fires when it sa
 
 ## Consequences
 
+_Amended 2026-09-17._ Netlify confirmed (ticket #1112198) that a burst of new instances stalls about 28 s inside its shared regional pool and bills the stall as duration, so a five-minute tick on twelve parallel targets was itself a recurring cold burst. Six sweeps whose GitHub Actions twin already runs at fifteen minutes or slower — `reconcile-ledgers`, `sync-payment-earnings`, `release-earnings`, `cascade-refund-earnings`, `reconcile-refunds`, `abandoned-payments` — now run on the fifteen-minute slots (`TARGET_EVERY_MINUTES`), and instances are kept warm by a separate four-minute scheduled function rather than by the ticker. The five customer-visible sweeps and the webhook re-drive keep the five-minute cadence this ADR chose; the worst case for a buyer is unchanged.
+
 The worst case for a buyer whose `after()` callback died falls from about a hundred minutes to about five, with no new vendor, no new secret inside the money path and no new table to reconcile. The trade-off is one more place that fires the fleet, which is why the ticker only ever hits routes that are already lock-guarded and idempotent, and why the cron heartbeat keeps watching the Actions side independently.
 
 Anyone adding a follow-up to a money path should first ask which row already records the obligation and which sweeper already walks that row, and only then consider a new mechanism.

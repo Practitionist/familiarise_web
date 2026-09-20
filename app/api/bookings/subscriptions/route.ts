@@ -19,6 +19,11 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { transitionSubscriptionRequest } from "@/lib/booking/transitions";
+import { requestListOrderBy } from "@/lib/booking/list-query";
+import {
+  parseRequestListQueryOrRespond,
+  refuseApprovalOnListRoute,
+} from "@/lib/booking/request-route-guards";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
@@ -33,9 +38,10 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const consultantProfileId = searchParams.get("consultantProfileId");
   const consulteeProfileId = searchParams.get("consulteeProfileId");
-  const status = searchParams.get("status") as AppointmentStatus | null;
-  const page = parseInt(searchParams.get("page") || "1");
-  const limit = parseInt(searchParams.get("limit") || "10");
+  // #1704 — validated, clamped paging; a bad value is a 400, not a 500.
+  const listQuery = parseRequestListQueryOrRespond(searchParams);
+  if (listQuery.response) return listQuery.response;
+  const { page, limit, status, sortOrder } = listQuery.query;
 
   try {
     const whereClause: Prisma.SubscriptionWhereInput = {};
@@ -71,7 +77,9 @@ export async function GET(request: NextRequest) {
           });
         }
         if (session.user.consulteeProfileId) {
-          ownershipArms.push({ requestedById: session.user.consulteeProfileId });
+          ownershipArms.push({
+            requestedById: session.user.consulteeProfileId,
+          });
         }
       }
       if (ownershipArms.length === 0) {
@@ -167,6 +175,8 @@ export async function GET(request: NextRequest) {
           schedulingPeriodStartsAt: true,
           schedulingPeriodEndsAt: true,
           schedulingTimezone: true,
+          // #1766 — the Requests tab sizes the first cycle off the entitlement.
+          sessionsTotal: true,
           subscriptionPlan: {
             select: {
               id: true,
@@ -182,9 +192,7 @@ export async function GET(request: NextRequest) {
           requestedBy: PROFILE_WITH_USER_SELECT,
           appointment: APPOINTMENT_LIST_SELECT,
         },
-        orderBy: {
-          requestedAt: "desc",
-        },
+        orderBy: requestListOrderBy(sortOrder),
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -201,7 +209,10 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error("Error fetching subscriptions:", error);
     return NextResponse.json(
       { error: "An error occurred while fetching subscriptions" },
@@ -239,14 +250,32 @@ export async function PATCH(request: NextRequest) {
           include: {
             consultantProfile: {
               include: {
-                user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    email: true,
+                    image: true,
+                    role: true,
+                    phone: true,
+                  },
+                },
               },
             },
           },
         },
         requestedBy: {
           include: {
-            user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                image: true,
+                role: true,
+                phone: true,
+              },
+            },
           },
         },
       },
@@ -286,6 +315,10 @@ export async function PATCH(request: NextRequest) {
         "You can only modify subscriptions you are a participant in",
       );
     }
+
+    // #1704 — approval lives on the [id] route only, for everyone.
+    const approvalRefusal = refuseApprovalOnListRoute(status);
+    if (approvalRefusal) return approvalRefusal;
 
     // #1004 — declining is the CONSULTANT's act. REJECTED is legal from
     // PENDING and APPROVED_PENDING_PAYMENT, so without this guard a consultee
@@ -339,20 +372,45 @@ export async function PATCH(request: NextRequest) {
             include: {
               consultantProfile: {
                 include: {
-                  user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      email: true,
+                      image: true,
+                      role: true,
+                      phone: true,
+                    },
+                  },
                 },
               },
             },
           },
           requestedBy: {
             include: {
-              user: { select: { id: true, name: true, email: true, image: true, role: true, phone: true } },
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  image: true,
+                  role: true,
+                  phone: true,
+                },
+              },
             },
           },
           appointment: {
             include: {
               occurrences: true,
-              payment: { select: { id: true, paymentStatus: true, amount: true, currency: true } },
+              payment: {
+                select: {
+                  id: true,
+                  paymentStatus: true,
+                  amount: true,
+                  currency: true,
+                },
+              },
             },
           },
         },
@@ -416,7 +474,10 @@ export async function PATCH(request: NextRequest) {
 
       return NextResponse.json({ data: subscription, rejectionRefund });
     } catch (error) {
-      Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "bookings" } },
+      );
       console.error(
         "Transaction error:",
         error instanceof Error ? error.message : "Unknown error",
@@ -430,7 +491,10 @@ export async function PATCH(request: NextRequest) {
         { status: error.httpStatus },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "bookings" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "bookings" } },
+    );
     console.error(
       "Error updating subscription:",
       error instanceof Error ? error.message : "Unknown error",

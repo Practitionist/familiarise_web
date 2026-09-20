@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { sendVerificationEmail, useSession } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import Link from "next/link";
@@ -23,11 +24,8 @@ export default function VerifyEmail() {
 // the verification link is bad (see api/routes/email-verification redirectOnError).
 function errorMessage(code: string | null): string | null {
   if (!code) return null;
-  if (code === "TOKEN_EXPIRED")
-    return "That verification link has expired. Request a fresh one below.";
-  if (code === "INVALID_TOKEN")
-    return "That verification link is invalid. Request a fresh one below.";
-  return "We couldn't verify that link. Request a fresh one below.";
+  const copy = humanizeAuthError("verify", { code });
+  return `${copy.title}. ${copy.description}`;
 }
 
 function VerifyEmailContent() {
@@ -69,10 +67,13 @@ function VerifyEmailContent() {
       const verificationCallbackUrl = safeCallbackUrl
         ? `/auth/verify-email?callbackUrl=${encodeURIComponent(safeCallbackUrl)}`
         : "/auth/verify-email";
-      await sendVerificationEmail({ email, callbackURL: verificationCallbackUrl });
+      await sendVerificationEmail({
+        email,
+        callbackURL: verificationCallbackUrl,
+      });
       toast({
         title: "Verification email sent",
-        description: `Check ${email} for the link. It expires in 1 hour.`,
+        description: `If ${email} belongs to an unverified account, the link is on its way. It expires in 1 hour.`,
       });
     } catch {
       toast({
