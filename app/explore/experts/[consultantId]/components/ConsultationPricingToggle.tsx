@@ -451,44 +451,60 @@ export default function ConsultationPricingToggle({
                       </h3>
                       <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
                         <div className="flex justify-between items-center mb-5">
-                          <Button
-                            variant="ghost"
-                            size="default"
-                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() - 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &lt;
-                          </Button>
                           <span className="font-semibold text-white text-lg">
                             {currentDate.toLocaleString("default", {
                               month: "long",
                               year: "numeric",
                             })}
                           </span>
-                          <Button
-                            variant="ghost"
-                            size="default"
-                            className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-10 w-10 text-lg"
-                            onClick={() =>
-                              setCurrentDate(
-                                new Date(
-                                  currentDate.getFullYear(),
-                                  currentDate.getMonth() + 1,
-                                  1,
-                                ),
-                              )
-                            }
-                          >
-                            &gt;
-                          </Button>
+                          <div className="flex items-center gap-1">
+                            {/* #1785 L-4 — back to the current month and today's date. */}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                              onClick={handleBookNowClick}
+                            >
+                              Today
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="default"
+                              aria-label="Previous month"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              onClick={() =>
+                                setCurrentDate(
+                                  new Date(
+                                    currentDate.getFullYear(),
+                                    currentDate.getMonth() - 1,
+                                    1,
+                                  ),
+                                )
+                              }
+                            >
+                              &lt;
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="default"
+                              aria-label="Next month"
+                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              onClick={() =>
+                                setCurrentDate(
+                                  new Date(
+                                    currentDate.getFullYear(),
+                                    currentDate.getMonth() + 1,
+                                    1,
+                                  ),
+                                )
+                              }
+                            >
+                              &gt;
+                            </Button>
+                          </div>
                         </div>
                         <div className="grid grid-cols-7 gap-3 text-center text-base font-medium text-zinc-400 mb-3">
                           <div>Mo</div>
