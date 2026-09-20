@@ -47,22 +47,22 @@ it.each([
   [
     "fresh plan",
     {},
-    "Schedule the next 4 sessions · this cycle 2 Mar 2026 – 8 Mar 2026 · 0 of 12 scheduled",
+    "Pick 4 for 2 Mar – 8 Mar 2026 · 4 per week · 0 of 12 booked",
   ],
   [
     "cycle placed",
     { SCHEDULED: 4 },
-    "Schedule the next 0 sessions · this cycle 5 Mar 2026 – 11 Mar 2026 · 4 of 12 scheduled",
+    "This cycle is set · next opens after 11 Mar 2026 · 4 of 12 booked",
   ],
   [
     "cycle complete",
     { COMPLETED: 4 },
-    "Schedule the next 4 sessions · this cycle 5 Mar 2026 – 11 Mar 2026 · 4 of 12 scheduled",
+    "Pick 4 for 5 Mar – 11 Mar 2026 · 4 per week · 4 of 12 booked",
   ],
   [
     "top-up",
     { SCHEDULED: 2 },
-    "Schedule the next 2 sessions · this cycle 3 Mar 2026 – 9 Mar 2026 · 2 of 12 scheduled",
+    "Pick 2 for 3 Mar – 9 Mar 2026 · 4 per week · 2 of 12 booked",
   ],
 ])("%s", (_name, spec, expected) => {
   expect(heading(spec)).toBe(expected);

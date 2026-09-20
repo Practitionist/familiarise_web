@@ -2121,13 +2121,6 @@ export function UnifiedCalendar({
               })}
             </ul>
           )}
-          {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
-          {eventType === "subscription" && (
-            <div className="text-xs text-muted-foreground">
-              Max {sessionsPerWeek || 1} session
-              {(sessionsPerWeek || 1) > 1 ? "s" : ""} per week
-            </div>
-          )}
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>
           )}

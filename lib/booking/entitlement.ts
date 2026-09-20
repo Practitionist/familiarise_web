@@ -13,7 +13,7 @@
  */
 import { fromZonedTime, toZonedTime } from "date-fns-tz";
 
-import { formatDateLabel } from "@/lib/time/display";
+import { formatDateLabel, formatDateRangeLabel } from "@/lib/time/display";
 import { addMonthsSafely } from "@/utils/dateUtils";
 
 export type CycleUnit = "week" | "month";
@@ -192,12 +192,23 @@ export function subscriptionEntitlement(
   };
 }
 
-/** The allocate-page footer and the Home row read one sentence. */
+/**
+ * The allocate-page footer and the Home row read one short sentence:
+ * "Pick 4 for 2 – 8 Mar · 1 per week · 0 of 12 booked" while the cycle has
+ * room, "This cycle is set · next opens after 8 Mar · 4 of 12 booked" once
+ * it is full, "All 12 sessions booked" at the end.
+ */
 export function subscriptionCycleHeading(
   entitlement: SubscriptionEntitlement,
   opts: { zone?: string; locale?: string } = {},
 ): string {
-  const { nextBatch, windowStart, windowEnd } = entitlement.cycle;
-  const window = `${formatDateLabel(windowStart, opts)} – ${formatDateLabel(windowEnd, opts)}`;
-  return `Schedule the next ${nextBatch} session${nextBatch === 1 ? "" : "s"} · this cycle ${window} · ${entitlement.held} of ${entitlement.total} scheduled`;
+  const { nextBatch, windowStart, windowEnd, capacity, unit } =
+    entitlement.cycle;
+  const { held, total, remaining } = entitlement;
+  const booked = `${held} of ${total} booked`;
+  if (remaining === 0) return `All ${total} sessions booked`;
+  if (nextBatch === 0)
+    return `This cycle is set · next opens after ${formatDateLabel(windowEnd, opts)} · ${booked}`;
+  const window = formatDateRangeLabel(windowStart, windowEnd, opts);
+  return `Pick ${nextBatch} for ${window} · ${capacity} per ${unit} · ${booked}`;
 }
