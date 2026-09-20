@@ -53,11 +53,11 @@ export {
   // Subscriptions
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
-  notifySubscriptionRenewed,
   // Consultant
   notifyNewBookingRequest,
   notifyVerificationStatusChanged,
   notifyPayoutProcessed,
+  notifyPayoutFailed,
   // Moderation (#693)
   notifyModerationWarning,
   notifyAccountSuspended,

@@ -83,6 +83,10 @@ export async function syncSubscriber(data: SubscriberData): Promise<void> {
 export async function updateSubscriberPreferences(
   userId: string,
   preferences: {
+    // Master toggle — gates the bell via `masterEnabled` (Q1 fix).
+    // Required: partial updates must forward the persisted value (never a
+    // `?? true` default that would resurrect the bell for opted-out users).
+    allNotifications: boolean;
     // Channel preferences
     inApp?: boolean;
     email?: boolean;
@@ -120,7 +124,9 @@ export async function updateSubscriberPreferences(
     await novu.subscribers.patch(
       {
         data: {
-          // Channel preferences
+          // Master toggle + channel preferences (Q1: the bell skip rule
+          // reads `masterEnabled` and `preferInApp`; see conditions.ts).
+          masterEnabled: preferences.allNotifications,
           preferInApp: preferences.inApp ?? true,
           preferEmail: preferences.email ?? true,
           preferPush: preferences.push ?? false,
@@ -144,18 +150,26 @@ export async function updateSubscriberPreferences(
 /**
  * Delete a subscriber from Novu (e.g. on account deletion).
  */
-export async function deleteSubscriber(userId: string): Promise<void> {
-  if (!isNovuConfigured()) return;
+/**
+ * Returns whether Novu acknowledged the deletion (unconfigured counts as
+ * acknowledged: nothing was ever mirrored). Never throws — the caller's
+ * local erasure is already committed and must not be reported as failed,
+ * but it may report the vendor copy as still pending (#1738 review).
+ */
+export async function deleteSubscriber(userId: string): Promise<boolean> {
+  if (!isNovuConfigured()) return true;
 
   try {
     const novu = getNovuClient();
     await novu.subscribers.delete(userId);
     console.log(`[Novu] Subscriber deleted: ${userId}`);
+    return true;
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
       { tags: { subsystem: "novu" } },
     );
     console.error("[Novu] Failed to delete subscriber:", error);
+    return false;
   }
 }
