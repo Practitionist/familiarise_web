@@ -2,22 +2,34 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Search } from "lucide-react";
+import { Search, Zap, Building2, Users } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import SectionHeader from "@/app/explore/components/SectionHeader";
+import FilterChips from "@/app/explore/components/FilterChips";
+import FacetRail from "@/app/explore/components/FacetRail";
 import {
   useConsultants,
   useExpertsFilters,
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
-import type { IExpertsMetaData } from "./utils";
-import StickyFilterBar from "./components/StickyFilterBar";
+import type { IExpertsMetaData, AffiliationType } from "./utils";
+import { FilterPanel } from "./components/FilterPanel";
+import { SearchBar, type SortOption } from "./components/SearchBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
 import ExpertDetailsSheet from "./components/ExpertDetailsSheet";
-import type { SortOption } from "./components/SearchBar";
+
+const AFFILIATION_TABS: {
+  value: AffiliationType;
+  label: string;
+  icon: React.ElementType;
+}[] = [
+  { value: null, label: "All Experts", icon: Users },
+  { value: "independent", label: "Independent", icon: Zap },
+  { value: "agency", label: "Agency / Org", icon: Building2 },
+];
 
 interface ExpertsInteractiveContentProps {
   metadata: IExpertsMetaData | null;
@@ -66,10 +78,7 @@ export default function ExpertsInteractiveContent({
   // Details drawer: selected expert id synced to ?expert=<id> (shareable,
   // back-button closable). Opening/closing pushes a history entry so browser
   // Back closes (or reopens) the sheet, and a popstate listener syncs
-  // selectedId both ways. The drawer resolves the id against the loaded list,
-  // so list scroll + infinite-query cache are preserved. Deep links to experts
-  // beyond the loaded pages resolve once their page loads (or stay closed if
-  // the id matches nothing — no single-expert endpoint exists yet).
+  // selectedId both ways. The drawer resolves the id against the loaded list.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {
     const syncFromUrl = () => {
@@ -162,19 +171,43 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          // Tracks the measured sticky bar (JS var) so deep-links land below
-          // it; falls back to the static header calc pre-measurement.
-          style={{
-            scrollMarginTop:
-              "var(--browse-scroll-mt, calc(var(--header-height,5rem)+1rem))",
-          }}
+          className="scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
         >
           <SectionHeader
             title="Browse Familiarise Experts"
             icon={<Search className="w-5 h-5 text-white" />}
           />
 
-          {/* Search banner (not sticky) */}
+          {/* Affiliation type toggle: All | Independent | Agency/Org */}
+          <motion.div
+            className="mb-6"
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.5, delay: 0.05 }}
+          >
+            <div className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border">
+              {AFFILIATION_TABS.map(({ value, label, icon: Icon }) => {
+                const isActive = filters.affiliationType === value;
+                return (
+                  <button
+                    key={String(value)}
+                    onClick={() => updateFilters({ affiliationType: value })}
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                      isActive
+                        ? "bg-card text-foreground shadow-sm border border-border"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="w-4 h-4" />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+
+          {/* Search banner */}
           <motion.div
             className="mb-6"
             initial={{ opacity: 0, y: 20 }}
@@ -199,32 +232,57 @@ export default function ExpertsInteractiveContent({
             </div>
           </motion.div>
 
-          {/* Sticky settings navbar: search + sort + affiliation tabs +
-              org-kind sub-filter + chips. Advanced facets live in the
-              Filters sheet (no sidebar grid). */}
-          <StickyFilterBar
-            metadata={metadata}
-            filters={filters}
-            updateFilters={updateFilters}
-            chips={chips}
-            onRemoveChip={removeChip}
-            onClearAll={clearAll}
-            resultSummary={resultSummary}
-          />
+          {/* Filters live in the sticky sidebar rail (mobile: Sheet drawer)
+              so the results keep the full column instead of starting below a
+              three-row filter grid. */}
+          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[280px_1fr]">
+            <FacetRail
+              activeCount={chips.length}
+              onClearAll={clearAll}
+              resultSummary={resultSummary}
+            >
+              <FilterPanel
+                metadata={metadata}
+                filters={filters}
+                updateFilters={updateFilters}
+              />
+            </FacetRail>
 
-          {/* Single-column results: ConsultantCard is a two-column card
-              (profile + plan tabs) that collapses badly inside a narrow
-              grid cell, so the sidebar grid was removed. */}
-          <ExpertResults
-            consultants={consultants}
-            metadata={metadata}
-            isLoading={isLoading}
-            isRefetching={isRefetching}
-            isLoadingMore={isLoadingMore}
-            groupByDomainId={filters.domain}
-            sentinelRef={sentinelRef}
-            onSelect={openDetails}
-          />
+            <div className="min-w-0">
+              <div className="mb-6">
+                <SearchBar
+                  onSearch={(term) => updateFilters({ search: term })}
+                  onSort={(option) => updateFilters({ sort: option })}
+                  sortBy={filters.sort}
+                  initialSearch={filters.search}
+                />
+              </div>
+
+              {chips.length > 0 && (
+                <div className="mb-6">
+                  <FilterChips
+                    filters={chips}
+                    onRemove={removeChip}
+                    onClearAll={clearAll}
+                  />
+                </div>
+              )}
+
+              {/* Kept as a full-width vertical stack, not a grid: ConsultantCard
+                  is a two-column card (profile + plan tabs) that collapses
+                  badly inside a narrow grid cell. */}
+              <ExpertResults
+                consultants={consultants}
+                metadata={metadata}
+                isLoading={isLoading}
+                isRefetching={isRefetching}
+                isLoadingMore={isLoadingMore}
+                groupByDomainId={filters.domain}
+                sentinelRef={sentinelRef}
+                onSelect={openDetails}
+              />
+            </div>
+          </div>
         </div>
       </div>
 
