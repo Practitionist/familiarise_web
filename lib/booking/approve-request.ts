@@ -146,6 +146,58 @@ function report(error: unknown): void {
 }
 
 /**
+ * #1775 — the link onto the row, or null when it is not deliverable.
+ * #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a mint
+ * landing after the lapse sweep EXPIRED the request must not re-arm a link;
+ * zero rows is reconciled (the orphaned order tombstoned, only a link still
+ * live on the row may reach the consultee), never thrown. A persist that
+ * throws leaves the row's state unproven, so the link is not delivered and
+ * the next approval reuses the same PENDING intent (#1181).
+ */
+async function persistPayLink(
+  kind: "consultation" | "subscription",
+  id: string,
+  requestNotes: string | null,
+  paymentResult: { paymentIntentId: string; checkoutUrl: string },
+  reconcile: (typeof import("@/lib/booking/pay-link-persist"))["reconcileOrphanedPayLink"],
+): Promise<string | null> {
+  try {
+    const persist = {
+      where: {
+        id,
+        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+        pendingPaymentUrl: null,
+      },
+      data: {
+        pendingPaymentUrl: paymentResult.checkoutUrl,
+        requestNotes: requestNotes
+          ? `${requestNotes}\n\n[System] Payment link generated and sent to user.`
+          : `[System] Payment link generated and sent to user.`,
+      },
+    };
+    const persisted =
+      kind === "consultation"
+        ? await prisma.consultation.updateMany(persist)
+        : await prisma.subscription.updateMany(persist);
+    if (persisted.count > 0) return paymentResult.checkoutUrl;
+    const outcome = await reconcile({
+      kind,
+      id,
+      paymentIntentId: paymentResult.paymentIntentId,
+      checkoutUrl: paymentResult.checkoutUrl,
+    });
+    return outcome.url;
+  } catch (persistError) {
+    console.error(
+      `⚠️ Failed to persist payment link for ${kind} ${id}:`,
+      persistError instanceof Error ? persistError.message : "Unknown error",
+    );
+    report(persistError);
+    return null;
+  }
+}
+
+/**
  * The detail PATCH's post-commit block, shared: mint under the mint lock
  * (`createApprovalPaymentIntent` reuses a live PENDING row, so a retry or a
  * re-allocation never mints a parallel order), CAS the link onto the row,
@@ -229,50 +281,13 @@ export async function mintApprovalPaymentAfterCommit(args: {
     return { status: "mint_failed", error: linkError };
   }
 
-  let paymentUrl: string | null = paymentResult.checkoutUrl;
-  try {
-    // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a mint
-    // landing after the lapse sweep EXPIRED the request must not re-arm a
-    // link; zero rows is reconciled, never thrown.
-    const persist = {
-      where: {
-        id: row.id,
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        pendingPaymentUrl: null,
-      },
-      data: {
-        pendingPaymentUrl: paymentResult.checkoutUrl,
-        requestNotes: row.requestNotes
-          ? `${row.requestNotes}\n\n[System] Payment link generated and sent to user.`
-          : `[System] Payment link generated and sent to user.`,
-      },
-    };
-    const persisted =
-      args.kind === "consultation"
-        ? await prisma.consultation.updateMany(persist)
-        : await prisma.subscription.updateMany(persist);
-    if (persisted.count === 0) {
-      // The request moved since the mint (lapsed, paid, or a sibling
-      // persisted first): the orphaned order is tombstoned and only a link
-      // still live on the row may reach the consultee.
-      const outcome = await reconcileOrphanedPayLink({
-        kind: args.kind,
-        id: row.id,
-        paymentIntentId: paymentResult.paymentIntentId,
-        checkoutUrl: paymentResult.checkoutUrl,
-      });
-      paymentUrl = outcome.url;
-    }
-  } catch (persistError) {
-    // The row's state is unproven, so the link is not delivered; the next
-    // approval reuses the same PENDING intent (#1181).
-    paymentUrl = null;
-    console.error(
-      `⚠️ Failed to persist payment link for ${args.kind} ${row.id}:`,
-      persistError instanceof Error ? persistError.message : "Unknown error",
-    );
-    report(persistError);
-  }
+  const paymentUrl = await persistPayLink(
+    args.kind,
+    row.id,
+    row.requestNotes,
+    paymentResult,
+    reconcileOrphanedPayLink,
+  );
   if (!paymentUrl) return { status: "not_delivered" };
 
   try {
