@@ -92,6 +92,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
           success: true,
           accountStatus: validation.accountStatus,
           verification: validation.status,
+          // #1675 PR-Y2 — the name-match result the Get-paid page shows.
+          registeredName: validation.registeredName,
+          nameMatchScore: validation.nameMatchScore,
           account: updated,
         });
       } catch (err) {
@@ -135,7 +138,10 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
       account: updatedAccount,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     console.error("Error updating payout account:", error);
     return NextResponse.json(
       { error: "Failed to update payout account" },
@@ -221,7 +227,10 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "consultant" } },
+    );
     console.error("Error deleting payout account:", error);
     return NextResponse.json(
       { error: "Failed to delete payout account" },
