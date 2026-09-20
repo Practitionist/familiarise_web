@@ -7,8 +7,10 @@ import {
   BadgeCheck,
   Briefcase,
   Building2,
+  CalendarDays,
   Clock,
   Globe,
+  Mail,
   Star,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +54,20 @@ export default function ExpertDetailsSheet({
     [...plans]
       .filter((p) => p.trialEnabled)
       .sort((a, b) => a.trialPriceInPaise - b.trialPriceInPaise)[0] ?? null;
+  const sortedPlans = [...plans].sort(
+    (a, b) => a.durationInMonths - b.durationInMonths,
+  );
+  const experiences = consultant?.user.workExperiences ?? [];
+  // Recent-review sample (card query takes up to 10 ratings, no text) — an
+  // average + distribution, honestly labelled as a sample.
+  const sampledRatings = consultant?.reviews?.map((r) => r.rating) ?? [];
+  const reviewAvg =
+    sampledRatings.length > 0
+      ? sampledRatings.reduce((s, r) => s + r, 0) / sampledRatings.length
+      : null;
+  const reviewDist = [5, 4, 3, 2, 1].map(
+    (star) => sampledRatings.filter((r) => Math.round(r) === star).length,
+  );
 
   return (
     <Sheet open={!!consultant} onOpenChange={(open) => !open && onClose()}>
@@ -148,25 +164,48 @@ export default function ExpertDetailsSheet({
                     </dd>
                   </div>
                 )}
+                <div className="flex items-center gap-2">
+                  <CalendarDays className="h-4 w-4 text-muted-foreground/70" />
+                  <dt className="text-muted-foreground">Member since:</dt>
+                  <dd className="font-medium text-foreground">
+                    {new Date(consultant.createdAt).getFullYear()}
+                  </dd>
+                </div>
               </dl>
 
-              {consultant.user.workExperiences &&
-                consultant.user.workExperiences.length > 0 && (
-                  <div className="mt-4 flex items-center gap-2">
-                    {consultant.user.workExperiences.slice(0, 3).map((exp, i) => (
-                      <CompanyLogo
+              {experiences.length > 0 && (
+                <div className="mt-6">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Work experience
+                  </p>
+                  <ul className="space-y-2">
+                    {experiences.map((exp, i) => (
+                      <li
                         key={`${consultant.id}-drawer-company-${i}`}
-                        companyName={exp.company}
-                        companyDomain={exp.companyDomain ?? undefined}
-                        size={32}
-                        className="border-border"
-                      />
+                        className="flex items-center gap-3 rounded-xl border border-border bg-card p-2.5"
+                      >
+                        <CompanyLogo
+                          companyName={exp.company}
+                          companyDomain={exp.companyDomain ?? undefined}
+                          size={32}
+                          className="shrink-0 border-border"
+                        />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                          {exp.company}
+                        </span>
+                        {exp.isCurrent && (
+                          <Badge
+                            variant="outline"
+                            className="shrink-0 text-[10px]"
+                          >
+                            Current
+                          </Badge>
+                        )}
+                      </li>
                     ))}
-                    <span className="ml-1 text-sm text-muted-foreground">
-                      {consultant.user.workExperiences[0].company}
-                    </span>
-                  </div>
-                )}
+                  </ul>
+                </div>
+              )}
 
               {(consultant.domain?.name || consultant.subDomains.length > 0) && (
                 <div className="mt-4">
@@ -206,8 +245,105 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
+              {sortedPlans.length > 0 && (
+                <div className="mt-6">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Plans & pricing
+                  </p>
+                  <div className="space-y-2">
+                    {sortedPlans.map((plan) => (
+                      <div
+                        key={plan.id}
+                        className="rounded-xl border border-border bg-card p-3.5"
+                      >
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <p className="text-sm font-semibold text-foreground">
+                            {plan.title}
+                          </p>
+                          <p className="text-base font-bold text-foreground">
+                            {formatPrice(plan.price)}
+                          </p>
+                        </div>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {plan.durationInMonths} mo
+                          {plan.sessionsPerWeek !== null &&
+                            plan.sessionsPerWeek !== undefined &&
+                            ` · ${plan.sessionsPerWeek}/week`}
+                          {plan.totalSessions !== null &&
+                            plan.totalSessions !== undefined &&
+                            ` · ${plan.totalSessions} sessions`}
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                          {plan.emailSupport && (
+                            <Badge
+                              variant="outline"
+                              className="inline-flex items-center gap-1 text-[10px]"
+                            >
+                              <Mail className="h-3 w-3" />
+                              {plan.emailSupport}
+                            </Badge>
+                          )}
+                          {plan.trialEnabled && (
+                            <Badge className="bg-primary text-[10px] text-primary-foreground">
+                              {plan.trialPriceInPaise > 0
+                                ? `Trial ${formatPrice(plan.trialPriceInPaise)}`
+                                : "Free intro call"}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {reviewAvg !== null && (
+                <div className="mt-6">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Recent reviews
+                  </p>
+                  <div className="rounded-xl border border-border bg-card p-3.5">
+                    <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                      <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                      {reviewAvg.toFixed(1)}
+                      <span className="font-normal text-muted-foreground">
+                        · {sampledRatings.length}-review sample
+                      </span>
+                    </p>
+                    <div className="mt-2 space-y-1">
+                      {reviewDist.map((count, i) => {
+                        const star = 5 - i;
+                        const pct =
+                          sampledRatings.length > 0
+                            ? (count / sampledRatings.length) * 100
+                            : 0;
+                        return (
+                          <div
+                            key={star}
+                            className="flex items-center gap-2 text-xs text-muted-foreground"
+                          >
+                            <span className="w-3 shrink-0 tabular-nums">
+                              {star}
+                            </span>
+                            <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full bg-amber-400"
+                                style={{ width: `${pct}%` }}
+                              />
+                            </div>
+                            <span className="w-4 shrink-0 tabular-nums">
+                              {count}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {consultant.description && (
-                <div className="mt-4">
+                <div className="mt-6">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     About
                   </p>

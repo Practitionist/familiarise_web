@@ -85,7 +85,13 @@ export default function StickyFilterBar({
   return (
     <div
       className="sticky z-30 border-b border-border bg-background/80 backdrop-blur-xl"
-      style={{ top: "var(--header-height, 5rem)" }}
+      // --header-height omits the maintenance banner that Navbar.tsx adds to
+      // its own top offset, so without it the bar tucks under the navbar by
+      // exactly the banner height. The trailing 0.75rem is breathing room so
+      // the bar never kisses the navbar even during banner transitions.
+      style={{
+        top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 0.75rem)",
+      }}
     >
       <div className="py-3 space-y-3">
         {/* Row 1: search + advanced-filters trigger */}
@@ -117,7 +123,7 @@ export default function StickyFilterBar({
               <SheetHeader>
                 <SheetTitle>Filters</SheetTitle>
               </SheetHeader>
-              <div className="mt-4">
+              <div className="mt-4 px-6 pb-8">
                 <FilterPanel
                   metadata={metadata}
                   filters={filters}

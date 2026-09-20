@@ -208,16 +208,35 @@ export const ConsultantCard = memo(function ConsultantCard({
   return (
     <div className="bg-card rounded-2xl border border-border hover:border-border hover:shadow-xl transition-all duration-300 overflow-hidden group">
       <div className="p-6 md:p-8 lg:p-10 flex flex-col lg:flex-row gap-8 lg:gap-12">
-        {/* Left Section: Consultant Info. Uses a stretched overlay <Link>
-            (absolute inset-0) instead of wrapping the whole section, so the
-            nested org-badge link stays valid HTML (no <a> inside <a>) while
-            right-click / cmd-click / middle-click still open the profile. */}
-        <div className="relative flex-grow">
-          <Link
-            href={profileHref}
-            aria-label={`View ${consultant.user.name}'s profile`}
-            className="absolute inset-0 z-0"
-          />
+        {/* Left Section: Consultant Info. Clicking anywhere here (except the
+            nested org-badge link) opens the quick-view drawer; the primary
+            CTA on the right navigates to the full profile page. Keyboard:
+            Enter/Space on the section opens the drawer too. */}
+        <div
+          className={`relative flex-grow ${onSelect ? "cursor-pointer" : ""}`}
+          {...(onSelect
+            ? {
+                role: "button",
+                tabIndex: 0,
+                "aria-label": `Quick view ${consultant.user.name}'s details`,
+                onClick: (e: React.MouseEvent) => {
+                  // Let nested interactive elements (org badge link) behave
+                  // normally instead of opening the drawer.
+                  if ((e.target as HTMLElement).closest("a,button")) return;
+                  onSelect(consultant);
+                },
+                onKeyDown: (e: React.KeyboardEvent) => {
+                  if (
+                    (e.key === "Enter" || e.key === " ") &&
+                    !(e.target as HTMLElement).closest("a,button")
+                  ) {
+                    e.preventDefault();
+                    onSelect(consultant);
+                  }
+                },
+              }
+            : {})}
+        >
           {/* Header */}
           <div className="flex items-start gap-4 mb-6">
             <div className="relative h-20 w-20 flex-shrink-0">
@@ -422,29 +441,20 @@ export const ConsultantCard = memo(function ConsultantCard({
             )}
           </div>
 
-          {/* Action Buttons — wrapped in <Link> via Button asChild so the
-              browser context menu offers "Open in new tab" / "Copy link". */}
+          {/* Primary CTA navigates to the full profile page (wrapped in
+              <Link> via Button asChild so the browser context menu offers
+              "Open in new tab" / "Copy link"). The card body opens the
+              quick-view drawer instead. */}
           <div className="flex flex-col gap-2">
-            {onSelect ? (
-              <Button
-                type="button"
-                onClick={() => onSelect(consultant)}
-                className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
-              >
-                <span>Quick view</span>
+            <Button
+              asChild
+              className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
+            >
+              <Link href={profileHref}>
+                <span>View Profile</span>
                 <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            ) : (
-              <Button
-                asChild
-                className="w-full h-12 bg-primary hover:bg-primary/90 text-primary-foreground font-medium rounded-xl transition-all"
-              >
-                <Link href={profileHref}>
-                  <span>View Profile</span>
-                  <ArrowRight className="w-4 h-4 ml-2" />
-                </Link>
-              </Button>
-            )}
+              </Link>
+            </Button>
             <div
               className={`grid gap-2 ${trialOffer ? "grid-cols-2" : "grid-cols-1"}`}
             >
@@ -469,14 +479,6 @@ export const ConsultantCard = memo(function ConsultantCard({
                 <Link href={`${profileHref}?action=book`}>Book Session</Link>
               </Button>
             </div>
-            {onSelect && (
-              <Link
-                href={profileHref}
-                className="text-center text-xs font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-              >
-                Open full profile page
-              </Link>
-            )}
           </div>
         </div>
       </div>
