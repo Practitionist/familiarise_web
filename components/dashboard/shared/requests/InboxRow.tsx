@@ -26,6 +26,7 @@ import {
   deriveBookingPresentation,
   toneBadge,
   type BookingPresentation,
+  type MoneyState,
 } from "@/lib/dashboard/money-state";
 import {
   toStampDate,
@@ -36,6 +37,7 @@ import {
   zoneLabel,
   type ViewerZone,
 } from "@/lib/time/viewer-zone";
+import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { useState } from "react";
 
@@ -186,6 +188,26 @@ function Countdown({ deadline }: Readonly<{ deadline: Date }>) {
       {text}
     </span>
   );
+}
+
+/**
+ * The ONE money line, always with an amount: the derivation's plan arithmetic
+ * when it has one, its own line once money moved, else the plan price in
+ * front of its not-due sentence; a free trial says so (QA #1783 case 2).
+ */
+export function moneyLine(
+  row: Pick<InboxRowInput, "kind" | "amountPaise" | "currency">,
+  moneyState: Pick<MoneyState, "state" | "line" | "detail">,
+): string {
+  if (moneyState.detail) return moneyState.detail;
+  if (moneyState.state === "FREE") {
+    return row.kind === "trial" ? "Free trial" : moneyState.line;
+  }
+  if (moneyState.state === "NOT_DUE" && row.amountPaise !== null) {
+    return `${formatCurrencyAmount(row.amountPaise, row.currency)} · ${moneyState.line}`;
+  }
+  if (row.kind === "trial" && row.amountPaise === null) return "Free trial";
+  return moneyState.line;
 }
 
 /** The "when" line: the requested time, the cycle heading, or the trial length. */
@@ -417,15 +439,20 @@ export function InboxRow({
               ? nextCycleLine(row.entitlement)
               : whenLine(row, viewer)}
           </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {moneyState.line}
-            {row.requestNotes?.trim() ? (
-              <span title={row.requestNotes.trim()}>
-                {" "}
-                · &ldquo;{row.requestNotes.trim()}&rdquo;
-              </span>
-            ) : null}
+          <p
+            className="truncate text-xs text-muted-foreground"
+            data-money-line="true"
+          >
+            {moneyLine(row, moneyState)}
           </p>
+          {row.requestNotes?.trim() ? (
+            <p
+              className="truncate text-xs italic text-muted-foreground"
+              title={row.requestNotes.trim()}
+            >
+              &ldquo;{row.requestNotes.trim()}&rdquo;
+            </p>
+          ) : null}
           {row.proposal && (
             <p className="text-xs text-muted-foreground">
               Proposed new times · round {row.proposal.round}

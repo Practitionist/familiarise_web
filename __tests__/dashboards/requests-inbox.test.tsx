@@ -96,6 +96,12 @@ describe("Requests inbox anatomy (A-4)", () => {
     expect(html).toContain("Awaiting payment");
     expect(html).toContain("Schedule the next 2 · 4 of 24 booked");
     expect(html).not.toMatch(/\d+ slots/);
+    // QA #1783 case 2 — every row carries a money line with an amount.
+    const moneyLines = [
+      ...html.matchAll(/data-money-line="true">([^<]*)</g),
+    ].map((m) => m[1]);
+    expect(moneyLines).toHaveLength(4);
+    for (const line of moneyLines) expect(line).toMatch(/₹|Free trial/);
   });
 
   it("offers one primary action per row: Remind + Withdraw, Allocate, Approve, countdown-only", async () => {
