@@ -31,6 +31,8 @@ import {
   addMonths,
   subMonths,
   isSameMonth,
+  getDay,
+  type Day,
 } from "date-fns";
 import {
   ChevronLeft,
@@ -281,6 +283,29 @@ function classFooterText(
     ),
     schedulingTimezone: params.schedulingTimezone,
   });
+}
+
+/**
+ * #1775 — a subscription's week grid starts on the day its cycle starts, so
+ * the seven columns ARE the cycle; everything else keeps the Sunday start
+ * the quota bucketing is pinned to.
+ */
+export function weekStartFor(subject: {
+  eventType: UnifiedCalendarProps["eventType"];
+  cycleStart?: Date | null;
+}): Day {
+  return subject.eventType === "subscription" && subject.cycleStart
+    ? (getDay(subject.cycleStart) as Day)
+    : 0;
+}
+
+/** #1775 — what the window banner calls the range, per subject. */
+function windowBannerLabel(
+  eventType: UnifiedCalendarProps["eventType"],
+): string {
+  if (eventType === "subscription") return "This cycle";
+  if (eventType === "consultation") return "Requested window";
+  return "Scheduling Period";
 }
 
 /** Formats the allowed [start, end] range in the grid's zone. */
@@ -684,6 +709,11 @@ export function UnifiedCalendar({
   }, []);
 
   // Use calendar data hook
+  // #1775 — the grid's week starts where the cycle does. `allowedStart` is
+  // the cycle's windowStart on the allocate page (lib/data/allocation-request);
+  // the fetch window and the status map follow it through useCalendarData.
+  const weekStartsOn = weekStartFor({ eventType, cycleStart: allowedStart });
+
   const {
     consultantDetails,
     availableSlots,
@@ -710,6 +740,7 @@ export function UnifiedCalendar({
     sessionDurationInHours,
     consulteeUserId,
     gridZone,
+    weekStartsOn,
     // Follows `mode` rather than being its own prop: "allocate" is the
     // consultant's own surface, the only one that renders the overlap
     // tooltips, and the only one the route authorizes for them. A consultee
@@ -924,12 +955,12 @@ export function UnifiedCalendar({
   // consultant's timezone. Limit BUCKETING is UTC (ScheduleCalculationService) —
   // do not "unify" these; display and bucketing are different concerns.
   const weekDates = useMemo(() => {
-    // Sunday start, pinned like the fetch window (useCalendarData): display
-    // and quota bucketing are different concerns, but the week START must
-    // still be the same Sunday or week headers drift from fetched weeks.
-    const startDate = startOfWeek(currentDate, { weekStartsOn: 0 });
+    // Pinned like the fetch window (useCalendarData): display and quota
+    // bucketing are different concerns, but the week START must still be the
+    // same day the fetch used or week headers drift from fetched weeks.
+    const startDate = startOfWeek(currentDate, { weekStartsOn });
     return [...Array(7)].map((_, i) => addDays(startDate, i));
-  }, [currentDate]);
+  }, [currentDate, weekStartsOn]);
 
   // A callback ref in STATE, not a plain ref: the week grid does not exist
   // until `consultantDetails` has arrived, and a ref mutating cannot wake an
@@ -1765,7 +1796,7 @@ export function UnifiedCalendar({
             <Calendar className="h-5 w-5 text-blue-600 mr-2 flex-shrink-0" />
             <div className="flex-1">
               <p className="text-sm font-medium text-blue-800">
-                Scheduling Period
+                {windowBannerLabel(eventType)}
               </p>
               <p className="text-sm text-blue-700">
                 {formatAllowedRange(gridZone, allowedStart, allowedEnd)}
@@ -1811,8 +1842,8 @@ export function UnifiedCalendar({
           <div className="min-w-0 text-center text-sm font-bold sm:min-w-[150px] sm:text-lg">
             {view === "week"
               ? formatDateRangeLabel(
-                  startOfWeek(currentDate, { weekStartsOn: 0 }),
-                  endOfWeek(currentDate, { weekStartsOn: 0 }),
+                  startOfWeek(currentDate, { weekStartsOn }),
+                  endOfWeek(currentDate, { weekStartsOn }),
                 )
               : formatMonthLabel(currentDate)}
           </div>
