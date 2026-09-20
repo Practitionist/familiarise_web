@@ -273,11 +273,12 @@ export function AppointmentDetailClient({
 
   // #1775 — the consultant's two actions on an unpaid approval; the callout
   // reads the 429 / 409 answers off the ApiResponseError these throw.
-  const requestPath = detail?.appointment.consultation
-    ? `/api/bookings/consultations/${detail.appointment.consultation.id}`
-    : detail?.appointment.subscription
-      ? `/api/bookings/subscriptions/${detail.appointment.subscription.id}`
-      : null;
+  let requestPath: string | null = null;
+  if (detail?.appointment.consultation) {
+    requestPath = `/api/bookings/consultations/${detail.appointment.consultation.id}`;
+  } else if (detail?.appointment.subscription) {
+    requestPath = `/api/bookings/subscriptions/${detail.appointment.subscription.id}`;
+  }
   const postRequestAction = async (action: "remind" | "withdraw-approval") => {
     if (!requestPath) throw new Error("No request to act on");
     const res = await fetch(`${requestPath}/${action}`, { method: "POST" });

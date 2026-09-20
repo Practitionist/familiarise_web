@@ -195,23 +195,23 @@ function isTypedHttpError(
  * outcomes keep their 423 / 503 codes. `next/server` and the Redis lock stay
  * out of this module so the sweeps that share the core still load under jsdom.
  */
-export async function withdrawApproval(args: {
-  kind: "consultation" | "subscription";
-  id: string;
-  actor: WithdrawActor;
-  lock: AppointmentLock;
-}): Promise<{ status: "EXPIRED" }> {
+/** #1775 — the ownership read: the row and its plan, or a 404 / 403 refusal. */
+async function readOwnedRequest(
+  kind: "consultation" | "subscription",
+  id: string,
+  actor: WithdrawActor,
+) {
   const row =
-    args.kind === "consultation"
+    kind === "consultation"
       ? await prisma.consultation.findUnique({
-          where: { id: args.id },
+          where: { id },
           select: {
             ...WITHDRAW_SELECT,
             consultationPlan: WITHDRAW_PLAN_SELECT,
           },
         })
       : await prisma.subscription.findUnique({
-          where: { id: args.id },
+          where: { id },
           select: {
             ...WITHDRAW_SELECT,
             subscriptionPlan: WITHDRAW_PLAN_SELECT,
@@ -226,15 +226,25 @@ export async function withdrawApproval(args: {
   const plan =
     "consultationPlan" in row ? row.consultationPlan : row.subscriptionPlan;
   const owns =
-    !!args.actor.consultantProfileId &&
-    plan?.consultantProfileId === args.actor.consultantProfileId;
-  if (!owns && !args.actor.privileged)
+    !!actor.consultantProfileId &&
+    plan?.consultantProfileId === actor.consultantProfileId;
+  if (!owns && !actor.privileged)
     throw new Refusal({
       code: "FORBIDDEN",
       httpStatus: 403,
       userMessage:
         "Only the consultant who approved this request can withdraw it.",
     });
+  return { row, plan };
+}
+
+export async function withdrawApproval(args: {
+  kind: "consultation" | "subscription";
+  id: string;
+  actor: WithdrawActor;
+  lock: AppointmentLock;
+}): Promise<{ status: "EXPIRED" }> {
+  const { row, plan } = await readOwnedRequest(args.kind, args.id, args.actor);
 
   const run = () =>
     withSerializableRetry(() =>

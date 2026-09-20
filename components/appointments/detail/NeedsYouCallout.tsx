@@ -349,13 +349,13 @@ function RemindOrWithdraw({
   heldCount,
   deadline,
   onHelp,
-}: {
+}: Readonly<{
   actions: AwaitingPaymentActions;
   names: NeedsYouCalloutProps["names"];
   heldCount: number;
   deadline: Date | undefined;
   onHelp: () => void;
-}) {
+}>) {
   const [reminding, setReminding] = useState(false);
   const [nextAllowedAt, setNextAllowedAt] = useState<string | null>(null);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
@@ -424,6 +424,10 @@ function RemindOrWithdraw({
   };
 
   const busy = reminding || withdrawing;
+  let heldLine = "";
+  if (heldCount === 1) heldLine = " The slot stays held until then.";
+  else if (heldCount > 1)
+    heldLine = ` ${heldCount} slots stay held until then.`;
   return (
     <Shell
       onHelp={onHelp}
@@ -487,9 +491,7 @@ function RemindOrWithdraw({
     >
       {names.payer} has the payment link
       {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
-      {heldCount > 0
-        ? ` ${heldCount === 1 ? "The slot stays" : `${heldCount} slots stay`} held until then.`
-        : ""}
+      {heldLine}
     </Shell>
   );
 }
