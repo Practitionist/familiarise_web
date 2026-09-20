@@ -237,3 +237,112 @@ describe("UnifiedCalendar focus effect", () => {
     expect(weekGrid(host).scrollTop).toBe(16 * ROW_HEIGHT);
   });
 });
+
+// #1764/#1766 — the allocate page's three consultant-facing fixes: a
+// skeleton before the empty state, one band instead of scattered
+// "Outside period" cells, and a cycle-honest subscription heading.
+describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
+  let host: HTMLElement;
+  let root: Root;
+  const originalRect = Element.prototype.getBoundingClientRect;
+
+  beforeAll(() => {
+    (global as unknown as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    stubLayout();
+  });
+
+  afterAll(() => {
+    Element.prototype.getBoundingClientRect = originalRect;
+  });
+
+  beforeEach(() => {
+    setCalendarData();
+    resetAllocation();
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  function render(props: Record<string, unknown> = {}) {
+    act(() => {
+      root.render(
+        <UnifiedCalendar
+          consultantId="consultant-1"
+          eventType="consultation"
+          eventId="event-1"
+          mode="allocate"
+          durationInHours={1}
+          {...props}
+        />,
+      );
+    });
+  }
+
+  it("shows the grid skeleton, not the empty-week notice, while the fetch is pending", () => {
+    setCalendarData({ loading: true, consultantDetails: null });
+    render();
+
+    expect(host.textContent).not.toContain("Nothing is published");
+    // The skeleton renders shadcn's Skeleton primitive; the real grid's own
+    // scroll container (asserted absent) is what "no skeleton" would leave.
+    expect(host.querySelector(`.${SCROLL_CONTAINER_CLASS}`)).toBeNull();
+  });
+
+  it("shows the empty-week notice only once the fetch has settled with nothing published", () => {
+    // Nothing published anywhere this week — the settled, truly-empty case
+    // the notice exists for, distinct from the outside-period case below.
+    setCalendarData({
+      loading: false,
+      getSlotStatusForInterval: (
+        interval: { hour: number; minute: number },
+        date: Date,
+      ) => ({ ...slotStatus(interval, date), isAvailable: false }),
+    });
+    render();
+
+    expect(host.textContent).toContain("Nothing is published this week");
+  });
+
+  it("collapses an entirely out-of-period week into one band with zero per-cell labels", () => {
+    // Every interval this week is published (isAvailable: true from the
+    // shared slotStatus stub) but the request's period starts after the
+    // whole visible week, so every cell is outside it.
+    render({
+      focus,
+      allowedStart: new Date(2026, 7, 20),
+      allowedEnd: new Date(2026, 8, 20),
+    });
+
+    const bandButtons = Array.from(host.querySelectorAll("button")).filter(
+      (button) => button.textContent?.includes("Outside the scheduling period"),
+    );
+    expect(bandButtons.length).toBe(1);
+
+    // The old per-cell word must be gone everywhere, band open or closed.
+    const exactMatches = Array.from(
+      host.querySelectorAll("button, div"),
+    ).filter((el) => el.textContent?.trim() === "Outside period");
+    expect(exactMatches.length).toBe(0);
+  });
+
+  it("leads a fresh subscription with what fits this cycle, not the plan's lifetime total", () => {
+    setCalendarData({ eventSlots: [] });
+    render({
+      eventType: "subscription",
+      sessionDurationInHours: 1,
+      sessionsPerWeek: 3,
+      totalSessions: 144,
+      allowedStart: new Date(2026, 0, 1),
+      allowedEnd: new Date(2026, 0, 13, 23, 59, 59, 999),
+    });
+
+    expect(host.textContent).toContain("Schedule the next 6 sessions");
+    expect(host.textContent).toContain("of 144");
+  });
+});

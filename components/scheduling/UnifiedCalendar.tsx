@@ -118,6 +118,12 @@ function getSlotsPerCall(sessionDurationInHours?: number): number {
   return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
 }
 
+/** Calendar days spanned by [start, end], inclusive of both ends (#1766). */
+function daysInclusive(start: Date, end: Date): number {
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  return Math.floor((end.getTime() - start.getTime()) / ONE_DAY_MS) + 1;
+}
+
 /** Minutes as a phrase a buyer would use — never a slot count (ADR B1). */
 function formatDurationLabel(minutes: number): string {
   if (minutes % 60 !== 0) return `${minutes} min`;
@@ -145,6 +151,14 @@ function bandLabel(segment: RowSegment): string {
     formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
   // Row 48 is midnight at the end of the day, which row 0's clock also reads.
   return `Unavailable · ${at(segment.from)}–${at(segment.to % 48)}`;
+}
+
+/** "Outside the scheduling period · 00:00–09:00" — same shape as `bandLabel`,
+ * for a band whose rows are outside this booking's period (#1764/#1766). */
+function outsidePeriodBandLabel(segment: RowSegment): string {
+  const at = (row: number) =>
+    formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
+  return `Outside the scheduling period · ${at(segment.from)}–${at(segment.to % 48)}`;
 }
 
 // The time gutter must be a FIXED first column, not 1/8 of the row. As an
@@ -217,6 +231,9 @@ function subscriptionFooterText(
     pastEventSlotCount: number;
     maxSlots: number;
     schedulingTimezone?: string;
+    /** "This booking" cell count — see computeSubscriptionFooter (#1766). */
+    confirmedSlotCount: number;
+    zone: string;
   }>,
 ): string {
   const slotsPerCall = getSlotsPerCall(params.sessionDurationInHours);
@@ -228,6 +245,8 @@ function subscriptionFooterText(
     sessionDurationInHours: params.sessionDurationInHours,
     totalSessions: params.totalSessions,
     pastCompletedSessions: Math.floor(params.pastEventSlotCount / slotsPerCall),
+    confirmedSlotCount: params.confirmedSlotCount,
+    zone: params.zone,
   });
   if (computed) return computed;
   return calculateCallProgress(
@@ -345,6 +364,11 @@ function computeSubscriptionFooter(
     sessionDurationInHours?: number;
     totalSessions?: number;
     pastCompletedSessions?: number;
+    /** Every currently confirmed slot for this event ("This booking" cells,
+     * past and future) — the plan-lifetime "already scheduled" count (#1766). */
+    confirmedSlotCount?: number;
+    /** Grid zone, for the cycle date range (#1766). */
+    zone?: string;
   }>,
 ): string | null {
   const {
@@ -355,6 +379,8 @@ function computeSubscriptionFooter(
     sessionDurationInHours,
     totalSessions,
     pastCompletedSessions = 0,
+    confirmedSlotCount = 0,
+    zone,
   } = params;
 
   // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
@@ -380,6 +406,21 @@ function computeSubscriptionFooter(
   } else if (pastCompletedSessions > 0 && remaining > 0) {
     return `✅ ${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`;
   } else if (scheduled === 0) {
+    // #1764/#1766 — cycle-honest heading: the plan's lifetime total (up to
+    // 144 for a long subscription) is not what fits in THIS scheduling
+    // window, so lead with what can actually be placed now.
+    if (allowedStart && allowedEnd && zone) {
+      const alreadyScheduled = Math.floor(confirmedSlotCount / slotsPerCall);
+      const windowDays = daysInclusive(allowedStart, allowedEnd);
+      const capacityOfWindow =
+        (sessionsPerWeek || 1) * Math.ceil(windowDays / 7);
+      const targetThisCycle = Math.max(
+        0,
+        Math.min(maxTotalCalls - alreadyScheduled, capacityOfWindow),
+      );
+      const periodRange = `${formatDateLabel(allowedStart, { zone })} – ${formatDateLabel(allowedEnd, { zone })}`;
+      return `Schedule the next ${targetThisCycle} session${targetThisCycle === 1 ? "" : "s"} · this cycle ${periodRange} · ${alreadyScheduled} of ${maxTotalCalls} scheduled`;
+    }
     return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
     return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
@@ -1188,6 +1229,9 @@ export function UnifiedCalendar({
       let label = SLOT_STATUS_TOKENS[statusKey].label;
       if (statusKey === "thisEvent" && status.isInPast) label = "Past session";
       if (statusKey === "unavailable") label = "";
+      // #1764/#1766 — outside-period rows collapse into one band; a per-cell
+      // "Outside period" word is noise whether the band is open or closed.
+      if (statusKey === "outsidePeriod") label = "";
 
       return {
         status,
@@ -1222,16 +1266,27 @@ export function UnifiedCalendar({
   const { folded, paintedKeys, paintedCounts } = useMemo(() => {
     const painted = new Set<SlotStatusKey>();
     const counts = new Map<SlotStatusKey, number>();
-    const live = INTERVALS.map((interval) =>
-      weekDates.reduce((anyLive, date) => {
+    // Two liveness vectors, not one: `live` excludes outside-period cells so
+    // a row whose only content is outside this booking's period bands as its
+    // own "Outside the scheduling period" strip rather than the plain
+    // "Unavailable" one (#1764/#1766).
+    const live: boolean[] = [];
+    const outsidePeriod: boolean[] = [];
+    for (const interval of INTERVALS) {
+      let rowLive = false;
+      let rowOutsidePeriod = false;
+      for (const date of weekDates) {
         const cell = describeCell(interval, date);
         painted.add(cell.statusKey);
         counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
-        return anyLive || cell.isLive;
-      }, false),
-    );
+        if (cell.statusKey === "outsidePeriod") rowOutsidePeriod = true;
+        else if (cell.isLive) rowLive = true;
+      }
+      live.push(rowLive);
+      outsidePeriod.push(rowOutsidePeriod);
+    }
     return {
-      folded: foldDeadHourBands(live),
+      folded: foldDeadHourBands(live, outsidePeriod),
       paintedKeys: painted,
       paintedCounts: counts,
     };
@@ -1821,7 +1876,9 @@ export function UnifiedCalendar({
                         className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
                       />
                     )}
-                    {bandLabel(segment)}
+                    {segment.variant === "outsidePeriod"
+                      ? outsidePeriodBandLabel(segment)
+                      : bandLabel(segment)}
                     <span aria-hidden>{isOpenBand ? "· hide" : "· show"}</span>
                     {stripHoldsNow && <span aria-hidden>· now</span>}
                   </button>
@@ -1902,6 +1959,8 @@ export function UnifiedCalendar({
                       pastEventSlotCount,
                       maxSlots: slotLimits.maxSlots,
                       schedulingTimezone,
+                      confirmedSlotCount: eventSlots.length,
+                      zone: gridZone,
                     });
                   }
                   if (eventType === "class") {
