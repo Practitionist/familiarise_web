@@ -39,6 +39,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import { APPOINTMENT_LIST_SELECT } from "@/lib/booking/list-selects";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
 import { inboxBucketOf } from "@/lib/dashboard/requests-inbox-state";
@@ -126,6 +127,13 @@ describe("readRequestsInbox (A-1)", () => {
     // The scan is stable: requestedAt desc with the id tiebreaker (#1704 P1).
     const call = (prisma.subscription.findMany as jest.Mock).mock.calls[0][0];
     expect(call.orderBy).toEqual([{ requestedAt: "desc" }, { id: "asc" }]);
+    // A-7 — occurrence includes are bounded to live rows on the inbox AND the list routes.
+    expect(call.select.appointment.select.occurrences.where).toEqual({
+      deletedAt: null,
+    });
+    expect(APPOINTMENT_LIST_SELECT.select.occurrences.where).toEqual({
+      deletedAt: null,
+    });
   });
 
   it("the bucket rule: only a REQUESTED row is the consultant's to answer", () => {
