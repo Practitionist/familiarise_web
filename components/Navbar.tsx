@@ -573,6 +573,7 @@ const Navbar = () => {
     <>
       {/* Main Navbar */}
       <nav
+        data-global-navbar
         className={`fixed w-full z-[1000] transition-all duration-300 ${
           showDarkStyle
             ? "bg-transparent"
