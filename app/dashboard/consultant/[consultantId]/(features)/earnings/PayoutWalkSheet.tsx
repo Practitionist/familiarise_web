@@ -28,7 +28,8 @@ import {
 type WalkPayout = PayoutRowInput & { tdsFinancialYear?: string | null };
 
 const inr = (paise: number) => formatCurrencyAmount(paise, "INR");
-const pct = (bps: number) => `${(bps / 100).toFixed(2).replace(/\.?0+$/, "")}%`;
+// Number(...).toString() drops trailing zeros ("0.10" → "0.1", "20.00" → "20").
+const pct = (bps: number) => `${Number((bps / 100).toFixed(2))}%`;
 
 export function PayoutWalkBody({ payout }: Readonly<{ payout: WalkPayout }>) {
   const walk = moneyWalk(payout);

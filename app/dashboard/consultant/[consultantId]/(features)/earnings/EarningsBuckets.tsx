@@ -1,5 +1,7 @@
 "use client";
 
+import type React from "react";
+
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import {
@@ -162,13 +164,40 @@ export function EarningsBuckets({
     setPage(0);
   };
 
+  let segmentBody: React.ReactNode;
+  if (segment === "PAID_OUT") {
+    segmentBody = <PayoutList payouts={data.payouts} />;
+  } else if (pageRows.length === 0) {
+    segmentBody = (
+      <EmptyState
+        icon={Wallet}
+        title={`Nothing ${BUCKET_LABEL[segment].toLowerCase()} right now`}
+        description={
+          segment === "AVAILABLE"
+            ? "Earnings move here once their hold clears."
+            : "Earnings appear here after your sessions are paid."
+        }
+      />
+    );
+  } else {
+    segmentBody = (
+      <ul className="divide-y divide-border">
+        {pageRows.map(({ earning, presentation }) => (
+          <EarningItem
+            key={earning.id}
+            earning={earning}
+            badge={presentationBadge(presentation)}
+            line={presentation.line}
+          />
+        ))}
+      </ul>
+    );
+  }
+
   return (
     <DashboardContent>
       {needsPayoutAccount(data.eligibility) && (
-        <div
-          role="status"
-          className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900 dark:bg-amber-950"
-        >
+        <output className="mb-4 flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-900 dark:bg-amber-950">
           <div className="flex items-start gap-3">
             <Landmark className="mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
             <div>
@@ -188,7 +217,7 @@ export function EarningsBuckets({
               Get paid
             </Link>
           </Button>
-        </div>
+        </output>
       )}
 
       <DashboardGrid columns={3}>
@@ -256,30 +285,7 @@ export function EarningsBuckets({
         )}
         aria-busy={isStale}
       >
-        {segment === "PAID_OUT" ? (
-          <PayoutList payouts={data.payouts} />
-        ) : pageRows.length === 0 ? (
-          <EmptyState
-            icon={Wallet}
-            title={`Nothing ${BUCKET_LABEL[segment].toLowerCase()} right now`}
-            description={
-              segment === "AVAILABLE"
-                ? "Earnings move here once their hold clears."
-                : "Earnings appear here after your sessions are paid."
-            }
-          />
-        ) : (
-          <ul className="divide-y divide-border">
-            {pageRows.map(({ earning, presentation }) => (
-              <EarningItem
-                key={earning.id}
-                earning={earning}
-                badge={presentationBadge(presentation)}
-                line={presentation.line}
-              />
-            ))}
-          </ul>
-        )}
+        {segmentBody}
 
         {segment !== "PAID_OUT" && shownRows.length > PAGE_SIZE && (
           <div className="flex items-center justify-between border-t border-border bg-muted/40 px-4 py-3">
