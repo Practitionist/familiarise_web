@@ -321,8 +321,10 @@ export async function fetchExpertsMetadata() {
         // only hides the sub-filter counts — never the experts themselves.
         (async () => {
           try {
-            const rows = await prisma.membership.groupBy({
-              by: ["organizationId"],
+            // Dedupe by consultant: one expert in two same-kind orgs counts
+            // once per kind, matching the listing (findMany returns the
+            // consultant once). A group-by-org sum would double-count them.
+            const rows = await prisma.membership.findMany({
               where: {
                 role: "EXPERT",
                 status: "ACTIVE",
@@ -339,35 +341,35 @@ export async function fetchExpertsMetadata() {
                   kind: { not: null },
                 },
               },
-              _count: { organizationId: true },
+              select: {
+                consultantProfileId: true,
+                organization: { select: { kind: true } },
+              },
             });
-            if (rows.length === 0)
-              return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
-            const orgIds = rows.map((r) => r.organizationId);
-            const orgs = await prisma.organization.findMany({
-              where: { id: { in: orgIds } },
-              select: { id: true, kind: true },
-            });
-            const kindOf = new Map(orgs.map((o) => [o.id, o.kind]));
-            const out = { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+            const seen: Record<string, Set<string>> = {
+              AGENCY: new Set(),
+              ENTERPRISE: new Set(),
+              SOLO_PRACTICE: new Set(),
+            };
             for (const row of rows) {
-              const kind = kindOf.get(row.organizationId);
-              if (kind && kind in out) {
-                // _count.organizationId = experts hosted by this org.
-                out[kind as keyof typeof out] += row._count.organizationId;
+              const kind = row.organization.kind;
+              if (row.consultantProfileId && kind && kind in seen) {
+                seen[kind].add(row.consultantProfileId);
               }
             }
-            return out;
+            return {
+              AGENCY: seen.AGENCY.size,
+              ENTERPRISE: seen.ENTERPRISE.size,
+              SOLO_PRACTICE: seen.SOLO_PRACTICE.size,
+            };
           } catch (error) {
-            // Fail-soft ONLY on the missing-column case (P2022): the column
-            // lands via db push after merge. Anything else (notably transient
+            // Fail-soft ONLY on the missing-column case: the column lands via
+            // db push after merge (see isMissingKindColumn). Anything else
+            // (notably transient
             // pooler failures) must throw so the build retry and error
             // paths run — and a swallowed transient must never become a
             // "successful" zero-count cached for 300s.
-            if (
-              error instanceof Prisma.PrismaClientKnownRequestError &&
-              error.code === "P2022"
-            ) {
+            if (isMissingKindColumn(error)) {
               return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
             }
             throw error;
@@ -545,6 +547,27 @@ export const getRecentReviews = (limit: number = 6) =>
 // during the render, so the old 120 was silently capping that page's ISR window.
 export type CuratedAffiliation = "independent" | "agency" | null;
 export type CuratedOrgKind = "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
+
+/**
+ * True when `error` is the pre-migration P2022 for the not-yet-deployed
+ * `Organization.kind` column. Prisma's P2022 `meta` shape is undocumented and
+ * varies, so: a named non-kind column returns false (rethrow); an unnamed or
+ * kind-named P2022 returns true. The unnamed case is safe because `kind` is
+ * the only column these queries touch that can be absent — every other
+ * column ships with the code that reads it (additive-only schema).
+ */
+export function isMissingKindColumn(error: unknown): boolean {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2022"
+  ) {
+    return false;
+  }
+  const meta = error.meta as { column?: unknown } | undefined;
+  if (typeof meta?.column !== "string") return true;
+  const col = meta.column;
+  return col === "kind" || col === "Organization.kind" || col.endsWith(".kind");
+}
 
 export function affiliationWhere(
   affiliationType: CuratedAffiliation,

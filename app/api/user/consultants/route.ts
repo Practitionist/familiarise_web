@@ -8,6 +8,7 @@ import {
   toConsultantCard,
   orderByForSort,
   getDefaultConsultantsPage,
+  isMissingKindColumn,
 } from "@/lib/data/explore-experts";
 import { apiError } from "@/lib/errors";
 import { isTransientDbError, reportTransient } from "@/lib/data/fail-open";
@@ -257,12 +258,11 @@ export async function GET(request: NextRequest) {
     // Pre-migration rollout: `?orgKind=` on a DB without Organization.kind
     // raises P2022. Answer that exact case with an empty list (no-store),
     // not a 500 — the disabled UI pills don't protect direct query-string
-    // callers. Scoped to P2022-with-orgKind only; every other defect still
-    // captures + surfaces below.
+    // callers. Scoped to the kind column (see isMissingKindColumn) with
+    // orgKind present; every other defect still captures + surfaces below.
     if (
       VALID_ORG_KINDS.has(searchParams.get("orgKind") ?? "") &&
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2022"
+      isMissingKindColumn(error)
     ) {
       return NextResponse.json(
         { data: [], meta: { total: 0, page, limit, totalPages: 0 } },
