@@ -23,6 +23,7 @@ import {
   type DayOfWeek,
   Prisma,
   AppointmentStatus,
+  OccurrenceCompletionStatus,
   ScheduleType,
   AppointmentOccurrence,
 } from "@prisma/client";
@@ -1994,6 +1995,7 @@ export class SchedulingService {
             selectedSlots[0],
             config,
           );
+          await this.holdUntilPaid(tx, appointments, outcome);
 
           // #1065 — these times ARE the answer to the preference, so close it
           // here rather than leaving it open for the expiry sweep to mislabel.
@@ -2546,6 +2548,7 @@ export class SchedulingService {
             slots[0],
             config,
           );
+          await this.holdUntilPaid(tx, appointments, outcome);
 
           // #1065 — see autoAllocate: placing the replacement answers the ask.
           await this.resolveConsumedPreferenceRequests(
@@ -2876,16 +2879,21 @@ export class SchedulingService {
           );
 
           // CRITICAL FIX: Clear isTentative flag on all slots after approval
-          // This ensures slots are no longer marked as pending reschedule
+          // This ensures slots are no longer marked as pending reschedule.
+          // #1775 B-9 — only once the money is settled: an unpaid approval
+          // keeps its rows as the hold the pay order is for (the capture
+          // webhook confirms them; a lapse or withdraw releases them).
           const appointmentIds = existingAppointments.map(
             (appointment) => appointment.id,
           );
-          await tx.appointmentOccurrence.updateMany({
-            where: {
-              appointmentId: { in: appointmentIds },
-            },
-            data: { isTentative: false },
-          });
+          if (outcome !== "awaiting_payment") {
+            await tx.appointmentOccurrence.updateMany({
+              where: {
+                appointmentId: { in: appointmentIds },
+              },
+              data: { isTentative: false },
+            });
+          }
 
           // #837 — stamp the batch's key on the FIRST appointment so a retry
           // replays this approval instead of re-running it (mirrors
@@ -4802,6 +4810,28 @@ export class SchedulingService {
           new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime(),
       )
       .map((row) => row.ordinal);
+  }
+
+  /**
+   * #1775 B-9 — an unpaid approval's freshly placed sessions are the hold
+   * its pay order is for, not confirmed times: created confirmed by
+   * `createAppointments`, they are marked tentative here so the capture
+   * webhook confirms them and a lapse or withdraw releases them by status.
+   */
+  private static async holdUntilPaid(
+    tx: Tx,
+    appointments: { id: string }[],
+    outcome: ApprovalOutcome | undefined,
+  ): Promise<void> {
+    if (outcome !== "awaiting_payment" || appointments.length === 0) return;
+    await tx.appointmentOccurrence.updateMany({
+      where: {
+        appointmentId: { in: appointments.map((a) => a.id) },
+        deletedAt: null,
+        completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+      },
+      data: { isTentative: true },
+    });
   }
 
   /**

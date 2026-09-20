@@ -3511,6 +3511,14 @@ describe("#1775 B-9 — allocation lands by money", () => {
       status: { in: ["PENDING", "APPROVED_PENDING_PAYMENT"] },
     });
     expect(casData(1).status).toBe(AppointmentStatus.APPROVED_PENDING_PAYMENT);
+    // The placed sessions are the hold the pay order is for, not confirmed
+    // times: the capture webhook confirms them, a lapse releases them.
+    expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ completionStatus: "SCHEDULED" }),
+        data: { isTentative: true },
+      }),
+    );
   });
 
   it("paid PENDING consultation → APPROVED on the first CAS, no second attempt", async () => {
@@ -3526,6 +3534,9 @@ describe("#1775 B-9 — allocation lands by money", () => {
 
     expect(result.outcome).toBe("approved");
     expect(mockTx.consultation.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isTentative: true } }),
+    );
     expect(casWhere(0).status).toEqual({
       in: ["PENDING", "APPROVED_PENDING_PAYMENT", "APPROVED"],
     });
