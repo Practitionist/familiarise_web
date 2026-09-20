@@ -6,6 +6,7 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
+  getDefaultConsultantsPage,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
@@ -28,11 +29,14 @@ import {
 // loudly instead of shipping an empty experts directory. `withBuildTimeRetry`
 // gives the build two extra attempts before it gives up.
 //
-// 5 minutes, matched by the unstable_cache windows on the reads below so the
-// declared interval is the effective one — Next resolves a route's revalidate to
-// the MINIMUM of the segment value and every data-cache entry read during the
-// render, so a shorter window underneath would silently win. New and updated
-// profiles purge this path on demand at the write sites.
+// 5 minutes. The unstable_cache windows underneath are LONGER (30 min for
+// metadata/curated rows, 5 min for the default directory page) — Next resolves
+// a route's revalidate to the MINIMUM of the segment value and every data-cache
+// entry read during the render, so the declared 300s stays the effective
+// regeneration interval while each regeneration reads blobs instead of the
+// pooler. All three entries carry the "experts" tag, purged on every consultant
+// write (purgeExpertSurfaces), so the TTLs are backstops, not the freshness SLA.
+// New and updated profiles purge this path on demand at the write sites.
 export const revalidate = 300;
 
 const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
@@ -100,22 +104,25 @@ function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
 }
 
 export default async function ExploreExperts() {
-  // These used to degrade to empty rows on a transient timeout. This route is ISR,
-  // so that empty page would be cached and served to everyone until the window
-  // expired; retry once and otherwise throw, which caches nothing (#1119).
-  const [metadata, featuredExperts, trendingExperts, newestExperts] =
-    await Promise.all([
-      withBuildTimeRetry(getExpertsMetadata),
-      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
-      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
-      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
-    ]);
-
+  // Stream the shell first: the hero headline and section chrome flush before
+  // any pooled read resolves, so the edge starts streaming well inside its
+  // receive-timeout even when the server handler is cold (~28s stall, #1112198).
+  // Data-bound islands resolve behind Suspense boundaries below.
   return (
     <main className="min-h-screen bg-background">
-      <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+      <Suspense fallback={<HeroSection stats={[]} />}>
+        <HeroLoader />
+      </Suspense>
 
-      <FeaturedExperts experts={featuredExperts} isLoading={false} />
+      <Suspense
+        fallback={
+          <section className="mx-auto max-w-[1600px] px-4 py-10 md:px-8 lg:px-12">
+            <div className="h-56 animate-pulse rounded-xl bg-muted" />
+          </section>
+        }
+      >
+        <FeaturedLoader />
+      </Suspense>
 
       <Suspense
         fallback={
@@ -139,12 +146,53 @@ export default async function ExploreExperts() {
           </section>
         }
       >
-        <ExpertsInteractiveContent
-          metadata={metadata}
-          trendingExperts={trendingExperts}
-          newestExperts={newestExperts}
-        />
+        <InteractiveLoader />
       </Suspense>
     </main>
+  );
+}
+
+// Each loader reads independently. A transient pooler timeout now throws past
+// its own Suspense boundary rather than failing the whole page, and on ISR a
+// failed regeneration keeps serving the last good cached copy (#1119).
+async function HeroLoader() {
+  const metadata = await withBuildTimeRetry(getExpertsMetadata);
+  return (
+    <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+  );
+}
+
+async function FeaturedLoader() {
+  const featuredExperts = await withBuildTimeRetry(() =>
+    getCuratedExperts("rating", 5),
+  );
+  return <FeaturedExperts experts={featuredExperts} isLoading={false} />;
+}
+
+async function InteractiveLoader() {
+  // These used to degrade to empty rows on a transient timeout. This route is ISR,
+  // so that empty page would be cached and served to everyone until the window
+  // expired; retry once and otherwise throw, which caches nothing (#1119).
+  //
+  // The default directory page (unfiltered, nameAsc, page 1) rides along so the
+  // client list renders with the RSC payload instead of firing its own
+  // /api/user/consultants roundtrip on mount — one fewer function invocation
+  // and one fewer pooled query on the critical path (#1769 follow-up). It is
+  // only USED when the visitor's filters are the defaults (no query params);
+  // the client hook decides (see useConsultants).
+  const [metadata, trendingExperts, newestExperts, defaultPage] =
+    await Promise.all([
+      withBuildTimeRetry(getExpertsMetadata),
+      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
+      withBuildTimeRetry(() => getDefaultConsultantsPage("nameAsc", 10)),
+    ]);
+  return (
+    <ExpertsInteractiveContent
+      metadata={metadata}
+      trendingExperts={trendingExperts}
+      newestExperts={newestExperts}
+      defaultPage={defaultPage}
+    />
   );
 }

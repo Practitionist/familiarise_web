@@ -1,7 +1,7 @@
 "use client";
 
 import { PlanLevel } from "@prisma/client";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   GraduationCap,
@@ -43,8 +43,10 @@ interface ProgramsInteractiveContentProps {
   initialNewest: Program[];
   initialTopics: TopicWithCount[];
   initialStats: ProgramStats | null;
-  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }. */
-  viewerOrgs?: Record<string, string>;
+  /** #664 — viewer's ACTIVE org memberships as { orgId: orgName }.
+   * Server seed (always {} now that the page is ISR); the live value resolves
+   * client-side via /api/viewer/orgs — see the effect below. */
+  initialViewerOrgs?: Record<string, string>;
   /** Every level in the catalog, read server-side — not just loaded rows. */
   availableLevels?: PlanLevel[];
 }
@@ -65,12 +67,34 @@ export default function ProgramsInteractiveContent({
   initialNewest,
   initialTopics,
   initialStats,
-  viewerOrgs = {},
+  initialViewerOrgs = {},
   availableLevels = [],
 }: ProgramsInteractiveContentProps) {
   const { data: session } = useSession();
   const userId = session?.user?.id;
   const { formatPrice } = useCurrency();
+
+  // #664 — the org badge resolves client-side so the page itself stays a
+  // cacheable ISR route. Signed-out visitors keep {} with no request at all;
+  // signed-in visitors get badges ~1 small indexed roundtrip after paint.
+  // (Previously a server session read forced the whole route dynamic, so
+  // every visit paid a full function render.)
+  const [viewerOrgs, setViewerOrgs] = useState<Record<string, string>>(
+    () => initialViewerOrgs,
+  );
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    fetch("/api/viewer/orgs")
+      .then((res) => (res.ok ? res.json() : { orgs: {} }))
+      .then((body) => {
+        if (!cancelled) setViewerOrgs(body.orgs ?? {});
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   // All UI state lives in one hook so the orchestrator stays thin.
   const {

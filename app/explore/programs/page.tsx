@@ -9,34 +9,19 @@ import {
 import { sortPlanLevels } from "@/lib/labels/plan-labels";
 import { unstable_cache } from "next/cache";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
 import ProgramsInteractiveContent from "./ProgramsInteractiveContent";
 
-// #664 — the viewer's ACTIVE org memberships, as { orgId: orgName }. Viewer-
-// specific, so it must NOT enter the shared curated cache — it's fetched
-// per-request here and prop-drilled to the card, which badges a plan
-// "Recommended by <org>" when the viewer's org sponsors that plan's program.
+// ISR, not force-dynamic. This listing is public and identical for every
+// visitor — the one viewer-specific affordance (the "Recommended by <org>"
+// badge, #664) now resolves client-side via /api/viewer/orgs instead of a
+// server session read, which had made the whole route uncacheable
+// (`private, no-store`) so every visitor paid a full function render.
+// Prerendered HTML is served off the CDN with no function invocation.
 //
-// Signed-out returns {} here because that is an ANSWER, not a failure. Failure
-// is handled at the call site by the same fail-open helper the four sibling
-// reads use — this used to be a bare `catch { return {} }`, which swallowed
-// every error class and would have silently dropped every org badge on a mapper
-// or schema regression, indefinitely and with no signal. (#1125)
-async function getViewerOrgs(): Promise<Record<string, string>> {
-  const session = await getSession();
-  const userId = session?.user?.id;
-  if (!userId) return {};
-  const memberships = await prisma.membership.findMany({
-    where: { userId, status: "ACTIVE" },
-    select: { organization: { select: { id: true, name: true } } },
-  });
-  return Object.fromEntries(
-    memberships.map((m) => [m.organization.id, m.organization.name]),
-  );
-}
-
-// Stream behind the static layout's instant skeleton; don't prerender at build (#932).
-export const dynamic = "force-dynamic";
+// 5 minutes: curated reads underneath carry their own windows (120–300s);
+// the "programs" tag has no on-demand purge wired, so this window IS the
+// freshness SLA for new/updated plans — do not lengthen it casually.
+export const revalidate = 300;
 
 /**
  * Server-fetch the trending / newest curated rows, the topic list, and the
@@ -56,7 +41,6 @@ export default async function ExplorePrograms() {
     newestPrograms,
     topicsWithCount,
     stats,
-    viewerOrgs,
     levels,
   ] = await Promise.all([
     getCuratedPrograms("all", "trending", 8).catch(
@@ -74,15 +58,6 @@ export default async function ExplorePrograms() {
     getCachedProgramCounts().catch(
       fallbackOnTransientDbError("program stats", null, { perRequest: true }),
     ),
-    getViewerOrgs().catch(
-      fallbackOnTransientDbError<Record<string, string>>(
-        "viewer orgs",
-        {},
-        {
-          perRequest: true,
-        },
-      ),
-    ),
     getCachedProgramLevels().catch(
       emptyOnTransientDbError("program levels", { perRequest: true }),
     ),
@@ -94,7 +69,6 @@ export default async function ExplorePrograms() {
       initialNewest={newestPrograms}
       initialTopics={topicsWithCount}
       initialStats={stats}
-      viewerOrgs={viewerOrgs}
       availableLevels={levels}
     />
   );

@@ -167,3 +167,12 @@ export function filtersToSearchParams(filters: IExpertFilters): string {
     params.set("affiliationType", filters.affiliationType);
   return params.toString();
 }
+
+// True exactly when the filters are the defaults. filtersToSearchParams emits
+// '' if and only if every field is at its default (each non-default writes at
+// least one param), so this is the gate for using the server-seeded default
+// directory page: a share-link visitor (?sort=rating, ?domain=…) never sees a
+// flash of the wrong list.
+export function isDefaultFilters(filters: IExpertFilters): boolean {
+  return filtersToSearchParams(filters) === "";
+}

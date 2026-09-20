@@ -44,12 +44,12 @@ describe("keep-warm", () => {
     expect(config.schedule).toBe("*/4 * * * *");
   });
 
-  it("defaults to three, honours 0 as off, and ignores nonsense", () => {
-    expect(keepWarmConcurrency(undefined)).toBe(3);
+  it("defaults to five, honours 0 as off, and ignores nonsense", () => {
+    expect(keepWarmConcurrency(undefined)).toBe(5);
     expect(keepWarmConcurrency("0")).toBe(0);
-    expect(keepWarmConcurrency("5")).toBe(5);
-    expect(keepWarmConcurrency("banana")).toBe(3);
-    expect(keepWarmConcurrency("99")).toBe(3);
+    expect(keepWarmConcurrency("3")).toBe(3);
+    expect(keepWarmConcurrency("banana")).toBe(5);
+    expect(keepWarmConcurrency("99")).toBe(5);
   });
 
   it("mints one unique-key probe URL per instance to warm", () => {

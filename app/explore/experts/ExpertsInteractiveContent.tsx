@@ -34,19 +34,31 @@ interface ExpertsInteractiveContentProps {
   metadata: IExpertsMetaData | null;
   trendingExperts: IConsultantCardData[];
   newestExperts: IConsultantCardData[];
+  /**
+   * Server-fetched default directory page (unfiltered, nameAsc, page 1) so the
+   * listing renders with the RSC payload instead of firing its own API
+   * roundtrip on mount. Only USED when the visitor's filters are the defaults
+   * (no query params) — useConsultants decides.
+   */
+  defaultPage?: {
+    data: IConsultantCardData[];
+    meta: { total: number; page: number; limit: number; totalPages: number };
+  };
 }
 
 export default function ExpertsInteractiveContent({
   metadata,
   trendingExperts,
   newestExperts,
+  defaultPage,
 }: ExpertsInteractiveContentProps) {
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
   const browseSectionRef = useRef<HTMLDivElement>(null);
   const { formatPrice } = useCurrency();
 
   // Main listing — keepPreviousData inside the hook keeps stale results
-  // visible during refetch.
+  // visible during refetch. The server-seeded default page (when present and
+  // the filters are untouched) means first paint needs no client fetch.
   const {
     consultants,
     isLoading,
@@ -54,7 +66,7 @@ export default function ExpertsInteractiveContent({
     isRefetching,
     hasMore,
     loadMore,
-  } = useConsultants(filters);
+  } = useConsultants(filters, defaultPage);
 
   // Sentinel-driven infinite scroll. The hook owns the IntersectionObserver
   // lifecycle (one observer per hasMore/isLoading transition, not one per

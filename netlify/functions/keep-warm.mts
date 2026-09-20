@@ -15,11 +15,11 @@ export const config = { schedule: "*/4 * * * *" };
 export const KEEP_WARM_PATH = "/api/perf/probe-bare";
 const KEEP_WARM_TIMEOUT_MS = 4_000;
 
-/** How many instances to keep warm; defaults to 3 (Netlify's suggested 3–5). */
+/** How many instances to keep warm; defaults to 5 (Netlify's suggested 3–5, top end). */
 export function keepWarmConcurrency(raw: string | undefined): number {
-  if (raw === undefined || raw === "") return 3;
+  if (raw === undefined || raw === "") return 5;
   const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 && n <= 20 ? n : 3;
+  return Number.isInteger(n) && n >= 0 && n <= 20 ? n : 5;
 }
 
 /** One unique-key URL per ping so no cache and no coalescing answers them. */

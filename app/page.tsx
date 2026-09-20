@@ -90,20 +90,31 @@ async function ReviewsLoader() {
   );
 }
 
-// #1490 — the hero and the category cards render real figures now, so the page
-// component awaits them. That is affordable precisely here: `/` is prerendered
-// at build and served from the CDN, so no visitor pays for this read, and the
-// loader is cached on the same 1-hour window as the segment so a regeneration
-// reads a blob rather than the pooler. The heavy curated sections keep their
-// Suspense boundaries below; this one small read is not worth a skeleton in the
-// LCP element.
-export default async function Home() {
+// #1490 — the hero and the category cards render real figures now, but the
+// page no longer awaits them before flushing: the static hero shell (headline,
+// CTAs — real text, so FCP fires) streams on the first byte, and the DB-backed
+// counters and category counts resolve behind Suspense. Affordable *and* fast:
+// `/` is prerendered at build and served from the CDN, and a failed
+// regeneration keeps serving the cached copy. Blocking the whole page on one
+// small pooled read is what pushed cold regenerations toward the edge
+// receive-timeout (#1112198).
+async function HeroLoader() {
   const stats = await withBuildTimeRetry(getHomeStats);
+  return <HeroSection stats={buildExpertHeroStats(stats)} />;
+}
 
+async function CategoriesLoader() {
+  const stats = await withBuildTimeRetry(getHomeStats);
+  return <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />;
+}
+
+export default function Home() {
   return (
     <main className="flex-1 w-full overflow-hidden">
-      {/* Hero - Black with animated orbs */}
-      <HeroSection stats={buildExpertHeroStats(stats)} />
+      {/* Hero — static shell (stats={[]}) flushes immediately; counters stream in */}
+      <Suspense fallback={<HeroSection stats={[]} />}>
+        <HeroLoader />
+      </Suspense>
 
       {/* Trusted By / Logo Cloud - Dark */}
       <TrustedBySection />
@@ -112,7 +123,24 @@ export default async function Home() {
       <FeaturesSection />
 
       {/* Browse by Category - Light gradient */}
-      <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
+      <Suspense
+        fallback={
+          <section className="py-20 md:py-32 bg-gradient-to-b from-white to-zinc-50">
+            <div className="container mx-auto px-4 md:px-6">
+              <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-24 animate-pulse rounded-xl bg-muted"
+                  />
+                ))}
+              </div>
+            </div>
+          </section>
+        }
+      >
+        <CategoriesLoader />
+      </Suspense>
 
       {/* Why Familiarise / Benefits - Light silver gradient */}
       <Suspense fallback={<BenefitsSkeleton />}>

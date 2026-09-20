@@ -3,7 +3,11 @@
 import { useInfiniteQuery, keepPreviousData } from "@tanstack/react-query";
 import { useCallback, useMemo } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
-import { CONSULTANTS_PER_PAGE, type IExpertFilters } from "../utils";
+import {
+  CONSULTANTS_PER_PAGE,
+  isDefaultFilters,
+  type IExpertFilters,
+} from "../utils";
 
 // Enhanced React Query fetcher function with error handling for consultants
 const fetchConsultantsData = async (url: string) => {
@@ -24,7 +28,23 @@ const fetchConsultantsData = async (url: string) => {
   return res.json();
 };
 
-export function useConsultants(filters: IExpertFilters) {
+interface DefaultPage {
+  data: IConsultantCardData[];
+  meta: { total: number; page: number; limit: number; totalPages: number };
+}
+
+export function useConsultants(
+  filters: IExpertFilters,
+  /**
+   * Server-rendered first page for the DEFAULT filter set. When the visitor
+   * arrives with no query params, the listing paints from the RSC payload
+   * with zero client roundtrips — no extra function invocation, no pooled
+   * query on the critical path (#1769 follow-up). Any active filter (sort,
+   * domain, search, …) serializes to a non-empty query string, in which case
+   * this seed is ignored and the hook fetches normally.
+   */
+  defaultPage?: DefaultPage,
+) {
   const {
     domain: selectedDomain,
     subdomain: selectedSubdomain,
@@ -105,6 +125,14 @@ export function useConsultants(filters: IExpertFilters) {
       affiliationType,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
+    // Seed the default view from the server render. filtersToSearchParams
+    // emits '' exactly for the default filter set (every non-default writes
+    // at least one param), so a share-link visitor (?sort=rating, ?domain=…)
+    // never sees a flash of the wrong list.
+    ...(isDefaultFilters(filters) &&
+      defaultPage && {
+        initialData: { pages: [defaultPage], pageParams: [0] },
+      }),
     getNextPageParam: (lastPage, pages) => {
       if (lastPage?.data?.length === CONSULTANTS_PER_PAGE) {
         return pages.length;
