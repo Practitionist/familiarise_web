@@ -162,12 +162,9 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          // Tracks the measured sticky bar (JS var) so deep-links land below
-          // it; falls back to the static header calc pre-measurement.
-          style={{
-            scrollMarginTop:
-              "var(--browse-scroll-mt, calc(var(--header-height,5rem)+1rem))",
-          }}
+          // The sticky bar takes over the viewport top when stuck, so a small
+          // margin suffices — the bar is in-flow (unstuck) at this anchor.
+          className="scroll-mt-4"
         >
           <SectionHeader
             title="Browse Familiarise Experts"
