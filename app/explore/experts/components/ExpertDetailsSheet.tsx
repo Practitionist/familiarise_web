@@ -2,18 +2,22 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useState } from "react";
 import {
   ArrowRight,
   BadgeCheck,
   Briefcase,
   Building2,
   CalendarDays,
+  Check,
   Clock,
   Globe,
+  Share2,
   Star,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 import {
   Sheet,
   SheetContent,
@@ -44,7 +48,30 @@ export default function ExpertDetailsSheet({
   onClose,
 }: Readonly<ExpertDetailsSheetProps>) {
   const { formatPrice } = useCurrency();
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
   const profileHref = consultant ? `/explore/experts/${consultant.id}` : "#";
+
+  // Copies the absolute profile URL — the drawer is a quick-view, so Share
+  // (pass this expert along) earns its slot; Book session only duplicated
+  // the card CTA and the profile page.
+  const shareProfile = () => {
+    if (!consultant) return;
+    const url = `${window.location.origin}${profileHref}`;
+    navigator.clipboard.writeText(url).then(
+      () => {
+        setCopied(true);
+        toast({ title: "Profile link copied!" });
+        setTimeout(() => setCopied(false), 2000);
+      },
+      () => {
+        toast({
+          title: "Couldn't copy the link",
+          description: "Copy it from the address bar after opening the profile.",
+        });
+      },
+    );
+  };
   const plans = consultant?.subscriptionPlans ?? [];
   const cheapest = plans.length > 0 ? [...plans].sort((a, b) => a.price - b.price)[0] : null;
   // Cheapest 1:1 session — one headline line so the drawer answers "what does
@@ -369,8 +396,18 @@ export default function ExpertDetailsSheet({
                     </Link>
                   </Button>
                 )}
-                <Button asChild variant="outline" className="h-10 rounded-xl text-sm">
-                  <Link href={`${profileHref}?action=book`}>Book session</Link>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={shareProfile}
+                  className="h-10 rounded-xl text-sm"
+                >
+                  {copied ? (
+                    <Check className="mr-1.5 h-4 w-4" />
+                  ) : (
+                    <Share2 className="mr-1.5 h-4 w-4" />
+                  )}
+                  {copied ? "Copied!" : "Share profile"}
                 </Button>
               </div>
             </div>
