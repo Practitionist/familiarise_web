@@ -192,6 +192,10 @@ Consultations support two entry paths:
 
 The reason two paths exist is flexibility. Some consultants want to screen clients before accepting bookings; others want frictionless direct booking.
 
+#### While the approval waits for payment (#1775)
+
+An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment (`remindLimiter`), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
+
 #### Sequence Diagram
 
 ```mermaid
@@ -1126,14 +1130,14 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Financial Notifications
 
-| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point          | Source         |
-| ---------------- | ------------------ | ---------------------- | ---------------------- | -------------- |
-| Refund processed | `refund-processed` | Consultee              | Refund API             | Refund routes  |
-| Refund requested | `refund-requested` | Admin users            | Refund request API     | Refund routes  |
-| Payout processed | `payout-processed` | Consultant             | Payout processing      | Payout scripts |
+| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point                                          | Source         |
+| ---------------- | ------------------ | ---------------------- | ------------------------------------------------------ | -------------- |
+| Refund processed | `refund-processed` | Consultee              | Refund API                                             | Refund routes  |
+| Refund requested | `refund-requested` | Admin users            | Refund request API                                     | Refund routes  |
+| Payout processed | `payout-processed` | Consultant             | Payout processing                                      | Payout scripts |
 | Payout failed    | `payout-failed`    | Consultant             | Payout rejection / gateway FAILED or CANCELLED webhook | Payout service |
-| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API   | Dispute routes |
-| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API | Dispute routes |
+| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API                                   | Dispute routes |
+| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API                                 | Dispute routes |
 
 ### Other Notifications
 
