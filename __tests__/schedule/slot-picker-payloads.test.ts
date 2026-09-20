@@ -30,6 +30,7 @@ import prisma from "../../lib/prisma";
 import { readAppointmentDetail } from "../../lib/data/appointment-detail";
 import { readAllocationRequest } from "../../lib/data/allocation-request";
 import { readManageTimingsTarget } from "../../lib/data/manage-timings-target";
+import { checkoutSchema, createCheckoutData } from "../../schemas/checkout";
 
 const ALLOWED_SLOT_KEYS = [
   "appointmentId",
@@ -91,7 +92,11 @@ describe("readManageTimingsTarget slot payload", () => {
         },
         // #1554 — the roster rides on the wrapper, not the rows.
         participants: [
-          { userId: "user-1", role: "CONSULTEE", user: { name: ATTENDEE_NAME } },
+          {
+            userId: "user-1",
+            role: "CONSULTEE",
+            user: { name: ATTENDEE_NAME },
+          },
         ],
         // #1554 — the whole programme is the one wrapper's rows.
         occurrences: [
@@ -163,7 +168,10 @@ describe("readAllocationRequest slot payload", () => {
   });
 
   it("carries the request's requested times", async () => {
-    const request = await readAllocationRequest("consultation-1", "consultation");
+    const request = await readAllocationRequest(
+      "consultation-1",
+      "consultation",
+    );
 
     expect(request?.slots).toHaveLength(1);
     expect(Object.keys(request!.slots[0]).sort()).toEqual(ALLOWED_SLOT_KEYS);
@@ -244,8 +252,7 @@ describe("readAllocationRequest slot payload", () => {
     // A consultation id queried as a subscription: the page tries the named
     // table first, then the other one, redirecting to ?type=<correct> — so
     // the miss must be a null, never a throw or a wrong-typed row.
-    const subscriptionFindUnique = prisma.subscription
-      .findUnique as jest.Mock;
+    const subscriptionFindUnique = prisma.subscription.findUnique as jest.Mock;
     subscriptionFindUnique.mockResolvedValue(null);
 
     await expect(
@@ -254,5 +261,23 @@ describe("readAllocationRequest slot payload", () => {
     expect(subscriptionFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "consultation-1" } }),
     );
+  });
+});
+
+// #1766 — the subscription checkout page sends a START only; the window is
+// the first cycle and the server derives it, so no client end travels.
+describe("subscription checkout payload", () => {
+  it("subscription payload carries start only", () => {
+    const start = "2026-03-02T09:00:00.000Z";
+    const payload = createCheckoutData({
+      appointmentType: "SUBSCRIPTION",
+      planId: "plan-1",
+      paymentGateway: "RAZORPAY",
+      schedulingPeriodStartsAt: start,
+    });
+
+    expect(payload.schedulingPeriodStartsAt).toBe(start);
+    expect(payload.schedulingPeriodEndsAt).toBeUndefined();
+    expect(checkoutSchema.safeParse(payload).success).toBe(true);
   });
 });
