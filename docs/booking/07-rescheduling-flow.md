@@ -299,20 +299,20 @@ This path runs the full auto-allocation algorithm. It is reschedule-aware -- see
 ```mermaid
 sequenceDiagram
     participant Con as Consultant (Browser)
-    participant Tab as RequestRequestSchedulingTab
-    participant API_List as GET /api/requests
+    participant Tab as RequestsInbox
+    participant API_List as GET /api/bookings/inbox
     participant API_Alloc as POST /api/allocate
     participant DB as Database
     participant Service as SchedulingService
 
-    Con->>Tab: Opens Requests tab
-    Tab->>API_List: Fetch PENDING requests
-    API_List->>DB: Query consultations/subscriptions<br/>where status = PENDING
-    DB-->>API_List: Return events with slots
-    API_List-->>Tab: Events with tentative slot counts
+    Con->>Tab: Opens the Requests inbox
+    Tab->>API_List: Fetch the tab's cohort
+    API_List->>DB: readRequestsInbox: consultations/subscriptions<br/>where status in (PENDING, APPROVED_PENDING_PAYMENT)
+    DB-->>API_List: Return rows with live occurrences
+    API_List-->>Tab: Rows with released/tentative counts and a deadline bucket
 
-    Tab->>Tab: Calculate badges per request
-    Note over Tab: Count tentative vs total slots<br/>Determine badge type and color
+    Tab->>Tab: Derive each row's words
+    Note over Tab: deriveBookingPresentation names the state;<br/>rescheduledSlotCount gates "Approve"
 
     Tab->>Con: Display requests with badges
 

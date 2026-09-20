@@ -372,8 +372,41 @@ function consultationRow(
   );
 }
 
+/** The fields the entitlement needs; the slim next-cycle count reads only these. */
+const ENTITLEMENT_SELECT = {
+  id: true,
+  sessionsTotal: true,
+  schedulingPeriodStartsAt: true,
+  schedulingTimezone: true,
+  subscriptionPlan: {
+    select: {
+      sessionsPerWeek: true,
+      durationInMonths: true,
+      totalSessions: true,
+    },
+  },
+  appointment: {
+    select: {
+      occurrences: {
+        where: { deletedAt: null },
+        select: {
+          startsAt: true,
+          endsAt: true,
+          isTentative: true,
+          completionStatus: true,
+          deletedAt: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.SubscriptionSelect;
+
+type EntitlementRow = Prisma.SubscriptionGetPayload<{
+  select: typeof ENTITLEMENT_SELECT;
+}>;
+
 function entitlementOf(
-  s: SubscriptionRow,
+  s: EntitlementRow,
   now: Date,
 ): SubscriptionEntitlement | null {
   const total = sessionsTotalOf(s);
@@ -671,6 +704,21 @@ async function readNextCycleRows(
     .filter((row) => (row.entitlement?.remaining ?? 0) > 0);
 }
 
+/** #1766 — how many finished cycles still have sessions left, without building rows. */
+async function countNextCycle(
+  cp: string,
+  scope: Scope,
+  now: Date,
+): Promise<number> {
+  const candidates = await prisma.subscription.findMany({
+    where: { ...nextCycleSubscriptionWhere(cp, scope), deletedAt: null },
+    select: ENTITLEMENT_SELECT,
+    take: INBOX_SCAN,
+  });
+  return candidates.filter((s) => (entitlementOf(s, now)?.remaining ?? 0) > 0)
+    .length;
+}
+
 /** Tab labels: the default cohort's size per type, read with the same predicates. */
 async function readCounts(
   cp: string,
@@ -708,7 +756,7 @@ async function readCounts(
           deletedAt: null,
         },
       })) +
-      (await readNextCycleRows(cp, scope, now)).length;
+      (await countNextCycle(cp, scope, now));
   }
   if (known?.type === "trial") counts.trial = known.total;
   else {

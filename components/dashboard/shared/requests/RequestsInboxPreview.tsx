@@ -81,6 +81,8 @@ export function RequestsInboxPreview({
     staleTime: 30_000,
   });
 
+  // A disabled query never leaves pending; nothing to show without an id.
+  if (consultantId === "") return null;
   if (query.isPending) {
     return (
       <div role="status" aria-live="polite" className="space-y-2 p-2">

@@ -117,13 +117,17 @@ async function postLifecycle(
   return { status: response.status, body };
 }
 
-const requestPath = (row: InboxRowInput) =>
-  `/api/bookings/${row.kind === "subscription" ? "subscriptions" : "consultations"}/${encodeURIComponent(row.id)}`;
-
 const requestType = (row: InboxRowInput): AppointmentsType =>
   row.kind === "subscription" || row.kind === "next-cycle"
     ? AppointmentsType.SUBSCRIPTION
     : AppointmentsType.CONSULTATION;
+
+const requestPath = (row: InboxRowInput) =>
+  `/api/bookings/${
+    requestType(row) === AppointmentsType.SUBSCRIPTION
+      ? "subscriptions"
+      : "consultations"
+  }/${encodeURIComponent(row.id)}`;
 
 /**
  * The consultant Requests inbox (#1775): type tabs, chips, sort and deadline

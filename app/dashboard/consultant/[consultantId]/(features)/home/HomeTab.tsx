@@ -636,7 +636,7 @@ export function HomeTab({
                     </p>
                   )}
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
-                  <RequestsInboxPreview />
+                  <RequestsInboxPreview consultantProfileId={consultantId} />
                 </div>
               </DataCard>
 
