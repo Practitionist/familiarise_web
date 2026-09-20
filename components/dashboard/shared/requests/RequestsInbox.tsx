@@ -59,7 +59,6 @@ import {
   type RequestedSlotsConfirmation,
 } from "./components/RequestedSlotsDialog";
 import {
-  CHIPS_FOR_TYPE,
   EMPTY_STATE,
   TOAST,
   TYPE_LABEL,
@@ -147,11 +146,7 @@ export function RequestsInbox({
     () => readInboxParams((key) => searchParams.get(key)),
     [searchParams],
   );
-  // A chip the tab does not offer is dropped, never sent.
-  const chip =
-    params.chip && CHIPS_FOR_TYPE[params.type].includes(params.chip)
-      ? params.chip
-      : null;
+  const chip = params.chip;
   const queryArgs = {
     consultantProfileId,
     scope: orgScope,

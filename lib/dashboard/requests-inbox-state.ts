@@ -23,6 +23,13 @@ export const INBOX_CHIPS = [
 ] as const;
 export type InboxChip = (typeof INBOX_CHIPS)[number];
 
+/** Which chips a tab offers; a next cycle only exists on a subscription. */
+export const CHIPS_FOR_TYPE: Record<InboxType, InboxChip[]> = {
+  consultation: ["answer-today", "awaiting-payment", "declined"],
+  subscription: ["answer-today", "awaiting-payment", "next-cycle", "declined"],
+  trial: ["answer-today", "awaiting-payment", "declined"],
+};
+
 export const INBOX_SORTS = [
   "new",
   "old",
@@ -248,9 +255,14 @@ export function readInboxParams(
   const chip = get("chip");
   const sort = get("sort");
   const page = Number.parseInt(get("page") ?? "1", 10);
+  const safeType = isInboxType(type) ? type : INBOX_DEFAULT_TYPE;
+  // A chip the tab does not offer is dropped, never sent.
   return {
-    type: isInboxType(type) ? type : INBOX_DEFAULT_TYPE,
-    chip: isInboxChip(chip) ? chip : null,
+    type: safeType,
+    chip:
+      isInboxChip(chip) && CHIPS_FOR_TYPE[safeType].includes(chip)
+        ? chip
+        : null,
     sort: isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT,
     page: Number.isFinite(page) && page >= 1 ? page : 1,
   };

@@ -36,13 +36,6 @@ export const CHIP_LABEL: Record<InboxChip, string> = {
   declined: "Declined",
 };
 
-/** Which chips a tab offers; a next cycle only exists on a subscription. */
-export const CHIPS_FOR_TYPE: Record<InboxType, InboxChip[]> = {
-  consultation: ["answer-today", "awaiting-payment", "declined"],
-  subscription: ["answer-today", "awaiting-payment", "next-cycle", "declined"],
-  trial: ["answer-today", "awaiting-payment", "declined"],
-};
-
 export const SORT_LABEL: Record<InboxSort, string> = {
   priority: "Priority",
   deadline: "Deadline",

@@ -1,13 +1,14 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import type {
-  InboxChip,
-  InboxType,
+import {
+  CHIPS_FOR_TYPE,
+  type InboxChip,
+  type InboxType,
 } from "@/lib/dashboard/requests-inbox-state";
 import { cn } from "@/utils/tailwind";
 
-import { CHIP_LABEL, CHIPS_FOR_TYPE } from "./labels";
+import { CHIP_LABEL } from "./labels";
 
 /** The filter chips one tab offers; one active at a time, none = the whole tab. */
 export function InboxChips({
