@@ -39,10 +39,14 @@ jest.mock("../../lib/novu/service", () => ({
   notifyPayoutProcessed: jest.fn(),
 }));
 
+import prisma from "@/lib/prisma";
 import {
+  payoutEligibilityReason,
   payoutRequirements,
   type PayoutRequirementsInput,
 } from "@/lib/payments/payouts/payout-requirements";
+import { checkPayoutEligibility } from "@/lib/payments/payouts/payout-service";
+import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 
 const base: PayoutRequirementsInput = {
   consultantProfileId: "cp-1",
@@ -107,5 +111,73 @@ describe("Y2-0 payoutRequirements", () => {
         /^\/dashboard\/consultant\/cp-1\/settings\/payouts#/,
       );
     }
+  });
+});
+
+describe("Y2-1 payoutEligibilityReason", () => {
+  const eligible = {
+    livePayoutsEnabled: true,
+    isIndianResident: true,
+    defaultAccount: { isVerified: true },
+    readyAmount: 60_000,
+    minimumAmount: 50_000,
+  };
+  it.each([
+    ["LIVE_PAYOUTS_OFF", { livePayoutsEnabled: false }],
+    ["NON_INDIA", { isIndianResident: false }],
+    ["NO_ACCOUNT", { defaultAccount: null }],
+    ["UNVERIFIED", { defaultAccount: { isVerified: false } }],
+    ["BELOW_MINIMUM", { readyAmount: 100 }],
+  ] as const)("%s", (reason, overrides) => {
+    expect(payoutEligibilityReason({ ...eligible, ...overrides })).toBe(reason);
+  });
+
+  it("the flag outranks residency, which outranks the account", () => {
+    expect(
+      payoutEligibilityReason({
+        ...eligible,
+        livePayoutsEnabled: false,
+        isIndianResident: false,
+        defaultAccount: null,
+      }),
+    ).toBe("LIVE_PAYOUTS_OFF");
+  });
+
+  it("checkPayoutEligibility relays the reason and null when eligible", async () => {
+    const aggregate = prisma.consultantEarnings.aggregate as jest.Mock;
+    const findFirst = prisma.payoutAccount.findFirst as jest.Mock;
+    const findUnique = prisma.consultantTaxInfo.findUnique as jest.Mock;
+    aggregate.mockResolvedValue({
+      _sum: {
+        consultantSharePaise: BigInt(PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT),
+        refundedShareAmount: BigInt(0),
+      },
+    });
+    findUnique.mockResolvedValue({ isIndianResident: true });
+
+    findFirst.mockResolvedValue({
+      id: "pa-1",
+      provider: "RAZORPAY",
+      isVerified: false,
+    });
+    const unverified = await checkPayoutEligibility("cp-1");
+    expect(unverified).toMatchObject({
+      isEligible: false,
+      hasPayoutAccount: false,
+      reason: "UNVERIFIED",
+    });
+
+    findFirst.mockResolvedValue({
+      id: "pa-1",
+      provider: "RAZORPAY",
+      isVerified: true,
+    });
+    const ok = await checkPayoutEligibility("cp-1");
+    expect(ok).toMatchObject({
+      isEligible: true,
+      hasPayoutAccount: true,
+      defaultAccountId: "pa-1",
+      reason: null,
+    });
   });
 });

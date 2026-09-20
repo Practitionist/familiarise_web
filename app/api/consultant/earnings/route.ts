@@ -11,6 +11,7 @@ import { getSession } from "@/lib/auth-server";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 import { resolveOrgScope } from "@/lib/api/scope/parse";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
 
 /**
  * GET /api/consultant/earnings
@@ -88,6 +89,12 @@ export async function GET(req: NextRequest) {
       organizationId,
     });
 
+    // #1675 PR-Y2 — the setup steps the Earnings banner links to, from the
+    // same derivation the Get-paid page renders; a plain read after the payload.
+    const payoutRequirements = await readPayoutRequirements(
+      consultantProfile.id,
+    );
+
     // #776 §B honesty flag, ported from the org payouts page. With
     // ENABLE_LIVE_PAYOUTS off, a BATCHED earning is reserved at the platform,
     // not in flight to a bank — and the earnings page's own tooltip said "cash
@@ -95,6 +102,7 @@ export async function GET(req: NextRequest) {
     // and it is server-only, so it rides the payload.
     return NextResponse.json({
       ...payload,
+      payoutRequirements,
       livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
     });
   } catch (error) {
