@@ -7,11 +7,36 @@
  * a next step, never dropped. U1: only the pay-link lapse (the
  * APPROVED_PENDING_PAYMENT → EXPIRED edge) becomes a Home row, and that row
  * carries the "Request again" link. U2: a FAILED refund gets the support line,
- * a SUCCEEDED one does not.
+ * a SUCCEEDED one does not. X-1: the payments route still answers 403 for a
+ * foreign consulteeId now that the read lives in lib/data.
  */
+
+jest.mock("../../lib/auth-helpers", () => ({
+  __esModule: true,
+  requireApiAuth: jest.fn(),
+  isPrivileged: jest.fn(() => false),
+  forbiddenResponse: jest.fn(
+    (message: string) =>
+      new Response(JSON.stringify({ error: message }), { status: 403 }),
+  ),
+}));
+jest.mock("../../lib/prisma", () => ({
+  __esModule: true,
+  default: {
+    consulteeProfile: { findUnique: jest.fn() },
+    membership: { findMany: jest.fn() },
+  },
+}));
+jest.mock("../../lib/data/consultee-payments", () => ({
+  __esModule: true,
+  readConsulteePayments: jest.fn(),
+}));
 
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { requireApiAuth } from "@/lib/auth-helpers";
+import { readConsulteePayments } from "@/lib/data/consultee-payments";
+import { GET as getPayments } from "@/app/api/dashboard/consultee/[consulteeId]/payments/route";
 import {
   toLapsedPayLinks,
   type ExpiredRequestRow,
@@ -77,5 +102,20 @@ describe("U2 — failed refund line", () => {
     expect(
       renderToStaticMarkup(<FailedRefundNote status="SUCCEEDED" {...props} />),
     ).toBe("");
+  });
+});
+
+describe("X-1 — the payments route keeps its ownership guard", () => {
+  it("answers 403 for a foreign consulteeId without reading anything", async () => {
+    (requireApiAuth as jest.Mock).mockResolvedValue({
+      session: {
+        user: { id: "user-1", role: "USER", consulteeProfileId: "mine" },
+      },
+    });
+    const res = await getPayments(new Request("http://localhost/api"), {
+      params: Promise.resolve({ consulteeId: "someone-else" }),
+    });
+    expect(res.status).toBe(403);
+    expect(readConsulteePayments).not.toHaveBeenCalled();
   });
 });
