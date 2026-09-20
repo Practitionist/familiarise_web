@@ -609,10 +609,12 @@ ALTER TABLE "ModerationReport" ADD CONSTRAINT "moderation_report_review_has_revi
 -- #1569 — one earning per (payment, consultant, role, occurrence). A whole-
 -- purchase fee carries a NULL occurrence, and NULLS NOT DISTINCT (PG 15) keeps
 -- that single row unique too. Replaces the Prisma @@unique on the first three.
+-- #1766 — a subscription mints one row per cycle, told apart by cycleOrdinal;
+-- every other row carries NULL there and stays a single row.
 DROP INDEX IF EXISTS "consultant_earnings_occurrence_key";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "consultant_earnings_occurrence_key"
-  ON "ConsultantEarnings" ("paymentId", "consultantProfileId", "role", "appointmentOccurrenceId") NULLS NOT DISTINCT;
+  ON "ConsultantEarnings" ("paymentId", "consultantProfileId", "role", "appointmentOccurrenceId", "cycleOrdinal") NULLS NOT DISTINCT;
 -- SPLIT
 -- #1580 — one live PRESENTER per plan. The invite transaction checks this too;
 -- the partial uniques make a racing second presenter impossible to commit.

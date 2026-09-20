@@ -103,6 +103,8 @@ Upstream of parking, the checkout path now hard-requires a **verified domain cla
 
 The hold window is what gives the platform time to absorb a refund or dispute before money leaves. At mint time, `createEarningsFromPayment` sets `holdUntil = now + HOLD_PERIOD_HOURS[appointmentType]` (`lib/payments/payouts/constants.ts`). The windows are keyed by appointment type and run from the moment of earnings creation, not from the appointment's completion time.
 
+Since #1569 the anchor is the later of the capture and the end of the last live occurrence, and since #1766 (PR-Z2) a subscription is the exception to "set at mint time": its earnings are one row per cycle with `holdUntil` NULL, meaning not yet delivered, and the completion path stamps each tranche's hold once its cycle's last session completes. A NULL hold is skipped by `recomputeEarningsHold` and never matched by the release job, because `holdUntil <= now` is NULL-safe in SQL.
+
 The table below lists the configured hold periods and the reasoning behind each.
 
 | Appointment type | Hold (hours) | Rationale                                 |

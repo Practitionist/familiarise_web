@@ -13,6 +13,9 @@
  * circumstance. A test that fabricated its input would not have caught that.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import {
   findDestructive,
   normalise,
@@ -156,6 +159,27 @@ describe("sidecar-owned unique indexes", () => {
     expect(owned.has("appointment_feedback_level_key")).toBe(true);
     expect(owned.has("consultant_earnings_occurrence_key")).toBe(true);
     expect(owned.has("Payment_pkey")).toBe(false);
+  });
+
+  it("#1766 — the earnings unique carries the cycle ordinal and keeps NULLS NOT DISTINCT", () => {
+    // A subscription mints one row per cycle on the same (payment, consultant,
+    // role, NULL occurrence) key, so the widened unique is what lets the
+    // tranches coexist while a second whole-purchase row still collides.
+    const sql = readFileSync(
+      path.join(process.cwd(), "prisma/sql/check-constraints.sql"),
+      "utf8",
+    );
+    const create = sql.match(
+      /CREATE UNIQUE INDEX IF NOT EXISTS "consultant_earnings_occurrence_key"\s+ON "ConsultantEarnings" \(([^)]*)\)\s+NULLS NOT DISTINCT;/,
+    );
+    expect(create).not.toBeNull();
+    expect(create![1].split(",").map((c) => c.trim())).toEqual([
+      '"paymentId"',
+      '"consultantProfileId"',
+      '"role"',
+      '"appointmentOccurrenceId"',
+      '"cycleOrdinal"',
+    ]);
   });
 
   it("names the index a DROP INDEX statement targets, and nothing else", () => {

@@ -42,6 +42,7 @@ function row(index: number, completionStatus: string) {
 function wrapperWith(statuses: string[]) {
   return {
     organizationId: null,
+    payment: [{ id: "pay-1" }],
     subscription: {
       id: "sub-1",
       status: "APPROVED",
@@ -95,6 +96,11 @@ function makeTx(statuses: string[]) {
     tx: {
       appointment: {
         findUnique: jest.fn().mockResolvedValue(wrapperWith(statuses)),
+      },
+      // #1766 (PR-Z2) — the money half runs first; the bell is what this
+      // suite pins, so the stamp is a counted no-op here.
+      consultantEarnings: {
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       notificationOutbox: { upsert },
       membership: { findMany: jest.fn().mockResolvedValue([]) },

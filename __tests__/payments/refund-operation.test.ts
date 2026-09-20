@@ -1552,3 +1552,94 @@ describe("applyRefundCascade — gateway-cron entry path", () => {
     expect(state.billingAccounts.get("ba-1")!.walletBalance).toBe(before);
   });
 });
+
+// ===========================================================================
+// #1766 — subscription tranches: the clawback consumes the newest cycle first
+// ===========================================================================
+
+describe("applyRefundCascade — #1766 one clawback over the tranches, newest first", () => {
+  /** A 3-cycle subscription: pool 9 000 split 3 000 per tranche, tranche 0 matured. */
+  function seedTranchePayment(amount = 10_000) {
+    seedSinglePartyWalletPayment({
+      amount,
+      consultantSharePaise: 0,
+      withOrgEarnings: false,
+      organizationId: null,
+    });
+    state.consultantEarnings.delete("ce-1");
+    const holds: (Date | null)[] = [
+      new Date("2026-03-20T00:00:00Z"),
+      null,
+      null,
+    ];
+    for (const k of [0, 1, 2]) {
+      state.consultantEarnings.set(`tr-${k}`, {
+        id: `tr-${k}`,
+        paymentId: "pay-1",
+        consultantProfileId: "cp-1",
+        consultantSharePaise: 3_000,
+        grossAmount: 3_333,
+        platformFeePaise: 333,
+        refundedShareAmount: 0,
+        status: "PENDING",
+        cycleOrdinal: k,
+        holdUntil: holds[k],
+      });
+    }
+  }
+
+  it("a refund worth 1.5 tranches empties ordinal 2, halves ordinal 1 and leaves matured 0 alone", async () => {
+    seedTranchePayment();
+    state.refunds.push({
+      id: "rf-1",
+      paymentId: "pay-1",
+      amountPaise: 5_000,
+      status: "PENDING",
+      cascadedAt: null,
+    });
+
+    await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: "rf-1",
+      amountPaise: 5_000,
+      reason: "cancel after cycle 1",
+      initiatedByUserId: null,
+    });
+
+    // 50% of the 9 000 pool = 4 500, taken from the top down.
+    const row = (k: number) => state.consultantEarnings.get(`tr-${k}`)!;
+    expect(row(2).refundedShareAmount).toBe(3_000);
+    expect(row(2).status).toBe("REFUNDED");
+    expect(row(1).refundedShareAmount).toBe(1_500);
+    expect(row(1).status).toBe("PENDING");
+    expect(row(0).refundedShareAmount).toBe(0);
+    expect(row(0).status).toBe("PENDING");
+  });
+
+  it("a legacy single-row payment keeps the per-row proportion", async () => {
+    seedSinglePartyWalletPayment({
+      consultantSharePaise: 8_000,
+      withOrgEarnings: false,
+      organizationId: null,
+    });
+    state.refunds.push({
+      id: "rf-2",
+      paymentId: "pay-1",
+      amountPaise: 2_500,
+      status: "PENDING",
+      cascadedAt: null,
+    });
+
+    await applyRefundCascade(tx, {
+      paymentId: "pay-1",
+      refundId: "rf-2",
+      amountPaise: 2_500,
+      reason: "partial",
+      initiatedByUserId: null,
+    });
+
+    expect(state.consultantEarnings.get("ce-1")!.refundedShareAmount).toBe(
+      2_000,
+    );
+  });
+});

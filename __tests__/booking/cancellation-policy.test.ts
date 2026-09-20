@@ -165,3 +165,96 @@ describe("quoteBookingRefund — #1500 credit-funded bookings", () => {
     expect(quote.refundPaise).toBe(100_000);
   });
 });
+
+describe("quoteBookingRefund — #1766 unused sessions against the plan", () => {
+  const HOUR = 3_600_000;
+  const NOW = Date.parse("2026-09-20T10:00:00Z");
+  const plan = (
+    overrides: Partial<Parameters<typeof quoteBookingRefund>[0]> = {},
+  ) =>
+    quoteBookingRefund({
+      policy: null,
+      hoursUntilNextSession: null,
+      slotsTotal: 0,
+      sessionsRemaining: 0,
+      isSubscription: true,
+      isConsultantInitiated: false,
+      isFreeCreditFunded: false,
+      grossPaise: 12_000,
+      refundablePaise: 12_000,
+      sessionsTotal: 12,
+      sessionsCompleted: 4,
+      scheduledStarts: [NOW + 1 * HOUR],
+      nowMs: NOW,
+      ...overrides,
+    });
+
+  it("12-plan, 4 delivered, 1 scheduled in an hour: seven never-scheduled at 100%, the late one at 0%", () => {
+    const quote = plan();
+    expect(quote.refundPaise).toBe(7_000);
+    expect(quote.tierRefundPct).toBe(0);
+    expect(quote.prorated).toBe(true);
+    expect(quote.proratedBasePaise).toBe(8_000);
+    // 7 000 of the 8 000 undelivered base: the dialog shows one honest number.
+    expect(quote.refundPct).toBe(87.5);
+  });
+
+  it("consultant-initiated pays every undelivered session in full", () => {
+    expect(plan({ isConsultantInitiated: true }).refundPaise).toBe(8_000);
+  });
+
+  it("a never-scheduled session takes the ladder's infinite-notice rung, not a hardcoded 100%", () => {
+    const strict = terms({
+      policyId: "policy-strict",
+      source: "ORG",
+      tiers: [
+        { hoursBefore: 72, refundPct: 80 },
+        { hoursBefore: 0, refundPct: 10 },
+      ],
+      consultantInitiatedPct: 90,
+    });
+    // Seven never scheduled at the 80% top rung, one in an hour at 10%.
+    expect(plan({ policy: strict }).refundPaise).toBe(5_600 + 100);
+    expect(
+      plan({ policy: strict, isConsultantInitiated: true }).refundPaise,
+    ).toBe(7_200);
+  });
+
+  it("6 of 144 allocated, 3 delivered, 3 far out: 141 sessions come back, not half", () => {
+    const quote = plan({
+      grossPaise: 144_000,
+      refundablePaise: 144_000,
+      sessionsTotal: 144,
+      sessionsCompleted: 3,
+      scheduledStarts: [NOW + 72 * HOUR, NOW + 96 * HOUR, NOW + 120 * HOUR],
+    });
+    expect(quote.refundPaise).toBe(141_000);
+    expect(quote.refundPct).toBe(100);
+  });
+
+  it("an untouched plan whose price does not divide still refunds the whole gross", () => {
+    const quote = plan({
+      grossPaise: 500_000,
+      refundablePaise: 500_000,
+      sessionsTotal: 3,
+      sessionsCompleted: 0,
+      scheduledStarts: [NOW + 72 * HOUR, NOW + 96 * HOUR, NOW + 120 * HOUR],
+    });
+    expect(quote.refundPaise).toBe(500_000);
+    expect(quote.prorated).toBe(false);
+  });
+
+  it("clamps to the balance an earlier refund left", () => {
+    expect(plan({ refundablePaise: 5_000 }).refundPaise).toBe(5_000);
+  });
+
+  it("falls back to the allocated-slot proration when the plan total is unknown", () => {
+    const quote = plan({
+      sessionsTotal: null,
+      slotsTotal: 6,
+      sessionsRemaining: 3,
+      hoursUntilNextSession: 72,
+    });
+    expect(quote.refundPaise).toBe(6_000);
+  });
+});
