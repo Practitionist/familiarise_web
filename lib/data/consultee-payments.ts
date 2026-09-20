@@ -20,6 +20,7 @@ import {
   requestHoldDeadline,
   type BookingPresentationInput,
   type PaymentInput,
+  type PaymentRowInput,
 } from "@/lib/dashboard/money-state";
 import {
   BUYER_PAYMENT_DISPLAY_SELECT,
@@ -28,12 +29,6 @@ import {
 
 /** A Date on the server seed, an ISO string after a JSON refetch. */
 type Stamp = Date | string;
-
-/** What `derivePaymentPresentation` reads: the detail input minus its sessions. */
-export type ConsulteePaymentPresentationInput = Omit<
-  BookingPresentationInput,
-  "occurrences"
->;
 
 export interface ConsulteePaymentRefund {
   id: string;
@@ -73,7 +68,7 @@ export interface ConsulteePaymentRow {
   receiptUrl: string | null;
   expiresAt: Stamp | null;
   createdAt: Stamp;
-  presentation: ConsulteePaymentPresentationInput;
+  presentation: PaymentRowInput;
 }
 
 export interface ConsulteeCreditRow {
@@ -285,7 +280,7 @@ function toRow(p: PaymentRecord): ConsulteePaymentRow {
     (request?.status === "PENDING"
       ? requestHoldDeadline(request.kind, request.requestedAt)
       : null);
-  const presentation: ConsulteePaymentPresentationInput = {
+  const presentation: PaymentRowInput = {
     appointmentType: a?.appointmentType ?? "CONSULTATION",
     request,
     payments: [toPaymentInput(p)],

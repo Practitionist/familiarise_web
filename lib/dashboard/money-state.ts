@@ -778,3 +778,21 @@ export function deriveBookingPresentation(
     settled,
   };
 }
+
+/** A history row's input: the detail page's, minus the sessions a list never carries. */
+export type PaymentRowInput = Omit<BookingPresentationInput, "occurrences">;
+
+// #1675 — list rows have no occurrences; the money half is identical to the
+// detail page's, so this is the same derivation with three fields picked.
+export function derivePaymentPresentation(
+  input: PaymentRowInput,
+  viewer: Viewer,
+  options?: DeriveOptions,
+): Pick<BookingPresentation, "moneyState" | "nextAction" | "settled"> {
+  const { moneyState, nextAction, settled } = deriveBookingPresentation(
+    { ...input, occurrences: [] },
+    viewer,
+    options,
+  );
+  return { moneyState, nextAction, settled };
+}
