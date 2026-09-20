@@ -1,8 +1,13 @@
-"use client";
-
-import { use } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { Suspense } from "react";
+import { notFound } from "next/navigation";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
+import prisma from "@/lib/prisma";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { readConsulteePayments } from "@/lib/data/consultee-payments";
 import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { PaymentsTab } from "./PaymentsTab";
 
@@ -10,66 +15,58 @@ type PageProps = {
   params: Promise<{ consulteeId: string }>;
 };
 
-export default function PaymentsPage({ params }: Readonly<PageProps>) {
-  const { consulteeId } = use(params);
-
-  // Personal pin, matching the sibling Appointments page (ADR 19). The old
-  // defaultForOrgMember: "all" here papered over the missing attendee arm in
-  // the orgMember scope (#1166 ORG-5); org-funded transactions belong to the
-  // org dashboard's money views. The route defaults personal without
-  // ?orgScope=.
-  const {
-    data: paymentsData,
-    isLoading,
-    error,
-  } = useQuery({
-    queryKey: ["consultee-payments", consulteeId, "personal"] as const,
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/payments`,
-      );
-      if (!res.ok) throw new Error("Failed to fetch payments");
-      const json = await res.json();
-      return json.data;
-    },
-    staleTime: 2 * 60 * 1000,
-    // E2E-audit P1 fix — this is the only money surface without an SSR
-    // seed, and the global query client sets refetchOnMount/refetchOnWindow
-    // Focus to false, so a purchase made elsewhere in the same SPA session
-    // never appeared here until a full reload. Remounting this tab must
-    // always revalidate: the newest transaction (and REFUNDED flips caused
-    // by auto-refunds) land within one navigation.
-    refetchOnMount: "always",
+/**
+ * /dashboard/consultee/[consulteeId]/payments — Needs you + History, Credits.
+ *
+ * #1675 X1 — this was the only money surface with no SSR seed. The page now
+ * reads through the same `lib/data` function the API route answers with and
+ * hydrates react-query, so the first paint carries the rows and the client
+ * query only revalidates.
+ */
+export default async function PaymentsPage({ params }: Readonly<PageProps>) {
+  const { consulteeId } = await params;
+  // Ownership is enforced HERE, not by the layout: the layout is a client
+  // component, so its check runs after this server render has already read
+  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
+  await requirePersonalProfileAccess("consultee", consulteeId);
+  const profile = await prisma.consulteeProfile.findUnique({
+    where: { id: consulteeId },
+    select: { userId: true },
   });
-
-  if (isLoading) {
-    return <PageSkeleton />;
-  }
-
-  if (error) {
-    return (
-      <DashboardErrorBoundary>
-        <div className="flex items-center justify-center min-h-[400px]">
-          <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
-            <h3 className="font-semibold mb-2">Error Loading Payments</h3>
-            <p className="text-sm">
-              {error.message || "Failed to load payments. Please try again."}
-            </p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      </DashboardErrorBoundary>
-    );
-  }
+  if (!profile) notFound();
 
   return (
-    <DashboardErrorBoundary>
-      <PaymentsTab data={paymentsData} consulteeId={consulteeId} />
-    </DashboardErrorBoundary>
+    <Suspense fallback={<PageSkeleton />}>
+      <SeededPayments consulteeId={consulteeId} userId={profile.userId} />
+    </Suspense>
+  );
+}
+
+async function SeededPayments({
+  consulteeId,
+  userId,
+}: Readonly<{
+  consulteeId: string;
+  userId: string;
+}>) {
+  const queryClient = new QueryClient();
+  // The key MUST match PaymentsTab's useQuery key or hydration won't apply.
+  // Personal pin (ADR 19): org-funded transactions belong to the org
+  // dashboard's money views. prefetchQuery swallows a failed read, so the
+  // client falls back to its own fetch and its error state.
+  await queryClient.prefetchQuery({
+    queryKey: ["consultee-payments", consulteeId, "personal"],
+    queryFn: () =>
+      readConsulteePayments({
+        consulteeId,
+        userId,
+        orgScope: { kind: "personal" },
+      }),
+  });
+
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <PaymentsTab consulteeId={consulteeId} />
+    </HydrationBoundary>
   );
 }
