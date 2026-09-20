@@ -70,7 +70,11 @@ function makeTx(statuses: string[]) {
       create,
     }: {
       where: { transactionId: string };
-      create: { transactionId: string; payload: Record<string, unknown> };
+      create: {
+        transactionId: string;
+        workflowId: string;
+        payload: Record<string, unknown>;
+      };
     }) => {
       const existing = rows.get(where.transactionId);
       const staged = existing ?? {
