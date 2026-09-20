@@ -5648,11 +5648,15 @@ model ConsultantEarnings {
   // NULL for a whole-purchase fee (subscription, class) until it is split.
   appointmentOccurrenceId String?
 
+  /// #1766 — 0-based earnings tranche of a subscription; NULL for every other row.
+  cycleOrdinal Int?
+
   // Status tracking
   status           EarningStatus  @default(PENDING)
-  // #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
-  // recomputed when a reschedule moves the call.
-  holdUntil        DateTime       @db.Timestamptz
+  /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
+  /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
+  /// yet delivered; stamped by the completion path.
+  holdUntil        DateTime?      @db.Timestamptz
   paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
@@ -5672,9 +5676,9 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  // One row per (payment, consultant, role, occurrence): the NULLS NOT DISTINCT
-  // sidecar unique consultant_earnings_occurrence_key in prisma/sql; no
-  // @@unique/@@index on that set here (#1268).
+  // One row per (payment, consultant, role, occurrence, cycle): the NULLS NOT
+  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/sql;
+  // no @@unique/@@index on that set here (#1268, #1766).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])

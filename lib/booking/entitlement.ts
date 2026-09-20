@@ -123,6 +123,48 @@ function cycleEnd(start: Date, unit: CycleUnit, tz: string): Date {
   return new Date(fromZonedTime(nextCycleDay, tz).getTime() - 1);
 }
 
+/**
+ * The plan's cycles as money tranches (#1766): `count` tranches of
+ * `capacity` sessions, the last one possibly short. `capacityOf(k)` is what
+ * tranche `k` holds; tranche `k` has matured once `completed` covers it, or
+ * once every session of the plan is delivered.
+ */
+export interface SubscriptionTranches {
+  capacity: number;
+  count: number;
+  total: number;
+  capacityOf: (k: number) => number;
+}
+
+export function subscriptionTranches(
+  plan: EntitlementPlanShape,
+  sessionsTotal: number,
+): SubscriptionTranches {
+  const total = Math.max(0, sessionsTotal);
+  const capacity = cycleCapacity(plan, total);
+  const count = Math.max(1, Math.ceil(total / capacity));
+  return {
+    capacity,
+    count,
+    total,
+    capacityOf: (k) =>
+      k === count - 1 ? total - (count - 1) * capacity : capacity,
+  };
+}
+
+/** Highest tranche ordinal delivered in full, or -1 when none is yet. */
+export function maturedTrancheOrdinal(
+  tranches: SubscriptionTranches,
+  completed: number,
+): number {
+  if (tranches.total > 0 && completed >= tranches.total)
+    return tranches.count - 1;
+  return Math.min(
+    Math.floor(completed / tranches.capacity) - 1,
+    tranches.count - 1,
+  );
+}
+
 /** The scheduling window checkout persists: the FIRST cycle only. */
 export function firstCycleWindow(
   plan: EntitlementPlanShape,
