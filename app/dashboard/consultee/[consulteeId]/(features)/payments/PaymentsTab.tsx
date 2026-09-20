@@ -43,6 +43,7 @@ import {
   resolveSponsoringOrgName,
 } from "@/lib/labels/session-labels";
 import { FailedRefundNote } from "./FailedRefundNote";
+import { NeedsYouBand } from "./NeedsYouBand";
 
 type PaymentItem = ConsulteePaymentRow;
 type CreditItem = ConsulteeCreditRow;
@@ -672,6 +673,7 @@ function PaymentsTabBody({
 
         {/* Payments (merged transactions + invoices) */}
         <TabsContent value="payments">
+          <NeedsYouBand consulteeId={consulteeId} />
           {data.payments.length === 0 ? (
             <EmptyState message="No payments yet" />
           ) : (
