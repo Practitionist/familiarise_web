@@ -93,10 +93,15 @@ export async function GET(req: NextRequest) {
     // not in flight to a bank — and the earnings page's own tooltip said "cash
     // is on its way to your bank". The client needs the flag to tell the truth,
     // and it is server-only, so it rides the payload.
-    return NextResponse.json({
-      ...payload,
-      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-    });
+    return NextResponse.json(
+      {
+        ...payload,
+        livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+      },
+      // Money truth is never cached (#1675); PR #1755 swaps this for the
+      // shared constant.
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),
