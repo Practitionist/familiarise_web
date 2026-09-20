@@ -368,6 +368,11 @@ export function AppointmentDetailClient({
         ? { ...item, label: "Withdraw request" }
         : item,
     );
+  // #1675 — a destructive overflow item (Withdraw/Cancel) no longer sits at
+  // the front of the action bar next to Approve/Pay; it renders last, past
+  // "Get help", where the row's other destructive secondary actions live.
+  const overflowPrimary = overflow.filter((item) => !item.destructive);
+  const overflowSecondary = overflow.filter((item) => item.destructive);
   const heldCount = detail.appointment.occurrences.filter(
     (o) => o.isTentative && !isDeadOccurrence(o),
   ).length;
@@ -532,7 +537,13 @@ export function AppointmentDetailClient({
                 with {vm.counterpart.name}
                 {vm.meta ? ` · ${vm.meta}` : ""}
                 {vm.group && vm.group.total > 0
-                  ? ` · ${vm.group.total} session${vm.group.total === 1 ? "" : "s"}`
+                  ? // #1675 — one session-count story: a plan's own header
+                    // reads the held/plan progress the money line no longer
+                    // repeats, instead of a second, plain total.
+                    (vm.kind === "SUBSCRIPTION" || vm.kind === "CLASS") &&
+                    presentation.sessionProgress
+                    ? ` · ${presentation.sessionProgress}`
+                    : ` · ${vm.group.total} session${vm.group.total === 1 ? "" : "s"}`
                   : ""}
               </p>
               {vm.nextAt && (
@@ -588,18 +599,13 @@ export function AppointmentDetailClient({
                   feedback={sessionFeedback}
                 />
               )}
-            {overflow.map((item) => (
+            {overflowPrimary.map((item) => (
               <Button
                 key={item.key}
                 variant="outline"
                 size="sm"
                 disabled={item.disabled}
                 onClick={item.onClick}
-                className={
-                  item.destructive
-                    ? "text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
-                    : undefined
-                }
               >
                 {item.label}
               </Button>
@@ -612,6 +618,18 @@ export function AppointmentDetailClient({
               <LifeBuoy className="mr-1.5 h-4 w-4" />
               Get help
             </Button>
+            {overflowSecondary.map((item) => (
+              <Button
+                key={item.key}
+                variant="outline"
+                size="sm"
+                disabled={item.disabled}
+                onClick={item.onClick}
+                className="text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-900/40 dark:hover:bg-red-900/20"
+              >
+                {item.label}
+              </Button>
+            ))}
           </div>
 
           {soleSession && soleSessionOver && sessionFeedback.isError && (
@@ -703,18 +721,26 @@ export function AppointmentDetailClient({
                 on screen twice: a private per-call rating on each session row
                 and a public review card above them, neither anchored to what
                 the user thought they were rating. What stays here is a link. */}
-            {role === "consultee" && vm.consultantProfileId && (
-              <p className="text-sm text-muted-foreground">
-                Reviewed this expert?{" "}
-                <Link
-                  href={`/explore/experts/${vm.consultantProfileId}#reviews`}
-                  className="font-medium text-foreground underline underline-offset-4"
-                >
-                  Write or update your review on their profile
-                </Link>
-                .
-              </p>
-            )}
+            {/* #1300/#1542/#1675 — asking before a session has actually run
+                invites a review of a call that never happened; the prompt
+                waits for the derived state or a completed occurrence. */}
+            {role === "consultee" &&
+              vm.consultantProfileId &&
+              (bookingState.state === "COMPLETED" ||
+                detail.appointment.occurrences.some(
+                  (o) => o.completionStatus === "COMPLETED",
+                )) && (
+                <p className="text-sm text-muted-foreground">
+                  Reviewed this expert?{" "}
+                  <Link
+                    href={`/explore/experts/${vm.consultantProfileId}#reviews`}
+                    className="font-medium text-foreground underline underline-offset-4"
+                  >
+                    Write or update your review on their profile
+                  </Link>
+                  .
+                </p>
+              )}
             {!soleSession && (
               <Section
                 title={

@@ -209,7 +209,11 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(c.moneyState.line).toBe(
       "Not due yet — Rachel is asked to pay after you approve.",
     );
-    expect(c.moneyState.detail).toContain("6 × ");
+    // #1675 — one session-count story: the money detail prices the plan,
+    // the header (not this line) owns the held/plan count.
+    expect(c.moneyState.detail).toBe(
+      "₹6,000.00 for the plan · 6 sessions · ₹1,000.00 each",
+    );
     expect(c.timeline.map((e) => `${e.done ? "●" : "○"} ${e.label}`)).toEqual([
       "● Requested by Rachel",
       "○ You approve",
@@ -272,5 +276,19 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
     expect(u.settled).toBe(false);
     expect(u.bookingState.state).toBe("CONFIRMED");
+  });
+
+  it("#1675 — one session-count story: a 6-held / 144-plan subscription", () => {
+    const input = base({
+      occurrences: Array.from({ length: 6 }, (_, i) =>
+        slot(true, new Date(IN_4D.getTime() + i * 3_600_000)),
+      ),
+      plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
+    });
+    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    expect(u.moneyState.detail).toBe(
+      "₹144.00 for the plan · 12 sessions · ₹12.00 each",
+    );
+    expect(u.sessionProgress).toBe("6 of 12 sessions scheduled");
   });
 });

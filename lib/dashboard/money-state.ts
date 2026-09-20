@@ -166,6 +166,13 @@ export interface BookingPresentation {
   /** Schedule words only for a Sessions row — never a money word. */
   sessionRowLabel: (occurrence: OccurrenceInput) => string;
   /**
+   * #1675 — the header's one session-count story: "<held> of <plan> sessions
+   * scheduled" once the plan size is known, else the bare held count. The
+   * header uses this for SUBSCRIPTION/CLASS instead of a second, conflicting
+   * count next to the money line.
+   */
+  sessionProgress: string;
+  /**
    * #1752 — false while the money is in but the rows are still tentative: the
    * confirmation pipeline has not landed, so the success page keeps polling.
    */
@@ -517,9 +524,12 @@ function deriveMoney(
     );
   }
   if (booking === "REQUESTED") {
+    // #1675 — one session-count story: the header owns "<held> of <plan>
+    // sessions"; this line only prices the plan, so it no longer repeats a
+    // second, differently-worded count.
     const detail =
       input.plan && Number(input.plan.pricePaise) > 0
-        ? `${money(input.plan.pricePaise, input.plan.currency)} · ${input.plan.sessions} × ${money(Number(input.plan.pricePaise) / input.plan.sessions, input.plan.currency)} (plan)`
+        ? `${money(input.plan.pricePaise, input.plan.currency)} for the plan · ${input.plan.sessions} sessions · ${money(Number(input.plan.pricePaise) / input.plan.sessions, input.plan.currency)} each`
         : undefined;
     const line = you
       ? `Not due yet — you are asked to pay after ${c} approves.`
@@ -747,12 +757,21 @@ export function deriveBookingPresentation(
     paidRow && (live.length > 0 ? live.every((o) => o.isTentative) : !lazy)
   );
 
+  // #1675 — same "held" the header's bare count used (live.length), so
+  // swapping one for the other never changes what number the viewer sees.
+  const planSessions = input.plan?.sessions;
+  const sessionProgress =
+    planSessions && planSessions > 1
+      ? `${live.length} of ${planSessions} sessions scheduled`
+      : `${live.length} sessions`;
+
   return {
     bookingState,
     moneyState,
     nextAction,
     timeline,
     sessionRowLabel: (o) => rowLabel(o, b.state, holdExpiresAt, now),
+    sessionProgress,
     settled,
   };
 }
