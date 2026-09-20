@@ -52,17 +52,19 @@ flowchart TD
 Recurring sessions over a period of months. Most complex event type.
 
 **Config**: `sessionDurationInHours` (per call) + `durationInMonths` + `sessionsPerWeek` (0-7) + `schedulingPeriodStartsAt/EndsAt`
-**Total calls**: `countWeeks(startDate, endDate) * sessionsPerWeek`
-**Total slots**: `totalCalls * Math.ceil(sessionDurationInHours / 0.5)`
+**Total calls**: `Subscription.sessionsTotal`, the entitlement frozen at purchase (#1766); a pre-#1766 row falls back to `plan.totalSessions`
+**Slots this run**: `nextBatch * Math.ceil(sessionDurationInHours / 0.5)`, where `nextBatch` is the current cycle's remaining capacity from `subscriptionEntitlement`
+
+Since #1766 the stored `schedulingPeriodStartsAt/EndsAt` describe the first cycle only, and the validated period is the current cycle's window, which starts at the latest of the stored start, the last held session's end and now and runs one cycle in the scheduling timezone. The plan-total gate compares every live call plus the proposed ones against `sessionsTotal`, so a call delivered in an earlier cycle still draws down the entitlement even though it sits outside the window in view.
 
 **Rules**:
 
-- All slots within scheduling period [startDate, endDate]
+- All slots within the current cycle's window (`SubscriptionValidationResult.subscriptionPeriod`)
 - Max 1 call per **scheduling-timezone** day (consecutive slots within that call). The same-day check buckets by `ScheduleCalculationService.dayKey()` in the event's `schedulingTimezone` (default Asia/Kolkata) on both the client and the server (ADR B9), so the verdict is identical everywhere; the old browser-local `toDateString()` bucketing disagreed with the server's for slots near day boundaries.
 - Weekly limit: `sessionsPerWeek` calls per Sunday-Saturday **scheduling-timezone** week (`ScheduleCalculationService.weekKey()`)
 - Weekly distribution validation counts **calls** (complete session groups), not raw slots
 
-**Important**: Total weeks uses `ScheduleCalculationService.countWeeks()`, not `durationInMonths * 4`. A 6-month subscription has ~26 weeks, not 24.
+**Important**: The weekly cap still buckets by Sunday-to-Saturday scheduling-timezone weeks, while a cycle window is seven zone-days from wherever the last held session ended. A window that straddles two Sunday weeks therefore only has room in the days of the week that is not already at its cap.
 
 ```mermaid
 flowchart TD

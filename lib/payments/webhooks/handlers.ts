@@ -23,7 +23,7 @@ import {
   OccurrenceCompletionStatus,
   TrialStatus,
 } from "@prisma/client";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
@@ -1720,22 +1720,18 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   });
   if (!plan) throw new Error("Subscription plan not found");
 
-  // Check if this is a scheduling period request (no slots) or direct slot booking
-  const isSchedulingPeriodRequest =
-    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
-
-  let startDate: Date;
-  let endDate: Date;
-
-  if (isSchedulingPeriodRequest) {
-    // Use provided scheduling period dates (safe to assert since checked above)
-    startDate = new Date(data.schedulingPeriodStartsAt!);
-    endDate = new Date(data.schedulingPeriodEndsAt!);
-  } else {
-    // Calculate subscription period from current date
-    startDate = new Date();
-    endDate = calculateSubscriptionEndDate(startDate, plan.durationInMonths);
-  }
+  // #1766 — window = first cycle; a client end is clamped/ignored, never
+  // refused. Twin of handleSubscriptionCheckout.
+  const schedulingTimezone = resolveSchedulingTimezone(
+    plan.consultantProfile?.user?.timezone,
+  );
+  const { start: startDate, end: endDate } = firstCycleWindow(
+    plan,
+    data.schedulingPeriodStartsAt
+      ? new Date(data.schedulingPeriodStartsAt)
+      : new Date(),
+    schedulingTimezone,
+  );
 
   const subscription = await tx.subscription.create({
     data: {
@@ -1746,9 +1742,9 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
-      schedulingTimezone: resolveSchedulingTimezone(
-        plan.consultantProfile?.user?.timezone,
-      ),
+      schedulingTimezone,
+      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+      sessionsTotal: plan.totalSessions,
     },
   });
 

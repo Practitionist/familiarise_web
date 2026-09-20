@@ -167,15 +167,16 @@ export const checkoutSchema = z
     // === SUBSCRIPTION validation ===
     if (data.appointmentType === "SUBSCRIPTION") {
       const hasSlotData = data.startsAt && data.endsAt;
-      const hasSchedulingPeriod =
-        data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+      // #1766 — the server derives the window (first cycle) from the start;
+      // `schedulingPeriodEndsAt` stays accepted for old clients and is ignored.
+      const hasSchedulingPeriod = !!data.schedulingPeriodStartsAt;
 
-      // Require EITHER slot data OR scheduling period
+      // Require EITHER slot data OR a scheduling start
       if (!hasSlotData && !hasSchedulingPeriod) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "Subscription requires either slot timing or scheduling period",
+            "Subscription requires either slot timing or a scheduling start",
           path: ["startsAt"],
         });
       }

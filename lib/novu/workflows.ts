@@ -475,6 +475,10 @@ export type SubscriptionPayload = {
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
+  /** #1766 — the cycle just finished (1-based) and what the plan still owes. */
+  cycleOrdinal?: number;
+  remainingSessions?: number;
+  nextBatch?: number;
 };
 
 export type BookingRequestPayload = NotificationScope & {
