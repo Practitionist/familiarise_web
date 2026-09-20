@@ -135,6 +135,7 @@ export {
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
 import { assertEarningStatusTransitionLegal } from "./earning-status";
+import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
 import {
   sessionsTotalOf,
@@ -1531,6 +1532,20 @@ export async function refundEarnings(
     );
   }
 
+  // #1766 — subscription tranches: one clawback over the summed share,
+  // consumed newest-tranche-first (same allocator as applyRefundCascade).
+  const trancheRows = allEarnings.filter(
+    (e) => typeof e.cycleOrdinal === "number",
+  );
+  const trancheAbsorb = new Map(
+    allocateCycleClawback(
+      trancheRows,
+      prorateRefundPaise(
+        trancheRows.reduce((s, e) => s + e.consultantSharePaise, 0),
+      ),
+    ).map((a) => [a.id, a.absorbPaise] as const),
+  );
+
   // Refund each earnings record (supports multi-party collaborator payments)
   for (const earnings of allEarnings) {
     // C7 FIX: Guard against already-refunded earnings.
@@ -1548,7 +1563,10 @@ export async function refundEarnings(
       0,
       earnings.consultantSharePaise - alreadyRefunded,
     );
-    const rawShare = prorateRefundPaise(earnings.consultantSharePaise);
+    const rawShare =
+      typeof earnings.cycleOrdinal !== "number"
+        ? prorateRefundPaise(earnings.consultantSharePaise)
+        : (trancheAbsorb.get(earnings.id) ?? 0);
     const shareToReverse = Math.min(rawShare, maxReversible);
 
     if (shareToReverse <= 0) {
