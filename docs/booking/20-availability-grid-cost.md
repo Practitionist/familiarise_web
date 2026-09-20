@@ -53,7 +53,8 @@ because the failure they close is a caller asking for too much, not the query
 being slow. `MAX_AVAILABILITY_WINDOW_DAYS = 32` in the route refuses a window
 wider than a month (32 rather than 31 since #1785, because a 31-day month that
 ends daylight-saving time spans 31 days and one hour of elapsed time, and the
-expert page's calendar reads a whole month in one call): the grid's cost is
+expert page's calendar reads a whole month in one call — see
+`22-explore-booking-dialog.md`): the grid's cost is
 proportional to window width, so a
 caller asking for a whole scheduling period (six or twelve months) ran past
 the roughly 26-second edge-function ceiling and got a bare timeout instead of
