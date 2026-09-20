@@ -19,6 +19,7 @@ import {
   paymentFunding,
   paymentRailLabel,
   receiptHref,
+  refundRailLine,
 } from "@/lib/appointments/payment-display";
 
 const HOST = "u-host";
@@ -310,5 +311,35 @@ describe("seat payments", () => {
       currency: "INR",
       otherCurrency: 0,
     });
+  });
+});
+
+describe("refundRailLine — one sentence per rail (#1675 X6)", () => {
+  const amounts = {
+    estimatedRefundPaise: 120_000,
+    currency: "INR",
+    refundPct: 100,
+    prorated: false,
+  };
+
+  it("names the card, the organisation and the credits differently", () => {
+    const gateway = refundRailLine("GATEWAY", amounts);
+    const internal = refundRailLine("INTERNAL", amounts);
+    const credits = refundRailLine("CREDITS", amounts);
+    expect(gateway).toContain("~₹1,200.00");
+    expect(gateway).toContain("original payment method");
+    expect(internal).toContain("Your organisation is credited ~₹1,200.00");
+    expect(internal).toContain("nothing was charged to you");
+    expect(credits).toBe(
+      "You paid with referral credits — they'll be restored to your balance.",
+    );
+    expect(new Set([gateway, internal, credits]).size).toBe(3);
+    // A partial window never promises the credits back.
+    expect(refundRailLine("CREDITS", { ...amounts, refundPct: 50 })).toContain(
+      "reviewed manually",
+    );
+    expect(
+      refundRailLine("GATEWAY", { ...amounts, estimatedRefundPaise: 0 }),
+    ).toMatch(/^No refund at this notice/);
   });
 });

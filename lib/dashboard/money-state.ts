@@ -489,6 +489,8 @@ function deriveMoney(
       if (back > 0) parts.push(`${money(back, paid.currency)} refunded`);
       if (pendingRefund > 0)
         parts.push(`${money(pendingRefund, paid.currency)} refund on its way`);
+      // #1770 QA — the rail rides every refund line, partial ones included.
+      if (rail) parts.push(rail);
       return build("PARTIALLY_REFUNDED", "Partly refunded", parts.join(" · "));
     }
     // Locked 2026-09-13: the member did not pay a sponsored booking, so no amount.
@@ -777,4 +779,22 @@ export function deriveBookingPresentation(
     sessionProgress,
     settled,
   };
+}
+
+/** A history row's input: the detail page's, minus the sessions a list never carries. */
+export type PaymentRowInput = Omit<BookingPresentationInput, "occurrences">;
+
+// #1675 — list rows have no occurrences; the money half is identical to the
+// detail page's, so this is the same derivation with three fields picked.
+export function derivePaymentPresentation(
+  input: PaymentRowInput,
+  viewer: Viewer,
+  options?: DeriveOptions,
+): Pick<BookingPresentation, "moneyState" | "nextAction" | "settled"> {
+  const { moneyState, nextAction, settled } = deriveBookingPresentation(
+    { ...input, occurrences: [] },
+    viewer,
+    options,
+  );
+  return { moneyState, nextAction, settled };
 }

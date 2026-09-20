@@ -13,6 +13,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { refundRailLine } from "@/lib/appointments/payment-display";
 
 /** What `GET /api/appointments/[id]/cancel/preview` answers. */
 interface CancelRefundPreview {
@@ -87,26 +88,26 @@ export function CancelConfirmationDialog({
     isLoading: isPreviewLoading,
     isError: isPreviewError,
   } = useQuery<CancelRefundPreview>({
-      queryKey: ["cancel-refund-preview", appointmentId],
-      queryFn: async () => {
-        const response = await fetch(
-          `/api/appointments/${appointmentId}/cancel/preview`,
-          // R18 — the quote had no deadline, and the confirm button is disabled
-          // while it loads. A hung request therefore did not just withhold the
-          // number, it locked the user out of cancelling their own booking
-          // behind a spinner that never stopped.
-          { signal: AbortSignal.timeout(8_000) },
-        );
-        if (!response.ok) throw new Error("Could not estimate the refund");
-        return response.json();
-      },
-      enabled: previewEnabled,
-      // Money owed moves with the clock (the notice tiers), so this is never
-      // served from cache across openings.
-      staleTime: 0,
-      gcTime: 0,
-      retry: false,
-    });
+    queryKey: ["cancel-refund-preview", appointmentId],
+    queryFn: async () => {
+      const response = await fetch(
+        `/api/appointments/${appointmentId}/cancel/preview`,
+        // R18 — the quote had no deadline, and the confirm button is disabled
+        // while it loads. A hung request therefore did not just withhold the
+        // number, it locked the user out of cancelling their own booking
+        // behind a spinner that never stopped.
+        { signal: AbortSignal.timeout(8_000) },
+      );
+      if (!response.ok) throw new Error("Could not estimate the refund");
+      return response.json();
+    },
+    enabled: previewEnabled,
+    // Money owed moves with the clock (the notice tiers), so this is never
+    // served from cache across openings.
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+  });
 
   // Flattened from a nested ternary — Sonar flags nested ternaries in JSX;
   // the three outcomes are easier to skim as sequential assignments.
@@ -179,55 +180,10 @@ export function CancelConfirmationDialog({
         </p>
       );
     }
-    if (preview.fundingRail === "CREDITS") {
-      // #1161 — credit restoration is all-or-nothing. Only a full-refund window
-      // restores automatically; inside a partial window the cancellation still
-      // stands but the credits are escalated for a human, not returned. The
-      // dialog said "they'll be restored" for both, which was a promise the
-      // money path does not keep.
-      if (preview.refundPct === 100) {
-        return (
-          <p className="text-muted-foreground text-sm">
-            You paid with referral credits — they&apos;ll be restored to your
-            balance.
-          </p>
-        );
-      }
-      return (
-        <p className="text-muted-foreground text-sm">
-          You paid with referral credits, and this cancellation falls in a
-          partial-refund window — restoration is reviewed manually rather than
-          returned automatically.
-        </p>
-      );
-    }
-    if (preview.estimatedRefundPaise > 0) {
-      // The learner never paid on an org-funded booking — the wallet, invoice
-      // accrual or licence did — so "your original payment method" names a card
-      // that was never charged and promises a settlement that will never arrive.
-      const isInternal = preview.fundingRail === "INTERNAL";
-      return (
-        <p className="text-muted-foreground text-sm">
-          {isInternal ? "Your organisation is credited " : "You'll be refunded "}
-          <strong className="text-foreground">
-            ~
-            {formatCurrencyAmount(
-              preview.estimatedRefundPaise,
-              preview.currency,
-            )}
-          </strong>{" "}
-          ({preview.refundPct}%
-          {preview.prorated ? ", prorated for sessions already held" : ""}).{" "}
-          {isInternal
-            ? "Your organisation's balance is restored; nothing was charged to you."
-            : "Refunds reach your original payment method in 5–7 working days."}
-        </p>
-      );
-    }
+    // One sentence per rail, shared with the payments surfaces (#1675 X6).
     return (
       <p className="text-muted-foreground text-sm">
-        No refund at this notice — cancelling now returns nothing under the
-        booking&apos;s cancellation policy.
+        {refundRailLine(preview.fundingRail, preview)}
       </p>
     );
   };
@@ -249,8 +205,8 @@ export function CancelConfirmationDialog({
               </p>
               {isLeave ? (
                 <p className="text-muted-foreground text-sm">
-                  You will be removed from this event. If you paid for a seat,
-                  a refund is issued under the event&apos;s cancellation policy.
+                  You will be removed from this event. If you paid for a seat, a
+                  refund is issued under the event&apos;s cancellation policy.
                 </p>
               ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
