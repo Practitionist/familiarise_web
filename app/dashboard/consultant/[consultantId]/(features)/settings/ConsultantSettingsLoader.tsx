@@ -2,12 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { SettingsIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { use, type ReactNode } from "react";
 import type { TConsultantProfile } from "types/consultant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { EmptyState } from "@/components/dashboard/DataCard";
+import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { fetchConsultantData } from "../../utils/fetchHelpers";
 
@@ -84,5 +85,26 @@ export function ConsultantSettingsLoader({
 
   return (
     <DashboardErrorBoundary>{children(consultant)}</DashboardErrorBoundary>
+  );
+}
+
+/**
+ * A hub section page whose body edits the consultant profile: resolves the
+ * route param, pads the content and runs the loader above.
+ */
+export function ConsultantSettingsSectionPage({
+  params,
+  children,
+}: {
+  params: Promise<{ consultantId: string }>;
+  children: (consultant: TConsultantProfile) => ReactNode;
+}) {
+  const { consultantId } = use(params);
+  return (
+    <DashboardContent>
+      <ConsultantSettingsLoader consultantId={consultantId}>
+        {children}
+      </ConsultantSettingsLoader>
+    </DashboardContent>
   );
 }

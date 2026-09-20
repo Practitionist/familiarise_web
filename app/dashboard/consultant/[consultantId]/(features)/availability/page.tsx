@@ -1,11 +1,7 @@
 "use client";
 
-import { use } from "react";
-import {
-  DashboardContent,
-  DashboardHeader,
-} from "@/components/dashboard/PageScaffold";
-import { ConsultantSettingsLoader } from "../settings/ConsultantSettingsLoader";
+import { DashboardHeader } from "@/components/dashboard/PageScaffold";
+import { ConsultantSettingsSectionPage } from "../settings/ConsultantSettingsLoader";
 import { AvailabilityForm } from "./AvailabilityForm";
 
 /**
@@ -17,18 +13,15 @@ import { AvailabilityForm } from "./AvailabilityForm";
 export default function AvailabilityPage({
   params,
 }: Readonly<{ params: Promise<{ consultantId: string }> }>) {
-  const { consultantId } = use(params);
   return (
     <>
       <DashboardHeader
         title="Availability"
         subtitle="The hours people can book you for, in your timezone"
       />
-      <DashboardContent>
-        <ConsultantSettingsLoader consultantId={consultantId}>
-          {(consultant) => <AvailabilityForm consultant={consultant} />}
-        </ConsultantSettingsLoader>
-      </DashboardContent>
+      <ConsultantSettingsSectionPage params={params}>
+        {(consultant) => <AvailabilityForm consultant={consultant} />}
+      </ConsultantSettingsSectionPage>
     </>
   );
 }
