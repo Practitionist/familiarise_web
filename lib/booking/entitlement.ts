@@ -159,9 +159,10 @@ export function subscriptionEntitlement(
   const lastHeldEndsAt = live
     .filter((o) => isCompleted(o) || isScheduled(o))
     .reduce<number>((max, o) => Math.max(max, toDate(o.endsAt).getTime()), 0);
+  const storedStart = toDate(input.schedulingPeriodStartsAt).getTime();
   const windowStart = new Date(
     Math.max(
-      toDate(input.schedulingPeriodStartsAt).getTime(),
+      Number.isFinite(storedStart) ? storedStart : 0,
       lastHeldEndsAt,
       now.getTime(),
     ),
