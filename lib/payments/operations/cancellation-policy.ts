@@ -269,7 +269,7 @@ function quoteUnusedSessions(
 
   const gross = BigInt(input.grossPaise);
   const den = BigInt(total) * BigInt(10_000);
-  let refundBeforeClamp = 0n;
+  let refundBeforeClamp = BigInt(0);
   perBps.forEach((n, bps) => {
     refundBeforeClamp += (gross * BigInt(n) * BigInt(bps)) / den;
   });
