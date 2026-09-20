@@ -59,7 +59,7 @@ export async function settleSubscriptionCycle(
     },
   });
   const sub = wrapper?.subscription;
-  if (!wrapper || !sub || sub.status !== "APPROVED") return [];
+  if (!sub || sub.status !== "APPROVED") return [];
 
   const entitlement = subscriptionEntitlement({
     sessionsTotal: sessionsTotalOf(sub),

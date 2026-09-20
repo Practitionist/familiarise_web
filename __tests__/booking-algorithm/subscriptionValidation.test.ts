@@ -451,7 +451,7 @@ describe("Weekly info generation", () => {
     const result = await service.validateSubscriptionSlots("sub-1", []);
     // The first cycle runs 06–12 Jan IST, whose last day sits in the Sunday
     // week of 12 Jan: two Sunday weeks, not the stored period's four.
-    expect(result.weeklyInfo.length).toBe(2);
+    expect(result.weeklyInfo).toHaveLength(2);
   });
 
   it("should correctly populate weekStart and weekEnd", async () => {

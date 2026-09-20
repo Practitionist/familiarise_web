@@ -370,9 +370,11 @@ function cycleFooterText(
   }
   const { nextBatch } = entitlement.cycle;
   const plan = `${entitlement.held + selectedSessions} of ${entitlement.total} scheduled`;
-  return selectedSessions >= nextBatch
-    ? `✅ This cycle's ${nextBatch} session${nextBatch === 1 ? "" : "s"} selected · ${plan}`
-    : `✅ ${selectedSessions} of ${nextBatch} for this cycle · ${plan}`;
+  if (selectedSessions >= nextBatch) {
+    const sessionNoun = nextBatch === 1 ? "session" : "sessions";
+    return `✅ This cycle's ${nextBatch} ${sessionNoun} selected · ${plan}`;
+  }
+  return `✅ ${selectedSessions} of ${nextBatch} for this cycle · ${plan}`;
 }
 
 /**
@@ -581,6 +583,52 @@ export interface UnifiedCalendarProps {
   ) => void;
 }
 
+/**
+ * #1766 — a subscription's limit is THIS cycle: completed + nextBatch, with
+ * the completed part subtracted again below, so requiredSlots comes out as
+ * nextBatch × slotsPerCall without touching getSlotLimits.
+ */
+function resolveMaxTotalCalls(
+  entitlement: SubscriptionEntitlement | null,
+  eventType: UnifiedCalendarProps["eventType"],
+  totalSessions: number | undefined,
+  allowedStart: Date | undefined,
+  allowedEnd: Date | undefined,
+  sessionsPerWeek: number | undefined,
+): number | undefined {
+  if (entitlement) {
+    return entitlement.completed + entitlement.cycle.nextBatch;
+  }
+  if (!isRecurringEventType(eventType)) {
+    return undefined;
+  }
+  if (totalSessions && totalSessions > 0) {
+    return totalSessions;
+  }
+  if (allowedStart && allowedEnd && sessionsPerWeek) {
+    return (
+      countSundayWeeksInclusive(allowedStart, allowedEnd) *
+      (sessionsPerWeek || 1)
+    );
+  }
+  return undefined;
+}
+
+function resolvePastConfirmedSlotCount(
+  entitlement: SubscriptionEntitlement | null,
+  eventType: UnifiedCalendarProps["eventType"],
+  slotsPerCallForCycle: number,
+  pastEventSlotCount: number,
+): number | undefined {
+  if (entitlement) {
+    return entitlement.completed * slotsPerCallForCycle;
+  }
+  if (isRecurringEventType(eventType)) {
+    return pastEventSlotCount;
+  }
+  return undefined;
+}
+
 export function UnifiedCalendar({
   consultantId,
   eventType,
@@ -762,24 +810,20 @@ export function UnifiedCalendar({
     startDate: allowedStart,
     endDate: allowedEnd,
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
-    // #1766 — a subscription's limit is THIS cycle: completed + nextBatch,
-    // with the completed part subtracted again below, so requiredSlots comes
-    // out as nextBatch × slotsPerCall without touching getSlotLimits.
-    maxTotalCalls: entitlement
-      ? entitlement.completed + entitlement.cycle.nextBatch
-      : isRecurringEventType(eventType)
-        ? totalSessions && totalSessions > 0
-          ? totalSessions
-          : allowedStart && allowedEnd && sessionsPerWeek
-            ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-              (sessionsPerWeek || 1)
-            : undefined
-        : undefined,
-    pastConfirmedSlotCount: entitlement
-      ? entitlement.completed * slotsPerCallForCycle
-      : isRecurringEventType(eventType)
-        ? pastEventSlotCount
-        : undefined,
+    maxTotalCalls: resolveMaxTotalCalls(
+      entitlement,
+      eventType,
+      totalSessions,
+      allowedStart,
+      allowedEnd,
+      sessionsPerWeek,
+    ),
+    pastConfirmedSlotCount: resolvePastConfirmedSlotCount(
+      entitlement,
+      eventType,
+      slotsPerCallForCycle,
+      pastEventSlotCount,
+    ),
     // #1766 — held sessions mean this run appends the next cycle.
     topUp: entitlement ? entitlement.held > 0 : undefined,
     weeklyConfirmedCallCounts,
