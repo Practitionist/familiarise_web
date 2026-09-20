@@ -7,7 +7,6 @@ import {
   Clock,
   Code,
   FileCheck,
-  Globe,
   GraduationCap,
   HeadphonesIcon,
   HeartHandshake,
@@ -20,7 +19,6 @@ import {
   Palette,
   Shield,
   Star,
-  TrendingUp,
   Users,
   Video,
   Zap,
@@ -64,38 +62,26 @@ export const CATEGORIES = [
   {
     icon: Code,
     name: "Technology",
-    color: "bg-zinc-900",
   },
   {
     icon: Briefcase,
     name: "Business",
-    color: "bg-zinc-800",
-  },
-  { icon: Palette, name: "Design", color: "bg-zinc-700" },
-  {
-    icon: TrendingUp,
-    name: "Marketing",
-    color: "bg-zinc-800",
   },
   {
-    icon: HeartHandshake,
-    name: "Career Coach",
-    color: "bg-zinc-900",
+    icon: Palette,
+    name: "Creative Arts",
   },
   {
     icon: GraduationCap,
     name: "Education",
-    color: "bg-zinc-700",
+  },
+  {
+    icon: HeartHandshake,
+    name: "Health",
   },
   {
     icon: Lightbulb,
-    name: "Startups",
-    color: "bg-zinc-800",
-  },
-  {
-    icon: Globe,
-    name: "Languages",
-    color: "bg-zinc-900",
+    name: "Personal Development",
   },
 ];
 
@@ -129,27 +115,21 @@ export const BENEFITS = [
 export const HOW_IT_WORKS = [
   {
     step: 1,
-    title: "Find Your Expert",
+    title: "Explore and compare",
     description:
-      "Browse our curated network of verified professionals across various domains.",
+      "Search verified experts, live programs, and organisations by the topic or outcome you need.",
   },
   {
     step: 2,
-    title: "Book a Session",
+    title: "Choose the right format",
     description:
-      "Choose your preferred time slot and session type that fits your schedule.",
+      "Book a one-off consultation, start ongoing mentorship, or learn with a group.",
   },
   {
     step: 3,
-    title: "Connect & Learn",
+    title: "Meet and make progress",
     description:
-      "Join your session via our platform and start your transformation journey.",
-  },
-  {
-    step: 4,
-    title: "Grow Together",
-    description:
-      "Continue learning with follow-ups, resources, and our supportive community.",
+      "Join securely on Familiarise, then keep your bookings, resources, and next steps together.",
   },
 ];
 

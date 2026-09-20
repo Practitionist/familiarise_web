@@ -29,18 +29,18 @@ export function BenefitsSkeleton() {
 
 export function FeaturedExpertsSkeleton() {
   return (
-    <section className="py-20 md:py-28 bg-background">
-      <div className="container mx-auto px-4 md:px-6">
-        <div className="text-center mb-12 space-y-3">
-          <div className="h-6 w-28 bg-muted/50 rounded animate-pulse mx-auto" />
-          <div className="h-10 w-72 bg-muted/50 rounded animate-pulse mx-auto" />
-          <div className="h-5 w-96 bg-muted/50 rounded animate-pulse mx-auto" />
+    <section className="bg-zinc-100 py-20 dark:bg-zinc-950 md:py-28">
+      <div className="mx-auto max-w-[1400px] px-4 md:px-8 lg:px-12">
+        <div className="mb-10 space-y-3">
+          <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+          <div className="h-10 w-full max-w-xl animate-pulse rounded bg-muted" />
+          <div className="h-5 w-full max-w-2xl animate-pulse rounded bg-muted" />
         </div>
-        <div className="flex gap-6 overflow-hidden">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, i) => (
             <div
               key={i}
-              className="flex-shrink-0 w-[300px] h-[220px] bg-muted/50 rounded-xl animate-pulse"
+              className="h-80 animate-pulse rounded-2xl border border-border bg-muted"
             />
           ))}
         </div>
@@ -51,31 +51,22 @@ export function FeaturedExpertsSkeleton() {
 
 export function TestimonialsSkeleton() {
   return (
-    <>
-      <section className="py-20 md:py-28 bg-gradient-to-b from-zinc-900 to-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="text-center mb-12 space-y-3">
-            <div className="h-6 w-28 bg-zinc-800 rounded animate-pulse mx-auto" />
-            <div className="h-10 w-72 bg-zinc-800 rounded animate-pulse mx-auto" />
-          </div>
-          <div className="flex gap-6 overflow-hidden">
-            {[...Array(3)].map((_, i) => (
-              <div
-                key={i}
-                className="flex-shrink-0 w-[350px] h-[180px] bg-zinc-800 rounded-xl animate-pulse"
-              />
-            ))}
-          </div>
+    <section className="bg-background py-20 md:py-28">
+      <div className="mx-auto max-w-[1400px] px-4 md:px-8 lg:px-12">
+        <div className="mb-10 max-w-3xl space-y-3">
+          <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+          <div className="h-10 w-full max-w-xl animate-pulse rounded bg-muted" />
+          <div className="h-5 w-full max-w-2xl animate-pulse rounded bg-muted" />
         </div>
-      </section>
-      <section className="py-20 bg-zinc-950">
-        <div className="container mx-auto px-4 md:px-6">
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-            <div className="h-[320px] bg-zinc-800 rounded-xl animate-pulse" />
-          </div>
+        <div className="grid gap-4 md:grid-cols-3">
+          {[...Array(3)].map((_, i) => (
+            <div
+              key={i}
+              className="h-72 animate-pulse rounded-2xl border border-border bg-muted"
+            />
+          ))}
         </div>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }
