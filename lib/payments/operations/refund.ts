@@ -437,6 +437,8 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
           ...(input.reason ? { reason: input.reason } : {}),
           dashboardUrl: `${getAppUrl()}/dashboard`,
         },
+        // Notification identity = the refund row, not the payload shape.
+        reserved.id,
       );
     }
   } catch (notifyError) {

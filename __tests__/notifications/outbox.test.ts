@@ -197,4 +197,27 @@ describe("deriveTransactionId", () => {
       }),
     ).toBe(id);
   });
+
+  it("keys identical payloads apart by dedupeKey (refund-requested uses the refund row id)", () => {
+    // #1738 review — the refund-requested wire payload carries no refund id,
+    // so two refunds of the same amount/reason/scope must be told apart by
+    // the key; the same key still collapses a retry onto one row.
+    const payload = { amount: "₹500", currency: "INR", scope: "b2c" };
+    const a = deriveTransactionId(
+      "refund-requested",
+      ["ops1"],
+      payload,
+      "rf_1",
+    );
+    const b = deriveTransactionId(
+      "refund-requested",
+      ["ops1"],
+      payload,
+      "rf_2",
+    );
+    expect(a).not.toBe(b);
+    expect(
+      deriveTransactionId("refund-requested", ["ops1"], payload, "rf_1"),
+    ).toBe(a);
+  });
 });

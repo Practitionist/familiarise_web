@@ -681,14 +681,19 @@ export async function notifyRefundFailed(userId: string, payload: RefundInput) {
   );
 }
 
+// `dedupeKey` should be the Refund row id: the wire payload carries no refund
+// identifier, so two refunds of the same amount/reason/scope would otherwise
+// hash to one outbox row and ops would see only the first (#1738 review).
 export async function notifyRefundRequested(
   adminUserIds: string[],
   payload: RefundInput,
+  dedupeKey?: string,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.REFUND_REQUESTED,
     adminUserIds,
     refundWire(payload),
+    dedupeKey,
   );
 }
 
