@@ -19,7 +19,9 @@ type ChipKey =
   | { kind: "company"; value: string }
   | { kind: "language" }
   | { kind: "search" }
-  | { kind: "sort" };
+  | { kind: "sort" }
+  | { kind: "orgKind" }
+  | { kind: "orgSlug" };
 
 /**
  * Encode a structured chip key as a string for the shared `FilterChips`
@@ -66,6 +68,8 @@ function decodeChipKey(encoded: string): ChipKey | null {
     case "language":
     case "search":
     case "sort":
+    case "orgKind":
+    case "orgSlug":
       return { kind: encoded };
     default:
       return null;
@@ -192,6 +196,27 @@ export function useExpertFilterChips(
       });
     }
 
+    if (filters.orgKind) {
+      const labels: Record<string, string> = {
+        AGENCY: "Agency",
+        ENTERPRISE: "Enterprise",
+        SOLO_PRACTICE: "Solo practice",
+      };
+      out.push({
+        key: encodeChipKey({ kind: "orgKind" }),
+        label: "Org type",
+        value: labels[filters.orgKind] ?? filters.orgKind,
+      });
+    }
+
+    if (filters.orgSlug) {
+      out.push({
+        key: encodeChipKey({ kind: "orgSlug" }),
+        label: "Organisation",
+        value: filters.orgSlug,
+      });
+    }
+
     return out;
   }, [filters, metadata, formatPrice]);
 
@@ -234,6 +259,12 @@ export function useExpertFilterChips(
           return;
         case "sort":
           updateFilters({ sort: "nameAsc" });
+          return;
+        case "orgKind":
+          updateFilters({ orgKind: null });
+          return;
+        case "orgSlug":
+          updateFilters({ orgSlug: null });
           return;
       }
     },

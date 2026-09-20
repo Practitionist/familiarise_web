@@ -97,6 +97,7 @@ export const orgMembershipInclude = {
         select: {
           name: true,
           slug: true,
+          kind: true,
           brandingProfile: { select: { logo: true } },
         },
       },
@@ -169,8 +170,11 @@ export function toConsultantCard(row: ConsultantCardRow): IConsultantCardData {
           name: firstOrg.name,
           slug: firstOrg.slug,
           logo: firstOrg.brandingProfile?.logo ?? null,
+          kind: (firstOrg as { kind?: "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null })
+            .kind ?? null,
         }
       : null,
+    isIndependent: c.isIndependent,
   };
 }
 
@@ -243,6 +247,9 @@ export async function fetchExpertsMetadata() {
     (async () => {
       const [
         totalConsultants,
+        independentCount,
+        agencyCount,
+        orgKindCounts,
         consultantsByDomain,
         ratedProfiles,
         completedSessions,
@@ -250,6 +257,64 @@ export async function fetchExpertsMetadata() {
         prisma.consultantProfile.count({
           where: { verificationStatus: "VERIFIED", deletedAt: null },
         }),
+        prisma.consultantProfile.count({
+          where: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+            isIndependent: true,
+          },
+        }),
+        prisma.consultantProfile.count({
+          where: {
+            verificationStatus: "VERIFIED",
+            deletedAt: null,
+            isIndependent: false,
+          },
+        }),
+        // Experts hosted by each org kind (verified, non-deleted). An expert
+        // with memberships in two kinds counts once per kind — the tabs use
+        // the independent/agency counts above; this powers the org-kind
+        // sub-filter inside Agency/Org.
+        prisma.membership
+          .groupBy({
+            by: ["organizationId"],
+            where: {
+              role: "EXPERT",
+              status: "ACTIVE",
+              consultantProfile: {
+                verificationStatus: "VERIFIED",
+                deletedAt: null,
+                isIndependent: false,
+              },
+              organization: {
+                canHost: true,
+                status: "ACTIVE",
+                isPublic: true,
+                deletedAt: null,
+                kind: { not: null },
+              },
+            },
+            _count: { organizationId: true },
+          })
+          .then(async (rows) => {
+            if (rows.length === 0)
+              return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+            const orgIds = rows.map((r) => r.organizationId);
+            const orgs = await prisma.organization.findMany({
+              where: { id: { in: orgIds } },
+              select: { id: true, kind: true },
+            });
+            const kindOf = new Map(orgs.map((o) => [o.id, o.kind]));
+            const out = { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+            for (const row of rows) {
+              const kind = kindOf.get(row.organizationId);
+              if (kind && kind in out) {
+                // _count.organizationId = experts hosted by this org.
+                out[kind as keyof typeof out] += row._count.organizationId;
+              }
+            }
+            return out;
+          }),
         prisma.domain.findMany({
           select: {
             id: true,
@@ -289,6 +354,12 @@ export async function fetchExpertsMetadata() {
 
       return {
         totalConsultants,
+        affiliationCounts: {
+          all: totalConsultants,
+          independent: independentCount,
+          agency: agencyCount,
+        },
+        orgKindCounts,
         consultantsByDomain: consultantsByDomain.map((d) => ({
           id: d.id,
           name: d.name,
@@ -414,11 +485,62 @@ export const getRecentReviews = (limit: number = 6) =>
 // 300 to match /explore/experts' route-level revalidate rather than undercut it:
 // Next takes the minimum of the segment interval and every data cache entry read
 // during the render, so the old 120 was silently capping that page's ISR window.
+export type CuratedAffiliation = "independent" | "agency" | null;
+export type CuratedOrgKind = "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
+
+export function affiliationWhere(
+  affiliationType: CuratedAffiliation,
+  orgKind?: CuratedOrgKind | null,
+  orgSlug?: string | null,
+): Prisma.ConsultantProfileWhereInput {
+  const conditions: Prisma.ConsultantProfileWhereInput[] = [];
+  if (affiliationType === "independent") conditions.push({ isIndependent: true });
+  else if (affiliationType === "agency") conditions.push({ isIndependent: false });
+  if (orgKind) {
+    conditions.push({
+      memberships: {
+        some: {
+          role: "EXPERT",
+          status: "ACTIVE",
+          organization: {
+            kind: orgKind,
+            canHost: true,
+            status: "ACTIVE",
+            deletedAt: null,
+          },
+        },
+      },
+    });
+  }
+  if (orgSlug) {
+    conditions.push({
+      memberships: {
+        some: {
+          role: "EXPERT",
+          status: "ACTIVE",
+          organization: { slug: orgSlug, canHost: true, deletedAt: null },
+        },
+      },
+    });
+  }
+  return conditions.length > 0 ? { AND: conditions } : {};
+}
+
 export const getCuratedExperts = unstable_cache(
-  async (sort: "rating" | "trending" | "newest", limit: number = 8) => {
+  async (
+    sort: "rating" | "trending" | "newest",
+    limit: number = 8,
+    affiliationType: CuratedAffiliation = null,
+    orgKind: CuratedOrgKind = null,
+  ) => {
     const rows = await prisma.consultantProfile.findMany({
       // #781 §B — soft-deleted profiles leave public surfaces
-      where: { verificationStatus: "VERIFIED", deletedAt: null },
+      where: {
+        AND: [
+          { verificationStatus: "VERIFIED", deletedAt: null },
+          affiliationWhere(affiliationType, orgKind),
+        ],
+      },
       orderBy: orderByForSort(sort),
       take: limit,
       include: consultantCardInclude,
@@ -440,10 +562,17 @@ export const getCuratedExperts = unstable_cache(
 // purgeExpertSurfaces (lib/data/public-cache.ts); the 60s revalidate is the
 // backstop. (#945 — pairs with the route's no-store fail-open; #932 caching.)
 export const getDefaultConsultantsPage = unstable_cache(
-  async (sort: string, limit: number) => {
+  async (
+    sort: string,
+    limit: number,
+    affiliationType: CuratedAffiliation = null,
+    orgKind: CuratedOrgKind = null,
+  ) => {
     const where: Prisma.ConsultantProfileWhereInput = {
-      verificationStatus: "VERIFIED",
-      deletedAt: null,
+      AND: [
+        { verificationStatus: "VERIFIED", deletedAt: null },
+        affiliationWhere(affiliationType, orgKind),
+      ],
     };
     const [rows, total] = await Promise.all([
       prisma.consultantProfile.findMany({

@@ -77,7 +77,10 @@ export interface IConsultantCardData {
     name: string;
     slug: string;
     logo: string | null;
+    kind?: "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
   } | null;
+  /** Cached affiliation flag — true = Independent, false = Agency/Org. */
+  isIndependent?: boolean;
   subscriptionPlans?: Array<{
     id: string;
     title: string;

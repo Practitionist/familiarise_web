@@ -17,8 +17,11 @@ import { personScoreAtLeast } from "@/lib/reviews-display";
 const LIST_CACHE_HEADERS = {
   "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
   "Netlify-Vary":
-    "query=page|limit|sort|domain|subdomain|tags|experience|minPrice|maxPrice|minRating|companies|language|affiliationType|search",
+    "query=page|limit|sort|domain|subdomain|tags|experience|minPrice|maxPrice|minRating|companies|language|affiliationType|orgKind|orgSlug|search",
 };
+
+const VALID_AFFILIATIONS = new Set(["independent", "agency"]);
+const VALID_ORG_KINDS = new Set(["AGENCY", "ENTERPRISE", "SOLO_PRACTICE"]);
 
 export async function GET(request: NextRequest) {
   // Hoisted out of the try so the fail-open branch can echo them back in `meta`.
@@ -42,7 +45,13 @@ export async function GET(request: NextRequest) {
     const search = searchParams.get("search");
     const language = searchParams.get("language");
     const companies = searchParams.getAll("companies").filter(Boolean);
-    const affiliationType = searchParams.get("affiliationType");
+    const rawAffiliation = searchParams.get("affiliationType");
+    const affiliationType = VALID_AFFILIATIONS.has(rawAffiliation ?? "")
+      ? rawAffiliation
+      : null;
+    const rawOrgKind = searchParams.get("orgKind");
+    const orgKind = VALID_ORG_KINDS.has(rawOrgKind ?? "") ? rawOrgKind : null;
+    const orgSlug = searchParams.get("orgSlug") || null;
 
     const rawMinPrice = searchParams.get("minPrice");
     const rawMaxPrice = searchParams.get("maxPrice");
@@ -67,6 +76,8 @@ export async function GET(request: NextRequest) {
       companies.length === 0 &&
       !language &&
       !affiliationType &&
+      !orgKind &&
+      !orgSlug &&
       !search;
 
     if (isDefaultView) {
@@ -144,6 +155,34 @@ export async function GET(request: NextRequest) {
       conditions.push({ isIndependent: true });
     } else if (affiliationType === "agency") {
       conditions.push({ isIndependent: false });
+    }
+    // Org-kind sub-filter inside Agency/Org (AGENCY vs ENTERPRISE vs SOLO_PRACTICE).
+    if (orgKind) {
+      conditions.push({
+        memberships: {
+          some: {
+            role: "EXPERT",
+            status: "ACTIVE",
+            organization: {
+              kind: orgKind as "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE",
+              canHost: true,
+              status: "ACTIVE",
+              deletedAt: null,
+            },
+          },
+        },
+      });
+    }
+    if (orgSlug) {
+      conditions.push({
+        memberships: {
+          some: {
+            role: "EXPERT",
+            status: "ACTIVE",
+            organization: { slug: orgSlug, canHost: true, deletedAt: null },
+          },
+        },
+      });
     }
     if (search) {
       conditions.push({
