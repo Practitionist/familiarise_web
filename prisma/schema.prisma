@@ -3797,6 +3797,12 @@ model Subscription {
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
 
+  /// #1766 — entitlement frozen at purchase, like Payment.amount; plan edits
+  /// never move it. Nullable only for pre-#1766 rows (the resolver falls back
+  /// to plan.totalSessions); NOT NULL + CHECK >= 1 staged in the
+  /// check-constraints banner.
+  sessionsTotal Int?
+
   appointment        Appointment?
   convertedFromTrial Trial?
 
