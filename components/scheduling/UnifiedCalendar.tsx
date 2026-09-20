@@ -360,6 +360,43 @@ function countCompletedSelectedCallsForWeek(
 }
 
 /**
+ * Cycle-honest heading for a fresh subscription (#1764/#1766): the plan's
+ * lifetime total (up to 144 for a long subscription) is not what fits in
+ * THIS scheduling window, so lead with what can actually be placed now.
+ * `null` when the period is unknown — the caller falls back to the
+ * lifetime-total heading it always had.
+ */
+function subscriptionCycleHeading(
+  params: Readonly<{
+    allowedStart?: Date;
+    allowedEnd?: Date;
+    zone?: string;
+    sessionsPerWeek?: number;
+    maxTotalCalls: number;
+    alreadyScheduled: number;
+  }>,
+): string | null {
+  const {
+    allowedStart,
+    allowedEnd,
+    zone,
+    sessionsPerWeek,
+    maxTotalCalls,
+    alreadyScheduled,
+  } = params;
+  if (!allowedStart || !allowedEnd || !zone) return null;
+
+  const windowDays = daysInclusive(allowedStart, allowedEnd);
+  const capacityOfWindow = (sessionsPerWeek || 1) * Math.ceil(windowDays / 7);
+  const targetThisCycle = Math.max(
+    0,
+    Math.min(maxTotalCalls - alreadyScheduled, capacityOfWindow),
+  );
+  const periodRange = `${formatDateLabel(allowedStart, { zone })} – ${formatDateLabel(allowedEnd, { zone })}`;
+  return `Schedule the next ${targetThisCycle} session${targetThisCycle === 1 ? "" : "s"} · this cycle ${periodRange} · ${alreadyScheduled} of ${maxTotalCalls} scheduled`;
+}
+
+/**
  * Subscription footer: Clear, action-oriented progress text
  * Removes confusing "past completed" concept and technical jargon
  */
@@ -414,21 +451,15 @@ function computeSubscriptionFooter(
   } else if (pastCompletedSessions > 0 && remaining > 0) {
     return `✅ ${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`;
   } else if (scheduled === 0) {
-    // #1764/#1766 — cycle-honest heading: the plan's lifetime total (up to
-    // 144 for a long subscription) is not what fits in THIS scheduling
-    // window, so lead with what can actually be placed now.
-    if (allowedStart && allowedEnd && zone) {
-      const alreadyScheduled = Math.floor(confirmedSlotCount / slotsPerCall);
-      const windowDays = daysInclusive(allowedStart, allowedEnd);
-      const capacityOfWindow =
-        (sessionsPerWeek || 1) * Math.ceil(windowDays / 7);
-      const targetThisCycle = Math.max(
-        0,
-        Math.min(maxTotalCalls - alreadyScheduled, capacityOfWindow),
-      );
-      const periodRange = `${formatDateLabel(allowedStart, { zone })} – ${formatDateLabel(allowedEnd, { zone })}`;
-      return `Schedule the next ${targetThisCycle} session${targetThisCycle === 1 ? "" : "s"} · this cycle ${periodRange} · ${alreadyScheduled} of ${maxTotalCalls} scheduled`;
-    }
+    const cycleHeading = subscriptionCycleHeading({
+      allowedStart,
+      allowedEnd,
+      zone,
+      sessionsPerWeek,
+      maxTotalCalls,
+      alreadyScheduled: Math.floor(confirmedSlotCount / slotsPerCall),
+    });
+    if (cycleHeading) return cycleHeading;
     return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
     return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;

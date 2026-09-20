@@ -9,9 +9,10 @@
  * profile, so a custom-availability week folds to its own shape.
  */
 
-/** Unset for the plain "Unavailable" band; "outsidePeriod" for a band whose
- * only live cells are outside the booking's scheduling period (#1764/#1766). */
-export type RowBandVariant = "outsidePeriod" | undefined;
+/** Unset (absent) for the plain "Unavailable" band; "outsidePeriod" for a
+ * band whose only live cells are outside the booking's scheduling period
+ * (#1764/#1766). */
+export type RowBandVariant = "outsidePeriod";
 
 export type RowSegment =
   /** Rows `from` to `to` (exclusive) render as normal grid rows. */
@@ -45,7 +46,7 @@ export function foldDeadHourBands(
     };
   }
 
-  const variantAt = (row: number): RowBandVariant =>
+  const variantAt = (row: number): RowBandVariant | undefined =>
     outsidePeriod?.[row] ? "outsidePeriod" : undefined;
 
   const segments: RowSegment[] = [];

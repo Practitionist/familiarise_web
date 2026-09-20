@@ -322,13 +322,13 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
     const bandButtons = Array.from(host.querySelectorAll("button")).filter(
       (button) => button.textContent?.includes("Outside the scheduling period"),
     );
-    expect(bandButtons.length).toBe(1);
+    expect(bandButtons).toHaveLength(1);
 
     // The old per-cell word must be gone everywhere, band open or closed.
     const exactMatches = Array.from(
       host.querySelectorAll("button, div"),
     ).filter((el) => el.textContent?.trim() === "Outside period");
-    expect(exactMatches.length).toBe(0);
+    expect(exactMatches).toHaveLength(0);
   });
 
   it("leads a fresh subscription with what fits this cycle, not the plan's lifetime total", () => {
