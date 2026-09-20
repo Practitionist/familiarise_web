@@ -16,7 +16,10 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { transitionProgram } from "@/lib/enterprise/transitions";
 import { getProgramLockState } from "@/lib/enterprise/config-lock";
-import { overageBehaviorUnsupportedReason } from "@/lib/enterprise/reachable-paths";
+import {
+  CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
+  overageBehaviorUnsupportedReason,
+} from "@/lib/enterprise/reachable-paths";
 import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 
@@ -255,7 +258,12 @@ async function applyProgramPatch(
       // wallet CHARGE_ORG programme is refused as readily as one that sets both.
       merged.overageSurchargeBps,
     );
-    if (overageReason) fail(overageReason);
+    // #1744 — a programme saved with CHARGE_MEMBER before the all-rail guard
+    // may still edit its other money fields; only re-asserting the value fails.
+    const reassertsLegacyMemberCharge =
+      overageReason === CHARGE_MEMBER_NEEDS_EARNINGS_HOLD &&
+      body.overageBehavior === undefined;
+    if (overageReason && !reassertsLegacyMemberCharge) fail(overageReason);
   }
 
   // #777 §B — archiving guard: an archived program is skipped by the cycle

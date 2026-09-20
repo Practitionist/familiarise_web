@@ -1118,7 +1118,19 @@ function EditProgramDialog({
         setError("Overage surcharge must be blank or a non-negative percentage.");
         return;
       }
-      body.overageBehavior = overageBehavior;
+      // #1744 — a legacy CHARGE_MEMBER value is refused if re-sent; leave it
+      // out when unchanged so rate/cap edits still save.
+      const savedOverageBehavior =
+        program.licensedSeatConfig?.overageBehavior ??
+        program.creditPoolConfig?.overageBehavior;
+      if (
+        !(
+          overageBehavior === "CHARGE_MEMBER" &&
+          savedOverageBehavior === "CHARGE_MEMBER"
+        )
+      ) {
+        body.overageBehavior = overageBehavior;
+      }
       body.overageSurchargeBps = surchargeBps;
       // #768 #14/#15 — circuit-breaker ceiling. PATCH validation at
       // [programId]/route.ts:225-239 merges with the existing config and
