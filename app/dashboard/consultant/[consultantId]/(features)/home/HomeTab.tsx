@@ -222,6 +222,7 @@ export function HomeTab({
         ),
         basePath: `/dashboard/consultant/${consultantId}`,
         payoutSetupNeeded: payoutSetup?.needed ?? false,
+        livePayoutsEnabled: payoutSetup?.livePayoutsEnabled ?? true,
       }),
     [allUpcomingAppointments, pendingRequestsCount, consultantId, payoutSetup],
   );

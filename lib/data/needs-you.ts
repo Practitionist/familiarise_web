@@ -2,8 +2,8 @@ import prisma from "@/lib/prisma";
 import type { AppointmentStatus, Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
-import { readPayoutGate } from "@/lib/data/consultant-payout-setup";
-import type { PayoutEligibilityReason } from "@/lib/payments/payouts/payout-requirements";
+import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
+import type { PayoutRequirements } from "@/lib/payments/payouts/payout-requirements";
 
 /**
  * Cross-context "needs you" roll-up for a consultant.
@@ -102,17 +102,20 @@ export function subscriptionRequestWhere(
 
 /**
  * The Home row shows only when money exists AND the account is what stops it:
- * no earnings means nothing to pay and no reason to nag, and a reason other
- * than the account (the launch freeze, residency, the minimum) is not the
- * consultant's to fix on the settings page.
+ * no earnings means nothing to pay and no reason to nag, and a missing PAN
+ * only over-withholds. Deliberately independent of ENABLE_LIVE_PAYOUTS — the
+ * point of the row is to have every account in BEFORE the flag flips, so the
+ * first batch reaches everyone on day one (coordinator correction 2026-09-20).
  */
 export function payoutSetupNeeded(input: {
-  reason: PayoutEligibilityReason | null;
+  requirements: Pick<PayoutRequirements, "currentlyDue">;
   earningsCount: number;
 }): boolean {
   return (
     input.earningsCount >= 1 &&
-    (input.reason === "NO_ACCOUNT" || input.reason === "UNVERIFIED")
+    input.requirements.currentlyDue.some(
+      (r) => r.code === "PAYOUT_ACCOUNT" || r.code === "ACCOUNT_VERIFICATION",
+    )
   );
 }
 
@@ -125,8 +128,10 @@ export async function readPayoutSetupNeeded(
     where: { consultantProfileId },
   });
   if (earningsCount === 0) return false;
-  const { reason } = await readPayoutGate(consultantProfileId);
-  return payoutSetupNeeded({ reason, earningsCount });
+  const requirements = await readPayoutRequirements(consultantProfileId, {
+    earningsCount,
+  });
+  return payoutSetupNeeded({ requirements, earningsCount });
 }
 
 /**

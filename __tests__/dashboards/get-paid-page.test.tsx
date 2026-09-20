@@ -250,35 +250,61 @@ describe("Y2-2 reverse penny drop persists a reference-only row", () => {
 });
 
 describe("Y2-3 Home needs-you row", () => {
-  it("no earnings → no row; earnings + NO_ACCOUNT → the row with the settings link", () => {
-    expect(payoutSetupNeeded({ reason: "NO_ACCOUNT", earningsCount: 0 })).toBe(
-      false,
-    );
-    expect(payoutSetupNeeded({ reason: "NO_ACCOUNT", earningsCount: 1 })).toBe(
-      true,
-    );
-    expect(payoutSetupNeeded({ reason: "UNVERIFIED", earningsCount: 3 })).toBe(
-      true,
-    );
-    // The launch freeze and the minimum are not the consultant's to fix here.
-    expect(
-      payoutSetupNeeded({ reason: "LIVE_PAYOUTS_OFF", earningsCount: 3 }),
-    ).toBe(false);
-    expect(
-      payoutSetupNeeded({ reason: "BELOW_MINIMUM", earningsCount: 3 }),
-    ).toBe(false);
+  const reqs = (overrides: Partial<Parameters<typeof payoutRequirements>[0]>) =>
+    payoutRequirements({
+      consultantProfileId: CP,
+      taxInfo: null,
+      defaultAccount: null,
+      earningsCount: 1,
+      isIndianResident: true,
+      livePayoutsEnabled: false,
+      ...overrides,
+    });
 
-    const items = deriveConsultantActionItems({
+  it("flag off + no account + one earning → row; flag off + verified account → none; no earnings → none", () => {
+    expect(
+      payoutSetupNeeded({ requirements: reqs({}), earningsCount: 1 }),
+    ).toBe(true);
+    expect(
+      payoutSetupNeeded({
+        requirements: reqs({ defaultAccount: { isVerified: false } }),
+        earningsCount: 2,
+      }),
+    ).toBe(true);
+    expect(
+      payoutSetupNeeded({
+        requirements: reqs({ defaultAccount: { isVerified: true } }),
+        earningsCount: 2,
+      }),
+    ).toBe(false);
+    expect(
+      payoutSetupNeeded({
+        requirements: reqs({ earningsCount: 0 }),
+        earningsCount: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("the row words itself by the flag and links to the settings route", () => {
+    const base = {
       pendingApprovals: 0,
       upcomingSessions: [],
       basePath: `/dashboard/consultant/${CP}`,
       payoutSetupNeeded: true,
+    };
+    const off = deriveConsultantActionItems({
+      ...base,
+      livePayoutsEnabled: false,
     });
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
+    expect(off).toHaveLength(1);
+    expect(off[0]).toMatchObject({
       key: "payout-setup",
-      title: "Add your bank account to get paid",
+      title: "Add your bank account — payouts begin at launch",
       ctaHref: `/dashboard/consultant/${CP}/settings/payouts`,
     });
+    expect(
+      deriveConsultantActionItems({ ...base, livePayoutsEnabled: true })[0]
+        .title,
+    ).toBe("Add your bank account to get paid");
   });
 });

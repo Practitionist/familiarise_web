@@ -55,8 +55,12 @@ export type ConsultantPayoutSetup = Awaited<
   ReturnType<typeof readConsultantPayoutSetup>
 >;
 
-/** The three inputs `payoutRequirements` needs, read in sequence. */
-async function readRequirementInputs(consultantProfileId: string) {
+/** The three inputs `payoutRequirements` needs, read in sequence; a caller
+ * that already counted the earnings passes the count and saves the query. */
+async function readRequirementInputs(
+  consultantProfileId: string,
+  known: { earningsCount?: number } = {},
+) {
   const taxInfo = await prisma.consultantTaxInfo.findUnique({
     where: { consultantProfileId },
     select: TAX_INFO_SELECT,
@@ -65,44 +69,17 @@ async function readRequirementInputs(consultantProfileId: string) {
     where: { consultantProfileId, isDefault: true },
     select: { isVerified: true },
   });
-  const earningsCount = await prisma.consultantEarnings.count({
-    where: { consultantProfileId },
-  });
+  const earningsCount =
+    known.earningsCount ??
+    (await prisma.consultantEarnings.count({ where: { consultantProfileId } }));
   return { taxInfo, defaultAccount, earningsCount };
-}
-
-/**
- * The eligibility gate without the READY aggregate: the account reasons sit
- * ahead of BELOW_MINIMUM, so a caller that only asks "is the account what
- * stops the money?" (the Home row) needs no balance. `readyAmount` is pinned
- * at the minimum so the answer is never BELOW_MINIMUM by accident.
- */
-export async function readPayoutGate(
-  consultantProfileId: string,
-): Promise<{ reason: PayoutEligibilityReason | null }> {
-  const taxInfo = await prisma.consultantTaxInfo.findUnique({
-    where: { consultantProfileId },
-    select: { isIndianResident: true },
-  });
-  const defaultAccount = await prisma.payoutAccount.findFirst({
-    where: { consultantProfileId, isDefault: true },
-    select: { isVerified: true },
-  });
-  return {
-    reason: payoutEligibilityReason({
-      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
-      isIndianResident: taxInfo?.isIndianResident ?? true,
-      defaultAccount,
-      readyAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
-      minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
-    }),
-  };
 }
 
 export async function readPayoutRequirements(
   consultantProfileId: string,
+  known: { earningsCount?: number } = {},
 ): Promise<PayoutRequirements> {
-  const inputs = await readRequirementInputs(consultantProfileId);
+  const inputs = await readRequirementInputs(consultantProfileId, known);
   return payoutRequirements({
     consultantProfileId,
     ...inputs,

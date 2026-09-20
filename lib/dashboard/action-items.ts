@@ -137,6 +137,8 @@ export interface ConsultantActionInput {
   basePath: string;
   /** #1675 PR-Y2 — earnings exist and no verified payout account can take them. */
   payoutSetupNeeded?: boolean;
+  /** Words the row: before launch the account is collected ahead of the flag. */
+  livePayoutsEnabled?: boolean;
 }
 
 export function deriveConsultantActionItems({
@@ -145,6 +147,7 @@ export function deriveConsultantActionItems({
   upcomingSessions,
   basePath,
   payoutSetupNeeded = false,
+  livePayoutsEnabled = true,
 }: ConsultantActionInput): ActionItem[] {
   const items: ActionItem[] = [];
 
@@ -160,8 +163,12 @@ export function deriveConsultantActionItems({
     items.push({
       key: "payout-setup",
       severity: "warning",
-      title: "Add your bank account to get paid",
-      body: "You have earnings waiting; payouts start once an account is verified.",
+      title: livePayoutsEnabled
+        ? "Add your bank account to get paid"
+        : "Add your bank account — payouts begin at launch",
+      body: livePayoutsEnabled
+        ? "You have earnings waiting; payouts start once an account is verified."
+        : "You have earnings waiting; a verified account now means you are in the first batch.",
       ctaLabel: "Set up",
       ctaHref: `${basePath}/settings/payouts`,
     });

@@ -31,6 +31,7 @@ import {
 import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
 import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
 import { reportSentryError } from "@/lib/observability/report";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -923,6 +924,8 @@ export async function getConsultantDashboard(
       return false;
     }),
     href: payoutSettingsHref(consultantProfileId),
+    // Server-only flag, so it rides the payload to word the row.
+    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
   };
 
   const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
