@@ -319,7 +319,11 @@ export class SchedulingService {
       requiredSessions?: number;
       unplacedSessions?: number;
     },
+    outcome?: ApprovalOutcome,
   ): Promise<StagedTrigger[]> {
+    // #1775 B-9 — nothing is booked before payment: an awaiting-payment
+    // approval's only consultee message is the pay-link email the mint sends.
+    if (outcome === "awaiting_payment") return [];
     const prisma = tx;
     let context: {
       userIds: string[];
@@ -2018,6 +2022,7 @@ export class SchedulingService {
                   unplacedSessions: requestedSessions - placedSessions,
                 }
               : undefined,
+            outcome,
           );
 
           return {
@@ -2567,6 +2572,8 @@ export class SchedulingService {
               tx,
               eventType,
               eventId,
+              undefined,
+              outcome,
             ),
           };
         },
@@ -2930,6 +2937,8 @@ export class SchedulingService {
               tx,
               eventType,
               eventId,
+              undefined,
+              outcome,
             ),
           };
         },

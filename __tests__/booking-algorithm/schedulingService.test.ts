@@ -83,6 +83,8 @@ import {
 // Mocked above; imported (not require()d) so the lock-scope pin below stays
 // free of a require-style import.
 import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmentlock";
+// Mocked in ./setup; the B-9 pins read whether the booked bell was staged.
+import { notifyAppointmentBooked } from "../../lib/novu";
 
 // ─── Mock Transaction Factory ───────────────────────────────────────────────
 
@@ -3501,6 +3503,9 @@ describe("#1775 B-9 — allocation lands by money", () => {
 
     expect(result.success).toBe(true);
     expect(result.outcome).toBe("awaiting_payment");
+    // Nothing is booked before payment: the pay-link email the mint sends is
+    // the consultee's only message on this landing.
+    expect(notifyAppointmentBooked).not.toHaveBeenCalled();
     expect(JSON.stringify(casWhere(0))).toContain(
       '"paymentStatus":"SUCCEEDED"',
     );
@@ -3522,7 +3527,23 @@ describe("#1775 B-9 — allocation lands by money", () => {
   });
 
   it("paid PENDING consultation → APPROVED on the first CAS, no second attempt", async () => {
-    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    // The config read first; every later read (the CAS pre-read, the bell's
+    // notice read) sees the wrapper the booked bell needs.
+    mockTx.consultation.findUnique
+      .mockResolvedValueOnce(makeConsultationEvent())
+      .mockResolvedValue({
+        status: "PENDING",
+        consultationPlan: {
+          title: "Plan",
+          consultantProfile: { user: { id: "consultant-1", name: "Ethan" } },
+        },
+        requestedBy: { user: { id: "consultee-1", name: "Rachel" } },
+        appointment: {
+          id: "apt-1",
+          organizationId: null,
+          occurrences: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
+        },
+      });
     mockTx.consultation.updateMany.mockResolvedValueOnce({ count: 1 });
 
     const result = await SchedulingService.allocate({
@@ -3533,6 +3554,7 @@ describe("#1775 B-9 — allocation lands by money", () => {
     });
 
     expect(result.outcome).toBe("approved");
+    expect(notifyAppointmentBooked).toHaveBeenCalledTimes(1);
     expect(mockTx.consultation.updateMany).toHaveBeenCalledTimes(1);
     expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalledWith(
       expect.objectContaining({ data: { isTentative: true } }),
