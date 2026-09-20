@@ -15,6 +15,10 @@ import {
   EarningStatus,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "./constants";
+import {
+  payoutEligibilityReason,
+  type PayoutEligibilityReason,
+} from "./payout-requirements";
 import { isPostMvpGatewayStub } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
@@ -98,9 +102,12 @@ export interface ConsultantPayoutEligibility {
   isEligible: boolean;
   readyAmount: number;
   minimumAmount: number;
+  /** A VERIFIED default account; an unverified one still reads false. */
   hasPayoutAccount: boolean;
   defaultAccountId?: string;
   provider?: PaymentGateway;
+  /** The first failing gate in batch order; null when eligible (#1675 PR-Y2). */
+  reason: PayoutEligibilityReason | null;
 }
 
 // ============================================
@@ -184,24 +191,36 @@ export async function checkPayoutEligibility(
     sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
     sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
-  // Get default payout account
+  // The default account at ANY verification state, so NO_ACCOUNT and
+  // UNVERIFIED can be told apart (#1675 PR-Y2); sequential reads, no tx.
   const defaultAccount = await prisma.payoutAccount.findFirst({
-    where: {
-      consultantProfileId,
-      isDefault: true,
-      isVerified: true,
-    },
+    where: { consultantProfileId, isDefault: true },
+    select: { id: true, provider: true, isVerified: true },
+  });
+  const taxInfo = await prisma.consultantTaxInfo.findUnique({
+    where: { consultantProfileId },
+    select: { isIndianResident: true },
+  });
+  const verifiedAccount = defaultAccount?.isVerified ? defaultAccount : null;
+
+  const reason = payoutEligibilityReason({
+    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+    // No tax row yet reads as resident, matching the payout job's guard.
+    isIndianResident: taxInfo?.isIndianResident ?? true,
+    defaultAccount,
+    readyAmount,
+    minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
   });
 
   return {
     consultantProfileId,
-    isEligible:
-      readyAmount >= PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT && !!defaultAccount,
+    isEligible: reason === null,
     readyAmount,
     minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
-    hasPayoutAccount: !!defaultAccount,
-    defaultAccountId: defaultAccount?.id,
-    provider: defaultAccount?.provider,
+    hasPayoutAccount: !!verifiedAccount,
+    defaultAccountId: verifiedAccount?.id,
+    provider: verifiedAccount?.provider,
+    reason,
   };
 }
 

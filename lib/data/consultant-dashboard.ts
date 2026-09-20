@@ -26,8 +26,12 @@ import {
   nextCycleSubscriptionWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
+  readPayoutSetupNeeded,
   subscriptionRequestWhere,
 } from "@/lib/data/needs-you";
+import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
+import { reportSentryError } from "@/lib/observability/report";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
 import {
   sessionsTotalOf,
   subscriptionEntitlement,
@@ -912,6 +916,18 @@ export async function getConsultantDashboard(
   // #1766 — the next-cycle strip; sequential like the read above.
   const nextCycles = await readNextCycles(consultantProfileId, now);
 
+  // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
+  // reads above; a failure degrades to no row, never to a broken Home.
+  const payoutSetup = {
+    needed: await readPayoutSetupNeeded(consultantProfileId).catch((error) => {
+      reportSentryError(error, { subsystem: "payments", expected: true });
+      return false;
+    }),
+    href: payoutSettingsHref(consultantProfileId),
+    // Server-only flag, so it rides the payload to word the row.
+    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+  };
+
   const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
   const awaitingPayment = {
     count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
@@ -1032,6 +1048,7 @@ export async function getConsultantDashboard(
     orgSessions,
     nextCycles,
     responseRate,
+    payoutSetup,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,
