@@ -62,6 +62,28 @@ Money per cycle — refund quotes and earnings tranches — belongs to PR-Z2. Th
 
 Run `npx prisma db push` from the merged `dev` before the deploy, and `npm run novu:sync` after it, because the step body of `subscription-renewed` changed.
 
+## PR-Z2 — subscription escrow: refund unused sessions against the plan, one earnings tranche per cycle stamped on delivery (#1766 row 5; #1729 schema rows)
+
+### The problem
+
+Two money defects followed from progressive allocation. The refund quote prorated `gross × sessionsRemaining / slotsTotal` where `slotsTotal` was the number of allocated occurrences, so a 144-session plan with six slots allocated and three delivered paid back half the price to a buyer owed 141 sessions. Earnings were one row per plan payment whose hold anchored on the last live occurrence, so the consultant was paid the whole plan a week after the first cycle's last session, against the locked delivery-enforced escrow.
+
+### The decision
+
+The owner locked this on 2026-09-20 and it is not to be re-asked. The refund of unused sessions is `sessionsTotal − completed − late-window scheduled` at `gross / sessionsTotal` through the existing front door. Earnings are one PENDING tranche per cycle with `holdUntil` NULL, stamped by the completion path when the cycle's last occurrence completes; a refund consumes the newest un-matured tranches first; batching and payouts do not change.
+
+### What changed, in commit order
+
+The schema gained `ConsultantEarnings.cycleOrdinal` and a nullable `holdUntil`, and the sidecar unique `consultant_earnings_occurrence_key` widened to include the ordinal under `NULLS NOT DISTINCT`, with the preflight suite asserting the columns. `createEarningsFromPayment` reads the plan shape through the transaction and mints one row per cycle for the owner, floored per tranche with the residual on tranche 0, so the rows still sum to what the booking journal credits; `subscriptionTranches` and `maturedTrancheOrdinal` were added to `lib/booking/entitlement.ts` because PR-Z1 shipped no matured-tranche helper. `recomputeEarningsHold` skips a NULL hold and the release job was pinned as never matching one. `settleSubscriptionCycle` stamps every unstamped tranche up to the highest matured one before the bell's early return, and the cancel route stamps whatever is still NULL inside the cancel transaction. `quoteBookingRefund` gained the unused-session arm with the floor taken once per notice tier, so an untouched plan whose price does not divide still refunds the whole gross, and the percentage it reports is the effective share of the undelivered base; the context resolves `sessionsTotal` via `appointment.subscription` and both cancel routes pass it. `allocateCycleClawback` is the one ordering both refund writers use, and the refund journal's payable debits read what each row absorbed. The healer cohort and the payout batch were pinned unchanged.
+
+### What was deliberately not done
+
+The spec placed the terminal stamp "after the refund, in the cancel transaction"; the refund runs after that transaction commits and may defer its cascade to the webhook, so the stamp runs inside the cancel transaction before the refund, which the allocator's ordering makes equivalent. Plan edits after purchase are not refused here. UNVERIFIED→CANCELLED corrections do not un-stamp or refund. Pre-Z2 single-row subscription earnings keep the legacy path end to end.
+
+### Owner apply steps
+
+The shared Supabase project is live dev and prod, and `prisma db push` would drop the hand-applied partial uniques, so the schema change is applied by hand before the preview QA, verbatim from the pull request body: add the `cycleOrdinal` column, drop the NOT NULL on `holdUntil`, then drop and recreate `consultant_earnings_occurrence_key` with the fifth column.
+
 ## PR-Y2 — Get paid: bank/UPI + PAN onboarding, typed payout eligibility, needs-you blocker
 
 **Branch:** `feat/consultant-get-paid-onboarding` · **Date:** 2026-09-20
