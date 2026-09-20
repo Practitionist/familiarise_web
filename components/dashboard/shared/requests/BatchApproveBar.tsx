@@ -64,16 +64,13 @@ export function BatchApproveBar({
         error: error instanceof Error ? error.message : String(error),
       }));
       keysRef.current.set(row.id, ref.current);
+      const code = "errorCode" in result ? result.errorCode : undefined;
+      const failure = errorSentence(code, result.error ?? "Could not approve");
       done.push({
         id: row.id,
         name: row.requester.name,
         ok: result.success,
-        note: result.success
-          ? TOAST.approved
-          : errorSentence(
-              "errorCode" in result ? result.errorCode : undefined,
-              result.error ?? "Could not approve",
-            ),
+        note: result.success ? TOAST.approved : failure,
       });
       setOutcomes([...done]);
     }
@@ -81,19 +78,23 @@ export function BatchApproveBar({
     onFinished(done);
   };
 
+  const summary = `${outcomes.filter((o) => o.ok).length} of ${outcomes.length} approved`;
+  const idle =
+    outcomes.length > 0 && rows.length === 0
+      ? summary
+      : `${rows.length} selected · requested times only`;
+  const status = running
+    ? `Approving ${outcomes.length + 1} of ${rows.length}…`
+    : idle;
+
   return (
-    <div
+    <section
       className="sticky bottom-0 z-10 mt-4 rounded-lg border border-border bg-background/95 p-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80"
-      role="region"
       aria-label="Batch approval"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-foreground" aria-live="polite">
-          {running
-            ? `Approving ${outcomes.length + 1} of ${rows.length}…`
-            : outcomes.length > 0 && rows.length === 0
-              ? `${outcomes.filter((o) => o.ok).length} of ${outcomes.length} approved`
-              : `${rows.length} selected · requested times only`}
+          {status}
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -146,6 +147,6 @@ export function BatchApproveBar({
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }

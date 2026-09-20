@@ -410,7 +410,7 @@ function entitlementOf(
   now: Date,
 ): SubscriptionEntitlement | null {
   const total = sessionsTotalOf(s);
-  if (!(total > 0) || !s.schedulingPeriodStartsAt) return null;
+  if (total <= 0 || !s.schedulingPeriodStartsAt) return null;
   return subscriptionEntitlement({
     sessionsTotal: total,
     sessionsPerWeek: s.subscriptionPlan.sessionsPerWeek,
@@ -459,12 +459,11 @@ function subscriptionRow(
   );
   // A reschedule replaces only the released rows; a fresh request places
   // the next cycle's batch (#1766); a plan that cannot say is disabled.
+  const freshBatch = entitlement
+    ? entitlement.cycle.nextBatch * slotsPerSession
+    : null;
   const requiredSlots =
-    facts.tentativeSlotCount > 0
-      ? facts.tentativeSlotCount
-      : entitlement
-        ? entitlement.cycle.nextBatch * slotsPerSession
-        : null;
+    facts.tentativeSlotCount > 0 ? facts.tentativeSlotCount : freshBatch;
   return finish(
     {
       id: s.id,
@@ -594,6 +593,76 @@ interface CohortPlan {
   trialStatuses: TrialStatus[];
 }
 
+type ChipKey = InboxChip | "all";
+const chipKey = (chip: InboxChip | undefined): ChipKey => chip ?? "all";
+
+/** The consultation sub-cohorts a chip reads; an unknown chip reads nothing. */
+function consultationCohort(
+  cp: string,
+  scope: Scope,
+  chip: InboxChip | undefined,
+  now: Date,
+): Prisma.ConsultationWhereInput[] {
+  const awaiting = consultationRequestWhere(
+    cp,
+    scope,
+    "APPROVED_PENDING_PAYMENT",
+  );
+  const byChip: Partial<Record<ChipKey, Prisma.ConsultationWhereInput[]>> = {
+    all: [pendingConsultationWhere(cp, scope), awaiting],
+    "answer-today": [
+      {
+        ...pendingConsultationWhere(cp, scope),
+        requestedAt: dueWithinDay(CONSULTATION_HOLD_MS, now),
+      },
+    ],
+    "awaiting-payment": [awaiting],
+    declined: [consultationRequestWhere(cp, scope, "REJECTED")],
+  };
+  return byChip[chipKey(chip)] ?? [];
+}
+
+/** The subscription sub-cohorts a chip reads, plus whether next-cycle rows join. */
+function subscriptionCohort(
+  cp: string,
+  scope: Scope,
+  chip: InboxChip | undefined,
+  now: Date,
+): { statuses: Prisma.SubscriptionWhereInput[]; nextCycle: boolean } {
+  const awaiting = subscriptionRequestWhere(
+    cp,
+    scope,
+    "APPROVED_PENDING_PAYMENT",
+  );
+  const byChip: Partial<Record<ChipKey, Prisma.SubscriptionWhereInput[]>> = {
+    all: [pendingSubscriptionWhere(cp, scope), awaiting],
+    "answer-today": [
+      {
+        ...pendingSubscriptionWhere(cp, scope),
+        requestedAt: dueWithinDay(SUBSCRIPTION_HOLD_MS, now),
+      },
+    ],
+    "awaiting-payment": [awaiting],
+    "next-cycle": [],
+    declined: [subscriptionRequestWhere(cp, scope, "REJECTED")],
+  };
+  return {
+    statuses: byChip[chipKey(chip)] ?? [],
+    nextCycle: chip === undefined || chip === "next-cycle",
+  };
+}
+
+/** A trial has no hold clock, so "answer today" is every pending one. */
+function trialCohort(chip: InboxChip | undefined): TrialStatus[] {
+  const byChip: Partial<Record<ChipKey, TrialStatus[]>> = {
+    all: ["PENDING", "AWAITING_PAYMENT"],
+    "answer-today": ["PENDING"],
+    "awaiting-payment": ["AWAITING_PAYMENT"],
+    declined: ["REJECTED"],
+  };
+  return byChip[chipKey(chip)] ?? [];
+}
+
 /** Which sub-cohorts a (type, chip) pair reads; every predicate is needs-you's. */
 function planCohort(
   cp: string,
@@ -609,58 +678,13 @@ function planCohort(
     trialStatuses: [],
   };
   if (type === "consultation") {
-    if (!chip) {
-      plan.consultationStatuses = [
-        pendingConsultationWhere(cp, scope),
-        consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      ];
-    } else if (chip === "answer-today") {
-      plan.consultationStatuses = [
-        {
-          ...pendingConsultationWhere(cp, scope),
-          requestedAt: dueWithinDay(CONSULTATION_HOLD_MS, now),
-        },
-      ];
-    } else if (chip === "awaiting-payment") {
-      plan.consultationStatuses = [
-        consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      ];
-    } else if (chip === "declined") {
-      plan.consultationStatuses = [
-        consultationRequestWhere(cp, scope, "REJECTED"),
-      ];
-    }
+    plan.consultationStatuses = consultationCohort(cp, scope, chip, now);
   } else if (type === "subscription") {
-    if (!chip) {
-      plan.subscriptionStatuses = [
-        pendingSubscriptionWhere(cp, scope),
-        subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      ];
-      plan.nextCycle = true;
-    } else if (chip === "answer-today") {
-      plan.subscriptionStatuses = [
-        {
-          ...pendingSubscriptionWhere(cp, scope),
-          requestedAt: dueWithinDay(SUBSCRIPTION_HOLD_MS, now),
-        },
-      ];
-    } else if (chip === "awaiting-payment") {
-      plan.subscriptionStatuses = [
-        subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-      ];
-    } else if (chip === "next-cycle") {
-      plan.nextCycle = true;
-    } else if (chip === "declined") {
-      plan.subscriptionStatuses = [
-        subscriptionRequestWhere(cp, scope, "REJECTED"),
-      ];
-    }
-  } else if (!chip || chip === "answer-today") {
-    plan.trialStatuses = chip ? ["PENDING"] : ["PENDING", "AWAITING_PAYMENT"];
-  } else if (chip === "awaiting-payment") {
-    plan.trialStatuses = ["AWAITING_PAYMENT"];
-  } else if (chip === "declined") {
-    plan.trialStatuses = ["REJECTED"];
+    const sub = subscriptionCohort(cp, scope, chip, now);
+    plan.subscriptionStatuses = sub.statuses;
+    plan.nextCycle = sub.nextCycle;
+  } else {
+    plan.trialStatuses = trialCohort(chip);
   }
   return plan;
 }

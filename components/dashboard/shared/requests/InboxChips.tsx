@@ -23,7 +23,8 @@ export function InboxChips({
   onChange: (chip: InboxChip | null) => void;
 }>) {
   return (
-    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Filter">
+    <fieldset className="flex flex-wrap gap-1.5 border-0 p-0">
+      <legend className="sr-only">Filter</legend>
       {CHIPS_FOR_TYPE[type].map((chip) => {
         const on = active === chip;
         return (
@@ -44,6 +45,6 @@ export function InboxChips({
           </Button>
         );
       })}
-    </div>
+    </fieldset>
   );
 }

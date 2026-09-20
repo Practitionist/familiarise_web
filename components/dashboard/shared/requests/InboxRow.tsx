@@ -74,8 +74,7 @@ const ACTION_LABEL: Record<RowAction["kind"], string> = {
 export function answerableProposal(row: InboxRowInput) {
   const p = row.proposal;
   if (
-    !p ||
-    p.status !== "PENDING_REVIEW" ||
+    p?.status !== "PENDING_REVIEW" ||
     p.initiatorRole !== "CONSULTEE" ||
     !row.appointmentId ||
     p.proposedTimes.filter((t) => t.round === p.round).length === 0
@@ -101,6 +100,11 @@ export function isDialogFreeApproval(row: InboxRowInput): boolean {
     row.tentativeSlotCount >= row.requiredSlots
   );
 }
+
+const isDestructive = (action: RowAction) =>
+  action.kind === "decline" ||
+  action.kind === "withdraw" ||
+  action.kind === "trial-decline";
 
 /** ONE primary action per row, mirroring the detail page's needs-you CTA. */
 export function rowActions(
@@ -155,18 +159,20 @@ export function formatDateTime(
   return `${formatInViewerZone(date, viewer.zone, "EEE d MMM, h:mm a")} ${zoneLabel(date, viewer.zone)}`;
 }
 
-/** "18h 40m left" against the row's clock; "Past due" once it has passed. */
-function Countdown({ deadline }: Readonly<{ deadline: Date }>) {
-  const { minutesLeft, isExpired } = useHoldCountdown(deadline);
+/** "2d left" / "18h 40m left" / "5m left" / "Past due". */
+function countdownText(minutesLeft: number, isExpired: boolean): string {
+  if (isExpired) return "Past due";
   const h = Math.floor(minutesLeft / 60);
   const m = minutesLeft % 60;
-  const text = isExpired
-    ? "Past due"
-    : h >= 48
-      ? `${Math.floor(h / 24)}d left`
-      : h > 0
-        ? `${h}h ${m}m left`
-        : `${Math.max(m, 1)}m left`;
+  if (h >= 48) return `${Math.floor(h / 24)}d left`;
+  if (h > 0) return `${h}h ${m}m left`;
+  return `${Math.max(m, 1)}m left`;
+}
+
+/** The row's clock as a chip; "Past due" once it has passed. */
+function Countdown({ deadline }: Readonly<{ deadline: Date }>) {
+  const { minutesLeft, isExpired } = useHoldCountdown(deadline);
+  const text = countdownText(minutesLeft, isExpired);
   return (
     <span
       className={cn(
@@ -275,13 +281,9 @@ export function InboxRow({
     variant: "default" | "outline" | "ghost",
   ) => {
     const href = linkFor(action);
-    const destructive =
-      action.kind === "decline" ||
-      action.kind === "withdraw" ||
-      action.kind === "trial-decline";
     const className = cn(
       TOUCH,
-      destructive &&
+      isDestructive(action) &&
         variant === "ghost" &&
         "text-destructive hover:bg-destructive/10 hover:text-destructive",
     );
@@ -308,67 +310,61 @@ export function InboxRow({
     );
   };
 
-  const secondaryMenu =
-    actions.secondary.length === 0 ? null : isDesktop ? (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={TOUCH}
-            aria-label={`More actions for ${row.requester.name}`}
-            disabled={busy}
+  const moreButton = (onClick?: () => void) => (
+    <Button
+      variant="ghost"
+      size="sm"
+      className={TOUCH}
+      aria-label={`More actions for ${row.requester.name}`}
+      disabled={busy}
+      onClick={onClick}
+    >
+      <MoreHorizontal className="h-4 w-4" aria-hidden />
+    </Button>
+  );
+  const desktopMenu = (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>{moreButton()}</DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {actions.secondary.map((action) => (
+          <DropdownMenuItem
+            key={action.kind}
+            className={cn(
+              isDestructive(action) &&
+                "text-destructive focus:text-destructive",
+            )}
+            onSelect={() => onAction(action)}
           >
-            <MoreHorizontal className="h-4 w-4" aria-hidden />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+            {ACTION_LABEL[action.kind]}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+  // Below sm the secondary actions live in a bottom sheet (#1775).
+  const mobileSheet = (
+    <ResponsiveModal open={sheetOpen} onOpenChange={setSheetOpen}>
+      {moreButton(() => setSheetOpen(true))}
+      <ResponsiveModalContent>
+        <ResponsiveModalHeader>
+          <ResponsiveModalTitle>
+            {row.requester.name} · {row.planTitle}
+          </ResponsiveModalTitle>
+        </ResponsiveModalHeader>
+        <div className="flex flex-col gap-2">
+          {actions.primary && renderAction(actions.primary, "default")}
           {actions.secondary.map((action) => (
-            <DropdownMenuItem
-              key={action.kind}
-              className={cn(
-                (action.kind === "decline" ||
-                  action.kind === "withdraw" ||
-                  action.kind === "trial-decline") &&
-                  "text-destructive focus:text-destructive",
-              )}
-              onSelect={() => onAction(action)}
-            >
-              {ACTION_LABEL[action.kind]}
-            </DropdownMenuItem>
+            <span key={action.kind} className="contents">
+              {renderAction(action, "ghost")}
+            </span>
           ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ) : (
-      // Below sm the secondary actions live in a bottom sheet (#1775).
-      <ResponsiveModal open={sheetOpen} onOpenChange={setSheetOpen}>
-        <Button
-          variant="ghost"
-          size="sm"
-          className={TOUCH}
-          aria-label={`More actions for ${row.requester.name}`}
-          disabled={busy}
-          onClick={() => setSheetOpen(true)}
-        >
-          <MoreHorizontal className="h-4 w-4" aria-hidden />
-        </Button>
-        <ResponsiveModalContent>
-          <ResponsiveModalHeader>
-            <ResponsiveModalTitle>
-              {row.requester.name} · {row.planTitle}
-            </ResponsiveModalTitle>
-          </ResponsiveModalHeader>
-          <div className="flex flex-col gap-2">
-            {actions.primary && renderAction(actions.primary, "default")}
-            {actions.secondary.map((action) => (
-              <span key={action.kind} className="contents">
-                {renderAction(action, "ghost")}
-              </span>
-            ))}
-          </div>
-        </ResponsiveModalContent>
-      </ResponsiveModal>
-    );
+        </div>
+      </ResponsiveModalContent>
+    </ResponsiveModal>
+  );
+  const hasSecondary = actions.secondary.length > 0;
+  const menuForViewport = isDesktop ? desktopMenu : mobileSheet;
+  const secondaryMenu = hasSecondary ? menuForViewport : null;
 
   return (
     <li

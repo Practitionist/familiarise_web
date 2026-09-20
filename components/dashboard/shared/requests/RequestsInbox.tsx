@@ -129,49 +129,15 @@ const requestPath = (row: InboxRowInput) =>
       : "consultations"
   }/${encodeURIComponent(row.id)}`;
 
-/**
- * The consultant Requests inbox (#1775): type tabs, chips, sort and deadline
- * buckets over `readRequestsInbox`, every word from the presentation layer,
- * one primary action per row. State lives in the URL; the RSC page seeds the
- * query and this component keeps it fresh (30 s stale, refetch on focus).
- */
-export function RequestsInbox({
-  consultantProfileId,
-  orgScope = "personal",
-  viewerZone,
-}: Readonly<RequestsInboxProps>) {
+/** Tabs, chips, sort and page live in the URL; this reads and replaces them (no scroll). */
+function useInboxUrlState() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const viewer = useViewerZone(viewerZone);
-  const queryClient = useQueryClient();
-
   const params = useMemo(
     () => readInboxParams((key) => searchParams.get(key)),
     [searchParams],
   );
-  const chip = params.chip;
-  const queryArgs = {
-    consultantProfileId,
-    scope: orgScope,
-    type: params.type,
-    chip,
-    sort: params.sort,
-    page: params.page,
-  };
-  const queryKey = inboxQueryKey(queryArgs);
-
-  const query = useQuery({
-    queryKey,
-    queryFn: () => fetchInbox(inboxQueryString(queryArgs)),
-    staleTime: 30_000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
-    placeholderData: keepPreviousData,
-  });
-  const data = query.data;
-  const rows = useMemo(() => data?.rows ?? [], [data]);
-
   const setParams = useCallback(
     (patch: {
       type?: InboxType;
@@ -205,6 +171,45 @@ export function RequestsInbox({
     },
     [pathname, router, searchParams],
   );
+  return { params, setParams };
+}
+
+/**
+ * The consultant Requests inbox (#1775): type tabs, chips, sort and deadline
+ * buckets over `readRequestsInbox`, every word from the presentation layer,
+ * one primary action per row. State lives in the URL; the RSC page seeds the
+ * query and this component keeps it fresh (30 s stale, refetch on focus).
+ */
+export function RequestsInbox({
+  consultantProfileId,
+  orgScope = "personal",
+  viewerZone,
+}: Readonly<RequestsInboxProps>) {
+  const { params, setParams } = useInboxUrlState();
+  const viewer = useViewerZone(viewerZone);
+  const queryClient = useQueryClient();
+
+  const chip = params.chip;
+  const queryArgs = {
+    consultantProfileId,
+    scope: orgScope,
+    type: params.type,
+    chip,
+    sort: params.sort,
+    page: params.page,
+  };
+  const queryKey = inboxQueryKey(queryArgs);
+
+  const query = useQuery({
+    queryKey,
+    queryFn: () => fetchInbox(inboxQueryString(queryArgs)),
+    staleTime: 30_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    placeholderData: keepPreviousData,
+  });
+  const data = query.data;
+  const rows = useMemo(() => data?.rows ?? [], [data]);
 
   const invalidate = useCallback(() => {
     void queryClient.invalidateQueries({
@@ -523,6 +528,117 @@ export function RequestsInbox({
     ? Math.max(1, Math.ceil(data.meta.total / data.meta.limit))
     : 1;
 
+  const renderBody = () => {
+    if (loading) {
+      return (
+        <div role="status" aria-live="polite" className="space-y-3">
+          <span className="sr-only">Loading requests</span>
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-16 w-full rounded-lg" />
+          ))}
+        </div>
+      );
+    }
+    if (query.isError && !data) {
+      const message =
+        query.error instanceof Error
+          ? query.error.message
+          : "Something went wrong.";
+      return (
+        <div className="rounded-lg border border-border p-6">
+          <p className="font-medium text-foreground">
+            Couldn&apos;t load requests
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">{message}</p>
+          <Button className="mt-4" onClick={() => void query.refetch()}>
+            Retry
+          </Button>
+        </div>
+      );
+    }
+    if (rows.length === 0) {
+      return (
+        <EmptyState
+          icon={Inbox}
+          title={EMPTY_STATE[params.type].title}
+          description={EMPTY_STATE[params.type].body}
+        />
+      );
+    }
+    return (
+      <>
+        <InboxBuckets
+          rows={rows}
+          flat={chip === "declined"}
+          renderRow={(row) => (
+            <InboxRow
+              key={row.id}
+              row={row}
+              viewer={viewer}
+              selectable={isDialogFreeApproval(row)}
+              selected={selected.has(row.id)}
+              busy={
+                busyId === row.id ||
+                (approve.isPending && approveTarget?.id === row.id)
+              }
+              note={notes[row.id] ?? null}
+              onSelect={(checked) =>
+                setSelected((prev) => {
+                  const next = new Set(prev);
+                  if (checked) next.add(row.id);
+                  else next.delete(row.id);
+                  return next;
+                })
+              }
+              onAction={(action) => onAction(row, action)}
+            />
+          )}
+        />
+        {data && data.meta.total > data.meta.limit && (
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span aria-live="polite">
+              Showing {(data.meta.page - 1) * data.meta.limit + 1}&ndash;
+              {Math.min(
+                data.meta.total,
+                data.meta.page * data.meta.limit,
+              )} of {data.meta.total}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={refreshing || data.meta.page <= 1}
+                onClick={() => setParams({ page: data.meta.page - 1 })}
+              >
+                Prev
+              </Button>
+              <span className="tabular-nums">
+                {data.meta.page} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={refreshing || data.meta.page >= totalPages}
+                onClick={() => setParams({ page: data.meta.page + 1 })}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+        <BatchApproveBar
+          rows={selectedRows}
+          busy={approve.isPending}
+          onClear={() => setSelected(new Set())}
+          onFinished={() => {
+            setSelected(new Set());
+            invalidate();
+          }}
+        />
+      </>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -597,105 +713,7 @@ export function RequestsInbox({
         }}
       />
 
-      {loading ? (
-        <div role="status" aria-live="polite" className="space-y-3">
-          <span className="sr-only">Loading requests</span>
-          {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-16 w-full rounded-lg" />
-          ))}
-        </div>
-      ) : query.isError && !data ? (
-        <div className="rounded-lg border border-border p-6">
-          <p className="font-medium text-foreground">
-            Couldn&apos;t load requests
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {query.error instanceof Error
-              ? query.error.message
-              : "Something went wrong."}
-          </p>
-          <Button className="mt-4" onClick={() => void query.refetch()}>
-            Retry
-          </Button>
-        </div>
-      ) : rows.length === 0 ? (
-        <EmptyState
-          icon={Inbox}
-          title={EMPTY_STATE[params.type].title}
-          description={EMPTY_STATE[params.type].body}
-        />
-      ) : (
-        <>
-          <InboxBuckets
-            rows={rows}
-            flat={chip === "declined"}
-            renderRow={(row) => (
-              <InboxRow
-                key={row.id}
-                row={row}
-                viewer={viewer}
-                selectable={isDialogFreeApproval(row)}
-                selected={selected.has(row.id)}
-                busy={
-                  busyId === row.id ||
-                  (approve.isPending && approveTarget?.id === row.id)
-                }
-                note={notes[row.id] ?? null}
-                onSelect={(checked) =>
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (checked) next.add(row.id);
-                    else next.delete(row.id);
-                    return next;
-                  })
-                }
-                onAction={(action) => onAction(row, action)}
-              />
-            )}
-          />
-          {data && data.meta.total > data.meta.limit && (
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span aria-live="polite">
-                Showing {(data.meta.page - 1) * data.meta.limit + 1}&ndash;
-                {Math.min(
-                  data.meta.total,
-                  data.meta.page * data.meta.limit,
-                )} of {data.meta.total}
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={refreshing || data.meta.page <= 1}
-                  onClick={() => setParams({ page: data.meta.page - 1 })}
-                >
-                  Prev
-                </Button>
-                <span className="tabular-nums">
-                  {data.meta.page} / {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={refreshing || data.meta.page >= totalPages}
-                  onClick={() => setParams({ page: data.meta.page + 1 })}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-          <BatchApproveBar
-            rows={selectedRows}
-            busy={approve.isPending}
-            onClear={() => setSelected(new Set())}
-            onFinished={() => {
-              setSelected(new Set());
-              invalidate();
-            }}
-          />
-        </>
-      )}
+      {renderBody()}
 
       <RequestedSlotsDialog
         open={approveTarget !== null}

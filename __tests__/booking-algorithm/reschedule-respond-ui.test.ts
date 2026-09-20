@@ -100,7 +100,7 @@ describe("#1163 — the consultant inbox answers proposals", () => {
   });
 
   it("only a PENDING_REVIEW consultee-initiated proposal with times is answerable", () => {
-    expect(inboxRow).toContain('p.status !== "PENDING_REVIEW"');
+    expect(inboxRow).toContain('p?.status !== "PENDING_REVIEW"');
     expect(inboxRow).toContain('p.initiatorRole !== "CONSULTEE"');
     expect(inboxRow).toContain("t.round === p.round).length === 0");
   });
@@ -127,10 +127,10 @@ describe("#1766 — the Requests inbox sizes a subscription's batch off the enti
   it("asks for this cycle's nextBatch, never the lifetime total", () => {
     // The requiredSlots arm for a fresh subscription (no tentative rows).
     const arm = inboxRead.slice(
-      inboxRead.indexOf("const requiredSlots ="),
+      inboxRead.indexOf("const freshBatch ="),
       inboxRead.indexOf(
         "return finish(",
-        inboxRead.indexOf("const requiredSlots ="),
+        inboxRead.indexOf("const freshBatch ="),
       ),
     );
     expect(arm).toContain("entitlement.cycle.nextBatch * slotsPerSession");
