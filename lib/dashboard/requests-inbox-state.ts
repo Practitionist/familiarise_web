@@ -202,3 +202,56 @@ export function isInboxSort(v: string | null | undefined): v is InboxSort {
 export const INBOX_DEFAULT_TYPE: InboxType = "consultation";
 export const INBOX_DEFAULT_SORT: InboxSort = "priority";
 export const INBOX_DEFAULT_LIMIT = 20;
+
+export interface InboxQueryArgs {
+  consultantProfileId: string;
+  /** "personal" or an organisation id, as the URL carries it. */
+  scope: string;
+  type: InboxType;
+  chip: InboxChip | null;
+  sort: InboxSort;
+  page: number;
+}
+
+/** The RSC seed and the client `useQuery` MUST build this identically. */
+export function inboxQueryKey(args: InboxQueryArgs) {
+  return [
+    "requests-inbox",
+    args.consultantProfileId,
+    args.scope,
+    args.type,
+    args.chip,
+    args.sort,
+    args.page,
+  ] as const;
+}
+
+/** The HTTP twin's query string for the same arguments. */
+export function inboxQueryString(args: InboxQueryArgs): string {
+  const params = new URLSearchParams({
+    consultantProfileId: args.consultantProfileId,
+    orgScope: args.scope,
+    type: args.type,
+    sort: args.sort,
+    page: String(args.page),
+    limit: String(INBOX_DEFAULT_LIMIT),
+  });
+  if (args.chip) params.set("chip", args.chip);
+  return params.toString();
+}
+
+/** URL → inbox state; anything unknown falls to the default. */
+export function readInboxParams(
+  get: (key: string) => string | null,
+): Pick<InboxQueryArgs, "type" | "chip" | "sort" | "page"> {
+  const type = get("type");
+  const chip = get("chip");
+  const sort = get("sort");
+  const page = Number.parseInt(get("page") ?? "1", 10);
+  return {
+    type: isInboxType(type) ? type : INBOX_DEFAULT_TYPE,
+    chip: isInboxChip(chip) ? chip : null,
+    sort: isInboxSort(sort) ? sort : INBOX_DEFAULT_SORT,
+    page: Number.isFinite(page) && page >= 1 ? page : 1,
+  };
+}
