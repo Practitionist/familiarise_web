@@ -1,7 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
+import { PageSkeleton } from "@/components/dashboard/DashboardSkeletons";
+import type {
+  ConsulteeCreditRow,
+  ConsulteeCreditUsageRow,
+  ConsulteePaymentRow,
+  ConsulteePaymentsPayload,
+} from "@/lib/data/consultee-payments";
 import { motion } from "framer-motion";
 import { useCurrency } from "@/hooks/useCurrency";
 import { cn } from "@/utils/tailwind";
@@ -35,84 +44,12 @@ import {
 } from "@/lib/labels/session-labels";
 import { FailedRefundNote } from "./FailedRefundNote";
 
-interface RefundItem {
-  id: string;
-  amountPaise: number;
-  status: string;
-  reason: string | null;
-  createdAt: string;
-}
+type PaymentItem = ConsulteePaymentRow;
+type CreditItem = ConsulteeCreditRow;
+type CreditUsageItem = ConsulteeCreditUsageRow;
+type PaymentsData = ConsulteePaymentsPayload;
 
-interface PaymentItem {
-  id: string;
-  amount: number;
-  originalAmount: number | null;
-  taxAmount: number | null;
-  currency: string;
-  status: string;
-  paymentMethod: string | null;
-  paymentGateway: string;
-  appointmentType: string | null;
-  appointmentId: string | null;
-  /** #1675 — the buyer already has a support thread on this booking. */
-  hasSupportThread: boolean;
-  planTitle: string;
-  organizationId: string | null;
-  discount: {
-    code: string;
-    type: string;
-    value: number;
-  } | null;
-  refunds: RefundItem[];
-  refundedPaise: number;
-  /** Server-derived: REFUNDED | PARTIALLY_REFUNDED | PaymentStatus. */
-  displayStatus: string;
-  /** #1365 — the statutory tax invoice, when one was issued for this payment. */
-  consumerInvoice: {
-    id: string;
-    invoiceNumber: string;
-    issuedAt: string;
-  } | null;
-  receiptUrl: string | null;
-  expiresAt: string | null;
-  createdAt: string;
-}
-
-interface CreditItem {
-  id: string;
-  amount: number;
-  source: string;
-  usedAmount: number;
-  remainingAmount: number;
-  expiresAt: string | null;
-  createdAt: string;
-}
-
-interface CreditUsageItem {
-  id: string;
-  amount: number;
-  usedAt: string;
-  credit: { source: string };
-  payment: {
-    id: string;
-    amount: number;
-    currency: string;
-    createdAt: string;
-  } | null;
-}
-
-interface PaymentsData {
-  payments: PaymentItem[];
-  credits: CreditItem[];
-  creditUsages: CreditUsageItem[];
-  creditSummary: {
-    total: number;
-    used: number;
-    remaining: number;
-  };
-}
-
-function formatDate(date: string): string {
+function formatDate(date: Date | string): string {
   return new Date(date).toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
@@ -129,7 +66,7 @@ function formatGateway(gateway: string): string {
   return GATEWAY_LABELS[gateway] || gateway;
 }
 
-function formatDateTime(date: string): string {
+function formatDateTime(date: Date | string): string {
   return new Date(date).toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
@@ -167,7 +104,7 @@ function formatRelativeTime(date: Date): string {
  * misleading amber "PENDING" badge while the cleanup cron hasn't run yet.
  */
 function getDisplayStatus(payment: PaymentItem): string {
-  const base = payment.displayStatus ?? payment.status;
+  const base = payment.status;
   if (base !== "PENDING") return base;
 
   const expiresAt = payment.expiresAt
@@ -239,11 +176,64 @@ function renderInvoiceCell(payment: PaymentItem) {
   );
 }
 
-export function PaymentsTab({
+async function fetchConsulteePayments(
+  consulteeId: string,
+): Promise<PaymentsData> {
+  const res = await fetch(`/api/dashboard/consultee/${consulteeId}/payments`);
+  if (!res.ok) throw new Error("Failed to fetch payments");
+  const json = await res.json();
+  return json.data;
+}
+
+export function PaymentsTab({ consulteeId }: { consulteeId: string }) {
+  // Personal pin, matching the sibling Appointments page (ADR 19); the route
+  // defaults personal without ?orgScope=. The RSC page seeds this exact key.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["consultee-payments", consulteeId, "personal"] as const,
+    queryFn: () => fetchConsulteePayments(consulteeId),
+    staleTime: 30 * 1000,
+    // E2E-audit P1 fix — the global query client sets refetchOnMount /
+    // refetchOnWindowFocus to false, so a purchase made elsewhere in the same
+    // SPA session never appeared here until a full reload. Remounting this tab
+    // must always revalidate: the newest transaction (and REFUNDED flips caused
+    // by auto-refunds) land within one navigation; the SSR seed only covers
+    // the first paint.
+    refetchOnMount: "always",
+  });
+
+  if (isLoading) return <PageSkeleton />;
+
+  if (error || !data) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="p-4 bg-red-50 text-red-600 rounded-lg max-w-md text-center">
+          <h3 className="font-semibold mb-2">Error Loading Payments</h3>
+          <p className="text-sm">
+            {error?.message || "Failed to load payments. Please try again."}
+          </p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <DashboardErrorBoundary>
+      <PaymentsTabBody data={data} consulteeId={consulteeId} />
+    </DashboardErrorBoundary>
+  );
+}
+
+function PaymentsTabBody({
   data,
   consulteeId,
 }: {
-  data: PaymentsData | undefined;
+  data: PaymentsData;
   consulteeId: string;
 }) {
   const { formatPrice } = useCurrency();
@@ -571,7 +561,7 @@ export function PaymentsTab({
       header: "Date",
       cell: (usage) => (
         <span className="text-muted-foreground">
-          {formatDate(usage.usedAt)}
+          {formatDate(usage.createdAt)}
         </span>
       ),
     },
@@ -587,8 +577,6 @@ export function PaymentsTab({
       ),
     },
   ];
-
-  if (!data) return null;
 
   return (
     <motion.div
