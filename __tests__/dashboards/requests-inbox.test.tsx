@@ -31,6 +31,7 @@ import {
   isDialogFreeApproval,
   rowActions,
 } from "@/components/dashboard/shared/requests/InboxRow";
+import { approvedToast } from "@/components/dashboard/shared/requests/labels";
 import { CP, NOW, serveInboxFixture } from "../fixtures/requests-inbox";
 
 type MockPrisma = Parameters<typeof serveInboxFixture>[0];
@@ -131,6 +132,15 @@ describe("Requests inbox anatomy (A-4)", () => {
     expect(html).toContain(">Remind<");
     expect(html).toContain(">Allocate<");
     expect(html).toContain(">Approve<");
+  });
+
+  it("the approve toast follows the allocate response's awaitingPayment flag", () => {
+    expect(approvedToast({ awaitingPayment: true })).toBe(
+      "Approved — the client has 24 h to pay",
+    );
+    // Absent or false → today's behaviour.
+    expect(approvedToast({})).toBe("Approved");
+    expect(approvedToast({ awaitingPayment: false })).toBe("Approved");
   });
 
   it("puts the batch checkbox only on the dialog-free row", async () => {

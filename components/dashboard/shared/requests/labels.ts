@@ -86,6 +86,7 @@ export function nextCycleLine(entitlement: SubscriptionEntitlement): string {
 /** One verb per toast. */
 export const TOAST = {
   approved: "Approved",
+  approvedAwaitingPayment: "Approved — the client has 24 h to pay",
   declined: "Declined",
   reminderSent: "Reminder sent",
   approvalWithdrawn: "Approval withdrawn",
@@ -114,6 +115,17 @@ export function errorSentence(
   return (
     fallback.replace(/\[[A-Z_]+\]\s*/g, "").trim() || "Something went wrong."
   );
+}
+
+/**
+ * The approve toast follows the allocate response's `awaitingPayment` flag
+ * (PR-B #1782): a pay order was minted, so the row moves to "Awaiting
+ * payment" rather than leaving the inbox. Absent → today's plain "Approved".
+ */
+export function approvedToast(result: { awaitingPayment?: boolean }): string {
+  return result.awaitingPayment === true
+    ? TOAST.approvedAwaitingPayment
+    : TOAST.approved;
 }
 
 /** "Remind sent · next in 3 h" from the route's `nextAllowedAt`. */

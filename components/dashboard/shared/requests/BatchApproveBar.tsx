@@ -9,7 +9,7 @@ import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
 import type { InboxRowInput } from "@/lib/dashboard/requests-inbox-state";
 import { cn } from "@/utils/tailwind";
 
-import { TOAST, errorSentence } from "./labels";
+import { approvedToast, errorSentence } from "./labels";
 import { approveRequestedTimes } from "./request-decision";
 
 export type BatchOutcome = {
@@ -70,7 +70,7 @@ export function BatchApproveBar({
         id: row.id,
         name: row.requester.name,
         ok: result.success,
-        note: result.success ? TOAST.approved : failure,
+        note: result.success ? approvedToast(result) : failure,
       });
       setOutcomes([...done]);
     }

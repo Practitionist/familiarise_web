@@ -62,6 +62,7 @@ import {
   EMPTY_STATE,
   TOAST,
   TYPE_LABEL,
+  approvedToast,
   errorSentence,
   nextReminderLine,
 } from "./labels";
@@ -297,7 +298,11 @@ export function RequestsInbox({
             errorSentence(body.code, body.error ?? "Could not confirm"),
           );
         }
-        return { kind: "done" as const, appointmentId: row.appointmentId };
+        return {
+          kind: "done" as const,
+          appointmentId: row.appointmentId,
+          awaitingPayment: false,
+        };
       }
       const result = await approveRequestedTimes(
         {
@@ -320,6 +325,7 @@ export function RequestsInbox({
       return {
         kind: "done" as const,
         appointmentId: result.data?.[0]?.id ?? null,
+        awaitingPayment: result.awaitingPayment === true,
       };
     },
     onSuccess: (outcome) => {
@@ -328,7 +334,9 @@ export function RequestsInbox({
         changedElsewhere();
         return;
       }
-      toast({ title: TOAST.approved });
+      // No optimistic removal: the refetch moves an unpaid approval to the
+      // "Awaiting payment" chip (the read includes APPROVED_PENDING_PAYMENT).
+      toast({ title: approvedToast(outcome) });
       setConfirmation({
         appointmentHref: outcome.appointmentId
           ? `/dashboard/consultant/${consultantProfileId}/appointments/${outcome.appointmentId}`
