@@ -87,11 +87,38 @@ jest.mock("../../lib/rate-limit", () => ({
 
 import prisma from "../../lib/prisma";
 import { lapseApprovedRequest } from "../../lib/booking/lapse-approved-request";
+import { POST as withdrawConsultation } from "../../app/api/bookings/consultations/[consultationId]/withdraw-approval/route";
+import { POST as withdrawSubscription } from "../../app/api/bookings/subscriptions/[subscriptionId]/withdraw-approval/route";
+import { NextRequest } from "next/server";
+
+// CUID-shaped, so `refuseMalformedEventId` lets the routes past the id gate.
+const C_ID = "clzzzzzzz000consultation1";
+const S_ID = "clzzzzzzz000subscription1";
 
 const db = prisma as unknown as Record<
   string,
   Record<string, jest.Mock> & jest.Mock
 >;
+const post = <P extends Record<string, string>>(
+  handler: (req: NextRequest, ctx: { params: Promise<P> }) => Promise<Response>,
+  params: P,
+) =>
+  handler(new NextRequest("http://localhost/x", { method: "POST" }), {
+    params: Promise.resolve(params),
+  });
+
+const consultationRow = (status: string) => ({
+  id: C_ID,
+  status,
+  consultationPlan: { consultantProfileId: "cp-1" },
+  requestedBy: { user: { id: "u-buyer", name: "Buyer" } },
+  appointment: {
+    id: "a-1",
+    organizationId: null,
+    occurrences: [{ startsAt: new Date("2026-09-24T09:00:00Z") }],
+  },
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   lockCalls.length = 0;
@@ -137,5 +164,65 @@ describe("lapseApprovedRequest (B-1)", () => {
     expect(
       db.appointmentOccurrence.updateManyAndReturn.mock.calls[0][0].where,
     ).toMatchObject({ appointmentId: "a-1", isTentative: true });
+  });
+});
+
+describe("POST …/withdraw-approval (B-2)", () => {
+  it("capture-then-withdraw: the request already moved → 409, Payment untouched", async () => {
+    db.consultation.findUnique.mockResolvedValue(consultationRow("APPROVED"));
+    db.consultation.updateMany.mockResolvedValue({ count: 0 });
+    const res = await post(withdrawConsultation, { consultationId: C_ID });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "REQUEST_CHANGED_ELSEWHERE",
+    });
+    expect(db.payment.updateMany).not.toHaveBeenCalled();
+    expect(notifyConsulteeRequestExpired).not.toHaveBeenCalled();
+  });
+
+  it("withdraw-then-capture: the request and its open order are EXPIRED under the appointment lock, the consultee is told", async () => {
+    db.subscription.findUnique.mockResolvedValue({
+      ...consultationRow("APPROVED_PENDING_PAYMENT"),
+      id: S_ID,
+      subscriptionPlan: { consultantProfileId: "cp-1" },
+    });
+    db.subscription.updateMany.mockResolvedValue({ count: 1 });
+    const res = await post(withdrawSubscription, { subscriptionId: S_ID });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ status: "EXPIRED" });
+    expect(lockCalls).toEqual(["a-1"]);
+    // The tombstone a late capture lands on: the handler's EXPIRED→SUCCEEDED
+    // claim + front-door refund (capture-amount-parity.test.ts).
+    expect(db.subscription.updateMany.mock.calls[0][0].data.status).toBe(
+      "EXPIRED",
+    );
+    expect(db.payment.updateMany).toHaveBeenCalledWith({
+      where: { appointmentId: "a-1", paymentStatus: "PENDING" },
+      data: { paymentStatus: "EXPIRED" },
+    });
+    expect(notifyConsulteeRequestExpired).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: "a-1",
+        consulteeUserId: "u-buyer",
+        appointmentType: "SUBSCRIPTION",
+      }),
+    );
+  });
+
+  it("the consultee cannot withdraw the consultant's approval → 403, no writes", async () => {
+    session.user = {
+      id: "u-buyer",
+      role: "CONSULTEE",
+      consultantProfileId: null,
+      consulteeProfileId: "cee-1",
+    };
+    db.consultation.findUnique.mockResolvedValue(
+      consultationRow("APPROVED_PENDING_PAYMENT"),
+    );
+    const res = await post(withdrawConsultation, { consultationId: C_ID });
+    expect(res.status).toBe(403);
+    expect(db.consultation.updateMany).not.toHaveBeenCalled();
+    expect(lockCalls).toEqual([]);
   });
 });
