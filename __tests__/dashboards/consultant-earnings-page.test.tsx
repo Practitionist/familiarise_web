@@ -96,6 +96,7 @@ const data: EarningsResponse = {
   eligibility: {
     consultantProfileId: "cp_1",
     isEligible: false,
+    reason: "NO_ACCOUNT" as const,
     readyAmount: 75_000,
     minimumAmount: 50_000,
     hasPayoutAccount: false,
