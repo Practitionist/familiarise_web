@@ -728,7 +728,16 @@ async function completeIndividualSlots(): Promise<{
         const staged = await prisma.$transaction((tx) =>
           settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
         );
-        for (const row of staged ?? []) await attemptTrigger(row);
+        for (const row of staged ?? []) {
+          // Best-effort after commit: the relay retries a failed attempt.
+          try {
+            await attemptTrigger(row);
+          } catch (error) {
+            console.error(
+              `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          }
+        }
       }
       return moved;
     };

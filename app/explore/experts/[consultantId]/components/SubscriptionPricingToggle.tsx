@@ -492,8 +492,12 @@ export default function SubscriptionPricingToggle({
                     : ""
                 }
                 onChange={(e) => {
-                  const date = e.target.value ? new Date(e.target.value) : null;
-                  setSchedulingStartDate(date);
+                  // Local midnight of the picked calendar day: `new Date("yyyy-MM-dd")`
+                  // is UTC midnight, a day early west of Greenwich.
+                  const [y, m, d] = e.target.value.split("-").map(Number);
+                  setSchedulingStartDate(
+                    e.target.value ? new Date(y, m - 1, d) : null,
+                  );
                 }}
                 min={format(new Date(), "yyyy-MM-dd")}
                 className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"

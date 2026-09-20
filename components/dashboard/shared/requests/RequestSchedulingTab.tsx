@@ -856,15 +856,17 @@ export function RequestSchedulingTab({
                       const plan = subscription.subscriptionPlan;
                       // #1766 — one cycle at a time: the batch the entitlement
                       // helper says this plan takes next, never the lifetime total.
+                      const entitlementTotal =
+                        subscription.sessionsTotal ?? plan?.totalSessions;
                       if (
-                        plan?.totalSessions &&
-                        plan.totalSessions > 0 &&
+                        plan &&
+                        entitlementTotal &&
+                        entitlementTotal > 0 &&
                         subscription.schedulingPeriodStartsAt
                       ) {
                         return (
                           subscriptionEntitlement({
-                            sessionsTotal:
-                              subscription.sessionsTotal ?? plan.totalSessions,
+                            sessionsTotal: entitlementTotal,
                             sessionsPerWeek: plan.sessionsPerWeek,
                             durationInMonths: plan.durationInMonths,
                             occurrences: allSlots.map((slot) => ({

@@ -128,7 +128,7 @@ describe("#1766 — the Requests tab sizes a subscription's batch off the entitl
     );
     expect(arm).toContain("subscriptionEntitlement({");
     expect(arm).toContain(".cycle.nextBatch * slotsPerSession");
-    expect(arm).toContain("subscription.sessionsTotal ?? plan.totalSessions");
+    expect(arm).toContain("subscription.sessionsTotal ?? plan?.totalSessions");
     expect(arm).not.toContain("totalSessions * slotsPerSession");
     expect(allocationTab).not.toContain("countSundayWeeksInclusive");
   });
