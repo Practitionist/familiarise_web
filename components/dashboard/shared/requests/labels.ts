@@ -134,8 +134,3 @@ export function nextReminderLine(
   );
   return `Remind sent · next in ${hours} h`;
 }
-
-/** The Home preview's type word; retired with the preview rewrite (#1775 A-6). */
-export function getRequestTypeLabel(type: string): string {
-  return type.charAt(0) + type.slice(1).toLowerCase();
-}

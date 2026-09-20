@@ -39,6 +39,7 @@ import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
 import { inboxBucketOf } from "@/lib/dashboard/requests-inbox-state";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
@@ -174,5 +175,36 @@ describe("GET /api/bookings/inbox (A-2)", () => {
     expect((await res.json()).rows.map((r: { id: string }) => r.id)).toEqual([
       "t-awaiting",
     ]);
+  });
+});
+
+describe("Home strip parity (A-6)", () => {
+  it("Home's answer / awaiting / next-cycle strips add up to the inbox tab counts", async () => {
+    const m = prisma as unknown as Record<string, Record<string, jest.Mock>>;
+    m.appointmentOccurrence.findMany.mockResolvedValue([]);
+    m.appointmentOccurrence.groupBy.mockResolvedValue([]);
+    m.appointment.findMany.mockResolvedValue([]);
+    m.activityLog.findMany.mockResolvedValue([]);
+    m.trial.groupBy.mockResolvedValue([]);
+    m.bookingStatusHistory.findMany.mockResolvedValue([]);
+    m.consultantEarnings.count.mockResolvedValue(0);
+    m.consultantEarnings.aggregate.mockResolvedValue({
+      _sum: { consultantSharePaise: null, refundedShareAmount: null },
+    });
+    m.consultantReview.aggregate.mockResolvedValue({
+      _avg: { rating: null },
+      _count: { rating: 0 },
+    });
+    const home = await getConsultantDashboard(CP);
+    const inbox = await read({ type: "consultation" });
+    // Same predicates (needs-you.ts) on both sides: 1 pending + 1 awaiting + 1 next cycle.
+    expect(
+      home.pendingRequestsCount +
+        home.awaitingPayment.count +
+        home.nextCycles.length,
+    ).toBe(3);
+    expect(
+      inbox.meta.counts.consultation + inbox.meta.counts.subscription,
+    ).toBe(3);
   });
 });
