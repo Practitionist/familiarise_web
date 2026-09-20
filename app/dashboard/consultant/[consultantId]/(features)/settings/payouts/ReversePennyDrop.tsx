@@ -71,7 +71,11 @@ export function ReversePennyDrop({
     if (phase.kind !== "waiting") return;
     const { validationId } = phase.start;
     let cancelled = false;
+    let inFlight = false;
     const timer = setInterval(async () => {
+      // One request at a time: a slow settle must not be joined by the next tick.
+      if (inFlight) return;
+      inFlight = true;
       if (Date.now() - phase.since > POLL_LIMIT_MS) {
         clearInterval(timer);
         setPhase({
@@ -106,6 +110,8 @@ export function ReversePennyDrop({
           clearInterval(timer);
           setPhase({ kind: "failed", reason: error.message });
         }
+      } finally {
+        inFlight = false;
       }
     }, POLL_MS);
     return () => {

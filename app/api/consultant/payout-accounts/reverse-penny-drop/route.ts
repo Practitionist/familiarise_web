@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
 import { apiError } from "@/lib/errors/api-error";
+import { applyRateLimit, moneyOpsLimiter } from "@/lib/rate-limit";
 import { startReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-drop";
 
 export async function POST() {
@@ -15,6 +16,9 @@ export async function POST() {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    // Every start mints a validation at RazorpayX; throttle per user first.
+    const rateLimited = await applyRateLimit(moneyOpsLimiter, session.user.id);
+    if (rateLimited) return rateLimited;
     const consultantProfile = await prisma.consultantProfile.findUnique({
       where: { userId: session.user.id },
       select: { id: true },

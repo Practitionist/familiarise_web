@@ -84,10 +84,15 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
             account.razorpayFundAccId,
           );
         const verified = validation.accountStatus === "valid";
-        const updated = await prisma.payoutAccount.update({
-          where: { id: account.id },
-          data: { isVerified: verified },
-        });
+        // #1675 PR-Y2 — an async "created" reply is not an answer; only a
+        // definite valid/invalid may move the flag.
+        const updated =
+          validation.accountStatus === "unknown"
+            ? account
+            : await prisma.payoutAccount.update({
+                where: { id: account.id },
+                data: { isVerified: verified },
+              });
         return NextResponse.json({
           success: true,
           accountStatus: validation.accountStatus,

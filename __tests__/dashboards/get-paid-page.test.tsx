@@ -17,11 +17,16 @@ jest.mock("../../lib/prisma", () => ({
   default: {
     payoutAccount: {
       findFirst: jest.fn(),
-      count: jest.fn(),
+      updateMany: jest.fn(),
       create: jest.fn(),
     },
     consultantProfile: { findUniqueOrThrow: jest.fn() },
+    $transaction: jest.fn(),
   },
+}));
+jest.mock("../../lib/redis", () => ({
+  acquireLock: jest.fn().mockResolvedValue("tok"),
+  releaseLock: jest.fn().mockResolvedValue(undefined),
 }));
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
   __esModule: true,
@@ -184,8 +189,11 @@ describe("Y2-2 reverse penny drop persists a reference-only row", () => {
       createFundAccount: jest.fn().mockResolvedValue({ id: "fa_1" }),
     };
     (getRazorpayPayoutsService as jest.Mock).mockReturnValue(svc);
+    // No matching row, then no current default → the new account is default.
     (prisma.payoutAccount.findFirst as jest.Mock).mockResolvedValue(null);
-    (prisma.payoutAccount.count as jest.Mock).mockResolvedValue(0);
+    (prisma.$transaction as jest.Mock).mockImplementation(
+      (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma),
+    );
     (prisma.consultantProfile.findUniqueOrThrow as jest.Mock).mockResolvedValue(
       { user: { name: "Asha", email: "a@x.in" }, payoutAccounts: [] },
     );

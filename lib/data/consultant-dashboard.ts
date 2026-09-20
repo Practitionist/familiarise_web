@@ -29,6 +29,7 @@ import {
 } from "@/lib/data/needs-you";
 import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
 import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
+import { reportSentryError } from "@/lib/observability/report";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
@@ -826,7 +827,10 @@ export async function getConsultantDashboard(
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
   const payoutSetup = {
-    needed: await readPayoutSetupNeeded(consultantProfileId).catch(() => false),
+    needed: await readPayoutSetupNeeded(consultantProfileId).catch((error) => {
+      reportSentryError(error, { subsystem: "payments", expected: true });
+      return false;
+    }),
     href: payoutSettingsHref(consultantProfileId),
   };
 

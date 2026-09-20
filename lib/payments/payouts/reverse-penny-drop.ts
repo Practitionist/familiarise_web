@@ -15,6 +15,7 @@
  */
 
 import prisma from "@/lib/prisma";
+import { acquireLock, releaseLock } from "@/lib/redis";
 import { Refusal } from "@/lib/errors/refusal";
 import { PaymentError } from "@/lib/payments/core/types";
 import { PaymentGateway, PayoutAccountType } from "@prisma/client";
@@ -102,10 +103,15 @@ export async function startReversePennyDrop(
   return { validationId: validation.id, upiIntent: validation.upiIntent };
 }
 
+/** Long enough for two RazorpayX calls and two writes; short enough to self-heal. */
+const SETTLE_LOCK_TTL_MS = 30_000;
+
 /**
  * One poll: pending until the ₹1 lands; on completion the account is created
  * at RazorpayX and persisted. Re-polling after completion finds the row by
- * its masked tail + IFSC and returns it instead of creating a second one.
+ * its masked tail + IFSC and returns it instead of creating a second one, and
+ * overlapping polls for one validation are serialised by a Redis lock — the
+ * schema has no column for the validation id, so the lock is the claim.
  */
 export async function settleReversePennyDrop(
   consultantProfileId: string,
@@ -133,6 +139,27 @@ export async function settleReversePennyDrop(
     };
   }
 
+  const lockKey = `rpd:settle:${validationId}`;
+  const lockToken = await acquireLock(lockKey, SETTLE_LOCK_TTL_MS);
+  // Another poll holds the claim; the next tick will find the persisted row.
+  if (!lockToken) return { status: "pending" };
+  try {
+    return await persistVerifiedAccount(razorpayX, consultantProfileId, {
+      ...validation,
+      bankAccount: validation.bankAccount,
+    });
+  } finally {
+    await releaseLock(lockKey, lockToken);
+  }
+}
+
+async function persistVerifiedAccount(
+  razorpayX: ReturnType<typeof getRazorpayPayoutsService>,
+  consultantProfileId: string,
+  validation: FundAccountValidationSummary & {
+    bankAccount: NonNullable<FundAccountValidationSummary["bankAccount"]>;
+  },
+): Promise<ReversePennyDropOutcome> {
   const { accountNumber, ifsc, bankName } = validation.bankAccount;
   const accountNumberLast4 = accountNumber.slice(-4);
 
@@ -178,24 +205,44 @@ export async function settleReversePennyDrop(
     bankAccount: { name: holderName, ifsc, accountNumber },
   });
 
-  const isFirst =
-    (await prisma.payoutAccount.count({ where: { consultantProfileId } })) ===
-    0;
-  const account = await prisma.payoutAccount.create({
-    data: {
-      consultantProfileId,
-      provider: PaymentGateway.RAZORPAY,
-      accountType: PayoutAccountType.BANK_ACCOUNT,
-      accountHolderName: holderName,
-      bankName: bankName ?? undefined,
-      accountNumberLast4,
-      ifscCode: ifsc,
-      razorpayContactId: contactId,
-      razorpayFundAccId: fundAccount.id,
-      isVerified: true,
-      isDefault: isFirst,
-    },
-    select: PAYOUT_ACCOUNT_SAFE_SELECT,
+  // A verified account takes the default slot unless a verified default
+  // already holds it — otherwise a pending manual entry would keep payouts
+  // blocked after the consultant had just proved a working account.
+  const currentDefault = await prisma.payoutAccount.findFirst({
+    where: { consultantProfileId, isDefault: true },
+    select: { isVerified: true },
+  });
+  const becomesDefault = !currentDefault?.isVerified;
+  const data = {
+    consultantProfileId,
+    provider: PaymentGateway.RAZORPAY,
+    accountType: PayoutAccountType.BANK_ACCOUNT,
+    accountHolderName: holderName,
+    bankName: bankName ?? undefined,
+    accountNumberLast4,
+    ifscCode: ifsc,
+    razorpayContactId: contactId,
+    razorpayFundAccId: fundAccount.id,
+    isVerified: true,
+    isDefault: becomesDefault,
+  };
+  if (!becomesDefault) {
+    const account = await prisma.payoutAccount.create({
+      data,
+      select: PAYOUT_ACCOUNT_SAFE_SELECT,
+    });
+    return { status: "verified", account };
+  }
+  // Two writes on the tx client only (PG_POOL_MAX=1): one default at a time.
+  const account = await prisma.$transaction(async (tx) => {
+    await tx.payoutAccount.updateMany({
+      where: { consultantProfileId, isDefault: true },
+      data: { isDefault: false },
+    });
+    return tx.payoutAccount.create({
+      data,
+      select: PAYOUT_ACCOUNT_SAFE_SELECT,
+    });
   });
   return { status: "verified", account };
 }

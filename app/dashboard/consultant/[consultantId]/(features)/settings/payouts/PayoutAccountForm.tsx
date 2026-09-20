@@ -83,18 +83,26 @@ export function PayoutAccountForm({
   const mutation = useMutation({
     mutationFn: async (input: CreatePayoutAccountInput) => {
       const { account } = await createPayoutAccount(input);
+      // The row exists from here on; a failed default switch is reported
+      // as its own outcome, never as "not saved".
+      let madeDefault = true;
       if (makeDefault && !account.isDefault) {
-        await makeDefaultPayoutAccount(account.id);
+        madeDefault = await makeDefaultPayoutAccount(account.id).then(
+          () => true,
+          () => false,
+        );
       }
-      return account;
+      return { account, madeDefault };
     },
-    onSuccess: async (account) => {
+    onSuccess: async ({ account, madeDefault }) => {
       await invalidate();
       toast({
         title: account.isVerified ? "Account verified" : "Account saved",
-        description: account.isVerified
-          ? "The ₹1 test deposit confirmed your account."
-          : "We are confirming it with a ₹1 test deposit; check back in a minute.",
+        description: !madeDefault
+          ? "Saved, but we could not make it your payout account yet — use Change to pick it."
+          : account.isVerified
+            ? "The ₹1 test deposit confirmed your account."
+            : "We are confirming it with a ₹1 test deposit; check back in a minute.",
       });
       setAccountNumber("");
       setConfirmNumber("");
