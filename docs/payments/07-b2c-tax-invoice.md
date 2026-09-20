@@ -95,7 +95,7 @@ The documents render from the snapshot stored on the row rather than from live s
 
 Both PDFs register Noto Sans Devanagari from `public/fonts/` and apply it to the buyer's name and address only. Helvetica, which the org documents use throughout, has no Devanagari coverage, so a buyer writing in Hindi or Marathi would otherwise see their own name as a row of boxes. The font is read from a copy traced into the deployment bundle by `outputFileTracingIncludes` in `next.config.mjs`, never fetched over the network, and registration falls back to Helvetica if the file is absent rather than failing the download.
 
-The invoice number and a download link appear on the admin payment list and detail pages, and on the consultee's own payments tab. An empty cell there means the payment was org-funded, which is the correct answer rather than a missing document.
+The invoice number and a download link appear on the admin payment list and detail pages; on the consultee's own payments tab the row's "View receipt" link resolves to the invoice when one was issued (`receiptHref` in `lib/appointments/payment-display.ts`). A row without one means the payment was org-funded, which is the correct answer rather than a missing document.
 
 ## The outward-supplies register
 

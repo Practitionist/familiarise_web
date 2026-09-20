@@ -38,6 +38,7 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   refundWholeEventPayments,
   type WholeEventRefundSummary,
@@ -493,6 +494,15 @@ export async function POST(
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
 
+          // #1766 — no completion will stamp the remaining tranches now; the
+          // refund below claws back its share and the rest still pays out.
+          if (appointment.subscription && bookingCtx?.paidPayment) {
+            await stampTranchesOnCancel(tx, {
+              paymentId: bookingCtx.paidPayment.id,
+              now: cancellationData.cancelledAt,
+            });
+          }
+
           return {
             success: true,
             cancellationReason: validatedData.reason,
@@ -569,6 +579,9 @@ export async function POST(
           hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
           slotsTotal: bookingCtx.slotsTotal,
           sessionsRemaining: bookingCtx.sessionsRemaining,
+          sessionsTotal: bookingCtx.sessionsTotal,
+          sessionsCompleted: bookingCtx.sessionsCompleted,
+          scheduledStarts: bookingCtx.scheduledStarts,
           isSubscription: !!appointment.subscription,
           isConsultantInitiated,
           isFreeCreditFunded,

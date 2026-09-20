@@ -16,6 +16,7 @@
 import { format } from "date-fns";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
 import {
@@ -489,6 +490,8 @@ function deriveMoney(
       if (back > 0) parts.push(`${money(back, paid.currency)} refunded`);
       if (pendingRefund > 0)
         parts.push(`${money(pendingRefund, paid.currency)} refund on its way`);
+      // #1770 QA — the rail rides every refund line, partial ones included.
+      if (rail) parts.push(rail);
       return build("PARTIALLY_REFUNDED", "Partly refunded", parts.join(" · "));
     }
     // Locked 2026-09-13: the member did not pay a sponsored booking, so no amount.
@@ -762,11 +765,15 @@ export function deriveBookingPresentation(
 
   // #1675 — same "held" the header's bare count used (live.length), so
   // swapping one for the other never changes what number the viewer sees.
+  // #1766 — the plan size is the frozen entitlement; delivered sessions are
+  // named once they exist (COMPLETED and UNVERIFIED both count as held).
   const planSessions = input.plan?.sessions;
+  const completedCount = live.filter(isCompletedOccurrence).length;
   const sessionProgress =
-    planSessions && planSessions > 1
+    (planSessions && planSessions > 1
       ? `${live.length} of ${planSessions} sessions scheduled`
-      : `${live.length} sessions`;
+      : `${live.length} sessions`) +
+    (completedCount > 0 ? ` · ${completedCount} completed` : "");
 
   return {
     bookingState,
@@ -777,4 +784,22 @@ export function deriveBookingPresentation(
     sessionProgress,
     settled,
   };
+}
+
+/** A history row's input: the detail page's, minus the sessions a list never carries. */
+export type PaymentRowInput = Omit<BookingPresentationInput, "occurrences">;
+
+// #1675 — list rows have no occurrences; the money half is identical to the
+// detail page's, so this is the same derivation with three fields picked.
+export function derivePaymentPresentation(
+  input: PaymentRowInput,
+  viewer: Viewer,
+  options?: DeriveOptions,
+): Pick<BookingPresentation, "moneyState" | "nextAction" | "settled"> {
+  const { moneyState, nextAction, settled } = deriveBookingPresentation(
+    { ...input, occurrences: [] },
+    viewer,
+    options,
+  );
+  return { moneyState, nextAction, settled };
 }

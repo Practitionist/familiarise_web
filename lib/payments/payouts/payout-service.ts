@@ -15,6 +15,10 @@ import {
   EarningStatus,
 } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "./constants";
+import {
+  payoutEligibilityReason,
+  type PayoutEligibilityReason,
+} from "./payout-requirements";
 import { isPostMvpGatewayStub } from "@/lib/payments/constants";
 import {
   getRazorpayPayoutsService,
@@ -101,9 +105,12 @@ export interface ConsultantPayoutEligibility {
   isEligible: boolean;
   readyAmount: number;
   minimumAmount: number;
+  /** A VERIFIED default account; an unverified one still reads false. */
   hasPayoutAccount: boolean;
   defaultAccountId?: string;
   provider?: PaymentGateway;
+  /** The first failing gate in batch order; null when eligible (#1675 PR-Y2). */
+  reason: PayoutEligibilityReason | null;
 }
 
 // ============================================
@@ -187,24 +194,36 @@ export async function checkPayoutEligibility(
     sumPaise(readyEarningsAgg._sum.consultantSharePaise) -
     sumPaise(readyEarningsAgg._sum.refundedShareAmount);
 
-  // Get default payout account
+  // The default account at ANY verification state, so NO_ACCOUNT and
+  // UNVERIFIED can be told apart (#1675 PR-Y2); sequential reads, no tx.
   const defaultAccount = await prisma.payoutAccount.findFirst({
-    where: {
-      consultantProfileId,
-      isDefault: true,
-      isVerified: true,
-    },
+    where: { consultantProfileId, isDefault: true },
+    select: { id: true, provider: true, isVerified: true },
+  });
+  const taxInfo = await prisma.consultantTaxInfo.findUnique({
+    where: { consultantProfileId },
+    select: { isIndianResident: true },
+  });
+  const verifiedAccount = defaultAccount?.isVerified ? defaultAccount : null;
+
+  const reason = payoutEligibilityReason({
+    livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+    // No tax row yet reads as resident, matching the payout job's guard.
+    isIndianResident: taxInfo?.isIndianResident ?? true,
+    defaultAccount,
+    readyAmount,
+    minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
   });
 
   return {
     consultantProfileId,
-    isEligible:
-      readyAmount >= PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT && !!defaultAccount,
+    isEligible: reason === null,
     readyAmount,
     minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
-    hasPayoutAccount: !!defaultAccount,
-    defaultAccountId: defaultAccount?.id,
-    provider: defaultAccount?.provider,
+    hasPayoutAccount: !!verifiedAccount,
+    defaultAccountId: verifiedAccount?.id,
+    provider: verifiedAccount?.provider,
+    reason,
   };
 }
 
@@ -1587,3 +1606,46 @@ export async function getPayoutStats() {
     },
   };
 }
+
+// ============================================
+// Consultant-facing payout history (#1675 PR-Y)
+// ============================================
+
+/**
+ * The earner-safe payout select: the money walk (share → TDS → net), the
+ * dates, the failure reason and the UTR. Never `providerPayoutId`, the dedupe
+ * key or batch internals — the UTR is the only gateway reference a consultant
+ * needs to trace a transfer with their bank.
+ */
+export const CONSULTANT_PAYOUT_SELECT = {
+  id: true,
+  status: true,
+  amount: true,
+  tdsDeducted: true,
+  netAmount: true,
+  tdsRateAppliedBps: true,
+  tdsFinancialYear: true,
+  processedAt: true,
+  gatewayUtr: true,
+  failureReason: true,
+  mustPayByDate: true,
+  createdAt: true,
+} as const;
+
+/** Newest first; a plain read on the global client, never inside a transaction. */
+export async function getConsultantPayouts(
+  consultantProfileId: string,
+  options: { take?: number } = {},
+) {
+  const { take = 50 } = options;
+  return prisma.consultantPayout.findMany({
+    where: { consultantProfileId },
+    select: CONSULTANT_PAYOUT_SELECT,
+    orderBy: { createdAt: "desc" },
+    take,
+  });
+}
+
+export type ConsultantPayoutRow = Awaited<
+  ReturnType<typeof getConsultantPayouts>
+>[number];

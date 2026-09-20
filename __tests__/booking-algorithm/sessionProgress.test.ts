@@ -72,3 +72,36 @@ describe("calculateSessionProgress", () => {
     expect(r.progressPercentage).toBe(0);
   });
 });
+
+// #1766 — with the wrapper's subscription present, the total is the frozen
+// entitlement and "completed" the delivered rows, not the allocated-so-far
+// count: a 12-plan with cycle one done reads 4 of 12, never 4 of 4.
+describe("calculateSessionProgress with the subscription's entitlement", () => {
+  const ref = new Date("2025-06-01T00:00:00Z");
+
+  it("reads total from sessionsTotal and completed from delivered rows", () => {
+    const group = wrapper([
+      occurrence("2025-05-01T10:00:00Z", "COMPLETED"),
+      occurrence("2025-05-02T10:00:00Z", "COMPLETED"),
+      occurrence("2025-05-03T10:00:00Z", "UNVERIFIED"),
+      occurrence("2025-05-04T10:00:00Z", "COMPLETED"),
+      occurrence("2025-07-01T10:00:00Z"),
+    ]);
+    group.subscription = {
+      sessionsTotal: 12,
+      schedulingPeriodStartsAt: new Date("2025-05-01T00:00:00Z"),
+      schedulingTimezone: "UTC",
+      subscriptionPlan: {
+        sessionsPerWeek: 4,
+        durationInMonths: 3,
+        totalSessions: 16,
+      },
+    };
+
+    const r = calculateSessionProgress([group], ref);
+
+    expect(r.totalSessions).toBe(12);
+    expect(r.completedSessions).toBe(4);
+    expect(r.remainingSessions).toBe(8);
+  });
+});

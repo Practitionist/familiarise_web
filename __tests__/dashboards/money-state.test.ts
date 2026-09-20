@@ -11,6 +11,7 @@
 
 import {
   deriveBookingPresentation,
+  derivePaymentPresentation,
   type BookingPresentationInput,
   type PaymentInput,
 } from "@/lib/dashboard/money-state";
@@ -278,6 +279,15 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(u.bookingState.state).toBe("CONFIRMED");
   });
 
+  it("#1766 — a fresh subscription reads 0 of 12, never a blank", () => {
+    const input = base({
+      occurrences: [],
+      plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
+    });
+    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    expect(u.sessionProgress).toBe("0 of 12 sessions scheduled");
+  });
+
   it("#1675 — one session-count story: a 6-held / 144-plan subscription", () => {
     const input = base({
       occurrences: Array.from({ length: 6 }, (_, i) =>
@@ -290,5 +300,82 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
       "₹144.00 for the plan · 12 sessions · ₹12.00 each",
     );
     expect(u.sessionProgress).toBe("6 of 12 sessions scheduled");
+  });
+});
+
+describe("derivePaymentPresentation — a list row's money is the detail page's", () => {
+  const wallet = pay("SUCCEEDED", 500_000, {
+    paymentMethod: "WALLET",
+    legs: [{ source: "WALLET" }],
+  });
+  const refund = (amountPaise: number, status: string) => ({
+    amountPaise,
+    status,
+  });
+  // money kind · fixture (occurrences are dropped by the row entry point)
+  const ROWS: [string, Partial<BookingPresentationInput>][] = [
+    ["PAID", { request: req("APPROVED"), payments: paid, holdExpiresAt: null }],
+    [
+      "PARTIALLY_REFUNDED",
+      {
+        request: req("APPROVED"),
+        payments: paid,
+        refunds: [refund(100, "SUCCEEDED")],
+      },
+    ],
+    [
+      "REFUNDED",
+      {
+        request: req("CANCELLED"),
+        payments: paid,
+        refunds: [refund(708_000, "SUCCEEDED")],
+      },
+    ],
+    [
+      "REFUND_PENDING",
+      {
+        request: req("CANCELLED"),
+        payments: paid,
+        refunds: [refund(708_000, "PENDING")],
+      },
+    ],
+    [
+      "SPONSORED",
+      {
+        request: req("APPROVED"),
+        payments: [wallet],
+        sponsorOrgName: "Wipro Limited",
+      },
+    ],
+    [
+      "DISPUTED",
+      {
+        request: req("APPROVED"),
+        payments: paid,
+        disputes: [{ status: "NEEDS_RESPONSE" }],
+      },
+    ],
+    ["DUE", TABLE[1][1]],
+    [
+      "FREE",
+      {
+        request: req("APPROVED"),
+        plan: { pricePaise: 0, currency: "INR", sessions: 1 },
+      },
+    ],
+  ];
+
+  it.each(ROWS)("%s", (kind, over) => {
+    const { occurrences: _dropped, ...row } = base(over);
+    const asRow = derivePaymentPresentation(row, "CONSULTEE", { now: NOW });
+    const asDetail = deriveBookingPresentation(
+      { ...row, occurrences: [] },
+      "CONSULTEE",
+      { now: NOW },
+    );
+    expect(asRow.moneyState.state).toBe(kind);
+    expect(asRow.moneyState).toEqual(asDetail.moneyState);
+    expect(asRow.nextAction).toEqual(asDetail.nextAction);
+    expect(asRow.settled).toBe(asDetail.settled);
   });
 });

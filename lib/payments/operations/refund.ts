@@ -66,6 +66,7 @@ import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpe
 import { transitionOverage } from "@/lib/payments/billing/overage-transitions";
 import { DISPUTE_INACTIVE_FOR_GATING } from "@/lib/payments/dispute-status";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
+import { allocateCycleClawback } from "@/lib/payments/payouts/earnings-reversal";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { postLedgerTxn, type Posting } from "@/lib/payments/ledger/post";
 // Late-bound cycle: reversal-engine imports applyRefundCascade from here.
@@ -1115,9 +1116,28 @@ export async function applyRefundCascade(
   // -----------------------------------------------------------------------
   // Step 6: ConsultantEarnings reversal.
   // -----------------------------------------------------------------------
+  // #1766 — a subscription's rows are one tranche per cycle, and the refund
+  // is the UNDELIVERED sessions, so the clawback (one proportion of the
+  // summed share) is consumed newest-tranche-first rather than pro rata per
+  // row. Rows with no ordinal keep the per-row proportion below; the ledger
+  // debits in Step 9 read what each row actually absorbed.
+  const trancheRows = payment.earnings.filter(
+    (e) => typeof e.cycleOrdinal === "number",
+  );
+  const trancheAbsorb = new Map(
+    allocateCycleClawback(
+      trancheRows,
+      proportion(trancheRows.reduce((s, e) => s + e.consultantSharePaise, 0)),
+    ).map((a) => [a.id, a.absorbPaise] as const),
+  );
+  const reversalOf = (earnings: (typeof payment.earnings)[number]): number =>
+    typeof earnings.cycleOrdinal !== "number"
+      ? proportion(earnings.consultantSharePaise)
+      : (trancheAbsorb.get(earnings.id) ?? 0);
+
   let consultantEarningsReversed = 0;
   for (const earnings of payment.earnings) {
-    const shareReversal = proportion(earnings.consultantSharePaise);
+    const shareReversal = reversalOf(earnings);
     if (shareReversal <= 0) continue;
     // #785 — cap at the share (mirrors the credit-note Math.min + earnings-service):
     // a second reversal (e.g. app refund THEN a lost-dispute chargeback creates a
@@ -1487,10 +1507,7 @@ export async function applyRefundCascade(
 
     const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
     if (fundingTotal > 0) {
-      const consRev = payment.earnings.reduce(
-        (s, e) => s + proportion(e.consultantSharePaise),
-        0,
-      );
+      const consRev = payment.earnings.reduce((s, e) => s + reversalOf(e), 0);
       const orgRev = payment.organizationEarnings.reduce(
         (s, o) => s + proportion(o.orgSharePaise),
         0,
@@ -1544,7 +1561,7 @@ export async function applyRefundCascade(
       // left collaborators' payables un-reversed in the ledger — an invisible
       // per-account divergence on every multi-collaborator refund.
       for (const earning of payment.earnings) {
-        const earningRev = proportion(earning.consultantSharePaise);
+        const earningRev = reversalOf(earning);
         if (earningRev > 0) {
           debits.push({
             account: {

@@ -28,6 +28,10 @@ import type { Prisma } from "@prisma/client";
 
 import prisma, { type Db, type Tx } from "@/lib/prisma";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  isCompletedOccurrence,
+  sessionsTotalOf,
+} from "@/lib/booking/entitlement";
 import type { CancellationPolicyTerms } from "@/lib/payments/operations/cancellation-policy";
 import {
   POLICY_TERMS_INCLUDE,
@@ -69,10 +73,18 @@ export type BookingRefundContext = {
    * subscription, or one whose sessions have all been held).
    */
   hoursUntilNextSession: number | null;
-  /** Sessions already delivered — the proration input (#1006). */
+  /** Sessions delivered — COMPLETED or UNVERIFIED (#1006, #1766). */
   sessionsCompleted: number;
   /** Sessions still owed to the buyer. */
   sessionsRemaining: number;
+  /**
+   * #1766 — the plan entitlement a subscription was sold as (the frozen
+   * `Subscription.sessionsTotal`, or the plan's total for an older row); null
+   * for every other booking, which quotes off its slots.
+   */
+  sessionsTotal: number | null;
+  /** #1766 — start instants (epoch ms, ascending) of the sessions still scheduled. */
+  scheduledStarts: number[];
   /**
    * Slots of ANY status on the booking. Zero means no session was ever
    * scheduled, which is a different fact from "every session is terminal" —
@@ -152,12 +164,19 @@ export async function resolveBookingRefundContext(
         },
         orderBy: { createdAt: "asc" },
       },
+      // #1766 — the unused-session quote measures against the plan.
+      subscription: {
+        select: {
+          sessionsTotal: true,
+          subscriptionPlan: { select: { totalSessions: true } },
+        },
+      },
       occurrences: {
         // #1554 — every attendee of a class shares the appointment's
         // occurrences, so there is no per-payer subset to scope to; the payer
         // filter lives on the payment lookup above.
         where: { deletedAt: null },
-        select: { startsAt: true, completionStatus: true },
+        select: { startsAt: true, completionStatus: true, isTentative: true },
       },
     },
   });
@@ -210,14 +229,22 @@ export async function resolveBookingRefundContext(
     .map((s) => s.startsAt.getTime())
     .sort((a, b) => a - b);
 
+  // A RESCHEDULED row is the tombstone of a moved session, so it is not on the
+  // calendar twice; a tentative row is an unpaid hold, not an entitlement.
+  const scheduledStarts = slots
+    .filter((s) => s.completionStatus === "SCHEDULED" && !s.isTentative)
+    .map((s) => s.startsAt.getTime())
+    .sort((a, b) => a - b);
+
   return {
     paidPayment,
     policy,
     hoursUntilNextSession:
       liveStarts.length > 0 ? (liveStarts[0] - Date.now()) / 3_600_000 : null,
-    sessionsCompleted: slots.filter((s) => s.completionStatus === "COMPLETED")
-      .length,
+    sessionsCompleted: slots.filter(isCompletedOccurrence).length,
     sessionsRemaining: liveStarts.length,
     slotsTotal: slots.length,
+    sessionsTotal: row?.subscription ? sessionsTotalOf(row.subscription) : null,
+    scheduledStarts,
   };
 }

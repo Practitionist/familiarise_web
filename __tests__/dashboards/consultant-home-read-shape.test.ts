@@ -260,4 +260,71 @@ describe("consultant Home read shape (#1101)", () => {
       expect(clause.occurrences.some.deletedAt).toBeNull();
     }
   });
+
+  it("next-cycle row excludes remaining 0 and excludes a plan with a live SCHEDULED row (#1766)", async () => {
+    const HOUR = 60 * 60 * 1000;
+    const delivered = (n: number) =>
+      Array.from({ length: n }, (_, i) => {
+        const startsAt = new Date(Date.now() - (n - i) * 24 * HOUR);
+        return {
+          completionStatus: "COMPLETED",
+          isTentative: false,
+          deletedAt: null,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + HOUR),
+        };
+      });
+    const candidate = (id: string, sessionsTotal: number, done: number) => ({
+      id,
+      sessionsTotal,
+      schedulingPeriodStartsAt: new Date("2026-01-05T00:00:00Z"),
+      schedulingTimezone: "UTC",
+      subscriptionPlan: {
+        title: "Plan",
+        totalSessions: sessionsTotal,
+        sessionsPerWeek: 4,
+        durationInMonths: 3,
+      },
+      requestedBy: { user: { name: "Buyer" } },
+      appointment: { occurrences: delivered(done) },
+    });
+    const subscriptionFindMany = prisma.subscription.findMany as jest.Mock;
+    subscriptionFindMany.mockImplementation(
+      ({ where }: { where: { appointment?: { occurrences?: unknown } } }) =>
+        Promise.resolve(
+          // Only the next-cycle read filters on the wrapper's occurrences.
+          where.appointment?.occurrences
+            ? [candidate("sub-done", 4, 4), candidate("sub-mid", 12, 4)]
+            : [],
+        ),
+    );
+
+    const result = await getConsultantDashboard("cp-1");
+
+    // The exhausted plan is dropped in JS; the one with entitlement left stays.
+    expect(result.nextCycles.map((row) => row.subscriptionId)).toEqual([
+      "sub-mid",
+    ]);
+    expect(result.nextCycles[0].nextBatch).toBe(4);
+    expect(result.nextCycles[0].href).toBe(
+      "/dashboard/consultant/cp-1/requests/sub-mid/allocate?type=subscription",
+    );
+    // A plan with a live SCHEDULED session is excluded by the predicate itself.
+    const nextCycleRead = subscriptionFindMany.mock.calls.find(
+      (c) => c[0].where.appointment?.occurrences,
+    );
+    expect(nextCycleRead![0].where.appointment.occurrences).toEqual({
+      some: {
+        completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
+        deletedAt: null,
+      },
+      none: {
+        completionStatus: "SCHEDULED",
+        isTentative: false,
+        deletedAt: null,
+      },
+    });
+    expect(nextCycleRead![0].where.status).toBe("APPROVED");
+    expect(nextCycleRead![0].where.deletedAt).toBeNull();
+  });
 });

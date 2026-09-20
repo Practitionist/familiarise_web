@@ -239,7 +239,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Tier 1 (16) | appointment-booked, appointment-cancelled, appointment-reminder, payment-success, payment-failed, new-booking-request, subscription-started, subscription-cancelled, trial-session-\* (4), support-ticket-created, support-ticket-response, new-review-received, verification-status-changed | Template specs ready in `docs/notifications/03-novu-template-specs.md` |
 | Tier 2 (12) | appointment-rescheduled, appointment-completed, appointment-partially-scheduled, refund-processed, refund-requested, payout-processed, payout-failed, maintenance-scheduled, collaborator-invited/accepted/removed, new-consultant-application                                                            | Triggers wired, Dashboard config deferred                              |
-| Tier 3 (15) | referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                            | Functions exist, wiring deferred (`subscription-renewed` removed: no renewal transition exists) |
+| Tier 3 (16) | subscription-renewed, referral-_, maintenance-_, dispute-_, recording-_, general-announcement, feedback-received, etc.                                                                                                                                                                            | Functions exist, wiring deferred |
 
 **Trigger wiring (which business logic calls which notification):**
 
@@ -258,7 +258,7 @@ Every address above is env-derived from `EMAIL_TRANSACTIONAL_DOMAIN` / `EMAIL_NE
 | `app/api/user/reviews/route.ts`                             | newReview                                                      |
 | `app/api/admin/verification/` + `app/api/staff/moderation/` | verificationStatusChanged                                      |
 | `app/api/verification/submit/route.ts`                      | newConsultantApplication                                       |
-| `lib/payments/payouts/payout-service.ts`                    | payoutProcessed                                                |
+| `lib/payments/payouts/payout-service.ts`                    | payoutProcessed, payoutFailed                                  |
 | `lib/collaborators/service.ts`                              | collaboratorInvited, collaboratorAccepted, collaboratorRemoved |
 | `app/api/webhooks/stream/recording/route.ts`                | recordingAvailable                                             |
 | `app/api/announcements/route.ts`                            | generalAnnouncement (broadcast)                                |

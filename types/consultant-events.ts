@@ -72,6 +72,20 @@ export interface TFinancialSummary {
   activePrograms: number;
 }
 
+/** #1766 — an APPROVED subscription whose live cycle is done with entitlement left. */
+export interface TConsultantNextCycle {
+  subscriptionId: string;
+  consulteeName: string;
+  planTitle: string;
+  nextBatch: number;
+  held: number;
+  total: number;
+  windowStart: Date;
+  windowEnd: Date;
+  /** The existing allocate route for this request. */
+  href: string;
+}
+
 // Full API response type for consultant dashboard
 export interface TConsultantDashboardResponse {
   appointments: TAppointment[];
@@ -83,6 +97,8 @@ export interface TConsultantDashboardResponse {
   awaitingPayment: { count: number; items: TConsultantApproval[] };
   /** Next org-funded sessions to deliver, metadata only (ADR 20). #1703 */
   orgSessions: TConsultantOrgSession[];
+  /** Subscriptions whose next cycle is waiting to be scheduled. #1766 */
+  nextCycles: TConsultantNextCycle[];
   /** Share of requests answered within a day over the last 30 days. #1703 */
   responseRate: {
     withinTarget: number;
@@ -91,4 +107,6 @@ export interface TConsultantDashboardResponse {
   };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
+  /** #1675 PR-Y2 — earnings exist and the payout account is what stops them. */
+  payoutSetup?: { needed: boolean; href: string; livePayoutsEnabled: boolean };
 }

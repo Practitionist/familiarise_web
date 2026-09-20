@@ -11,6 +11,7 @@ import type {
   TDetailAppointment,
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
+import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 import { deriveBucket } from "./bucket";
 import {
   getAnchorTime,
@@ -142,6 +143,33 @@ export function mapAppointmentDetail(
   // groupProgress does, so "2 of 10" reads the same on the list and here.
   const live = liveOccurrences(occurrences);
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
+  // #1766 — a subscription's programme is its frozen entitlement, so the
+  // count reads "0 of T" before allocation instead of vanishing at 0 rows.
+  const sub = appointment.subscription;
+  const plan = sub?.subscriptionPlan;
+  const subscriptionGroup =
+    appointment.appointmentType === "SUBSCRIPTION" &&
+    sub &&
+    plan &&
+    typeof plan.sessionsPerWeek === "number" &&
+    typeof plan.durationInMonths === "number" &&
+    typeof plan.totalSessions === "number"
+      ? (() => {
+          const e = subscriptionEntitlement({
+            sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
+            sessionsPerWeek: plan.sessionsPerWeek,
+            durationInMonths: plan.durationInMonths,
+            occurrences: occurrences.map((o) => ({
+              ...o,
+              endsAt: o.endsAt ?? o.startsAt,
+            })),
+            schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
+            schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
+            now,
+          });
+          return { total: e.total, completed: e.completed };
+        })()
+      : null;
 
   const counterpart =
     role === "consultee"
@@ -171,7 +199,9 @@ export function mapAppointmentDetail(
     ...deriveBucket({ status: facts.status, occurrences, now }),
     nextAt: getAnchorTime(occurrences, now),
     occurrences,
-    group: isGroup ? { total: live.length, completed } : null,
+    group: isGroup
+      ? (subscriptionGroup ?? { total: live.length, completed })
+      : null,
     meta: appointment.trial
       ? trialMeta(
           appointment.trial.subscriptionPlan?.trialPriceInPaise ?? null,

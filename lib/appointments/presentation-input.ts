@@ -5,6 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
 import {
   requestHoldDeadline,
@@ -35,8 +36,40 @@ function toPaymentInput(
   };
 }
 
+type Money = bigint | number | string;
+type Priced = { price: Money; priceCurrency: string };
+type Requested = { status: string; requestedAt?: Date | string | null };
+
+/**
+ * The lifecycle relations as any read carries them — the detail payload or
+ * a payment-history row (lib/data/consultee-payments.ts). Structural, so
+ * each read passes its own select.
+ */
+export type LifecycleRows = {
+  trial?:
+    | (Requested & {
+        subscriptionPlan?: {
+          trialPriceInPaise: Money;
+          priceCurrency: string;
+        } | null;
+      })
+    | null;
+  consultation?: (Requested & { consultationPlan?: Priced | null }) | null;
+  subscription?:
+    | (Requested & {
+        /** #1766 — the frozen entitlement; a read without it falls back to the plan. */
+        sessionsTotal?: number | null;
+        subscriptionPlan?: (Priced & { totalSessions: number }) | null;
+      })
+    | null;
+  webinar?: { status: string; webinarPlan?: Priced | null } | null;
+  class?: { status: string; classPlan?: Priced | null } | null;
+};
+
 /** The lifecycle row and the enum family its status belongs to. */
-function lifecycleOf(a: Detail): BookingPresentationInput["request"] {
+export function lifecycleOf(
+  a: LifecycleRows,
+): BookingPresentationInput["request"] {
   if (a.trial) {
     return {
       status: a.trial.status,
@@ -58,7 +91,7 @@ function lifecycleOf(a: Detail): BookingPresentationInput["request"] {
     : null;
 }
 
-function planOf(a: Detail): BookingPresentationInput["plan"] {
+export function planOf(a: LifecycleRows): BookingPresentationInput["plan"] {
   if (a.trial) {
     const p = a.trial.subscriptionPlan;
     return p
@@ -74,7 +107,11 @@ function planOf(a: Detail): BookingPresentationInput["plan"] {
     return {
       pricePaise: p.price,
       currency: p.priceCurrency,
-      sessions: p.totalSessions,
+      // #1766 — the entitlement frozen at purchase, not today's plan.
+      sessions: sessionsTotalOf({
+        sessionsTotal: a.subscription.sessionsTotal ?? null,
+        subscriptionPlan: p,
+      }),
     };
   }
   const p =
