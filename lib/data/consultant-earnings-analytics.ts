@@ -8,6 +8,12 @@ import {
   getConsultantEarnings,
   checkPayoutEligibility,
 } from "@/lib/payments/payouts";
+import {
+  getConsultantPayouts,
+  type ConsultantPayoutRow,
+} from "@/lib/payments/payouts/payout-service";
+import { isSponsoredPayment } from "@/lib/appointments/payment-display";
+import { sanitizePayoutFailure } from "@/lib/dashboard/earnings-state";
 
 export interface MonthlyEarning {
   /** Calendar month bucket, "YYYY-MM". */
@@ -83,6 +89,53 @@ export interface ConsultantEarningsPayloadOptions {
   organizationId?: string | null;
 }
 
+type EarningRecord = Awaited<
+  ReturnType<typeof getConsultantEarnings>
+>["earnings"][number];
+
+/** One earning as the page reads it: the row, its plan title and its sponsor. */
+export type ConsultantEarningRow = EarningRecord & {
+  title: string | null;
+  sponsorOrgName: string | null;
+};
+
+export type { ConsultantPayoutRow };
+
+export type ConsultantEarningsPayload = Awaited<
+  ReturnType<typeof buildConsultantEarningsPayload>
+>;
+
+function planTitle(a: EarningRecord["payment"]["appointment"]): string | null {
+  return (
+    a?.consultation?.consultationPlan.title ??
+    a?.subscription?.subscriptionPlan.title ??
+    a?.trial?.subscriptionPlan.title ??
+    a?.webinar?.webinarPlan.title ??
+    a?.class?.classPlan.title ??
+    null
+  );
+}
+
+function toEarningRow(e: EarningRecord): ConsultantEarningRow {
+  return {
+    ...e,
+    title: planTitle(e.payment.appointment),
+    sponsorOrgName: isSponsoredPayment(e.payment)
+      ? (e.payment.organization?.name ?? null)
+      : null,
+  };
+}
+
+/** The raw gateway text can embed provider ids; only plain words leave the server. */
+function toPayoutRow(p: ConsultantPayoutRow): ConsultantPayoutRow {
+  return {
+    ...p,
+    failureReason: p.failureReason
+      ? sanitizePayoutFailure(p.failureReason)
+      : null,
+  };
+}
+
 /**
  * Single assembler for the GET /api/consultant/earnings response body,
  * shared by the route handler and the analytics page's SSR prefetch so the
@@ -118,10 +171,15 @@ export async function buildConsultantEarningsPayload(
       : Promise.resolve(undefined),
   ]);
 
+  // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
+  // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
+  const payouts = await getConsultantPayouts(consultantProfileId);
+
   return {
     summary,
     eligibility,
-    earnings: history.earnings,
+    earnings: history.earnings.map(toEarningRow),
+    payouts: payouts.map(toPayoutRow),
     pagination: {
       total: history.total,
       limit,

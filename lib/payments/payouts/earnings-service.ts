@@ -1286,10 +1286,29 @@ export async function getConsultantEarnings(
             originalAmount: true,
             currency: true,
             createdAt: true,
+            // #1675 PR-Y — the sponsor (legs are the funding truth, the method
+            // the pre-legs fallback) and the plan title the row is named by.
+            paymentMethod: true,
+            organizationId: true,
+            organization: { select: { name: true } },
+            legs: { select: { source: true } },
             appointment: {
               select: {
                 id: true,
                 appointmentType: true,
+                consultation: {
+                  select: { consultationPlan: { select: { title: true } } },
+                },
+                subscription: {
+                  select: { subscriptionPlan: { select: { title: true } } },
+                },
+                trial: {
+                  select: { subscriptionPlan: { select: { title: true } } },
+                },
+                webinar: {
+                  select: { webinarPlan: { select: { title: true } } },
+                },
+                class: { select: { classPlan: { select: { title: true } } } },
               },
             },
           },
