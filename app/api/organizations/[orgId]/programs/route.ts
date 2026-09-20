@@ -29,13 +29,8 @@ const CoveredPlanTypeSchema = z.enum([
 ]);
 
 const BillingCycleSchema = z.enum(["MONTHLY", "QUARTERLY", "ANNUAL"]);
-// TODO(#715): CHARGE_MEMBER and CHARGE_ORG are accepted here and
-// `recordBookingUtilization` correctly flags `wasOverage` for bookings
-// past the cap, but the downstream financial side effect is still in
-// flight — member-side card charge for CHARGE_MEMBER and invoice-accrual
-// leg for CHARGE_ORG. Until #715 ships, the safe production grid is
-// BLOCK only; the wizard surfaces a WIP banner when either of the other
-// two is selected so operators don't ship a silent under-charge.
+// The enum still parses CHARGE_MEMBER so the refusal below can name it;
+// #1744 — `overageBehaviorUnsupportedReason` refuses it on every rail.
 const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 
 // #768 #14/#15 — overage-combo guards shared by both config schemas:

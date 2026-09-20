@@ -337,7 +337,7 @@ export async function deprovisionScimUser(
       },
       data: { periodEnd: now, status: "CANCELLED" },
     });
-    await releaseSeatsForTerminatedAssignments(tx, [membership.id]);
+    await releaseSeatsForTerminatedAssignments(tx, [membership.id], now);
     const updated = await tx.membership.findUniqueOrThrow({
       where: { id: membership.id },
     });

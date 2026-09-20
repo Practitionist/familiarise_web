@@ -52,6 +52,8 @@ export async function settleInvoiceAccruals(): Promise<{
       billableToOrgInvoiceId: null,
       paymentStatus: "SUCCEEDED",
       organizationId: { not: null },
+      // #1744 row 6 — a wound-down org is never billed again.
+      organization: { status: { not: "DEACTIVATED" }, deletedAt: null },
       legs: {
         some: {
           source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },

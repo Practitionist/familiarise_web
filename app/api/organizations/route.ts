@@ -27,6 +27,7 @@ import { getOperatorOrganizations } from "@/lib/data/org-workspace";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import { DEFAULT_WALLET_MIN_BALANCE_PAISE } from "@/lib/enterprise/governance";
 import { isValidGstin } from "@/lib/compliance/gst";
+import { numericStateCode } from "@/lib/compliance/state-codes";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
@@ -248,6 +249,8 @@ export async function POST(req: NextRequest) {
           taxInfo: {
             create: {
               gstin: body.gstin ?? null,
+              // #1744 row 3 — the GSTIN prefix is the buyer's GST state.
+              gstStateCode: numericStateCode(body.gstin, null),
               // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
               ...(body.pan
                 ? (() => {
