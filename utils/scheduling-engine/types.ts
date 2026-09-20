@@ -301,6 +301,9 @@ export interface EventConfig {
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
   sessionsPerWeek?: number; // For subscriptions/classes
   totalSessions?: number; // Authoritative session count from subscription plan
+  /** #1766 — sessions this allocation may place: the subscription's current
+   * cycle `nextBatch`. When set, the period below is that cycle's window. */
+  cycleTargetSessions?: number;
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
   // Timezone defining the limit day/week buckets (ADR B9). Subscription/Class

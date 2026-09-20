@@ -175,7 +175,7 @@ export async function GET(
           paymentCount: pendingAgg._count._all,
         }
       : null,
-    paymentTermsDays: org?.paymentTermsDays ?? 60,
+    paymentTermsDays: org?.paymentTermsDays ?? 30,
     licenseContract: licenseContract
       ? {
           id: licenseContract.id,

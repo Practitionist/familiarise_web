@@ -225,6 +225,10 @@ export interface UseEventSlotAllocationOptions {
   /** #1012 — reschedule stale-tab precondition (tentative count at dialog open). */
   expectedTentativeSlotCount?: number;
 
+  /** #1766 — the subscription already holds sessions; this run appends its
+   * next cycle. The server derives the same answer; this only names intent. */
+  topUp?: boolean;
+
   /** Enable caching of availability data */
   enableCaching?: boolean;
 
@@ -1220,6 +1224,7 @@ export function useEventSlotAllocation(
         // The consultant explicitly accepting these times as-is (outside
         // their published availability). Was a dead option until wired here.
         override: options.allowOverride || undefined,
+        topUp: options.topUp || undefined,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1309,6 +1314,7 @@ export function useEventSlotAllocation(
             initialAllocation: options.initialAllocation || undefined,
             expectedTentativeSlotCount: options.expectedTentativeSlotCount,
             allowPartial: allocateOptions?.allowPartial,
+            topUp: options.topUp || undefined,
           },
         );
 

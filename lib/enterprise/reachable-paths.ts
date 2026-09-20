@@ -2,7 +2,9 @@
  * #768 lockdown #17 — reachable (capability x fundingSource x programType) paths.
  *
  * After the Programs v2 drop (#768 Comment 3), the theoretical Cartesian
- * grid collapses to 7 reachable paths. Any code that branches on the
+ * grid collapses to 10 reachable paths: the 4 sellable sponsor pairs, the
+ * same 4 enumerated for HYBRID (no wildcard — #1676 S4), plus the two
+ * program-less shapes (PERSONAL_TAG, HOST). Any code that branches on the
  * tuple should consult this constant rather than enumerating the raw
  * enums; otherwise the wizard, the route gate, and any analytics drift
  * out of sync.
@@ -28,13 +30,20 @@ export interface ReachablePath {
   capability: ReachableCapability;
   /** `null` means no Program at all (PERSONAL_TAG and HOST shapes). */
   fundingSource: FundingSource | null;
-  /** `null` means no Program at all. `"any"` (HYBRID) means accept any of LICENSED_SEAT/CREDIT_POOL. */
-  programType: ProgramType | "any" | null;
+  /** `null` means no Program at all. Every capability enumerates its pairs
+   *  explicitly — there is no wildcard (see HYBRID below). */
+  programType: ProgramType | null;
 }
 
 /**
- * Locked v0 matrix. Treat as a frozen contract — adding a row affects
+ * Locked v1 matrix. Treat as a frozen contract — adding a row affects
  * the route gate, the wizard, and the regression test.
+ *
+ * HYBRID enumerates the same 4 sponsor pairs rather than carrying an
+ * `any/any` wildcard (#1676 S4): the wildcard silently re-opened the three
+ * refused intersections (`WALLET+CHARGE_MEMBER`, `WALLET+CHARGE_ORG` with a
+ * surcharge, `LICENSE+non-BLOCK`) that `overageBehaviorUnsupportedReason`
+ * and the checkout fail-closed guards exist to keep unreachable.
  */
 export const REACHABLE_ORG_FUNDING_PATHS: ReadonlyArray<ReachablePath> = [
   { capability: "PERSONAL_TAG", fundingSource: null, programType: null },
@@ -43,7 +52,10 @@ export const REACHABLE_ORG_FUNDING_PATHS: ReadonlyArray<ReachablePath> = [
   { capability: "SPONSOR", fundingSource: "INVOICE", programType: "LICENSED_SEAT" },
   { capability: "SPONSOR", fundingSource: "LICENSE", programType: "LICENSED_SEAT" },
   { capability: "HOST", fundingSource: null, programType: null },
-  { capability: "HYBRID", fundingSource: "any" as never, programType: "any" },
+  { capability: "HYBRID", fundingSource: "WALLET", programType: "CREDIT_POOL" },
+  { capability: "HYBRID", fundingSource: "INVOICE", programType: "CREDIT_POOL" },
+  { capability: "HYBRID", fundingSource: "INVOICE", programType: "LICENSED_SEAT" },
+  { capability: "HYBRID", fundingSource: "LICENSE", programType: "LICENSED_SEAT" },
 ] as const;
 
 /**
@@ -58,9 +70,8 @@ export function isReachableOrgFundingPath(
   return REACHABLE_ORG_FUNDING_PATHS.some(
     (p) =>
       p.capability === capability &&
-      (p.fundingSource === fundingSource ||
-        (p.fundingSource as unknown) === "any") &&
-      (p.programType === programType || p.programType === "any"),
+      p.fundingSource === fundingSource &&
+      p.programType === programType,
   );
 }
 
@@ -131,6 +142,26 @@ export function overageBehaviorUnsupportedReason(
     );
   }
   return null;
+}
+
+/**
+ * Money-positive default: which overage behaviour a NEW programme gets when
+ * the operator doesn't pick one.
+ *
+ * INVOICE programmes default to CHARGE_ORG — the over-cap marginal rides the
+ * monthly invoice the org already pays, so expansion revenue accrues with no
+ * refused booking and no member friction (Datadog/Snowflake-style overage).
+ * The server still requires the circuit-breaker ceiling for any non-BLOCK
+ * behaviour, and the payer sentence surfaces it before pay.
+ *
+ * Every other rail defaults to BLOCK: WALLET collects the whole price at
+ * commit (a member charge-back doesn't exist, #715) and LICENSE moves no
+ * money per booking at all.
+ */
+export function defaultOverageBehaviorForFunding(
+  fundingSource: FundingSource | null,
+): OverageBehavior {
+  return fundingSource === "INVOICE" ? "CHARGE_ORG" : "BLOCK";
 }
 
 /**

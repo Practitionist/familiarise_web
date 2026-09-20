@@ -110,6 +110,7 @@ describe("stageTrigger + attemptTrigger", () => {
       transactionId: "appointment-booked:abc",
       attempts: 0,
       status: "PENDING",
+      notBefore: null,
     });
 
     expect(result).toMatchObject({ success: false, outcome: "PENDING" });
@@ -121,6 +122,24 @@ describe("stageTrigger + attemptTrigger", () => {
     expect(mockCaptureException.mock.calls[0][1]).toMatchObject({
       level: "warning",
     });
+  });
+
+  it("holds a row whose notBefore is in the future for the drain", async () => {
+    const result = await attemptTrigger({
+      id: "nx-3",
+      workflowId: "appointment-booked",
+      kind: "SINGLE",
+      recipients: ["u1"],
+      payload,
+      transactionId: "appointment-booked:def",
+      attempts: 0,
+      status: "PENDING",
+      notBefore: new Date(Date.now() + 60 * 60 * 1000),
+    });
+
+    expect(result).toMatchObject({ success: true, outcome: "PENDING" });
+    expect(mockTrigger).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -177,5 +196,28 @@ describe("deriveTransactionId", () => {
         Alpha: 2,
       }),
     ).toBe(id);
+  });
+
+  it("keys identical payloads apart by dedupeKey (refund-requested uses the refund row id)", () => {
+    // #1738 review — the refund-requested wire payload carries no refund id,
+    // so two refunds of the same amount/reason/scope must be told apart by
+    // the key; the same key still collapses a retry onto one row.
+    const payload = { amount: "₹500", currency: "INR", scope: "b2c" };
+    const a = deriveTransactionId(
+      "refund-requested",
+      ["ops1"],
+      payload,
+      "rf_1",
+    );
+    const b = deriveTransactionId(
+      "refund-requested",
+      ["ops1"],
+      payload,
+      "rf_2",
+    );
+    expect(a).not.toBe(b);
+    expect(
+      deriveTransactionId("refund-requested", ["ops1"], payload, "rf_1"),
+    ).toBe(a);
   });
 });

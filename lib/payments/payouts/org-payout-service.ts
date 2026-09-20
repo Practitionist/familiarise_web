@@ -1341,7 +1341,12 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
       notify: {
         organizationId: payout.organizationId,
         orgName: payout.organization.name,
+        // #1474 — the bell reports what the rail transferred (post-TDS,
+        // `amountPaise`), with the gross + withheld slice alongside so the
+        // org reconciles against its bank credit AND its Form 16A.
+        amountPaise: payout.amountPaise,
         netPayoutPaise: payout.netPayoutPaise,
+        tdsAmountPaise: orgTds,
         currency: payout.currency,
       },
       // Reported AFTER the commit: the withholding is already deposited to
@@ -1392,7 +1397,9 @@ export async function markOrgPayoutCompleted(payoutId: string): Promise<{
     await notifyOrgPayoutCompleted(result.notify.organizationId, {
       orgName: result.notify.orgName,
       payoutId,
-      amountPaise: result.notify.netPayoutPaise,
+      amountPaise: result.notify.amountPaise,
+      netPayoutPaise: result.notify.netPayoutPaise,
+      tdsAmountPaise: result.notify.tdsAmountPaise,
       currency: result.notify.currency,
       dashboardUrl: `${getAppUrl()}/dashboard/organization/${result.notify.organizationId}/payouts`,
     });
@@ -1415,22 +1422,31 @@ async function emailOrgPayoutFailed(
   notify: {
     organizationId: string;
     orgName: string;
-    netPayoutPaise: number | bigint;
+    // #1474 — same basis as the bell (FAILED: attempted gross, REVERSED:
+    // returned post-TDS cash), with the withheld slice for the email line.
+    amountPaise: number | bigint;
+    tdsAmountPaise: number | bigint | null;
     currency: string;
   },
 ): Promise<void> {
   try {
     const { rosterForOrg, VISIBILITY_ROLES } =
       await import("@/lib/novu/org-workflows");
+    const { formatNotificationMoney } = await import("@/lib/novu/humanize");
     const roster = await rosterForOrg(notify.organizationId, VISIBILITY_ROLES);
+    const withheldPaise = Number(notify.tdsAmountPaise ?? 0);
     await sendOrgPayoutFailedEmail({
       recipientUserIds: roster,
       kind,
       orgName: notify.orgName,
       payoutId,
-      amountPaise: notify.netPayoutPaise,
+      amountPaise: notify.amountPaise,
       currency: notify.currency,
       reason: reason.slice(0, 200),
+      withheldText:
+        withheldPaise > 0
+          ? formatNotificationMoney(withheldPaise, notify.currency)
+          : undefined,
       dashboardUrl: `${getAppUrl()}/dashboard/organization/${notify.organizationId}/payouts`,
     });
   } catch (e) {
@@ -1528,12 +1544,20 @@ async function markOrgPayoutFailedInternal(
     });
 
     // #1654 — staged inside the claim's transaction so a Novu outage or a freeze cannot lose it.
+    // #1474 — FAILED moved no money: the bell names the attempted gross and
+    // carries no withholding. Hardcoded 0, NOT the row's batch-time
+    // tdsAmountPaise: the batch persists a computed withholding that is only
+    // actually withheld at COMPLETED (the TDSRecord is written there, and a
+    // stray one is deleted on this path) — forwarding it would render
+    // "withheld as TDS" for money the government never got.
     const notifyStaged = await notifyOrgPayoutFailed(
       payout.organizationId,
       {
         orgName: payout.organization.name,
         payoutId,
         amountPaise: payout.netPayoutPaise,
+        netPayoutPaise: payout.netPayoutPaise,
+        tdsAmountPaise: 0,
         currency: payout.currency,
         reason: reason.slice(0, 200),
         kind,
@@ -1549,7 +1573,9 @@ async function markOrgPayoutFailedInternal(
       notify: {
         organizationId: payout.organizationId,
         orgName: payout.organization.name,
+        amountPaise: payout.netPayoutPaise,
         netPayoutPaise: payout.netPayoutPaise,
+        tdsAmountPaise: 0,
         currency: payout.currency,
       },
     };
@@ -1714,12 +1740,16 @@ export async function markOrgPayoutReversed(
     });
 
     // #1654 — staged inside the claim's transaction so a Novu outage or a freeze cannot lose it.
+    // #1474 — REVERSED unwound settled cash: the bell names what went out and
+    // came back (post-TDS `amountPaise`), with the gross + withheld alongside.
     const notifyStaged = await notifyOrgPayoutFailed(
       payout.organizationId,
       {
         orgName: payout.organization.name,
         payoutId,
-        amountPaise: payout.netPayoutPaise,
+        amountPaise: payout.amountPaise,
+        netPayoutPaise: payout.netPayoutPaise,
+        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
         currency: payout.currency,
         reason: reason.slice(0, 200),
         kind: "REVERSED",
@@ -1734,7 +1764,9 @@ export async function markOrgPayoutReversed(
       notify: {
         organizationId: payout.organizationId,
         orgName: payout.organization.name,
+        amountPaise: payout.amountPaise,
         netPayoutPaise: payout.netPayoutPaise,
+        tdsAmountPaise: payout.tdsAmountPaise ?? 0,
         currency: payout.currency,
       },
     };

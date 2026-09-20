@@ -155,6 +155,8 @@ async function findPayments(userId: string, consulteeId: string, scope: Scope) {
             select: {
               status: true,
               requestedAt: true,
+              // #1766 — the frozen entitlement drives the plan-size copy.
+              sessionsTotal: true,
               subscriptionPlan: {
                 select: { ...planSelect.select, totalSessions: true },
               },

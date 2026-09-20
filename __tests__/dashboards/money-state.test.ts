@@ -279,6 +279,15 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(u.bookingState.state).toBe("CONFIRMED");
   });
 
+  it("#1766 — a fresh subscription reads 0 of 12, never a blank", () => {
+    const input = base({
+      occurrences: [],
+      plan: { pricePaise: 14_400, currency: "INR", sessions: 12 },
+    });
+    const u = deriveBookingPresentation(input, "CONSULTEE", { now: NOW });
+    expect(u.sessionProgress).toBe("0 of 12 sessions scheduled");
+  });
+
   it("#1675 — one session-count story: a 6-held / 144-plan subscription", () => {
     const input = base({
       occurrences: Array.from({ length: 6 }, (_, i) =>

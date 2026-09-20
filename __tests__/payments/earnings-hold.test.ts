@@ -45,26 +45,24 @@ describe("recomputeEarningsHold", () => {
     earnings: { id: string; createdAt: Date; holdUntil: Date }[];
   }) {
     const update = jest.fn(async () => ({}));
-    return {
-      update,
-      client: {
-        appointment: {
-          findUnique: jest.fn(async () => ({
-            appointmentType: "SUBSCRIPTION",
-            payment: [{ id: "pay-1" }],
-          })),
-        },
-        appointmentOccurrence: {
-          findFirst: jest.fn(async () =>
-            opts.lastEnd ? { endsAt: opts.lastEnd } : null,
-          ),
-        },
-        consultantEarnings: {
-          findMany: jest.fn(async () => opts.earnings),
-          update,
-        },
-      } as never,
+    const client = {
+      appointment: {
+        findUnique: jest.fn(async () => ({
+          appointmentType: "SUBSCRIPTION",
+          payment: [{ id: "pay-1" }],
+        })),
+      },
+      appointmentOccurrence: {
+        findFirst: jest.fn(async () =>
+          opts.lastEnd ? { endsAt: opts.lastEnd } : null,
+        ),
+      },
+      consultantEarnings: {
+        findMany: jest.fn(async () => opts.earnings),
+        update,
+      },
     };
+    return { update, client: client as unknown as never, mocks: client };
   }
 
   it("extends a PENDING hold to the last live call's end plus the hold hours", async () => {
@@ -87,6 +85,22 @@ describe("recomputeEarningsHold", () => {
       where: { id: "earn-1" },
       data: { holdUntil: at("2026-09-27T11:00:00Z") },
     });
+  });
+
+  it("leaves a null hold alone (#1766 — an undelivered tranche is stamped by the completion path)", async () => {
+    const { client, update, mocks } = db({
+      lastEnd: at("2026-09-20T11:00:00Z"),
+      earnings: [],
+    });
+
+    expect(await recomputeEarningsHold(client, "appt-1")).toBe(0);
+    expect(update).not.toHaveBeenCalled();
+    // The predicate itself excludes NULL rows, so the SQL never sees them.
+    expect(mocks.consultantEarnings.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ holdUntil: { not: null } }),
+      }),
+    );
   });
 
   it("never moves a hold earlier than it already is", async () => {

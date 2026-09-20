@@ -69,11 +69,12 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ORG_PAYOUT_COMPLETED,
     name: "Org payout sent",
-    description: "Billing admins, when a payout leaves for the org's bank.",
+    description:
+      "Billing admins, when a payout leaves for the org's bank. `amount` is the received (post-TDS) figure; `withheld` names the TDS slice (#1474).",
     category: "orgBilling",
     inApp: {
       subject: "Payout sent",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} has been sent.",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} has been sent.{% if payload.withheld %} {{payload.withheld}} was withheld as TDS.{% endif %}",
       redirect: "dashboardUrl",
     },
   },
@@ -91,11 +92,12 @@ export const ORG_TEMPLATES: WorkflowTemplate[] = [
   {
     workflowId: W.ORG_PAYOUT_REVERSED,
     name: "Org payout reversed",
-    description: "Billing admins, when the bank returns a payout.",
+    description:
+      "Billing admins, when the bank returns a payout. `amount` is the cash that went out and came back (post-TDS, #1474).",
     category: "orgBilling",
     inApp: {
       subject: "Payout reversed",
-      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed: {{payload.reason}}.",
+      body: "A payout of {{payload.amount}} to {{payload.orgName}} was reversed: {{payload.reason}}{% if payload.withheld %} (includes {{payload.withheld}} withheld as TDS, netted on the return).{% endif %}",
       redirect: "dashboardUrl",
     },
   },

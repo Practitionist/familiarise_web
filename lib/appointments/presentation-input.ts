@@ -5,6 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
 import {
   requestHoldDeadline,
@@ -56,6 +57,8 @@ export type LifecycleRows = {
   consultation?: (Requested & { consultationPlan?: Priced | null }) | null;
   subscription?:
     | (Requested & {
+        /** #1766 — the frozen entitlement; a read without it falls back to the plan. */
+        sessionsTotal?: number | null;
         subscriptionPlan?: (Priced & { totalSessions: number }) | null;
       })
     | null;
@@ -104,7 +107,11 @@ export function planOf(a: LifecycleRows): BookingPresentationInput["plan"] {
     return {
       pricePaise: p.price,
       currency: p.priceCurrency,
-      sessions: p.totalSessions,
+      // #1766 — the entitlement frozen at purchase, not today's plan.
+      sessions: sessionsTotalOf({
+        sessionsTotal: a.subscription.sessionsTotal ?? null,
+        subscriptionPlan: p,
+      }),
     };
   }
   const p =

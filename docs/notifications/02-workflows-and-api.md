@@ -46,10 +46,11 @@ graph TD
         W21[subscription-renewed]
     end
 
-    subgraph "Consultant (3)"
+    subgraph "Consultant (4)"
         W22[new-booking-request]
         W23[verification-status-changed]
         W24[payout-processed]
+        W24b[payout-failed]
     end
 
     subgraph "Admin (2)"
@@ -78,7 +79,7 @@ The Novu plan in use caps an environment at 20 workflows, and the application no
 | `session-media`  | recording-available, recording-failed, recording-expiring, document-uploaded, document-reviewed                                                                                                                            |
 | `payment`        | payment-success, payment-failed, referral-credits-applied                                                                                                                                                                  |
 | `refund`         | refund-requested, refund-processed, refund-failed, dispute-created, dispute-resolved                                                                                                                                       |
-| `payout`         | payout-processed                                                                                                                                                                                                           |
+| `payout`         | payout-processed, payout-failed                                                                                                                                                                                            |
 | `referral`       | referral-bonus-earned, referee-welcome-bonus                                                                                                                                                                               |
 | `subscription`   | subscription-started, subscription-cancelled, subscription-renewed                                                                                                                                                         |
 | `trial`          | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled                                                                                                                         |
@@ -226,13 +227,13 @@ sequenceDiagram
 
 ### Subscriptions
 
-| Workflow ID              | Trigger Function                                  | Recipients   | Payload Type          |
-| ------------------------ | ------------------------------------------------- | ------------ | --------------------- |
-| `subscription-started`   | `notifySubscriptionStarted(userId, payload)`      | Consultee    | `SubscriptionPayload` |
-| `subscription-cancelled` | `notifySubscriptionCancelled(userIds[], payload)` | Both parties | `SubscriptionPayload` |
-| `subscription-renewed`   | `notifySubscriptionRenewed(userId, payload)`      | Consultee    | `SubscriptionPayload` |
+| Workflow ID              | Trigger Function                                                | Recipients   | Payload Type          |
+| ------------------------ | --------------------------------------------------------------- | ------------ | --------------------- |
+| `subscription-started`   | `notifySubscriptionStarted(userId, payload)`                    | Consultee    | `SubscriptionPayload` |
+| `subscription-cancelled` | `notifySubscriptionCancelled(userIds[], payload)`               | Both parties | `SubscriptionPayload` |
+| `subscription-renewed`   | `notifySubscriptionRenewed(userId, payload, dedupeKey?, opts?)` | Consultee    | `SubscriptionPayload` |
 
-**SubscriptionPayload**: `subscriptionId?`, `planTitle`, `consultantName`, `consulteeName?`, `dashboardUrl`
+**SubscriptionPayload**: `subscriptionId?`, `planTitle`, `consultantName`, `consulteeName?`, `dashboardUrl`, and since #1766 `cycleOrdinal?`, `remainingSessions?`, `nextBatch?`. The `subscription-renewed` id is kept for the 20-workflow cap, but its step now reads "Cycle N of <plan> is done — <consultant> will schedule your next M sessions (R left)"; it is staged inside the completing transaction by `settleSubscriptionCycle` with the dedupe key `sub:<subscriptionId>:cycle:<n>` and attempted after commit, so a second completion pass over the same state adds no row. `npm run novu:sync` must run after the step body ships.
 
 ---
 
@@ -243,6 +244,7 @@ sequenceDiagram
 | `new-booking-request`         | `notifyNewBookingRequest(consultantUserId, payload)`         | Consultant | `BookingRequestPayload` |
 | `verification-status-changed` | `notifyVerificationStatusChanged(consultantUserId, payload)` | Consultant | `VerificationPayload`   |
 | `payout-processed`            | `notifyPayoutProcessed(consultantUserId, payload)`           | Consultant | `PayoutPayload`         |
+| `payout-failed`               | `notifyPayoutFailed(consultantUserId, payload)`              | Consultant | `PayoutPayload`         |
 
 **BookingRequestPayload**: `consulteeName`, `planTitle`, `appointmentType` (label), `appointmentTypeCode?`, `requestedDateTime?` (recipient-zone), `requestedDateTimeIso?`, `dashboardUrl`. Callers pass `BookingRequestInput`.
 

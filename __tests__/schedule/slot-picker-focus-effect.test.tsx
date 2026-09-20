@@ -85,6 +85,8 @@ function setCalendarData(overrides: Record<string, unknown> = {}) {
     eventSlots: [],
     eventTentativeSlots: [],
     weeklyConfirmedCallCounts: {},
+    eventOccurrences: [],
+    subscriptionMeta: null,
     loading: false,
     error: null,
     refetch: jest.fn(),
@@ -332,7 +334,19 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
   });
 
   it("leads a fresh subscription with what fits this cycle, not the plan's lifetime total", () => {
-    setCalendarData({ eventSlots: [] });
+    // #1766 — the heading reads the row's frozen entitlement through the one
+    // helper: a 3-a-week plan's first cycle takes 3, whatever the total is.
+    setCalendarData({
+      eventSlots: [],
+      eventOccurrences: [],
+      subscriptionMeta: {
+        sessionsTotal: 144,
+        sessionsPerWeek: 3,
+        durationInMonths: 12,
+        schedulingPeriodStartsAt: new Date(2026, 0, 1).toISOString(),
+        schedulingTimezone: "Asia/Kolkata",
+      },
+    });
     render({
       eventType: "subscription",
       sessionDurationInHours: 1,
@@ -342,7 +356,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       allowedEnd: new Date(2026, 0, 13, 23, 59, 59, 999),
     });
 
-    expect(host.textContent).toContain("Schedule the next 6 sessions");
-    expect(host.textContent).toContain("of 144");
+    expect(host.textContent).toContain("Pick 3 for");
+    expect(host.textContent).toContain("3 per week · 0 of 144 booked");
   });
 });

@@ -8,13 +8,12 @@
  * recipients through the preference gate, renders per recipient, and never
  * throws.
  *
- * Two shapes per notice. `send*` stages and attempts in one call (for a
- * caller with nothing else to do). `stage*` only writes the outbox rows —
- * one fast insert per recipient, no vendor call — and returns them for
- * `attemptOnboardingEmail()` inside `after()`. Routes use the second shape:
- * the row exists before the response, so a dropped or timed-out `after()`
- * costs nothing but latency (the relay finishes the send), while the
- * response never waits on the Resend budget.
+ * One shape per notice. `stage*` only writes the outbox rows — one fast
+ * insert per recipient, no vendor call — and returns them for
+ * `attemptOnboardingEmail()` inside `after()`: the row exists before the
+ * response, so a dropped or timed-out `after()` costs nothing but latency
+ * (the relay finishes the send), while the response never waits on the
+ * Resend budget.
  */
 
 import * as Sentry from "@sentry/nextjs";
@@ -39,9 +38,7 @@ import { EMAIL_BUDGET_MS, SENDERS, supportEmail } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
   attemptStaged,
-  sendToRecipients,
   stageToRecipients,
-  type SendToRecipientsResult,
   type StagedRecipientEmail,
 } from "../send-to-recipients";
 
@@ -61,8 +58,6 @@ type Spec = {
   subject: (r: EmailRecipient) => string;
   render: (r: EmailRecipient) => React.ReactElement;
 };
-
-const FAILED: SendToRecipientsResult = { sent: 0, skipped: 0, failed: 1 };
 
 /** Outbox rows a route attempts after its response (`attemptOnboardingEmail`). */
 export interface StagedOnboardingEmail {
@@ -137,31 +132,6 @@ export async function attemptOnboardingEmail(
   }
 }
 
-async function guarded(
-  spec: Spec,
-  userIds: string[],
-): Promise<SendToRecipientsResult> {
-  try {
-    const recipients = await loadEmailRecipients(userIds, null);
-    return await sendToRecipients({
-      recipients,
-      emailType: spec.emailType,
-      from: spec.from,
-      entityRef: spec.entityRef,
-      budgetMs: spec.budgetMs,
-      subject: spec.subject,
-      render: spec.render,
-    });
-  } catch (error) {
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType: spec.emailType } },
-    );
-    console.error(`[email] ${spec.emailType} failed:`, error);
-    return FAILED;
-  }
-}
-
 // ── Verification decided ────────────────────────────────────────────────────
 
 export interface VerificationDecidedEmailArgs {
@@ -193,13 +163,6 @@ function verificationDecidedSpec(args: VerificationDecidedEmailArgs): Spec {
         daysLeft: args.daysLeft,
       }),
   };
-}
-
-/** Post-commit twin of the verification-status-changed bell. */
-export function sendVerificationDecidedEmail(
-  args: VerificationDecidedEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(verificationDecidedSpec(args), [args.userId]);
 }
 
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
@@ -250,13 +213,6 @@ function orgMembershipChangedSpec(args: OrgMembershipChangedEmailArgs): Spec {
   };
 }
 
-/** Post-commit required notice to the affected member. */
-export function sendOrgMembershipChangedEmail(
-  args: OrgMembershipChangedEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(orgMembershipChangedSpec(args), [args.userId]);
-}
-
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
 export function stageOrgMembershipChangedEmail(
   args: OrgMembershipChangedEmailArgs,
@@ -289,13 +245,6 @@ function orgCreatedSpec(args: OrgCreatedEmailArgs): Spec {
         dashboardUrl,
       }),
   };
-}
-
-/** Post-commit confirmation to the creator. */
-export function sendOrgCreatedEmail(
-  args: OrgCreatedEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(orgCreatedSpec(args), [args.userId]);
 }
 
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
@@ -332,13 +281,6 @@ function orgWelcomeSpec(args: OrgWelcomeEmailArgs): Spec {
         dashboardUrl,
       }),
   };
-}
-
-/** Post-commit welcome to the joiner; skipped when alreadyMember. */
-export function sendOrgWelcomeEmail(
-  args: OrgWelcomeEmailArgs,
-): Promise<SendToRecipientsResult> {
-  return guarded(orgWelcomeSpec(args), [args.userId]);
 }
 
 /** Stage-only twin; attempt with `attemptOnboardingEmail()` after the response. */
