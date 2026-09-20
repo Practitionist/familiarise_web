@@ -10,7 +10,6 @@ import {
   CalendarDays,
   Clock,
   Globe,
-  Mail,
   Star,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -62,9 +61,6 @@ export default function ExpertDetailsSheet({
     [...plans]
       .filter((p) => p.trialEnabled)
       .sort((a, b) => a.trialPriceInPaise - b.trialPriceInPaise)[0] ?? null;
-  const sortedPlans = [...plans].sort(
-    (a, b) => a.durationInMonths - b.durationInMonths,
-  );
   const experiences = consultant?.user.workExperiences ?? [];
   // Recent-review sample (card query takes up to 10 ratings, no text) — an
   // average + distribution, honestly labelled as a sample.
@@ -253,58 +249,6 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
-              {sortedPlans.length > 0 && (
-                <div className="mt-6">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Plans & pricing
-                  </p>
-                  <div className="space-y-2">
-                    {sortedPlans.map((plan) => (
-                      <div
-                        key={plan.id}
-                        className="rounded-xl border border-border bg-card p-3.5"
-                      >
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <p className="text-sm font-semibold text-foreground">
-                            {plan.title}
-                          </p>
-                          <p className="text-base font-bold text-foreground">
-                            {formatPrice(plan.price)}
-                          </p>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {plan.durationInMonths} mo
-                          {plan.sessionsPerWeek !== null &&
-                            plan.sessionsPerWeek !== undefined &&
-                            ` · ${plan.sessionsPerWeek}/week`}
-                          {plan.totalSessions !== null &&
-                            plan.totalSessions !== undefined &&
-                            ` · ${plan.totalSessions} sessions`}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                          {plan.emailSupport && (
-                            <Badge
-                              variant="outline"
-                              className="inline-flex items-center gap-1 text-[10px]"
-                            >
-                              <Mail className="h-3 w-3" />
-                              {plan.emailSupport}
-                            </Badge>
-                          )}
-                          {plan.trialEnabled && (
-                            <Badge className="bg-primary text-[10px] text-primary-foreground">
-                              {plan.trialPriceInPaise > 0
-                                ? `Trial ${formatPrice(plan.trialPriceInPaise)}`
-                                : "Free intro call"}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {reviewAvg !== null && (
                 <div className="mt-6">
                   <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -361,42 +305,44 @@ export default function ExpertDetailsSheet({
                 </div>
               )}
 
-              <div className="mt-6 rounded-xl border border-border bg-muted p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Starting from
-                </p>
-                {cheapest ? (
-                  <p className="mt-1 text-2xl font-bold text-foreground">
-                    {formatPrice(cheapest.price)}
-                    <span className="ml-2 text-sm font-medium text-muted-foreground">
-                      / {cheapest.durationInMonths} mo
-                    </span>
-                  </p>
-                ) : (
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    No subscription plans listed — see profile for 1:1 options.
-                  </p>
-                )}
-                {trialPlan && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {trialPlan.trialPriceInPaise > 0
-                      ? `Trial available · ${formatPrice(trialPlan.trialPriceInPaise)}`
-                      : "Free intro call available"}
-                  </p>
-                )}
-                <p className="mt-2 border-t border-border pt-2 text-sm text-muted-foreground">
+              <div className="mt-6 space-y-2 rounded-xl border border-border bg-muted p-4">
+                <p className="text-sm text-muted-foreground">
+                  Consultation plans start from{" "}
                   {cheapestOneOnOne ? (
                     <>
-                      1:1 session from{" "}
                       <span className="font-semibold text-foreground">
                         {formatPrice(cheapestOneOnOne.price)}
                       </span>{" "}
                       / {cheapestOneOnOne.durationInHours}h
                     </>
                   ) : (
-                    "No 1:1 sessions listed — see profile for options."
+                    <span className="font-medium text-foreground">
+                      — none listed
+                    </span>
                   )}
                 </p>
+                <p className="text-sm text-muted-foreground">
+                  Subscription plans start from{" "}
+                  {cheapest ? (
+                    <>
+                      <span className="font-semibold text-foreground">
+                        {formatPrice(cheapest.price)}
+                      </span>{" "}
+                      / {cheapest.durationInMonths} mo
+                    </>
+                  ) : (
+                    <span className="font-medium text-foreground">
+                      — none listed
+                    </span>
+                  )}
+                </p>
+                {trialPlan && (
+                  <p className="border-t border-border pt-2 text-sm text-muted-foreground">
+                    {trialPlan.trialPriceInPaise > 0
+                      ? `Trial available · ${formatPrice(trialPlan.trialPriceInPaise)}`
+                      : "Free intro call available"}
+                  </p>
+                )}
               </div>
             </div>
 
