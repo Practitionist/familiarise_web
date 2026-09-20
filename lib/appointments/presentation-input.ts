@@ -57,6 +57,8 @@ export type LifecycleRows = {
   consultation?: (Requested & { consultationPlan?: Priced | null }) | null;
   subscription?:
     | (Requested & {
+        /** #1766 — the frozen entitlement; a read without it falls back to the plan. */
+        sessionsTotal?: number | null;
         subscriptionPlan?: (Priced & { totalSessions: number }) | null;
       })
     | null;
@@ -106,7 +108,10 @@ export function planOf(a: LifecycleRows): BookingPresentationInput["plan"] {
       pricePaise: p.price,
       currency: p.priceCurrency,
       // #1766 — the entitlement frozen at purchase, not today's plan.
-      sessions: sessionsTotalOf(a.subscription),
+      sessions: sessionsTotalOf({
+        sessionsTotal: a.subscription.sessionsTotal ?? null,
+        subscriptionPlan: p,
+      }),
     };
   }
   const p =
