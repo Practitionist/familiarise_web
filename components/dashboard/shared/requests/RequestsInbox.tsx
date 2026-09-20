@@ -168,6 +168,8 @@ export function RequestsInbox({
   viewerZone,
 }: Readonly<RequestsInboxProps>) {
   const { params, setParams } = useInboxUrlState();
+  // A breadcrumb / link may name one row; it is highlighted and scrolled to once.
+  const focusId = useSearchParams().get("focus");
   const viewer = useViewerZone(viewerZone);
   const queryClient = useQueryClient();
 
@@ -227,6 +229,15 @@ export function RequestsInbox({
     returnedRef.current = false;
     knownTotalRef.current = data.meta.total;
   }, [data]);
+
+  const scrolledRef = useRef(false);
+  useEffect(() => {
+    if (!focusId || scrolledRef.current || rows.length === 0) return;
+    const el = document.getElementById(`request-${focusId}`);
+    if (!el) return;
+    scrolledRef.current = true;
+    el.scrollIntoView({ block: "center" });
+  }, [focusId, rows]);
 
   // ---- selection + batch -------------------------------------------------
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -564,6 +575,7 @@ export function RequestsInbox({
                 (approve.isPending && approveTarget?.id === row.id)
               }
               note={notes[row.id] ?? null}
+              focused={focusId === row.id}
               onSelect={(checked) =>
                 setSelected((prev) => {
                   const next = new Set(prev);

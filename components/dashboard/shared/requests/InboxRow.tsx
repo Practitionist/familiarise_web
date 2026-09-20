@@ -256,6 +256,8 @@ export interface InboxRowProps {
   note?: string | null;
   /** The clock the words are derived at; a pin passes a fixed one. */
   now?: Date;
+  /** `?focus=<id>` — the row a breadcrumb or link pointed at. */
+  focused?: boolean;
   onSelect: (checked: boolean) => void;
   onAction: (action: RowAction) => void;
 }
@@ -271,6 +273,7 @@ export function InboxRow({
   busy,
   note,
   now,
+  focused = false,
   onSelect,
   onAction,
 }: Readonly<InboxRowProps>) {
@@ -393,7 +396,9 @@ export function InboxRow({
       className={cn(
         "flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:gap-4 sm:px-4",
         selected && "bg-muted/40",
+        focused && "ring-2 ring-inset ring-primary/40",
       )}
+      id={`request-${row.id}`}
       data-row-id={row.id}
       data-kind={row.kind}
     >
