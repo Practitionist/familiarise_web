@@ -86,6 +86,9 @@ export interface BucketSums {
  */
 export const PAYOUT_BATCH_UTC = { weekday: 1, hour: 20 } as const;
 
+/** Rows the page fetches in one read; the tiles sum these, so the cap is stated when it bites. */
+export const EARNINGS_FETCH_CAP = 200;
+
 /** Payouts are India-only (INR rails), so the dates on this page read in IST. */
 export const PAYOUT_ZONE = "Asia/Kolkata";
 
