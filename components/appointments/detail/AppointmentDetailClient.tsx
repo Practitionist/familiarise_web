@@ -4,7 +4,7 @@ import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CalendarX,
@@ -23,6 +23,7 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { throwSupportError } from "@/lib/support/error-copy";
+import { requireJsonResponse } from "@/lib/fetch-helpers";
 import { useSetBreadcrumbLabel } from "@/components/dashboard/breadcrumb-override";
 import type { AppointmentActionAdapter } from "@/lib/appointments/adapter";
 import { mapAppointmentDetail } from "@/lib/appointments/map-detail";
@@ -268,6 +269,26 @@ export function AppointmentDetailClient({
       const { data } = await res.json();
       return data;
     },
+  });
+
+  // #1775 — the consultant's two actions on an unpaid approval; the callout
+  // reads the 429 / 409 answers off the ApiResponseError these throw.
+  const requestPath = detail?.appointment.consultation
+    ? `/api/bookings/consultations/${detail.appointment.consultation.id}`
+    : detail?.appointment.subscription
+      ? `/api/bookings/subscriptions/${detail.appointment.subscription.id}`
+      : null;
+  const postRequestAction = async (action: "remind" | "withdraw-approval") => {
+    if (!requestPath) throw new Error("No request to act on");
+    const res = await fetch(`${requestPath}/${action}`, { method: "POST" });
+    return requireJsonResponse(res, "Request action");
+  };
+  const remindMutation = useMutation({
+    mutationFn: () =>
+      postRequestAction("remind") as Promise<{ nextAllowedAt: string }>,
+  });
+  const withdrawMutation = useMutation({
+    mutationFn: () => postRequestAction("withdraw-approval"),
   });
 
   const mapped = detail ? mapAppointmentDetail(detail, role) : null;
@@ -689,6 +710,19 @@ export function AppointmentDetailClient({
               : null
           }
           decision={decision}
+          awaitingPayment={
+            role === "consultant" && requestPath
+              ? {
+                  remind: remindMutation.mutateAsync,
+                  withdraw: withdrawMutation.mutateAsync,
+                  onChanged: () => {
+                    void queryClient.invalidateQueries({
+                      queryKey: ["appointment-detail", appointmentId],
+                    });
+                  },
+                }
+              : undefined
+          }
           onHelp={() => setHelp({ open: true })}
         >
           {nextAction.kind === "JOIN" && action.kind === "join" ? (
