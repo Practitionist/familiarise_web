@@ -338,6 +338,27 @@ function slotRunWindow(
 }
 
 /**
+ * #1744 row 4 — the one credit-limit predicate both gates share: the booking
+ * being priced counts, so `exposure + booking > limit` refuses. Copy is in
+ * whole rupees; the limit is a business figure, not a paise integer.
+ */
+export function assertWithinInvoiceCreditLimit(
+  exposurePaise: number,
+  bookingPaise: number,
+  limitPaise: number,
+): void {
+  if (exposurePaise + bookingPaise <= limitPaise) return;
+  const rupees = (p: number) =>
+    `₹${Math.round(p / 100).toLocaleString("en-IN")}`;
+  throw Object.assign(
+    new Error(
+      `This booking would take the organisation past its invoice credit limit of ${rupees(limitPaise)} (${rupees(exposurePaise)} already outstanding). Outstanding invoices must be paid before new bookings.`,
+    ),
+    { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
+  );
+}
+
+/**
  * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
  * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
  * plus invoices already issued and unpaid. Both credit-limit gates read this.
@@ -3248,18 +3269,8 @@ export async function handleCheckout(
             ? explicitLimit
             : Math.min(explicitLimit, governanceLimit);
       creditEffectiveLimit = effectiveLimit;
-
-      if (effectiveLimit !== null) {
-        const exposure = await readInvoiceExposurePaise(prisma, org.id);
-        if (exposure >= effectiveLimit) {
-          throw Object.assign(
-            new Error(
-              `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
-            ),
-            { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
-          );
-        }
-      }
+      // #1744 row 4 — the fast-fail exposure check moved below STEP 1: it needs
+      // this booking's price, which is not derived yet at this point.
     }
 
     // Resolve a currently-active ProgramAssignment for this member that
@@ -3346,6 +3357,19 @@ export async function handleCheckout(
       // needs it to scope the self-hold exclusion to a resumable hold.
       organizationId,
     );
+
+    // INVOICE fundingSource: fast-fail on the credit limit before any lock is
+    // taken. #1744 row 4 — the booking itself counts: `exposure >= limit` let
+    // one booking of any size through at ₹1 under the limit, so the predicate
+    // is `exposure + this booking > limit` here and inside the tx alike.
+    if (
+      fundingSource === "INVOICE" &&
+      creditEffectiveLimit !== null &&
+      organizationId
+    ) {
+      const exposure = await readInvoiceExposurePaise(prisma, organizationId);
+      assertWithinInvoiceCreditLimit(exposure, amount, creditEffectiveLimit);
+    }
 
     const displayCurrencyAtCheckout =
       validatedData.displayCurrency?.toUpperCase() || currency;
@@ -3670,17 +3694,14 @@ export async function handleCheckout(
                 tx,
                 organizationId,
               );
-              // Same gate as the pre-lock check (>= limit), re-run inside the tx so
-              // a concurrent sibling's just-committed accrual is visible — SSI then
+              // Same gate as the pre-lock check, re-run inside the tx so a
+              // concurrent sibling's just-committed accrual is visible — SSI then
               // aborts the loser of a racing pair instead of both straddling the cap.
-              if (exposure >= creditEffectiveLimit) {
-                throw Object.assign(
-                  new Error(
-                    `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
-                  ),
-                  { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
-                );
-              }
+              assertWithinInvoiceCreditLimit(
+                exposure,
+                amount,
+                creditEffectiveLimit,
+              );
             }
 
             let createdAppointment;

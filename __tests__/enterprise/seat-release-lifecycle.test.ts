@@ -21,9 +21,12 @@
 import type { Tx } from "@/lib/prisma";
 import {
   releaseSeatsForTerminatedAssignments,
+  releaseSeatsForClosedAssignments,
   adjustActiveSeatCount,
   SeatCountUnderflowError,
 } from "@/lib/api/organizations/seat-count";
+
+const CLOSED_AT = new Date("2026-09-20T10:00:00.000Z");
 
 type ProgramRow = {
   type: string;
@@ -107,7 +110,11 @@ describe("releaseSeatsForTerminatedAssignments", () => {
       seatCounts: { "sub-1": 5, "sub-2": 3 },
     });
 
-    const released = await releaseSeatsForTerminatedAssignments(tx, ["mem-1"]);
+    const released = await releaseSeatsForTerminatedAssignments(
+      tx,
+      ["mem-1"],
+      CLOSED_AT,
+    );
 
     expect(released).toBe(2);
     expect(counts["sub-1"]).toBe(4);
@@ -123,29 +130,39 @@ describe("releaseSeatsForTerminatedAssignments", () => {
       seatCounts: { "sub-1": 5 },
     });
 
-    const released = await releaseSeatsForTerminatedAssignments(tx, ["mem-1"]);
+    const released = await releaseSeatsForTerminatedAssignments(
+      tx,
+      ["mem-1"],
+      CLOSED_AT,
+    );
 
     expect(released).toBe(1);
     expect(counts["sub-1"]).toBe(4);
   });
 
-  it("selects only CANCELLED assignments still inside their period", async () => {
+  it("selects only the CANCELLED assignments the caller just closed", async () => {
     const { tx, findMany } = makeTx({ assignments: [], programs: {} });
 
-    await releaseSeatsForTerminatedAssignments(tx, ["mem-1", "mem-2"]);
+    await releaseSeatsForTerminatedAssignments(
+      tx,
+      ["mem-1", "mem-2"],
+      CLOSED_AT,
+    );
 
     const [args] = findMany.mock.calls[0];
     expect(args.where.status).toBe("CANCELLED");
     expect(args.where.membershipId).toEqual({ in: ["mem-1", "mem-2"] });
-    // An already-expired assignment was never counted, so releasing it would
-    // double-decrement.
-    expect(args.where.periodEnd).toHaveProperty("gte");
+    // #1744 row 4 — the caller's own `periodEnd` stamp, exactly: `gte: new
+    // Date()` taken a few ms later matched nothing and released no seat.
+    expect(args.where.periodEnd).toBe(CLOSED_AT);
   });
 
   it("is a no-op for an empty membership list (no query at all)", async () => {
     const { tx, findMany } = makeTx({ assignments: [], programs: {} });
 
-    expect(await releaseSeatsForTerminatedAssignments(tx, [])).toBe(0);
+    expect(await releaseSeatsForTerminatedAssignments(tx, [], CLOSED_AT)).toBe(
+      0,
+    );
     expect(findMany).not.toHaveBeenCalled();
   });
 
@@ -157,12 +174,15 @@ describe("releaseSeatsForTerminatedAssignments", () => {
           type: "CREDIT_POOL",
           contract: { subscription: { id: "sub-x", activeSeatCount: 9 } },
         },
-        "prog-nosub": { type: "LICENSED_SEAT", contract: { subscription: null } },
+        "prog-nosub": {
+          type: "LICENSED_SEAT",
+          contract: { subscription: null },
+        },
       },
     });
 
     // The helper still counts them as visited programs, but no seat moves.
-    await releaseSeatsForTerminatedAssignments(tx, ["mem-1"]);
+    await releaseSeatsForTerminatedAssignments(tx, ["mem-1"], CLOSED_AT);
 
     expect(updateMany).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalled();
@@ -179,8 +199,50 @@ describe("releaseSeatsForTerminatedAssignments", () => {
     });
 
     await expect(
-      releaseSeatsForTerminatedAssignments(tx, ["mem-1"]),
+      releaseSeatsForTerminatedAssignments(tx, ["mem-1"], CLOSED_AT),
     ).resolves.toBe(1);
+  });
+});
+
+// #1744 rows 3/4 + W5 — the three `updateMany` close sites (program cancel
+// cascade, cycle CLOSE, contract expiry) all hand their closed count to one
+// helper; two closed assignments free two seats at each of them.
+describe("releaseSeatsForClosedAssignments", () => {
+  it.each([
+    ["program cancel cascade", 2],
+    ["cycle CLOSE (one per claimed row, twice)", 1],
+    ["contract expiry", 2],
+  ])("%s: closing 2 assignments frees 2 seats", async (_site, perCall) => {
+    const { tx, counts } = makeTx({
+      assignments: [],
+      programs: { "prog-a": licensedProgram("sub-1", 5) },
+      seatCounts: { "sub-1": 5 },
+    });
+
+    let released = 0;
+    for (let closed = 0; closed < 2; closed += perCall) {
+      released += await releaseSeatsForClosedAssignments(tx, "prog-a", perCall);
+    }
+
+    expect(released).toBe(2);
+    expect(counts["sub-1"]).toBe(3);
+  });
+
+  it("clamps at zero when the count had already drifted low", async () => {
+    const { tx, counts } = makeTx({
+      assignments: [],
+      programs: { "prog-a": licensedProgram("sub-1", 1) },
+      seatCounts: { "sub-1": 1 },
+    });
+    // The underflow re-read goes through findUnique on the subscription.
+    (
+      tx as unknown as { billingSubscription: Record<string, unknown> }
+    ).billingSubscription.findUnique = jest.fn(async () => ({
+      activeSeatCount: counts["sub-1"],
+    }));
+
+    expect(await releaseSeatsForClosedAssignments(tx, "prog-a", 3)).toBe(1);
+    expect(counts["sub-1"]).toBe(0);
   });
 });
 

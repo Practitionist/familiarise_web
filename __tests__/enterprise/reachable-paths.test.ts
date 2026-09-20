@@ -17,6 +17,7 @@ import {
   defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
   overageBehaviorUnsupportedReason,
+  CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
   capabilityOf,
 } from "@/lib/enterprise/reachable-paths";
 
@@ -37,9 +38,14 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
   it("rejects Programs v2 fundingSource values", () => {
     // Reachable paths must not reference PROJECT/RETAINER/AOR/EOR.
     for (const path of REACHABLE_ORG_FUNDING_PATHS) {
-      expect(["PERSONAL", "WALLET", "INVOICE", "LICENSE", null, "any"]).toContain(
-        path.fundingSource as unknown,
-      );
+      expect([
+        "PERSONAL",
+        "WALLET",
+        "INVOICE",
+        "LICENSE",
+        null,
+        "any",
+      ]).toContain(path.fundingSource as unknown);
       expect(["LICENSED_SEAT", "CREDIT_POOL", null, "any"]).toContain(
         path.programType as unknown,
       );
@@ -73,9 +79,9 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
     });
 
     it("accepts HYBRID with any reachable pair", () => {
-      expect(
-        isReachableOrgFundingPath("HYBRID", "WALLET", "CREDIT_POOL"),
-      ).toBe(true);
+      expect(isReachableOrgFundingPath("HYBRID", "WALLET", "CREDIT_POOL")).toBe(
+        true,
+      );
       expect(
         isReachableOrgFundingPath("HYBRID", "LICENSE", "LICENSED_SEAT"),
       ).toBe(true);
@@ -91,7 +97,12 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
     // silently re-opening the refused intersections. Enumeration keeps the
     // refusals refused for dual-capability orgs too.
     it("rejects refused pairs for HYBRID exactly as for SPONSOR", () => {
-      const refused: Array<[Parameters<typeof isReachableOrgFundingPath>[1], Parameters<typeof isReachableOrgFundingPath>[2]]> = [
+      const refused: Array<
+        [
+          Parameters<typeof isReachableOrgFundingPath>[1],
+          Parameters<typeof isReachableOrgFundingPath>[2],
+        ]
+      > = [
         ["WALLET", "LICENSED_SEAT"],
         ["LICENSE", "CREDIT_POOL"],
         ["INVOICE", null],
@@ -116,12 +127,15 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
   // carve back out for a member charge. Checkout could only fail closed after
   // the member had picked a slot; the config is what has to be refused.
   describe("overageBehaviorUnsupportedReason", () => {
-    it("refuses CHARGE_MEMBER on a WALLET-funded account, naming #715", () => {
-      const reason = overageBehaviorUnsupportedReason(
-        "WALLET",
-        "CHARGE_MEMBER",
-      );
-      expect(reason).toContain("#715");
+    // #1744 — CHARGE_MEMBER is refused on every rail until an earnings hold
+    // exists: the member pays after the session while the consultant is paid
+    // on the full price, so the over-cap portion is an unsecured write-off.
+    it("refuses CHARGE_MEMBER on every rail with the earnings-hold reason", () => {
+      for (const rail of ["WALLET", "INVOICE", "LICENSE", null] as const) {
+        expect(overageBehaviorUnsupportedReason(rail, "CHARGE_MEMBER")).toBe(
+          CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
+        );
+      }
     });
 
     it("refuses either charging behaviour on a LICENSE-funded account", () => {
@@ -130,19 +144,20 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
       expect(
         overageBehaviorUnsupportedReason("LICENSE", "CHARGE_ORG"),
       ).toContain("licence");
-      expect(
-        overageBehaviorUnsupportedReason("LICENSE", "CHARGE_MEMBER"),
-      ).toContain("licence");
+      // #1744 — CHARGE_MEMBER now trips the all-rail refusal first.
+      expect(overageBehaviorUnsupportedReason("LICENSE", "CHARGE_MEMBER")).toBe(
+        CHARGE_MEMBER_NEEDS_EARNINGS_HOLD,
+      );
       expect(overageBehaviorUnsupportedReason("LICENSE", "BLOCK")).toBeNull();
     });
 
-    it("allows CHARGE_ORG and BLOCK on WALLET, and CHARGE_MEMBER on INVOICE", () => {
+    it("allows CHARGE_ORG and BLOCK on WALLET, and CHARGE_ORG on INVOICE", () => {
       expect(
         overageBehaviorUnsupportedReason("WALLET", "CHARGE_ORG"),
       ).toBeNull();
       expect(overageBehaviorUnsupportedReason("WALLET", "BLOCK")).toBeNull();
       expect(
-        overageBehaviorUnsupportedReason("INVOICE", "CHARGE_MEMBER"),
+        overageBehaviorUnsupportedReason("INVOICE", "CHARGE_ORG"),
       ).toBeNull();
     });
 

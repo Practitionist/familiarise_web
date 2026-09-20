@@ -21,6 +21,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 // MAINTAINER is intentionally excluded — see `lib/auth/billing-admin-gate.ts`.
 import { requireOrgBillingAdminOrOwner } from "@/lib/auth/billing-admin-gate";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { numericStateCode } from "@/lib/compliance/state-codes";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
 import {
   supplierStateCode,
@@ -238,10 +239,14 @@ export async function POST(
       { status: 503 },
     );
   }
+  // #1744 row 3 — the buyer GSTIN's first two digits are the place of supply;
+  // an org that never filled its state still gets the right tax head.
   const gst = deriveGstBreakdown({
     subtotalPaise: subtotal,
     supplierStateCode: supplierState,
-    buyerStateCode: org.taxInfo?.gstStateCode ?? null,
+    buyerStateCode:
+      org.taxInfo?.gstStateCode ?? numericStateCode(org.taxInfo?.gstin, null),
+    buyerGstin: org.taxInfo?.gstin ?? null,
     buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
     hsnCode: org.taxInfo?.hsnDefault,
   });

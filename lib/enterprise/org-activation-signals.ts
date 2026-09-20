@@ -23,6 +23,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
   pendingOveragePaise: number;
   stuckPayoutCount: number;
   creditPoolMaxUtilizationPct: number | null;
+  memberBilledOverageProgramNames: string[];
 }> {
   const now = new Date();
   const soon = new Date(now.getTime() + THIRTY_DAYS_MS);
@@ -35,6 +36,7 @@ export async function resolveActivationSignals(orgId: string): Promise<{
     overageAgg,
     stuckPayoutCount,
     meteredAssignments,
+    memberBilledPrograms,
   ] = await Promise.all([
     prisma.contract.count({ where: { organizationId: orgId } }),
     prisma.contract.count({
@@ -89,6 +91,21 @@ export async function resolveActivationSignals(orgId: string): Promise<{
         },
       },
     }),
+    // #1744 — live programmes still configured CHARGE_MEMBER, which the
+    // server now refuses; the action centre asks the owner to switch them.
+    prisma.program.findMany({
+      where: {
+        contract: { organizationId: orgId },
+        status: "ACTIVE",
+        archivedAt: null,
+        OR: [
+          { licensedSeatConfig: { overageBehavior: "CHARGE_MEMBER" } },
+          { creditPoolConfig: { overageBehavior: "CHARGE_MEMBER" } },
+        ],
+      },
+      take: 20,
+      select: { name: true },
+    }),
   ]);
 
   let maxPct: number | null = null;
@@ -113,5 +130,6 @@ export async function resolveActivationSignals(orgId: string): Promise<{
     pendingOveragePaise: sumPaise(overageAgg._sum.marginalPaise),
     stuckPayoutCount,
     creditPoolMaxUtilizationPct: maxPct,
+    memberBilledOverageProgramNames: memberBilledPrograms.map((p) => p.name),
   };
 }

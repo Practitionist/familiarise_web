@@ -903,9 +903,8 @@ function CreateProgramDialog({
                 <SelectItem value="BLOCK">
                   Block — reject booking once the cap is hit
                 </SelectItem>
-                <SelectItem value="CHARGE_MEMBER">
-                  Charge member — learner pays the overage on their own card
-                </SelectItem>
+                {/* #1744 — CHARGE_MEMBER is refused by the server until an
+                    earnings hold exists; a new programme never offers it. */}
                 <SelectItem value="CHARGE_ORG">
                   Charge org — added to the next invoice
                 </SelectItem>
@@ -1119,7 +1118,19 @@ function EditProgramDialog({
         setError("Overage surcharge must be blank or a non-negative percentage.");
         return;
       }
-      body.overageBehavior = overageBehavior;
+      // #1744 — a legacy CHARGE_MEMBER value is refused if re-sent; leave it
+      // out when unchanged so rate/cap edits still save.
+      const savedOverageBehavior =
+        program.licensedSeatConfig?.overageBehavior ??
+        program.creditPoolConfig?.overageBehavior;
+      if (
+        !(
+          overageBehavior === "CHARGE_MEMBER" &&
+          savedOverageBehavior === "CHARGE_MEMBER"
+        )
+      ) {
+        body.overageBehavior = overageBehavior;
+      }
       body.overageSurchargeBps = surchargeBps;
       // #768 #14/#15 — circuit-breaker ceiling. PATCH validation at
       // [programId]/route.ts:225-239 merges with the existing config and
@@ -1348,9 +1359,14 @@ function EditProgramDialog({
                   <SelectItem value="BLOCK">
                     Block — reject booking once the cap is hit
                   </SelectItem>
-                  <SelectItem value="CHARGE_MEMBER">
-                    Charge member — learner pays the overage on their own card
-                  </SelectItem>
+                  {/* #1744 — shown only while the saved value is still
+                      CHARGE_MEMBER, so the operator can see it and switch away. */}
+                  {overageBehavior === "CHARGE_MEMBER" && (
+                    <SelectItem value="CHARGE_MEMBER" disabled>
+                      Charge member — no longer offered; switch to Block or
+                      Charge org
+                    </SelectItem>
+                  )}
                   <SelectItem value="CHARGE_ORG">
                     Charge org — added to the next invoice
                   </SelectItem>

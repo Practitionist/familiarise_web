@@ -257,6 +257,7 @@ export async function scrubUser(
       await releaseSeatsForTerminatedAssignments(
         tx,
         memberships.map((m) => m.id),
+        now,
       );
     }
 

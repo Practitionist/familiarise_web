@@ -282,7 +282,7 @@ export async function PATCH(
           });
           // E2E-audit P1 fix — release the billed seats the cancelled
           // assignments held (parity with the assignment-route cancels).
-          await releaseSeatsForTerminatedAssignments(tx, [memberId]);
+          await releaseSeatsForTerminatedAssignments(tx, [memberId], now);
         }
       }
 
@@ -647,7 +647,7 @@ export async function DELETE(
         data: { periodEnd: now, status: "CANCELLED" },
       });
       // E2E-audit P1 fix — release billed seats (see PATCH → REMOVED arm).
-      await releaseSeatsForTerminatedAssignments(tx, [memberId]);
+      await releaseSeatsForTerminatedAssignments(tx, [memberId], now);
 
       await tx.orgAuditLog.create({
         data: {

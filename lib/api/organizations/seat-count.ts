@@ -102,6 +102,42 @@ export async function adjustActiveSeatCount(
 }
 
 /**
+ * #1744 rows 3/4 + W5 — release the seats a batch of just-closed assignments
+ * held: one seat per closed row, in the same transaction that closed them.
+ * Program cancel, cycle CLOSE and contract expiry all close by `updateMany`
+ * and never released, so PER_SEAT invoicing kept billing dead assignments.
+ *
+ * Underflow means the count had already drifted low; the close still stands,
+ * so the release clamps at zero instead of aborting the caller's transaction.
+ * Returns the number of seats actually released.
+ */
+export async function releaseSeatsForClosedAssignments(
+  tx: Tx,
+  programId: string,
+  closedCount: number,
+): Promise<number> {
+  if (closedCount <= 0) return 0;
+  try {
+    const r = await adjustActiveSeatCount(tx, {
+      programId,
+      delta: -closedCount,
+    });
+    return r.applied ? closedCount : 0;
+  } catch (err) {
+    if (!(err instanceof SeatCountUnderflowError)) throw err;
+    const sub = await tx.billingSubscription.findUnique({
+      where: { id: err.billingSubscriptionId },
+      select: { activeSeatCount: true },
+    });
+    const remaining = sub?.activeSeatCount ?? 0;
+    if (remaining > 0) {
+      await adjustActiveSeatCount(tx, { programId, delta: -remaining });
+    }
+    return remaining;
+  }
+}
+
+/**
  * E2E-audit P1 fix — seat-count release for member-lifecycle cascades.
  *
  * The assignment-cancel paths on the assignment routes already decrement the
@@ -117,14 +153,18 @@ export async function adjustActiveSeatCount(
 export async function releaseSeatsForTerminatedAssignments(
   tx: Tx,
   membershipIds: string[],
+  // #1744 row 4 — the instant the caller stamped as `periodEnd`. Selecting
+  // `periodEnd >= new Date()` here matched nothing: the caller's stamp is
+  // always a few milliseconds older than this helper's clock, so every
+  // member-removal, SCIM and erasure cascade released zero seats.
+  closedAt: Date,
 ): Promise<number> {
   if (membershipIds.length === 0) return 0;
 
-  const now = new Date();
   const terminated = await tx.programAssignment.findMany({
     where: {
       membershipId: { in: membershipIds },
-      periodEnd: { gte: now },
+      periodEnd: closedAt,
       status: "CANCELLED",
     },
     select: { programId: true },
