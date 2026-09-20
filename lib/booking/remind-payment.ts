@@ -52,6 +52,17 @@ const REMIND_PLAN_SELECT = {
   },
 } as const;
 
+const REMIND_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function remindRateLimited(nextAllowedAt: Date): Refusal {
+  return new Refusal({
+    code: "REMIND_RATE_LIMITED",
+    httpStatus: 429,
+    userMessage: "A reminder was already sent in the last 24 hours.",
+    context: { nextAllowedAt: nextAllowedAt.toISOString() },
+  });
+}
+
 function notAwaitingPayment(kind: string, id: string): Refusal {
   return new Refusal({
     code: "NOT_AWAITING_PAYMENT",
@@ -112,19 +123,27 @@ export async function remindApprovedPayment(args: {
   const consultee = row.requestedBy?.user;
   if (!consultee?.email) throw notAwaitingPayment(args.kind, args.id);
 
-  // Keyed by appointment, not by caller: the consultee's inbox is the thing
-  // being protected. Fails open like `applyRateLimit`, but reported.
-  let nextAllowedAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  // Once per 24 h, measured from the last manual reminder's own outbox row
+  // (state-as-outbox, ADR 27): the Upstash window reports `reset` on the UTC
+  // day bucket, so it read "next in 4 h" right after a first send. The
+  // limiter stays underneath as the same-second burst guard, keyed by
+  // appointment; it fails open like `applyRateLimit`, but reported.
+  const lastManual = await prisma.failedEmail.findFirst({
+    where: {
+      emailType: PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE,
+      entityRef: `payment:${payment.id}`,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true },
+  });
+  const nextAllowedAt = new Date(
+    (lastManual ? lastManual.createdAt.getTime() : now.getTime()) +
+      REMIND_WINDOW_MS,
+  );
+  if (nextAllowedAt > now && lastManual) throw remindRateLimited(nextAllowedAt);
   try {
-    const { success, reset } = await remindLimiter.limit(row.appointment.id);
-    nextAllowedAt = new Date(reset);
-    if (!success)
-      throw new Refusal({
-        code: "REMIND_RATE_LIMITED",
-        httpStatus: 429,
-        userMessage: "A reminder was already sent today.",
-        context: { nextAllowedAt: nextAllowedAt.toISOString() },
-      });
+    const { success } = await remindLimiter.limit(row.appointment.id);
+    if (!success) throw remindRateLimited(nextAllowedAt);
   } catch (error) {
     if (isRefusal(error)) throw error;
     reportSentryError(error, {

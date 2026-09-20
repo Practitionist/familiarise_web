@@ -10,11 +10,14 @@
  */
 
 const findUnique = jest.fn();
+// The last manual reminder's outbox row — the 24 h clock (state-as-outbox).
+const lastManualReminder = jest.fn();
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
   default: {
     consultation: { findUnique: (...a: unknown[]) => findUnique(...a) },
     subscription: { findUnique: (...a: unknown[]) => findUnique(...a) },
+    failedEmail: { findFirst: (...a: unknown[]) => lastManualReminder(...a) },
   },
 }));
 
@@ -89,8 +92,12 @@ const post = () =>
     { params: Promise.resolve({ consultationId: C_ID }) },
   );
 
+const HOUR = 3_600_000;
+const hoursFromNow = (iso: string) => (Date.parse(iso) - Date.now()) / HOUR;
+
 beforeEach(() => {
   jest.clearAllMocks();
+  lastManualReminder.mockResolvedValue(null);
   limit.mockResolvedValue({ success: true, reset: IN_20H.getTime() });
 });
 
@@ -100,7 +107,9 @@ describe("POST …/remind (B-3)", () => {
     const res = await post();
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ nextAllowedAt: IN_20H.toISOString() });
+    // A sliding 24 h from THIS send, not the limiter's UTC-day bucket.
+    const { nextAllowedAt } = await res.json();
+    expect(hoursFromNow(nextAllowedAt)).toBeCloseTo(24, 1);
     expect(limit).toHaveBeenCalledWith("a-1");
     const [message, emailType, opts] = deliver.mock.calls[0];
     expect(emailType).toBe(PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE);
@@ -110,16 +119,30 @@ describe("POST …/remind (B-3)", () => {
     expect(message.to).toBe("buyer@test");
   });
 
-  it("a second call inside 24 h → 429 with nextAllowedAt, nothing sent", async () => {
+  it("a second call inside 24 h → 429, nextAllowedAt = the last send + 24 h, nothing sent", async () => {
+    findUnique.mockResolvedValue(awaiting());
+    // Sent 4 h ago: the window closes 20 h from now, whatever the UTC day
+    // bucket says; the limiter is not even consulted.
+    lastManualReminder.mockResolvedValue({
+      createdAt: new Date(Date.now() - 4 * HOUR),
+    });
+    const res = await post();
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body.code).toBe("REMIND_RATE_LIMITED");
+    expect(hoursFromNow(body.nextAllowedAt)).toBeCloseTo(20, 1);
+    expect(res.headers.get("retry-after")).toMatch(/^\d+$/);
+    expect(limit).not.toHaveBeenCalled();
+    expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("two clicks in the same second: the limiter refuses the second with a full 24 h", async () => {
     findUnique.mockResolvedValue(awaiting());
     limit.mockResolvedValue({ success: false, reset: IN_20H.getTime() });
     const res = await post();
     expect(res.status).toBe(429);
-    expect(await res.json()).toMatchObject({
-      code: "REMIND_RATE_LIMITED",
-      nextAllowedAt: IN_20H.toISOString(),
-    });
-    expect(res.headers.get("retry-after")).toMatch(/^\d+$/);
+    const body = await res.json();
+    expect(hoursFromNow(body.nextAllowedAt)).toBeCloseTo(24, 1);
     expect(deliver).not.toHaveBeenCalled();
   });
 
