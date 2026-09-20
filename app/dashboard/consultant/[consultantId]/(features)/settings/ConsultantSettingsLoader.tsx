@@ -11,10 +11,7 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { DashboardContent } from "@/components/dashboard/PageScaffold";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import { fetchConsultantData } from "../../utils/fetchHelpers";
-
-/** The query every settings section and the Requests page's paused banner share (#1703 D4). */
-export const consultantSettingsQueryKey = (consultantId: string) =>
-  ["consultant-settings", consultantId] as const;
+import { consultantSettingsQueryKey } from "./settings";
 
 /**
  * Loads the consultant profile a section edits and renders the four states

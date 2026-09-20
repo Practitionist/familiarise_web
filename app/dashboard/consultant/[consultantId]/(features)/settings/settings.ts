@@ -250,6 +250,10 @@ export const getMonthYearString = (date: Date) => {
   });
 };
 
+/** The query every settings section and the Requests page's paused banner share (#1703 D4). */
+export const consultantSettingsQueryKey = (consultantId: string) =>
+  ["consultant-settings", consultantId] as const;
+
 /**
  * The Settings hub's sections (#1785 L-2), in the locked order. One entry is
  * one URL under `/settings/<slug>`; `group` is the titled block the left nav

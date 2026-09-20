@@ -44,14 +44,14 @@ export function SlotList({
 
   return (
     <>
-      {bookable.map((slot, index) => {
+      {bookable.map((slot) => {
         const isSelected =
           selectedSlot?.slotId === slot.slotId &&
           selectedSlot?.localStartTime === slot.localStartTime;
         const needsRequest = slotNeedsRequest(bookingMode, slot);
         return (
           <button
-            key={`${slot.slotId}-${index}`}
+            key={`${slot.slotId}-${slot.localStartTime}`}
             type="button"
             aria-pressed={isSelected}
             className={cn(

@@ -372,6 +372,7 @@ export function ExpertProfileClient({
       days.push(
         <p
           key="marks-error"
+          role="status"
           className="col-span-7 pt-2 text-center text-xs text-zinc-500"
         >
           Couldn&apos;t load availability marks — pick a day to see its times.

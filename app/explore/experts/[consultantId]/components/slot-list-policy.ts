@@ -33,16 +33,15 @@ export function takenTimesLine(takenCount: number): string | null {
 
 /**
  * A slot the expert has to confirm before payment carries a small "Request"
- * tag: every slot under REQUEST mode, and a contended one under INSTANT
- * (#1703 D1 — the same rule `consultationCtaFor` applies to the button).
+ * tag: every slot under REQUEST mode, and a contended one under INSTANT — the
+ * same predicate `consultationCtaFor` applies to the button (#1703 D1), so
+ * the tag and the button never disagree. `partially-booked` is not a separate
+ * arm: the grid derives it from the same overlapping appointments that set
+ * `isAllocated`, so it never occurs without it.
  */
 export function slotNeedsRequest(
   mode: BookingMode,
-  slot: Pick<SlotWithStatus, "isAllocated" | "bookingStatus">,
+  slot: Pick<SlotWithStatus, "isAllocated">,
 ): boolean {
-  return (
-    mode === "REQUEST" ||
-    slot.isAllocated ||
-    slot.bookingStatus === "partially-booked"
-  );
+  return mode === "REQUEST" || slot.isAllocated;
 }

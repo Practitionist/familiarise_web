@@ -19,6 +19,7 @@ import {
 import { requireJsonResponse } from "@/lib/fetch-helpers";
 import type { SlotsType } from "@/utils/schedule/types";
 import {
+  consultantSettingsQueryKey,
   getInitialCustomSlots,
   getInitialFormData,
   getInitialWeeklySlots,
@@ -434,7 +435,7 @@ export function useConsultantSettingsForm(
 
       // #1703 D4 — the Requests page reads the same query for its paused banner.
       await queryClient.invalidateQueries({
-        queryKey: ["consultant-settings", consultant.id],
+        queryKey: consultantSettingsQueryKey(consultant.id),
       });
 
       // A booking keeps its time when the hours shrink; say how many sit
