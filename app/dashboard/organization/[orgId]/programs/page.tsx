@@ -22,6 +22,7 @@ import type {
 import { useOrgRole, useRequireOrgAccess } from "../useOrgRole";
 import {
   capabilityOf,
+  defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
   type ReachableCapability,
 } from "@/lib/enterprise/reachable-paths";
@@ -457,6 +458,13 @@ function CreateProgramDialog({
   const [coveredEngagementsPerCycle, setCoveredEngagementsPerCycle] = useState("");
   const [overageBehavior, setOverageBehavior] =
     useState<OverageBehavior>("BLOCK");
+  // Funding-aware default (mirrors the server's
+  // `defaultOverageBehaviorForFunding`) — the effective value is resolved
+  // below, after `selectedFunding` is derived. Until the operator touches
+  // the toggle, an INVOICE contract's programme charges the org; every other
+  // funding source blocks. `reset()` clears the touch so a reopened dialog
+  // re-derives from the newly selected contract.
+  const [overageTouched, setOverageTouched] = useState(false);
   // #775 — optional markup on over-cap bookings, entered as a percentage and
   // stored as bps (10% → 1000 bps). Blank = no markup. Shared across both
   // program types (the selector + this field render for LICENSED_SEAT and
@@ -493,6 +501,12 @@ function CreateProgramDialog({
     );
   }, [capability, selectedFunding]);
 
+  // Effective overage behaviour: the operator's explicit pick once touched,
+  // else the funding-aware default (INVOICE → CHARGE_ORG, else BLOCK).
+  const effectiveOverageBehavior: OverageBehavior = overageTouched
+    ? overageBehavior
+    : defaultOverageBehaviorForFunding(selectedFunding);
+
   // Auto-correct an unreachable selection when the funding context changes
   // (e.g. user switches from an INVOICE to a LICENSE contract while
   // CREDIT_POOL is selected). Keeps the form submittable without surfacing a
@@ -511,6 +525,7 @@ function CreateProgramDialog({
     setCycle("MONTHLY");
     setCoveredEngagementsPerCycle("");
     setOverageBehavior("BLOCK");
+    setOverageTouched(false);
     setOverageSurchargePct("");
     setMaxOveragePerCycleRupees("");
     setCreditsPerCycle("1000");
@@ -573,7 +588,7 @@ function CreateProgramDialog({
     // (and any non-null circuit-breaker) in that case. Block it here too so
     // the operator gets a single clear message instead of the opaque 400.
     let maxOveragePerCyclePaise: number | null = null;
-    if (overageBehavior !== "BLOCK") {
+    if (effectiveOverageBehavior !== "BLOCK") {
       if (
         programType === "LICENSED_SEAT" &&
         coveredEngagementsPerCycle.trim() === ""
@@ -615,7 +630,7 @@ function CreateProgramDialog({
           ratePerSeatPaise: ratePaise,
           cycle,
           coveredEngagementsPerCycle: cap,
-          overageBehavior,
+          overageBehavior: effectiveOverageBehavior,
           overageSurchargeBps: surchargeBps,
           maxOveragePerCyclePaise,
         },
@@ -634,7 +649,7 @@ function CreateProgramDialog({
         creditPoolConfig: {
           cycle,
           creditBudgetPerCycle: credits,
-          overageBehavior,
+          overageBehavior: effectiveOverageBehavior,
           overageSurchargeBps: surchargeBps,
           maxOveragePerCyclePaise,
         },
@@ -869,7 +884,7 @@ function CreateProgramDialog({
           <div className="space-y-2">
             <Label>Overage behaviour</Label>
             <Select
-              value={overageBehavior}
+              value={effectiveOverageBehavior}
               onValueChange={(v) => {
                 if (
                   v === "BLOCK" ||
@@ -877,6 +892,7 @@ function CreateProgramDialog({
                   v === "CHARGE_ORG"
                 ) {
                   setOverageBehavior(v);
+                  setOverageTouched(true);
                 }
               }}
             >
@@ -899,12 +915,13 @@ function CreateProgramDialog({
               Applies to <strong>new</strong> bookings from the moment you
               save — existing overage charges keep the policy they were booked
               under. Switching to Block stops further over-cap bookings
-              immediately.
+              immediately. New INVOICE programmes default to Charge org;
+              other funding defaults to Block.
             </p>
           </div>
 
           {/* Overage surcharge — only meaningful when bookings can overage. */}
-          {overageBehavior !== "BLOCK" && (
+          {effectiveOverageBehavior !== "BLOCK" && (
             <div className="space-y-2">
               <Label htmlFor="overage-surcharge">Overage surcharge (%)</Label>
               <Input
@@ -927,7 +944,7 @@ function CreateProgramDialog({
 
           {/* #768 #14/#15 — per-cycle overage ceiling (circuit breaker).
               Server requires a positive value when overage charges. */}
-          {overageBehavior !== "BLOCK" && (
+          {effectiveOverageBehavior !== "BLOCK" && (
             <div className="space-y-2">
               <Label htmlFor="max-overage">Max overage per cycle (₹)</Label>
               <Input
@@ -942,7 +959,7 @@ function CreateProgramDialog({
               <p className="text-xs text-zinc-500">
                 Hard cap on the total over-cap amount this cycle (circuit
                 breaker). Once reached, further over-cap bookings are blocked
-                even with {overageBehavior === "CHARGE_ORG" ? "Charge org" : "Charge member"} enabled.
+                even with {effectiveOverageBehavior === "CHARGE_ORG" ? "Charge org" : "Charge member"} enabled.
                 Required by the platform — keeps runaway overage liability bounded.
               </p>
             </div>

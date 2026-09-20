@@ -14,6 +14,7 @@
 
 import {
   REACHABLE_ORG_FUNDING_PATHS,
+  defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
   overageBehaviorUnsupportedReason,
   capabilityOf,
@@ -169,9 +170,22 @@ describe("REACHABLE_ORG_FUNDING_PATHS — v0 lockdown matrix", () => {
       [true, true, "HYBRID"],
       [false, false, null],
     ])("(%s, %s) → %s", (canSponsor, canHost, expected) => {
-      expect(capabilityOf(canSponsor as boolean, canHost as boolean)).toBe(
-        expected,
-      );
+      expect(capabilityOf(canSponsor, canHost)).toBe(expected);
     });
+  });
+
+  // Money-positive default: INVOICE programmes charge the org (expansion
+  // revenue with no refused booking); every other rail blocks.
+  describe("defaultOverageBehaviorForFunding", () => {
+    it("defaults INVOICE programmes to CHARGE_ORG", () => {
+      expect(defaultOverageBehaviorForFunding("INVOICE")).toBe("CHARGE_ORG");
+    });
+
+    it.each(["WALLET", "LICENSE", "PERSONAL", null] as const)(
+      "defaults %s to BLOCK",
+      (funding) => {
+        expect(defaultOverageBehaviorForFunding(funding)).toBe("BLOCK");
+      },
+    );
   });
 });
