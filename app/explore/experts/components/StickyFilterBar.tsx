@@ -84,15 +84,16 @@ export default function StickyFilterBar({
 
   return (
     <div
-      className="sticky z-30 border-b border-border bg-background/80 backdrop-blur-xl"
-      // Parks below the full fixed header stack: maintenance banner +
-      // announcement/navbar height + breathing room. Same formula as the
-      // FacetRail sidebar offset — one formula for both, nothing to measure.
+      className="sticky z-30 ml-[calc(50%-50vw)] w-[100vw] border-b border-border bg-background/80 backdrop-blur-xl"
+      // Flush under the fixed header stack (banner + announcement/navbar
+      // height, no gap) and full viewport width via the margin breakout;
+      // inner content stays aligned to the page container. Same offset
+      // formula as the FacetRail sidebar — one formula, nothing to measure.
       style={{
-        top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 0.75rem)",
+        top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
       }}
     >
-      <div className="py-3 space-y-3">
+      <div className="mx-auto max-w-[1600px] space-y-3 px-4 py-3 md:px-8 lg:px-12">
         {/* Row 1: search + advanced-filters trigger */}
         <div className="flex items-center gap-3">
           <div className="min-w-0 flex-1">
