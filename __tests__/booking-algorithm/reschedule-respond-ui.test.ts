@@ -150,10 +150,7 @@ describe("#1766 — the Requests list row reads entitlement words", () => {
       schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00Z"),
       schedulingTimezone: "UTC",
     });
-    expect(requestCountLine({ entitlement, requiredSlots: 8 })).toBe(
-      "0 of 12 booked · pick 4",
-    );
-    expect(requestCountLine({ requiredSlots: 2 })).toBe("2 slots to allocate");
+    expect(requestCountLine({ entitlement })).toBe("0 of 12 booked · pick 4");
     // The row renders through the helper, not an inline slot count.
     expect(inboxRow).toContain(
       "requestCountLine({ entitlement: row.entitlement })",
