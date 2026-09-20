@@ -16,6 +16,7 @@
 import { format } from "date-fns";
 import type { StatusBadgeStyle } from "@/lib/labels/session-labels";
 import { isDeadOccurrence } from "@/lib/appointments/occurrences";
+import { isCompletedOccurrence } from "@/lib/booking/entitlement";
 import { normalizeStatus } from "@/lib/appointments/status";
 import { paymentDisplayStatus } from "@/lib/appointments/seat-payments";
 import {
@@ -762,11 +763,15 @@ export function deriveBookingPresentation(
 
   // #1675 — same "held" the header's bare count used (live.length), so
   // swapping one for the other never changes what number the viewer sees.
+  // #1766 — the plan size is the frozen entitlement; delivered sessions are
+  // named once they exist (COMPLETED and UNVERIFIED both count as held).
   const planSessions = input.plan?.sessions;
+  const completedCount = live.filter(isCompletedOccurrence).length;
   const sessionProgress =
-    planSessions && planSessions > 1
+    (planSessions && planSessions > 1
       ? `${live.length} of ${planSessions} sessions scheduled`
-      : `${live.length} sessions`;
+      : `${live.length} sessions`) +
+    (completedCount > 0 ? ` · ${completedCount} completed` : "");
 
   return {
     bookingState,

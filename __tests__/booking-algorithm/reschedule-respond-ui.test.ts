@@ -118,3 +118,18 @@ describe("#1163 — the reschedule page refuses trial subjects", () => {
     expect(reschedulePage).toContain("can&apos;t be rescheduled");
   });
 });
+
+describe("#1766 — the Requests tab sizes a subscription's batch off the entitlement", () => {
+  it("asks for this cycle's nextBatch, never the lifetime total", () => {
+    // The requiredSlots arm for a fresh subscription (no tentative rows).
+    const arm = allocationTab.slice(
+      allocationTab.indexOf("requiredSlots:\n"),
+      allocationTab.indexOf("totalSessions:\n"),
+    );
+    expect(arm).toContain("subscriptionEntitlement({");
+    expect(arm).toContain(".cycle.nextBatch * slotsPerSession");
+    expect(arm).toContain("subscription.sessionsTotal ?? plan.totalSessions");
+    expect(arm).not.toContain("totalSessions * slotsPerSession");
+    expect(allocationTab).not.toContain("countSundayWeeksInclusive");
+  });
+});

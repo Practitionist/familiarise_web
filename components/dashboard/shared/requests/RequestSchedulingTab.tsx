@@ -54,7 +54,7 @@ import {
   REQUESTS_COUNT_POLL_INTERVAL_MS,
   requestsFreshnessBadge,
 } from "@/lib/scheduling/requestsFreshness";
-import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
+import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
@@ -853,26 +853,32 @@ export function RequestSchedulingTab({
                 tentativeCount > 0
                   ? tentativeCount
                   : (() => {
-                      const totalSessions =
-                        subscription.subscriptionPlan?.totalSessions;
-                      if (totalSessions && totalSessions > 0) {
-                        return totalSessions * slotsPerSession;
-                      }
-                      // Fallback: week-based calculation
-                      const startDate = subscription.schedulingPeriodStartsAt
-                        ? new Date(subscription.schedulingPeriodStartsAt)
-                        : undefined;
-                      const endDate = subscription.schedulingPeriodEndsAt
-                        ? new Date(subscription.schedulingPeriodEndsAt)
-                        : undefined;
-                      const sessionsPerWeek =
-                        subscription.subscriptionPlan?.sessionsPerWeek ?? 0;
-                      if (startDate && endDate) {
-                        const weeks = countSundayWeeksInclusive(
-                          startDate,
-                          endDate,
+                      const plan = subscription.subscriptionPlan;
+                      // #1766 — one cycle at a time: the batch the entitlement
+                      // helper says this plan takes next, never the lifetime total.
+                      if (
+                        plan?.totalSessions &&
+                        plan.totalSessions > 0 &&
+                        subscription.schedulingPeriodStartsAt
+                      ) {
+                        return (
+                          subscriptionEntitlement({
+                            sessionsTotal:
+                              subscription.sessionsTotal ?? plan.totalSessions,
+                            sessionsPerWeek: plan.sessionsPerWeek,
+                            durationInMonths: plan.durationInMonths,
+                            occurrences: allSlots.map((slot) => ({
+                              startsAt: slot.startsAt,
+                              endsAt: slot.endsAt,
+                              completionStatus: slot.completionStatus ?? null,
+                              isTentative: slot.isTentative ?? false,
+                            })),
+                            schedulingPeriodStartsAt:
+                              subscription.schedulingPeriodStartsAt,
+                            schedulingTimezone:
+                              subscription.schedulingTimezone ?? "Asia/Kolkata",
+                          }).cycle.nextBatch * slotsPerSession
                         );
-                        return weeks * sessionsPerWeek * slotsPerSession;
                       }
                       // No totalSessions AND no period: the server throws for
                       // such subscriptions, so any client guess (the old
@@ -893,7 +899,8 @@ export function RequestSchedulingTab({
               totalSessions:
                 tentativeCount > 0
                   ? tentativeCount / slotsPerSession
-                  : subscription.subscriptionPlan?.totalSessions,
+                  : (subscription.sessionsTotal ??
+                    subscription.subscriptionPlan?.totalSessions),
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               sessionsPerWeek: subscription.subscriptionPlan?.sessionsPerWeek,
               sessionDurationInHours: sessionDuration,

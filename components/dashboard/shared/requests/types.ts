@@ -89,6 +89,8 @@ export interface SubscriptionApiResponse {
   schedulingPeriodEndsAt?: string;
   /** Defines the limit day/week buckets (ADR B9); column default Asia/Kolkata. */
   schedulingTimezone?: string;
+  /** #1766 — the entitlement frozen at purchase (null on pre-#1766 rows). */
+  sessionsTotal?: number | null;
   /** What the consultee said when booking. */
   requestNotes?: string | null;
 }

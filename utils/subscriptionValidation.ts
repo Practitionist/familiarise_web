@@ -1,5 +1,9 @@
 import type { PrismaLike } from "@/lib/prisma";
 import { isWithinInterval } from "date-fns";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { ScheduleCalculationService } from "@/utils/scheduling-engine/ScheduleCalculationService";
 import { OCCUPIED_REQUEST_STATUSES } from "@/utils/scheduling-engine/occupancyPolicy";
 
@@ -67,6 +71,20 @@ export class SubscriptionValidationService {
             user: true,
           },
         },
+        // #1766 — the wrapper's rows feed the one entitlement counter.
+        appointment: {
+          select: {
+            occurrences: {
+              select: {
+                startsAt: true,
+                endsAt: true,
+                completionStatus: true,
+                isTentative: true,
+                deletedAt: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -82,11 +100,17 @@ export class SubscriptionValidationService {
       ScheduleCalculationService.DEFAULT_SCHEDULING_TIMEZONE;
     const proposedSlotDates = proposedSlots.map((slot) => new Date(slot));
 
-    // FIXED: Use the correct Sunday-to-Saturday week counting logic
-    const exactWeeks = ScheduleCalculationService.countWeeks(
-      subscription.schedulingPeriodStartsAt,
-      subscription.schedulingPeriodEndsAt,
-    );
+    // #1766 — the total is the frozen entitlement and the period the current
+    // cycle's window, both from the one helper every surface reads.
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: sessionsTotalOf(subscription),
+      sessionsPerWeek: subscriptionPlan.sessionsPerWeek,
+      durationInMonths: subscriptionPlan.durationInMonths,
+      occurrences: subscription.appointment?.occurrences ?? [],
+      schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+      schedulingTimezone,
+    });
+    const { windowStart, windowEnd } = entitlement.cycle;
 
     // Initialize result
     const result: SubscriptionValidationResult = {
@@ -95,18 +119,15 @@ export class SubscriptionValidationService {
       warnings: [],
       weeklyInfo: [],
       totalCallsScheduled: 0,
-      maxTotalCalls: subscriptionPlan.sessionsPerWeek * exactWeeks,
-      subscriptionPeriod: {
-        start: subscription.schedulingPeriodStartsAt,
-        end: subscription.schedulingPeriodEndsAt,
-      },
+      maxTotalCalls: entitlement.total,
+      subscriptionPeriod: { start: windowStart, end: windowEnd },
     };
 
-    // Check if proposed slots are within subscription period
+    // Check if proposed slots are within the current cycle's window
     const subscriptionPeriodValid = this.validateSubscriptionPeriod(
       proposedSlotDates,
-      subscription.schedulingPeriodStartsAt,
-      subscription.schedulingPeriodEndsAt,
+      windowStart,
+      windowEnd,
     );
 
     if (!subscriptionPeriodValid.isValid) {
@@ -134,10 +155,16 @@ export class SubscriptionValidationService {
       schedulingTimezone,
     );
 
-    // Generate weekly info for the entire subscription period
+    // Weekly info from the stored start through the current cycle's end, so
+    // earlier cycles' calls still count towards the entitlement total.
     const weeklyInfo = this.generateWeeklyInfo(
-      subscription.schedulingPeriodStartsAt,
-      subscription.schedulingPeriodEndsAt,
+      new Date(
+        Math.min(
+          subscription.schedulingPeriodStartsAt.getTime(),
+          windowStart.getTime(),
+        ),
+      ),
+      windowEnd,
       subscriptionPlan.sessionsPerWeek,
       existingCallsByWeek,
       proposedCallsByWeek,
@@ -145,14 +172,14 @@ export class SubscriptionValidationService {
     );
 
     result.weeklyInfo = weeklyInfo;
-    // Total calls are determined by counting completed weeks (auto-completed) plus any scheduled/proposed calls within the current and future weeks.
-    // Both arms count: the weekly gate above compares existing+proposed per
+    // Both arms count: the weekly gate below compares existing+proposed per
     // week, so the plan-total gate must do the same or an over-total spread
-    // across weeks passes validation and oversells the subscription.
-    result.totalCallsScheduled = weeklyInfo.reduce(
-      (sum, w) => sum + w.existingCalls + w.proposedCalls,
-      0,
-    );
+    // across weeks passes validation and oversells the subscription. #1766 —
+    // summed over every live call, not over the weeks in view, so a call in
+    // an earlier cycle still draws down the entitlement.
+    result.totalCallsScheduled =
+      existingOccurrences.length +
+      Array.from(proposedCallsByWeek.values()).reduce((a, b) => a + b, 0);
 
     // Validate weekly limits
     const weeklyValidation = this.validateWeeklyLimits(weeklyInfo);
@@ -422,7 +449,9 @@ export class SubscriptionValidationService {
         proposedCalls: proposedCallCount,
         maxCalls: sessionsPerWeek,
         canScheduleMore: !isPastWeek && totalCalls < sessionsPerWeek,
-        availableSlots: isPastWeek ? 0 : Math.max(0, sessionsPerWeek - totalCalls),
+        availableSlots: isPastWeek
+          ? 0
+          : Math.max(0, sessionsPerWeek - totalCalls),
       });
 
       currentWeek = nextWeek;

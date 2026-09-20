@@ -55,6 +55,11 @@ import {
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import {
+  subscriptionCycleHeading,
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import {
   earliestSelectedSlot,
   useEventSlotAllocation,
 } from "@/hooks/scheduling/useScheduling";
@@ -116,20 +121,6 @@ import {
  */
 function getSlotsPerCall(sessionDurationInHours?: number): number {
   return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
-}
-
-/** Calendar days spanned by [start, end], inclusive of both ends (#1766).
- * Diffs UTC-anchored day numbers built from the LOCAL y/m/d, not raw
- * timestamps — a DST transition inside the window must not shave an hour off
- * the elapsed-ms difference and round a real calendar day away (CodeRabbit). */
-function daysInclusive(start: Date, end: Date): number {
-  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  const dayNumber = (date: Date) =>
-    Math.floor(
-      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) /
-        ONE_DAY_MS,
-    );
-  return dayNumber(end) - dayNumber(start) + 1;
 }
 
 /** Minutes as a phrase a buyer would use — never a slot count (ADR B1). */
@@ -239,12 +230,19 @@ function subscriptionFooterText(
     pastEventSlotCount: number;
     maxSlots: number;
     schedulingTimezone?: string;
-    /** "This booking" cell count — see computeSubscriptionFooter (#1766). */
-    confirmedSlotCount: number;
+    /** #1766 — the one counter; null until the subscription row has loaded. */
+    entitlement: SubscriptionEntitlement | null;
     zone: string;
   }>,
 ): string {
   const slotsPerCall = getSlotsPerCall(params.sessionDurationInHours);
+  if (params.entitlement) {
+    return cycleFooterText(
+      params.entitlement,
+      Math.floor(params.selectedSlots.length / slotsPerCall),
+      params.zone,
+    );
+  }
   const computed = computeSubscriptionFooter({
     selectedSlots: params.selectedSlots,
     allowedStart: params.allowedStart,
@@ -253,8 +251,6 @@ function subscriptionFooterText(
     sessionDurationInHours: params.sessionDurationInHours,
     totalSessions: params.totalSessions,
     pastCompletedSessions: Math.floor(params.pastEventSlotCount / slotsPerCall),
-    confirmedSlotCount: params.confirmedSlotCount,
-    zone: params.zone,
   });
   if (computed) return computed;
   return calculateCallProgress(
@@ -360,40 +356,23 @@ function countCompletedSelectedCallsForWeek(
 }
 
 /**
- * Cycle-honest heading for a fresh subscription (#1764/#1766): the plan's
- * lifetime total (up to 144 for a long subscription) is not what fits in
- * THIS scheduling window, so lead with what can actually be placed now.
- * `null` when the period is unknown — the caller falls back to the
- * lifetime-total heading it always had.
+ * #1766 — the subscription footer reads the one entitlement counter: the
+ * cycle heading while nothing is selected, then the selection against THIS
+ * cycle's batch with the plan-wide count alongside.
  */
-function subscriptionCycleHeading(
-  params: Readonly<{
-    allowedStart?: Date;
-    allowedEnd?: Date;
-    zone?: string;
-    sessionsPerWeek?: number;
-    maxTotalCalls: number;
-    alreadyScheduled: number;
-  }>,
-): string | null {
-  const {
-    allowedStart,
-    allowedEnd,
-    zone,
-    sessionsPerWeek,
-    maxTotalCalls,
-    alreadyScheduled,
-  } = params;
-  if (!allowedStart || !allowedEnd || !zone) return null;
-
-  const windowDays = daysInclusive(allowedStart, allowedEnd);
-  const capacityOfWindow = (sessionsPerWeek || 1) * Math.ceil(windowDays / 7);
-  const targetThisCycle = Math.max(
-    0,
-    Math.min(maxTotalCalls - alreadyScheduled, capacityOfWindow),
-  );
-  const periodRange = `${formatDateLabel(allowedStart, { zone })} – ${formatDateLabel(allowedEnd, { zone })}`;
-  return `Schedule the next ${targetThisCycle} session${targetThisCycle === 1 ? "" : "s"} · this cycle ${periodRange} · ${alreadyScheduled} of ${maxTotalCalls} scheduled`;
+function cycleFooterText(
+  entitlement: SubscriptionEntitlement,
+  selectedSessions: number,
+  zone: string,
+): string {
+  if (selectedSessions === 0) {
+    return subscriptionCycleHeading(entitlement, { zone });
+  }
+  const { nextBatch } = entitlement.cycle;
+  const plan = `${entitlement.held + selectedSessions} of ${entitlement.total} scheduled`;
+  return selectedSessions >= nextBatch
+    ? `✅ This cycle's ${nextBatch} session${nextBatch === 1 ? "" : "s"} selected · ${plan}`
+    : `✅ ${selectedSessions} of ${nextBatch} for this cycle · ${plan}`;
 }
 
 /**
@@ -409,11 +388,6 @@ function computeSubscriptionFooter(
     sessionDurationInHours?: number;
     totalSessions?: number;
     pastCompletedSessions?: number;
-    /** Every currently confirmed slot for this event ("This booking" cells,
-     * past and future) — the plan-lifetime "already scheduled" count (#1766). */
-    confirmedSlotCount?: number;
-    /** Grid zone, for the cycle date range (#1766). */
-    zone?: string;
   }>,
 ): string | null {
   const {
@@ -424,8 +398,6 @@ function computeSubscriptionFooter(
     sessionDurationInHours,
     totalSessions,
     pastCompletedSessions = 0,
-    confirmedSlotCount = 0,
-    zone,
   } = params;
 
   // Use totalSessions from plan (authoritative) to avoid calendar-week edge cases
@@ -451,15 +423,6 @@ function computeSubscriptionFooter(
   } else if (pastCompletedSessions > 0 && remaining > 0) {
     return `✅ ${totalScheduled} of ${maxTotalCalls} (${pastCompletedSessions} past + ${scheduled} new) | ⏳ ${remaining} remaining`;
   } else if (scheduled === 0) {
-    const cycleHeading = subscriptionCycleHeading({
-      allowedStart,
-      allowedEnd,
-      zone,
-      sessionsPerWeek,
-      maxTotalCalls,
-      alreadyScheduled: Math.floor(confirmedSlotCount / slotsPerCall),
-    });
-    if (cycleHeading) return cycleHeading;
     return `📅 Choose times for ${maxTotalCalls} sessions (${durationText} each)`;
   } else if (remaining > 0) {
     return `✅ ${scheduled} of ${maxTotalCalls} sessions scheduled • ${remaining} more to go`;
@@ -679,6 +642,8 @@ export function UnifiedCalendar({
     eventSlots,
     eventTentativeSlots = [],
     weeklyConfirmedCallCounts,
+    eventOccurrences,
+    subscriptionMeta,
     loading,
     error,
     refetch,
@@ -736,6 +701,21 @@ export function UnifiedCalendar({
     return eventSlots.filter((s) => s.endTime <= now).length;
   }, [eventSlots]);
 
+  // #1766 — the one counter: what this cycle still takes and what the plan
+  // holds, from the row's frozen entitlement and its live occurrences.
+  const entitlement = useMemo(
+    () =>
+      eventType === "subscription" && subscriptionMeta
+        ? subscriptionEntitlement({
+            ...subscriptionMeta,
+            occurrences: eventOccurrences,
+            now,
+          })
+        : null,
+    [eventType, subscriptionMeta, eventOccurrences, now],
+  );
+  const slotsPerCallForCycle = getSlotsPerCall(sessionDurationInHours);
+
   // Stay-open failures (slot taken, co-host busy, transient lock) leave the
   // dialog open against stale cells: refetch both grids so the retry is
   // picked fresh. Best-effort — a refetch failure must never mask the toast
@@ -782,18 +762,26 @@ export function UnifiedCalendar({
     startDate: allowedStart,
     endDate: allowedEnd,
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
-    // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
-    maxTotalCalls: isRecurringEventType(eventType)
-      ? totalSessions && totalSessions > 0
-        ? totalSessions
-        : allowedStart && allowedEnd && sessionsPerWeek
-          ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-            (sessionsPerWeek || 1)
-          : undefined
-      : undefined,
-    pastConfirmedSlotCount: isRecurringEventType(eventType)
-      ? pastEventSlotCount
-      : undefined,
+    // #1766 — a subscription's limit is THIS cycle: completed + nextBatch,
+    // with the completed part subtracted again below, so requiredSlots comes
+    // out as nextBatch × slotsPerCall without touching getSlotLimits.
+    maxTotalCalls: entitlement
+      ? entitlement.completed + entitlement.cycle.nextBatch
+      : isRecurringEventType(eventType)
+        ? totalSessions && totalSessions > 0
+          ? totalSessions
+          : allowedStart && allowedEnd && sessionsPerWeek
+            ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
+              (sessionsPerWeek || 1)
+            : undefined
+        : undefined,
+    pastConfirmedSlotCount: entitlement
+      ? entitlement.completed * slotsPerCallForCycle
+      : isRecurringEventType(eventType)
+        ? pastEventSlotCount
+        : undefined,
+    // #1766 — held sessions mean this run appends the next cycle.
+    topUp: entitlement ? entitlement.held > 0 : undefined,
     weeklyConfirmedCallCounts,
     initialAllocation,
     expectedTentativeSlotCount,
@@ -1998,7 +1986,7 @@ export function UnifiedCalendar({
                       pastEventSlotCount,
                       maxSlots: slotLimits.maxSlots,
                       schedulingTimezone,
-                      confirmedSlotCount: eventSlots.length,
+                      entitlement,
                       zone: gridZone,
                     });
                   }

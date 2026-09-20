@@ -5,6 +5,7 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
+import { sessionsTotalOf } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
 import {
   requestHoldDeadline,
@@ -74,7 +75,8 @@ function planOf(a: Detail): BookingPresentationInput["plan"] {
     return {
       pricePaise: p.price,
       currency: p.priceCurrency,
-      sessions: p.totalSessions,
+      // #1766 — the entitlement frozen at purchase, not today's plan.
+      sessions: sessionsTotalOf(a.subscription),
     };
   }
   const p =

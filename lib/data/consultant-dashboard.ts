@@ -199,6 +199,9 @@ const appointmentInclude = {
       },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
+      // #1766 — Home's session progress reads the frozen entitlement.
+      sessionsTotal: true,
+      schedulingTimezone: true,
       status: true,
     },
   },
@@ -786,6 +789,11 @@ export async function getConsultantDashboard(
             endDate: new Date(
               appointment.subscription.schedulingPeriodEndsAt,
             ).toISOString(),
+            // #1766 — the entitlement inputs calculateSessionProgress reads.
+            sessionsTotal: appointment.subscription.sessionsTotal,
+            schedulingPeriodStartsAt:
+              appointment.subscription.schedulingPeriodStartsAt,
+            schedulingTimezone: appointment.subscription.schedulingTimezone,
           }
         : undefined,
       webinar: appointment.webinar

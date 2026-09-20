@@ -75,9 +75,13 @@ function isLiveOccurrence(o: EntitlementOccurrence): boolean {
   );
 }
 
-function isCompleted(o: EntitlementOccurrence): boolean {
+/** Delivered: COMPLETED, or UNVERIFIED (past, parked for a human). */
+export function isCompletedOccurrence(o: {
+  completionStatus?: string | null;
+}): boolean {
   return !!o.completionStatus && COMPLETED_STATUSES.has(o.completionStatus);
 }
+const isCompleted = isCompletedOccurrence;
 
 function isScheduled(o: EntitlementOccurrence): boolean {
   return (o.completionStatus ?? "SCHEDULED") === "SCHEDULED" && !o.isTentative;
