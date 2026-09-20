@@ -251,6 +251,9 @@ async function quoteIndividualBooking(
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     slotsTotal: ctx.slotsTotal,
     sessionsRemaining: ctx.sessionsRemaining,
+    sessionsTotal: ctx.sessionsTotal,
+    sessionsCompleted: ctx.sessionsCompleted,
+    scheduledStarts: ctx.scheduledStarts,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
     // #1500 — a booking funded entirely by referral credit. The rail alone is not
