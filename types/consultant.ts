@@ -77,7 +77,18 @@ export interface IConsultantCardData {
     name: string;
     slug: string;
     logo: string | null;
+    kind?: "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE" | null;
   } | null;
+  /** Cached affiliation flag — true = Independent, false = Agency/Org. */
+  isIndependent?: boolean;
+  /** 1:1 consultation plans (per-session). Drawer headline only — cards stay subscription-led. */
+  consultationPlans?: Array<{
+    id: string;
+    title: string;
+    price: number;
+    priceCurrency: string;
+    durationInHours: number;
+  }>;
   subscriptionPlans?: Array<{
     id: string;
     title: string;

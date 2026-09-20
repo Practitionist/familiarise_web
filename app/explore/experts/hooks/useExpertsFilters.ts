@@ -68,7 +68,14 @@ export function useExpertsFilters(): UseExpertsFiltersResult {
       // Preserve the hash: deep-links like ?sort=rating#all-experts would
       // otherwise lose their anchor when this rewrite lands 300ms after mount.
       const hash = window.location.hash;
-      const target = `/explore/experts${qs ? `?${qs}` : ""}${hash}`;
+      // Preserve the details-drawer selection: this rewrite only owns filter
+      // params, so carry ?expert= across or changing any filter with the drawer
+      // open would drop it and break Back-to-close.
+      const expert = new URLSearchParams(window.location.search).get("expert");
+      const params = new URLSearchParams(qs);
+      if (expert) params.set("expert", expert);
+      const qsWithExpert = params.toString();
+      const target = `/explore/experts${qsWithExpert ? `?${qsWithExpert}` : ""}${hash}`;
       const current = window.location.pathname + window.location.search;
       if (target !== current) {
         window.history.replaceState(window.history.state, "", target);

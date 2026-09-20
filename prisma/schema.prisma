@@ -972,6 +972,12 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
+  // Explore-experts taxonomy (additive, nullable per #705 freeze): separates a
+  // staffing AGENCY from an ENTERPRISE buyer/host and a SOLO_PRACTICE host.
+  // `agency` affiliation (isIndependent=false) alone cannot tell LearnPro Agency
+  // apart from IIT Madras HYBRID or a solo host — this column can. Null = unclassified.
+  kind OrgKind?
+
   // #705 freeze — inert group-hierarchy columns (parentOrganizationId,
   // rootOrganizationId, OrgHierarchy self-relation) dropped: never read by any
   // code path. Subsidiary scoping remains a future structural change if a
@@ -1171,6 +1177,7 @@ model Organization {
 
   @@index([status])
   @@index([canSponsor, canHost])
+  @@index([kind])
   @@index([canHost, isPublic, status])
   // Directory listing filters on isPublic+status only; the index above can't
   // serve it because its leading column (canHost) is no longer in the predicate.
@@ -1351,6 +1358,15 @@ enum OrgStatus {
   ACTIVE
   SUSPENDED
   DEACTIVATED
+}
+
+/// Explore-experts host taxonomy: what kind of org hosts agency experts.
+/// AGENCY = staffing/intermediary (e.g. LearnPro Agency), ENTERPRISE = buyer/host
+/// (e.g. IIT Madras HYBRID), SOLO_PRACTICE = single-consultant host entity.
+enum OrgKind {
+  AGENCY
+  ENTERPRISE
+  SOLO_PRACTICE
 }
 
 enum OrgSizeBucket {
@@ -3093,6 +3109,8 @@ model ConsultantProfile {
   @@index([domainId])
   @@index([isVerified])
   @@index([verificationStatus])
+  @@index([isIndependent])
+  @@index([verificationStatus, isIndependent])
   // #705 — explore sorts and filters on the published score, not the raw mean.
   // #1300 — for a per-track sort with nulls last; a composite cannot serve a sort on
   // its trailing column, so two single-column indexes.
