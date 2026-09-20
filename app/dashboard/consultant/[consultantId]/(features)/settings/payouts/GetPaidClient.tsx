@@ -60,15 +60,28 @@ export function accountFaceOf(
   return lastCheckFailed ? "FAILED" : "PENDING";
 }
 
+/** The detail line shown under the account card after a reverify check. */
+function describeReverifyResult(r: {
+  accountStatus: string;
+  registeredName?: string | null;
+}): string | null {
+  if (r.accountStatus === "invalid") {
+    return "The bank reported this account as invalid.";
+  }
+  if (r.registeredName) {
+    return `Bank has this account under "${r.registeredName}".`;
+  }
+  return null;
+}
+
 /** `•••• 1234` for a bank account, `ab••@upi` for a UPI id — never the whole thing. */
 export function maskedAccountLabel(account: PayoutAccountView): string {
   if (account.accountType === "UPI" && account.upiId) {
     const [user, handle] = account.upiId.split("@");
     return `${user.slice(0, 2)}••••${handle ? `@${handle}` : ""}`;
   }
-  return `•••• ${account.accountNumberLast4 ?? "????"}${
-    account.ifscCode ? ` · ${account.ifscCode}` : ""
-  }`;
+  const ifscSuffix = account.ifscCode ? ` · ${account.ifscCode}` : "";
+  return `•••• ${account.accountNumberLast4 ?? "????"}${ifscSuffix}`;
 }
 
 function StepList({
@@ -207,12 +220,7 @@ function AccountCard({
             onResult={(r) =>
               setLastCheck({
                 failed: r.accountStatus === "invalid",
-                detail:
-                  r.accountStatus === "invalid"
-                    ? "The bank reported this account as invalid."
-                    : r.registeredName
-                      ? `Bank has this account under "${r.registeredName}".`
-                      : null,
+                detail: describeReverifyResult(r),
               })
             }
           />
@@ -232,8 +240,7 @@ function AccountCard({
             onVerified={() => setChanging(false)}
           />
           <div className="flex items-center gap-3 text-xs uppercase tracking-wide text-muted-foreground">
-            <span className="h-px flex-1 bg-border" />
-            or enter it yourself
+            <span className="h-px flex-1 bg-border" /> or enter it yourself{" "}
             <span className="h-px flex-1 bg-border" />
           </div>
           <PayoutAccountForm
@@ -368,19 +375,22 @@ export function GetPaidClient({
     staleTime: 0,
   });
 
+  let body: React.ReactNode = null;
+  if (isLoading && !data) {
+    body = <SettingsSkeleton />;
+  } else if (error && !data) {
+    body = (
+      <div className="mx-auto max-w-md rounded-lg bg-red-50 p-4 text-center text-sm text-red-600">
+        {error.message || "Failed to load your payout setup."}
+      </div>
+    );
+  } else if (data) {
+    body = <GetPaidView consultantId={consultantId} setup={data} />;
+  }
+
   return (
     <DashboardContent>
-      <DashboardErrorBoundary>
-        {isLoading && !data ? (
-          <SettingsSkeleton />
-        ) : error && !data ? (
-          <div className="mx-auto max-w-md rounded-lg bg-red-50 p-4 text-center text-sm text-red-600">
-            {error.message || "Failed to load your payout setup."}
-          </div>
-        ) : data ? (
-          <GetPaidView consultantId={consultantId} setup={data} />
-        ) : null}
-      </DashboardErrorBoundary>
+      <DashboardErrorBoundary>{body}</DashboardErrorBoundary>
     </DashboardContent>
   );
 }

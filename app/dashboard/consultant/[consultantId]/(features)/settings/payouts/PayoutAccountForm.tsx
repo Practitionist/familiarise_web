@@ -57,6 +57,19 @@ type Mode = "BANK_ACCOUNT" | "UPI";
  * account number lives in this form's state only for the length of the
  * request; the server stores its last four digits and nothing more.
  */
+function describeAccountSaveOutcome(
+  madeDefault: boolean,
+  isVerified: boolean,
+): string {
+  if (!madeDefault) {
+    return "Saved, but we could not make it your payout account yet — use Change to pick it.";
+  }
+  if (isVerified) {
+    return "The ₹1 test deposit confirmed your account.";
+  }
+  return "We are confirming it with a ₹1 test deposit; check back in a minute.";
+}
+
 export function PayoutAccountForm({
   consultantId,
   disabled = false,
@@ -98,11 +111,10 @@ export function PayoutAccountForm({
       await invalidate();
       toast({
         title: account.isVerified ? "Account verified" : "Account saved",
-        description: !madeDefault
-          ? "Saved, but we could not make it your payout account yet — use Change to pick it."
-          : account.isVerified
-            ? "The ₹1 test deposit confirmed your account."
-            : "We are confirming it with a ₹1 test deposit; check back in a minute.",
+        description: describeAccountSaveOutcome(
+          madeDefault,
+          account.isVerified,
+        ),
       });
       setAccountNumber("");
       setConfirmNumber("");

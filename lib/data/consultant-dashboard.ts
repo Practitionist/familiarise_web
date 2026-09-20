@@ -26,9 +26,9 @@ import {
   nextCycleSubscriptionWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
+  readPayoutSetupNeeded,
   subscriptionRequestWhere,
 } from "@/lib/data/needs-you";
-import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
 import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
 import { reportSentryError } from "@/lib/observability/report";
 import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";

@@ -93,7 +93,7 @@ interface HomeTabProps {
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
   /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
-  payoutSetup?: TConsultantDashboardResponse["payoutSetup"];
+  payoutSetup: TConsultantDashboardResponse["payoutSetup"];
   /** Subscriptions whose next cycle is waiting on this consultant. #1766 */
   nextCycles?: TConsultantDashboardResponse["nextCycles"];
   /** Read-only metric on the requests card; absent on older payloads. #1703 */

@@ -18,8 +18,8 @@ import {
   useRefusalToast,
 } from "./PayoutAccountForm";
 
-const PAN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
-const GSTIN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const PAN = /^[A-Z]{5}\d{4}[A-Z]$/;
+const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 const ENTITY_OPTIONS: Array<
   [NonNullable<TaxInfoInput["taxEntityType"]>, string]
@@ -203,7 +203,7 @@ export function TaxInfoForm({
             onChange={(e) => setAgreement(e.target.checked)}
           />
           <span>
-            I have a written agreement with Familiarise on payment terms.
+            I have a written agreement with Familiarise on payment terms.{" "}
             <span className="block text-xs text-muted-foreground">
               Sets the MSMED payment deadline (15 days without one, up to 45
               with).
