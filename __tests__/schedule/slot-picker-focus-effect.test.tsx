@@ -356,7 +356,7 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
       allowedEnd: new Date(2026, 0, 13, 23, 59, 59, 999),
     });
 
-    expect(host.textContent).toContain("Schedule the next 3 sessions");
-    expect(host.textContent).toContain("0 of 144 scheduled");
+    expect(host.textContent).toContain("Pick 3 for");
+    expect(host.textContent).toContain("3 per week · 0 of 144 booked");
   });
 });

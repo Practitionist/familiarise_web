@@ -6,6 +6,8 @@
 
 import fs from "fs";
 import path from "path";
+import { requestCountLine } from "@/components/dashboard/shared/requests/request-count-line";
+import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
@@ -131,5 +133,25 @@ describe("#1766 — the Requests tab sizes a subscription's batch off the entitl
     expect(arm).toContain("subscription.sessionsTotal ?? plan?.totalSessions");
     expect(arm).not.toContain("totalSessions * slotsPerSession");
     expect(allocationTab).not.toContain("countSundayWeeksInclusive");
+  });
+});
+
+describe("#1766 — the Requests list row reads entitlement words", () => {
+  it("says booked-of-total and the pick, never a bare slot count, for a subscription", () => {
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: 12,
+      sessionsPerWeek: 4,
+      durationInMonths: 3,
+      occurrences: [],
+      schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00Z"),
+      schedulingTimezone: "UTC",
+    });
+    expect(requestCountLine({ entitlement, requiredSlots: 8 })).toBe(
+      "0 of 12 booked · pick 4",
+    );
+    expect(requestCountLine({ requiredSlots: 2 })).toBe("2 slots to allocate");
+    // The row cell renders through the helper, not an inline slot count.
+    expect(allocationTab).toContain("{requestCountLine(request)}");
+    expect(allocationTab).not.toContain("} to allocate`}");
   });
 });

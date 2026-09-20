@@ -245,3 +245,53 @@ describe("consultee · COMPLETED subscription", () => {
     expect(html).toContain("Reviewed this expert");
   });
 });
+
+describe("consultee · CONFIRMED subscription, one of four allocated (#1766)", () => {
+  it("shows the entitlement count once in the header and no second bar", () => {
+    viewerId = "u-rachel";
+    const paid = subscriptionDetail({
+      status: "APPROVED",
+      payment: [
+        {
+          id: "pay-1",
+          userId: "u-rachel",
+          amount: 708_000,
+          taxAmount: 108_000,
+          currency: "INR",
+          paymentStatus: "SUCCEEDED",
+          paymentMethod: "CARD",
+          paymentGateway: "RAZORPAY",
+          receiptUrl: null,
+          createdAt: new Date(NOW - 3_600_000),
+          expiresAt: null,
+          organizationId: null,
+          consumerInvoice: null,
+          legs: [],
+          refunds: [],
+          disputes: [],
+          childPayments: [],
+        },
+      ] as unknown as TAppointmentDetail["appointment"]["payment"],
+    });
+    const sub = paid.appointment.subscription as unknown as Record<
+      string,
+      unknown
+    >;
+    sub.sessionsTotal = 4;
+    sub.schedulingPeriodStartsAt = new Date(NOW);
+    sub.schedulingTimezone = "UTC";
+    (sub.subscriptionPlan as Record<string, unknown>).totalSessions = 4;
+    (sub.subscriptionPlan as Record<string, unknown>).sessionsPerWeek = 2;
+    (sub.subscriptionPlan as Record<string, unknown>).durationInMonths = 1;
+    paid.appointment.occurrences = [
+      { ...paid.appointment.occurrences[0], isTentative: false },
+    ];
+    currentDetail = paid;
+
+    const html = render("consultee");
+
+    expect(html).not.toContain("0 of 1");
+    expect(html.split("1 of 4 sessions scheduled")).toHaveLength(2);
+    expect(html).not.toContain("Program progress");
+  });
+});

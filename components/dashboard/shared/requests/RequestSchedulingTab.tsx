@@ -54,7 +54,11 @@ import {
   REQUESTS_COUNT_POLL_INTERVAL_MS,
   requestsFreshnessBadge,
 } from "@/lib/scheduling/requestsFreshness";
-import { subscriptionEntitlement } from "@/lib/booking/entitlement";
+import {
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import { requestCountLine } from "./request-count-line";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
@@ -113,6 +117,8 @@ interface Request {
   schedulingTimezone?: string;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
+  /** #1766 — a fresh subscription's one counter, for the row's words. */
+  entitlement?: SubscriptionEntitlement;
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
@@ -903,6 +909,33 @@ export function RequestSchedulingTab({
                   ? tentativeCount / slotsPerSession
                   : (subscription.sessionsTotal ??
                     subscription.subscriptionPlan?.totalSessions),
+              // #1766 — the list row's words: booked so far against the
+              // frozen entitlement; the same rows the required count read.
+              entitlement:
+                tentativeCount === 0 &&
+                subscription.subscriptionPlan &&
+                subscription.schedulingPeriodStartsAt
+                  ? subscriptionEntitlement({
+                      sessionsTotal:
+                        subscription.sessionsTotal ??
+                        subscription.subscriptionPlan.totalSessions ??
+                        0,
+                      sessionsPerWeek:
+                        subscription.subscriptionPlan.sessionsPerWeek,
+                      durationInMonths:
+                        subscription.subscriptionPlan.durationInMonths,
+                      occurrences: allSlots.map((slot) => ({
+                        startsAt: slot.startsAt,
+                        endsAt: slot.endsAt,
+                        completionStatus: slot.completionStatus ?? null,
+                        isTentative: slot.isTentative ?? false,
+                      })),
+                      schedulingPeriodStartsAt:
+                        subscription.schedulingPeriodStartsAt,
+                      schedulingTimezone:
+                        subscription.schedulingTimezone ?? "Asia/Kolkata",
+                    })
+                  : undefined,
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               sessionsPerWeek: subscription.subscriptionPlan?.sessionsPerWeek,
               sessionDurationInHours: sessionDuration,
@@ -1318,11 +1351,7 @@ export function RequestSchedulingTab({
           <span className="font-medium text-foreground">{request.title}</span>
           <RescheduleBadge request={request} />
           <span className="text-xs text-muted-foreground">
-            {request.requiredSlots === undefined
-              ? "Slot count unavailable"
-              : `${request.requiredSlots} slot${
-                  request.requiredSlots !== 1 ? "s" : ""
-                } to allocate`}
+            {requestCountLine(request)}
           </span>
         </div>
       ),
