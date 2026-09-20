@@ -258,11 +258,8 @@ export function EarningsBuckets({
       </DashboardGrid>
 
       {/* A filter over one list, not tab panels: pressed buttons, not tabs. */}
-      <div
-        role="group"
-        aria-label="Earnings"
-        className="mt-6 inline-flex rounded-lg bg-muted p-1"
-      >
+      <fieldset className="mt-6 inline-flex rounded-lg border-0 bg-muted p-1">
+        <legend className="sr-only">Earnings</legend>
         {segments.map((s) => (
           <button
             key={s}
@@ -282,7 +279,7 @@ export function EarningsBuckets({
             </span>
           </button>
         ))}
-      </div>
+      </fieldset>
       {segment === "PAID_OUT" && (
         <p className="mt-2 text-xs text-muted-foreground">
           Every payout and where it is
