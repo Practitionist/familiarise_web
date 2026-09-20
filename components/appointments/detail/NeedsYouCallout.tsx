@@ -68,17 +68,30 @@ function Shell({
   children,
   actions,
   onHelp,
+  tone = "warning",
 }: {
   children: ReactNode;
   actions: ReactNode;
   onHelp: () => void;
+  /** #1675 — REQUESTED asks nothing of this viewer, so it draws neutral, not amber. */
+  tone?: "warning" | "neutral";
 }) {
   return (
     <section
       aria-label="Needs you"
-      className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/20 sm:p-5"
+      className={
+        tone === "neutral"
+          ? "rounded-2xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/30 sm:p-5"
+          : "rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm dark:border-amber-900/40 dark:bg-amber-900/20 sm:p-5"
+      }
     >
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300">
+      <p
+        className={
+          tone === "neutral"
+            ? "mb-2 text-[10px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400"
+            : "mb-2 text-[10px] font-semibold uppercase tracking-wider text-amber-800 dark:text-amber-300"
+        }
+      >
         Needs you
       </p>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -399,6 +412,20 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
             : "How did it go?"}
         </Shell>
       ) : null;
+    case "NONE":
+      // #1675 (owner decision 2026-09-20) — the consultee's own REQUESTED
+      // page had nothing here; that read as the request vanishing. A plain
+      // wait line, no button, replaces the silence without inviting an action.
+      if (bookingState.state === "REQUESTED") {
+        const consultantFirstName = names.consultant.split(" ")[0];
+        return (
+          <Shell tone="neutral" onHelp={onHelp} actions={null}>
+            Waiting for {consultantFirstName} to respond — usually within 48
+            hours.
+          </Shell>
+        );
+      }
+      return null;
     default:
       return null;
   }
