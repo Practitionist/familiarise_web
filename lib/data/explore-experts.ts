@@ -355,10 +355,14 @@ export async function fetchExpertsMetadata() {
 // Cross-request cached wrapper for Server Components: the filter metadata
 // (domains, tags, counts) changes slowly, so serve it from the Next data cache
 // rather than opening a cross-region pooled connection per request (#932).
+// 30 minutes, not 5: consultant verify/edit/delete purges the "experts" tag on
+// every write (purgeExpertSurfaces), so the TTL is a backstop against a missed
+// purge, not the freshness SLA. A longer window means a route regeneration
+// reads a blob instead of re-running ~8 pooled queries (#1769 follow-up).
 export const getExpertsMetadata = unstable_cache(
   fetchExpertsMetadata,
   ["experts-metadata"],
-  { revalidate: 300, tags: ["experts"] },
+  { revalidate: 1800, tags: ["experts"] },
 );
 
 export type ExpertsMetadata = Awaited<ReturnType<typeof fetchExpertsMetadata>>;
@@ -411,9 +415,9 @@ export const getRecentReviews = (limit: number = 6) =>
 // unstable_cache, so the three curated rows share one cache entry apiece instead
 // of re-querying the pooler on every explore load (#932).
 //
-// 300 to match /explore/experts' route-level revalidate rather than undercut it:
-// Next takes the minimum of the segment interval and every data cache entry read
-// during the render, so the old 120 was silently capping that page's ISR window.
+// 30 minutes to match the metadata window above rather than undercut it: the
+// "experts" tag is purged on every consultant write, so the TTL is a backstop,
+// not the SLA — and a route regeneration then reads blobs, not the pooler.
 export const getCuratedExperts = unstable_cache(
   async (sort: "rating" | "trending" | "newest", limit: number = 8) => {
     const rows = await prisma.consultantProfile.findMany({
@@ -428,7 +432,7 @@ export const getCuratedExperts = unstable_cache(
     return rows.map(toConsultantCard);
   },
   ["curated-experts"],
-  { revalidate: 300, tags: ["experts"] },
+  { revalidate: 1800, tags: ["experts"] },
 );
 
 // Cached default consultants page — the explore landing's most common read
@@ -437,8 +441,10 @@ export const getCuratedExperts = unstable_cache(
 // data cache instead of opening a cross-region pooled connection on every load.
 // Tagged "experts" (same as getCuratedExperts) so it is cleared by the
 // revalidateTag("experts") that consultant verify/edit/delete now fires via
-// purgeExpertSurfaces (lib/data/public-cache.ts); the 60s revalidate is the
-// backstop. (#945 — pairs with the route's no-store fail-open; #932 caching.)
+// purgeExpertSurfaces (lib/data/public-cache.ts); the 300s revalidate is the
+// backstop — long enough that the client-seeded first page (see
+// ExpertsInteractiveContent) and the API default view both usually read blobs.
+// (#945 — pairs with the route's no-store fail-open; #932 caching.)
 export const getDefaultConsultantsPage = unstable_cache(
   async (sort: string, limit: number) => {
     const where: Prisma.ConsultantProfileWhereInput = {
@@ -460,5 +466,5 @@ export const getDefaultConsultantsPage = unstable_cache(
     };
   },
   ["default-consultants-page"],
-  { revalidate: 60, tags: ["experts"] },
+  { revalidate: 300, tags: ["experts"] },
 );

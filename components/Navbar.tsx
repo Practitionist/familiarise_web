@@ -426,6 +426,7 @@ function DesktopNavItem({
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const router = useRouter();
   const panelId = `nav-panel-${group.label.toLowerCase().replace(/\s+/g, "-")}`;
 
   const handleEnter = useCallback(() => {
@@ -443,9 +444,32 @@ function DesktopNavItem({
     };
   }, []);
 
-  // The panel previously closed on mouse-leave only: no Escape, no
-  // outside-click, no focus return — so a keyboard user could open it and had
-  // no way to dismiss it without tabbing through every link inside.
+  // Panel links render only when the panel opens, so viewport prefetch never
+  // fires for them ahead of time. Warm each destination's canonical path the
+  // moment the panel opens: a cold handler then stalls the background
+  // prefetch while the visitor browses the menu, not the click (#1769
+  // follow-up). Query/hash variants are deliberately skipped — only the
+  // canonical document is prefetched, one invocation per destination.
+  useEffect(() => {
+    if (!open) return;
+    const paths = new Set<string>();
+    for (const column of group.columns) {
+      for (const item of column.items) {
+        if (item.disabled) continue;
+        paths.add(item.href.split("?")[0].split("#")[0]);
+      }
+    }
+    for (const chip of group.categoryChips ?? []) {
+      paths.add(chip.href.split("?")[0].split("#")[0]);
+    }
+    for (const path of paths) {
+      router.prefetch(path);
+    }
+  }, [open, group, router]);
+
+  // The panel closes on mouse-leave only by default: Escape, outside-click,
+  // and focus return are wired here so keyboard users can dismiss it without
+  // tabbing through every link inside.
   useEffect(() => {
     if (!open) return;
 

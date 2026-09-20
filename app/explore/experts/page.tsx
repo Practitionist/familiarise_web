@@ -6,6 +6,7 @@ import ExpertsInteractiveContent from "./ExpertsInteractiveContent";
 import {
   getExpertsMetadata,
   getCuratedExperts,
+  getDefaultConsultantsPage,
 } from "@/lib/data/explore-experts";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
@@ -28,11 +29,14 @@ import {
 // loudly instead of shipping an empty experts directory. `withBuildTimeRetry`
 // gives the build two extra attempts before it gives up.
 //
-// 5 minutes, matched by the unstable_cache windows on the reads below so the
-// declared interval is the effective one — Next resolves a route's revalidate to
-// the MINIMUM of the segment value and every data-cache entry read during the
-// render, so a shorter window underneath would silently win. New and updated
-// profiles purge this path on demand at the write sites.
+// 5 minutes. The unstable_cache windows underneath are LONGER (30 min for
+// metadata/curated rows, 5 min for the default directory page) — Next resolves
+// a route's revalidate to the MINIMUM of the segment value and every data-cache
+// entry read during the render, so the declared 300s stays the effective
+// regeneration interval while each regeneration reads blobs instead of the
+// pooler. All three entries carry the "experts" tag, purged on every consultant
+// write (purgeExpertSurfaces), so the TTLs are backstops, not the freshness SLA.
+// New and updated profiles purge this path on demand at the write sites.
 export const revalidate = 300;
 
 const STAT_ICONS: Record<ExpertStatKey, LucideIcon> = {
@@ -169,16 +173,26 @@ async function InteractiveLoader() {
   // These used to degrade to empty rows on a transient timeout. This route is ISR,
   // so that empty page would be cached and served to everyone until the window
   // expired; retry once and otherwise throw, which caches nothing (#1119).
-  const [metadata, trendingExperts, newestExperts] = await Promise.all([
-    withBuildTimeRetry(getExpertsMetadata),
-    withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
-    withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
-  ]);
+  //
+  // The default directory page (unfiltered, nameAsc, page 1) rides along so the
+  // client list renders with the RSC payload instead of firing its own
+  // /api/user/consultants roundtrip on mount — one fewer function invocation
+  // and one fewer pooled query on the critical path (#1769 follow-up). It is
+  // only USED when the visitor's filters are the defaults (no query params);
+  // the client hook decides (see useConsultants).
+  const [metadata, trendingExperts, newestExperts, defaultPage] =
+    await Promise.all([
+      withBuildTimeRetry(getExpertsMetadata),
+      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
+      withBuildTimeRetry(() => getDefaultConsultantsPage("nameAsc", 10)),
+    ]);
   return (
     <ExpertsInteractiveContent
       metadata={metadata}
       trendingExperts={trendingExperts}
       newestExperts={newestExperts}
+      defaultPage={defaultPage}
     />
   );
 }
