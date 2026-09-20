@@ -755,11 +755,24 @@ export async function notifySubscriptionCancelled(
   );
 }
 
+/**
+ * #1766 — staged from the completion path when a cycle's last live session
+ * completes with entitlement left; `dedupeKey` is `sub:<id>:cycle:<ordinal>`
+ * so a second completion pass over the same state reuses the outbox row.
+ */
 export async function notifySubscriptionRenewed(
   userId: string,
   payload: SubscriptionPayload,
+  dedupeKey?: string,
+  opts?: TriggerOptions,
 ) {
-  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED, userId, payload);
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
+    userId,
+    payload,
+    dedupeKey,
+    opts,
+  );
 }
 
 // ============================================================================

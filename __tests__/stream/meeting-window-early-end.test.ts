@@ -9,7 +9,12 @@
  *  - a participant joining clears a non-deliberate end, never a deliberate one
  */
 jest.mock("../../lib/prisma", () => {
-  const tx = { meeting: { update: jest.fn().mockResolvedValue({}) } };
+  const tx = {
+    meeting: { update: jest.fn().mockResolvedValue({}) },
+    // #1766 — the cycle bell reads the wrapper after a completion; a
+    // consultation wrapper (no subscription) stages nothing.
+    appointment: { findUnique: jest.fn().mockResolvedValue(null) },
+  };
   const client = {
     meeting: {
       findUnique: jest.fn(),
