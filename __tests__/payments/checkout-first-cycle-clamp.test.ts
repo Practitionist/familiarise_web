@@ -78,13 +78,41 @@ jest.mock("../../lib/events/capacity", () => ({
 }));
 
 import { handleSubscriptionCheckout } from "../../lib/payments/operations/checkout";
+import {
+  classifyError,
+  isBusinessErrorCode,
+} from "../../lib/errors/classification/payment-error-classification";
 import type { Tx } from "../../lib/prisma";
 import { checkoutSchema, type CheckoutInput } from "../../schemas/checkout";
 
 const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
 const START = new Date("2026-03-02T09:00:00.000Z");
 
-function makeTx() {
+/** A live subscription of this plan the buyer already holds (#1766). */
+function heldRow(completed: number) {
+  return {
+    sessionsTotal: 24,
+    schedulingPeriodStartsAt: new Date("2026-02-02T00:00:00.000Z"),
+    schedulingTimezone: "Asia/Kolkata",
+    subscriptionPlan: {
+      totalSessions: 24,
+      sessionsPerWeek: 2,
+      durationInMonths: 3,
+    },
+    appointment: {
+      occurrences: Array.from({ length: completed }, (_, i) => ({
+        startsAt: new Date(START.getTime() - (i + 1) * DAY),
+        endsAt: new Date(START.getTime() - (i + 1) * DAY + HOUR),
+        completionStatus: "COMPLETED",
+        isTentative: false,
+        deletedAt: null,
+      })),
+    },
+  };
+}
+
+function makeTx(liveRows: ReturnType<typeof heldRow>[] = []) {
   const tx = {
     subscriptionPlan: {
       findUnique: jest.fn().mockResolvedValue({
@@ -98,7 +126,7 @@ function makeTx() {
       }),
     },
     subscription: {
-      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue(liveRows),
       create: jest.fn().mockResolvedValue({ id: "sub-1" }),
     },
     trial: { findFirst: jest.fn().mockResolvedValue(null) },
@@ -158,4 +186,60 @@ it("the Zod edge accepts a start alone and still refuses a reversed pair", () =>
       schedulingPeriodEndsAt: new Date(START.getTime() - DAY).toISOString(),
     }).success,
   ).toBe(false);
+});
+
+// #1766 — the double-buy guard follows the entitlement, not the window.
+describe("double-buy guard", () => {
+  const checkout = (tx: Tx) =>
+    handleSubscriptionCheckout(
+      tx,
+      {
+        appointmentType: "SUBSCRIPTION",
+        planId: "plan-1",
+        schedulingPeriodStartsAt: START.toISOString(),
+      } as unknown as CheckoutInput,
+      "consultee-profile-1",
+      false,
+      null,
+      "policy-1",
+    );
+
+  it("refuses with a typed 409 while a live row has sessions left", async () => {
+    const tx = makeTx([heldRow(4)]);
+    const error = await checkout(tx).catch((e: unknown) => e);
+
+    expect(error).toMatchObject({
+      httpStatus: 409,
+      code: "SUBSCRIPTION_ALREADY_ACTIVE",
+      message:
+        "You already have this plan with 20 sessions left — schedule those first.",
+    });
+    expect(tx.subscription.create).not.toHaveBeenCalled();
+    // The tx catch rethrows any registered code unchanged and the route
+    // classifies it to its own status, type and the thrown sentence.
+    expect(isBusinessErrorCode("SUBSCRIPTION_ALREADY_ACTIVE")).toBe(true);
+    expect(classifyError(error)).toMatchObject({
+      httpStatus: 409,
+      errorType: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
+      errorMessage:
+        "You already have this plan with 20 sessions left — schedule those first.",
+    });
+    // The read drops the window terms: status + plan + buyer only.
+    const { where } = (tx.subscription.findMany as jest.Mock).mock.calls[0][0];
+    expect(where.schedulingPeriodStartsAt).toBeUndefined();
+    expect(where.OR).toBeUndefined();
+    expect(where.status.in).toEqual(
+      expect.arrayContaining([
+        "PENDING",
+        "APPROVED",
+        "APPROVED_PENDING_PAYMENT",
+      ]),
+    );
+  });
+
+  it("lets a spent plan be bought again (renewal as repurchase)", async () => {
+    const tx = makeTx([heldRow(24)]);
+    await checkout(tx);
+    expect(tx.subscription.create).toHaveBeenCalledTimes(1);
+  });
 });
