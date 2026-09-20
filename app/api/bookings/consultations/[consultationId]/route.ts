@@ -28,6 +28,7 @@ import {
   refusePlanNotOwned,
 } from "@/lib/booking/request-route-guards";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { APPROVAL_STATUSES_DETAIL_ONLY } from "@/lib/booking/list-query";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
@@ -457,6 +458,20 @@ export async function PATCH(
     if (!isPrivileged(session.user.role) && !isParticipant) {
       return forbiddenResponse(
         "You can only update consultations you are a participant in",
+      );
+    }
+
+    // #1775 — a dual-profile user was both sides of the request, so the
+    // participant check passed and they could approve their own booking.
+    if (
+      APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
+      existingConsultation.consultationPlan.consultantProfile.user.id ===
+        existingConsultation.requestedBy.user.id &&
+      !isPrivileged(session.user.role)
+    ) {
+      return NextResponse.json(
+        { error: "You cannot approve your own request", code: "SELF_APPROVAL" },
+        { status: 403 },
       );
     }
 

@@ -147,3 +147,24 @@ describe("checkout hardening (#1093 tail + tentative visibility)", () => {
     expect(window).toContain("withSerializableRetry(");
   });
 });
+
+describe("#1775 — the detail PATCH refuses self-approval", () => {
+  it.each([
+    ["consultations", consultationsRoute, "existingConsultation"],
+    ["subscriptions", subscriptionsRoute, "existingSubscription"],
+  ])(
+    "%s: same user on both sides → 403 SELF_APPROVAL before any transition",
+    (_name, src, row) => {
+      const patchStart = src.indexOf("export async function PATCH(");
+      const guard = src.indexOf('code: "SELF_APPROVAL"', patchStart);
+      const tx = src.indexOf("prisma.$transaction(", patchStart);
+      expect(guard).toBeGreaterThan(patchStart);
+      expect(guard).toBeLessThan(tx);
+      const block = src.slice(guard - 600, guard);
+      expect(block).toContain("APPROVAL_STATUSES_DETAIL_ONLY.has(status)");
+      expect(block).toContain(`${row}.requestedBy.user.id`);
+      expect(block).toContain("!isPrivileged(session.user.role)");
+      expect(src.slice(guard, guard + 80)).toContain("status: 403");
+    },
+  );
+});
