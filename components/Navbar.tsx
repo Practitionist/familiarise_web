@@ -26,7 +26,7 @@ import { disconnectStreamClients } from "@/lib/stream/disconnect";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -512,6 +512,7 @@ function DesktopNavItem({
 
 const Navbar = () => {
   const pathname = usePathname();
+  const router = useRouter();
   // The root layout is static (#932), so the session hydrates client-side here,
   // which makes the whole gap between FCP and this bar settling the /api/auth
   // round trip itself. `useRememberedAuth` fills that gap with the last resolved
@@ -542,6 +543,22 @@ const Navbar = () => {
     window.addEventListener("scroll", checkScroll);
     return () => window.removeEventListener("scroll", checkScroll);
   }, []);
+
+  // Mobile drawer links render only when the drawer opens, so viewport
+  // prefetch never fires for them ahead of time. Warm the top destinations
+  // the moment the drawer opens: a cold handler then stalls the background
+  // prefetch, not the tap (#1112198). Static destinations serve from cache.
+  useEffect(() => {
+    if (!isOpen) return;
+    for (const href of [
+      "/explore/experts",
+      "/explore/programs",
+      "/pricing",
+      "/auth/signin",
+    ]) {
+      router.prefetch(href);
+    }
+  }, [isOpen, router]);
 
   if (isChromeHidden(pathname)) return null;
 

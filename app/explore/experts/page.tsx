@@ -100,22 +100,25 @@ function HeroSection({ stats }: { stats: IPublicStat<ExpertStatKey>[] }) {
 }
 
 export default async function ExploreExperts() {
-  // These used to degrade to empty rows on a transient timeout. This route is ISR,
-  // so that empty page would be cached and served to everyone until the window
-  // expired; retry once and otherwise throw, which caches nothing (#1119).
-  const [metadata, featuredExperts, trendingExperts, newestExperts] =
-    await Promise.all([
-      withBuildTimeRetry(getExpertsMetadata),
-      withBuildTimeRetry(() => getCuratedExperts("rating", 5)),
-      withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
-      withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
-    ]);
-
+  // Stream the shell first: the hero headline and section chrome flush before
+  // any pooled read resolves, so the edge starts streaming well inside its
+  // receive-timeout even when the server handler is cold (~28s stall, #1112198).
+  // Data-bound islands resolve behind Suspense boundaries below.
   return (
     <main className="min-h-screen bg-background">
-      <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+      <Suspense fallback={<HeroSection stats={[]} />}>
+        <HeroLoader />
+      </Suspense>
 
-      <FeaturedExperts experts={featuredExperts} isLoading={false} />
+      <Suspense
+        fallback={
+          <section className="mx-auto max-w-[1600px] px-4 py-10 md:px-8 lg:px-12">
+            <div className="h-56 animate-pulse rounded-xl bg-muted" />
+          </section>
+        }
+      >
+        <FeaturedLoader />
+      </Suspense>
 
       <Suspense
         fallback={
@@ -139,12 +142,43 @@ export default async function ExploreExperts() {
           </section>
         }
       >
-        <ExpertsInteractiveContent
-          metadata={metadata}
-          trendingExperts={trendingExperts}
-          newestExperts={newestExperts}
-        />
+        <InteractiveLoader />
       </Suspense>
     </main>
+  );
+}
+
+// Each loader reads independently. A transient pooler timeout now throws past
+// its own Suspense boundary rather than failing the whole page, and on ISR a
+// failed regeneration keeps serving the last good cached copy (#1119).
+async function HeroLoader() {
+  const metadata = await withBuildTimeRetry(getExpertsMetadata);
+  return (
+    <HeroSection stats={buildExpertHeroStats(metadata.consultantMetadata)} />
+  );
+}
+
+async function FeaturedLoader() {
+  const featuredExperts = await withBuildTimeRetry(() =>
+    getCuratedExperts("rating", 5),
+  );
+  return <FeaturedExperts experts={featuredExperts} isLoading={false} />;
+}
+
+async function InteractiveLoader() {
+  // These used to degrade to empty rows on a transient timeout. This route is ISR,
+  // so that empty page would be cached and served to everyone until the window
+  // expired; retry once and otherwise throw, which caches nothing (#1119).
+  const [metadata, trendingExperts, newestExperts] = await Promise.all([
+    withBuildTimeRetry(getExpertsMetadata),
+    withBuildTimeRetry(() => getCuratedExperts("trending", 8)),
+    withBuildTimeRetry(() => getCuratedExperts("newest", 8)),
+  ]);
+  return (
+    <ExpertsInteractiveContent
+      metadata={metadata}
+      trendingExperts={trendingExperts}
+      newestExperts={newestExperts}
+    />
   );
 }

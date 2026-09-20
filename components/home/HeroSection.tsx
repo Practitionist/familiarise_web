@@ -4,6 +4,7 @@ import { useCallback } from "react";
 import { motion, useInView } from "framer-motion";
 import { ArrowRight, Sparkles } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useRef, useState, useEffect } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -61,6 +62,16 @@ export function HeroSection({
 }: {
   stats: IPublicStat<ExpertStatKey>[];
 }) {
+  const router = useRouter();
+  // Warm the primary CTA destination while the visitor reads the hero: the
+  // RSC payload lands in the router cache before the click, so a cold server
+  // handler stalls the background prefetch — not the navigation (#1112198).
+  // Static destination, so the prefetch is served from cache, not a DB render.
+  useEffect(() => {
+    router.prefetch("/explore/experts");
+  }, [router]);
+  const prefetchExperts = () => router.prefetch("/explore/experts");
+  const prefetchBecomeExpert = () => router.prefetch("/become-an-expert");
   return (
     <section className="relative min-h-[95vh] flex items-center bg-black overflow-hidden">
       {/* Animated gradient orbs */}
@@ -131,7 +142,11 @@ export function HeroSection({
               className="bg-white text-black hover:bg-zinc-200 px-8 h-14 text-base rounded-xl shadow-lg shadow-white/10 group font-medium"
               asChild
             >
-              <Link href="/explore/experts">
+              <Link
+                href="/explore/experts"
+                onMouseEnter={prefetchExperts}
+                onFocus={prefetchExperts}
+              >
                 Find Your Expert
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
@@ -145,7 +160,11 @@ export function HeroSection({
               className="border-zinc-700 bg-transparent text-white hover:bg-zinc-900 hover:text-white px-8 h-14 text-base rounded-xl group"
               asChild
             >
-              <Link href="/become-an-expert">
+              <Link
+                href="/become-an-expert"
+                onMouseEnter={prefetchBecomeExpert}
+                onFocus={prefetchBecomeExpert}
+              >
                 Become an Expert
                 <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
