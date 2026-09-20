@@ -97,6 +97,9 @@ describe("PaymentsHistoryList", () => {
         row("refunded", {
           refundRows: [{ amountPaise: 150_000, status: "SUCCEEDED" }],
         }),
+        row("partly", {
+          refundRows: [{ amountPaise: 50_000, status: "SUCCEEDED" }],
+        }),
         row("sponsored", {
           legs: [{ source: "WALLET" }],
           sponsorOrgName: "Wipro Limited",
@@ -118,6 +121,7 @@ describe("PaymentsHistoryList", () => {
     expect(rowHtml("paid")).toContain("₹1,500.00 · Razorpay");
     expect(rowHtml("paid")).toContain("View receipt");
     expect(rowHtml("refunded")).toContain("₹1,500.00 refunded · Razorpay");
+    expect(rowHtml("partly")).toContain("₹500.00 refunded · Razorpay");
     expect(rowHtml("sponsored")).toContain("Sponsored by Wipro Limited");
     expect(rowHtml("sponsored")).not.toContain("₹");
   });

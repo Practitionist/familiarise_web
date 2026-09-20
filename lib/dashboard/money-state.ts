@@ -489,6 +489,8 @@ function deriveMoney(
       if (back > 0) parts.push(`${money(back, paid.currency)} refunded`);
       if (pendingRefund > 0)
         parts.push(`${money(pendingRefund, paid.currency)} refund on its way`);
+      // #1770 QA — the rail rides every refund line, partial ones included.
+      if (rail) parts.push(rail);
       return build("PARTIALLY_REFUNDED", "Partly refunded", parts.join(" · "));
     }
     // Locked 2026-09-13: the member did not pay a sponsored booking, so no amount.
