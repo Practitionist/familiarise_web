@@ -7,6 +7,7 @@ import { UserRole, Gender } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 import { persistProfessionalBackground } from "@/utils/onboarding-server";
 import { scrubUser } from "@/lib/compliance/erasure/scrub-user";
+import { deleteSubscriber } from "@/lib/novu/subscriber";
 
 /**
  * Convert empty strings to undefined so Prisma skips the field update.
@@ -260,10 +261,15 @@ export async function DELETE(
 
     if (hasMoneyHistory) {
       await scrubUser(prisma, id);
+      // Erasure propagates to Novu (never throws; Sentry-reported). The local
+      // scrub is committed either way; an unacknowledged vendor delete is
+      // surfaced as pending rather than hidden behind a success message.
+      const novuErased = await deleteSubscriber(id);
       return NextResponse.json({
         message:
           "Account erased (PII scrubbed; financial history retained per statutory retention)",
         softDeleted: true,
+        novuCleanup: novuErased ? "done" : "pending",
       });
     }
 
@@ -272,9 +278,15 @@ export async function DELETE(
       prisma.session.deleteMany({ where: { userId: id } }),
       prisma.user.delete({ where: { id: id } }),
     ]);
+    // Novu holds the same PII (email/name) — remove it too. Never throws;
+    // an unacknowledged delete is reported as pending, not as success.
+    const novuErased = await deleteSubscriber(id);
 
     return NextResponse.json(
-      { message: "User deleted successfully" },
+      {
+        message: "User deleted successfully",
+        novuCleanup: novuErased ? "done" : "pending",
+      },
       { status: 200 },
     );
   } catch (error) {

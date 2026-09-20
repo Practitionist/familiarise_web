@@ -344,7 +344,10 @@ export async function recordOverageAtCheckout(
       });
       throw fundingErr;
     }
-    const carved = baseLeg.amountPaise >= basePaise ? basePaise : 0;
+    // #1744 row 1 — a short base leg (credits/discounts already netted) used to
+    // carve nothing, so the slice it did hold was billed again inside the
+    // OVERAGE leg. Carve whatever the base leg holds, up to basePaise.
+    const carved = Math.min(baseLeg.amountPaise, basePaise);
     if (carved > 0) {
       await tx.paymentLeg.update({
         where: { paymentId_source: { paymentId, source: "INVOICE_ACCRUAL" } },

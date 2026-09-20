@@ -238,6 +238,19 @@ async function allocateOneSession() {
   });
 }
 
+/**
+ * #1766 — the allocator now sizes the batch from the wrapper's rows it reads
+ * BEFORE writing, so the pre-write reads see a fresh wrapper and only the
+ * post-write utilization read sees the state the scenario describes.
+ */
+function wrapperAfterWrite(occurrences: ReturnType<typeof occurrence>[]) {
+  mockTx.subscription.findUnique.mockImplementation(async () =>
+    mockTx.appointment.update.mock.calls.length > 0
+      ? subscriptionFixture(occurrences)
+      : subscriptionFixture(),
+  );
+}
+
 describe("#1132 — a dead assignment cannot be debited at allocation time", () => {
   it("filters the allocation-time resolve on status: ACTIVE", async () => {
     const result = await allocateOneSession();
@@ -292,9 +305,7 @@ describe("removed subscription sessions return the engagement", () => {
     trackedThreeSessions();
     // Post-delete/post-create state: only the new session is still live on
     // the wrapper, so all three tracked ids are stale.
-    mockTx.subscription.findUnique.mockResolvedValue(
-      subscriptionFixture([occurrence("occ-new-1", 4)]),
-    );
+    wrapperAfterWrite([occurrence("occ-new-1", 4)]);
 
     const result = await allocateOneSession();
 
@@ -317,9 +328,7 @@ describe("removed subscription sessions return the engagement", () => {
       id: "util-1",
       appointmentIds: ["occ-old-1"],
     });
-    mockTx.subscription.findUnique.mockResolvedValue(
-      subscriptionFixture([occurrence("occ-new-1", 2)]),
-    );
+    wrapperAfterWrite([occurrence("occ-new-1", 2)]);
 
     const result = await allocateOneSession();
 
@@ -335,12 +344,7 @@ describe("removed subscription sessions return the engagement", () => {
       id: "util-1",
       appointmentIds: ["occ-old-1"],
     });
-    mockTx.subscription.findUnique.mockResolvedValue(
-      subscriptionFixture([
-        occurrence("occ-old-1", 1),
-        occurrence("occ-new-1", 2),
-      ]),
-    );
+    wrapperAfterWrite([occurrence("occ-old-1", 1), occurrence("occ-new-1", 2)]);
 
     const result = await allocateOneSession();
 

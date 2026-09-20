@@ -39,12 +39,15 @@ function makeTx(opts: {
   overageBehavior?: "CHARGE_ORG" | "CHARGE_MEMBER";
   /** #1458 — which funding rail wrote the parent's base leg. */
   baseSource?: "INVOICE_ACCRUAL" | "WALLET" | "LICENSE";
+  /** #1744 row 1 — a base leg that holds less than the price. */
+  baseLegPaise?: number;
 }) {
   const legs: Leg[] = [
     {
       source: opts.baseSource ?? "INVOICE_ACCRUAL",
       // A licence leg is deliberately zero-value: the contract already paid.
-      amountPaise: opts.baseSource === "LICENSE" ? 0 : opts.price,
+      amountPaise:
+        opts.baseSource === "LICENSE" ? 0 : (opts.baseLegPaise ?? opts.price),
     },
   ];
   const payment = { amount: opts.price };
@@ -173,6 +176,27 @@ describe("recordOverageAtCheckout — CHARGE_ORG leg-sum invariant (#785)", () =
     ]);
     expect(state.payment.amount).toBe(100_000); // no surcharge → unchanged
     expect(sum(state.legs)).toBe(state.payment.amount); // covered + overage == price
+  });
+
+  it("#1744 row 1: a short base leg is carved to zero, never billed twice", async () => {
+    // base 1_000 (whole booking over cap) but the base leg only holds 400.
+    const { state, tx } = makeTx({
+      price: 1_000,
+      cap: 5,
+      used: 5,
+      baseLegPaise: 400,
+    });
+    await recordOverageAtCheckout({
+      tx: tx as unknown as Tx,
+      ...callArgs(1_000),
+    });
+
+    expect(state.legs).toEqual([
+      { source: "INVOICE_ACCRUAL", amountPaise: 0 }, // carved min(400, 1_000)
+      { source: "OVERAGE_INVOICE_ACCRUAL", amountPaise: 1_000 },
+    ]);
+    // The rollup bills Σ(both sources) — exactly the marginal, not 1_400.
+    expect(sum(state.legs)).toBe(1_000);
   });
 });
 

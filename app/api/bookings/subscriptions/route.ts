@@ -175,6 +175,8 @@ export async function GET(request: NextRequest) {
           schedulingPeriodStartsAt: true,
           schedulingPeriodEndsAt: true,
           schedulingTimezone: true,
+          // #1766 — the Requests tab sizes the first cycle off the entitlement.
+          sessionsTotal: true,
           subscriptionPlan: {
             select: {
               id: true,

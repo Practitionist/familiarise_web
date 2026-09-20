@@ -25,7 +25,9 @@ import prisma from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth-helpers";
 import { getOperatorOrganizations } from "@/lib/data/org-workspace";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { DEFAULT_WALLET_MIN_BALANCE_PAISE } from "@/lib/enterprise/governance";
 import { isValidGstin } from "@/lib/compliance/gst";
+import { numericStateCode } from "@/lib/compliance/state-codes";
 import { isValidPan } from "@/lib/compliance/tds";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { ENABLE_HOST_ORGS } from "@/lib/feature-flags";
@@ -225,7 +227,7 @@ export async function POST(req: NextRequest) {
           contractCurrency: body.currency,
           reportingCurrency: body.currency,
           billingEmail: body.billingEmail,
-          paymentTermsDays: body.paymentTermsDays ?? 60,
+          paymentTermsDays: body.paymentTermsDays ?? 30,
           // #768 — branding fields live on OrgBrandingProfile. Upserted
           // below in the same transaction when any branding column is set.
           ...(body.description ||
@@ -247,6 +249,8 @@ export async function POST(req: NextRequest) {
           taxInfo: {
             create: {
               gstin: body.gstin ?? null,
+              // #1744 row 3 — the GSTIN prefix is the buyer's GST state.
+              gstStateCode: numericStateCode(body.gstin, null),
               // #768 — PAN stored encrypted (parity with ConsultantTaxInfo).
               ...(body.pan
                 ? (() => {
@@ -270,6 +274,13 @@ export async function POST(req: NextRequest) {
             currency: body.currency,
             fundingSource: body.fundingSource,
             walletBalance: body.fundingSource === "WALLET" ? 0 : null,
+            // New WALLET accounts start enrolled in low-balance alerts
+            // (DEFAULT_WALLET_MIN_BALANCE_PAISE) so the first drain pages
+            // billing admins instead of failing checkouts silently.
+            minBalancePaise:
+              body.fundingSource === "WALLET"
+                ? DEFAULT_WALLET_MIN_BALANCE_PAISE
+                : null,
           },
         });
         billingAccountId = ba.id;

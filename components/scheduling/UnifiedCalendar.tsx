@@ -55,6 +55,11 @@ import {
 import { CalendarGridSkeleton } from "@/components/scheduling/CalendarSkeletons";
 import { useCalendarData } from "@/hooks/scheduling/useCalendarData";
 import {
+  subscriptionCycleHeading,
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import {
   earliestSelectedSlot,
   useEventSlotAllocation,
 } from "@/hooks/scheduling/useScheduling";
@@ -147,6 +152,14 @@ function bandLabel(segment: RowSegment): string {
   return `Unavailable · ${at(segment.from)}–${at(segment.to % 48)}`;
 }
 
+/** "Outside the scheduling period · 00:00–09:00" — same shape as `bandLabel`,
+ * for a band whose rows are outside this booking's period (#1764/#1766). */
+function outsidePeriodBandLabel(segment: RowSegment): string {
+  const at = (row: number) =>
+    formatClockTime(new Date(1970, 0, 1, Math.floor(row / 2), (row % 2) * 30));
+  return `Outside the scheduling period · ${at(segment.from)}–${at(segment.to % 48)}`;
+}
+
 // The time gutter must be a FIXED first column, not 1/8 of the row. As an
 // equal-8 grid the gutter kept its w-14 while its CELL shrank with the
 // container, so in a narrow modal the label overflowed onto Sunday and
@@ -217,9 +230,19 @@ function subscriptionFooterText(
     pastEventSlotCount: number;
     maxSlots: number;
     schedulingTimezone?: string;
+    /** #1766 — the one counter; null until the subscription row has loaded. */
+    entitlement: SubscriptionEntitlement | null;
+    zone: string;
   }>,
 ): string {
   const slotsPerCall = getSlotsPerCall(params.sessionDurationInHours);
+  if (params.entitlement) {
+    return cycleFooterText(
+      params.entitlement,
+      Math.floor(params.selectedSlots.length / slotsPerCall),
+      params.zone,
+    );
+  }
   const computed = computeSubscriptionFooter({
     selectedSlots: params.selectedSlots,
     allowedStart: params.allowedStart,
@@ -330,6 +353,28 @@ function countCompletedSelectedCallsForWeek(
       completed += 1;
   });
   return completed;
+}
+
+/**
+ * #1766 — the subscription footer reads the one entitlement counter: the
+ * cycle heading while nothing is selected, then the selection against THIS
+ * cycle's batch with the plan-wide count alongside.
+ */
+function cycleFooterText(
+  entitlement: SubscriptionEntitlement,
+  selectedSessions: number,
+  zone: string,
+): string {
+  if (selectedSessions === 0) {
+    return subscriptionCycleHeading(entitlement, { zone });
+  }
+  const { nextBatch } = entitlement.cycle;
+  const plan = `${entitlement.held + selectedSessions} of ${entitlement.total} scheduled`;
+  if (selectedSessions >= nextBatch) {
+    const sessionNoun = nextBatch === 1 ? "session" : "sessions";
+    return `✅ This cycle's ${nextBatch} ${sessionNoun} selected · ${plan}`;
+  }
+  return `✅ ${selectedSessions} of ${nextBatch} for this cycle · ${plan}`;
 }
 
 /**
@@ -538,6 +583,52 @@ export interface UnifiedCalendarProps {
   ) => void;
 }
 
+/**
+ * #1766 — a subscription's limit is THIS cycle: completed + nextBatch, with
+ * the completed part subtracted again below, so requiredSlots comes out as
+ * nextBatch × slotsPerCall without touching getSlotLimits.
+ */
+function resolveMaxTotalCalls(
+  entitlement: SubscriptionEntitlement | null,
+  eventType: UnifiedCalendarProps["eventType"],
+  totalSessions: number | undefined,
+  allowedStart: Date | undefined,
+  allowedEnd: Date | undefined,
+  sessionsPerWeek: number | undefined,
+): number | undefined {
+  if (entitlement) {
+    return entitlement.completed + entitlement.cycle.nextBatch;
+  }
+  if (!isRecurringEventType(eventType)) {
+    return undefined;
+  }
+  if (totalSessions && totalSessions > 0) {
+    return totalSessions;
+  }
+  if (allowedStart && allowedEnd && sessionsPerWeek) {
+    return (
+      countSundayWeeksInclusive(allowedStart, allowedEnd) *
+      (sessionsPerWeek || 1)
+    );
+  }
+  return undefined;
+}
+
+function resolvePastConfirmedSlotCount(
+  entitlement: SubscriptionEntitlement | null,
+  eventType: UnifiedCalendarProps["eventType"],
+  slotsPerCallForCycle: number,
+  pastEventSlotCount: number,
+): number | undefined {
+  if (entitlement) {
+    return entitlement.completed * slotsPerCallForCycle;
+  }
+  if (isRecurringEventType(eventType)) {
+    return pastEventSlotCount;
+  }
+  return undefined;
+}
+
 export function UnifiedCalendar({
   consultantId,
   eventType,
@@ -599,6 +690,8 @@ export function UnifiedCalendar({
     eventSlots,
     eventTentativeSlots = [],
     weeklyConfirmedCallCounts,
+    eventOccurrences,
+    subscriptionMeta,
     loading,
     error,
     refetch,
@@ -656,6 +749,21 @@ export function UnifiedCalendar({
     return eventSlots.filter((s) => s.endTime <= now).length;
   }, [eventSlots]);
 
+  // #1766 — the one counter: what this cycle still takes and what the plan
+  // holds, from the row's frozen entitlement and its live occurrences.
+  const entitlement = useMemo(
+    () =>
+      eventType === "subscription" && subscriptionMeta
+        ? subscriptionEntitlement({
+            ...subscriptionMeta,
+            occurrences: eventOccurrences,
+            now,
+          })
+        : null,
+    [eventType, subscriptionMeta, eventOccurrences, now],
+  );
+  const slotsPerCallForCycle = getSlotsPerCall(sessionDurationInHours);
+
   // Stay-open failures (slot taken, co-host busy, transient lock) leave the
   // dialog open against stale cells: refetch both grids so the retry is
   // picked fresh. Best-effort — a refetch failure must never mask the toast
@@ -702,18 +810,22 @@ export function UnifiedCalendar({
     startDate: allowedStart,
     endDate: allowedEnd,
     // Provide dynamic maxTotalCalls so validation/toasts show the real limit.
-    // Prefer totalSessions from plan (authoritative) over calendar-week calculation.
-    maxTotalCalls: isRecurringEventType(eventType)
-      ? totalSessions && totalSessions > 0
-        ? totalSessions
-        : allowedStart && allowedEnd && sessionsPerWeek
-          ? countSundayWeeksInclusive(allowedStart, allowedEnd) *
-            (sessionsPerWeek || 1)
-          : undefined
-      : undefined,
-    pastConfirmedSlotCount: isRecurringEventType(eventType)
-      ? pastEventSlotCount
-      : undefined,
+    maxTotalCalls: resolveMaxTotalCalls(
+      entitlement,
+      eventType,
+      totalSessions,
+      allowedStart,
+      allowedEnd,
+      sessionsPerWeek,
+    ),
+    pastConfirmedSlotCount: resolvePastConfirmedSlotCount(
+      entitlement,
+      eventType,
+      slotsPerCallForCycle,
+      pastEventSlotCount,
+    ),
+    // #1766 — held sessions mean this run appends the next cycle.
+    topUp: entitlement ? entitlement.held > 0 : undefined,
     weeklyConfirmedCallCounts,
     initialAllocation,
     expectedTentativeSlotCount,
@@ -1188,6 +1300,9 @@ export function UnifiedCalendar({
       let label = SLOT_STATUS_TOKENS[statusKey].label;
       if (statusKey === "thisEvent" && status.isInPast) label = "Past session";
       if (statusKey === "unavailable") label = "";
+      // #1764/#1766 — outside-period rows collapse into one band; a per-cell
+      // "Outside period" word is noise whether the band is open or closed.
+      if (statusKey === "outsidePeriod") label = "";
 
       return {
         status,
@@ -1222,16 +1337,27 @@ export function UnifiedCalendar({
   const { folded, paintedKeys, paintedCounts } = useMemo(() => {
     const painted = new Set<SlotStatusKey>();
     const counts = new Map<SlotStatusKey, number>();
-    const live = INTERVALS.map((interval) =>
-      weekDates.reduce((anyLive, date) => {
+    // Two liveness vectors, not one: `live` excludes outside-period cells so
+    // a row whose only content is outside this booking's period bands as its
+    // own "Outside the scheduling period" strip rather than the plain
+    // "Unavailable" one (#1764/#1766).
+    const live: boolean[] = [];
+    const outsidePeriod: boolean[] = [];
+    for (const interval of INTERVALS) {
+      let rowLive = false;
+      let rowOutsidePeriod = false;
+      for (const date of weekDates) {
         const cell = describeCell(interval, date);
         painted.add(cell.statusKey);
         counts.set(cell.statusKey, (counts.get(cell.statusKey) ?? 0) + 1);
-        return anyLive || cell.isLive;
-      }, false),
-    );
+        if (cell.statusKey === "outsidePeriod") rowOutsidePeriod = true;
+        else if (cell.isLive) rowLive = true;
+      }
+      live.push(rowLive);
+      outsidePeriod.push(rowOutsidePeriod);
+    }
     return {
-      folded: foldDeadHourBands(live),
+      folded: foldDeadHourBands(live, outsidePeriod),
       paintedKeys: painted,
       paintedCounts: counts,
     };
@@ -1821,7 +1947,9 @@ export function UnifiedCalendar({
                         className="absolute inset-y-0 left-0 w-0.5 rounded-full bg-primary"
                       />
                     )}
-                    {bandLabel(segment)}
+                    {segment.variant === "outsidePeriod"
+                      ? outsidePeriodBandLabel(segment)
+                      : bandLabel(segment)}
                     <span aria-hidden>{isOpenBand ? "· hide" : "· show"}</span>
                     {stripHoldsNow && <span aria-hidden>· now</span>}
                   </button>
@@ -1902,6 +2030,8 @@ export function UnifiedCalendar({
                       pastEventSlotCount,
                       maxSlots: slotLimits.maxSlots,
                       schedulingTimezone,
+                      entitlement,
+                      zone: gridZone,
                     });
                   }
                   if (eventType === "class") {
@@ -1990,13 +2120,6 @@ export function UnifiedCalendar({
                 );
               })}
             </ul>
-          )}
-          {/* Only show weekly limit for subscriptions - other event types don't need secondary info */}
-          {eventType === "subscription" && (
-            <div className="text-xs text-muted-foreground">
-              Max {sessionsPerWeek || 1} session
-              {(sessionsPerWeek || 1) > 1 ? "s" : ""} per week
-            </div>
           )}
           {allocationError && (
             <div className="text-sm text-red-600">{allocationError}</div>

@@ -90,8 +90,10 @@ export async function PUT(req: NextRequest) {
       },
     });
 
-    // Sync channel + category preferences to Novu subscriber data
+    // Sync master + channel + category preferences to Novu subscriber
+    // data (Q1: the bell skip rule reads masterEnabled + preferInApp).
     await updateSubscriberPreferences(session.user.id, {
+      allNotifications: updated.allNotifications,
       // Channel preferences
       inApp: updated.inAppEnabled,
       email: updated.emailEnabled,

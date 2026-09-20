@@ -54,8 +54,11 @@ import {
   REQUESTS_COUNT_POLL_INTERVAL_MS,
   requestsFreshnessBadge,
 } from "@/lib/scheduling/requestsFreshness";
-import { countSundayWeeksInclusive } from "@/lib/scheduling/calendarUtils";
-import { AllocationService } from "@/lib/scheduling/allocationService";
+import {
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
+import { requestCountLine } from "./request-count-line";
 import { isReleasedForReschedule } from "@/utils/scheduling-engine/types";
 import {
   allocatedElsewhere,
@@ -72,12 +75,14 @@ import {
   type ViewerZone,
 } from "@/lib/time/viewer-zone";
 import { getRequestTypeLabel } from "./labels";
+import type { AllocationAttemptKey } from "@/hooks/scheduling/useScheduling";
+// #1675 — the approve/decline mutations are shared with the appointment
+// detail page's needs-you slot; the guards and the calls live in one module.
 import {
-  computeAttemptFingerprint,
-  fingerprintGuards,
-  resolveAttemptKey,
-  type AllocationAttemptKey,
-} from "@/hooks/scheduling/useScheduling";
+  approveRequestedTimes,
+  classifyRequestedConflict,
+  declineRequest,
+} from "./request-decision";
 import { cn } from "@/utils/tailwind";
 
 // Slot with tentative status for reschedule visibility. completionStatus
@@ -112,6 +117,8 @@ interface Request {
   schedulingTimezone?: string;
   bookingSource?: "DIRECT_CHECKOUT" | "REQUEST_SUBMITTED"; // Booking source - direct checkout or request submitted
   totalSessions?: number; // Authoritative session count from plan (overrides weeks × sessionsPerWeek)
+  /** #1766 — a fresh subscription's one counter, for the row's words. */
+  entitlement?: SubscriptionEntitlement;
   // Reschedule info
   tentativeSlotCount?: number;
   totalSlotCount?: number;
@@ -129,55 +136,9 @@ interface Request {
 
 // interface SlotInterval { ... } // Removed - Now imported
 
-/**
- * Classifies a failed requested-times approval so the handler stays flat.
- * Only a genuine already-allocated answer removes the row: a stale
- * tentative count or a co-host clash leaves the request allocatable, so
- * closing + deleting the row would strand it (M5).
- */
-function classifyRequestedConflict(result: {
-  success: boolean;
-  httpStatus?: number;
-  error?: string;
-  errorCode?: string;
-}): "genuine-conflict" | "stale" | "stay-open" | null {
-  if (result.success || result.httpStatus !== 409) return null;
-  switch (result.errorCode) {
-    case "ALREADY_ALLOCATED":
-      return "genuine-conflict";
-    case "RESCHEDULE_STATE_CHANGED":
-      return "stale";
-    default:
-      // Co-host clash, illegal transition, slot taken, lock busy, or a code
-      // this switch does not know: the request is still allocatable.
-      return "stay-open";
-  }
-}
-
 type RequestType = "all" | "consultation" | "subscription";
 type PagedKind = Exclude<RequestType, "all">;
 const PAGED_KINDS: readonly PagedKind[] = ["consultation", "subscription"];
-
-/**
- * The stale-tab guard pair for a requested-times approval, shared verbatim
- * by the idempotency fingerprint and the request body: if the two disagree,
- * a guard change mints a key the server never enforces against (or
- * vice versa). Fresh allocations only — partial reschedules legitimately
- * have confirmed slots and must not trip the already-allocated guard (#837);
- * the tentative count is the #1012 stale-tab precondition.
- */
-function requestedAllocationGuards(
-  request: Pick<Request, "tentativeSlotCount">,
-): {
-  initialAllocation: true | undefined;
-  expectedTentativeSlotCount: number | undefined;
-} {
-  const tentative = request.tentativeSlotCount ?? 0;
-  return {
-    initialAllocation: tentative === 0 || undefined,
-    expectedTentativeSlotCount: tentative > 0 ? tentative : undefined,
-  };
-}
 
 interface RequestSchedulingTabProps {
   type: RequestType;
@@ -898,26 +859,34 @@ export function RequestSchedulingTab({
                 tentativeCount > 0
                   ? tentativeCount
                   : (() => {
-                      const totalSessions =
-                        subscription.subscriptionPlan?.totalSessions;
-                      if (totalSessions && totalSessions > 0) {
-                        return totalSessions * slotsPerSession;
-                      }
-                      // Fallback: week-based calculation
-                      const startDate = subscription.schedulingPeriodStartsAt
-                        ? new Date(subscription.schedulingPeriodStartsAt)
-                        : undefined;
-                      const endDate = subscription.schedulingPeriodEndsAt
-                        ? new Date(subscription.schedulingPeriodEndsAt)
-                        : undefined;
-                      const sessionsPerWeek =
-                        subscription.subscriptionPlan?.sessionsPerWeek ?? 0;
-                      if (startDate && endDate) {
-                        const weeks = countSundayWeeksInclusive(
-                          startDate,
-                          endDate,
+                      const plan = subscription.subscriptionPlan;
+                      // #1766 — one cycle at a time: the batch the entitlement
+                      // helper says this plan takes next, never the lifetime total.
+                      const entitlementTotal =
+                        subscription.sessionsTotal ?? plan?.totalSessions;
+                      if (
+                        plan &&
+                        entitlementTotal &&
+                        entitlementTotal > 0 &&
+                        subscription.schedulingPeriodStartsAt
+                      ) {
+                        return (
+                          subscriptionEntitlement({
+                            sessionsTotal: entitlementTotal,
+                            sessionsPerWeek: plan.sessionsPerWeek,
+                            durationInMonths: plan.durationInMonths,
+                            occurrences: allSlots.map((slot) => ({
+                              startsAt: slot.startsAt,
+                              endsAt: slot.endsAt,
+                              completionStatus: slot.completionStatus ?? null,
+                              isTentative: slot.isTentative ?? false,
+                            })),
+                            schedulingPeriodStartsAt:
+                              subscription.schedulingPeriodStartsAt,
+                            schedulingTimezone:
+                              subscription.schedulingTimezone ?? "Asia/Kolkata",
+                          }).cycle.nextBatch * slotsPerSession
                         );
-                        return weeks * sessionsPerWeek * slotsPerSession;
                       }
                       // No totalSessions AND no period: the server throws for
                       // such subscriptions, so any client guess (the old
@@ -938,7 +907,35 @@ export function RequestSchedulingTab({
               totalSessions:
                 tentativeCount > 0
                   ? tentativeCount / slotsPerSession
-                  : subscription.subscriptionPlan?.totalSessions,
+                  : (subscription.sessionsTotal ??
+                    subscription.subscriptionPlan?.totalSessions),
+              // #1766 — the list row's words: booked so far against the
+              // frozen entitlement; the same rows the required count read.
+              entitlement:
+                tentativeCount === 0 &&
+                subscription.subscriptionPlan &&
+                subscription.schedulingPeriodStartsAt
+                  ? subscriptionEntitlement({
+                      sessionsTotal:
+                        subscription.sessionsTotal ??
+                        subscription.subscriptionPlan.totalSessions ??
+                        0,
+                      sessionsPerWeek:
+                        subscription.subscriptionPlan.sessionsPerWeek,
+                      durationInMonths:
+                        subscription.subscriptionPlan.durationInMonths,
+                      occurrences: allSlots.map((slot) => ({
+                        startsAt: slot.startsAt,
+                        endsAt: slot.endsAt,
+                        completionStatus: slot.completionStatus ?? null,
+                        isTentative: slot.isTentative ?? false,
+                      })),
+                      schedulingPeriodStartsAt:
+                        subscription.schedulingPeriodStartsAt,
+                      schedulingTimezone:
+                        subscription.schedulingTimezone ?? "Asia/Kolkata",
+                    })
+                  : undefined,
               durationInMonths: subscription.subscriptionPlan?.durationInMonths,
               sessionsPerWeek: subscription.subscriptionPlan?.sessionsPerWeek,
               sessionDurationInHours: sessionDuration,
@@ -1201,39 +1198,10 @@ export function RequestSchedulingTab({
     // feedback and double-submits are only saved by the idempotency ref.
     setAllocatingRequest(true);
     try {
-      const eventType =
-        selectedRequestForDialog.type === AppointmentsType.SUBSCRIPTION
-          ? "subscription"
-          : "consultation";
-
-      // Same stale-tab guards as the body below: a guard change mints a
-      // fresh key so the server enforces it instead of replaying (#1012).
-      const guards = requestedAllocationGuards(selectedRequestForDialog);
-      const attempt = resolveAttemptKey(
-        attemptKeyRef.current,
-        computeAttemptFingerprint(
-          "requested",
-          selectedRequestForDialog.id,
-          [],
-          undefined,
-          fingerprintGuards(guards),
-        ),
-      );
-      attemptKeyRef.current = attempt;
-
-      // Via the shared client so a non-JSON edge error still carries its HTTP
-      // status (fail-closed) and structured codes like IDEMPOTENCY_KEY_REUSE
-      // survive to the caller instead of collapsing into a generic Error.
-      const result = await AllocationService.allocateSlots(
-        eventType,
-        selectedRequestForDialog.id,
-        [],
-        {
-          useRequestedSlots: true,
-          override,
-          ...guards,
-          idempotencyKey: attempt.key,
-        },
+      const result = await approveRequestedTimes(
+        selectedRequestForDialog,
+        attemptKeyRef,
+        override,
       );
 
       const conflict = classifyRequestedConflict(result);
@@ -1295,21 +1263,9 @@ export function RequestSchedulingTab({
   const handleDeclineConfirm = async () => {
     const request = declineTarget;
     if (!request) return;
-    const endpoint =
-      request.type === AppointmentsType.SUBSCRIPTION
-        ? `/api/bookings/subscriptions/${request.id}`
-        : `/api/bookings/consultations/${request.id}`;
     setDeclining(true);
     try {
-      const response = await fetch(endpoint, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "REJECTED" }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to decline request");
-      }
+      await declineRequest(request);
       toast({
         title: "Request declined",
         description: `The ${getRequestTypeLabel(request.type).toLowerCase()} request has been declined.`,
@@ -1395,11 +1351,7 @@ export function RequestSchedulingTab({
           <span className="font-medium text-foreground">{request.title}</span>
           <RescheduleBadge request={request} />
           <span className="text-xs text-muted-foreground">
-            {request.requiredSlots === undefined
-              ? "Slot count unavailable"
-              : `${request.requiredSlots} slot${
-                  request.requiredSlots !== 1 ? "s" : ""
-                } to allocate`}
+            {requestCountLine(request)}
           </span>
         </div>
       ),

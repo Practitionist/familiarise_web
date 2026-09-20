@@ -344,6 +344,8 @@ export async function getConsultantAppointments(
           // #997 Phase 3 — the appointments route's weekly-confirmed-call-count
           // aggregate buckets by THIS column (ADR B9), not a client-passed tz.
           schedulingTimezone: true,
+          // #1766 — the allocate grid's cycle heading reads the frozen entitlement.
+          sessionsTotal: true,
           status: true,
         },
       },

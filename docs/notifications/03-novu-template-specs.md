@@ -72,7 +72,7 @@ The Novu environment holds one workflow per family, not one per event; a family 
 | `session-media`  | recording-available, recording-failed, recording-expiring, document-uploaded, document-reviewed                                                                                                                            |
 | `payment`        | payment-success, payment-failed, referral-credits-applied                                                                                                                                                                  |
 | `refund`         | refund-requested, refund-processed, refund-failed, dispute-created, dispute-resolved                                                                                                                                       |
-| `payout`         | payout-processed                                                                                                                                                                                                           |
+| `payout`         | payout-processed, payout-failed                                                                                                                                                                                            |
 | `referral`       | referral-bonus-earned, referee-welcome-bonus                                                                                                                                                                               |
 | `subscription`   | subscription-started, subscription-cancelled, subscription-renewed                                                                                                                                                         |
 | `trial`          | trial-session-requested, trial-session-scheduled, trial-session-completed, trial-session-cancelled                                                                                                                         |
@@ -1466,6 +1466,7 @@ These need Dashboard configuration after Tier 1 is done:
 - `appointment-partially-scheduled` — AppointmentPartiallyScheduledPayload (#1206). Consultee only, fired alongside `appointment-booked` when a consultant accepts a partial allocation. The copy must name `placedSessions` of `requiredSessions` and say the remaining `unplacedSessions` are still to be timed.
 - `refund-processed` — RefundPayload
 - `payout-processed` — PayoutPayload
+- `payout-failed` — PayoutPayload
 - `collaborator-invited` — CollaboratorInvitedPayload
 - `collaborator-accepted` — CollaboratorAcceptedPayload
 - `collaborator-removed` — CollaboratorRemovedPayload

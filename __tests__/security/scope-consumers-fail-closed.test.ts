@@ -90,12 +90,14 @@ describe("every self-scoped consumer treats orgMember as an org filter", () => {
     "app/api/bookings/webinars/route.ts",
     "app/api/dashboard/consultant/[consultantId]/documents/route.ts",
     "app/api/dashboard/consultant/[consultantId]/planner/route.ts",
-    "app/api/dashboard/consultee/[consulteeId]/payments/route.ts",
+    // #1770 — the payments route delegates to this read; the org question is
+    // answered there via scopeToWhereOrgId (orgMember pins an org, like org).
+    "lib/data/consultee-payments.ts",
   ];
 
   it.each(CONSUMERS)("%s routes the org question through scopeOrgId", (rel) => {
     const src = read(rel);
-    expect(src).toContain("scopeOrgId");
+    expect(src).toMatch(/scopeOrgId|scopeToWhereOrgId/);
   });
 
   it.each(CONSUMERS)(

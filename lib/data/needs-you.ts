@@ -2,6 +2,8 @@ import prisma from "@/lib/prisma";
 import type { AppointmentStatus, Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import { readPayoutRequirements } from "@/lib/data/consultant-payout-setup";
+import type { PayoutRequirements } from "@/lib/payments/payouts/payout-requirements";
 
 /**
  * Cross-context "needs you" roll-up for a consultant.
@@ -91,6 +93,79 @@ export function subscriptionRequestWhere(
       ? { OR: [{ appointment: null }, { appointment: orgWhere }] }
       : // "all" keeps the old `some: {}` meaning: any allocated wrapper.
         { appointment: scope.kind === "all" ? { isNot: null } : orgWhere }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// #1675 PR-Y2 — "Add your bank account to get paid"
+// ---------------------------------------------------------------------------
+
+/**
+ * The Home row shows only when money exists AND the account is what stops it:
+ * no earnings means nothing to pay and no reason to nag, and a missing PAN
+ * only over-withholds. Deliberately independent of ENABLE_LIVE_PAYOUTS — the
+ * point of the row is to have every account in BEFORE the flag flips, so the
+ * first batch reaches everyone on day one (coordinator correction 2026-09-20).
+ */
+export function payoutSetupNeeded(input: {
+  requirements: Pick<PayoutRequirements, "currentlyDue">;
+  earningsCount: number;
+}): boolean {
+  return (
+    input.earningsCount >= 1 &&
+    input.requirements.currentlyDue.some(
+      (r) => r.code === "PAYOUT_ACCOUNT" || r.code === "ACCOUNT_VERIFICATION",
+    )
+  );
+}
+
+/** Sequential reads (PG_POOL_MAX=1), the earnings count first so a
+ * consultant with nothing to pay costs one query. */
+export async function readPayoutSetupNeeded(
+  consultantProfileId: string,
+): Promise<boolean> {
+  const earningsCount = await prisma.consultantEarnings.count({
+    where: { consultantProfileId },
+  });
+  if (earningsCount === 0) return false;
+  const requirements = await readPayoutRequirements(consultantProfileId, {
+    earningsCount,
+  });
+  return payoutSetupNeeded({ requirements, earningsCount });
+}
+
+/**
+ * #1766 — an APPROVED subscription whose live cycle has finished: at least
+ * one delivered session and no live SCHEDULED one. Whether entitlement is
+ * left (remaining > 0) is decided in JS through the entitlement helper — the
+ * predicate cannot count, so the caller filters after the read.
+ */
+export function nextCycleSubscriptionWhere(
+  consultantProfileId: string,
+  scope: Scope,
+): Prisma.SubscriptionWhereInput {
+  const scoped = subscriptionRequestWhere(
+    consultantProfileId,
+    scope,
+    "APPROVED",
+  );
+  return {
+    ...scoped,
+    deletedAt: null,
+    appointment: {
+      ...(scoped.appointment as Prisma.AppointmentWhereInput | undefined),
+      occurrences: {
+        some: {
+          completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
+          deletedAt: null,
+        },
+        none: {
+          completionStatus: "SCHEDULED",
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+    },
   };
 }
 

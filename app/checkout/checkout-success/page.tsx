@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CheckoutResultSkeleton } from "@/app/checkout/CheckoutSkeletons";
 import { CheckCircle, Clock, Calendar, ArrowRight } from "lucide-react";
 import { reportPaymentsError } from "@/app/checkout/plans/utils";
-import type { BookingState } from "@/app/api/checkout/verify/route";
+import type { BookingState, MoneyState } from "@/app/api/checkout/verify/route";
 interface PaymentDetails {
   paymentIntent: string;
   appointmentType: string;
@@ -16,6 +16,8 @@ interface PaymentDetails {
   message: string;
   /** #1586 — absent while the pipeline has not landed; the page keeps polling. */
   bookingState?: BookingState;
+  /** #1675 — a full refund on its way or done outranks the booking state. */
+  moneyState?: MoneyState;
 }
 
 /**
@@ -158,9 +160,16 @@ function CheckoutSuccessContent() {
 
   // #1586 P1-J07/J08 — headline and status follow the booking state the
   // verify route derived, never the appointment type alone.
-  const getBookingStateMessage = (state: BookingState | undefined) => {
-    switch (state) {
-      case "PENDING_APPROVAL":
+  const getBookingStateMessage = (
+    state: BookingState | undefined,
+    money: MoneyState | undefined,
+  ) => {
+    // The whole charge coming back means the booking is gone, whatever the
+    // request row still says (the #827 loser, the amount mismatch).
+    switch (
+      money === "REFUND_PENDING" || money === "REFUNDED" ? money : state
+    ) {
+      case "REQUESTED":
         return {
           title: "Request sent — awaiting consultant approval",
           description:
@@ -335,7 +344,10 @@ function CheckoutSuccessContent() {
   }
 
   const statusInfo =
-    getBookingStateMessage(paymentDetails.bookingState) ??
+    getBookingStateMessage(
+      paymentDetails.bookingState,
+      paymentDetails.moneyState,
+    ) ??
     getStatusMessage(
       paymentDetails.bookingState === "CONFIRMED"
         ? paymentDetails.appointmentType

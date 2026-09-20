@@ -81,14 +81,34 @@ const mockPrisma = prisma as unknown as {
 
 const FUTURE_SLOTS = ["2026-08-03T09:00:00.000Z", "2026-08-03T09:30:00.000Z"];
 
+// #1766 — a subscription with held sessions appends its next cycle, so its
+// guard is decided AFTER the wrapper's rows are read (an empty wrapper here).
+// The fixture therefore carries enough for fetchEventData to run.
+const SUBSCRIPTION_ROW = {
+  subscriptionPlan: {
+    consultantProfileId: "cp-1",
+    consultantProfile: {
+      user: { id: "consultant-user-1" },
+      scheduleType: "WEEKLY",
+      availabilityWindowsWeekly: [],
+      availabilityWindowsCustom: [],
+    },
+    durationInMonths: 1,
+    sessionsPerWeek: 1,
+    sessionDurationInHours: 1,
+    totalSessions: 1,
+  },
+  sessionsTotal: null,
+  requestedBy: { user: { id: "user-1" } },
+  appointment: null,
+  schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
+  schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
+  schedulingTimezone: "Asia/Kolkata",
+};
+
 beforeEach(() => {
   jest.clearAllMocks();
-  // getConsultantProfileId + getConsulteeUserId both read subscription.findUnique
-  // with different selects; return a superset that satisfies both.
-  mockPrisma.subscription.findUnique.mockResolvedValue({
-    subscriptionPlan: { consultantProfileId: "cp-1" },
-    requestedBy: { user: { id: "user-1" } },
-  });
+  mockPrisma.subscription.findUnique.mockResolvedValue(SUBSCRIPTION_ROW);
   mockPrisma.appointment.findFirst.mockResolvedValue(null);
   mockPrisma.appointment.findMany.mockResolvedValue([]);
 });
@@ -110,7 +130,7 @@ describe("manual allocation with initialAllocation", () => {
     // The one 409 that may close the dialog and drop the row.
     expect(result.errorCode).toBe("ALREADY_ALLOCATED");
     expect(result.error).toContain("already allocated in another session");
-    // The guard fires before any event data is fetched or written.
+    // The guard fires before anything is written.
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
   });
 
@@ -125,8 +145,8 @@ describe("manual allocation with initialAllocation", () => {
       initialAllocation: true,
     });
 
-    // Guard passes (count=0) and the flow proceeds until event data is
-    // missing in this harness — a NOT_FOUND, decisively not the 409 guard.
+    // Guard passes (count=0) and the flow proceeds into a write transaction
+    // this harness does not model — whatever that yields, not the 409 guard.
     expect(mockPrisma.appointmentOccurrence.count).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ isTentative: false }),
@@ -155,26 +175,6 @@ describe("manual allocation: transaction race window", () => {
     // Tab B commits between tab A's out-of-txn guard and its write txn: the
     // first count returns 0, the advisory-locked in-txn count returns 2.
     mockPrisma.appointmentOccurrence.count.mockResolvedValueOnce(0);
-    mockPrisma.subscription.findUnique.mockResolvedValue({
-      subscriptionPlan: {
-        consultantProfileId: "cp-1",
-        consultantProfile: {
-          user: { id: "consultant-user-1" },
-          scheduleType: "WEEKLY",
-          availabilityWindowsWeekly: [],
-          availabilityWindowsCustom: [],
-        },
-        durationInMonths: 1,
-        sessionsPerWeek: 1,
-        sessionDurationInHours: 1,
-        totalSessions: 1,
-      },
-      requestedBy: { user: { id: "user-1" } },
-      appointments: [],
-      schedulingPeriodStartsAt: new Date("2026-08-02T00:00:00.000Z"),
-      schedulingPeriodEndsAt: new Date("2026-08-29T23:59:59.000Z"),
-      schedulingTimezone: "Asia/Kolkata",
-    });
     mockValidateFn.mockResolvedValue({
       isValid: true,
       errors: [],
