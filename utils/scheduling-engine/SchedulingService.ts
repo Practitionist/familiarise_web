@@ -88,6 +88,13 @@ import {
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import {
+  SETTLED_CONSULTATION,
+  SETTLED_SUBSCRIPTION,
+  UNPAID_CONSULTATION,
+  UNPAID_SUBSCRIPTION,
+  type ApprovalOutcome,
+} from "@/lib/booking/approve-request";
+import {
   isMinuteWithinWeeklySlot,
   TWENTY_FOUR_HOURS_IN_MS,
 } from "./slotTimeUtils";
@@ -1980,7 +1987,7 @@ export class SchedulingService {
           }
 
           // Update event status
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
@@ -2013,6 +2020,7 @@ export class SchedulingService {
 
           return {
             success: true,
+            outcome,
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
@@ -2531,7 +2539,7 @@ export class SchedulingService {
           }
 
           // Update event status
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
@@ -2548,6 +2556,7 @@ export class SchedulingService {
 
           return {
             success: true,
+            outcome,
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
@@ -2858,7 +2867,7 @@ export class SchedulingService {
           );
 
           // Update event status to approved (appointments already exist and verified)
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
@@ -2906,6 +2915,7 @@ export class SchedulingService {
 
           return {
             success: true,
+            outcome,
             appointments: existingAppointments,
             warnings: validation.warnings,
             stagedNotices: await SchedulingService.stageAllocationNotices(
@@ -4795,6 +4805,52 @@ export class SchedulingService {
   }
 
   /**
+   * #1775 B-9 — two CAS attempts, the money predicate in each WHERE. The
+   * first lands a settled request in APPROVED (the self-edge keeps
+   * re-allocation of a paid booking legal); the second lands an unpaid one in
+   * APPROVED_PENDING_PAYMENT from PENDING or from itself. Both missing means
+   * the row is not approvable (cancelled, expired, or a wrapper in an odd
+   * money state) and the allocation rolls back as before.
+   */
+  private static async approveByMoney<
+    W extends { id: string },
+    D extends object,
+  >(
+    eventId: string,
+    transition: (args: {
+      where: W;
+      to: AppointmentStatus;
+      fromIn: AppointmentStatus[];
+      data?: D;
+    }) => Promise<void>,
+    settled: Omit<W, "id">,
+    unpaid: Omit<W, "id">,
+    data?: D,
+  ): Promise<ApprovalOutcome> {
+    try {
+      await transition({
+        where: { id: eventId, ...settled } as W,
+        to: AppointmentStatus.APPROVED,
+        fromIn: ALLOCATION_APPROVABLE_FROM,
+        data,
+      });
+      return "approved";
+    } catch (error) {
+      if (!(error instanceof IllegalTransitionError)) throw error;
+    }
+    await transition({
+      where: { id: eventId, ...unpaid } as W,
+      to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      fromIn: [
+        AppointmentStatus.PENDING,
+        AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      ],
+      data,
+    });
+    return "awaiting_payment";
+  }
+
+  /**
    * Update event status after allocation
    */
   private static async updateEventStatus(
@@ -4803,26 +4859,33 @@ export class SchedulingService {
     eventId: string,
     firstSlot: Date,
     config: EventConfig,
-  ): Promise<void> {
+  ): Promise<ApprovalOutcome | undefined> {
     switch (eventType) {
       // #836 — allocation racing a cancel/expiry must not resurrect the
       // request to APPROVED; the allowed-from guard rides the WHERE and a
       // miss rolls back the whole allocation tx. fromIn keeps the APPROVED
       // self-edge legal for re-allocation of an already-approved event.
+      // #1775 B-9 — allocation IS the approval, and the money decides where
+      // it lands: a settled wrapper (SUCCEEDED payment, or a free plan) goes
+      // to APPROVED; an unpaid request goes to APPROVED_PENDING_PAYMENT and
+      // the caller mints the pay order after the commit. Both predicates
+      // ride the CAS WHERE; an unpaid row that already awaits payment keeps
+      // its live link (self-edge), it is never re-stamped APPROVED.
       case "consultation":
-        await transitionConsultationRequest(tx, {
-          where: { id: eventId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: ALLOCATION_APPROVABLE_FROM,
-        });
-        break;
+        return this.approveByMoney(
+          eventId,
+          (args) => transitionConsultationRequest(tx, args),
+          SETTLED_CONSULTATION,
+          UNPAID_CONSULTATION,
+        );
 
       case "subscription":
-        await transitionSubscriptionRequest(tx, {
-          where: { id: eventId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: ALLOCATION_APPROVABLE_FROM,
-          data: {
+        return this.approveByMoney(
+          eventId,
+          (args) => transitionSubscriptionRequest(tx, args),
+          SETTLED_SUBSCRIPTION,
+          UNPAID_SUBSCRIPTION,
+          {
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot
             // which could cause slots to appear outside the intended scheduling window
@@ -4837,8 +4900,7 @@ export class SchedulingService {
                 }
               : {}),
           },
-        });
-        break;
+        );
 
       case "webinar": {
         // Webinar model does NOT have startDate/endDate fields

@@ -1,20 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
-import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
-import {
-  PaymentGateway,
-  PaymentStatus,
-  Prisma,
-  AppointmentStatus,
-} from "@prisma/client";
+import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApprovalWindowLapsedError,
-  createApprovalPaymentIntent,
-} from "@/lib/payments/operations/approval-payment";
-import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
+import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
@@ -33,7 +23,6 @@ import { APPROVAL_STATUSES_DETAIL_ONLY } from "@/lib/booking/list-query";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { sendPaymentLinkEmail } from "@/lib/email";
 import {
   notifySubscriptionStarted,
   notifySubscriptionCancelled,
@@ -51,41 +40,6 @@ import {
 import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action";
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
-
-/**
- * Type for subscription with all related details needed for payment processing.
- * Derived via the extended client — raw GetPayload would re-introduce bigint
- * money fields (#780).
- */
-type SubscriptionWithDetails = Prisma.Result<
-  typeof prisma.subscription,
-  {
-    include: {
-      subscriptionPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: { id: true; name: true; email: true; image: true };
-              };
-            };
-          };
-        };
-      };
-      requestedBy: {
-        include: {
-          user: { select: { id: true; name: true; email: true; image: true } };
-        };
-      };
-      appointment: {
-        include: {
-          occurrences: true;
-        };
-      };
-    };
-  },
-  "findFirstOrThrow"
->;
 
 export async function GET(
   _request: NextRequest,
@@ -680,54 +634,40 @@ export async function PATCH(
         });
       }
 
-      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
-      // in-tx comment). Mint failure leaves APPROVED_PENDING_PAYMENT with no
-      // link; re-approval re-enters via needsLinkRetry and reuses the PENDING
-      // payment the first attempt persisted (#1181).
+      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (a
+      // gateway round-trip inside the Serializable tx pinned a connection and
+      // left a live link on rollback). #1775 B-9 — the block is the shared
+      // post-commit mint every approval writer calls: it reuses a live
+      // PENDING intent on a retry (#1181), CASes the link onto the row,
+      // tombstones an orphaned order and mails only a live link.
       let mintedLink: {
         paymentUrl: string;
-        paymentAmount: number;
-        paymentCurrency: string;
+        paymentAmount?: number;
+        paymentCurrency?: string;
       } | null = null;
       if (
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry; the retry reuses the same PENDING
-        // payment (#1181) rather than minting a parallel order — so a second
-        // live link can never reach the consultee. Everything after a
-        // successful mint therefore reports and continues.
-        let paymentResult;
-        try {
-          paymentResult = await generatePaymentLinkForSubscription(
-            result.data,
-            // On a retry the period was already committed by the first
-            // approval; recomputing it would drift the gateway metadata away
-            // from the row.
-            result.data.schedulingPeriodStartsAt ?? startDate,
-            result.data.schedulingPeriodEndsAt ?? endDate,
+        const mint = await mintApprovalPaymentAfterCommit({
+          kind: "subscription",
+          id: subscriptionId,
+        });
+        // A lapsed approval is not a retryable mint failure (#1319 review):
+        // the dead intent's request has already been swept.
+        if (mint.status === "lapsed") {
+          return NextResponse.json(
+            {
+              data: result.data,
+              error: mint.message,
+              requiresPayment: true,
+              paymentUrl: null,
+            },
+            { status: 409 },
           );
-        } catch (linkError) {
-          // #1319 review — a lapsed approval is not a retryable mint failure:
-          // the dead intent's request has already been swept, so re-approving
-          // would loop forever. Answer 409 and tell the consultee to re-request.
-          if (linkError instanceof ApprovalWindowLapsedError) {
-            return NextResponse.json(
-              {
-                data: result.data,
-                error: linkError.message,
-                requiresPayment: true,
-                paymentUrl: null,
-              },
-              { status: 409 },
-            );
-          }
-          Sentry.captureException(
-            linkError instanceof Error
-              ? linkError
-              : new Error(String(linkError)),
-            { tags: { subsystem: "bookings" } },
-          );
+        }
+        // The 502 invites a retry; the retry reuses the same PENDING payment.
+        if (mint.status === "mint_failed") {
           return NextResponse.json(
             {
               data: result.data,
@@ -739,94 +679,14 @@ export async function PATCH(
             { status: 502 },
           );
         }
-
-        mintedLink = {
-          paymentUrl: paymentResult.checkoutUrl,
-          paymentAmount: paymentResult.amount,
-          paymentCurrency: paymentResult.currency,
-        };
-
-        try {
-          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
-          // mint landing after the lapse sweep EXPIRED the request must not
-          // re-arm a link; zero rows is reported, never thrown.
-          const persisted = await prisma.subscription.updateMany({
-            where: {
-              id: subscriptionId,
-              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-              pendingPaymentUrl: null,
-            },
-            data: {
-              pendingPaymentUrl: paymentResult.checkoutUrl,
-              requestNotes: result.data.requestNotes
-                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                : `[System] Payment link generated and sent to user.`,
-            },
-          });
-          if (persisted.count === 0) {
-            // The request moved since the mint (lapsed, paid, or a sibling
-            // persisted first): the orphaned order is tombstoned and only a
-            // link still live on the row may reach the consultee.
-            const outcome = await reconcileOrphanedPayLink({
-              kind: "subscription",
-              id: subscriptionId,
-              paymentIntentId: paymentResult.paymentIntentId,
-              checkoutUrl: paymentResult.checkoutUrl,
-            });
-            mintedLink = outcome.url
-              ? { ...mintedLink, paymentUrl: outcome.url }
-              : null;
-          }
-        } catch (persistError) {
-          // Unproven row state: the link is not delivered (see the
-          // consultation twin); a re-approval reuses the same intent.
-          mintedLink = null;
-          Sentry.captureException(
-            persistError instanceof Error
-              ? persistError
-              : new Error(String(persistError)),
-            { tags: { subsystem: "bookings" } },
-          );
-          console.error(
-            `⚠️ Failed to persist payment link for subscription ${subscriptionId}:`,
-            persistError instanceof Error
-              ? persistError.message
-              : "Unknown error",
-          );
-        }
-
-        // Only a link that is live on the row is mailed (#1583 A-P0-06).
-        if (mintedLink) {
-          try {
-            await sendPaymentLinkEmail({
-              email: result.data.requestedBy.user.email || "",
-              name: result.data.requestedBy.user.name || "User",
-              consultantName:
-                result.data.subscriptionPlan.consultantProfile.user.name ||
-                "Consultant",
-              appointmentType: "subscription" as const,
-              amount: paymentResult.amount,
-              currency: paymentResult.currency,
-              paymentUrl: mintedLink.paymentUrl,
-              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-            });
-            console.log(
-              `📧 Payment link email sent for subscription ${subscriptionId}`,
-            );
-          } catch (emailError) {
-            Sentry.captureException(
-              emailError instanceof Error
-                ? emailError
-                : new Error(String(emailError)),
-              { tags: { subsystem: "bookings" } },
-            );
-            console.error(
-              `⚠️ Failed to send payment link email for subscription ${subscriptionId}:`,
-              emailError instanceof Error
-                ? emailError.message
-                : "Unknown error",
-            );
-          }
+        if (mint.status === "minted") {
+          mintedLink = {
+            paymentUrl: mint.paymentUrl,
+            paymentAmount: mint.paymentAmount,
+            paymentCurrency: mint.paymentCurrency,
+          };
+        } else if (mint.status === "already_live") {
+          mintedLink = { paymentUrl: mint.paymentUrl };
         }
       }
 
@@ -1022,38 +882,4 @@ async function checkSubscriptionPayment(
   });
 
   return (subscription?.appointment?.payment?.length ?? 0) > 0;
-}
-
-/**
- * Generate payment link for approved subscription
- */
-async function generatePaymentLinkForSubscription(
-  subscription: SubscriptionWithDetails,
-  schedulingPeriodStartsAt: Date,
-  schedulingPeriodEndsAt: Date,
-) {
-  const { subscriptionPlan, requestedBy } = subscription;
-  // #1181 / #1554 — the purchase wrapper. Threading it stamps
-  // Payment.appointmentId so capture confirms THAT row instead of building a
-  // twin subscription off metadata, and the duplicate-payment guard (which
-  // reads appointment.payment) can see approval payments at all. Unset only
-  // when no wrapper exists yet — nothing to confirm, mint as before.
-  const appointmentId = subscription.appointment?.id ?? undefined;
-
-  return await createApprovalPaymentIntent({
-    userId: requestedBy.user.id,
-    appointmentType: "SUBSCRIPTION",
-    subscriptionId: subscription.id,
-    appointmentId,
-    planId: subscriptionPlan.id,
-    // #1165 — settlement is INR-only; Razorpay is the KYC'd primary gateway,
-    // matching the trial path. Param stays configurable for a scale decision.
-    paymentGateway: PaymentGateway.RAZORPAY,
-    // #1166 ORG-9 — carry org sponsorship when an org-tagged appointment
-    // already exists on the request.
-    organizationId: subscription.appointment?.organizationId ?? undefined,
-    schedulingPeriodStartsAt: schedulingPeriodStartsAt.toISOString(),
-    schedulingPeriodEndsAt: schedulingPeriodEndsAt.toISOString(),
-    notes: subscription.requestNotes ?? undefined,
-  });
 }

@@ -712,24 +712,21 @@ describe("approval routes thread the appointment (source contract)", () => {
   const read = (rel: string) =>
     fs.readFileSync(path.join(process.cwd(), rel), "utf8");
 
-  it("the consultation route passes its request-time appointment", () => {
-    const src = read(
-      "app/api/bookings/consultations/[consultationId]/route.ts",
-    );
-    const fn = src.slice(src.indexOf("async function generatePaymentLink"));
-    expect(fn).toContain("appointmentId: appointment?.id ?? undefined");
-  });
-
-  it("the subscription route passes its one request-time appointment", () => {
-    const src = read(
-      "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
-    );
+  // #1775 B-9 — both request routes mint through the one shared post-commit
+  // block; the request-time appointment (the subscription's ONE wrapper —
+  // #1554, no `[0]` to pick) is threaded there.
+  it("the shared approval mint passes the request-time appointment", () => {
+    const src = read("lib/booking/approve-request.ts");
     const fn = src.slice(
-      src.indexOf("async function generatePaymentLinkForSubscription"),
+      src.indexOf("export async function mintApprovalPaymentAfterCommit"),
     );
-    expect(fn).toContain("appointmentId,");
-    // #1554 — one wrapper per subscription, so there is no `[0]` to pick.
-    expect(fn).toContain("subscription.appointment?.id ?? undefined");
+    expect(fn).toContain("appointmentId: row.appointment?.id ?? undefined");
+    for (const rel of [
+      "app/api/bookings/consultations/[consultationId]/route.ts",
+      "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
+    ]) {
+      expect(read(rel)).toContain("mintApprovalPaymentAfterCommit({");
+    }
   });
 
   it('the metadata builder no longer carries the "pending" sentinel', () => {
@@ -745,8 +742,7 @@ describe("approval routes thread the appointment (source contract)", () => {
     // The twin-prone default (leaving it unset) may only survive where no
     // appointment exists yet; the call sites must at least name the param.
     for (const rel of [
-      "app/api/bookings/consultations/[consultationId]/route.ts",
-      "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
+      "lib/booking/approve-request.ts",
       "app/api/trials/[trialId]/route.ts",
     ]) {
       expect(read(rel)).toMatch(/appointmentId:/);

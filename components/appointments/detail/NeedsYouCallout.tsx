@@ -201,7 +201,16 @@ function ApproveOrDecline({
       }
       if (!result.success)
         throw new Error(result.error || "Failed to allocate slots");
-      toast(timesConfirmed());
+      // #1775 B-9 — an unpaid request is approved, not confirmed: the pay
+      // order was minted and the client has the 24 h window to pay.
+      toast(
+        result.awaitingPayment
+          ? {
+              title: "Approved — the client has 24 h to pay",
+              description: `${names.payer} was sent the payment link; the times are held until it is paid.`,
+            }
+          : timesConfirmed(),
+      );
       decision.onDecided();
     } catch (error) {
       Sentry.captureException(

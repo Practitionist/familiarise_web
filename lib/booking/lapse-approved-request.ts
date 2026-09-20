@@ -7,6 +7,10 @@ import {
 } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { Refusal } from "@/lib/errors/refusal";
+import {
+  UNPAID_CONSULTATION,
+  UNPAID_SUBSCRIPTION,
+} from "@/lib/booking/approve-request";
 import { SLOT_TRANSITION_TX_OPTIONS } from "@/lib/booking/slot-release";
 import { notifyConsulteeRequestExpired } from "@/lib/booking/expiry-notices";
 import {
@@ -39,24 +43,8 @@ export type LapseOutcome =
   | { moved: 0; appointmentId: null }
   | { moved: 1; appointmentId: string | null };
 
-// The predicates the sweeps repeat in the CAS WHERE: no succeeded payment on
-// the wrapper (#1554 — a subscription may have no wrapper yet).
-const UNPAID_CONSULTATION = {
-  appointment: {
-    payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-  },
-} as const;
-const UNPAID_SUBSCRIPTION: { OR: Prisma.SubscriptionWhereInput[] } = {
-  OR: [
-    { appointment: null },
-    {
-      appointment: {
-        payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-      },
-    },
-  ],
-};
-
+// The unpaid arm of the approval decision (#1775 B-9), one copy for every
+// writer: the CAS WHERE below carries it, never a read ahead of it.
 type LapseTx = Pick<
   Tx,
   | "consultation"
