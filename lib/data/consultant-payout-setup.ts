@@ -71,6 +71,34 @@ async function readRequirementInputs(consultantProfileId: string) {
   return { taxInfo, defaultAccount, earningsCount };
 }
 
+/**
+ * The eligibility gate without the READY aggregate: the account reasons sit
+ * ahead of BELOW_MINIMUM, so a caller that only asks "is the account what
+ * stops the money?" (the Home row) needs no balance. `readyAmount` is pinned
+ * at the minimum so the answer is never BELOW_MINIMUM by accident.
+ */
+export async function readPayoutGate(
+  consultantProfileId: string,
+): Promise<{ reason: PayoutEligibilityReason | null }> {
+  const taxInfo = await prisma.consultantTaxInfo.findUnique({
+    where: { consultantProfileId },
+    select: { isIndianResident: true },
+  });
+  const defaultAccount = await prisma.payoutAccount.findFirst({
+    where: { consultantProfileId, isDefault: true },
+    select: { isVerified: true },
+  });
+  return {
+    reason: payoutEligibilityReason({
+      livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+      isIndianResident: taxInfo?.isIndianResident ?? true,
+      defaultAccount,
+      readyAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+      minimumAmount: PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT,
+    }),
+  };
+}
+
 export async function readPayoutRequirements(
   consultantProfileId: string,
 ): Promise<PayoutRequirements> {

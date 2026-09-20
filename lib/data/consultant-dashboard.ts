@@ -27,6 +27,8 @@ import {
   pendingSubscriptionWhere,
   subscriptionRequestWhere,
 } from "@/lib/data/needs-you";
+import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
+import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
@@ -821,6 +823,13 @@ export async function getConsultantDashboard(
     now,
   );
 
+  // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
+  // reads above; a failure degrades to no row, never to a broken Home.
+  const payoutSetup = {
+    needed: await readPayoutSetupNeeded(consultantProfileId).catch(() => false),
+    href: payoutSettingsHref(consultantProfileId),
+  };
+
   const approvals = toRequestRows(pendingConsultations, pendingSubscriptions);
   const awaitingPayment = {
     count: awaitingPaymentConsultationCount + awaitingPaymentSubscriptionCount,
@@ -940,6 +949,7 @@ export async function getConsultantDashboard(
     awaitingPayment,
     orgSessions,
     responseRate,
+    payoutSetup,
     performanceSnapshot: {
       earningsThisMonth: earningsThisMonthVal,
       earningsLastMonth: earningsLastMonthVal,

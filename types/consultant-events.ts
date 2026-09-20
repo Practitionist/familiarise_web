@@ -91,4 +91,6 @@ export interface TConsultantDashboardResponse {
   };
   performanceSnapshot: TPerformanceSnapshot;
   financialSummary: TFinancialSummary;
+  /** #1675 PR-Y2 — earnings exist and the payout account is what stops them. */
+  payoutSetup?: { needed: boolean; href: string };
 }

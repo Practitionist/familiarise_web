@@ -2,6 +2,8 @@ import prisma from "@/lib/prisma";
 import type { AppointmentStatus, Prisma } from "@prisma/client";
 import type { Scope } from "@/lib/api/scope/parse";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
+import { readPayoutGate } from "@/lib/data/consultant-payout-setup";
+import type { PayoutEligibilityReason } from "@/lib/payments/payouts/payout-requirements";
 
 /**
  * Cross-context "needs you" roll-up for a consultant.
@@ -92,6 +94,39 @@ export function subscriptionRequestWhere(
       : // "all" keeps the old `some: {}` meaning: any allocated wrapper.
         { appointment: scope.kind === "all" ? { isNot: null } : orgWhere }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// #1675 PR-Y2 — "Add your bank account to get paid"
+// ---------------------------------------------------------------------------
+
+/**
+ * The Home row shows only when money exists AND the account is what stops it:
+ * no earnings means nothing to pay and no reason to nag, and a reason other
+ * than the account (the launch freeze, residency, the minimum) is not the
+ * consultant's to fix on the settings page.
+ */
+export function payoutSetupNeeded(input: {
+  reason: PayoutEligibilityReason | null;
+  earningsCount: number;
+}): boolean {
+  return (
+    input.earningsCount >= 1 &&
+    (input.reason === "NO_ACCOUNT" || input.reason === "UNVERIFIED")
+  );
+}
+
+/** Sequential reads (PG_POOL_MAX=1), the earnings count first so a
+ * consultant with nothing to pay costs one query. */
+export async function readPayoutSetupNeeded(
+  consultantProfileId: string,
+): Promise<boolean> {
+  const earningsCount = await prisma.consultantEarnings.count({
+    where: { consultantProfileId },
+  });
+  if (earningsCount === 0) return false;
+  const { reason } = await readPayoutGate(consultantProfileId);
+  return payoutSetupNeeded({ reason, earningsCount });
 }
 
 /**

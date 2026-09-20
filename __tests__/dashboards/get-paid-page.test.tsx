@@ -7,7 +7,8 @@
  * eligibility reason renders its own CTA/state, the PAN card shows the
  * Section 194-O sentence only while the PAN is missing, and no full account
  * number or PAN ever reaches the DOM; the reverse-penny-drop settle step
- * persists the masked row only (mock-Prisma call-shape assertion).
+ * persists the masked row only (mock-Prisma call-shape assertion). Y2-3: the
+ * Home row's predicate.
  */
 
 jest.mock("@sentry/nextjs", () => ({ captureException: jest.fn() }));
@@ -35,6 +36,8 @@ import prisma from "@/lib/prisma";
 import { getRazorpayPayoutsService } from "@/lib/payments/payouts/razorpay-payouts";
 import { settleReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-drop";
 import { payoutRequirements } from "@/lib/payments/payouts/payout-requirements";
+import { payoutSetupNeeded } from "@/lib/data/needs-you";
+import { deriveConsultantActionItems } from "@/lib/dashboard/action-items";
 import { GetPaidView } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/payouts/GetPaidClient";
 import type { PayoutSetup } from "@/app/dashboard/consultant/[consultantId]/(features)/settings/payouts/get-paid-api";
 
@@ -60,7 +63,11 @@ function account(
   };
 }
 
-function setup(overrides: Partial<PayoutSetup> = {}): PayoutSetup {
+type SetupOverrides = Omit<Partial<PayoutSetup>, "taxInfo"> & {
+  taxInfo?: Partial<PayoutSetup["taxInfo"]>;
+};
+
+function setup(overrides: SetupOverrides = {}): PayoutSetup {
   const accounts = overrides.accounts ?? [];
   const taxInfo: PayoutSetup["taxInfo"] = {
     hasTaxInfo: false,
@@ -79,7 +86,6 @@ function setup(overrides: Partial<PayoutSetup> = {}): PayoutSetup {
   const defaultAccount = accounts.find((a) => a.isDefault) ?? null;
   return {
     accounts,
-    taxInfo,
     requirements: payoutRequirements({
       consultantProfileId: CP,
       taxInfo: taxInfo.panMasked
@@ -96,6 +102,7 @@ function setup(overrides: Partial<PayoutSetup> = {}): PayoutSetup {
     livePayoutsEnabled: true,
     razorpayConfigured: true,
     ...overrides,
+    taxInfo,
   };
 }
 
@@ -135,7 +142,7 @@ describe("Y2-2 Get-paid page faces", () => {
         accounts: [account()],
         taxInfo: { panMasked: "XXXXXX234F", taxEntityType: "INDIVIDUAL" },
         eligibilityReason: "BELOW_MINIMUM",
-      }) as PayoutSetup,
+      }),
     );
     expect(verified).toContain("•••• 6789");
     expect(verified).toContain("Change");
@@ -230,6 +237,40 @@ describe("Y2-2 reverse penny drop persists a reference-only row", () => {
     });
     await expect(settleReversePennyDrop(CP, "fav_3")).resolves.toEqual({
       status: "pending",
+    });
+  });
+});
+
+describe("Y2-3 Home needs-you row", () => {
+  it("no earnings → no row; earnings + NO_ACCOUNT → the row with the settings link", () => {
+    expect(payoutSetupNeeded({ reason: "NO_ACCOUNT", earningsCount: 0 })).toBe(
+      false,
+    );
+    expect(payoutSetupNeeded({ reason: "NO_ACCOUNT", earningsCount: 1 })).toBe(
+      true,
+    );
+    expect(payoutSetupNeeded({ reason: "UNVERIFIED", earningsCount: 3 })).toBe(
+      true,
+    );
+    // The launch freeze and the minimum are not the consultant's to fix here.
+    expect(
+      payoutSetupNeeded({ reason: "LIVE_PAYOUTS_OFF", earningsCount: 3 }),
+    ).toBe(false);
+    expect(
+      payoutSetupNeeded({ reason: "BELOW_MINIMUM", earningsCount: 3 }),
+    ).toBe(false);
+
+    const items = deriveConsultantActionItems({
+      pendingApprovals: 0,
+      upcomingSessions: [],
+      basePath: `/dashboard/consultant/${CP}`,
+      payoutSetupNeeded: true,
+    });
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      key: "payout-setup",
+      title: "Add your bank account to get paid",
+      ctaHref: `/dashboard/consultant/${CP}/settings/payouts`,
     });
   });
 });

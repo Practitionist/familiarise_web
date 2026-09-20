@@ -90,6 +90,8 @@ interface HomeTabProps {
   pendingRequestsCount?: number;
   awaitingPayment?: TConsultantDashboardResponse["awaitingPayment"];
   orgSessions?: TConsultantDashboardResponse["orgSessions"];
+  /** The "Add your bank account" row's input; absent on older payloads. #1675 PR-Y2 */
+  payoutSetup?: TConsultantDashboardResponse["payoutSetup"];
   /** Read-only metric on the requests card; absent on older payloads. #1703 */
   responseRate?: TConsultantDashboardResponse["responseRate"];
   /** From the RSC page, so server and client format one wall clock. #1703 */
@@ -122,6 +124,7 @@ export function HomeTab({
   pendingRequestsCount = 0,
   awaitingPayment,
   orgSessions = [],
+  payoutSetup,
   responseRate,
   viewerZone,
   performanceSnapshot,
@@ -213,8 +216,9 @@ export function HomeTab({
           })),
         ),
         basePath: `/dashboard/consultant/${consultantId}`,
+        payoutSetupNeeded: payoutSetup?.needed ?? false,
       }),
-    [allUpcomingAppointments, pendingRequestsCount, consultantId],
+    [allUpcomingAppointments, pendingRequestsCount, consultantId, payoutSetup],
   );
 
   return (
