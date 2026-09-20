@@ -162,7 +162,12 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          className="scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
+          // Tracks the measured sticky bar (JS var) so deep-links land below
+          // it; falls back to the static header calc pre-measurement.
+          style={{
+            scrollMarginTop:
+              "var(--browse-scroll-mt, calc(var(--header-height,5rem)+1rem))",
+          }}
         >
           <SectionHeader
             title="Browse Familiarise Experts"

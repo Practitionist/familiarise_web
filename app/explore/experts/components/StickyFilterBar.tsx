@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Building2, SlidersHorizontal, Users, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -69,8 +69,48 @@ export default function StickyFilterBar({
   resultSummary,
 }: Readonly<StickyFilterBarProps>) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
   const counts = metadata?.consultantMetadata.affiliationCounts;
   const orgKindCounts = metadata?.consultantMetadata.orgKindCounts;
+
+  // The fixed navbar stack (maintenance banner + announcement bar + navbar)
+  // renders at heights the CSS vars don't always capture (banners mount late
+  // or report stale heights), so a static `top` tucks this bar underneath it.
+  // Measure the real bottom of [data-global-navbar] and pin the sticky offset
+  // to it (+12px breathing room). Re-measures on resize, body layout shifts
+  // (banner mount/dismiss), and shortly after mount for late banners.
+  useEffect(() => {
+    const update = () => {
+      const nav = document.querySelector("[data-global-navbar]");
+      const navBottom = nav ? Math.ceil(nav.getBoundingClientRect().bottom) : 0;
+      const top = Math.max(0, navBottom) + 12;
+      barRef.current?.style.setProperty("top", `${top}px`);
+      const barHeight = barRef.current?.offsetHeight ?? 0;
+      document.documentElement.style.setProperty(
+        "--sticky-filter-top",
+        `${top}px`,
+      );
+      document.documentElement.style.setProperty(
+        "--browse-scroll-mt",
+        `${top + barHeight + 8}px`,
+      );
+    };
+    update();
+    const t1 = setTimeout(update, 500);
+    const t2 = setTimeout(update, 2000);
+    window.addEventListener("resize", update);
+    const ro =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(update)
+        : null;
+    if (ro) ro.observe(document.body);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.removeEventListener("resize", update);
+      ro?.disconnect();
+    };
+  }, []);
 
   const selectAffiliation = (value: AffiliationType) => {
     // Leaving Agency/Org clears the org-kind sub-filter so it can't linger
@@ -84,13 +124,12 @@ export default function StickyFilterBar({
 
   return (
     <div
+      ref={barRef}
       className="sticky z-30 border-b border-border bg-background/80 backdrop-blur-xl"
-      // --header-height omits the maintenance banner that Navbar.tsx adds to
-      // its own top offset, so without it the bar tucks under the navbar by
-      // exactly the banner height. The trailing 0.75rem is breathing room so
-      // the bar never kisses the navbar even during banner transitions.
+      // Measured at runtime (see effect above); the static calc is the
+      // no-JS/first-paint fallback only.
       style={{
-        top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 0.75rem)",
+        top: "var(--sticky-filter-top, calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 0.75rem))",
       }}
     >
       <div className="py-3 space-y-3">
