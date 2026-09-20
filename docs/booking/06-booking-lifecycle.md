@@ -1131,6 +1131,7 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 | Refund processed | `refund-processed` | Consultee              | Refund API             | Refund routes  |
 | Refund requested | `refund-requested` | Admin users            | Refund request API     | Refund routes  |
 | Payout processed | `payout-processed` | Consultant             | Payout processing      | Payout scripts |
+| Payout failed    | `payout-failed`    | Consultant             | Payout rejection / gateway FAILED or CANCELLED webhook | Payout service |
 | Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API   | Dispute routes |
 | Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API | Dispute routes |
 

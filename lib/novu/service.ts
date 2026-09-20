@@ -205,8 +205,17 @@ async function stageAndAttempt(
     return { success: false, error: "Novu not configured" };
   }
   if (!staged) {
-    // Staging failed outside a transaction: send-first, as before #1654, so
-    // a database hiccup does not also drop the bell.
+    // Staging failed outside a transaction. A quiet-hours floor lives only in
+    // the row, so a deferred notice has nowhere to wait: fail closed rather
+    // than wake the recipient early (stageTrigger already reported to Sentry).
+    if (notBefore && notBefore.getTime() > Date.now()) {
+      return {
+        success: false,
+        error: "Stage failed; quiet-hours notice not sent",
+      };
+    }
+    // Otherwise send-first, as before #1654, so a database hiccup does not
+    // also drop the bell.
     return sendUnstaged(args);
   }
   if (opts?.tx) return { success: true, staged };

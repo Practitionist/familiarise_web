@@ -27,6 +27,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { NotificationPreferencesPanel } from "@/components/notifications";
+import { useSession } from "@/lib/auth-client";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   CookiePreference,
@@ -63,6 +64,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   const { staffId } = resolvedParams;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
 
   // Fetch data on component mount
   const { data, isPending, isError, refetch } = useQuery({
@@ -462,8 +464,12 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           </CardFooter>
         </Card>
 
-        {/* Novu Notification Preferences */}
-        <NotificationPreferencesPanel />
+        {/* Novu Notification Preferences — the panel edits the SESSION
+            user's preferences, so an admin viewing another staff member's
+            page must not see it (#1738 review). */}
+        {session?.user?.id === staffData.user.id && (
+          <NotificationPreferencesPanel />
+        )}
 
         {/* Cookie Preferences Card (notifications live in the
             Novu-synced panel above) */}
