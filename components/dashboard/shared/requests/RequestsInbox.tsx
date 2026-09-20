@@ -39,6 +39,7 @@ import {
   type InboxType,
   type RequestsInboxPayload,
 } from "@/lib/dashboard/requests-inbox-state";
+import { requestsFreshnessBadge } from "@/lib/scheduling/requestsFreshness";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { cn } from "@/utils/tailwind";
 
@@ -66,6 +67,7 @@ import {
   nextReminderLine,
 } from "./labels";
 import {
+  DecisionError,
   approveRequestedTimes,
   classifyRequestedConflict,
   declineRequest,
@@ -233,8 +235,8 @@ export function RequestsInbox({
   useEffect(() => {
     if (!data) return;
     const known = knownTotalRef.current;
-    if (returnedRef.current && known !== null && data.meta.total > known) {
-      setNewBadge(`${data.meta.total - known} new`);
+    if (returnedRef.current && known !== null) {
+      setNewBadge(requestsFreshnessBadge(known, data.meta.total));
     }
     returnedRef.current = false;
     knownTotalRef.current = data.meta.total;
@@ -375,10 +377,8 @@ export function RequestsInbox({
         await declineRequest({ id: row.id, type: requestType(row) });
         return "done" as const;
       } catch (error) {
-        if (
-          error instanceof Error &&
-          /409|no longer|changed|transition/i.test(error.message)
-        ) {
+        // ILLEGAL_TRANSITION: the row left PENDING elsewhere; keep it, refetch.
+        if (error instanceof DecisionError && error.status === 409) {
           return "stale" as const;
         }
         throw error;
@@ -397,7 +397,7 @@ export function RequestsInbox({
       toast({
         title: "Couldn't decline",
         description: errorSentence(
-          undefined,
+          error instanceof DecisionError ? error.code : undefined,
           error instanceof Error ? error.message : "",
         ),
         variant: "destructive",

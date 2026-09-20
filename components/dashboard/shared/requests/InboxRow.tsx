@@ -382,7 +382,7 @@ export function InboxRow({
       <div className="flex min-w-0 flex-1 items-start gap-3">
         {selectable ? (
           <Checkbox
-            className="mt-1"
+            className="mt-1 h-5 w-5 sm:h-4 sm:w-4"
             checked={selected}
             disabled={busy}
             onCheckedChange={(checked) => onSelect(checked === true)}
