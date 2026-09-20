@@ -1,53 +1,13 @@
-import {
-  HydrationBoundary,
-  QueryClient,
-  dehydrate,
-} from "@tanstack/react-query";
-
-import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
-import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
-
-import { GetPaidClient } from "./GetPaidClient";
-import { payoutSetupQueryKey } from "./payout-setup-keys";
-
-type PageProps = {
-  params: Promise<{ consultantId: string }>;
-};
+import { permanentRedirect } from "next/navigation";
 
 /**
- * /dashboard/consultant/[consultantId]/settings/payouts — Get paid (#1675 PR-Y2).
- *
- * The bank/UPI account and the tax details a consultant has to give us before
- * a payout can reach them. Server component like the Earnings page: the guard
- * runs before the read, and the read is the same function the refetch route
- * answers with.
+ * /settings/payouts moved into the Settings hub as "Get paid" (#1785 L-2).
+ * The earnings page, the Home setup row and the payout-requirements helper
+ * still link here, so the old URL answers a 308 rather than a 404.
  */
-export default async function GetPaidPage({ params }: Readonly<PageProps>) {
+export default async function PayoutsRedirectPage({
+  params,
+}: Readonly<{ params: Promise<{ consultantId: string }> }>) {
   const { consultantId } = await params;
-  // Ownership is enforced HERE, not by the layout: the layout is a client
-  // component, so its check runs after this server render has already read
-  // and streamed the data. See lib/auth/personal-dashboard-access.ts.
-  await requirePersonalProfileAccess("consultant", consultantId);
-  const queryClient = new QueryClient();
-
-  // allSettled so a failed read degrades to a client-side fetch.
-  await Promise.allSettled([
-    queryClient.prefetchQuery({
-      queryKey: payoutSetupQueryKey(consultantId),
-      queryFn: () => readConsultantPayoutSetup(consultantId),
-    }),
-  ]);
-
-  return (
-    <>
-      <DashboardHeader
-        title="Get paid"
-        subtitle="Where your earnings go, and the tax details the law asks us to hold"
-      />
-      <HydrationBoundary state={dehydrate(queryClient)}>
-        <GetPaidClient consultantId={consultantId} />
-      </HydrationBoundary>
-    </>
-  );
+  permanentRedirect(`/dashboard/consultant/${consultantId}/settings/get-paid`);
 }

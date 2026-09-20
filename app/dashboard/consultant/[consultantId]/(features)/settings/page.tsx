@@ -1,6 +1,5 @@
 import { permanentRedirect } from "next/navigation";
 import { settingsTabRedirect } from "./settings";
-import { SettingsPageClient } from "./SettingsPageClient";
 
 type PageProps = {
   params: Promise<{ consultantId: string }>;
@@ -8,9 +7,10 @@ type PageProps = {
 };
 
 /**
- * /dashboard/consultant/[consultantId]/settings (#1785). A server component
- * so a retired `?tab=` deep link answers a real 308 rather than a client-side
- * hop: `?tab=availability` now lives at `/availability`.
+ * /dashboard/consultant/[consultantId]/settings (#1785 L-2). The hub has no
+ * body of its own: every section is a URL under it, so this answers a 308 to
+ * the section — a retired `?tab=<key>` link to its section, plain `/settings`
+ * to the first one, and `?tab=availability` to the top-level `/availability`.
  */
 export default async function SettingsPage({
   params,
@@ -19,10 +19,7 @@ export default async function SettingsPage({
   const { consultantId } = await params;
   const sp = await searchParams;
   const tab = Array.isArray(sp.tab) ? sp.tab[0] : sp.tab;
-  const target = settingsTabRedirect(
-    `/dashboard/consultant/${consultantId}`,
-    tab,
+  permanentRedirect(
+    settingsTabRedirect(`/dashboard/consultant/${consultantId}`, tab),
   );
-  if (target) permanentRedirect(target);
-  return <SettingsPageClient consultantId={consultantId} />;
 }

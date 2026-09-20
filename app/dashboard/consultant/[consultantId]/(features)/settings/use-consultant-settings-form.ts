@@ -453,7 +453,7 @@ export function useConsultantSettingsForm(
       if (!isExpectedRefusal(error)) {
         reportSentryError(error, {
           subsystem: "consultants",
-          op: "SettingsTab.save",
+          op: "ConsultantSettingsForm.save",
           extra: { consultantId: consultant.id, scheduleType },
         });
       }

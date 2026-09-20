@@ -163,6 +163,14 @@ const PAGE_LABELS: Record<string, string> = {
   earnings: "Earnings",
   referrals: "Referrals",
   settings: "Settings",
+  // The Settings hub's sections (#1785): one URL each, so one crumb each.
+  profile: "Profile",
+  verification: "Verification",
+  booking: "Booking requests",
+  "get-paid": "Get paid",
+  payouts: "Get paid",
+  notifications: "Notifications",
+  security: "Security",
   support: "Support requests",
   feedback: "Feedback",
   help: "Help",
@@ -679,7 +687,7 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const userName = consultantData?.user?.name ?? session?.user?.name ?? null;
   const userImage = consultantData?.user?.image ?? session?.user?.image ?? null;
   const settingsHref = `${basePath}/settings`;
-  const verificationHref = `${settingsHref}?tab=verification`;
+  const verificationHref = `${settingsHref}/verification`;
 
   // Bottom chip dropdown — org context switching only. Settings and Help are
   // sidebar entries under Support now, so this comment used to say the exact

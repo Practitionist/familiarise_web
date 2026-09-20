@@ -3,16 +3,19 @@
  */
 
 /**
- * #1785 — Availability left Settings for the sidebar (L-1), so the retired
- * `settings?tab=availability` deep link must answer a 308 to `/availability`.
+ * #1785 — the Settings hub. L-1: Availability left Settings for the sidebar,
+ * so the retired `settings?tab=availability` deep link answers a 308 to
+ * `/availability`. L-2: every section has its own URL, no two share one, and
+ * every legacy `?tab=<key>` lands on exactly one of them.
  */
 
 import SettingsPage from "@/app/dashboard/consultant/[consultantId]/(features)/settings/page";
-
-jest.mock(
-  "../../app/dashboard/consultant/[consultantId]/(features)/settings/SettingsPageClient",
-  () => ({ SettingsPageClient: () => null }),
-);
+import {
+  SETTINGS_SECTIONS,
+  settingsSectionGroups,
+  settingsSectionHref,
+  settingsTabRedirect,
+} from "@/app/dashboard/consultant/[consultantId]/(features)/settings/settings";
 
 const BASE = "/dashboard/consultant/cp-1";
 
@@ -32,7 +35,7 @@ async function redirectOf(searchParams: Record<string, string>) {
   }
 }
 
-describe("settings?tab= redirects (#1785)", () => {
+describe("settings hub redirects (#1785)", () => {
   it("sends ?tab=availability to the top-level Availability page as a 308", async () => {
     await expect(redirectOf({ tab: "availability" })).resolves.toEqual({
       url: `${BASE}/availability`,
@@ -40,7 +43,36 @@ describe("settings?tab= redirects (#1785)", () => {
     });
   });
 
-  it("renders the hub itself when there is no tab to redirect", async () => {
-    await expect(redirectOf({})).resolves.toBeNull();
+  it("sends a bare /settings and an unknown tab to the first section", async () => {
+    await expect(redirectOf({})).resolves.toEqual({
+      url: `${BASE}/settings/profile`,
+      status: 308,
+    });
+    await expect(redirectOf({ tab: "nope" })).resolves.toEqual({
+      url: `${BASE}/settings/profile`,
+      status: 308,
+    });
+  });
+});
+
+describe("settings section registry (#1785 L-2)", () => {
+  it("gives every section a unique URL in the locked group order", () => {
+    const hrefs = SETTINGS_SECTIONS.map((s) => settingsSectionHref(BASE, s));
+    expect(new Set(hrefs).size).toBe(SETTINGS_SECTIONS.length);
+    expect(settingsSectionGroups().map((g) => g.title)).toEqual([
+      "Profile & verification",
+      "Booking requests",
+      "Get paid",
+      "Notifications",
+      "Security",
+    ]);
+  });
+
+  it("maps every legacy ?tab= key onto exactly one section URL", () => {
+    for (const section of SETTINGS_SECTIONS) {
+      expect(settingsTabRedirect(BASE, section.key)).toBe(
+        settingsSectionHref(BASE, section),
+      );
+    }
   });
 });
