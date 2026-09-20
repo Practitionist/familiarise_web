@@ -27,6 +27,7 @@ import type {
   OrgDirectoryType,
   OrgSizeBucket,
 } from "@prisma/client";
+import { ORG_ROLE_RANK } from "@/lib/auth/role-ranks";
 
 // ───────────────────────────── Capability ─────────────────────────────
 
@@ -357,3 +358,44 @@ export const ORG_SIZE_BUCKET_LABEL: Record<OrgSizeBucket, string> = {
   LARGE_201_1000: "201–1,000 people",
   ENTERPRISE_1000_PLUS: "1,000+ people",
 };
+
+// ───────────────────────────── Fallback org selection ─────────────────────────────
+
+/** Minimal membership shape for fallback selection (session payloads). */
+export interface FallbackOrgCandidate {
+  organizationId: string;
+  organizationSlug?: string | null;
+  role: MemberRole | string;
+}
+
+/**
+ * Deterministic fallback org for users with no role home (multi-org members,
+ * org-only users). The session's `organizationMemberships` array has no
+ * ORDER BY, so `[0]` was whichever row Postgres returned — the dashboard
+ * landing flickered between orgs across logins.
+ *
+ * Ordering: highest ORG_ROLE_RANK first (an org you operate outranks one
+ * you merely learn in), then organizationSlug ascending as a stable
+ * tie-break. Pure, so the router, the layout seed, and tests share it.
+ */
+export function selectFallbackOrgMembership<
+  T extends FallbackOrgCandidate,
+>(memberships: readonly T[] | null | undefined): T | null {
+  if (!memberships || memberships.length === 0) return null;
+  let best = memberships[0];
+  for (const candidate of memberships) {
+    const rank =
+      ORG_ROLE_RANK[candidate.role as MemberRole] ??
+      Number.NEGATIVE_INFINITY;
+    const bestRank =
+      ORG_ROLE_RANK[best.role as MemberRole] ?? Number.NEGATIVE_INFINITY;
+    if (
+      rank > bestRank ||
+      (rank === bestRank &&
+        (candidate.organizationSlug ?? "") < (best.organizationSlug ?? ""))
+    ) {
+      best = candidate;
+    }
+  }
+  return best;
+}

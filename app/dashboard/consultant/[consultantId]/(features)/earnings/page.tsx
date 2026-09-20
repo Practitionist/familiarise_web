@@ -8,6 +8,9 @@ import { DashboardHeader } from "@/components/dashboard/PageScaffold";
 import { getConsultantAppointments } from "@/lib/data/consultant-appointments";
 import { buildConsultantEarningsPayload } from "@/lib/data/consultant-earnings-analytics";
 import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import { ENABLE_LIVE_PAYOUTS } from "@/lib/feature-flags";
+
+import { EARNINGS_FETCH_CAP } from "@/lib/dashboard/earnings-state";
 
 import { EarningsTabs } from "./EarningsTabs";
 
@@ -20,8 +23,8 @@ type PageProps = {
  *
  * This route was a client component until Analytics folded into it (ADR 19).
  * It is a server component now so the Analytics panel keeps the SSR prefetch it
- * had as its own page; the Summary panel still fetches on the client, as it
- * always did.
+ * had as its own page; since PR-Y (#1675) the Summary panel is seeded the same
+ * way, so the tiles paint on first render.
  */
 export default async function EarningsPage({ params }: Readonly<PageProps>) {
   const { consultantId } = await params;
@@ -35,6 +38,18 @@ export default async function EarningsPage({ params }: Readonly<PageProps>) {
   // won't apply. allSettled so a failed read degrades to a client-side fetch
   // rather than crashing the whole page.
   await Promise.allSettled([
+    queryClient.prefetchQuery({
+      // Mirrors EarningsSummaryPanel's fetch: the same cap, personal scope,
+      // and the server-only flag the client cannot read.
+      queryKey: ["consultant-earnings", consultantId],
+      queryFn: async () => ({
+        ...(await buildConsultantEarningsPayload(consultantId, {
+          limit: EARNINGS_FETCH_CAP,
+          organizationId: null,
+        })),
+        livePayoutsEnabled: ENABLE_LIVE_PAYOUTS,
+      }),
+    }),
     queryClient.prefetchQuery({
       queryKey: ["consultant-earnings-analytics", consultantId],
       queryFn: () =>

@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { FieldError, invalidProps } from "@/components/ui/field-error";
+import { AuthEmailField } from "../AuthEmailField";
+import {
+  humanizeAuthError,
+  type AuthErrorField,
+} from "@/lib/labels/auth-errors";
 import {
   signIn,
   useSession,
@@ -100,6 +106,10 @@ function SignInContent() {
   } | null>(null);
   const [ssoChecking, setSsoChecking] = useState(false);
   const [needsVerification, setNeedsVerification] = useState(false);
+  // The sentence under the input the server refused, cleared on retype.
+  const [fieldError, setFieldError] = useState<
+    Partial<Record<AuthErrorField, string>>
+  >({});
   const [resending, setResending] = useState(false);
 
   // Validate callbackUrl synchronously from the URL. safeSameOriginPath
@@ -286,31 +296,6 @@ function SignInContent() {
     }
   };
 
-  const friendlyAuthError = (raw: string | undefined): string => {
-    if (!raw) return "Invalid email or password.";
-    const lower = raw.toLowerCase();
-    if (
-      lower.includes("email") &&
-      (lower.includes("invalid") || lower.includes("required"))
-    )
-      return "Please enter a valid email address.";
-    if (
-      lower.includes("password") &&
-      (lower.includes("too small") ||
-        lower.includes(">=") ||
-        lower.includes("required"))
-    )
-      return "Please enter your password.";
-    if (lower.includes("invalid") && lower.includes("credentials"))
-      return "Invalid email or password.";
-    if (lower.includes("not found") || lower.includes("no user"))
-      return "No account found with this email. Check the address or sign up.";
-    return (
-      raw.replace(/\[body\.\w+\]\s*/g, "").trim() ||
-      "Invalid email or password."
-    );
-  };
-
   const handleResendVerification = async () => {
     if (!email || !email.includes("@")) {
       toast({
@@ -332,7 +317,7 @@ function SignInContent() {
       });
       toast({
         title: "Verification email sent",
-        description: `Check ${email} for the link.`,
+        description: `If ${email} belongs to an unverified account, the link is on its way.`,
       });
     } catch {
       toast({
@@ -349,6 +334,7 @@ function SignInContent() {
     e.preventDefault();
     // Clear any stale "verify your email" banner from a previous attempt.
     setNeedsVerification(false);
+    setFieldError({});
     setIsLoading(true);
     toast({ title: "Signing in..." });
 
@@ -359,21 +345,15 @@ function SignInContent() {
       });
 
       if (error) {
-        const code = (error as { code?: string }).code;
-        if (
-          code === "EMAIL_NOT_VERIFIED" ||
-          /verif/i.test(error.message ?? "")
-        ) {
+        const copy = humanizeAuthError("signin", error);
+        if (copy.needsVerification) {
           setNeedsVerification(true);
-          toast({
-            title: "Verify your email",
-            description:
-              "Your email isn't verified yet — resend the link below.",
-          });
+          toast({ title: copy.title, description: copy.description });
         } else {
+          if (copy.field) setFieldError({ [copy.field]: copy.description });
           toast({
-            title: "Sign In Failed",
-            description: friendlyAuthError(error.message),
+            title: copy.title,
+            description: copy.description,
             variant: "destructive",
           });
         }
@@ -470,22 +450,16 @@ function SignInContent() {
             Enter your email and password below to sign in.
           </p>
           <form onSubmit={handleEmailSignIn}>
-            <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                placeholder="name@example.com"
-                type="email"
-                autoCapitalize="none"
-                autoComplete="email"
-                autoCorrect="off"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onBlur={handleEmailBlur}
-                required
-                disabled={isLoading || ssoChecking}
-              />
-            </div>
+            <AuthEmailField
+              value={email}
+              onChange={(v) => {
+                setEmail(v);
+                setFieldError((f) => ({ ...f, email: undefined }));
+              }}
+              onBlur={handleEmailBlur}
+              disabled={isLoading || ssoChecking}
+              error={fieldError.email}
+            />
             {!ssoCheck?.enforceSSO && (
               <div className="grid gap-2 mt-4">
                 <div className="flex items-center justify-between">
@@ -501,10 +475,15 @@ function SignInContent() {
                   id="password"
                   type="password"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    setFieldError((f) => ({ ...f, password: undefined }));
+                  }}
                   required
                   disabled={isLoading}
+                  {...invalidProps(fieldError.password, "password-error")}
                 />
+                <FieldError id="password-error" message={fieldError.password} />
               </div>
             )}
             {ssoCheck?.enforceSSO ? (

@@ -8,11 +8,13 @@ import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
 import { createConsulteeQueries } from "@/lib/dashboard-queries";
 import HomeTab from "./HomeTab";
+import type { ViewerZone } from "@/lib/time/viewer-zone";
 import { useUser } from "../../UserContext";
 
 export default function HomePageClient({
   consulteeId,
-}: Readonly<{ consulteeId: string }>) {
+  viewerZone,
+}: Readonly<{ consulteeId: string; viewerZone: ViewerZone }>) {
   const { userDetails } = useUser();
 
   // Personal pin, matching the sibling Appointments page (ADR 19). The old
@@ -45,7 +47,7 @@ export default function HomePageClient({
     );
   }
 
-  if (!eventsData || !userDetails) {
+  if (!eventsData) {
     return <HomeSkeleton />;
   }
 
@@ -59,12 +61,19 @@ export default function HomePageClient({
       )}
       <HomeTab
         eventsData={eventsData}
-        userDetails={{
-          id: userDetails.id,
-          name: userDetails.name ?? "User",
-          email: userDetails.email ?? "",
-          image: userDetails.image ?? undefined,
-        }}
+        viewerZone={viewerZone}
+        // Nullable by design: events paint first, the greeting fills in when
+        // the layout user fetch lands (was: full-page skeleton until both).
+        userDetails={
+          userDetails
+            ? {
+                id: userDetails.id,
+                name: userDetails.name ?? "User",
+                email: userDetails.email ?? "",
+                image: userDetails.image ?? undefined,
+              }
+            : null
+        }
         isRefreshing={isLoading && !!eventsData}
         consulteeId={consulteeId}
       />

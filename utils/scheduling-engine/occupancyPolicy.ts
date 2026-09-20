@@ -12,6 +12,7 @@
 import {
   AppointmentStatus,
   BookingSource,
+  CollaboratorStatus,
   PaymentStatus,
   TrialStatus,
   Prisma,
@@ -122,15 +123,20 @@ export function buildOccupiedAppointmentFilter(
 /**
  * Everything that occupies one consultant's calendar.
  *
- * A consultant is busy for an active appointment when EITHER they are connected
- * to one of its slots (they are attending it, in any role) OR it is delivered
- * under one of their own plans. Both arms are needed:
+ * A consultant is busy for an active appointment when ANY of three things is
+ * true: they are connected to one of its slots (they are attending it, in any
+ * role), it is delivered under one of their own plans, or they hold an
+ * ACCEPTED co-host seat on its webinar/class plan. All three arms are needed:
  *
  *   - Slot participation alone misses group events, whose slot rows connect
  *     registrants rather than the host.
  *   - Plan ownership alone misses every appointment where the consultant is
  *     themselves the consultee — booked with a DIFFERENT consultant, so no plan
  *     of theirs is involved.
+ *   - Both alone miss the appointments where the consultant is a co-host:
+ *     co-hosts are NOT slot participants (only the plan owner is denormalized
+ *     onto AppointmentOccurrence, AE-2 #784), so a co-hosted webinar painted
+ *     green on the co-host's own grid while the time was physically committed.
  *
  * The availability grid used to ask only the second question while the
  * allocator asked only the first, so a consultant who was a consultee elsewhere
@@ -153,14 +159,40 @@ export function buildConsultantOccupancyWhere(
   ];
 
   if (consultantProfileId) {
-    reachesConsultant.push({
-      OR: buildOccupiedAppointmentFilter(consultantProfileId),
-    });
+    reachesConsultant.push(
+      { OR: buildOccupiedAppointmentFilter(consultantProfileId) },
+      // Co-host commitments (webinar/class plans with an ACCEPTED seat).
+      // Occupying-state scoping rides the outer AND's
+      // buildOccupiedAppointmentFilter(), same as the ownership arm.
+      { OR: buildCohostCommitmentFilter(consultantProfileId) },
+    );
   }
 
   return {
     AND: [{ OR: buildOccupiedAppointmentFilter() }, { OR: reachesConsultant }],
   };
+}
+
+/**
+ * Webinar/class appointments where this consultant holds an ACCEPTED co-host
+ * seat. Mirrors the collaborator arms of `commitmentClauses`
+ * (`lib/collaborators/availability.ts`) without importing it — that module
+ * owns a Prisma client instance, which must not leak into this shared filter
+ * builder. Keep the two in sync: both mean "ACCEPTED on a webinar/class plan".
+ */
+export function buildCohostCommitmentFilter(
+  consultantProfileId: string,
+): Prisma.AppointmentWhereInput[] {
+  const acceptedSeat = {
+    some: {
+      consultantProfileId,
+      status: CollaboratorStatus.ACCEPTED,
+    },
+  };
+  return [
+    { webinar: { webinarPlan: { collaborators: acceptedSeat } } },
+    { class: { classPlan: { collaborators: acceptedSeat } } },
+  ];
 }
 
 /**

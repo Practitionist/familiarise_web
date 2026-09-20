@@ -22,7 +22,6 @@
  *      from `<= now` to the next cycle end.
  *   3. Create an OrganizationInvoice with GST breakdown (stubbed via
  *      lib/compliance/gst.ts).
- *   4. Emit a SettlementLedgerEntry (kind=INVOICE_ISSUED).
  *
  * IRP upload is handled by the separate `irp-uploader.ts` cron.
  */
@@ -31,6 +30,7 @@ import prisma from "@/lib/prisma";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
 import { generateOrgInvoiceNumber } from "@/lib/payments/billing/invoice-numbering";
+import { supplierStateCode } from "@/lib/payments/billing/consumer-invoice";
 import { BILLABLE_ORG_STATUSES } from "@/lib/enterprise/org-status";
 import {
   notifyOrgLicenseRenewalUpcoming,
@@ -93,6 +93,10 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
   let generated = 0;
   let skipped = 0;
 
+  // #1447 — GSTIN-first supplier state, resolved once; a GSTIN/env mismatch
+  // throws here so no invoice in the run is issued under an ambiguous state.
+  const supplierState = supplierStateCode();
+
   for (const sub of dueSubs) {
     const subtotal =
       sub.model === "FLAT_FEE"
@@ -108,11 +112,7 @@ export async function runGenerateSubscriptionInvoices(): Promise<{
 
     const gst = deriveGstBreakdown({
       subtotalPaise: subtotal,
-      // Supplier state defaults to Karnataka but is env-overridable so a
-      // change of business address (or a regional GSTIN) doesn't require
-      // a code change. Place-of-supply rules use this to decide CGST+SGST
-      // vs IGST split.
-      supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
+      supplierStateCode: supplierState,
       buyerStateCode: sub.contract.organization.taxInfo?.gstStateCode ?? null,
       buyerCountry: "IN",
     });

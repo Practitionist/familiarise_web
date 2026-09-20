@@ -99,6 +99,11 @@ const ConsulteeAgreementForm: React.FC<Props> = ({
             </a>
           </label>
         </div>
+        {(!termsAccepted || !privacyAccepted) && (
+          <p className="text-sm text-muted-foreground">
+            Accept both to complete your registration.
+          </p>
+        )}
       </div>
 
       {/* Navigation */}

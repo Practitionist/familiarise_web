@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { useCallback, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,7 +35,6 @@ export function CatalogClient({
 }: Readonly<{ orgId: string; experts: Expert[] }>) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const router = useRouter();
   const [expertId, setExpertId] = useState<string>(
     experts.length === 1 ? experts[0].consultantProfileId : "",
   );
@@ -57,7 +56,6 @@ export function CatalogClient({
       return res.json();
     },
   });
-
 
   const setArchived = useMutation({
     mutationFn: async ({
@@ -114,8 +112,6 @@ export function CatalogClient({
     [setArchived],
   );
 
-
-
   // The fetch asks for everything; the split happens here so restoring a plan
   // does not need a second round trip.
   const live = (rows: CatalogRow[] | undefined) =>
@@ -170,29 +166,39 @@ export function CatalogClient({
                   </SelectContent>
                 </Select>
               </div>
-              <Button
-                onClick={() =>
-                  router.push(
-                    `/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`,
-                  )
-                }
-                disabled={!expertId}
-              >
-                <Plus className="mr-1.5 h-4 w-4" />
-                New webinar
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  router.push(
-                    `/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`,
-                  )
-                }
-                disabled={!expertId}
-              >
-                <Plus className="mr-1.5 h-4 w-4" />
-                New class
-              </Button>
+              {/* Prefetching Links (Button asChild) instead of onClick
+                  SPA-pushes. An anchor cannot be disabled, so the no-expert
+                  state keeps a plain disabled Button with identical styling. */}
+              {expertId ? (
+                <Button asChild>
+                  <Link
+                    href={`/dashboard/organization/${orgId}/catalog/webinar/new?expertId=${expertId}`}
+                  >
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    New webinar
+                  </Link>
+                </Button>
+              ) : (
+                <Button disabled>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  New webinar
+                </Button>
+              )}
+              {expertId ? (
+                <Button asChild variant="outline">
+                  <Link
+                    href={`/dashboard/organization/${orgId}/catalog/class/new?expertId=${expertId}`}
+                  >
+                    <Plus className="mr-1.5 h-4 w-4" />
+                    New class
+                  </Link>
+                </Button>
+              ) : (
+                <Button variant="outline" disabled>
+                  <Plus className="mr-1.5 h-4 w-4" />
+                  New class
+                </Button>
+              )}
             </div>
 
             <UrlTabs
@@ -270,7 +276,6 @@ export function CatalogClient({
           </>
         )}
       </DashboardContent>
-
     </>
   );
 }

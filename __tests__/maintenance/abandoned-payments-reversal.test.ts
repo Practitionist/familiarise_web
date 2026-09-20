@@ -38,7 +38,11 @@ jest.mock("../../lib/prisma", () => {
   };
   const client = {
     ...tx,
-    appointment: { findMany: jest.fn(), updateMany: tx.appointment.updateMany },
+    appointment: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      updateMany: tx.appointment.updateMany,
+    },
     $transaction: jest.fn((fn: (t: unknown) => Promise<unknown>) => fn(tx)),
     __tx: tx,
   };
@@ -78,12 +82,13 @@ import { getStripeClient } from "../../lib/payments/core/stripe";
 import {
   cancelGatewayIntents,
   cleanupAbandonedPayments,
+  retireOrphanPendingPayment,
 } from "../../scripts/payments/cleanup-abandoned-payments";
 import { REQUEST_ALLOWED_FROM } from "../../lib/booking/transitions";
 import { IllegalTransitionError } from "../../lib/enterprise/transitions";
 
 const db = prisma as unknown as {
-  appointment: { findMany: jest.Mock };
+  appointment: { findMany: jest.Mock; findFirst: jest.Mock };
   $transaction: jest.Mock;
   __tx: {
     payment: {
@@ -150,10 +155,17 @@ beforeEach(() => {
     order.push("tombstoneAppointment");
     return Promise.resolve({ count: 1 });
   });
-  tx.consultation.updateMany.mockImplementation(() => {
-    order.push("expireConsultation");
-    return Promise.resolve({ count: 1 });
-  });
+  // CAS-faithful: the fixture is PENDING, so the lapsed-link attempt (#1703,
+  // fromIn APPROVED_PENDING_PAYMENT) matches nothing and the wide edge wins.
+  tx.consultation.updateMany.mockImplementation(
+    (args: { where: { status: { in: string[] } } }) => {
+      if (!args.where.status.in.includes("PENDING")) {
+        return Promise.resolve({ count: 0 });
+      }
+      order.push("expireConsultation");
+      return Promise.resolve({ count: 1 });
+    },
+  );
   tx.subscription.updateMany.mockResolvedValue({ count: 1 });
   tx.consultation.findUnique.mockResolvedValue({ status: "PENDING" });
   tx.subscription.findUnique.mockResolvedValue({ status: "PENDING" });
@@ -463,5 +475,34 @@ describe("cleanupAbandonedPayments — a failed gateway cancel (#1464)", () => {
 
     expect(result.errorCount).toBe(0);
     expect(result.success).toBe(true);
+  });
+});
+
+/**
+ * #1761 CodeRabbit — a sibling SUCCEEDED/PENDING payment on the same
+ * appointment means the orphan row is not the appointment's alone to tear
+ * down; retiring it would still cancel slots another payment is holding.
+ */
+describe("retireOrphanPendingPayment — multi-payment appointments (#1761)", () => {
+  it("skips retirement when the appointment has more than one payment", async () => {
+    const appointment = abandonedConsultation();
+    appointment.payment.push({
+      id: "pay_2",
+      userId: "user_1",
+      paymentIntent: "order_def",
+      paymentGateway: "RAZORPAY",
+      paymentStatus: "SUCCEEDED",
+    });
+    db.appointment.findFirst.mockResolvedValue({
+      ...appointment,
+      _count: { payment: 2 },
+    });
+
+    const result = await retireOrphanPendingPayment("pay_1");
+
+    expect(result.outcome).toBe("skipped");
+    expect(result.errors[0]).toMatch(/apt_1/);
+    expect(result.errors[0]).toMatch(/pay_1/);
+    expect(db.$transaction).not.toHaveBeenCalled();
   });
 });

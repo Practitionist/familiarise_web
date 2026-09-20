@@ -6,6 +6,7 @@ import {
 import { AppointmentsType, AppointmentStatus } from "@prisma/client";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import { getRequestTypeLabel } from "./labels";
 
 interface RequestUser {
   user: { name: string };
@@ -132,7 +133,7 @@ export function RequestSchedulingTabMini() {
       header: "Type",
       headClassName: "w-[100px]",
       className: "font-medium",
-      cell: (request) => request.type,
+      cell: (request) => getRequestTypeLabel(request.type),
     },
     {
       key: "title",

@@ -1,4 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@/components/ui/button";
@@ -19,6 +21,7 @@ import {
 } from "@/components/ui/collapsible";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { PersonalInfoAndRoleFormSchema } from "@/utils/onboarding";
+import { trackOnboardingEvent } from "@/utils/onboarding-telemetry";
 import { useSession } from "@/lib/auth-client";
 import { z } from "zod";
 import { UserRole, Gender } from "@prisma/client";
@@ -33,6 +36,12 @@ type FormInput = z.input<typeof PersonalInfoAndRoleFormSchema>;
 interface Props {
   onNext: (data: FormData) => void;
   initialData: Partial<FormData>;
+  /**
+   * Add mode (PR-6): an onboarded account adding a consultant identity. The
+   * role is fixed, the picker is hidden, and the pending-invite gate is
+   * skipped — the user is here BECAUSE of an invite.
+   */
+  lockedRole?: "CONSULTANT";
 }
 
 // User-facing copy avoids internal role jargon (#onboarding-ux): "CONSULTEE"
@@ -61,7 +70,11 @@ const GENDER_OPTIONS = [
   { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
 ];
 
-const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
+const PersonalInfoAndRoleForm: React.FC<Props> = ({
+  onNext,
+  initialData,
+  lockedRole,
+}) => {
   const { data: session } = useSession();
   const [optionalOpen, setOptionalOpen] = useState(false);
   // Reflects the parent's async role-flip (ORG_WORKSPACE path hits the
@@ -72,9 +85,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
 
   // #840 — invitees skip the role-picker entirely when they have a pending
   // org invitation; picking a B2C tile would create unwanted profiles.
-  // CR #1245 r2 — tri-state: undefined = checking, null = none found,
-  // object = invite exists. The role picker MUST NOT render while checking
-  // or on failure, or a pending invitee could submit a B2C role.
+  // CR #1245 r2 — tri-state: inviteCheckDone=false = checking, =true with
+  // pendingInvite=null = none found, otherwise an invite exists. The role
+  // picker MUST NOT render while checking or on failure: an earlier version
+  // nested these branches inside `if (pendingInvite)`, so while the fetch
+  // was in flight (pendingInvite === null) the full form flashed and a fast
+  // submitter could file a B2C role before the invite panel ever appeared.
   const [inviteCheckDone, setInviteCheckDone] = useState(false);
   const [inviteCheckError, setInviteCheckError] = useState(false);
   const [pendingInvite, setPendingInvite] = useState<{
@@ -82,13 +98,27 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     role: string;
     organizationId: string;
   } | null>(null);
+  const [pendingInviteCount, setPendingInviteCount] = useState(0);
+  // Audited escape hatch: the panel used to be non-dismissible, so a stray
+  // invite row (expired-sweep regression, wrong address) locked the user out
+  // of onboarding with no recourse. Bypassing records a breadcrumb with the
+  // invite role (never the address) so the funnel stays honest; the emailed
+  // link still accepts afterwards.
+  const [continuedWithoutInvite, setContinuedWithoutInvite] = useState(false);
   const loadPendingInvites = useCallback(() => {
     setInviteCheckDone(false);
     setInviteCheckError(false);
     fetch("/api/user/pending-invites")
       .then((r) => (r.ok ? r.json() : Promise.reject("fetch failed")))
       .then((d) => {
-        if (d?.invites?.length > 0) setPendingInvite(d.invites[0]);
+        const invites = Array.isArray(d?.invites) ? d.invites : [];
+        if (invites.length > 0) {
+          setPendingInvite(invites[0]);
+          setPendingInviteCount(invites.length);
+        } else {
+          setPendingInvite(null);
+          setPendingInviteCount(0);
+        }
         setInviteCheckDone(true);
       })
       .catch(() => {
@@ -97,8 +127,12 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       });
   }, []);
   useEffect(() => {
+    if (lockedRole) {
+      setInviteCheckDone(true);
+      return;
+    }
     loadPendingInvites();
-  }, [loadPendingInvites]);
+  }, [loadPendingInvites, lockedRole]);
 
   const {
     register,
@@ -115,34 +149,42 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
       email: session?.user?.email || "",
       onlineStatus: false,
       onboardingCompleted: false,
-      role: UserRole.CONSULTEE,
+      role: lockedRole ?? UserRole.CONSULTEE,
       gender: null,
       city: "",
       country: "",
       linkedinUrl: "",
       bio: "",
       ...initialData,
+      ...(lockedRole ? { role: lockedRole } : {}),
     },
   });
 
-  // Sync form values when initialData changes (for back navigation)
+  // Sync form values when initialData changes: back navigation, and the
+  // saved draft or identity seed arriving after mount. Fields the user has
+  // already typed into win over the stored values — a draft that loads
+  // slowly on a cold instance must never overwrite live typing.
   useEffect(() => {
     if (initialData && Object.keys(initialData).length > 0) {
-      reset({
-        name: "",
-        email: session?.user?.email || "",
-        onlineStatus: false,
-        onboardingCompleted: false,
-        role: UserRole.CONSULTEE,
-        gender: null,
-        city: "",
-        country: "",
-        linkedinUrl: "",
-        bio: "",
-        ...initialData,
-      });
+      reset(
+        {
+          name: "",
+          email: session?.user?.email || "",
+          onlineStatus: false,
+          onboardingCompleted: false,
+          role: lockedRole ?? UserRole.CONSULTEE,
+          gender: null,
+          city: "",
+          country: "",
+          linkedinUrl: "",
+          bio: "",
+          ...initialData,
+          ...(lockedRole ? { role: lockedRole } : {}),
+        },
+        { keepDirtyValues: true },
+      );
     }
-  }, [initialData, reset, session?.user?.email]);
+  }, [initialData, reset, session?.user?.email, lockedRole]);
 
   // Sync email from session when it loads after form mount
   useEffect(() => {
@@ -169,43 +211,75 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
     }
   };
 
-  // #840 — invitees with a pending org invitation see this instead of the
-  // role tiles, so they can't accidentally create a B2C profile.
-  if (pendingInvite) {
-    if (!inviteCheckDone) {
+  // #840 — invitees with a pending org invitation see the invite panel
+  // instead of the role tiles, so they can't accidentally create a B2C
+  // profile. Flat tri-state (checking → error → invite → form): the picker
+  // below renders ONLY when the check settled with no invite, or when the
+  // user explicitly continued without it.
+  if (!inviteCheckDone) {
     return (
       <div className="mx-auto max-w-md py-8 text-center">
-        <p className="text-sm text-zinc-500">Checking for pending invitations…</p>
+        <p className="text-sm text-zinc-500">
+          Checking for pending invitations…
+        </p>
       </div>
     );
   }
   if (inviteCheckError && !pendingInvite) {
     return (
       <div className="mx-auto max-w-md space-y-3 py-8 text-center">
-        <p className="text-sm text-red-600">Could not check for pending invitations.</p>
-        <Button size="sm" onClick={() => loadPendingInvites()}>Retry</Button>
+        <p className="text-sm text-red-600">
+          Could not check for pending invitations.
+        </p>
+        <Button size="sm" onClick={() => loadPendingInvites()}>
+          Retry
+        </Button>
       </div>
     );
   }
-
-  return (
+  if (pendingInvite && !continuedWithoutInvite) {
+    return (
       <div className="mx-auto max-w-md space-y-4 py-8 text-center">
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-6">
           <p className="text-lg font-semibold text-blue-900">
             You&apos;ve been invited to join{" "}
             <span className="underline">{pendingInvite.organizationName}</span>
           </p>
+          {pendingInviteCount > 1 ? (
+            <p className="mt-1 text-sm text-blue-800">
+              You have {pendingInviteCount} pending invitations — check your
+              email for all of them.
+            </p>
+          ) : null}
           <p className="mt-2 text-sm text-zinc-600">
-            Check your email for the invitation link to accept and join
-            the organisation. Your profile will be set up as part of that flow.
+            Check your email for the invitation link to accept and join the
+            organisation. Your profile will be set up as part of that flow.
           </p>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            trackOnboardingEvent("invite_bypassed", {
+              inviteRole: pendingInvite.role,
+            });
+            setContinuedWithoutInvite(true);
+          }}
+        >
+          Continue without this invite
+        </Button>
+        <p className="text-xs text-zinc-500">
+          You can still accept the invitation from your email afterwards.
+        </p>
       </div>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form
+      onSubmit={handleSubmit(onSubmit, () => scrollToFirstErrorSoon())}
+      className="space-y-6"
+    >
       {/* Essential Fields */}
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -218,9 +292,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
               {...register("name")}
               placeholder="Enter your full name"
             />
-            {errors.name && (
-              <p className="text-sm text-destructive">{errors.name.message}</p>
-            )}
+            <FieldError message={errors.name?.message} />
           </div>
 
           <div className="space-y-2">
@@ -283,9 +355,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             )}
           />
           {errors.dateOfBirth ? (
-            <p className="text-sm text-destructive">
-              {errors.dateOfBirth.message}
-            </p>
+            <FieldError message={errors.dateOfBirth.message} />
           ) : (
             <p className="text-xs text-muted-foreground">
               You must be at least 18 to use Familiarise.
@@ -314,11 +384,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 {...register("phone")}
                 placeholder="+1 (555) 000-0000"
               />
-              {errors.phone && (
-                <p className="text-sm text-destructive">
-                  {errors.phone.message}
-                </p>
-              )}
+              <FieldError message={errors.phone?.message} />
             </div>
 
             <div className="space-y-2">
@@ -394,9 +460,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
                 {bioLength}/160
               </span>
             </div>
-            {errors.bio && (
-              <p className="text-sm text-destructive">{errors.bio.message}</p>
-            )}
+            <FieldError message={errors.bio?.message} />
           </div>
 
           <div className="space-y-2">
@@ -409,17 +473,20 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
               {...register("linkedinUrl")}
               placeholder="https://linkedin.com/in/yourprofile"
             />
-            {errors.linkedinUrl && (
-              <p className="text-sm text-destructive">
-                {errors.linkedinUrl.message}
-              </p>
-            )}
+            <FieldError message={errors.linkedinUrl?.message} />
           </div>
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Role Selection */}
-      <div className="space-y-4">
+      {/* Role Selection — hidden in add mode, where the role is fixed */}
+      {lockedRole ? (
+        <div className="rounded-lg border border-zinc-200 bg-muted/50 p-4 text-sm text-muted-foreground">
+          You are adding an <strong>expert profile</strong> to your existing
+          account. Confirm your details below, then set up your expertise,
+          availability and verification.
+        </div>
+      ) : null}
+      <div className={lockedRole ? "hidden" : "space-y-4"}>
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           I want to join as a... <span className="text-destructive">*</span>
         </h3>
@@ -451,9 +518,7 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({ onNext, initialData }) => {
             </div>
           )}
         />
-        {errors.role && (
-          <p className="text-sm text-destructive">{errors.role.message}</p>
-        )}
+        <FieldError message={errors.role?.message} />
       </div>
 
       {/* Role-specific info */}

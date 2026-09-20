@@ -4,16 +4,22 @@ import prisma from "@/lib/prisma";
 import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { AppointmentStatus, TrialStatus } from "@prisma/client";
 import {
+  APPROVAL_PAYMENT_EXPIRATION_MS,
+  APPROVAL_PAYMENT_REMINDER_MS,
+} from "@/lib/payments/constants";
+import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
+import { readLapsedPayLinks } from "@/lib/data/lapsed-pay-links";
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
  * Fetch pending payments for this consultee from two sources:
  * 1. Consultations/subscriptions with APPROVED_PENDING_PAYMENT status (awaiting checkout)
  * 2. Payment records with paymentStatus PENDING (checkout initiated, awaiting gateway confirmation)
+ * Alongside, `lapsedPayLinks`: requests whose pay-link lapsed in the last 7 d (#1675).
  */
 export async function GET(
   request: Request,
@@ -58,7 +64,8 @@ export async function GET(
       where: { deletedAt: null },
       orderBy: { createdAt: "desc" as const },
       take: 1,
-      select: { amount: true, currency: true },
+      // #1703 D2 — the minted row's own deadline, when it exists.
+      select: { amount: true, currency: true, expiresAt: true },
     } as const;
 
     const planInclude = {
@@ -88,6 +95,7 @@ export async function GET(
       pendingSubscriptions,
       pendingGatewayPayments,
       pendingTrials,
+      lapsedPayLinks,
     ] = await Promise.all([
       // Source 1: Consultations with APPROVED_PENDING_PAYMENT status
       prisma.consultation.findMany({
@@ -185,7 +193,7 @@ export async function GET(
 
       // Source 4: Paid trials the consultant accepted but the learner hasn't
       // paid for yet. Unlike the sources above these carry a real deadline
-      // (paymentDueAt) rather than an assumed 48h window.
+      // (paymentDueAt) rather than an assumed pay-link window.
       prisma.trial.findMany({
         where: {
           consulteeProfileId: consulteeId,
@@ -207,18 +215,30 @@ export async function GET(
         },
         orderBy: { updatedAt: "desc" },
       }),
+
+      // #1675 — the rows the D2 filter below drops once the link lapses,
+      // shown as "expired, request again" instead of vanishing. Informational:
+      // a failure here must never hide a payable link or the cancel action.
+      readLapsedPayLinks(consulteeId).catch((err: unknown) => {
+        Sentry.captureException(err, {
+          tags: { subsystem: "dashboard", op: "lapsed-pay-links" },
+        });
+        return [];
+      }),
     ]);
 
     // Transform approval-pending consultations
     const approvalPendingItems = [
       ...pendingConsultations.map((consultation) => {
-        const expiresAt = new Date(
-          consultation.updatedAt.getTime() + 48 * 60 * 60 * 1000,
-        ); // 48 hours from approval
-        const isExpiringSoon =
-          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
         // #1182 — frozen charge first; the plan is only the pre-mint quote.
         const frozen = consultation.appointment?.payment[0];
+        const expiresAt =
+          frozen?.expiresAt ??
+          new Date(
+            consultation.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+          );
+        const isExpiringSoon =
+          expiresAt.getTime() - Date.now() < APPROVAL_PAYMENT_REMINDER_MS;
 
         return {
           id: consultation.id,
@@ -241,13 +261,15 @@ export async function GET(
         };
       }),
       ...pendingSubscriptions.map((subscription) => {
-        const expiresAt = new Date(
-          subscription.updatedAt.getTime() + 48 * 60 * 60 * 1000,
-        );
-        const isExpiringSoon =
-          expiresAt.getTime() - Date.now() < 24 * 60 * 60 * 1000;
         // #1182 — frozen charge first; the plan is only the pre-mint quote.
         const frozen = subscription.appointment?.payment[0];
+        const expiresAt =
+          frozen?.expiresAt ??
+          new Date(
+            subscription.updatedAt.getTime() + APPROVAL_PAYMENT_EXPIRATION_MS,
+          );
+        const isExpiringSoon =
+          expiresAt.getTime() - Date.now() < APPROVAL_PAYMENT_REMINDER_MS;
 
         return {
           id: subscription.id,
@@ -270,7 +292,7 @@ export async function GET(
         };
       }),
       ...pendingTrials.map((trial) => {
-        // Real deadline, not the 48h assumption used above — a trial's slot may
+        // Real deadline, not the window assumed above — a trial's slot may
         // be sooner than that, in which case paymentDueAt is clamped to it.
         const expiresAt = trial.paymentDueAt ?? trial.updatedAt;
         const isExpiringSoon =
@@ -346,9 +368,16 @@ export async function GET(
       };
     });
 
+    // #1703 D2 — a lapsed link is not payable; the sweep voids the row on the
+    // same deadline, so drop it here rather than offer a dead paymentUrl.
+    const now = Date.now();
+    const payableApprovalItems = approvalPendingItems.filter(
+      (item) => new Date(item.expiresAt).getTime() > now,
+    );
+
     // Merge and sort: expiring soon first, then by date (newest first)
     const pendingPayments = [
-      ...approvalPendingItems,
+      ...payableApprovalItems,
       ...gatewayPendingItems,
     ].sort((a, b) => {
       if (a.isExpiringSoon && !b.isExpiringSoon) return -1;
@@ -361,6 +390,7 @@ export async function GET(
     return NextResponse.json({
       pendingPayments,
       count: pendingPayments.length,
+      lapsedPayLinks,
     });
   } catch (error) {
     Sentry.captureException(
@@ -373,6 +403,7 @@ export async function GET(
         error: "An error occurred while fetching pending payments",
         pendingPayments: [],
         count: 0,
+        lapsedPayLinks: [],
       },
       { status: 500 },
     );

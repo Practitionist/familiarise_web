@@ -17,6 +17,7 @@ sequence** — an on-call engineer at 3 AM should be able to execute one
 top-to-bottom without reading any other document.
 
 > Legend
+>
 > - 🚨 — incident response (reactive)
 > - 🗓️ — scheduled operational task (proactive)
 > - 🔬 — diagnostic helper (read-only, safe to run any time)
@@ -25,7 +26,7 @@ top-to-bottom without reading any other document.
 
 Start here when a customer or an alert says money is stuck and you don't
 yet know which subsystem owns it. Each leaf routes to the runbook (or the
-cron in the 🗓️ catalogue) that owns the recovery. This is a *router*, not
+cron in the 🗓️ catalogue) that owns the recovery. This is a _router_, not
 a procedure — once you land on a 🚨 section, follow it top-to-bottom.
 
 ```mermaid
@@ -54,7 +55,7 @@ flowchart TD
 ```
 
 Three of those leaves (orphaned top-up captures, stuck payouts, pending
-refunds) have **no dedicated 🚨 section** — the cron *is* the runbook:
+refunds) have **no dedicated 🚨 section** — the cron _is_ the runbook:
 force a run from the 🗓️ catalogue below and read its summary line. The
 two invoice-generation jobs that earlier lacked workflows now both fire
 on schedule (`generate-subscription-invoices` daily, `settle-invoice-accruals`
@@ -71,8 +72,8 @@ workflow under [`.github/workflows/*.yml`](../../../.github/workflows) with a
 `schedule.cron` block that invokes one standalone script under
 [`jobs/**`](../../../jobs) via `npx tsx`. There is **no** `netlify.toml`
 cron, no `app/api/cron` route, and no external scheduler. To find what
-runs a job, open its workflow; to run it by hand, see *🔬 Running cron
-jobs locally* below, or trigger the workflow with `workflow_dispatch`.
+runs a job, open its workflow; to run it by hand, see _🔬 Running cron
+jobs locally_ below, or trigger the workflow with `workflow_dispatch`.
 
 > ⚠️ **GitHub-Actions cron caveats** (verified against GitHub docs
 > 2026-06-05). Scheduled workflows (a) enforce a **5-minute minimum**
@@ -98,7 +99,7 @@ doubled, or dropped GitHub-Actions run is always safe. The **claim gate**
 is the load-bearing step: a conditional `updateMany` (or an idempotency
 stamp) that lets exactly one runner own a row. If `count === 0`, someone
 else already claimed it — skip, don't retry-into-a-double. Knowing this
-shape tells you, for any "the cron isn't working" page, *where* to look:
+shape tells you, for any "the cron isn't working" page, _where_ to look:
 no rows scanned ⇒ the schedule didn't fire; rows scanned but 0 claimed ⇒
 a stamp is already set (often the fix already happened); rows claimed but
 work failed ⇒ the per-row `catch` + the failure `SystemEvent`.
@@ -122,12 +123,13 @@ flowchart TD
 ```
 
 Two real variants of this skeleton:
+
 - **v2 lifecycle jobs** (`advance-program-cycles.ts`, `dunning.ts`) are
   self-contained: `dotenv/config` first line, `if (require.main ===
-  module)` main block, explicit `$disconnect()` in `.finally()`. The
+module)` main block, explicit `$disconnect()` in `.finally()`. The
   claim gate is the conditional `updateMany` shown above. `expire-
-  contracts.ts` is the canonical template (see *🔬 Running cron jobs
-  locally*).
+contracts.ts` is the canonical template (see _🔬 Running cron jobs
+  locally_).
 - **#785 sweepers** (`sweep-stuck-webhook-events.ts`) are thin wrappers
   over a `scripts/cleanup/*` helper and additionally emit GitHub-Actions
   annotations (`::notice::` on recovery, `::warning::` on still-failing)
@@ -137,61 +139,61 @@ Two real variants of this skeleton:
 
 Rows are ordered by daily execution time (UTC); pay attention to the ⚠️ markers — the jobs flagged there have no active GitHub Actions workflow and must be triggered manually until the gap is closed.
 
-| Workflow | Script | Cron (UTC) | What it does |
-|---|---|---|---|
-| `advance-program-cycles` | `jobs/billing/advance-program-cycles.ts` | `15 2 * * *` | Cycle engine: per ended `ProgramAssignment` ROLL (mint successor, `rolledAt`) or CLOSE. Runs **before** auto-renew so a live contract's assignment rolls first. |
-| `auto-renew-contracts` | `jobs/contracts/auto-renew-contracts.ts` | `30 2 * * *` | Mints RENEWAL successor + EXPIREs old (`autoRenewedAt` gate). Re-points programs to successor so the cycle engine keeps rolling. Runs 30 min **before** expire. |
-| `expire-contracts` | `jobs/contracts/expire-contracts.ts` | `0 3 * * *` | Flips ACTIVE contracts past `effectiveTo` → EXPIRED. Auto-renew already moved the renewable ones, so this catches only the non-renewing. |
-| `generate-subscription-invoices` | `jobs/billing/generate-subscription-invoices.ts` | `0 1 * * *` (01:00 UTC = 06:30 IST) | One invoice per `BillingSubscription` with `nextInvoiceDate <= now`; claim = advance `nextInvoiceDate`. The workflow carries a `concurrency` group (#813) so two overlapping runs queue rather than race the find-then-claim. |
-| `settle-invoice-accruals` | `jobs/billing/settle-invoice-accruals.ts` | `0 4 1 * *` (monthly, 1st, 04:00 UTC = 09:30 IST) | Rolls each org's unbilled `INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL` bookings into one invoice (thin wrapper over `rollupOrgInvoiceAccruals`). Gated by `ENABLE_CONSOLIDATED_INVOICE` (no-ops when unset). Monthly because rolling up the same ISSUED invoices twice would duplicate parent invoices; the workflow also has a `concurrency` group (#813) and `rollupOrgInvoiceAccruals` now reads the accrual set inside a Serializable transaction, so a second overlapping run aborts with a benign P2034 serialization skip instead of double-billing. Absorbed the retired `consolidated-invoice-rollup` job (#813). |
-| `dunning` | `jobs/billing/dunning.ts` | `30 23 * * *` (05:00 IST) | Stage 1 ISSUED→OVERDUE (`markedOverdueAt`, `INVOICE_OVERDUE`); stage 2 escalation reminders, 7-day cadence × max 3 (`dunningReminderCount`); stage 3 (#812, `ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the **last** reminder (`lastDunningReminderAt`), claimed + audit-logged in one Serializable transaction. |
-| `timeout-member-overages` | `jobs/billing/timeout-member-overages.ts` | `0 23 * * *` (04:30 IST per docstring) | Hard 14-day wall: never-settled `CHARGE_MEMBER` `OverageEvent` PENDING→FAILED (`chargeTimedOutAt`), frees the per-cycle ceiling, notifies the member. |
-| `sweep-abandoned-overage-charges` | `jobs/cleanup/sweep-abandoned-overage-charges.ts` | `30 2 * * *` | Sibling sweep (#785): FAILs never-*started* side-charges at 7d to free the ceiling **silently** (no member notify). Idempotent against the 14-day timeout cron. |
-| `wallet-low-balance` | `jobs/billing/wallet-low-balance.ts` | `45 23 * * *` (05:15 IST) | **NOTIFY-ONLY** floor: WALLET `BillingAccount`s below `minBalancePaise` → alert finance, stamp `autoTopUpLastFiredAt` (24h cooldown). No money moves; gateway-mandate auto-charge is `TODO(#777)`. |
+| Workflow                          | Script                                            | Cron (UTC)                                        | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------- | ------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `advance-program-cycles`          | `jobs/billing/advance-program-cycles.ts`          | `15 2 * * *`                                      | Cycle engine: per ended `ProgramAssignment` ROLL (mint successor, `rolledAt`) or CLOSE. Runs **before** auto-renew so a live contract's assignment rolls first.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `auto-renew-contracts`            | `jobs/contracts/auto-renew-contracts.ts`          | `30 2 * * *`                                      | Mints RENEWAL successor + EXPIREs old (`autoRenewedAt` gate). Re-points programs to successor so the cycle engine keeps rolling. Runs 30 min **before** expire.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `expire-contracts`                | `jobs/contracts/expire-contracts.ts`              | `0 3 * * *`                                       | Flips ACTIVE contracts past `effectiveTo` → EXPIRED. Auto-renew already moved the renewable ones, so this catches only the non-renewing.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `generate-subscription-invoices`  | `jobs/billing/generate-subscription-invoices.ts`  | `0 1 * * *` (01:00 UTC = 06:30 IST)               | One invoice per `BillingSubscription` with `nextInvoiceDate <= now`; claim = advance `nextInvoiceDate`. The workflow carries a `concurrency` group (#813) so two overlapping runs queue rather than race the find-then-claim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `settle-invoice-accruals`         | `jobs/billing/settle-invoice-accruals.ts`         | `0 4 1 * *` (monthly, 1st, 04:00 UTC = 09:30 IST) | Rolls each org's unbilled `INVOICE_ACCRUAL` + `OVERAGE_INVOICE_ACCRUAL` bookings into one invoice (thin wrapper over `rollupOrgInvoiceAccruals`). Gated by `ENABLE_CONSOLIDATED_INVOICE` as an opt-out: it runs unless the variable is set to the literal string `"false"`, so it runs when unset. Monthly because rolling up the same ISSUED invoices twice would duplicate parent invoices; the workflow also has a `concurrency` group (#813) and `rollupOrgInvoiceAccruals` now reads the accrual set inside a Serializable transaction, so a second overlapping run aborts with a benign P2034 serialization skip instead of double-billing. Absorbed the retired `consolidated-invoice-rollup` job (#813). |
+| `dunning`                         | `jobs/billing/dunning.ts`                         | `30 23 * * *` (05:00 IST)                         | Stage 1 ISSUED→OVERDUE (`markedOverdueAt`, `INVOICE_OVERDUE`); stage 2 escalation reminders, 7-day cadence × max 3 (`dunningReminderCount`); stage 3 (#812, `ENABLE_DUNNING_SUSPEND`-gated) stamps `dunningSuspendedAt` 7 days past the **last** reminder (`lastDunningReminderAt`), claimed + audit-logged in one Serializable transaction.                                                                                                                                                                                                                                                                                                                                                                     |
+| `timeout-member-overages`         | `jobs/billing/timeout-member-overages.ts`         | `0 23 * * *` (04:30 IST per docstring)            | Hard 14-day wall: never-settled `CHARGE_MEMBER` `OverageEvent` PENDING→FAILED (`chargeTimedOutAt`), frees the per-cycle ceiling, notifies the member.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `sweep-abandoned-overage-charges` | `jobs/cleanup/sweep-abandoned-overage-charges.ts` | `30 2 * * *`                                      | Sibling sweep (#785): FAILs never-_started_ side-charges at 7d to free the ceiling **silently** (no member notify). Idempotent against the 14-day timeout cron.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `wallet-low-balance`              | `jobs/billing/wallet-low-balance.ts`              | `45 23 * * *` (05:15 IST)                         | **NOTIFY-ONLY** floor: WALLET `BillingAccount`s below `minBalancePaise` → alert finance, stamp `autoTopUpLastFiredAt` (24h cooldown). No money moves; gateway-mandate auto-charge is `TODO(#777)`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Webhooks, top-ups & money reconciliation
 
 These cron jobs keep the outbound webhook queue drained, heal stuck inbound events and orphaned top-up captures, cascade refund earnings, and run the nightly ledger integrity audit — they are the operational backbone that guarantees no money side-effect is silently lost.
 
-| Workflow | Script | Cron (UTC) | What it does |
-|---|---|---|---|
-| `dispatch-outbound-webhooks` | `jobs/cleanup/dispatch-outbound-webhooks.ts` | `* * * * *` → **~5 min effective** | Drains the `OutboundWebhookDelivery` queue (PENDING + due RETRY). Emits a `WEBHOOK`/WARN `SystemEvent` when backlog > 200. |
-| `archive-webhook-events` | `jobs/cleanup/archive-webhook-events.ts` | `0 0 * * 0` (weekly Sun) | Ages out processed inbound `WebhookEvent` rows. |
-| `sweep-stuck-webhook-events` | `jobs/cleanup/sweep-stuck-webhook-events.ts` | `*/10 * * * *` | Re-drives inbound `WebhookEvent` rows left `processed=false` after an `after()` callback crash, so money side-effects land without a gateway redelivery. Also re-drives Razorpay refund webhooks that arrived before the payment was captured (the handler defers them by leaving the row unprocessed), terminally capping a deferred event at `giveUpAfterHours` (7 days) so an unknown payment can't churn forever. |
-| `sweep-orphaned-topup-captures` | `jobs/cleanup/sweep-orphaned-topup-captures.ts` | `*/30 * * * *` | Re-credits gateway-captured top-ups whose confirm/ledger post rolled back (`capturedAt` set, still PENDING). |
-| `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *` | Reaps never-completed org wallet top-up intents past the grace window. |
-| `cascade-refund-earnings` | `jobs/refunds/cascade-refund-earnings.ts` | `*/15 * * * *` | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate). |
-| `reconcile-pending-refunds` | `jobs/refunds/reconcile-pending-refunds.ts` | `*/15 * * * *` | Reconciles PENDING refunds against the gateway; notifies on failed refunds (no more silent stuck money). |
-| `reconcile-ledgers` | `jobs/reconcile/reconcile-ledgers.ts` | `45 3 * * *` | Nightly money-integrity audit. Exit 2 + `RECONCILE`/ERROR `SystemEvent` on discrepancies, exit 1 + `recordSystemError` on crash. See *🚨 Ledger reconciler flagged discrepancies*. |
-| `reconcile-document-storage` | `jobs/cleanup/reconcile-document-storage.ts` | `0 2 * * *` | Reconciles `OrganizationDocument` rows against object storage (orphaned + missing files). |
+| Workflow                        | Script                                          | Cron (UTC)                         | What it does                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------- | ----------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatch-outbound-webhooks`    | `jobs/cleanup/dispatch-outbound-webhooks.ts`    | `* * * * *` → **~5 min effective** | Drains the `OutboundWebhookDelivery` queue (PENDING + due RETRY). Emits a `WEBHOOK`/WARN `SystemEvent` when backlog > 200.                                                                                                                                                                                                                                                                                            |
+| `archive-webhook-events`        | `jobs/cleanup/archive-webhook-events.ts`        | `0 0 * * 0` (weekly Sun)           | Ages out processed inbound `WebhookEvent` rows.                                                                                                                                                                                                                                                                                                                                                                       |
+| `sweep-stuck-webhook-events`    | `jobs/cleanup/sweep-stuck-webhook-events.ts`    | `*/10 * * * *`                     | Re-drives inbound `WebhookEvent` rows left `processed=false` after an `after()` callback crash, so money side-effects land without a gateway redelivery. Also re-drives Razorpay refund webhooks that arrived before the payment was captured (the handler defers them by leaving the row unprocessed), terminally capping a deferred event at `giveUpAfterHours` (7 days) so an unknown payment can't churn forever. |
+| `sweep-orphaned-topup-captures` | `jobs/cleanup/sweep-orphaned-topup-captures.ts` | `*/30 * * * *`                     | Re-credits gateway-captured top-ups whose confirm/ledger post rolled back (`capturedAt` set, still PENDING).                                                                                                                                                                                                                                                                                                          |
+| `cleanup-abandoned-org-top-ups` | `jobs/cleanup/cleanup-abandoned-org-top-ups.ts` | `0 2 * * *`                        | Reaps never-completed org wallet top-up intents past the grace window.                                                                                                                                                                                                                                                                                                                                                |
+| `cascade-refund-earnings`       | `jobs/refunds/cascade-refund-earnings.ts`       | `*/15 * * * *`                     | Idempotent refund→earnings cascade (`mintRefundCreditNote`; `Refund.cascadedAt` gate).                                                                                                                                                                                                                                                                                                                                |
+| `reconcile-pending-refunds`     | `jobs/refunds/reconcile-pending-refunds.ts`     | `*/15 * * * *`                     | Reconciles PENDING refunds against the gateway; notifies on failed refunds (no more silent stuck money).                                                                                                                                                                                                                                                                                                              |
+| `reconcile-ledgers`             | `jobs/reconcile/reconcile-ledgers.ts`           | `45 3 * * *`                       | Nightly money-integrity audit. Exit 2 + `RECONCILE`/ERROR `SystemEvent` on discrepancies, exit 1 + `recordSystemError` on crash. See _🚨 Ledger reconciler flagged discrepancies_.                                                                                                                                                                                                                                    |
+| `reconcile-document-storage`    | `jobs/cleanup/reconcile-document-storage.ts`    | `0 2 * * *`                        | Reconciles `OrganizationDocument` rows against object storage (orphaned + missing files).                                                                                                                                                                                                                                                                                                                             |
 
 ### Payouts & earnings
 
 These jobs assemble and submit the weekly payout batch, reconcile in-flight transfers, release earnings out of the hold gate, and backfill earnings rows — the `ENABLE_LIVE_PAYOUTS` flag gates actual gateway disbursement across all of them.
 
-| Workflow | Script | Cron (UTC) | What it does |
-|---|---|---|---|
-| `create-payout-batch` | `jobs/payouts/create-payout-batch.ts` | `0 20 * * 1` (Mon) | Assembles the weekly payout batch. |
-| `process-payouts` | `jobs/payouts/process-payouts.ts` | `0 21 * * 1` (Mon) | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`live-payout-go-live-runbook`](06-live-payout-go-live-runbook.md). |
-| `handle-stuck-payouts` | `jobs/payouts/handle-stuck-payouts.ts` | `0 */4 * * *` | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack). |
-| `reconcile-payout-status` | `jobs/payouts/reconcile-payout-status.ts` | `0 */6 * * *` | Pulls gateway truth for in-flight payouts. |
-| `release-earnings` | `jobs/earnings/release-earnings.ts` | `0 * * * *` (hourly) | PENDING → READY when `holdUntil` lapses. |
-| `release-pending-trust-earnings` | `jobs/cleanup/release-pending-trust-earnings.ts` | `30 * * * *` (hourly) | Invoice-fraud trust gate: PENDING_TRUST → PENDING once the org is ACTIVE or has paid an invoice (#687). Disjoint rows from `release-earnings`. |
-| `sync-payment-earnings` | `jobs/earnings/sync-payment-earnings.ts` | `0 * * * *` (hourly) | Backfills earnings rows from succeeded payments. |
+| Workflow                         | Script                                           | Cron (UTC)            | What it does                                                                                                                                                             |
+| -------------------------------- | ------------------------------------------------ | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `create-payout-batch`            | `jobs/payouts/create-payout-batch.ts`            | `0 20 * * 1` (Mon)    | Assembles the weekly payout batch.                                                                                                                                       |
+| `process-payouts`                | `jobs/payouts/process-payouts.ts`                | `0 21 * * 1` (Mon)    | Submits batch to gateway — **gated by `ENABLE_LIVE_PAYOUTS`** (off ⇒ rows freeze at PROCESSING). See [`live-payout-go-live-runbook`](06-live-payout-go-live-runbook.md). |
+| `handle-stuck-payouts`           | `jobs/payouts/handle-stuck-payouts.ts`           | `0 */4 * * *`         | Reconciles/retries/fails PROCESSING payouts with no terminal webhook. Emits `PAYOUT` `SystemEvent` (+ `recordSystemError` on permanent failure → Better Stack).          |
+| `reconcile-payout-status`        | `jobs/payouts/reconcile-payout-status.ts`        | `0 */6 * * *`         | Pulls gateway truth for in-flight payouts.                                                                                                                               |
+| `release-earnings`               | `jobs/earnings/release-earnings.ts`              | `0 * * * *` (hourly)  | PENDING → READY when `holdUntil` lapses.                                                                                                                                 |
+| `release-pending-trust-earnings` | `jobs/cleanup/release-pending-trust-earnings.ts` | `30 * * * *` (hourly) | Invoice-fraud trust gate: PENDING_TRUST → PENDING once the org is ACTIVE or has paid an invoice (#687). Disjoint rows from `release-earnings`.                           |
+| `sync-payment-earnings`          | `jobs/earnings/sync-payment-earnings.ts`         | `0 * * * *` (hourly)  | Backfills earnings rows from succeeded payments.                                                                                                                         |
 
 ### Compliance & SSO
 
 Regulatory jobs in this group handle e-invoice IRN generation, DPDP breach-deadline alerting, MSME payment notices, SSO certificate expiry, consent retention, audit-log pruning, and the DPDP §11 data-export worker — note which ones carry a ⚠️ indicating no active workflow file.
 
-| Workflow | Script | Cron (UTC) | What it does |
-|---|---|---|---|
-| `irp-uploader` | `jobs/compliance/irp-uploader.ts` | `30 2 * * *` (08:00 IST) | E-invoice IRN generation via ClearTax GSP. **Gated by `ENABLE_IRP_UPLOADER`**; stubbed sub-₹5cr returns `{status:"FAILED",reason:"STUB"}` recorded as a normal retry. |
-| `databreach-deadline-alerts` | `jobs/compliance/databreach-deadline-alerts.ts` | `15 * * * *` (hourly) | DPDP 72h breach-report deadline alerts (`event:"dpdp.databreach.deadline"`). Hourly because the cutoff is sharp. |
-| `msme-payment-alerts` | `jobs/compliance/msme-payment-alerts.ts` | `30 4 * * *` | MSME §43B(h) at-risk-payout email to finance. Degrades to log-only if `MSME_ALERT_EMAIL`/`RESEND_API_KEY` unset. |
-| `sso-cert-expiry-alert` | `jobs/cleanup/sso-cert-expiry-alert.ts` | `0 3 * * *` (08:30 IST) | SP/IdP cert expiry: 30d WARN / 7d CRITICAL → `SSO_CERT_EXPIRING` audit row. |
-| `consent-retention-sweeper` | `jobs/compliance/consent-retention-sweeper.ts` ⚠️ | **NOT SCHEDULED** | DPDP `ConsentArtifact` retention sweep (`DPDP_SWEEPER_DELETE`-gated). ⚠️ **The job exists but has no workflow file** as of 2026-06-05 — its docstring claims "weekly Sunday 03:00 IST" but nothing fires it. Run manually until a workflow is added, or treat retention deletion as not-yet-automated. |
-| `prune-audit-logs` | `jobs/cleanup/prune-audit-logs.ts` | `15 3 * * *` | Deletes audit rows past retention (7y financial / 2y other); one `AUDIT_PRUNED` summary row per org. |
-| `process-data-exports` | `jobs/cleanup/process-data-exports.ts` → `scripts/cleanup/process-data-exports.ts` | `*/10 * * * *` (≈10 min) | DPDP §11 right-to-access worker: drains pending `OrgDataExportJob` rows, builds the bundle, writes `DATA_EXPORT_GENERATED`/`_FAILED`. On failure writes the clean prose audit row + a raw `SystemEvent` (`category=DATA_EXPORT`, `correlationId=job.id`). Outputs `picked/succeeded/failed`. |
+| Workflow                     | Script                                                                             | Cron (UTC)               | What it does                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `irp-uploader`               | `jobs/compliance/irp-uploader.ts`                                                  | `30 2 * * *` (08:00 IST) | E-invoice IRN generation via ClearTax GSP. **Gated by `ENABLE_IRP_UPLOADER`**; stubbed sub-₹5cr returns `{status:"FAILED",reason:"STUB"}` recorded as a normal retry.                                                                                                                                  |
+| `databreach-deadline-alerts` | `jobs/compliance/databreach-deadline-alerts.ts`                                    | `15 * * * *` (hourly)    | DPDP 72h breach-report deadline alerts (`event:"dpdp.databreach.deadline"`). Hourly because the cutoff is sharp.                                                                                                                                                                                       |
+| `msme-payment-alerts`        | `jobs/compliance/msme-payment-alerts.ts`                                           | `30 4 * * *`             | MSME §43B(h) at-risk-payout email to finance. Degrades to log-only if `MSME_ALERT_EMAIL`/`RESEND_API_KEY` unset.                                                                                                                                                                                       |
+| `sso-cert-expiry-alert`      | `jobs/cleanup/sso-cert-expiry-alert.ts`                                            | `0 3 * * *` (08:30 IST)  | SP/IdP cert expiry: 30d WARN / 7d CRITICAL → `SSO_CERT_EXPIRING` audit row.                                                                                                                                                                                                                            |
+| `consent-retention-sweeper`  | `jobs/compliance/consent-retention-sweeper.ts` ⚠️                                  | **NOT SCHEDULED**        | DPDP `ConsentArtifact` retention sweep (`DPDP_SWEEPER_DELETE`-gated). ⚠️ **The job exists but has no workflow file** as of 2026-06-05 — its docstring claims "weekly Sunday 03:00 IST" but nothing fires it. Run manually until a workflow is added, or treat retention deletion as not-yet-automated. |
+| `prune-audit-logs`           | `jobs/cleanup/prune-audit-logs.ts`                                                 | `15 3 * * *`             | Deletes audit rows past retention (7y financial / 2y other); one `AUDIT_PRUNED` summary row per org.                                                                                                                                                                                                   |
+| `process-data-exports`       | `jobs/cleanup/process-data-exports.ts` → `scripts/cleanup/process-data-exports.ts` | `*/10 * * * *` (≈10 min) | DPDP §11 right-to-access worker: drains pending `OrgDataExportJob` rows, builds the bundle, writes `DATA_EXPORT_GENERATED`/`_FAILED`. On failure writes the clean prose audit row + a raw `SystemEvent` (`category=DATA_EXPORT`, `correlationId=job.id`). Outputs `picked/succeeded/failed`.           |
 
 ### Non-enterprise crons (for completeness)
 
@@ -211,7 +213,7 @@ enterprise billing/compliance surface this doc owns.
 > have workflows, and the `consolidated-invoice-rollup` workflow + missing
 > script were retired into `settle-invoice-accruals`. Only
 > `consent-retention-sweeper` still exists with no workflow. Re-run that diff
-> after adding or moving any cron; a docstring that *claims* a cadence is not
+> after adding or moving any cron; a docstring that _claims_ a cadence is not
 > proof a workflow fires it.
 
 ---
@@ -233,7 +235,7 @@ Subscriptions keep billing but the local `BillingSubscription` state lags.
 > leaving `processed=false` with no gateway redelivery coming. The sweeper
 > re-drives those rows every ~10 min so the money side-effect lands
 > without a manual replay. If this runbook fires, check whether the
-> sweeper is *already* recovering the backlog (its `::notice::` /
+> sweeper is _already_ recovering the backlog (its `::notice::` /
 > `recovered` count) before replaying by hand.
 
 **Response:**
@@ -254,6 +256,7 @@ Subscriptions keep billing but the local `BillingSubscription` state lags.
    vendor dashboard — **never** loosen signature verification in code.
 
 **Do not:**
+
 - Increase the webhook HTTP timeout beyond 25s (Razorpay will retry
   regardless after 5s; wedging the Next.js edge function just holds
   memory).
@@ -386,7 +389,7 @@ but can't pay it", or a program's per-cycle circuit-breaker ceiling is
 wedged because never-resolved PENDING charges still count against it.
 
 **Impact:** A PENDING member-pays overage holds a slot in the per-cycle
-ceiling. Enough wedged rows and the breaker trips, blocking *legitimate*
+ceiling. Enough wedged rows and the breaker trips, blocking _legitimate_
 new overage on that assignment.
 
 **Two crons own this — know which one applies:**
@@ -395,7 +398,7 @@ new overage on that assignment.
   **14-day** wall. PENDING → FAILED, stamps `chargeTimedOutAt` +
   `chargeFailureReason`, **notifies the member** the obligation lapsed.
 - `jobs/cleanup/sweep-abandoned-overage-charges.ts` (`30 2 * * *`) — FAILs
-  never-*started* side-charges at **7 days silently** (no notify) to free
+  never-_started_ side-charges at **7 days silently** (no notify) to free
   the ceiling.
 
 They are idempotent against each other: once a row is FAILED it no longer
@@ -462,13 +465,13 @@ invoice-gen + expire so it reads invoices in their final state.
    claim (`updateMany` gated on the exact `lastDunningReminderAt` the read
    saw) makes this near-impossible; if you see it, check for a job
    invoked outside GitHub Actions (a stray manual `tsx` loop) racing the
-   cron. The notify is fire-and-forget *after* a committed claim, so a
+   cron. The notify is fire-and-forget _after_ a committed claim, so a
    notify retry (Novu side) is the more likely culprit — check Novu, not
    the DB.
 2. **Stuck ISSUED past due, no reminder** → confirm the org status is in
    the dunnable set and `dueDate < now`. Then force a run:
    `npx tsx jobs/billing/dunning.ts` and read the `scannedStage1 /
-   markedOverdue / scannedStage2 / remindersSent` summary line.
+markedOverdue / scannedStage2 / remindersSent` summary line.
 3. **Stopped at 3 reminders** → working as designed (`MAX_REMINDERS=3`).
    Escalation past that is a manual finance/collections action, not a
    cron concern.
@@ -556,7 +559,7 @@ not accrue.
    ```
 2. **Program archived / not ACTIVE** → the engine deliberately skips
    assignments on a non-live program (`program.status='ACTIVE',
-   archivedAt:null`). That's correct; the assignment is dormant by design.
+archivedAt:null`). That's correct; the assignment is dormant by design.
 3. **Malformed program (no money-config)** → `resolveProgramCycle`
    returns null and the row is counted as `skipped`. Fix the program's
    `licensedSeatConfig`/`creditPoolConfig`, then re-run.
@@ -570,7 +573,7 @@ not accrue.
    npx tsx jobs/billing/advance-program-cycles.ts   # scanned/rolled/closed/skipped
    ```
 6. **Never** hand-mint a successor assignment — the `@@unique([programId,
-   membershipId, periodStart])` + `rolledToAssignmentId @unique` are the
+membershipId, periodStart])` + `rolledToAssignmentId @unique` are the
    only safe double-mint guards; bypassing them risks double-billing.
 
 ---
@@ -726,6 +729,7 @@ npx tsx jobs/meetings/reconcile-orphaned-sessions.ts
 ```
 
 **Required boilerplate inside each job:**
+
 1. `import "dotenv/config";` as the FIRST line. Without it, tsx
    doesn't load `.env` and `PrismaClient` throws on the first query.
 2. An explicit `await prisma.$disconnect()` in `.finally()` of the

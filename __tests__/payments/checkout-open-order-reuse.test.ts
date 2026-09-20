@@ -30,6 +30,8 @@ jest.mock("../../lib/prisma", () => ({
         reuseState.rows.filter((row) => matchesReuseWhere(row, where)),
       ),
       updateMany: jest.fn(async () => ({ count: 1 })),
+      // #1695 — the post-mint abort tombstone is written on the global client.
+      create: jest.fn(async () => ({})),
     },
     webinar: {
       findUnique: jest.fn(async () => webinarRow()),
@@ -172,7 +174,10 @@ import {
   unlockConsulteeBooking,
   unlockEventCheckout,
 } from "../../utils/appointmentlock";
-import { handleCheckout } from "../../lib/payments/operations/checkout";
+import {
+  handleCheckout,
+  readInvoiceExposurePaise,
+} from "../../lib/payments/operations/checkout";
 
 // ---------------------------------------------------------------------------
 // In-memory store + faithful evaluation of the reuse lookup's WHERE clause.
@@ -414,6 +419,66 @@ describe("rec C — checkout adopts an open PENDING order across remounts", () =
   });
 });
 
+// #1592 A-P1-05 — an unknown discount code used to be ignored: the buyer was
+// charged full price with no word about the code they typed. It is now a
+// coded 400 refusal raised before any Payment row or gateway order exists.
+describe("an unknown discount code is refused, not silently ignored", () => {
+  it("throws DISCOUNT_CODE_INVALID and mints nothing", async () => {
+    txClient.discountCode = { findUnique: jest.fn(async () => null) };
+
+    await expect(
+      handleCheckout(checkoutInput({ discountCode: "NOPE10" }), "user-1"),
+    ).rejects.toMatchObject({
+      code: "DISCOUNT_CODE_INVALID",
+      httpStatus: 400,
+      message: "That discount code is not valid for this purchase",
+    });
+
+    expect(txClient.discountCode.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { code: "NOPE10" } }),
+    );
+    expect(createPaymentIntent).not.toHaveBeenCalled();
+    expect(txClient.payment.create).not.toHaveBeenCalled();
+  });
+});
+
+// #1591 J3-P1-01 — both credit-limit gates summed INVOICE_ACCRUAL legs without
+// their negative *_REVERSAL siblings, so a refunded seat kept counting against
+// the org's limit. The one helper nets them the way the monthly rollup does.
+describe("readInvoiceExposurePaise nets accrual reversals", () => {
+  it("an accrual with a matching reversal contributes 0", async () => {
+    const legs = [
+      { source: "INVOICE_ACCRUAL", amountPaise: 100_000 },
+      { source: "INVOICE_ACCRUAL_REVERSAL", amountPaise: -100_000 },
+      { source: "OVERAGE_INVOICE_ACCRUAL", amountPaise: 25_000 },
+    ];
+    const db = {
+      paymentLeg: {
+        aggregate: jest.fn(
+          async ({ where }: { where: { source: { in: string[] } } }) => ({
+            _sum: {
+              amountPaise: legs
+                .filter((l) => where.source.in.includes(l.source))
+                .reduce((s, l) => s + l.amountPaise, 0),
+            },
+          }),
+        ),
+      },
+      organizationInvoice: {
+        aggregate: jest.fn(async () => ({ _sum: { totalPaise: 10_000 } })),
+      },
+    };
+
+    const exposure = await readInvoiceExposurePaise(
+      db as unknown as Parameters<typeof readInvoiceExposurePaise>[0],
+      "org-1",
+    );
+
+    // Only the un-reversed overage accrual and the unpaid invoice remain.
+    expect(exposure).toBe(35_000);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // #1220-triage — the gates themselves, exercised directly (the webinar flow
 // above cannot discriminate them: eventId already pins scope and its fixtures
@@ -542,5 +607,33 @@ describe("#1220-triage — reuse gates", () => {
     );
     expect(keyless.reusable).toBeNull();
     expect(keyless.supersede.map((s) => s.id)).toEqual(["pay-period"]);
+  });
+});
+
+describe("#1695 — a post-mint abort leaves an EXPIRED tombstone for the orphaned order", () => {
+  it("writes the minted order as EXPIRED so a late capture has a row to be refunded against", async () => {
+    // The gateway order is minted before the booking transaction; an abort
+    // inside it (the CREDIT_SHORTFALL retry shape) used to leave a live
+    // Razorpay order with no Payment row, which cannot be voided.
+    txClient.payment.create = jest.fn(async () => {
+      throw new Error(
+        "CREDIT_SHORTFALL: expected 500 paise credits but only 0 available. Aborting for retry.",
+      );
+    });
+
+    await expect(handleCheckout(checkoutInput(), "user-1")).rejects.toThrow();
+
+    expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+    expect(prisma.payment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        paymentIntent: "order_NEW",
+        paymentStatus: "EXPIRED",
+        paymentGateway: "RAZORPAY",
+        userId: "user-1",
+      }),
+    });
+    const written = (prisma.payment.create as jest.Mock).mock.calls[0][0].data;
+    expect(written.appointmentId).toBeUndefined();
+    expect(written.expiresAt).toBeInstanceOf(Date);
   });
 });

@@ -2,11 +2,11 @@
 
 This page is the map a newcomer should read before any other payments document. It shows where money truth is written, what is allowed to lag behind it, and which mechanism closes each gap. Everything drawn here runs inside one Next.js application against one Postgres database and one Redis instance. There are no services, no queues and no message brokers; the domain rows themselves carry every pending obligation, and scheduled sweeps read those rows to finish the work (ADR 14, ADR 22 and ADR 27 explain why that posture was chosen over a broker).
 
-The diagrams describe the code as it stands after the 2026-09-03 finance train (PRs #1385, #1386, #1389, #1390, #1391, #1393, #1392 and #1414). Where a box only exists because of one of those PRs, the PR number is written on it. The verdict record that motivated the train lives in [audits/2026-09-03-finance-verdicts.md](./audits/2026-09-03-finance-verdicts.md).
+The diagrams describe the code as it stands after the 2026-09-03 finance train (PRs #1385, #1386, #1389, #1390, #1391, #1393, #1392 and #1414) and the 2026-09-19 Muse Spark finance train. Where a box only exists because of one of those PRs, the PR number is written on it. The verdict record that motivated the earlier train lives in [audits/2026-09-03-finance-verdicts.md](./audits/2026-09-03-finance-verdicts.md).
 
 ## 1. B2C: a consultee pays for a session
 
-The first diagram follows a single booking from the checkout request to the moment every side effect exists. The synchronous part is one Serializable database transaction taken under a Redis slot lock; it writes the Payment, its funding legs and the appointment hold together, so either all three exist or none does. The gateway then calls back asynchronously, and the webhook row is saved before the request is acknowledged, which makes the inbound event durable: the platform can redrive the persisted row without requiring Razorpay to resend it. One writer, running in one transaction, moves the money state and posts the ledger. Everything after that commit is best effort and is re-driven by the sweeps at the bottom.
+The first diagram follows a single booking from the checkout request to the moment every side effect exists. The synchronous part is one Serializable database transaction taken under a Redis slot lock; it writes the Payment, its funding legs and the appointment hold together, so either all three exist or none does. The gateway then calls back asynchronously, and the webhook row is saved before the request is acknowledged, which makes the inbound event durable: the platform can redrive the persisted row without requiring Razorpay to resend it. The single writer's Phase-1 transaction moves the Payment to `SUCCEEDED` and the Appointment to `CONFIRMED`; the earnings rows and the ledger posting are Phase 2, written immediately after that transaction commits and re-driven by `sync-payment-earnings` if the first attempt does not land. Everything after the Phase-1 commit, earnings and the ledger included, is best effort and is re-driven by the sweeps at the bottom.
 
 ```mermaid
 flowchart TB
@@ -24,11 +24,11 @@ flowchart TB
     HS["handlePaymentSuccess"]
     P2["Payment SUCCEEDED + gatewayPaymentId (#1391)"]
     A2["Appointment CONFIRMED (CAS in WHERE)"]
-    EARN["Earnings rows (consultant / platform split from the RateCard snapshot)"]
-    LED["LedgerTransaction + LedgerEntry rows<br/>(double entry; trigger rejects an unbalanced transaction)"]
     AUD["SystemEvent audit row"]
   end
-  subgraph After["Best effort after commit — idempotent, may fail"]
+  subgraph After["Best effort after commit — idempotent, may fail; re-driven by sync-payment-earnings"]
+    EARN["Earnings rows (consultant / platform split from the RateCard snapshot)"]
+    LED["LedgerTransaction + LedgerEntry rows<br/>(double entry; trigger rejects an unbalanced transaction)"]
     INV["ConsumerInvoice FAM-FY-SEQ tax invoice (#1393)"]
     CH["Stream chat channel"]
     MAIL["Emails / Novu"]
@@ -43,7 +43,8 @@ flowchart TB
   U --> CO --> PAY --> APPT
   PAY -- "order_id (INR asserted, #1414)" --> RZP
   U -- "pays" --> RZP -- "payment.captured" --> WE --> HS
-  HS --> P2 --> A2 --> EARN --> LED --> AUD
+  HS --> P2 --> A2 --> AUD
+  AUD -.-> EARN -.-> LED
   AUD -.-> INV
   AUD -.-> CH
   AUD -.-> MAIL
@@ -54,7 +55,7 @@ flowchart TB
   PAY -. "never paid" .-> S4
 ```
 
-Three guarantees follow from this shape. The buyer's money state is exact at the moment the writer commits, because the Payment, the appointment, the earnings and the ledger entries are in the same transaction. Side effects are eventually consistent and are retried by the listed sweeps where a sweep exists; the five-minute ticker cadence is the normal retry interval, not a hard completion bound. Every sweep is idempotent, so a sweep and a webhook retry racing each other cannot double-post anything.
+Three guarantees follow from this shape. The buyer's money state is exact at the moment the Phase-1 writer commits, because the Payment and the appointment are in the same transaction; the earnings and ledger rows are written in the immediately following Phase 2 and are re-driven by `sync-payment-earnings` rather than by the checkout request if that first attempt does not land. Side effects are eventually consistent and are retried by the listed sweeps where a sweep exists; the five-minute ticker cadence is the normal retry interval, not a hard completion bound. Every sweep is idempotent, so a sweep and a webhook retry racing each other cannot double-post anything.
 
 ## 2. B2C: refunds and consultant payouts
 
@@ -177,8 +178,8 @@ flowchart TD
     C4["reconcile-payment-status cron<br/>scripts/payments/reconcile-payment-status.ts"]
   end
   ROUTE["routeCapturedPayment<br/>selects the handler from notes, repeats the amount parity check every time"]
-  WRITER["handlePaymentSuccess — the single writer (ADR 21)<br/>one Serializable transaction"]
-  OUT["Payment SUCCEEDED + Appointment CONFIRMED (CAS-in-WHERE)<br/>+ ConsultantEarnings + LedgerTransaction / LedgerEntry rows"]
+  WRITER["handlePaymentSuccess — the single writer (ADR 21)<br/>Phase 1: one Serializable transaction"]
+  OUT["Payment SUCCEEDED + Appointment CONFIRMED (CAS-in-WHERE)<br/>then Phase 2 (best effort, re-driven): ConsultantEarnings + LedgerTransaction / LedgerEntry rows"]
   C1 -- "fetches the payment from Razorpay before calling in" --> ROUTE
   C2 -- "fetches the order + payments from Razorpay before calling in" --> ROUTE
   C3 -- "signature-verified; WebhookEvent row saved before the 200<br/>dedup key: x-razorpay-event-id" --> ROUTE
@@ -186,16 +187,16 @@ flowchart TD
   ROUTE --> WRITER --> OUT
 ```
 
-| Term | One-sentence definition |
-| --- | --- |
-| Webhook | Razorpay's asynchronous callback to `POST /api/webhooks/razorpay`, saved as a `WebhookEvent` row before the request is acknowledged so the platform can redrive it without Razorpay resending it. |
-| Idempotency key | A value that makes a repeated call produce the same result once instead of twice — `x-razorpay-event-id` for webhook dedup, `Refund.id` for a gateway refund, and `booking:<paymentId>` for a ledger transaction. |
-| CAS-in-WHERE | Every status move repeats the money predicate inside the `UPDATE ... WHERE` clause (for example `WHERE status = 'PENDING'`), so a second writer racing the first is rejected by the database rather than silently overwriting it. |
-| Single writer | `Payment.paymentStatus` is written by `handlePaymentSuccess` alone; all four callers above route into it instead of each writing the status themselves (ADR 21). |
-| Payment legs | `PaymentLeg` rows record what funded a `Payment` (card, wallet, invoice, licence seat); their sum must equal `Payment.amount`, excluding `REFERRAL_CREDIT` legs, which record value already subtracted out of `amount`. |
-| Double-entry ledger with reconciled caches | Every money movement posts a balanced `LedgerTransaction` plus two or more `LedgerEntry` rows; a cache such as `BillingAccount.walletBalance` is a read optimisation the reconciler corrects against that journal, never a second source of truth. |
-| State-as-outbox sweep | A scheduled job that finds domain rows whose expected side effect never landed (an unstamped column, a `PENDING` row past its window) and redrives exactly that side effect, instead of a separate outbox table (ADR 27). |
-| Transient vs terminal failure | A transient failure (a timeout, a not-yet-settled gateway lookup) is retried by the next sweep tick; a terminal failure (Razorpay's `BAD_REQUEST_ERROR` / `input_validation_failed` for an id it has no record of) is recorded once with a reason and never retried again. |
+| Term                                       | One-sentence definition                                                                                                                                                                                                                                                    |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Webhook                                    | Razorpay's asynchronous callback to `POST /api/webhooks/razorpay`, saved as a `WebhookEvent` row before the request is acknowledged so the platform can redrive it without Razorpay resending it.                                                                          |
+| Idempotency key                            | A value that makes a repeated call produce the same result once instead of twice — `x-razorpay-event-id` for webhook dedup, `Refund.id` for a gateway refund, and `booking:<paymentId>` for a ledger transaction.                                                          |
+| CAS-in-WHERE                               | Every status move repeats the money predicate inside the `UPDATE ... WHERE` clause (for example `WHERE status = 'PENDING'`), so a second writer racing the first is rejected by the database rather than silently overwriting it.                                          |
+| Single writer                              | `Payment.paymentStatus` is written by `handlePaymentSuccess` alone; all four callers above route into it instead of each writing the status themselves (ADR 21).                                                                                                           |
+| Payment legs                               | `PaymentLeg` rows record what funded a `Payment` (card, wallet, invoice, licence seat); their sum must equal `Payment.amount`, excluding `REFERRAL_CREDIT` legs, which record value already subtracted out of `amount`.                                                    |
+| Double-entry ledger with reconciled caches | Every money movement posts a balanced `LedgerTransaction` plus two or more `LedgerEntry` rows; a cache such as `BillingAccount.walletBalance` is a read optimisation the reconciler corrects against that journal, never a second source of truth.                         |
+| State-as-outbox sweep                      | A scheduled job that finds domain rows whose expected side effect never landed (an unstamped column, a `PENDING` row past its window) and redrives exactly that side effect, instead of a separate outbox table (ADR 27).                                                  |
+| Transient vs terminal failure              | A transient failure (a timeout, a not-yet-settled gateway lookup) is retried by the next sweep tick; a terminal failure (Razorpay's `BAD_REQUEST_ERROR` / `input_validation_failed` for an id it has no record of) is recorded once with a reason and never retried again. |
 
 ## When this design should change
 

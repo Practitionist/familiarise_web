@@ -10,9 +10,16 @@ import type {
 } from "@/types/review";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
+import {
+  addDays,
+  differenceInCalendarDays,
+  endOfDay,
+  startOfDay,
+} from "date-fns";
 import { useSession } from "@/lib/auth-client";
 import { AboutSection } from "./components/AboutSection";
 import { ClassesAndWebinars } from "./components/ClassesAndWebinars";
@@ -23,6 +30,7 @@ import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useTimezone } from "./hooks/useTimezone";
+import { useAvailabilityWindow } from "./hooks/useAvailabilityWindow";
 import { formatInTimeZone } from "date-fns-tz";
 
 interface ExpertProfileClientProps {
@@ -39,7 +47,9 @@ export function ExpertProfileClient({
   reviewTracks,
 }: ExpertProfileClientProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const { data: session } = useSession();
+  const queryClient = useQueryClient();
   const { timezone: browserTimezone, isLoading: isTimezoneLoading } =
     useTimezone();
   const { toast } = useToast();
@@ -48,12 +58,69 @@ export function ExpertProfileClient({
 
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(new Date());
-  const [slotTimings, setSlotTimings] = useState<TIntervalTiming[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TIntervalTiming | null>(
     null,
   );
 
   const timezone = browserTimezone || userDetails?.timezone;
+
+  // #1591 J1-P1-04 — the grid answer is `private, max-age=30`, so a return
+  // after a checkout 409 re-read the stale green cell. Entered with
+  // `?conflict=1`, or restored from the back/forward cache, the next fetch
+  // bypasses the browser cache once.
+  const bypassCacheOnce = useRef(searchParams.get("conflict") === "1");
+
+  // Pricing-day slots share the overview's week-window query: the week
+  // containing the selected day uses the same [start, end] computation as
+  // ConsultantAvailability's weekOffset, so an overlapping reader joins the
+  // single in-flight request instead of firing its own 1-day compute. Day
+  // clicks inside a loaded week cost zero requests (staleTime 30s).
+  const todayStart = startOfDay(new Date());
+  // Calendar-day arithmetic: a DST transition makes seven days 167 or 169
+  // elapsed hours, which would park the selected day in the wrong week.
+  const selectedWeekOffset = selectedDate
+    ? Math.max(
+        0,
+        Math.floor(
+          differenceInCalendarDays(startOfDay(selectedDate), todayStart) / 7,
+        ),
+      )
+    : 0;
+  const pricingWeekStart = addDays(todayStart, selectedWeekOffset * 7);
+  const pricingWeekEnd = endOfDay(addDays(pricingWeekStart, 6));
+
+  const dayQuery = useAvailabilityWindow({
+    consultantId: consultantDetails?.id,
+    startUtc: selectedDate ? pricingWeekStart : null,
+    endUtc: selectedDate ? pricingWeekEnd : null,
+    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+    bypassRef: bypassCacheOnce,
+  });
+
+  const selectedDateKey =
+    selectedDate && timezone && !isTimezoneLoading
+      ? formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd")
+      : null;
+  const slotTimings: TIntervalTiming[] =
+    (selectedDateKey && dayQuery.data?.[selectedDateKey]) || [];
+
+  useEffect(() => {
+    if (dayQuery.error) {
+      toast({
+        title: "Error fetching slots",
+        description: dayQuery.error.message || "Please try again",
+        variant: "destructive",
+      });
+    }
+  }, [dayQuery.error, toast]);
+
+  const refreshSlots = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: ["availability", consultantDetails?.id],
+      }),
+    [queryClient, consultantDetails?.id],
+  );
 
   // Handle ?action=trial or ?action=book from explore page buttons
   useEffect(() => {
@@ -73,52 +140,15 @@ export function ExpertProfileClient({
     return () => clearTimeout(timer);
   }, [searchParams]);
 
-  const fetchSlots = useCallback(async () => {
-    if (selectedDate && consultantDetails && timezone && !isTimezoneLoading) {
-      try {
-        const startDateInUtc = new Date(selectedDate);
-        startDateInUtc.setHours(0, 0, 0, 0);
-        const endDateInUtc = new Date(selectedDate);
-        endDateInUtc.setHours(23, 59, 59, 999);
-
-        const response = await fetch(
-          `/api/scheduling/availability-with-allocation/${
-            consultantDetails.id
-          }?startDateInUtc=${startDateInUtc.toISOString()}&endDateInUtc=${endDateInUtc.toISOString()}&timezone=${encodeURIComponent(timezone)}`,
-        );
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(
-            errorData.error || "Failed to fetch availability slots",
-          );
-        }
-
-        const { data } = await response.json();
-        const selectedDateKey = formatInTimeZone(
-          selectedDate,
-          timezone,
-          "yyyy-MM-dd",
-        );
-        const slotsForSelectedDate = data[selectedDateKey] || [];
-        setSlotTimings(slotsForSelectedDate);
-      } catch (error) {
-        console.error("Error fetching slots:", error);
-        toast({
-          title: "Error fetching slots",
-          description:
-            error instanceof Error ? error.message : "Please try again",
-          variant: "destructive",
-        });
-      }
-    } else {
-      setSlotTimings([]);
-    }
-  }, [selectedDate, consultantDetails, timezone, isTimezoneLoading, toast]);
-
   useEffect(() => {
-    fetchSlots();
-  }, [fetchSlots]);
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (!event.persisted) return;
+      bypassCacheOnce.current = true;
+      void refreshSlots();
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [refreshSlots]);
 
   const handleConsultationBooking = useCallback(
     async (consultationPlanId: string) => {
@@ -139,7 +169,6 @@ export function ExpertProfileClient({
       const params = new URLSearchParams();
       const startsAt = new Date(selectedSlot.startsAt);
       const endsAt = new Date(selectedSlot.endsAt);
-
       if (
         (selectedSlot as TIntervalTiming & { type: "WEEKLY" | "CUSTOM" })
           .type === "WEEKLY"
@@ -163,13 +192,16 @@ export function ExpertProfileClient({
       // them hit /checkout first works only via a middleware 302 onto a
       // generic sign-in page with no purchase context; doing it here keeps
       // one full-page load out of the funnel and reads as intentional.
+      // SPA navigation (router.push) so the client bundle stays warm.
       if (!session?.user?.id) {
-        window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+        router.push(
+          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
+        );
         return;
       }
-      window.location.href = checkoutUrl;
+      router.push(checkoutUrl);
     },
-    [selectedSlot, consultantDetails, session?.user?.id, toast],
+    [selectedSlot, consultantDetails, session?.user?.id, router, toast],
   );
 
   const handleSubscriptionBooking = useCallback(
@@ -213,13 +245,16 @@ export function ExpertProfileClient({
       // #booking-journey — same explicit guest handoff as consultations: the
       // checkout URL (plan + scheduling period) becomes the auth callback so
       // the purchase resumes untouched after sign-in/sign-up/onboarding.
+      // SPA navigation (router.push) so the client bundle stays warm.
       if (!session?.user?.id) {
-        window.location.href = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
+        router.push(
+          `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`,
+        );
         return;
       }
-      window.location.href = checkoutUrl;
+      router.push(checkoutUrl);
     },
-    [consultantDetails, session?.user?.id, toast],
+    [consultantDetails, session?.user?.id, router, toast],
   );
 
   const renderCalendar = useCallback(() => {
@@ -319,10 +354,17 @@ export function ExpertProfileClient({
                 certifications={userDetails.certifications || []}
               />
 
-              <ConsultantAvailability
-                consultantDetails={consultantDetails}
-                timezone={timezone || "UTC"}
-              />
+              {/* Gated on timezone resolution: the overview used to fire
+                  immediately with the "UTC" fallback and then refire with the
+                  real zone — a third, wrong-zone allocation compute per visit.
+                  One effect-tick delay is invisible inside the page fade-in. */}
+              {!isTimezoneLoading && timezone ? (
+                <ConsultantAvailability
+                  consultantDetails={consultantDetails}
+                  timezone={timezone}
+                  bypassRef={bypassCacheOnce}
+                />
+              ) : null}
             </div>
           </motion.div>
 
@@ -349,7 +391,7 @@ export function ExpertProfileClient({
               setSelectedSlot={setSelectedSlot}
               timezone={timezone || "UTC"}
               autoOpenTrial={autoOpenTrial}
-              onRefreshSlots={fetchSlots}
+              onRefreshSlots={refreshSlots}
             />
           </motion.div>
         </div>

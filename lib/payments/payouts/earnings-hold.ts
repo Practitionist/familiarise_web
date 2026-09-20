@@ -123,15 +123,19 @@ export async function recomputeEarningsHold(
   const holdHours = holdHoursFor(
     appointment.appointmentType as AppointmentType,
   );
+  // #1766 — a NULL hold is an undelivered subscription tranche; only the
+  // completion path may stamp it, so a reschedule leaves it alone.
   const pending = await db.consultantEarnings.findMany({
     where: {
       paymentId: { in: appointment.payment.map((p) => p.id) },
       status: "PENDING",
+      holdUntil: { not: null },
     },
     select: { id: true, createdAt: true, holdUntil: true },
   });
   let moved = 0;
   for (const earning of pending) {
+    if (!earning.holdUntil) continue;
     const computed = computeHoldUntil({
       capturedAt: earning.createdAt,
       lastOccurrenceEndsAt: lastEnd,

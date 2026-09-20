@@ -20,6 +20,7 @@
 import prisma from "../../lib/prisma";
 import { DisputeStatus } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { reportSentryMessage } from "@/lib/observability/report";
 
 // Alert for disputes due within this many hours
 const ALERT_THRESHOLD_HOURS = 48;
@@ -182,6 +183,23 @@ async function alertDisputeDeadlinesUnlocked(): Promise<DisputeDeadlineAlertResu
     console.log("\n🚨 CRITICAL ACTION REQUIRED:");
     console.log(
       "   Some disputes need IMMEDIATE attention to avoid financial loss!",
+    );
+    // #1757 — a deadline is a page, not a job failure: one expected warning
+    // per run listing the ids, and the run itself stays green.
+    reportSentryMessage(
+      `alert-dispute-deadlines: ${criticalCount} dispute(s) due within 12h or past due`,
+      {
+        subsystem: "payments",
+        op: "alert-dispute-deadlines",
+        expected: true,
+        level: "warning",
+        extra: {
+          critical: disputes
+            .filter((d) => d.hoursRemaining <= 12)
+            .map((d) => d.disputeId),
+          pastDue: pastDueDisputes.map((d) => d.disputeId),
+        },
+      },
     );
   }
 

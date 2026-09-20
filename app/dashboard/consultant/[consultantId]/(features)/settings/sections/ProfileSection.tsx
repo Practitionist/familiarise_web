@@ -84,19 +84,19 @@ export function ProfileSection({
           <div className="space-y-6">
             <div className="bg-zinc-50 p-6 rounded-lg">
               <Label className="text-lg font-semibold mb-4 block">
-                Domain Expertise
+                Expertise
               </Label>
               <div className="space-y-4">
                 <div>
                   <Label className="text-sm text-zinc-600">
-                    Primary Domain
+                    Field of expertise
                   </Label>
                   <Select
                     value={formData.domainId || ""}
                     onValueChange={onDomainChange}
                   >
                     <SelectTrigger className="mt-1">
-                      <SelectValue placeholder="Select your primary domain" />
+                      <SelectValue placeholder="Select your field" />
                     </SelectTrigger>
                     <SelectContent>
                       {(domains || [])
@@ -111,27 +111,25 @@ export function ProfileSection({
                 </div>
 
                 <div>
-                  <Label className="text-sm text-zinc-600">Sub Domains</Label>
+                  <Label className="text-sm text-zinc-600">Specialties</Label>
                   <div className="mt-1">
                     <MultiSelect
                       options={subDomainOptions}
                       selected={formData.subDomainIds || []}
                       onChange={onSubDomainChange}
-                      placeholder="Select relevant sub domains"
+                      placeholder="Select your specialties"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <Label className="text-sm text-zinc-600">
-                    Expertise Tags
-                  </Label>
+                  <Label className="text-sm text-zinc-600">Skills</Label>
                   <div className="mt-1">
                     <MultiSelect
                       options={tagOptions}
                       selected={formData.tagIds || []}
                       onChange={onTagChange}
-                      placeholder="Add expertise tags"
+                      placeholder="Add your skills"
                     />
                   </div>
                 </div>

@@ -160,8 +160,8 @@ async function provisionAndVerifyOrgPayoutAccount(ctx: {
           audit: {
             organizationId: orgId,
             actorMembershipId,
-            category: "SETTINGS",
-            action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+            category: "PAYOUT",
+            action: AUDIT_ACTIONS.PAYOUT.PAYOUT_ACCOUNT_UPDATED,
             description: "Payout account verified via RazorpayX penny-drop",
             details: { fundAccountId: fund.id, last4 },
           },
@@ -185,7 +185,8 @@ export async function PUT(
   if (!access.org.canHost) {
     return NextResponse.json(
       {
-        error: "Organization does not host. Enable canHost before setting a payout account.",
+        error:
+          "Organization does not host. Enable canHost before setting a payout account.",
       },
       { status: 409 },
     );
@@ -206,7 +207,10 @@ export async function PUT(
   try {
     encrypted = encodeAccountEnvelope(body.accountNumber);
   } catch (err) {
-    Sentry.captureException(err instanceof Error ? err : new Error(String(err)), { tags: { subsystem: "organizations" } });
+    Sentry.captureException(
+      err instanceof Error ? err : new Error(String(err)),
+      { tags: { subsystem: "organizations" } },
+    );
     return NextResponse.json(
       {
         error: "Payout encryption is not configured on this server",
@@ -270,8 +274,11 @@ export async function PUT(
       data: {
         organizationId: orgId,
         actorMembershipId: access.member.id,
-        category: "SETTINGS",
-        action: AUDIT_ACTIONS.SETTINGS.SETTINGS_CHANGED,
+        // #1584 P1-AU01 — PAYOUT category: 7-year retention, not SETTINGS' 2.
+        category: "PAYOUT",
+        action: existing
+          ? AUDIT_ACTIONS.PAYOUT.PAYOUT_ACCOUNT_UPDATED
+          : AUDIT_ACTIONS.PAYOUT.PAYOUT_ACCOUNT_CREATED,
         description: existing
           ? "Payout account updated"
           : "Payout account created",

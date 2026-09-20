@@ -11,6 +11,7 @@ import * as React from "react";
 import { getAppUrl } from "@/lib/url";
 import { EmailFooter } from "@/emails/components/EmailFooter";
 import { EmailLogo } from "@/emails/components/EmailLogo";
+import { memberRoleLabel } from "./OrgMembershipChangedEmail";
 
 interface OrgInvitationEmailProps {
   inviterName: string;
@@ -27,7 +28,7 @@ export const OrgInvitationEmail = ({
   inviteUrl = getAppUrl(),
   expiresAt,
 }: OrgInvitationEmailProps) => {
-  const roleLabel = role.replace("ORG_", "").toLowerCase();
+  const roleLabel = memberRoleLabel(role);
   const expiryText = expiresAt
     ? `This invitation expires on ${new Date(expiresAt).toLocaleDateString("en-IN", { dateStyle: "long" })}.`
     : "This invitation expires in 14 days.";

@@ -1,8 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
 
-import { isPrivileged } from "@/lib/auth-helpers";
-import { getSession } from "@/lib/auth-server";
+import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import {
   bookingAppointmentFilter,
   resolveBookingRefundContext,
@@ -164,11 +163,13 @@ function deriveActorRoles(
  * told them "no refund at this notice" while the click was about to return
  * every attendee's money.
  *
- * The payment set is `refundWholeEventPayments`' own, filter for filter,
- * including its absence of a `deletedAt` clause: a quote that reads a different
- * set than the charge is just a second opinion. Each seat is worth its
- * refundable balance rather than its gross, because that is what a full refund
- * of an already partly-refunded seat returns.
+ * The payment set is `refundWholeEventPayments`' own, filter for filter:
+ * SUCCEEDED, live (`deletedAt: null`) seats with no amount floor — free_
+ * (credit-funded) seats refund too, via credit restoration (#1161), and
+ * retired rows stay out (#781 §B). A quote that reads a different set than
+ * the charge is just a second opinion. Each seat is worth its refundable
+ * balance rather than its gross, because that is what a full refund of an
+ * already partly-refunded seat returns.
  */
 async function quoteWholeEventRefund(
   kind: "class" | "webinar",
@@ -179,7 +180,7 @@ async function quoteWholeEventRefund(
       appointment:
         kind === "webinar" ? { webinarId: eventId } : { classId: eventId },
       paymentStatus: "SUCCEEDED",
-      amount: { gt: 0 },
+      deletedAt: null,
     },
     select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
   });
@@ -250,6 +251,9 @@ async function quoteIndividualBooking(
     hoursUntilNextSession: ctx.hoursUntilNextSession,
     slotsTotal: ctx.slotsTotal,
     sessionsRemaining: ctx.sessionsRemaining,
+    sessionsTotal: ctx.sessionsTotal,
+    sessionsCompleted: ctx.sessionsCompleted,
+    scheduledStarts: ctx.scheduledStarts,
     isSubscription: !!appointment.subscriptionId,
     isConsultantInitiated,
     // #1500 — a booking funded entirely by referral credit. The rail alone is not
@@ -305,10 +309,10 @@ export async function GET(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1583 D-P0-02 — fresh, ban-aware read; 401 / 403 / 503 shapes are the helper's.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     const { appointmentId } = await params;
 

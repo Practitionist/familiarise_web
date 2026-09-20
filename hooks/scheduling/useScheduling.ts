@@ -46,6 +46,7 @@ import {
   allocationFailedWithCode,
   allocatedElsewhere,
   requestChangedElsewhere,
+  rateLimited,
   isPreservedAllocationMessage,
   schedulingDayBucket,
   schedulingWeekBucket,
@@ -67,6 +68,68 @@ export type { ValidationResult, EventConstraints, SlotLimits };
 /**
  * Configuration options for the useEventSlotAllocation hook
  */
+/**
+ * Classifies a failed allocation into the one action the UI takes. Pure
+ * (no toasts, no callbacks) so the branching lives outside the hook
+ * callback: several 409s do NOT mean "allocated elsewhere" (co-host busy,
+ * illegal transition, transient lock) and must neither close the dialog
+ * nor say that they did.
+ */
+type AllocationFailureAction =
+  | "rate-limited"
+  | "allocated-elsewhere"
+  | "request-changed"
+  | "stay-open-refresh"
+  | "stay-open-raw-refresh"
+  | "key-reset"
+  | "generic";
+
+function classifyAllocationFailure(
+  result: AllocationResult,
+  errorMessage: string,
+): AllocationFailureAction {
+  if (result.httpStatus === 429) return "rate-limited";
+  if (
+    result.httpStatus === 422 &&
+    result.errorCode === "IDEMPOTENCY_KEY_REUSE"
+  ) {
+    return "key-reset";
+  }
+  if (result.httpStatus !== 409) return "generic";
+  // 409s branch on the server's code, never on its wording. Only a
+  // genuine ALREADY_ALLOCATED removes the row; any code this switch does
+  // not know keeps the dialog open with a refetch, because closing and
+  // dropping an allocatable request strands it (M5).
+  switch (result.errorCode) {
+    case "ALREADY_ALLOCATED":
+      return "allocated-elsewhere";
+    case "ILLEGAL_TRANSITION":
+    case "RESCHEDULE_STATE_CHANGED":
+      return "request-changed";
+    case "SLOT_TAKEN":
+      return "stay-open-raw-refresh";
+    case "COLLABORATOR_UNAVAILABLE":
+    case "LOCK_CONTENTION":
+    default:
+      return isPreservedAllocationMessage(errorMessage)
+        ? "stay-open-raw-refresh"
+        : "stay-open-refresh";
+  }
+}
+
+/** The first selected cell by start time — what "Go to selection" scrolls to (#1703 F2). */
+export function earliestSelectedSlot(
+  selectedSlots: readonly CalendarInterval[],
+): CalendarInterval | null {
+  let earliest: CalendarInterval | null = null;
+  for (const slot of selectedSlots) {
+    if (!earliest || slot.startTime.getTime() < earliest.startTime.getTime()) {
+      earliest = slot;
+    }
+  }
+  return earliest;
+}
+
 export interface UseEventSlotAllocationOptions {
   /** Event type - determines validation rules and constraints */
   eventType: "subscription" | "class" | "webinar" | "consultation";
@@ -162,6 +225,10 @@ export interface UseEventSlotAllocationOptions {
   /** #1012 — reschedule stale-tab precondition (tentative count at dialog open). */
   expectedTentativeSlotCount?: number;
 
+  /** #1766 — the subscription already holds sessions; this run appends its
+   * next cycle. The server derives the same answer; this only names intent. */
+  topUp?: boolean;
+
   /** Enable caching of availability data */
   enableCaching?: boolean;
 
@@ -174,6 +241,14 @@ export interface UseEventSlotAllocationOptions {
   /** Called when the server reports the event was already allocated (409),
    * e.g. from another tab — the host should close the dialog and refetch. */
   onConflict?: () => void;
+
+  /**
+   * Stay-open failures (slot taken elsewhere, co-host busy, transient lock)
+   * leave the dialog open — the host should refetch availability so the next
+   * pick is made against fresh cells, not the stale green ones that just
+   * refused. Optional; without it the dialog still stays open correctly.
+   */
+  onStaleData?: () => void;
 
   /** Validation change callback */
   onValidationChange?: (isValid: boolean, result: ValidationResult) => void;
@@ -323,11 +398,23 @@ export interface AllocationAttemptKey {
  * Stable fingerprint of an allocation attempt. A retry of the SAME payload
  * keeps the same Idempotency-Key (the server replays the original batch);
  * any change to mode or slots gets a fresh key.
+ *
+ * `intent` separates attempts whose server-side meaning differs without
+ * changing mode/slots — today `allowPartial` (#1206): a partial-success batch
+ * stamped under a key must never replay as the answer to a later full-intent
+ * retry in the same hook instance, which would report the shortfall as done.
+ *
+ * `guards` separates attempts whose preconditions differ without changing
+ * mode/slots — `initialAllocation` and `expectedTentativeSlotCount` (#1012):
+ * reusing a key across a guard change would replay the old batch and mask the
+ * 409 the guard should have raised. Build it with `fingerprintGuards`.
  */
 export function computeAttemptFingerprint(
   mode: "manual" | "auto" | "requested",
   eventId: string,
   slots: CalendarInterval[],
+  intent?: string,
+  guards?: string,
 ): string {
   const slotPart = slots
     .map((s) => s.startTime.toISOString())
@@ -335,7 +422,32 @@ export function computeAttemptFingerprint(
     // every runtime locale.
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
     .join(",");
-  return `${mode}|${eventId}|${slotPart}`;
+  return `${mode}|${eventId}|${slotPart}|${intent ?? ""}|${guards ?? ""}`;
+}
+
+/**
+ * Serializes the stale-tab guards into the attempt fingerprint. The shape is
+ * five parts (mode|event|slots|intent|guards) whenever any call site passes
+ * guards — keys are per-hook-instance UUIDs, never persisted, so no
+ * cross-version stability is owed; within one session equal payloads keep
+ * equal fingerprints and any guard change mints a fresh key.
+ */
+export function fingerprintGuards(options: {
+  initialAllocation?: boolean;
+  expectedTentativeSlotCount?: number;
+  /**
+   * The consultant explicitly accepting times outside their own published
+   * availability. Skipping the window check changes what the server accepts
+   * for identical slots, so it separates keys like any other intent.
+   */
+  override?: boolean;
+}): string | undefined {
+  const parts: string[] = [];
+  if (options.initialAllocation === true) parts.push("init:1");
+  if (typeof options.expectedTentativeSlotCount === "number")
+    parts.push(`exp:${options.expectedTentativeSlotCount}`);
+  if (options.override === true) parts.push("ovr:1");
+  return parts.length > 0 ? parts.join("|") : undefined;
 }
 
 let attemptKeyCounter = 0;
@@ -386,6 +498,7 @@ export function useEventSlotAllocation(
     onSuccess,
     onError,
     onConflict,
+    onStaleData,
     onValidationChange,
     onSlotsChange,
   } = options;
@@ -540,47 +653,56 @@ export function useEventSlotAllocation(
   // ALLOCATION FAILURE HANDLING
   // ==========================================
 
-  /** Common failure path: 409 means another tab/session already allocated —
-   * UNLESS the message says a SLOT was taken (#1132): that request is still
-   * allocatable with different times, so the server's own message renders
-   * as itself and the dialog stays open (no onConflict tear-down). */
   const handleAllocationFailure = useCallback(
     (result: AllocationResult, fallback: string) => {
       const errorMessage = result.error || fallback;
       setAllocationError(errorMessage);
-      const isStaleReschedule =
-        result.httpStatus === 409 &&
-        /reschedule state changed in another session/i.test(errorMessage);
-      if (
-        result.httpStatus === 409 &&
-        !isPreservedAllocationMessage(errorMessage) &&
-        !isStaleReschedule
-      ) {
-        toast(allocatedElsewhere());
-        onConflict?.();
-      } else if (isStaleReschedule) {
-        // #1012 — the tentative count changed in another tab (a reschedule
-        // finished/started there). The dialog must close + refresh because
-        // the page's view of the booking is stale.
-        toast(requestChangedElsewhere());
-        onConflict?.();
-      } else if (
-        result.httpStatus === 409 &&
-        isPreservedAllocationMessage(errorMessage)
-      ) {
-        // Slot conflict — the dialog stays open, the server's own message
-        // renders as itself (#1132).
-        toast(allocationFailed(errorMessage));
-      } else {
-        // PR 2c resilience — cause-specific toast from the structured code
-        // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
-        // "The scheduling period has ended", SLOT_SHORTAGE → "Not enough
-        // free slots"). Falls back to the generic copy for unknown codes.
-        toast(allocationFailedWithCode(errorMessage, result.errorCode));
+      // A stay-open failure means the grid cells just proved stale: the host
+      // refetches so the next pick is made against fresh data.
+      switch (classifyAllocationFailure(result, errorMessage)) {
+        case "rate-limited":
+          // Rate limited — back off, don't resubmit into it.
+          toast(rateLimited());
+          break;
+        case "allocated-elsewhere":
+          toast(allocatedElsewhere());
+          onConflict?.();
+          break;
+        case "request-changed":
+          // The underlying request moved (cancelled/expired/stale tab):
+          // the page's view is stale, like a stale reschedule.
+          toast(requestChangedElsewhere());
+          onConflict?.();
+          break;
+        case "stay-open-refresh":
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          onStaleData?.();
+          break;
+        case "stay-open-raw-refresh":
+          // Slot conflict — the server's wording names the taken time, so
+          // it rides as the description under the code's title; the dialog
+          // stays open and refetches so the retry sees the taken slot (#1132).
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          onStaleData?.();
+          break;
+        case "key-reset":
+          // Same key, different payload: the key is burned and every retry
+          // with it 422s again. Drop it so the next submit mints a fresh one
+          // via resolveAttemptKey; the dialog stays open for the resubmit.
+          attemptKeyRef.current = null;
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          break;
+        case "generic":
+          // PR 2c resilience — cause-specific toast from the structured code
+          // (NO_AVAILABILITY → "No availability published", PERIOD_ENDED →
+          // "The scheduling period has ended", SLOT_SHORTAGE → "Not enough
+          // free slots"). Falls back to the generic copy for unknown codes.
+          toast(allocationFailedWithCode(errorMessage, result.errorCode));
+          break;
       }
       onError?.(errorMessage);
     },
-    [toast, onConflict, onError],
+    [toast, onConflict, onStaleData, onError],
   );
 
   // ==========================================
@@ -1068,7 +1190,20 @@ export function useEventSlotAllocation(
 
       const attempt = resolveAttemptKey(
         attemptKeyRef.current,
-        computeAttemptFingerprint("manual", eventId, selectedSlots),
+        computeAttemptFingerprint(
+          "manual",
+          eventId,
+          selectedSlots,
+          undefined,
+          // The hook names the intent allowOverride; the fingerprint and the
+          // wire call it override — mapped explicitly so the key separates
+          // override attempts from plain ones.
+          fingerprintGuards({
+            initialAllocation: options.initialAllocation,
+            expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+            override: options.allowOverride,
+          }),
+        ),
       );
       attemptKeyRef.current = attempt;
 
@@ -1086,6 +1221,10 @@ export function useEventSlotAllocation(
         idempotencyKey: attempt.key,
         initialAllocation: options.initialAllocation || undefined,
         expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+        // The consultant explicitly accepting these times as-is (outside
+        // their published availability). Was a dead option until wired here.
+        override: options.allowOverride || undefined,
+        topUp: options.topUp || undefined,
       };
 
       const result = await AllocationAlgorithms.manualAllocate(
@@ -1151,9 +1290,17 @@ export function useEventSlotAllocation(
         // Slots are picked server-side, so the fingerprint covers mode +
         // event only: a double-click replays, a later re-run (after a
         // failure changed nothing) also replays, which is safe either way.
+        // The partial intent is part of the fingerprint: a partial batch
+        // must never replay as a full placement (#1206).
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("auto", eventId, []),
+          computeAttemptFingerprint(
+            "auto",
+            eventId,
+            [],
+            allocateOptions?.allowPartial ? "partial" : undefined,
+            fingerprintGuards(options),
+          ),
         );
         attemptKeyRef.current = attempt;
 
@@ -1167,6 +1314,7 @@ export function useEventSlotAllocation(
             initialAllocation: options.initialAllocation || undefined,
             expectedTentativeSlotCount: options.expectedTentativeSlotCount,
             allowPartial: allocateOptions?.allowPartial,
+            topUp: options.topUp || undefined,
           },
         );
 
@@ -1277,7 +1425,13 @@ export function useEventSlotAllocation(
 
         const attempt = resolveAttemptKey(
           attemptKeyRef.current,
-          computeAttemptFingerprint("requested", eventId, requestedSlots),
+          computeAttemptFingerprint(
+            "requested",
+            eventId,
+            requestedSlots,
+            undefined,
+            fingerprintGuards(options),
+          ),
         );
         attemptKeyRef.current = attempt;
 

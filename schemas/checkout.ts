@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AppointmentsType } from "@prisma/client";
-import { validateSlotTiming } from "@/lib/payments/utils/slot-validation";
+import { slotStartRefusal } from "@/lib/payments/utils/slot-validation";
 import {
   SUPPORTED_CURRENCY_CODES,
   toSupportedCurrency,
@@ -167,15 +167,16 @@ export const checkoutSchema = z
     // === SUBSCRIPTION validation ===
     if (data.appointmentType === "SUBSCRIPTION") {
       const hasSlotData = data.startsAt && data.endsAt;
-      const hasSchedulingPeriod =
-        data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+      // #1766 — the server derives the window (first cycle) from the start;
+      // `schedulingPeriodEndsAt` stays accepted for old clients and is ignored.
+      const hasSchedulingPeriod = !!data.schedulingPeriodStartsAt;
 
-      // Require EITHER slot data OR scheduling period
+      // Require EITHER slot data OR a scheduling start
       if (!hasSlotData && !hasSchedulingPeriod) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "Subscription requires either slot timing or scheduling period",
+            "Subscription requires either slot timing or a scheduling start",
           path: ["startsAt"],
         });
       }
@@ -229,15 +230,19 @@ export const checkoutSchema = z
       }
     }
 
-    // Validate slot is not in the past or within minimum booking lead time
+    // Validate slot is on the 30-minute grid and not within the minimum
+    // booking lead time (#1583 E-P1-03 — shared with request-for-approval).
     if (data.startsAt) {
       const slotStart = new Date(data.startsAt);
-      const timingError = validateSlotTiming(slotStart);
-      if (timingError) {
+      const refusal = Number.isNaN(slotStart.getTime())
+        ? null
+        : slotStartRefusal(slotStart);
+      if (refusal) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: timingError,
+          message: refusal.message,
           path: ["startsAt"],
+          params: { code: refusal.code },
         });
       }
     }

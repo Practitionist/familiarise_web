@@ -24,7 +24,7 @@ import type { Db } from "@/lib/prisma";
  * Bump when the response SHAPE changes (new field, different bucketing). Every
  * previously issued ETag then misses and the next poll repaints.
  */
-const MARKER_VERSION = "av2";
+const MARKER_VERSION = "av3";
 
 export interface AvailabilityGridMarker {
   /** Null when no such consultant — the caller must fall through to its 404. */
@@ -43,8 +43,21 @@ export interface AvailabilityGridMarker {
    * keeps the marker honest when only the payment does.
    */
   paymentsUpdatedAt: Date | null;
-  /** Booked slot rows reaching this consultant (and the consultee, if given). */
+  /** Booked slot rows in the window reaching this consultant (and the consultee, if given). */
   slotsUpdatedAt: Date | null;
+  /**
+   * COUNT of those in-window slot rows. A reschedule that moves a run out of
+   * the window in place leaves max(updatedAt) over the survivors untouched;
+   * the count is what moves the tag (#1697 item 1).
+   */
+  slotRowCount: number;
+  /**
+   * Co-host seats held by this consultant. Accepting (or losing) a co-host
+   * seat changes which appointments the grid counts as busy without touching
+   * any appointment row, so membership needs its own arm — otherwise the grid
+   * could 304 across the very change that added busy times to it.
+   */
+  collaboratorsUpdatedAt: Date | null;
   /** Parent request rows — status flips that start or stop occupying. */
   requestsUpdatedAt: Date | null;
   /**
@@ -56,17 +69,29 @@ export interface AvailabilityGridMarker {
   nextHoldExpiry: Date | null;
 }
 
+/** The half-open window the grid was asked for; the marker is scoped to it. */
+export interface AvailabilityGridWindow {
+  startsAt: Date;
+  endsAt: Date;
+}
+
 /**
  * One statement, one round trip. Every consultant-scoped arm is an index probe
  * (`AppointmentOccurrence_consultantProfileId_startsAt_endsAt_idx`,
- * `AppointmentParticipant_userId_status_idx`, the four
- * `*Plan_consultantProfileId_idx`, `Payment_expiresAt_paymentStatus_idx`).
+ * `AppointmentOccurrence_appointmentId_idx`, `AppointmentParticipant_userId_status_idx`,
+ * the four `*Plan_consultantProfileId_idx`, `Payment_expiresAt_paymentStatus_idx`).
  *
- * `reach` is the set of appointments that can paint a cell on this calendar:
- * the allocator stamps every occurrence it writes with the denormalized
- * consultantProfileId (#440) and seats the consultant on the appointment's
- * roster (#1554), and the request arm below rides that set, so a status flip
- * on a booking where the consultant is the CONSULTEE is covered too.
+ * `reach` is the set of appointments that can paint a cell on THIS window:
+ * the ones the occupancy query reaches — the denormalized consultantProfileId
+ * (#440), the consultant's own seat (#1554), the consultee's seat when given,
+ * the consultant's plan ownership (the same five arms as
+ * `buildOccupiedAppointmentFilter`) and ACCEPTED co-host seats (AE-2 #784) —
+ * intersected with "has an occurrence overlapping [startsAt, endsAt)".
+ *
+ * Window-scoped as of #1697 item 1: scoped to the consultant alone, one
+ * booking flipped the ETag of every open calendar for that consultant and
+ * they all re-demanded full grids at once, serialised on a pool of one. Now
+ * a booking six months out leaves this week's tag alone.
  *
  * `consulteeUserId` is the empty string when absent: an index probe that
  * matches nothing, which keeps this one SQL string rather than two.
@@ -75,6 +100,7 @@ export async function readAvailabilityGridMarker(
   db: Db,
   consultantId: string,
   consulteeUserId: string | null,
+  window: AvailabilityGridWindow,
 ): Promise<AvailabilityGridMarker | null> {
   const consulteeKey = consulteeUserId ?? "";
   const rows = await db.$queryRaw<AvailabilityGridMarker[]>`
@@ -83,10 +109,12 @@ export async function readAvailabilityGridMarker(
         FROM "ConsultantProfile"
        WHERE id = ${consultantId}
     ),
-    reach AS (
+    candidates AS (
       SELECT s."appointmentId" AS id
         FROM "AppointmentOccurrence" s
        WHERE s."consultantProfileId" = ${consultantId}
+         AND s."startsAt" < ${window.endsAt}
+         AND s."endsAt" > ${window.startsAt}
       UNION
       SELECT p."appointmentId"
         FROM "AppointmentParticipant" p
@@ -95,6 +123,71 @@ export async function readAvailabilityGridMarker(
       SELECT p."appointmentId"
         FROM "AppointmentParticipant" p
        WHERE p."userId" = ${consulteeKey}
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Consultation" c ON c.id = a."consultationId"
+        JOIN "ConsultationPlan" cp ON cp.id = c."consultationPlanId"
+       WHERE cp."consultantProfileId" = ${consultantId}
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Subscription" sb ON sb.id = a."subscriptionId"
+        JOIN "SubscriptionPlan" sp ON sp.id = sb."subscriptionPlanId"
+       WHERE sp."consultantProfileId" = ${consultantId}
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Webinar" w ON w.id = a."webinarId"
+        JOIN "WebinarPlan" wp ON wp.id = w."webinarPlanId"
+       WHERE wp."consultantProfileId" = ${consultantId}
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Class" cl ON cl.id = a."classId"
+        JOIN "ClassPlan" clp ON clp.id = cl."classPlanId"
+       WHERE clp."consultantProfileId" = ${consultantId}
+      UNION
+      SELECT ts."appointmentId"
+        FROM "Trial" ts
+       WHERE ts."consultantProfileId" = ${consultantId}
+         AND ts."appointmentId" IS NOT NULL
+      UNION
+      -- Co-host commitments: webinar/class appointments on plans where this
+      -- consultant holds an ACCEPTED seat. Co-hosts are not slot participants
+      -- (AE-2 #784), so none of the arms above reach them. Enum compared as
+      -- text: Prisma raw SQL has no enum literal binding for this type.
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Webinar" w ON w.id = a."webinarId"
+        JOIN "Collaborator" cb ON cb."webinarPlanId" = w."webinarPlanId"
+       WHERE cb."consultantProfileId" = ${consultantId}
+         AND cb.status::text = 'ACCEPTED'
+      UNION
+      SELECT a.id
+        FROM "Appointment" a
+        JOIN "Class" c ON c.id = a."classId"
+        JOIN "Collaborator" cb ON cb."classPlanId" = c."classPlanId"
+       WHERE cb."consultantProfileId" = ${consultantId}
+         AND cb.status::text = 'ACCEPTED'
+    ),
+    reach AS (
+      SELECT k.id
+        FROM candidates k
+       WHERE EXISTS (
+         SELECT 1
+           FROM "AppointmentOccurrence" o
+          WHERE o."appointmentId" = k.id
+            AND o."startsAt" < ${window.endsAt}
+            AND o."endsAt" > ${window.startsAt}
+       )
+    ),
+    window_slots AS (
+      SELECT o."updatedAt"
+        FROM "AppointmentOccurrence" o
+        JOIN reach r ON r.id = o."appointmentId"
+       WHERE o."startsAt" < ${window.endsAt}
+         AND o."endsAt" > ${window.startsAt}
     )
     SELECT
       (SELECT c."updatedAt" FROM consultant c) AS "profileUpdatedAt",
@@ -115,9 +208,11 @@ export async function readAvailabilityGridMarker(
       (SELECT max(p."updatedAt")
          FROM "Payment" p
          JOIN reach r ON r.id = p."appointmentId") AS "paymentsUpdatedAt",
-      (SELECT max(s."updatedAt")
-         FROM "AppointmentOccurrence" s
-         JOIN reach r ON r.id = s."appointmentId") AS "slotsUpdatedAt",
+      (SELECT max(ws."updatedAt") FROM window_slots ws) AS "slotsUpdatedAt",
+      (SELECT count(*) FROM window_slots ws)::int AS "slotRowCount",
+      (SELECT max(cb."updatedAt")
+         FROM "Collaborator" cb
+        WHERE cb."consultantProfileId" = ${consultantId}) AS "collaboratorsUpdatedAt",
       (SELECT max(t) FROM (
           SELECT max(c."updatedAt") AS t
             FROM "Consultation" c
@@ -142,30 +237,6 @@ export async function readAvailabilityGridMarker(
           SELECT max(ts."updatedAt")
             FROM "Trial" ts
             JOIN reach r ON r.id = ts."appointmentId"
-          UNION ALL
-          SELECT max(c."updatedAt")
-            FROM "Consultation" c
-            JOIN "ConsultationPlan" cp ON cp.id = c."consultationPlanId"
-           WHERE cp."consultantProfileId" = ${consultantId}
-          UNION ALL
-          SELECT max(sb."updatedAt")
-            FROM "Subscription" sb
-            JOIN "SubscriptionPlan" sp ON sp.id = sb."subscriptionPlanId"
-           WHERE sp."consultantProfileId" = ${consultantId}
-          UNION ALL
-          SELECT max(w."updatedAt")
-            FROM "Webinar" w
-            JOIN "WebinarPlan" wp ON wp.id = w."webinarPlanId"
-           WHERE wp."consultantProfileId" = ${consultantId}
-          UNION ALL
-          SELECT max(cl."updatedAt")
-            FROM "Class" cl
-            JOIN "ClassPlan" clp ON clp.id = cl."classPlanId"
-           WHERE clp."consultantProfileId" = ${consultantId}
-          UNION ALL
-          SELECT max(ts."updatedAt")
-            FROM "Trial" ts
-           WHERE ts."consultantProfileId" = ${consultantId}
        ) b) AS "requestsUpdatedAt",
       (SELECT min(p."expiresAt")
          FROM "Payment" p
@@ -215,6 +286,8 @@ export function availabilityGridEtag(
     iso(marker.availabilityUpdatedAt),
     String(marker.availabilityRowCount ?? 0),
     iso(marker.slotsUpdatedAt),
+    String(marker.slotRowCount ?? 0),
+    iso(marker.collaboratorsUpdatedAt),
     iso(marker.paymentsUpdatedAt ?? null),
     iso(marker.requestsUpdatedAt),
     iso(marker.nextHoldExpiry),

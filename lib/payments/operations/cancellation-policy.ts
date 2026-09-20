@@ -154,6 +154,18 @@ export interface BookingRefundQuoteInput {
   grossPaise: number;
   /** Gross less anything already given back. */
   refundablePaise: number;
+  /**
+   * #1766 — the plan entitlement a subscription was sold as. Null or absent
+   * means the plan is unknown (a pre-Z2 row) and the quote falls back to the
+   * allocated-slot proration above.
+   */
+  sessionsTotal?: number | null;
+  /** #1766 — sessions delivered (COMPLETED or UNVERIFIED). */
+  sessionsCompleted?: number;
+  /** #1766 — start instants (epoch ms) of every session still scheduled. */
+  scheduledStarts?: number[];
+  /** The instant the notice is measured from; defaults to now. */
+  nowMs?: number;
 }
 
 export interface BookingRefundQuote {
@@ -207,9 +219,128 @@ export interface BookingRefundQuote {
  *     refund operation rejects the whole request with AMOUNT_EXCEEDS_REFUNDABLE,
  *     and the buyer loses the remainder they were owed.
  */
+/**
+ * #1766 — the subscription arm: refund the UNUSED entitlement against the
+ * plan, not against the sessions that happened to be allocated.
+ *
+ * Progressive allocation means a 144-session plan may hold six slots when it
+ * is cancelled; measuring the undelivered share against those six paid back
+ * half the price for a buyer owed 141 sessions. The base is now the plan:
+ * every session never scheduled has infinite notice and comes back in full,
+ * every session still on the calendar comes back at its own notice tier, and
+ * a delivered session comes back not at all. The floor is taken once per
+ * notice tier over the sessions in it, so an untouched plan refunds the whole
+ * gross and the ≤1-paisa-per-tier remainder stays with the platform (#778 §C).
+ */
+function quoteUnusedSessions(
+  input: BookingRefundQuoteInput & { sessionsTotal: number },
+): {
+  tierRefundPct: number;
+  noticeHours: number;
+  proratedBasePaise: number;
+  refundBeforeClamp: number;
+} {
+  const total = input.sessionsTotal;
+  const completed = Math.min(input.sessionsCompleted ?? 0, total);
+  const now = input.nowMs ?? Date.now();
+  const scheduled = [...(input.scheduledStarts ?? [])]
+    .sort((a, b) => a - b)
+    .slice(0, Math.max(0, total - completed));
+  const neverScheduled = Math.max(0, total - completed - scheduled.length);
+  const noticeHours =
+    scheduled.length > 0
+      ? (scheduled[0] - now) / 3_600_000
+      : Number.POSITIVE_INFINITY;
+
+  // Sessions per tier, in basis points; the never-scheduled remainder has
+  // infinite notice, so it lands in whatever rung the ladder gives that.
+  const perBps = new Map<number, number>();
+  const bump = (pct: number, n: number) =>
+    perBps.set(
+      Math.round(pct * 100),
+      (perBps.get(Math.round(pct * 100)) ?? 0) + n,
+    );
+  if (neverScheduled > 0) {
+    bump(
+      computeRefundPct(
+        input.policy,
+        Number.POSITIVE_INFINITY,
+        input.isConsultantInitiated,
+      ),
+      neverScheduled,
+    );
+  }
+  for (const startsAt of scheduled) {
+    const pct = computeRefundPct(
+      input.policy,
+      (startsAt - now) / 3_600_000,
+      input.isConsultantInitiated,
+    );
+    bump(pct, 1);
+  }
+
+  const gross = BigInt(input.grossPaise);
+  const den = BigInt(total) * BigInt(10_000);
+  let refundBeforeClamp = BigInt(0);
+  perBps.forEach((n, bps) => {
+    refundBeforeClamp += (gross * BigInt(n) * BigInt(bps)) / den;
+  });
+
+  return {
+    tierRefundPct: computeRefundPct(
+      input.policy,
+      noticeHours,
+      input.isConsultantInitiated,
+    ),
+    noticeHours,
+    proratedBasePaise: Number(
+      (gross * BigInt(total - completed)) / BigInt(total),
+    ),
+    refundBeforeClamp: Number(refundBeforeClamp),
+  };
+}
+
 export function quoteBookingRefund(
   input: BookingRefundQuoteInput,
 ): BookingRefundQuote {
+  if (
+    input.isSubscription &&
+    input.sessionsTotal !== null &&
+    input.sessionsTotal !== undefined &&
+    input.sessionsTotal > 0
+  ) {
+    const unused = quoteUnusedSessions({
+      ...input,
+      sessionsTotal: input.sessionsTotal,
+    });
+    // #1500 — same credit rule as below, asked of the next session's tier.
+    const creditRestoresInFull =
+      input.isFreeCreditFunded && unused.tierRefundPct > 0;
+    const refundPaise = Math.min(
+      creditRestoresInFull
+        ? unused.proratedBasePaise
+        : unused.refundBeforeClamp,
+      input.refundablePaise,
+    );
+    // Mixed tiers have no single rung to quote, so the percentage shown is
+    // the effective share of the undelivered base, to two decimals.
+    const effectivePct =
+      unused.proratedBasePaise > 0
+        ? Math.round(
+            (unused.refundBeforeClamp * 10_000) / unused.proratedBasePaise,
+          ) / 100
+        : unused.tierRefundPct;
+    return {
+      refundPct: creditRestoresInFull ? 100 : effectivePct,
+      tierRefundPct: unused.tierRefundPct,
+      noticeHours: unused.noticeHours,
+      proratedBasePaise: unused.proratedBasePaise,
+      prorated: (input.sessionsCompleted ?? 0) > 0,
+      refundPaise,
+      creditRestoresInFull,
+    };
+  }
+
   const neverScheduled = input.slotsTotal === 0;
   const noticeHours = neverScheduled
     ? Number.POSITIVE_INFINITY

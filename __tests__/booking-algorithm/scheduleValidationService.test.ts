@@ -15,6 +15,7 @@
  * - slotDurationMinutes fix verification
  */
 
+import { describeConflict } from "@/lib/booking/validate-conflict-view";
 import "./setup";
 
 jest.mock("../../lib/prisma", () => ({
@@ -26,7 +27,12 @@ import {
   ScheduleValidationService,
   isOccupiedByLiveAppointment,
 } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { ScheduleType, DayOfWeek, AppointmentStatus } from "@prisma/client";
+import {
+  ScheduleType,
+  DayOfWeek,
+  AppointmentStatus,
+  type Prisma,
+} from "@prisma/client";
 import {
   makeConsultantData,
   makeWeeklyAvailabilitySlot,
@@ -105,6 +111,25 @@ const customConsultant = makeConsultantData({
 
 // ─── checkSlotAvailability ──────────────────────────────────────────────────
 
+/**
+ * The "reaches this consultant" OR clause of the conflict query: the AND also
+ * carries the occupying-status OR first, so callers must select by content
+ * (the participants arm), not by position.
+ */
+function reachOrOf(call: {
+  where: Prisma.AppointmentWhereInput;
+}): Prisma.AppointmentWhereInput[] | undefined {
+  const andClauses = (call.where.AND ?? []) as Prisma.AppointmentWhereInput[];
+  const reach = andClauses
+    .filter((clause) => Array.isArray(clause.OR))
+    .find((clause) =>
+      (clause.OR as Prisma.AppointmentWhereInput[]).some(
+        (arm) => arm.participants !== undefined,
+      ),
+    );
+  return reach?.OR as Prisma.AppointmentWhereInput[] | undefined;
+}
+
 describe("checkSlotAvailability", () => {
   it("should return valid when no conflicts exist", async () => {
     const result = await service.checkSlotAvailability(
@@ -135,6 +160,104 @@ describe("checkSlotAvailability", () => {
     const result = await service.checkSlotAvailability(slots, "user-1");
     expect(result.isValid).toBe(false);
     expect(result.errors[0]).toContain("already booked");
+  });
+
+  it("carries the conflicting booking and its other party beside the string (#1721)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "existing-apt",
+        occurrences: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: {
+          requestedBy: { user: { id: "user-9", name: "Existing User" } },
+        },
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    expect(result.conflicts).toEqual([
+      {
+        slot: slots[0].toISOString().slice(0, 19),
+        appointmentId: "existing-apt",
+        type: "Consultation",
+        otherParty: { userId: "user-9", name: "Existing User" },
+        title: null,
+      },
+    ]);
+    // The event's consultant sees who; anyone else keeps "Another user".
+    const detail = result.conflicts?.[0];
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: true },
+        "Consultation",
+      ).existingAppointment,
+    ).toMatchObject({ with: "Existing User", appointmentId: "existing-apt" });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: false },
+        "Consultation",
+      ).existingAppointment,
+    ).toEqual({
+      type: "Consultation",
+      with: "Another user",
+      time: expect.any(String),
+    });
+  });
+
+  it("names a conflicting class by its plan title for the event's consultant (#1721 QA)", async () => {
+    const slots = futureSlots(1);
+    mockPrisma.appointment.findMany.mockResolvedValue([
+      {
+        id: "class-apt",
+        occurrences: [
+          {
+            startsAt: slots[0],
+            endsAt: new Date(slots[0].getTime() + 30 * 60 * 1000),
+          },
+        ],
+        consultation: null,
+        subscription: null,
+        webinar: null,
+        class: { status: "SCHEDULED", classPlan: { title: "Algebra I" } },
+      },
+    ]);
+
+    const result = await service.checkSlotAvailability(slots, "user-1");
+    const detail = result.conflicts?.[0];
+    expect(detail).toMatchObject({
+      appointmentId: "class-apt",
+      type: "Class",
+      title: "Algebra I",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: true },
+        "Consultation",
+      ).existingAppointment,
+    ).toMatchObject({
+      type: "Class",
+      with: "Algebra I",
+      appointmentId: "class-apt",
+    });
+    expect(
+      describeConflict(
+        detail!.slot,
+        detail,
+        { userId: "c-1", isEventConsultant: false },
+        "Consultation",
+      ).existingAppointment.with,
+    ).toBe("Another user");
   });
 
   // AE-5/RV-6 — the interval is no longer a parameter; it is the shared
@@ -172,15 +295,35 @@ describe("checkSlotAvailability", () => {
   // grid-allocator-parity suite against a real database.
   it("mirrors the parent slot predicate into the conflict query's include", async () => {
     await service.checkSlotAvailability(futureSlots(2), "user-1");
-    const { where, include } = mockPrisma.appointment.findMany.mock.calls[0][0];
-    const parentFilter = where.AND.find((clause: any) => clause.occurrences)
-      .occurrences.some.AND;
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+      include: {
+        occurrences: {
+          where: { AND: Prisma.AppointmentOccurrenceWhereInput[] };
+        };
+      };
+    };
+    const { where, include } = call;
+    const andClauses = (where.AND ?? []) as Prisma.AppointmentWhereInput[];
+    const parentFilter = andClauses.find(
+      (clause) => clause.occurrences,
+    )?.occurrences;
+    const slotFilter =
+      parentFilter !== null &&
+      typeof parentFilter === "object" &&
+      "some" in parentFilter
+        ? (
+            parentFilter as {
+              some: { AND: Prisma.AppointmentOccurrenceWhereInput[] };
+            }
+          ).some.AND
+        : undefined;
     const includeFilter = include.occurrences.where.AND;
     // Same three conditions, same order: envelope ×2, tombstone. #1554 — the
     // participant predicate sits on the appointment, not on the rows.
-    expect(includeFilter).toEqual(parentFilter);
+    expect(includeFilter).toEqual(slotFilter);
     expect(includeFilter).toContainEqual({ deletedAt: null });
-    expect(where.AND).toContainEqual({
+    expect(reachOrOf(call)).toContainEqual({
       participants: {
         some: {
           userId: { in: ["user-1"] },
@@ -188,6 +331,53 @@ describe("checkSlotAvailability", () => {
         },
       },
     });
+  });
+
+  it("adds the co-host arm when the consultant profile is known (AE-2)", async () => {
+    await service.checkSlotAvailability(
+      futureSlots(1),
+      "user-1",
+      "consultant-profile-1",
+    );
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+    };
+    expect(reachOrOf(call)).toContainEqual({
+      OR: [
+        {
+          webinar: {
+            webinarPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: "consultant-profile-1",
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
+        {
+          class: {
+            classPlan: {
+              collaborators: {
+                some: {
+                  consultantProfileId: "consultant-profile-1",
+                  status: "ACCEPTED",
+                },
+              },
+            },
+          },
+        },
+      ],
+    });
+  });
+
+  it("omits the co-host arm when no consultant profile is given", async () => {
+    await service.checkSlotAvailability(futureSlots(1), "user-1");
+    const call = mockPrisma.appointment.findMany.mock.calls[0][0] as {
+      where: Prisma.AppointmentWhereInput;
+    };
+    expect(reachOrOf(call)).toHaveLength(1);
   });
 
   it("should skip expired payment conflicts (consultation)", async () => {

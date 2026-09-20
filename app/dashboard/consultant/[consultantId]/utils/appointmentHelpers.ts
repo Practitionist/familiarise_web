@@ -1,11 +1,12 @@
-import { format } from "date-fns";
 import { TAppointment } from "@/types/appointment";
+import { formatInViewerZone } from "@/lib/time/viewer-zone";
 import {
   isDeadOccurrence,
   isOccurrenceOver,
   liveOccurrences,
   occurrencesOfAppointment,
 } from "@/lib/appointments/occurrences";
+import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 
 /**
  * The LIVE slot rows of an appointment — dead rows (CANCELLED / RESCHEDULED /
@@ -222,10 +223,24 @@ export const getSlotTimes = (appointment: TAppointment): Date[] => {
     .filter((date) => !isNaN(date.getTime()));
 };
 
+/** #1766 — the wrapper's subscription, when the read carried its entitlement. */
+type EntitledSubscription = {
+  sessionsTotal?: number | null;
+  schedulingPeriodStartsAt?: Date | string | null;
+  schedulingTimezone?: string | null;
+  subscriptionPlan?: {
+    sessionsPerWeek?: number;
+    durationInMonths?: number;
+    totalSessions?: number;
+  } | null;
+};
+
 /**
  * Calculates session progress metrics for a group of appointments
  * @param groupAppointments - The group's wrapper(s); #1554 — a subscription or
- * class is one Appointment whose live occurrence rows are its sessions
+ * class is one Appointment whose live occurrence rows are its sessions.
+ * #1766 — with the wrapper's subscription present, the total is the frozen
+ * entitlement and "completed" the delivered rows, through the one helper.
  * @param referenceDate - Optional reference date for comparison (defaults to now)
  * @returns Session progress metrics including total, completed, remaining sessions and percentage
  */
@@ -238,14 +253,42 @@ export const calculateSessionProgress = (
   remainingSessions: number;
   progressPercentage: number;
 } => {
-  const sessions = liveOccurrences(
-    groupAppointments.flatMap((app) => occurrencesOfAppointment(app)),
+  const rows = groupAppointments.flatMap((app) =>
+    occurrencesOfAppointment(app),
   );
+  const sessions = liveOccurrences(rows);
+  const sub = groupAppointments[0]?.subscription as
+    | EntitledSubscription
+    | null
+    | undefined;
+  const plan = sub?.subscriptionPlan;
 
-  const totalSessions = sessions.length;
-  const completedSessions = sessions.filter((session) =>
+  let totalSessions = sessions.length;
+  let completedSessions = sessions.filter((session) =>
     isOccurrenceOver(session, referenceDate),
   ).length;
+  if (
+    plan &&
+    typeof plan.sessionsPerWeek === "number" &&
+    typeof plan.durationInMonths === "number" &&
+    typeof plan.totalSessions === "number"
+  ) {
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: sub?.sessionsTotal ?? plan.totalSessions,
+      sessionsPerWeek: plan.sessionsPerWeek,
+      durationInMonths: plan.durationInMonths,
+      // A row with no end (legacy shape) contributes its start to the window.
+      occurrences: rows.map((row) => ({
+        ...row,
+        endsAt: row.endsAt ?? row.startsAt,
+      })),
+      schedulingPeriodStartsAt: sub?.schedulingPeriodStartsAt ?? referenceDate,
+      schedulingTimezone: sub?.schedulingTimezone ?? "Asia/Kolkata",
+      now: referenceDate,
+    });
+    totalSessions = entitlement.total;
+    completedSessions = entitlement.completed;
+  }
   const remainingSessions = totalSessions - completedSessions;
   const progressPercentage =
     totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0;
@@ -299,15 +342,6 @@ export const hasTodaySlots = (appointment: TAppointment): boolean => {
     const date = new Date(time);
     return date >= todayStart && date <= todayEnd;
   });
-};
-
-// Format UTC time to local time
-export const formatAppointmentTime = (utcTime: string): string => {
-  // Create a date object in local time
-  const localDate = new Date(utcTime);
-
-  // Format the date in local time with browser's timezone
-  return format(localDate, "EEE, MMM d, h:mm a");
 };
 
 // Get appointment status
@@ -423,21 +457,13 @@ export const sortAppointmentsByStartTime = (
   });
 };
 
-// Filter today's appointments
+// Filter today's appointments. "Today" is the viewer's calendar day, the
+// same zone the times are printed in (#1703 B7).
 export const getTodayAppointments = (
   appointments: TAppointment[],
+  zone: string,
 ): TAppointment[] => {
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayEnd = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    23,
-    59,
-    59,
-    999,
-  );
+  const todayKey = formatInViewerZone(new Date(), zone, "yyyy-MM-dd");
 
   // First expand appointments with multiple slots (only for subscriptions and classes)
   const expandedAppointments = appointments.flatMap((appointment) => {
@@ -468,10 +494,7 @@ export const getTodayAppointments = (
     const slotTime = getStartTime(appointment);
     if (!slotTime) return false;
 
-    const slotDate = new Date(slotTime);
-    const isToday = slotDate >= todayStart && slotDate <= todayEnd;
-
-    return isToday;
+    return formatInViewerZone(slotTime, zone, "yyyy-MM-dd") === todayKey;
   });
 };
 
@@ -565,4 +588,3 @@ export const groupRecurringAppointments = (
 
   return groups;
 };
-

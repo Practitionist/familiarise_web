@@ -14,7 +14,12 @@
  * a real failure; lose that and a lost CAS race starts looking like a crash.
  */
 
-import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
+import {
+  ApiResponseError,
+  OUTCOME_UNKNOWN_MESSAGE,
+  actionFailureMessage,
+  requireJsonResponse,
+} from "@/lib/fetch-helpers";
 
 const HTML = "<!DOCTYPE html><html><body>Gateway error</body></html>";
 
@@ -51,6 +56,35 @@ describe("requireJsonResponse", () => {
     expect(error).toBeInstanceOf(ApiResponseError);
     expect((error as Error).name).not.toBe("SyntaxError");
     expect((error as ApiResponseError).status).toBe(200);
+  });
+
+  it("reads an edge 504 as an unknown outcome, and a route's own 5xx sentence as its answer (#1696)", async () => {
+    const edge = await requireJsonResponse(htmlResponse(504)).catch(
+      (error: unknown) => error,
+    );
+    expect(actionFailureMessage(edge, "Failed")).toBe(OUTCOME_UNKNOWN_MESSAGE);
+
+    const route = await requireJsonResponse(
+      jsonResponse(500, {
+        error:
+          "Couldn't save these times — check whether they appear, then retry.",
+      }),
+    ).catch((error: unknown) => error);
+    expect(actionFailureMessage(route, "Failed")).toBe(
+      "Couldn't save these times — check whether they appear, then retry.",
+    );
+  });
+
+  it("carries a 429's Retry-After as milliseconds so pollers can back off (#1697)", async () => {
+    const res = new Response(JSON.stringify({ code: "RATE_LIMITED" }), {
+      status: 429,
+      headers: { "content-type": "application/json", "retry-after": "17" },
+    });
+    await expect(requireJsonResponse(res)).rejects.toMatchObject({
+      status: 429,
+      code: "RATE_LIMITED",
+      retryAfterMs: 17_000,
+    });
   });
 
   it("keeps the 409 the cancel dialog branches on, and the server's own message", async () => {

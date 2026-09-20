@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireOnboarded } from "@/lib/auth-guard";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
+import { selectFallbackOrgMembership } from "@/lib/labels/org-labels";
 
 // Server-side dashboard router. requireOnboarded() guarantees an onboarded
 // session carrying role + profile FKs + organizationMemberships (auth.ts
@@ -34,7 +35,12 @@ export default async function Dashboard() {
         : user.role === "CONSULTANT" && user.consultantProfileId
           ? `/dashboard/consultant/${user.consultantProfileId}/home`
           : null;
-    const firstOrg = user.organizationMemberships?.[0]?.organizationId;
+    // Deterministic multi-org fallback: highest-ranked membership wins, slug
+    // breaks ties — the session array has no ORDER BY, so [0] used to
+    // flicker between orgs across logins.
+    const firstOrg = selectFallbackOrgMembership(
+      user.organizationMemberships,
+    )?.organizationId;
     target =
       roleHome ??
       resolvePersonalDashboardHref(user) ??

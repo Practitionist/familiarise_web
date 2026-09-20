@@ -16,6 +16,7 @@ import {
   eligibilityLimiter,
   waitlistLimiter,
   availabilityLimiter,
+  availabilityGridLimiter,
   orgInviteAcceptLimiter,
   ssoDomainCheckLimiter,
   orgWalletTopUpLimiter,
@@ -146,18 +147,23 @@ function maintenanceRetryAfterHeaders(
  * Behaviours when a window IS in force and no bypass:
  *   - OFFLINE  → 503 JSON for /api/*, else rewrite to the /maintenance page.
  *   - DEGRADED + write route (non-GET) → 503 JSON ("writes unavailable").
- *   - DEGRADED + read route → pass through WITH x-maintenance-* banner headers.
+ *   - DEGRADED + read route → continue, and stamp x-maintenance-* banner
+ *     headers on whatever the rest of the middleware answers.
  *
- * GOTCHA for future devs: the DEGRADED read branch returns `NextResponse.next()`
- * and therefore SHORT-CIRCUITS the rest of the middleware — edge rate limiting
- * and the auth-cookie routing below do NOT run for reads during a DEGRADED
- * window. That's existing behaviour (banner-only degraded mode); change with care.
+ * #1599 — the DEGRADED read branch used to return `NextResponse.next()`
+ * here, which skipped the edge rate limiter and the cookie routing for every
+ * read during a window. It now hands the banner headers back so the caller
+ * runs the limiter and the auth routing first and stamps them on the result.
  */
+type MaintenanceGate =
+  | { kind: "respond"; response: NextResponse }
+  | { kind: "banner"; headers: Record<string, string> };
+
 function handleMaintenance(
   req: NextRequest,
   pathname: string,
   state: MaintenanceState,
-): NextResponse | null {
+): MaintenanceGate | null {
   if (state.phase === "OFF" || isMaintenanceExempt(pathname)) return null;
   if (validateBypass(req, state.bypassSecret)) return null;
 
@@ -166,47 +172,52 @@ function handleMaintenance(
   if (state.phase === "OFFLINE") {
     // API callers get machine-readable 503 JSON, not rewritten HTML.
     if (pathname.startsWith("/api/")) {
-      return NextResponse.json(
-        {
-          error: "Service temporarily unavailable during maintenance",
-          phase: "OFFLINE",
-          reason: state.reason || null,
-          estimatedEnd: state.estimatedEnd || null,
-        },
-        { status: 503, headers },
-      );
+      return {
+        kind: "respond",
+        response: NextResponse.json(
+          {
+            error: "Service temporarily unavailable during maintenance",
+            phase: "OFFLINE",
+            reason: state.reason || null,
+            estimatedEnd: state.estimatedEnd || null,
+          },
+          { status: 503, headers },
+        ),
+      };
     }
     const response = NextResponse.rewrite(new URL("/maintenance", req.url));
     for (const [key, value] of Object.entries(headers)) {
       response.headers.set(key, value);
     }
-    return response;
+    return { kind: "respond", response };
   }
 
   // DEGRADED: block transactional writes; allow reads with banner headers.
-  if (isWriteBlockedInDegraded(pathname, req.method)) {
-    return NextResponse.json(
-      {
-        error: "Writes are temporarily unavailable during maintenance",
-        phase: "DEGRADED",
-        reason: state.reason || null,
-        estimatedEnd: state.estimatedEnd || null,
-      },
-      { status: 503, headers },
-    );
+  if (
+    isWriteBlockedInDegraded(pathname, req.method, req.nextUrl.searchParams)
+  ) {
+    return {
+      kind: "respond",
+      response: NextResponse.json(
+        {
+          error: "Writes are temporarily unavailable during maintenance",
+          phase: "DEGRADED",
+          reason: state.reason || null,
+          estimatedEnd: state.estimatedEnd || null,
+        },
+        { status: 503, headers },
+      ),
+    };
   }
 
-  const response = NextResponse.next();
-  response.headers.set("x-maintenance-phase", "degraded");
-  response.headers.set(
-    "x-maintenance-reason",
-    encodeURIComponent(state.reason || ""),
-  );
-  response.headers.set(
-    "x-maintenance-eta",
-    encodeURIComponent(state.estimatedEnd || ""),
-  );
-  return response;
+  return {
+    kind: "banner",
+    headers: {
+      "x-maintenance-phase": "degraded",
+      "x-maintenance-reason": encodeURIComponent(state.reason || ""),
+      "x-maintenance-eta": encodeURIComponent(state.estimatedEnd || ""),
+    },
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +337,14 @@ const RATE_LIMIT_RULES: RateRule[] = [
     skipLocalhost: false,
   },
   {
+    // #1697 item 2 — a different prefix, so the rule above never matched the
+    // polling grid; it was the hottest unthrottled read in the app.
+    label: "public: availability grid (with allocation)",
+    match: (p) => p.startsWith("/api/scheduling/availability-with-allocation/"),
+    limiter: availabilityGridLimiter,
+    skipLocalhost: false,
+  },
+  {
     // Invite-accept floods. orgId isn't in the URL (it's inside the invite token
     // body), so this is IP-keyed; org-level observability is the per-accept audit
     // log. Covers credential-stuffing against stolen invite tokens.
@@ -380,7 +399,7 @@ async function applyEdgeRateLimits(
     if (rule.skipLocalhost && isLocalhost) continue;
     if (!rule.match(pathname, req.method)) continue;
     const id = rule.key ? rule.key(pathname, clientIp) : clientIp;
-    if (id == null) continue;
+    if (id === null) continue;
     const limited = await applyRateLimit(rule.limiter, id);
     if (limited) return limited;
   }
@@ -428,8 +447,24 @@ export async function middleware(
     ? getMaintenanceStateCachedOnly(event.waitUntil.bind(event))
     : await getMaintenanceState();
   const maintenance = handleMaintenance(req, pathname, maintenanceState);
-  if (maintenance) return maintenance;
+  if (maintenance?.kind === "respond") return maintenance.response;
 
+  const response = await routeRequest(req, pathname);
+  // A DEGRADED read carries the banner headers on top of whatever the limiter
+  // and the cookie routing decided, instead of skipping them (#1599).
+  if (maintenance?.kind === "banner") {
+    for (const [key, value] of Object.entries(maintenance.headers)) {
+      response.headers.set(key, value);
+    }
+  }
+  return response;
+}
+
+/** Steps 3–4: the edge rate limiter, then cookie-presence auth routing. */
+async function routeRequest(
+  req: NextRequest,
+  pathname: string,
+): Promise<NextResponse> {
   // 3. Edge rate limiting.
   const rateLimited = await applyEdgeRateLimits(req, pathname);
   if (rateLimited) return rateLimited;

@@ -150,20 +150,22 @@ model User {
   /// distinguishes it from `erasureRequests` above (requests filed
   /// against this user) — Prisma requires the disambiguation since
   /// both edges target ErasureRequest.
-  erasureRequestsProcessed      ErasureRequest[]      @relation("ErasureRequestProcessor")
+  erasureRequestsProcessed      ErasureRequest[]              @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
-  disputesAssigned              Dispute[]             @relation("DisputeAssignee")
+  disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
-  documentsReviewed             AppointmentDocument[] @relation("DocumentReviewer")
+  documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
   // Soft-delete audit — who tombstoned an appointment document.
-  documentsDeleted              AppointmentDocument[] @relation("DocumentDeleter")
+  documentsDeleted              AppointmentDocument[]         @relation("DocumentDeleter")
   // #366 — publish-time redistribution-consent attestations made by consultants.
-  recordingsConsentAttested     Recording[]           @relation("RecordingConsentAttestor")
+  recordingsConsentAttested     Recording[]                   @relation("RecordingConsentAttestor")
   // #366 — replay purchases this user made.
-  recordingPurchases            RecordingPurchase[]   @relation("RecordingPurchaseBuyer")
+  recordingPurchases            RecordingPurchase[]           @relation("RecordingPurchaseBuyer")
   // #1499 — cancellation-policy versions this OWNER published, for the audit trail.
-  publishedCancellationPolicies CancellationPolicy[]  @relation("CancellationPolicyPublisher")
+  publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
+  // Verification documents this user uploaded (owner column, #1224).
+  verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -2789,6 +2791,7 @@ enum LedgerTransactionKind {
   BOOKING
   TOPUP
   TOPUP_REFUND
+  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   INVOICE_ISSUED
   INVOICE_PAID
   INVOICE_REFUND
@@ -2796,6 +2799,7 @@ enum LedgerTransactionKind {
   ORG_PAYOUT
   REFUND
   OVERAGE_MEMBER
+  /// reserved — never posted; see docs/enterprise/10-money-and-ledger/03-ledger-and-postings.md
   GRANT
 }
 
@@ -3044,6 +3048,14 @@ model ConsultantProfile {
   memberships   Membership[] @relation("ConsultantMembership")
   isIndependent Boolean      @default(true)
 
+  // #1703 D1 — INSTANT pays on a free slot; REQUEST routes every slot through
+  // approval. Rationale: docs/booking/21-schema-reference.md.
+  bookingMode       BookingMode @default(INSTANT)
+  // #1703 D4 — the pause toggle and the optional open-PENDING cap (null = off);
+  // the request route refuses with a typed 409 when either bites.
+  acceptingRequests Boolean     @default(true)
+  maxOpenRequests   Int?
+
   // India statutory (compliance stubs read these)
   panNumber                       String?         @db.VarChar(10)
   residencyStatus                 ResidencyStatus @default(RESIDENT)
@@ -3086,6 +3098,12 @@ model ConsultantProfile {
   // its trailing column, so two single-column indexes.
   @@index([publishedRatingOneToOne])
   @@index([publishedRatingGroup])
+}
+
+// #1703 D1 — placed after ConsultantProfile, the one model it serves.
+enum BookingMode {
+  INSTANT
+  REQUEST
 }
 
 model Domain {
@@ -3778,6 +3796,12 @@ model Subscription {
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
+
+  /// #1766 — entitlement frozen at purchase, like Payment.amount; plan edits
+  /// never move it. Nullable only for pre-#1766 rows (the resolver falls back
+  /// to plan.totalSessions); NOT NULL + CHECK >= 1 staged in the
+  /// check-constraints banner.
+  sessionsTotal Int?
 
   appointment        Appointment?
   convertedFromTrial Trial?
@@ -5624,11 +5648,15 @@ model ConsultantEarnings {
   // NULL for a whole-purchase fee (subscription, class) until it is split.
   appointmentOccurrenceId String?
 
+  /// #1766 — 0-based earnings tranche of a subscription; NULL for every other row.
+  cycleOrdinal Int?
+
   // Status tracking
   status           EarningStatus  @default(PENDING)
-  // #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
-  // recomputed when a reschedule moves the call.
-  holdUntil        DateTime       @db.Timestamptz
+  /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
+  /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
+  /// yet delivered; stamped by the completion path.
+  holdUntil        DateTime?      @db.Timestamptz
   paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
@@ -5648,9 +5676,9 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  // One row per (payment, consultant, role, occurrence): the NULLS NOT DISTINCT
-  // sidecar unique consultant_earnings_occurrence_key in prisma/sql; no
-  // @@unique/@@index on that set here (#1268).
+  // One row per (payment, consultant, role, occurrence, cycle): the NULLS NOT
+  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/sql;
+  // no @@unique/@@index on that set here (#1268, #1766).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])
@@ -6148,7 +6176,9 @@ model DiscountCode {
   expiresAt     DateTime?
   maxUses       Int?
   currentUses   Int          @default(0)
-  maxDiscount   BigInt? // in paise (cap for FIXED_AMOUNT discounts)
+  /// In paise. Caps a PERCENTAGE discount only; FIXED_AMOUNT is capped by the
+  /// base price in derive-checkout-amount.ts (#1584 P1-FX01b).
+  maxDiscount   BigInt?
 
   Payment Payment[]
 
@@ -6624,6 +6654,10 @@ model ConsultantProfileVerification {
   rejectionReason String? @db.Text // Brief reason shown to consultant (e.g., "Documents unclear")
   feedbackDetails String? @db.Text // Detailed feedback (e.g., "12th certificate appears to be forged")
 
+  // Day-7 reminder stamp for an unanswered NEEDS_INFO; the day-14 sweep closes it.
+  // See docs/onboarding/05-schema-reference.md.
+  reminderSentAt DateTime? @db.Timestamptz
+
   documents ProfileVerificationDocument[]
 
   createdAt DateTime @default(now())
@@ -6648,13 +6682,33 @@ model ProfileVerificationDocument {
   // Document-specific review (for granular feedback)
   isValid       Boolean? // null = not reviewed, true = valid, false = invalid
   staffFeedback String? // Feedback on this specific document (e.g., "Certificate appears forged")
+  // Structured reason when staff mark a document invalid; drives the consultant's fix list.
+  issue         VerificationDocumentIssue?
 
-  verification   ConsultantProfileVerification @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
-  verificationId String
+  // A row exists from upload; null until a submission links it (unlinked rows are swept).
+  verification   ConsultantProfileVerification? @relation(fields: [verificationId], references: [id], onUpdate: Cascade, onDelete: Cascade)
+  verificationId String?
+  linkedAt       DateTime?                      @db.Timestamptz
+
+  // The uploader: ownership proof for linking (#1224) and the per-user byte quota.
+  // Null only on rows written before this column existed.
+  uploadedBy       User?   @relation("VerificationDocumentUploader", fields: [uploadedByUserId], references: [id], onDelete: Cascade)
+  uploadedByUserId String?
 
   uploadedAt DateTime @default(now())
 
   @@index([verificationId])
+  @@index([uploadedByUserId])
+}
+
+// Reasons a reviewer can attach to an invalid document; see docs/onboarding/04-verification-lifecycle.md.
+enum VerificationDocumentIssue {
+  UNCLEAR_SCAN
+  EXPIRED
+  NAME_MISMATCH
+  MISSING_PAGE
+  WRONG_TYPE
+  OTHER
 }
 
 // System Jobs Models

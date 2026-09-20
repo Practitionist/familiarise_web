@@ -51,6 +51,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Shell syntax + shellcheck
+        # #1757 — scripts/ci/notify-ops-failure.sh is the alert path for every
+        # money cron; a script that does not parse is a dead sink nobody sees.
+        run: |
+          for f in scripts/ci/*.sh; do bash -n "$f"; done
+          shellcheck scripts/ci/*.sh
+
       - name: Prettier Check
         id: prettier
         run: npm run format:check 2>&1 | tee /tmp/prettier.txt; exit ${PIPESTATUS[0]}

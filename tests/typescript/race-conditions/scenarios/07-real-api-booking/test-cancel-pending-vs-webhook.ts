@@ -40,6 +40,22 @@ interface Fixture {
   paymentIntent: string;
 }
 
+/**
+ * A webhook-win leg leaves Phase-2 rows on the chaos payment — earnings,
+ * invoice, refund, dispute — whose FKs are `onDelete: Restrict`, so the
+ * Payment cannot go until they do. Only rows on these chaos ids are touched.
+ */
+async function retireChaosPayments(paymentIds: string[]): Promise<void> {
+  if (paymentIds.length === 0) return;
+  const where = { paymentId: { in: paymentIds } };
+  await prisma.dispute.deleteMany({ where });
+  await prisma.refund.deleteMany({ where });
+  await prisma.consumerInvoice.deleteMany({ where });
+  await prisma.organizationEarnings.deleteMany({ where });
+  await prisma.consultantEarnings.deleteMany({ where });
+  await prisma.payment.deleteMany({ where: { id: { in: paymentIds } } });
+}
+
 async function createPendingPayment(
   userId: string,
   appointmentId: string,
@@ -322,6 +338,10 @@ async function run() {
       });
     }
 
+    // Leg 1's chaos payment stays on the wrapper (a cancel never deletes a
+    // Payment), and `Payment` is unique on (userId, appointmentId): retire it
+    // before leg 2 mints its twin. The final cleanup still covers both ids.
+    await retireChaosPayments(createdPaymentIds);
     const leg2 = await createPendingPayment(
       requester.id,
       appointment.id,
@@ -365,9 +385,7 @@ async function run() {
     // Cancellation fields restore from the SNAPSHOT (not hard-nulled): a
     // shared dev fixture may legitimately carry pre-existing values.
     // -------------------------------------------------------------------
-    await prisma.payment.deleteMany({
-      where: { id: { in: createdPaymentIds } },
-    });
+    await retireChaosPayments(createdPaymentIds);
     await prisma.consultation.update({
       where: { id: consultation.id },
       data: {

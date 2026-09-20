@@ -406,6 +406,8 @@ const createSubscriptionAppointment = (
         schedulingPeriodStartsAt: startDate,
         schedulingPeriodEndsAt: endDate,
         schedulingTimezone: "UTC",
+        // #1766 — the entitlement is snapshotted at purchase.
+        sessionsTotal: selectedPlan.totalSessions,
       },
     },
   };
@@ -748,7 +750,9 @@ async function createAppointmentBatch(
       await prisma.$transaction(
         async (tx) => {
           await tx.appointment.create({
-            data: appointmentData,
+            // #1708 — seeded parties share no real booking link, so the chat
+            // sweep can never ensure a channel; stamp it as decided.
+            data: { ...appointmentData, chatChannelEnsuredAt: new Date() },
           });
         },
         {

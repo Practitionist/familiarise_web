@@ -16,6 +16,11 @@ import {
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
+import {
+  validateWeeklyWindow,
+  AVAILABILITY_REFUSAL_STATUS,
+} from "@/lib/scheduling/availability-contract";
+import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
 
 /**
  * The tail every weekly-slot edit shares: reject an overlap, stamp the
@@ -116,7 +121,14 @@ async function applyWeeklySlotEdit(
             endTimeUtc: updatedSlot.endTimeUtc,
           },
         );
-        return NextResponse.json({ data: covering }, { status: 200 });
+        const { uncoveredUpcoming } = await settleAvailabilityWrite(
+          tx,
+          currentSlot.consultantProfileId,
+        );
+        return NextResponse.json(
+          { data: covering, uncoveredUpcoming },
+          { status: 200 },
+        );
       },
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
@@ -294,6 +306,21 @@ export async function PUT(
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
+    // Contract (lib/scheduling/availability-contract): the 30 min–12 h bound
+    // the wizard enforces, now on this path too.
+    const refusal = validateWeeklyWindow({
+      startDay: body.startDay,
+      endDay: body.endDay,
+      startTimeUtc,
+      endTimeUtc,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // Use authoritative consultantProfileId from existing slot (FIX 9)
     const effectiveConsultantProfileId = currentSlot.consultantProfileId;
 
@@ -429,6 +456,21 @@ export async function PATCH(
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
+    // Contract (lib/scheduling/availability-contract): the 30 min–12 h bound
+    // the wizard enforces, now on this path too.
+    const refusal = validateWeeklyWindow({
+      startDay: effectiveStartDay,
+      endDay: effectiveEndDay,
+      startTimeUtc,
+      endTimeUtc,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // PATCH omits what it does not change, so the effective day pair is what
     // both the overlap check and the write use.
     return await applyWeeklySlotEdit(
@@ -489,9 +531,18 @@ export async function DELETE(
         consultantProfile: true,
       },
     });
+    // Shrink notice + completion recompute (allowed, reported — see contract doc).
+    const { uncoveredUpcoming } = await settleAvailabilityWrite(
+      prisma,
+      deletedSlot.consultantProfileId,
+    );
 
     return NextResponse.json(
-      { message: "Weekly slot deleted successfully", data: deletedSlot },
+      {
+        message: "Weekly slot deleted successfully",
+        data: deletedSlot,
+        uncoveredUpcoming,
+      },
       { status: 200 },
     );
   } catch (error) {

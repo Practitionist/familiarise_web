@@ -475,6 +475,10 @@ export type SubscriptionPayload = {
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
+  /** #1766 — the cycle just finished (1-based) and what the plan still owes. */
+  cycleOrdinal?: number;
+  remainingSessions?: number;
+  nextBatch?: number;
 };
 
 export type BookingRequestPayload = NotificationScope & {
@@ -488,6 +492,11 @@ export type BookingRequestPayload = NotificationScope & {
   /** ISO 8601 copy of `requestedDateTime`. */
   requestedDateTimeIso?: string;
   dashboardUrl: string;
+  /**
+   * #1703 — set on the unscheduled-subscription nudge (3, 7 or 14): the same
+   * event, a different sentence, so no new workflow is spent on it.
+   */
+  nudgeDay?: number;
 };
 
 export type BookingRequestInput = Omit<

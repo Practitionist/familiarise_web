@@ -45,7 +45,7 @@ ran. Once a second writer can set `SUCCEEDED` without running it, the guard
 inverts: it stops reading "this work is done" and starts reading "this work will
 never be done". The webhook arrives, sees `SUCCEEDED`, and returns. No
 appointment, no earnings, no journal entry, no GST, and — because the
-capture-amount parity check sits *below* the early return — no verification that
+capture-amount parity check sits _below_ the early return — no verification that
 the amount captured matches the amount owed.
 
 The buyer's money is taken and never enters the ledger.
@@ -112,7 +112,7 @@ one set of earnings, and one journal entry.
 
 ### The reconcile cron was the easiest one to miss
 
-`scripts/payments/reconcile-payment-status.ts` exists *because* a
+`scripts/payments/reconcile-payment-status.ts` exists _because_ a
 `payment.captured` was missed, which makes it the least safe place of all to
 write status directly — and it did, then logged
 `⚠️ Payment succeeded - may need manual appointment creation!` rather than
@@ -174,6 +174,10 @@ buyer whose card had just been charged could be told their payment failed.
 The regression tests live in `__tests__/payments/` and assert the race in both
 directions: verify-signature first then webhook, and webhook first then
 verify-signature. Both must produce exactly one of everything.
+
+## Addendum 2026-09-19 — Phase 2 stays, with a reconciler grace
+
+The finance sweep of 2026-09-19 re-examined the split between the Phase-1 transaction (payment status and appointment) and the post-commit Phase 2 (earnings rows and the `booking:<paymentId>` journal, healed by `sync-payment-earnings`). The doctrine page and the high-level design diagram had drifted into saying that the journal is written in the same transaction; this ADR's consequences section had not, and it stays the reference. The decision was to keep Phase 2 as the shipped behaviour for launch rather than fold the earnings writer into Phase 1 now, because `createEarningsFromPayment` reads roughly thirteen models before it writes and a deterministic bug in that planner would hold every capture at `PENDING` until the abandoned-payment sweep expired it and the terminal-capture guard refunded it, which is strictly worse than a ledger gap that the healer closes within one ticker interval. Two things changed instead: the reconciler's `EARNINGS_WITHOUT_BOOKING_TXN` finding now ignores payments younger than `RECONCILE_UNJOURNALED_GRACE_MS` (default thirty minutes, two ticker intervals), so an in-flight Phase 2 is no longer reported as drift, and the doctrine and design pages were corrected to describe the split as it is. The fold itself, as a planner/writer split that computes every input on the global client before Phase 1 opens and performs inserts only inside it, is recorded as a tracked post-launch design issue so that it is a planned move and not an incident response.
 
 ## Related
 

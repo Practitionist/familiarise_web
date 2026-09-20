@@ -21,6 +21,7 @@ import {
   PaymentGateway,
   AppointmentStatus,
   OccurrenceCompletionStatus,
+  type Prisma,
 } from "@prisma/client";
 import type Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
@@ -34,6 +35,16 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { releaseParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import {
+  notifyConsulteeRequestExpired,
+  PAY_LINK_LAPSED_REASON,
+  type RequestExpiredNotice,
+} from "@/lib/booking/expiry-notices";
+import {
+  PAYMENT_LINK_REMINDER_EMAIL_TYPE,
+  sendPaymentLinkEmail,
+} from "@/lib/email";
+import { APPROVAL_PAYMENT_REMINDER_MS } from "@/lib/payments/constants";
 
 /**
  * Result structure for cleanup operations
@@ -236,6 +247,123 @@ function logCleanupSummary(
   }
 }
 
+/** #1703 D2 — what a lapsed-link notice names, read by both cohorts. */
+const LAPSED_LINK_PARTIES = {
+  requestedBy: { select: { user: { select: { id: true, name: true } } } },
+} as const;
+const LAPSED_LINK_PLAN_SELECT = {
+  select: {
+    title: true,
+    consultantProfile: { select: { user: { select: { name: true } } } },
+  },
+} as const;
+
+type LapsedLinkRequest = {
+  id: string;
+  requestedBy: { user: { id: string; name: string | null } } | null;
+};
+type LapsedLinkPlan = {
+  title: string;
+  consultantProfile: { user: { name: string | null } } | null;
+} | null;
+
+/**
+ * #1703 D2 — the one CAS a lapsed pay-link goes through, in whichever pass
+ * reads the row first (the abandoned sweep sees a held slot's expired PENDING
+ * payment before the approval sweep runs). `fromIn` is exactly
+ * APPROVED_PENDING_PAYMENT, so a win means "the link lapsed" and nothing else;
+ * the money predicate (no succeeded payment on the wrapper) rides in the WHERE.
+ *
+ * @returns true on the CAS win; false when the row was not a lapsed link
+ *   (already moved, or in another status), with nothing written.
+ */
+async function expireLapsedPayLink(
+  tx: Pick<Tx, "consultation" | "subscription" | "bookingStatusHistory">,
+  kind: "consultation" | "subscription",
+  id: string,
+): Promise<boolean> {
+  const unpaid = {
+    payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
+  } as const;
+  try {
+    switch (kind) {
+      case "consultation":
+        await transitionConsultationRequest(tx, {
+          where: { id, appointment: unpaid },
+          to: AppointmentStatus.EXPIRED,
+          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+        });
+        break;
+      case "subscription":
+        await transitionSubscriptionRequest(tx, {
+          where: { id, appointment: unpaid },
+          to: AppointmentStatus.EXPIRED,
+          fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
+        });
+        break;
+    }
+    return true;
+  } catch (error) {
+    if (!(error instanceof IllegalTransitionError)) throw error;
+    return false;
+  }
+}
+
+/** The consultee's notice for a lapsed link; sent by the caller after commit. */
+function lapsedLinkNotice(
+  kind: "consultation" | "subscription",
+  request: LapsedLinkRequest,
+  plan: LapsedLinkPlan,
+  appointment: {
+    id: string;
+    organizationId: string | null;
+    occurrences: { startsAt: Date }[];
+  },
+): RequestExpiredNotice | null {
+  const consultee = request.requestedBy?.user;
+  if (!consultee) return null;
+  return {
+    appointmentId: appointment.id,
+    organizationId: appointment.organizationId,
+    consulteeUserId: consultee.id,
+    consulteeName: consultee.name ?? "Consultee",
+    consultantName: plan?.consultantProfile?.user?.name ?? "Consultant",
+    planTitle:
+      plan?.title ??
+      (kind === "consultation" ? "Consultation" : "Subscription"),
+    appointmentType: kind === "consultation" ? "CONSULTATION" : "SUBSCRIPTION",
+    startsAt: appointment.occurrences[0]?.startsAt ?? null,
+    reason: PAY_LINK_LAPSED_REASON,
+  };
+}
+
+/**
+ * What one cleanup unit needs loaded: the PENDING payments it expires, the
+ * parties a lapsed pay-link notice names, and the hold it releases.
+ */
+const ABANDONED_INCLUDE = {
+  payment: {
+    where: { paymentStatus: PaymentStatus.PENDING },
+  },
+  // #1703 D2 — a lapsed pay-link can be claimed here first; the notice
+  // it sends after commit names these parties.
+  consultation: {
+    include: {
+      ...LAPSED_LINK_PARTIES,
+      consultationPlan: LAPSED_LINK_PLAN_SELECT,
+    },
+  },
+  subscription: {
+    include: {
+      ...LAPSED_LINK_PARTIES,
+      subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+    },
+  },
+  webinar: true,
+  class: true,
+  occurrences: true,
+} satisfies Prisma.AppointmentInclude;
+
 /**
  * The cohort: an appointment still holding a slot or a group seat against a
  * PENDING payment that has passed its expiry.
@@ -280,16 +408,7 @@ function findAbandonedAppointments(limit?: number) {
         { class: { isNot: null } },
       ],
     },
-    include: {
-      payment: {
-        where: { paymentStatus: PaymentStatus.PENDING },
-      },
-      consultation: true,
-      subscription: true,
-      webinar: true,
-      class: true,
-      occurrences: true,
-    },
+    include: ABANDONED_INCLUDE,
   });
 }
 
@@ -535,7 +654,7 @@ async function expireRequestAndReleaseSlots(
     | "bookingStatusHistory"
   >,
   appointment: AbandonedAppointment,
-): Promise<void> {
+): Promise<RequestExpiredNotice | null> {
   const kind = appointment.consultation ? "consultation" : "subscription";
   const confirmedSlots = await tx.appointmentOccurrence.count({
     where: {
@@ -560,16 +679,29 @@ async function expireRequestAndReleaseSlots(
     console.log(
       `🗑️ Released ${released} tentative slot(s) for ${kind} appointment: ${appointment.id}`,
     );
-    return;
+    return null;
   }
 
-  // The cohort's money predicate is repeated in the CAS WHERE, like the
-  // approval and stale-pending arms. Status alone is not enough: the include
-  // above only carries PENDING rows, and `reconcile-payment-status` flips a
-  // recovered capture to SUCCEEDED without moving the request — so a sibling
-  // or freshly-succeeded payment is invisible to a read-then-write. Re-checked
-  // by the UPDATE itself, a paid booking matches zero rows and is skipped.
-  if (appointment.consultation) {
+  // #1703 D2 — a lapsed pay-link is claimed by the narrow CAS first, so the
+  // consultee's notice is tied to that win whichever pass got here.
+  const request = appointment.consultation ?? appointment.subscription;
+  let notice: RequestExpiredNotice | null = null;
+  if (request && (await expireLapsedPayLink(tx, kind, request.id))) {
+    notice = lapsedLinkNotice(
+      kind,
+      request,
+      appointment.consultation?.consultationPlan ??
+        appointment.subscription?.subscriptionPlan ??
+        null,
+      appointment,
+    );
+  } else if (appointment.consultation) {
+    // The cohort's money predicate is repeated in the CAS WHERE, like the
+    // approval and stale-pending arms. Status alone is not enough: the include
+    // above only carries PENDING rows, and `reconcile-payment-status` flips a
+    // recovered capture to SUCCEEDED without moving the request — so a sibling
+    // or freshly-succeeded payment is invisible to a read-then-write. Re-checked
+    // by the UPDATE itself, a paid booking matches zero rows and is skipped.
     await transitionConsultationRequest(tx, {
       where: {
         id: appointment.consultation.id,
@@ -607,6 +739,7 @@ async function expireRequestAndReleaseSlots(
   console.log(
     `🗑️ Expired abandoned ${kind} appointment (soft): ${appointment.id}`,
   );
+  return notice;
 }
 
 /**
@@ -623,22 +756,29 @@ async function expireRequestAndReleaseSlots(
 async function cleanupAbandonedAppointment(
   appointment: AbandonedAppointment,
   failures: FailureSink,
-): Promise<"cleaned" | "skipped"> {
+): Promise<{
+  outcome: "cleaned" | "skipped";
+  /** Set only when the lapsed-link CAS won inside the committed unit. */
+  notice: RequestExpiredNotice | null;
+}> {
   try {
     return await prisma.$transaction(async (tx) => {
-      if (await anyPaymentSucceeded(tx, appointment)) return "skipped" as const;
+      if (await anyPaymentSucceeded(tx, appointment)) {
+        return { outcome: "skipped" as const, notice: null };
+      }
 
       await expirePendingPayments(tx, appointment.payment, failures);
       await restoreReferralCredits(tx, appointment.payment);
 
       if (appointment.webinar || appointment.class) {
         await releaseGroupSeats(tx, appointment);
-        return "cleaned" as const;
+        return { outcome: "cleaned" as const, notice: null };
       }
+      let notice: RequestExpiredNotice | null = null;
       if (appointment.consultation || appointment.subscription) {
-        await expireRequestAndReleaseSlots(tx, appointment);
+        notice = await expireRequestAndReleaseSlots(tx, appointment);
       }
-      return "cleaned" as const;
+      return { outcome: "cleaned" as const, notice };
     });
   } catch (error) {
     // Raced a capture or an approval: the row moved out of the expirable set,
@@ -648,8 +788,72 @@ async function cleanupAbandonedAppointment(
     console.log(
       `⏭️ Skipped appointment ${appointment.id} — status changed, or the payment succeeded, since the sweep read`,
     );
-    return "skipped";
+    return { outcome: "skipped", notice: null };
   }
+}
+
+/**
+ * #1757 — retire ONE PENDING payment the gateway has no record of, through the
+ * same per-appointment unit the abandoned sweep runs (expire the row, hand back
+ * referral credits, release the hold or seat). Rows with no `expiresAt` and no
+ * tentative hold never enter that sweep's cohort, which is why
+ * reconcile-payment-status calls this directly once the row is old enough.
+ * A payment with no appointment holds nothing: it is expired and its credits
+ * are reversed inside one transaction.
+ */
+export async function retireOrphanPendingPayment(
+  paymentId: string,
+): Promise<{ outcome: "retired" | "skipped"; errors: string[] }> {
+  const appointment = await prisma.appointment.findFirst({
+    where: {
+      payment: {
+        some: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
+      },
+    },
+    include: { ...ABANDONED_INCLUDE, _count: { select: { payment: true } } },
+  });
+
+  if (appointment) {
+    // #1761 CodeRabbit — a sibling SUCCEEDED/PENDING payment means this
+    // appointment isn't the orphan's alone to tear down; leave it be.
+    if (appointment._count.payment > 1) {
+      return {
+        outcome: "skipped",
+        errors: [
+          `Appointment ${appointment.id} has ${appointment._count.payment} payments; not retiring orphan ${paymentId}`,
+        ],
+      };
+    }
+    // Only the orphan row is expired; a sibling PENDING checkout is left alone.
+    const scoped: AbandonedAppointment = {
+      ...appointment,
+      payment: appointment.payment.filter((p) => p.id === paymentId),
+    };
+    const failures: FailureSink = { messages: [], count: 0 };
+    const { outcome, notice } = await cleanupAbandonedAppointment(
+      scoped,
+      failures,
+    );
+    if (outcome === "cleaned" && notice) {
+      await notifyConsulteeRequestExpired(notice);
+    }
+    return {
+      outcome: outcome === "cleaned" ? "retired" : "skipped",
+      errors: failures.messages,
+    };
+  }
+
+  const claimed = await prisma.$transaction(async (tx) => {
+    // Conditional on PENDING: a capture racing this keeps SUCCEEDED.
+    const { count } = await tx.payment.updateMany({
+      where: { id: paymentId, paymentStatus: PaymentStatus.PENDING },
+      data: { paymentStatus: PaymentStatus.EXPIRED },
+    });
+    if (count === 0) return false;
+    await reverseCreditsForPayment(paymentId, tx);
+    return true;
+  });
+  return { outcome: claimed ? "retired" : "skipped", errors: [] };
 }
 
 /**
@@ -701,7 +905,7 @@ async function cleanupAbandonedPaymentsUnlocked(
       // to this one and are not added again for the next.
       const failures: FailureSink = { messages: result.errors, count: 0 };
       try {
-        const outcome = await cleanupAbandonedAppointment(
+        const { outcome, notice } = await cleanupAbandonedAppointment(
           appointment,
           failures,
         );
@@ -718,6 +922,8 @@ async function cleanupAbandonedPaymentsUnlocked(
           console.log(
             `✅ Successfully cleaned up appointment: ${appointment.id}`,
           );
+          // #1703 D2 — after the commit, and only on the lapsed-link CAS win.
+          if (notice) await notifyConsulteeRequestExpired(notice);
         }
       } catch (error) {
         // Both: a gateway cancel that failed pushed its own line into
@@ -773,7 +979,7 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
   opts: CleanupAbandonedOptions = {},
 ): Promise<CleanupResult> {
   console.log(
-    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT consultations...",
+    "🧹 Starting cleanup of expired APPROVED_PENDING_PAYMENT requests...",
   );
 
   const result: CleanupResult = {
@@ -786,133 +992,417 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
   };
 
   try {
-    // Find consultations stuck in APPROVED_PENDING_PAYMENT with expired payments
-    const expiredConsultations = await prisma.consultation.findMany({
-      take: opts.limit,
-      // Oldest-first with an id tie-break: see findAbandonedAppointments above.
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      where: {
-        status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        appointment: {
-          payment: {
-            some: {
-              AND: [
-                { paymentStatus: PaymentStatus.PENDING },
-                { expiresAt: { lt: new Date() } },
-              ],
-            },
+    // Both request kinds stuck in APPROVED_PENDING_PAYMENT with a lapsed
+    // PENDING payment. #1732 — subscriptions used to fall through here (this
+    // read was consultations-only, and the abandoned sweep needs a tentative
+    // occurrence a placeholder subscription appointment does not have), so
+    // their pay-link lapse only ever reached the 7 d updatedAt fallback.
+    const lapsedWhere = {
+      status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      appointment: {
+        payment: {
+          some: {
+            AND: [
+              { paymentStatus: PaymentStatus.PENDING },
+              { expiresAt: { lt: new Date() } },
+            ],
           },
         },
       },
+    } satisfies Prisma.ConsultationWhereInput & Prisma.SubscriptionWhereInput;
+    const lapsedAppointment = {
       include: {
-        appointment: {
-          include: {
-            payment: {
-              where: { paymentStatus: PaymentStatus.PENDING },
-            },
-            occurrences: true,
-          },
-        },
+        payment: { where: { paymentStatus: PaymentStatus.PENDING } },
+        occurrences: true,
       },
-    });
+    } as const;
+    // One `limit` bounds the run, split across the two kinds; undefined
+    // (the Actions run) stays unbounded on both.
+    const perKind =
+      opts.limit === undefined ? undefined : Math.ceil(opts.limit / 2);
+    const [expiredConsultations, expiredSubscriptions] = await Promise.all([
+      prisma.consultation.findMany({
+        take: perKind,
+        // Oldest-first with an id tie-break: see findAbandonedAppointments above.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        where: lapsedWhere,
+        include: {
+          appointment: lapsedAppointment,
+          // #1703 D2 — what the consultee's expiry notice names.
+          ...LAPSED_LINK_PARTIES,
+          consultationPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      }),
+      prisma.subscription.findMany({
+        take: perKind,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        where: lapsedWhere,
+        include: {
+          appointment: lapsedAppointment,
+          ...LAPSED_LINK_PARTIES,
+          subscriptionPlan: LAPSED_LINK_PLAN_SELECT,
+        },
+      }),
+    ]);
 
-    result.totalProcessed = expiredConsultations.length;
+    result.totalProcessed =
+      expiredConsultations.length + expiredSubscriptions.length;
     console.log(
-      `📊 Found ${expiredConsultations.length} expired APPROVED_PENDING_PAYMENT consultations`,
+      `📊 Found ${expiredConsultations.length} consultations and ${expiredSubscriptions.length} subscriptions with a lapsed pay-link`,
     );
 
-    // Process each expired consultation
     for (const consultation of expiredConsultations) {
-      try {
-        const outcome = await prisma.$transaction(async (tx) => {
-          // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
-          // REJECTED reads as "the consultant declined" on every surface, and
-          // the CAS keeps a capture that raced this sweep from being clobbered.
-          try {
-            // The cohort read's payment filter is repeated in the UPDATE's
-            // WHERE: a capture that landed since the read (Stripe reconcile
-            // flips the payment without touching the request) makes this
-            // match zero rows instead of expiring a paid booking.
-            await transitionConsultationRequest(tx, {
-              where: {
-                id: consultation.id,
-                appointment: {
-                  payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
-                },
-              },
-              to: AppointmentStatus.EXPIRED,
-              fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-            });
-          } catch (error) {
-            if (!(error instanceof IllegalTransitionError)) throw error;
-            console.log(
-              `⏭️ Skipped consultation ${consultation.id} — status changed since the sweep read`,
-            );
-            return "skipped" as const;
-          }
+      await expireOneLapsedRequest(
+        "consultation",
+        consultation,
+        consultation.consultationPlan,
+        result,
+      );
+    }
+    for (const subscription of expiredSubscriptions) {
+      await expireOneLapsedRequest(
+        "subscription",
+        subscription,
+        subscription.subscriptionPlan,
+        result,
+      );
+    }
 
-          // Release the tentative hold by status; the rows stay for support.
-          if (consultation.appointment) {
-            const released = await transitionOccurrenceCompletion(tx, {
-              where: {
-                appointmentId: consultation.appointment.id,
-                isTentative: true,
-                deletedAt: null,
-              },
-              to: OccurrenceCompletionStatus.CANCELLED,
-              data: { deletedAt: new Date() },
-              allowZero: true,
-            });
-            console.log(
-              `🗑️ Released ${released} tentative slot(s) for consultation ${consultation.id}`,
-            );
-          }
+    result.success = result.errorCount === 0;
+    logCleanupSummary("Expired Request Cleanup Summary", "requests", result);
+  } catch (error) {
+    const errorMessage = describeError(error);
+    console.error("❌ Expired request cleanup failed:", errorMessage);
+    result.errors.push(`Job failed: ${errorMessage}`);
+    result.success = false;
+  }
 
-          // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
-          if (consultation.appointment?.payment) {
-            for (const payment of consultation.appointment.payment) {
-              // Conditional: only a still-PENDING row expires; a capture that
-              // raced this write keeps its SUCCEEDED status.
-              await tx.payment.updateMany({
-                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-                data: { paymentStatus: PaymentStatus.EXPIRED },
-              });
-            }
-          }
+  return result;
+}
 
-          console.log(
-            `✅ Reset consultation ${consultation.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
-          );
-          return "cleaned" as const;
+/**
+ * One lapsed approval request: the shared CAS, the tentative-hold release,
+ * the PENDING → EXPIRED payment flip, then the consultee notice on the win.
+ */
+async function expireOneLapsedRequest(
+  kind: "consultation" | "subscription",
+  request: LapsedLinkRequest & {
+    appointment: {
+      id: string;
+      organizationId: string | null;
+      payment: { id: string }[];
+      occurrences: { startsAt: Date }[];
+    } | null;
+  },
+  plan: LapsedLinkPlan,
+  result: CleanupResult,
+): Promise<void> {
+  try {
+    const outcome = await prisma.$transaction(async (tx) => {
+      // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
+      // REJECTED reads as "the consultant declined" on every surface, and
+      // the CAS keeps a capture that raced this sweep from being clobbered.
+      // The same narrow CAS the abandoned sweep uses, so a row either pass
+      // claims is claimed once.
+      if (!(await expireLapsedPayLink(tx, kind, request.id))) {
+        console.log(
+          `⏭️ Skipped ${kind} ${request.id} — status changed since the sweep read`,
+        );
+        return "skipped" as const;
+      }
+
+      // Release the tentative hold by status; the rows stay for support.
+      if (request.appointment) {
+        const released = await transitionOccurrenceCompletion(tx, {
+          where: {
+            appointmentId: request.appointment.id,
+            isTentative: true,
+            deletedAt: null,
+          },
+          to: OccurrenceCompletionStatus.CANCELLED,
+          data: { deletedAt: new Date() },
+          allowZero: true,
         });
+        console.log(
+          `🗑️ Released ${released} tentative slot(s) for ${kind} ${request.id}`,
+        );
+      }
 
-        if (outcome === "skipped") {
+      // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
+      for (const payment of request.appointment?.payment ?? []) {
+        // Conditional: only a still-PENDING row expires; a capture that
+        // raced this write keeps its SUCCEEDED status.
+        await tx.payment.updateMany({
+          where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+          data: { paymentStatus: PaymentStatus.EXPIRED },
+        });
+      }
+
+      console.log(
+        `✅ Reset ${kind} ${request.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
+      );
+      return "cleaned" as const;
+    });
+
+    if (outcome === "skipped") {
+      result.skippedCount++;
+      return;
+    }
+    result.cleanedCount++;
+    // #1703 D2 — after the commit: the consultee learns the link lapsed.
+    const notice = request.appointment
+      ? lapsedLinkNotice(kind, request, plan, request.appointment)
+      : null;
+    if (notice) await notifyConsulteeRequestExpired(notice);
+  } catch (error) {
+    result.errorCount++;
+    const errorMessage = describeError(error);
+    console.error(`❌ Failed to clean up ${kind} ${request.id}:`, errorMessage);
+    result.errors.push(
+      `${kind === "consultation" ? "Consultation" : "Subscription"} cleanup failed for ${request.id}: ${errorMessage}`,
+    );
+  }
+}
+
+/**
+ * #1703 D2 — the half-window reminder. A request approved but unpaid gets one
+ * nudge when half the pay-link window is left (12 h of 24). State-as-outbox
+ * (ADR 27): the guard is the FailedEmail row the first send staged, keyed on
+ * `payment:<id>` + the reminder email type, so a re-run finds it and skips.
+ * Never after payment (the cohort and a re-read require a PENDING payment on
+ * an APPROVED_PENDING_PAYMENT request) and never after expiry (`expiresAt`
+ * must still be ahead).
+ */
+export async function remindApprovalPaymentsDue(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
+  return withCronLock(
+    "cleanup-abandoned-payments",
+    { failMode: "closed" },
+    () => remindApprovalPaymentsDueUnlocked(opts),
+  );
+}
+
+/** The window read: PENDING, still payable, and inside the last half. */
+function reminderPaymentWindow(now: Date) {
+  return {
+    paymentStatus: PaymentStatus.PENDING,
+    expiresAt: {
+      gt: now,
+      lte: new Date(now.getTime() + APPROVAL_PAYMENT_REMINDER_MS),
+    },
+  } as const;
+}
+
+const REMINDER_PARTY_SELECT = {
+  requestedBy: {
+    select: { user: { select: { id: true, name: true, email: true } } },
+  },
+} as const;
+
+type ReminderCandidate = {
+  requestId: string;
+  kind: "consultation" | "subscription";
+  /** The cohort order key, kept so the merged list keeps oldest-first. */
+  updatedAt: Date;
+  pendingPaymentUrl: string;
+  consultee: { id: string; name: string | null; email: string | null };
+  consultantName: string;
+  payment: { id: string; amount: number; currency: string; expiresAt: Date };
+};
+
+async function findReminderCandidates(
+  now: Date,
+  limit: number | undefined,
+): Promise<ReminderCandidate[]> {
+  const paymentWhere = reminderPaymentWindow(now);
+  const paymentSelect = {
+    where: paymentWhere,
+    select: { id: true, amount: true, currency: true, expiresAt: true },
+    take: 1,
+  } as const;
+  const requestWhere = {
+    status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+    deletedAt: null,
+    pendingPaymentUrl: { not: null },
+    appointment: { payment: { some: paymentWhere } },
+  } as const;
+  const [consultations, subscriptions] = await Promise.all([
+    prisma.consultation.findMany({
+      take: limit,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      where: requestWhere,
+      select: {
+        id: true,
+        updatedAt: true,
+        pendingPaymentUrl: true,
+        ...REMINDER_PARTY_SELECT,
+        consultationPlan: {
+          select: {
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+        appointment: { select: { payment: paymentSelect } },
+      },
+    }),
+    prisma.subscription.findMany({
+      take: limit,
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      where: requestWhere,
+      select: {
+        id: true,
+        updatedAt: true,
+        pendingPaymentUrl: true,
+        ...REMINDER_PARTY_SELECT,
+        subscriptionPlan: {
+          select: {
+            consultantProfile: { select: { user: { select: { name: true } } } },
+          },
+        },
+        appointment: { select: { payment: paymentSelect } },
+      },
+    }),
+  ]);
+
+  const candidates: ReminderCandidate[] = [];
+  for (const row of consultations) {
+    const payment = row.appointment?.payment[0];
+    if (!payment?.expiresAt || !row.pendingPaymentUrl) continue;
+    candidates.push({
+      requestId: row.id,
+      kind: "consultation",
+      updatedAt: row.updatedAt,
+      pendingPaymentUrl: row.pendingPaymentUrl,
+      consultee: row.requestedBy.user,
+      consultantName:
+        row.consultationPlan.consultantProfile.user.name ?? "Consultant",
+      payment: { ...payment, expiresAt: payment.expiresAt },
+    });
+  }
+  for (const row of subscriptions) {
+    const payment = row.appointment?.payment[0];
+    if (!payment?.expiresAt || !row.pendingPaymentUrl) continue;
+    candidates.push({
+      requestId: row.id,
+      kind: "subscription",
+      updatedAt: row.updatedAt,
+      pendingPaymentUrl: row.pendingPaymentUrl,
+      consultee: row.requestedBy.user,
+      consultantName:
+        row.subscriptionPlan.consultantProfile.user.name ?? "Consultant",
+      payment: { ...payment, expiresAt: payment.expiresAt },
+    });
+  }
+  // Each read took `limit`; the pass is bounded by one `limit`, so the merged
+  // oldest-first list is cut once more.
+  candidates.sort((a, b) => {
+    const byTime = a.updatedAt.getTime() - b.updatedAt.getTime();
+    if (byTime !== 0) return byTime;
+    if (a.requestId === b.requestId) return 0;
+    return a.requestId < b.requestId ? -1 : 1;
+  });
+  return limit === undefined ? candidates : candidates.slice(0, limit);
+}
+
+/** The outbox rows the earlier reminders staged, by payment id. */
+async function alreadyReminded(paymentIds: string[]): Promise<Set<string>> {
+  if (paymentIds.length === 0) return new Set();
+  const rows = await prisma.failedEmail.findMany({
+    where: {
+      emailType: PAYMENT_LINK_REMINDER_EMAIL_TYPE,
+      entityRef: { in: paymentIds.map((id) => `payment:${id}`) },
+    },
+    select: { entityRef: true },
+  });
+  return new Set(
+    rows.flatMap((r) =>
+      r.entityRef ? [r.entityRef.slice("payment:".length)] : [],
+    ),
+  );
+}
+
+async function remindApprovalPaymentsDueUnlocked(
+  opts: CleanupAbandonedOptions = {},
+): Promise<CleanupResult> {
+  console.log("⏰ Starting approval pay-link reminders...");
+  const result: CleanupResult = {
+    success: false,
+    cleanedCount: 0,
+    skippedCount: 0,
+    errorCount: 0,
+    totalProcessed: 0,
+    errors: [],
+  };
+
+  try {
+    const now = new Date();
+    const candidates = await findReminderCandidates(now, opts.limit);
+    const reminded = await alreadyReminded(candidates.map((c) => c.payment.id));
+    result.totalProcessed = candidates.length;
+
+    for (const candidate of candidates) {
+      try {
+        if (reminded.has(candidate.payment.id)) {
           result.skippedCount++;
-        } else {
+          continue;
+        }
+        // Re-read at send time: a capture or the sweep may have moved the row
+        // since the cohort read, and a reminder after either is wrong.
+        const fresh = await prisma.payment.findUnique({
+          where: { id: candidate.payment.id },
+          select: { paymentStatus: true, expiresAt: true },
+        });
+        if (
+          fresh?.paymentStatus !== PaymentStatus.PENDING ||
+          !fresh.expiresAt ||
+          fresh.expiresAt <= new Date()
+        ) {
+          result.skippedCount++;
+          continue;
+        }
+        if (!candidate.consultee.email) {
+          result.skippedCount++;
+          continue;
+        }
+        const sent = await sendPaymentLinkEmail({
+          email: candidate.consultee.email,
+          name: candidate.consultee.name ?? "User",
+          consultantName: candidate.consultantName,
+          appointmentType: candidate.kind,
+          amount: candidate.payment.amount,
+          currency: candidate.payment.currency,
+          paymentUrl: candidate.pendingPaymentUrl,
+          expiresAt: candidate.payment.expiresAt,
+          paymentId: candidate.payment.id,
+          reminder: true,
+        });
+        if (sent.staged) {
+          // Sent or awaiting the relay: the row exists, so the once-guard
+          // holds. A send with no row would repeat next pass, so it is not
+          // counted as done.
           result.cleanedCount++;
+        } else {
+          result.errorCount++;
+          result.errors.push(
+            `Reminder for ${candidate.kind} ${candidate.requestId} ${
+              sent.success ? "sent without its guard row" : "did not send"
+            }`,
+          );
         }
       } catch (error) {
         result.errorCount++;
         const errorMessage = describeError(error);
-        console.error(
-          `❌ Failed to clean up consultation ${consultation.id}:`,
-          errorMessage,
-        );
         result.errors.push(
-          `Consultation cleanup failed for ${consultation.id}: ${errorMessage}`,
+          `Reminder failed for ${candidate.kind} ${candidate.requestId}: ${errorMessage}`,
         );
       }
     }
 
     result.success = result.errorCount === 0;
-    logCleanupSummary(
-      "Expired Consultation Cleanup Summary",
-      "consultations",
-      result,
-    );
+    logCleanupSummary("Pay-link Reminder Summary", "reminders", result);
   } catch (error) {
     const errorMessage = describeError(error);
-    console.error("❌ Expired consultation cleanup failed:", errorMessage);
+    console.error("❌ Pay-link reminder pass failed:", errorMessage);
     result.errors.push(`Job failed: ${errorMessage}`);
     result.success = false;
   }
@@ -943,6 +1433,9 @@ export async function runAllCleanupTasks(): Promise<{
     // Run expired consultation cleanup
     const consultationResult = await cleanupExpiredApprovalPendingPayments();
 
+    // #1703 D2 — the half-window reminder rides the same run.
+    const reminderResult = await remindApprovalPaymentsDue();
+
     const duration = (Date.now() - startTime) / 1000;
     console.log(`⏱️ Job completed in ${duration.toFixed(2)} seconds`);
 
@@ -955,10 +1448,16 @@ export async function runAllCleanupTasks(): Promise<{
       `   🧹 Expired consultations reset: ${consultationResult.cleanedCount}`,
     );
     console.log(
-      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount}`,
+      `   ⏰ Pay-link reminders sent: ${reminderResult.cleanedCount}`,
+    );
+    console.log(
+      `   ❌ Total errors: ${paymentResult.errorCount + consultationResult.errorCount + reminderResult.errorCount}`,
     );
 
-    const overallSuccess = paymentResult.success && consultationResult.success;
+    const overallSuccess =
+      paymentResult.success &&
+      consultationResult.success &&
+      reminderResult.success;
 
     return {
       paymentResult,

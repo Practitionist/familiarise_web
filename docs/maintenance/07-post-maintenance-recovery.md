@@ -63,11 +63,11 @@ npx tsx jobs/payments/reconcile-payment-status.ts
 - [ ] Verify output: no "succeeded payments needing appointment creation" flagged
 - [ ] If flagged: these need manual appointment creation or webhook replay
 
-### Priority 2: Slot Reconciliation
+### Priority 2: Occurrence Availability Reconciliation
 
 ```bash
-# Fix any slot inconsistencies caused by interrupted operations
-npx tsx jobs/appointments/reconcile-slot-availability.ts
+# Fix any occurrence-availability inconsistencies caused by interrupted operations
+npx tsx jobs/appointments/reconcile-occurrence-availability.ts
 ```
 
 - [ ] Verify output: no double bookings detected, no orphaned tentative flags
@@ -81,14 +81,14 @@ npx tsx jobs/earnings/sync-payment-earnings.ts
 
 - [ ] Verify output: no missing earnings entries created
 
-### Priority 4: Tentative Slot Cleanup
+### Priority 4: Dispute Reconciliation
 
 ```bash
-# Release tentative slots that may have been left by interrupted checkouts
-npx tsx jobs/appointments/cleanup-tentative-slots.ts
+# Sync dispute status changes that occurred during maintenance
+npx tsx jobs/disputes/reconcile-disputes.ts
 ```
 
-- [ ] Verify output: note how many tentative slots were released
+- [ ] Verify output: all dispute statuses match gateway state
 
 ### Priority 5: Refund Reconciliation
 
@@ -98,6 +98,15 @@ npx tsx jobs/refunds/reconcile-pending-refunds.ts
 ```
 
 - [ ] Verify output: all refund statuses synced
+
+### Priority 5b: Document Storage Reconciliation
+
+```bash
+# Sync document-storage state that may have drifted during maintenance
+npx tsx jobs/cleanup/reconcile-document-storage.ts
+```
+
+- [ ] Verify output: no orphaned or missing document-storage rows flagged
 
 ### Priority 6: Payout Reconciliation (if applicable)
 
@@ -202,7 +211,7 @@ npx tsx jobs/payouts/reconcile-payout-status.ts
 
 ### Appointments created with wrong data
 
-1. Run `reconcile-slot-availability` to fix slot state
+1. Run `reconcile-occurrence-availability` to fix slot state
 2. Check recently created appointments against payment records
 3. Contact affected users if their appointment details are incorrect
 

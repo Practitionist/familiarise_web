@@ -38,6 +38,15 @@ export interface AllocationOptions {
   initialAllocation?: boolean;
   /** #1012 — reschedule stale-tab precondition. */
   expectedTentativeSlotCount?: number;
+  /**
+   * The consultant explicitly accepting the selected times as-is, outside
+   * their published availability. Skips ONLY the availability-window check —
+   * conflicts, caps, and period checks still apply. The server re-gates this
+   * on the event consultant, so a consultee sending it is silently downgraded.
+   */
+  override?: boolean;
+  /** #1766 — the subscription already holds sessions; append the next cycle. */
+  topUp?: boolean;
   // Timezone defining the limit day/week buckets (ADR B9); defaults to
   // Asia/Kolkata in the shared helpers.
   schedulingTimezone?: string;
@@ -187,6 +196,8 @@ export class AllocationAlgorithms {
           idempotencyKey: options.idempotencyKey,
           initialAllocation: options.initialAllocation,
           expectedTentativeSlotCount: options.expectedTentativeSlotCount,
+          override: options.override,
+          topUp: options.topUp,
         },
       );
 

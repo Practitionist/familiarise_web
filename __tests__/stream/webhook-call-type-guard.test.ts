@@ -86,7 +86,10 @@ const RECORDING_READY = (callCid: string) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockLogWebhookEvent.mockResolvedValue({ isNew: true });
+  mockLogWebhookEvent.mockResolvedValue({
+    isNew: true,
+    claim: { claimedAt: null },
+  });
   mockMarkProcessed.mockResolvedValue(undefined);
 });
 
@@ -125,7 +128,9 @@ describe("webhook call-type guard", () => {
 
   it("still marks a refused event processed, so the sweeper does not re-drive it forever", async () => {
     await dispatch(RECORDING_READY("development:slot-abc"), "evt-marked");
-    expect(mockMarkProcessed).toHaveBeenCalledWith("evt-marked");
+    expect(mockMarkProcessed).toHaveBeenCalledWith("evt-marked", undefined, {
+      claimedAt: null,
+    });
   });
 
   it("treats a bare id with no type prefix as the app's own type", async () => {

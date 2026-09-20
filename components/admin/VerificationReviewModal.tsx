@@ -39,6 +39,11 @@ import {
   Award,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import type { VerificationDocumentIssue } from "@prisma/client";
+import {
+  VERIFICATION_DOCUMENT_ISSUE_LABEL,
+  VERIFICATION_DOCUMENT_ISSUE_VALUES,
+} from "@/lib/labels/verification-labels";
 
 interface Document {
   id: string;
@@ -102,6 +107,8 @@ interface DocumentFeedback {
   documentId: string;
   isValid: boolean;
   staffFeedback: string;
+  /** Required when isValid is false — the consultant reads the label. */
+  issue?: VerificationDocumentIssue;
 }
 
 interface VerificationReviewModalProps {
@@ -143,6 +150,21 @@ export function VerificationReviewModal({
         documentId: docId,
         isValid,
         staffFeedback: prev[docId]?.staffFeedback || "",
+      },
+    }));
+  };
+
+  const handleDocumentIssueChange = (
+    docId: string,
+    issue: VerificationDocumentIssue,
+  ) => {
+    setDocumentFeedback((prev) => ({
+      ...prev,
+      [docId]: {
+        documentId: docId,
+        isValid: false,
+        staffFeedback: prev[docId]?.staffFeedback || "",
+        issue,
       },
     }));
   };
@@ -192,10 +214,24 @@ export function VerificationReviewModal({
         }
       }
 
-      // Include document feedback if any
+      // Include document feedback if any. Every flagged document needs a
+      // reason code — the server refuses otherwise (ISSUE_REQUIRED).
       const docFeedbackArray = Object.values(documentFeedback).filter(
         (df) => df.documentId,
       );
+      const unreasoned = docFeedbackArray.some(
+        (df) => !df.isValid && !df.issue,
+      );
+      if (unreasoned) {
+        toast({
+          title: "Pick a reason",
+          description:
+            "Choose what is wrong with each document you mark invalid so the applicant knows what to fix.",
+          variant: "destructive",
+        });
+        setSubmitting(false);
+        return;
+      }
       if (docFeedbackArray.length > 0) {
         payload.documentFeedback = docFeedbackArray;
       }
@@ -504,6 +540,32 @@ export function VerificationReviewModal({
                             <ExternalLink className="h-3 w-3 ml-1" />
                           </Button>
                         </div>
+                        {documentFeedback[doc.id]?.isValid === false ? (
+                          <div className="mt-2">
+                            <select
+                              aria-label="Reason this document is invalid"
+                              className="h-8 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm"
+                              value={documentFeedback[doc.id]?.issue ?? ""}
+                              onChange={(e) =>
+                                handleDocumentIssueChange(
+                                  doc.id,
+                                  e.target.value as VerificationDocumentIssue,
+                                )
+                              }
+                            >
+                              <option value="" disabled>
+                                Why is it invalid?
+                              </option>
+                              {VERIFICATION_DOCUMENT_ISSUE_VALUES.map(
+                                (code) => (
+                                  <option key={code} value={code}>
+                                    {VERIFICATION_DOCUMENT_ISSUE_LABEL[code]}
+                                  </option>
+                                ),
+                              )}
+                            </select>
+                          </div>
+                        ) : null}
                         <div className="mt-2">
                           <Input
                             placeholder="Add feedback for this document..."

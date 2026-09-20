@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
+import { FieldError } from "@/components/ui/field-error";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -81,7 +83,10 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+    <form
+      onSubmit={handleSubmit(onSubmit, () => scrollToFirstErrorSoon())}
+      className="space-y-6"
+    >
       <div className="space-y-4">
         <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">
           Staff Role Details
@@ -110,13 +115,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               </Select>
             )}
           />
-          {/* react-hook-form FieldError.message is string | undefined; the
-              guard above ensures it exists, cast narrows the union */}
-          {errors.department && (
-            <p className="text-sm text-destructive">
-              {errors.department.message as string}
-            </p>
-          )}
+          <FieldError message={errors.department?.message as string} />
         </div>
 
         <div className="space-y-2">
@@ -156,12 +155,7 @@ const StaffProfileForm: React.FC<Props> = ({ onNext, onBack, initialData }) => {
               </Select>
             )}
           />
-          {/* Same pattern: FieldError.message narrowing */}
-          {errors.position && (
-            <p className="text-sm text-destructive">
-              {errors.position.message as string}
-            </p>
-          )}
+          <FieldError message={errors.position?.message as string} />
         </div>
       </div>
 

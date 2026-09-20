@@ -14,7 +14,11 @@
 // when the action module first requires these.
 jest.mock("../../lib/prisma", () => ({
   __esModule: true,
-  default: { user: { updateMany: jest.fn() } },
+  default: {
+    user: { updateMany: jest.fn(), update: jest.fn() },
+    orgWorkspaceProfile: { upsert: jest.fn() },
+    membership: { findFirst: jest.fn() },
+  },
 }));
 
 jest.mock("../../lib/auth-server", () => ({
@@ -27,12 +31,22 @@ jest.mock("../../utils/onboarding-server", () => ({
   processOnboardingData: jest.fn(),
 }));
 
-import { resetOnboardingRoleAction } from "../../actions/forms/onboarding.action";
+import {
+  completeOrgWorkspaceOnboardingAction,
+  resetOnboardingRoleAction,
+  setOnboardingRoleAction,
+} from "../../actions/forms/onboarding.action";
 import { getSession } from "../../lib/auth-server";
 import prisma from "../../lib/prisma";
+import { UserRole } from "@prisma/client";
 
 const mockGetSession = getSession as unknown as jest.Mock;
 const mockUpdateMany = prisma.user.updateMany as unknown as jest.Mock;
+const mockUserUpdate = prisma.user.update as unknown as jest.Mock;
+const mockProfileUpsert =
+  prisma.orgWorkspaceProfile.upsert as unknown as jest.Mock;
+const mockMembershipFindFirst =
+  prisma.membership.findFirst as unknown as jest.Mock;
 
 const USER_ID = "user-1";
 
@@ -75,7 +89,8 @@ describe("resetOnboardingRoleAction", () => {
         onboardingCompleted: { not: true },
         memberships: { none: {} },
       },
-      data: { role: "CONSULTEE" },
+      // Unlinks the profile created at handoff (row kept for reuse).
+      data: { role: "CONSULTEE", orgWorkspaceProfileId: null },
     });
   });
 
@@ -85,6 +100,87 @@ describe("resetOnboardingRoleAction", () => {
     await expect(resetOnboardingRoleAction(USER_ID)).resolves.toEqual({
       success: true,
       reverted: false,
+    });
+  });
+});
+
+describe("setOnboardingRoleAction operator-profile close", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetSession.mockResolvedValue({ user: { id: USER_ID } });
+    mockUserUpdate.mockResolvedValue({});
+    mockProfileUpsert.mockResolvedValue({ id: "ows-1" });
+    mockUpdateMany.mockResolvedValue({ count: 1 });
+  });
+
+  it("creates + links the OrgWorkspaceProfile at handoff (no half-onboarded window)", async () => {
+    await expect(
+      setOnboardingRoleAction(USER_ID, UserRole.ORG_WORKSPACE, { name: "Ada" }),
+    ).resolves.toEqual({ success: true });
+
+    expect(mockProfileUpsert).toHaveBeenCalledWith({
+      where: { userId: USER_ID },
+      create: { userId: USER_ID },
+      update: {},
+      select: { id: true },
+    });
+    expect(mockUpdateMany).toHaveBeenCalledWith({
+      where: { id: USER_ID, orgWorkspaceProfileId: null },
+      data: { orgWorkspaceProfileId: "ows-1" },
+    });
+  });
+
+  it("still refuses privileged roles at the allowlist", async () => {
+    await expect(
+      setOnboardingRoleAction(USER_ID, UserRole.ADMIN, {}),
+    ).resolves.toEqual({ success: false, error: "Forbidden" });
+    expect(mockProfileUpsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("completeOrgWorkspaceOnboardingAction membership gate", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockGetSession.mockResolvedValue({ user: { id: USER_ID } });
+    mockMembershipFindFirst.mockResolvedValue({ id: "m-1" });
+    mockUserUpdate.mockResolvedValue({});
+  });
+
+  it("rejects an unauthenticated caller", async () => {
+    mockGetSession.mockResolvedValue(null);
+
+    await expect(completeOrgWorkspaceOnboardingAction(USER_ID)).resolves.toEqual(
+      {
+        success: false,
+        error: "Unauthorized",
+      },
+    );
+    expect(mockMembershipFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("refuses to flip the flag with no live OWNER membership (crafted/replayed call)", async () => {
+    mockMembershipFindFirst.mockResolvedValue(null);
+
+    await expect(completeOrgWorkspaceOnboardingAction(USER_ID)).resolves.toEqual(
+      {
+        success: false,
+        error: "No organization found. Create your organization first.",
+      },
+    );
+    expect(mockMembershipFindFirst).toHaveBeenCalledWith({
+      where: { userId: USER_ID, role: "OWNER", status: "ACTIVE" },
+      select: { id: true },
+    });
+    expect(mockUserUpdate).not.toHaveBeenCalled();
+  });
+
+  it("flips the flag once the owner membership exists", async () => {
+    await expect(completeOrgWorkspaceOnboardingAction(USER_ID)).resolves.toEqual(
+      { success: true },
+    );
+    expect(mockUserUpdate).toHaveBeenCalledWith({
+      where: { id: USER_ID },
+      data: { onboardingCompleted: true },
     });
   });
 });

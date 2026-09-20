@@ -145,6 +145,120 @@ export interface PayoutWebhookEvent {
   createdAt: number;
 }
 
+/**
+ * The `fund_account.validation` entity as RazorpayX returns it, for both the
+ * standard penny drop (`results`) and the reverse penny drop
+ * (`validation_results` + `upi_intent`). Only the fields we read are typed.
+ */
+export interface FundAccountValidationEntity {
+  id: string;
+  entity: "fund_account.validation";
+  status: "created" | "completed" | "failed";
+  reference_id?: string | null;
+  utr?: string | null;
+  results?: {
+    account_status?: "active" | "invalid" | null;
+    registered_name?: string | null;
+    name_match_score?: number | null;
+  } | null;
+  validation_results?: {
+    account_status?: "active" | "inactive" | "invalid" | null;
+    registered_name?: string | null;
+    name_match_score?: number | null;
+    bank_account?: {
+      bank_routing_code?: string | null;
+      account_number?: string | null;
+      bank_name?: string | null;
+      account_type?: string | null;
+    } | null;
+  } | null;
+  upi_intent?: {
+    intent_url?: string | null;
+    gpay_url?: string | null;
+    phonepe_url?: string | null;
+    paytm_url?: string | null;
+    bhim_url?: string | null;
+    encoded_qr_code?: string | null;
+  } | null;
+  status_details?: {
+    description?: string | null;
+    reason?: string | null;
+  } | null;
+}
+
+/** The one shape every caller reads, whichever validation produced it. */
+export interface FundAccountValidationSummary {
+  id: string;
+  status: "created" | "completed" | "failed";
+  referenceId: string | null;
+  accountStatus: "valid" | "invalid" | "unknown";
+  registeredName: string | null;
+  nameMatchScore: number | null;
+  failureReason: string | null;
+  /** Present only on a completed reverse penny drop; never persisted whole. */
+  bankAccount: {
+    accountNumber: string;
+    ifsc: string;
+    bankName: string | null;
+    accountType: string | null;
+  } | null;
+  /** Present only on a freshly created reverse penny drop. */
+  upiIntent: {
+    intentUrl: string | null;
+    gpayUrl: string | null;
+    phonepeUrl: string | null;
+    paytmUrl: string | null;
+    bhimUrl: string | null;
+    encodedQrCode: string | null;
+  } | null;
+}
+
+export function summariseFundAccountValidation(
+  raw: FundAccountValidationEntity,
+): FundAccountValidationSummary {
+  const results = raw.validation_results ?? raw.results ?? null;
+  const account = raw.validation_results?.bank_account ?? null;
+  let accountStatus: FundAccountValidationSummary["accountStatus"] = "unknown";
+  if (raw.status === "completed" && results?.account_status === "active") {
+    accountStatus = "valid";
+  } else if (
+    raw.status === "failed" ||
+    results?.account_status === "invalid" ||
+    results?.account_status === "inactive"
+  ) {
+    accountStatus = "invalid";
+  }
+  return {
+    id: raw.id,
+    status: raw.status,
+    referenceId: raw.reference_id ?? null,
+    accountStatus,
+    registeredName: results?.registered_name ?? null,
+    nameMatchScore: results?.name_match_score ?? null,
+    failureReason:
+      raw.status_details?.description ?? raw.status_details?.reason ?? null,
+    bankAccount:
+      account?.account_number && account.bank_routing_code
+        ? {
+            accountNumber: account.account_number,
+            ifsc: account.bank_routing_code,
+            bankName: account.bank_name ?? null,
+            accountType: account.account_type ?? null,
+          }
+        : null,
+    upiIntent: raw.upi_intent
+      ? {
+          intentUrl: raw.upi_intent.intent_url ?? null,
+          gpayUrl: raw.upi_intent.gpay_url ?? null,
+          phonepeUrl: raw.upi_intent.phonepe_url ?? null,
+          paytmUrl: raw.upi_intent.paytm_url ?? null,
+          bhimUrl: raw.upi_intent.bhim_url ?? null,
+          encodedQrCode: raw.upi_intent.encoded_qr_code ?? null,
+        }
+      : null,
+  };
+}
+
 // ============================================
 // RazorpayX Payouts Service
 // ============================================
@@ -397,23 +511,65 @@ export class RazorpayPayoutsService {
   /**
    * Validate a bank account via penny testing
    * Note: This creates a ₹1 transfer that is reversed
+   *
+   * #1675 PR-Y2 — the wire entity answers `results.account_status:
+   * "active" | "invalid"`, never a top-level `accountStatus`; the callers'
+   * `=== "valid"` check could not fire until the reply was normalised here.
    */
-  async validateBankAccount(fundAccountId: string): Promise<{
-    id: string;
-    status: "created" | "completed" | "failed";
-    accountStatus: "valid" | "invalid" | "unknown";
-  }> {
-    return this.apiRequest("POST", "/fund_accounts/validations", {
-      fund_account: {
-        id: fundAccountId,
+  async validateBankAccount(
+    fundAccountId: string,
+  ): Promise<FundAccountValidationSummary> {
+    const raw = await this.apiRequest<FundAccountValidationEntity>(
+      "POST",
+      "/fund_accounts/validations",
+      {
+        fund_account: {
+          id: fundAccountId,
+        },
+        account_number: this.config.accountNumber,
+        amount: 100, // ₹1 in paise
+        currency: "INR",
+        notes: {
+          purpose: "bank_account_validation",
+        },
       },
-      account_number: this.config.accountNumber,
-      amount: 100, // ₹1 in paise
-      currency: "INR",
-      notes: {
-        purpose: "bank_account_validation",
+    );
+    return summariseFundAccountValidation(raw);
+  }
+
+  /**
+   * #1675 PR-Y2 — reverse penny drop: the consultant pays ₹1 from their own
+   * UPI app and RazorpayX hands back the account behind it. The docs label
+   * `source_account_number` ambiguously; their example carries the merchant's
+   * RazorpayX account, which is the only number we know at this point.
+   * Not available in test mode (docs), so previews cannot exercise it.
+   */
+  async createReversePennyDrop(request: {
+    referenceId: string;
+    notes?: Record<string, string>;
+  }): Promise<FundAccountValidationSummary> {
+    const raw = await this.apiRequest<FundAccountValidationEntity>(
+      "POST",
+      "/fund_accounts/validations",
+      {
+        source_account_number: this.config.accountNumber,
+        validation_type: "upi_intent",
+        reference_id: request.referenceId,
+        notes: request.notes,
       },
-    });
+    );
+    return summariseFundAccountValidation(raw);
+  }
+
+  /** Poll a validation by id; the reverse flow completes asynchronously. */
+  async fetchFundAccountValidation(
+    validationId: string,
+  ): Promise<FundAccountValidationSummary> {
+    const raw = await this.apiRequest<FundAccountValidationEntity>(
+      "GET",
+      `/fund_accounts/validations/${encodeURIComponent(validationId)}`,
+    );
+    return summariseFundAccountValidation(raw);
   }
 
   /**

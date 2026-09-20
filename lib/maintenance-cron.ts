@@ -29,6 +29,9 @@ import { flushJobSentry } from "@/lib/observability/job-sentry";
 // become inconsistent during a partial deployment.
 // Exported for the lock-registry drift test (#1169): every member that is
 // cron-scheduled must hold a fail-closed lock.
+// #1582/#1598 — `sweep-stuck-webhook-events`, `reconcile-orphaned-confirmations`
+// and `sweep-orphaned-topup-captures` DO move money, but only by re-driving a
+// webhook DEGRADED already exempts, so they are deliberately not listed here.
 export const FINANCIAL_JOB_NAMES = new Set([
   "process-payouts",
   "create-payout-batch",
@@ -69,6 +72,26 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // statutory series. A half-deployed run leaves gaps that cannot be filled.
   "gst-outward-register-export",
 ]);
+
+/**
+ * #1599 F-P1-03 — the admin console (`/api/admin/system-jobs/run`) keys a few
+ * jobs by an id spelled differently from the cron job name. Map those here so
+ * the DEGRADED gate has one list, `FINANCIAL_JOB_NAMES`, and no second copy.
+ */
+const CRON_JOB_NAME_BY_ADMIN_ID: Record<string, string> = {
+  "reconcile-refunds": "reconcile-pending-refunds",
+  // Rides inside the abandoned-payments run since #1321.
+  "cleanup-approval-payments": "cleanup-abandoned-payments",
+  "tentative-occurrences": "cleanup-tentative-occurrences",
+  "auth-tokens": "cleanup-auth-tokens",
+};
+
+/** True when a cron job name, or an admin console job id, is a money job. */
+export function isFinancialJob(jobIdOrName: string): boolean {
+  return FINANCIAL_JOB_NAMES.has(
+    CRON_JOB_NAME_BY_ADMIN_ID[jobIdOrName] ?? jobIdOrName,
+  );
+}
 
 /** The maintenance phases that can stop a job. */
 export type BlockingMaintenancePhase = "OFFLINE" | "DEGRADED";

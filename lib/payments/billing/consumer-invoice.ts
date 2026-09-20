@@ -22,7 +22,10 @@
  */
 
 import prisma, { type Tx } from "@/lib/prisma";
-import { reportSentryError } from "@/lib/observability/report";
+import {
+  reportSentryError,
+  reportSentryMessage,
+} from "@/lib/observability/report";
 import {
   recordSystemError,
   recordSystemEvent,
@@ -185,6 +188,29 @@ export function resolveSupplierStateCode(
   return { stateCode: fromGstin ?? fromEnv, mismatch: null };
 }
 
+/** #1447 — GSTIN and SUPPLIER_STATE_CODE disagree; the caller refuses, it never picks one. */
+export class SupplierStateMismatchError extends Error {
+  constructor(readonly mismatch: { fromGstin: string; fromEnv: string }) {
+    super(
+      `Supplier state is ambiguous: PLATFORM_GSTIN says "${mismatch.fromGstin}", SUPPLIER_STATE_CODE says "${mismatch.fromEnv}".`,
+    );
+    this.name = "SupplierStateMismatchError";
+  }
+}
+
+/**
+ * #1447 — the platform's own numeric state for the org rails, GSTIN-first
+ * like the B2C mint; "29" is the historical default when neither source is set.
+ */
+export function supplierStateCode(): string {
+  const { stateCode, mismatch } = resolveSupplierStateCode(
+    getPlatformSupplier()?.gstin,
+    process.env.SUPPLIER_STATE_CODE,
+  );
+  if (mismatch) throw new SupplierStateMismatchError(mismatch);
+  return stateCode ?? "29";
+}
+
 /** Funding sources that make a payment ORG-funded. Those supplies are invoiced
  *  to the organization on its own series and must never get a second document
  *  on the consumer series. */
@@ -210,6 +236,9 @@ function resolvePlaceOfSupplySource(
 }
 
 let supplierUnconfiguredLogged = false;
+// #1757 — every capture skipped here is an un-invoiced supply; counted so the
+// one-per-process Sentry warning below carries how many the console line hid.
+let supplierUnconfiguredSkips = 0;
 
 /**
  * Mint the statutory tax invoice for one successful consumer payment.
@@ -283,6 +312,7 @@ export async function mintConsumerInvoice(
     // Fail closed and loudly ONCE per process: minting a tax invoice without a
     // real GSTIN is worse than minting none, and the download route already
     // returns an ops-actionable 503 for the same reason.
+    supplierUnconfiguredSkips++;
     if (!supplierUnconfiguredLogged) {
       supplierUnconfiguredLogged = true;
       console.warn(
@@ -292,6 +322,22 @@ export async function mintConsumerInvoice(
             "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued.",
         }),
       );
+      // #1757 — the console line alone left the gate invisible on real
+      // traffic; one expected warning per process makes it show up in Sentry.
+      reportSentryMessage("CONSUMER_INVOICE_MINT_DISABLED", {
+        subsystem: "payments",
+        op: "consumer-invoice.mint",
+        expected: true,
+        level: "warning",
+        tags: { feature: "consumer-invoice" },
+        extra: {
+          env: "PLATFORM_GSTIN",
+          reason:
+            "PLATFORM_GSTIN is unset or malformed; consumer tax invoices are not being issued (fail-open, pre-launch posture).",
+          skippedMints: supplierUnconfiguredSkips,
+          firstSkippedPaymentId: payment.id,
+        },
+      });
     }
     return { consumerInvoiceId: null };
   }

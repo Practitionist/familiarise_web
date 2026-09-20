@@ -36,7 +36,7 @@ export function PaymentRequiredBadge({
             </div>
           </TooltipTrigger>
           <TooltipContent>
-            <p className="text-sm font-medium">Payment Required</p>
+            <p className="text-sm font-medium">Payment required</p>
             <p className="text-xs text-muted-foreground">
               Waiting for client payment before slot allocation
             </p>
@@ -55,11 +55,11 @@ export function PaymentRequiredBadge({
             className={`bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100 ${className}`}
           >
             <Clock className="mr-1 h-3 w-3" />
-            Payment Pending
+            Payment required
           </Badge>
         </TooltipTrigger>
         <TooltipContent>
-          <p className="text-sm font-medium">Approved - Awaiting Payment</p>
+          <p className="text-sm font-medium">Payment required</p>
           <p className="text-xs text-muted-foreground">
             Payment link has been sent to the client. Slot allocation will
             proceed after successful payment.

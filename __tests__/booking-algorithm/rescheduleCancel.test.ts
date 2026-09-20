@@ -247,6 +247,8 @@ function makeMockTx() {
     appointment: {
       findUnique: jest.fn(),
       findMany: jest.fn().mockResolvedValue([]),
+      // #1695 — the refund context is read on the tx client, under the lock.
+      findFirst: jest.fn().mockResolvedValue(null),
       delete: jest.fn(),
       deleteMany: jest.fn(),
     },
@@ -261,10 +263,9 @@ function makeMockTx() {
       findUnique: jest.fn().mockResolvedValue({ status: "SCHEDULED" }),
       // B2 — the cancel/reschedule CAS guards use updateMany.
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      // #448 — a PARTIAL (slotIds) subscription reschedule only terminal-guards
-      // via count (no status write); a positive count means the from-state is
-      // still reschedulable so the route proceeds without flipping to PENDING.
-      count: jest.fn().mockResolvedValue(1),
+      // #448 / #1583 A-P0-03 — a PARTIAL (slotIds) subscription reschedule
+      // terminal-guards through a locking updateMany touch (no status write);
+      // the shared updateMany mock above answers count: 1 for it.
     },
     webinar: {
       update: jest.fn(),
@@ -700,6 +701,35 @@ describe("Reschedule Route Handler - POST", () => {
       expect(body.rescheduleType).toBe("multiple_sessions");
       expect(body.sessionsAffected).toBe(2);
       expect(body.slotsAffected).toBe(2);
+    });
+
+    it("answers 409 when the partial path's locking touch matches no live parent", async () => {
+      // #1583 A-P0-03 — the touch is an updateMany so the row lock is held
+      // to commit; a zero count means a sweep terminalised the parent first.
+      const appointment = makeSubscriptionAppointment();
+      mockTx.appointment.findUnique.mockResolvedValue(appointment);
+      mockTx.subscription.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      const req = makeRescheduleRequest("apt-1", "SUBSCRIPTION", {
+        slotIds: ["slot-1"],
+      });
+      const res = await rescheduleHandler(req, makeParams("apt-1"));
+
+      expect(res.status).toBe(409);
+      expect(mockTx.subscription.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: "sub-1",
+          status: {
+            in: [
+              "PENDING",
+              "APPROVED",
+              "APPROVED_PENDING_PAYMENT",
+              "SCHEDULED",
+            ],
+          },
+        },
+        data: { updatedAt: expect.any(Date) },
+      });
     });
 
     it("should return 404 when requested slotIds not found in subscription", async () => {

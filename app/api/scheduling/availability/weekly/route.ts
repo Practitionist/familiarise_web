@@ -16,13 +16,22 @@ import {
   weeklyRowLocalColumns,
 } from "@/lib/scheduling/weeklyUtcOffset";
 import { getSession } from "@/lib/auth-server";
+import {
+  validateWeeklyWindow,
+  AVAILABILITY_REFUSAL_STATUS,
+} from "@/lib/scheduling/availability-contract";
+import { settleAvailabilityWrite } from "@/lib/scheduling/uncovered-upcoming";
+import { parseRequestListQueryOrRespond } from "@/lib/booking/request-route-guards";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const consultantProfileId = searchParams.get("consultantProfileId");
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
+    // #1583 D-P1-06 — the same validated, clamped paging the request lists
+    // got in #1704; a bad value is a 400, not NaN reaching Prisma.
+    const listQuery = parseRequestListQueryOrRespond(searchParams);
+    if (listQuery.response) return listQuery.response;
+    const { page, limit } = listQuery.query;
 
     if (!consultantProfileId) {
       return NextResponse.json(
@@ -172,6 +181,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: timeError }, { status: 400 });
     }
 
+    // Contract (lib/scheduling/availability-contract): the 30 min–12 h bound
+    // the wizard enforces, now on this path too.
+    const refusal = validateWeeklyWindow({
+      startDay: startDay,
+      endDay: endDay,
+      startTimeUtc,
+      endTimeUtc,
+    });
+    if (refusal) {
+      return NextResponse.json(
+        { error: refusal.message, code: refusal.code },
+        { status: AVAILABILITY_REFUSAL_STATUS[refusal.code] },
+      );
+    }
+
     // #1326 — the consultant's profile timezone decides the offset, and a
     // caller who sends one of their own may only agree with it. Resolved once,
     // before the transaction, so a contradiction costs no write.
@@ -248,7 +272,14 @@ export async function POST(req: NextRequest) {
             startTimeUtc,
             endTimeUtc,
           });
-          return NextResponse.json({ data: covering }, { status: 201 });
+          const { uncoveredUpcoming } = await settleAvailabilityWrite(
+            tx,
+            consultantProfileId,
+          );
+          return NextResponse.json(
+            { data: covering, uncoveredUpcoming },
+            { status: 201 },
+          );
         },
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,

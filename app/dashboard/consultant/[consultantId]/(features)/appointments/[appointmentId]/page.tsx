@@ -22,9 +22,16 @@ export default async function AppointmentDetailPage({
   // Ownership is enforced HERE, not by the layout: the layout is a client
   // component, so its check runs after this server render has already read
   // and streamed the data. See lib/auth/personal-dashboard-access.ts.
+  //
+  // Deliberately sequential, NOT Promise.all: the guard must SETTLE before
+  // the detail read starts. Firing both concurrently would run the query
+  // against someone else's rows before the ownership check resolves — the
+  // exact bug this file's comment and the ssr-ownership guard test pin
+  // against. The round trip this costs is the price of the invariant.
   const access = await requirePersonalProfileAccess("consultant", consultantId);
 
   const detail = await readAppointmentDetail(appointmentId);
+
   if (!detail) notFound();
 
   // Ownership: the route's consultant must own the plan or be an ACCEPTED

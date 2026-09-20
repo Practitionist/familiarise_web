@@ -57,6 +57,9 @@ export const getConsultantDetail = cache(async (consultantId: string) => {
       totalMenteesHelped: true,
       domainId: true,
       scheduleType: true,
+      // #1703 D1/D4 — the CTA and the badge read these; not PII.
+      bookingMode: true,
+      acceptingRequests: true,
       userId: true,
       isIndependent: true,
       createdAt: true,

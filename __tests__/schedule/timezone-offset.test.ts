@@ -21,10 +21,16 @@ import { getTimezoneOffsetMinutes } from "@/utils/scheduling-engine/slotTimeUtil
 describe("getTimezoneOffsetMinutes", () => {
   it("IST is +330 year-round (no DST)", () => {
     expect(
-      getTimezoneOffsetMinutes("Asia/Kolkata", new Date("2026-01-15T12:00:00Z")),
+      getTimezoneOffsetMinutes(
+        "Asia/Kolkata",
+        new Date("2026-01-15T12:00:00Z"),
+      ),
     ).toBe(330);
     expect(
-      getTimezoneOffsetMinutes("Asia/Kolkata", new Date("2026-07-15T12:00:00Z")),
+      getTimezoneOffsetMinutes(
+        "Asia/Kolkata",
+        new Date("2026-07-15T12:00:00Z"),
+      ),
     ).toBe(330);
   });
 
@@ -89,7 +95,10 @@ describe("getTimezoneOffsetMinutes", () => {
 
   it("half-hour and 45-minute offsets are exact", () => {
     expect(
-      getTimezoneOffsetMinutes("Asia/Kathmandu", new Date("2026-06-01T00:00:00Z")),
+      getTimezoneOffsetMinutes(
+        "Asia/Kathmandu",
+        new Date("2026-06-01T00:00:00Z"),
+      ),
     ).toBe(345);
     expect(
       getTimezoneOffsetMinutes(
@@ -97,5 +106,33 @@ describe("getTimezoneOffsetMinutes", () => {
         new Date("2026-01-15T00:00:00Z"), // ACDT (southern-hemisphere summer)
       ),
     ).toBe(630);
+  });
+});
+
+// FAMILIARISE_WEB-2R — `Asia/Calcutta` is the same zone under its legacy IANA
+// name; the "written outside Asia/Kolkata" signal must not fire for it.
+jest.mock("../../lib/observability/report", () => ({
+  reportSentryMessage: jest.fn(),
+  reportSentryError: jest.fn(),
+}));
+
+import { reportSentryMessage } from "@/lib/observability/report";
+import {
+  resolveWeeklyTimezone,
+  resolveWeeklyUtcOffsetMinutes,
+} from "@/lib/scheduling/weeklyUtcOffset";
+
+describe("legacy zone aliases", () => {
+  beforeEach(() => (reportSentryMessage as jest.Mock).mockClear());
+
+  it("folds Asia/Calcutta to Asia/Kolkata and stays silent", () => {
+    expect(resolveWeeklyTimezone("Asia/Calcutta")).toBe("Asia/Kolkata");
+    expect(
+      resolveWeeklyUtcOffsetMinutes({
+        profileTimezone: "Asia/Calcutta",
+        consultantProfileId: "cp1",
+      }),
+    ).toBe(330);
+    expect(reportSentryMessage).not.toHaveBeenCalled();
   });
 });

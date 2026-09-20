@@ -67,6 +67,10 @@ const txStub = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
   },
+  // #1766 — a subscription cancel stamps the undelivered earnings tranches.
+  consultantEarnings: {
+    updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
   bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
   // transitionOccurrenceCompletion reads the from-status, then moves the cohort with
   // updateManyAndReturn so each moved id gets its own history row.
@@ -81,6 +85,12 @@ const txStub = {
     findMany: jest.fn().mockResolvedValue([]),
     findUnique: jest.fn().mockResolvedValue({ status: "PENDING_REVIEW" }),
     updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+  },
+  // #1695 — the cancel POST reads the refund context on the tx client, under
+  // the lock and before the CAS; the preview GET keeps the global read.
+  appointment: {
+    findFirst: async (...a: unknown[]) =>
+      (await mockAppointmentFindMany(...a))[0] ?? null,
   },
 };
 
@@ -290,6 +300,16 @@ function bookingRows(c: Case) {
         },
       ],
       occurrences: [...done, ...live],
+      // #1766 — the plan entitlement; every fixture's plan is exactly the
+      // sessions it holds, so the unused-session quote and the old
+      // allocated-slot proration agree on the base.
+      subscription:
+        c.kind === "subscription"
+          ? {
+              sessionsTotal: done.length + live.length,
+              subscriptionPlan: { totalSessions: 0 },
+            }
+          : null,
     },
   ];
 }

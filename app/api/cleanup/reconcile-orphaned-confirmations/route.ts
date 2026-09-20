@@ -37,6 +37,7 @@ export const { GET, POST } = cleanupRoute({
     stillBlocked: r.stillBlocked,
     channelsEnsured: r.channelsEnsured,
     channelsFailed: r.channelsFailed,
+    channelsSkipped: r.channelsSkipped,
     channelBuyerOps: r.channelBuyerOps,
     channelsDeferred: r.channelsDeferred,
   }),
