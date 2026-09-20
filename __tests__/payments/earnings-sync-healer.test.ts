@@ -182,6 +182,37 @@ describe("the cohort has no age window", () => {
     });
   });
 
+  it("#1766 — a payment with tranche rows is not a candidate, so no whole-plan row can be minted", async () => {
+    // A subscription accrues several ConsultantEarnings rows in one
+    // transaction (one per cycle). `earnings: { none: {} }` is a row-count
+    // predicate, so one tranche is enough to keep the payment out of the
+    // cohort; the table stub applies it the way the database would.
+    const table = [
+      {
+        ...healablePayment("pay-tranched", 3),
+        earnings: [{ cycleOrdinal: 0 }],
+      },
+      { ...healablePayment("pay-bare", 3), earnings: [] },
+    ];
+    let served = false;
+    mockPaymentFindMany.mockImplementation(
+      async (args: { where: { earnings?: { none: unknown } } }) => {
+        if (served) return [];
+        served = true;
+        return args.where.earnings?.none
+          ? table.filter((p) => p.earnings.length === 0)
+          : table;
+      },
+    );
+
+    await syncPaymentEarnings();
+
+    expect(mockCreateEarningsFromPayment).toHaveBeenCalledTimes(1);
+    expect(mockCreateEarningsFromPayment.mock.calls[0][0].payment.id).toBe(
+      "pay-bare",
+    );
+  });
+
   it("heals a payment nine months past the old boundary", async () => {
     servePayments([healablePayment("pay-old", 270)]);
 
