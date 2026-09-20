@@ -65,3 +65,31 @@ it("counts live calls only, the same way the list's group card does", () => {
   const { vm } = mapAppointmentDetail(detail, "consultee", NOW);
   expect(vm.group).toEqual({ total: 4, completed: 2 });
 });
+
+// #1766 — with the plan and the frozen entitlement present the programme is
+// the entitlement, so a fresh request reads "0 of 12" instead of vanishing.
+it("reads the entitlement for a fresh subscription: 0 of 12", () => {
+  const base = detail.appointment.subscription as NonNullable<
+    TAppointmentDetail["appointment"]["subscription"]
+  >;
+  const fresh = {
+    appointment: {
+      ...detail.appointment,
+      occurrences: [],
+      subscription: {
+        ...base,
+        sessionsTotal: 12,
+        schedulingPeriodStartsAt: NOW,
+        schedulingTimezone: "UTC",
+        subscriptionPlan: {
+          ...base.subscriptionPlan,
+          sessionsPerWeek: 4,
+          durationInMonths: 3,
+          totalSessions: 16,
+        },
+      },
+    },
+  } as unknown as TAppointmentDetail;
+  const { vm } = mapAppointmentDetail(fresh, "consultee", NOW);
+  expect(vm.group).toEqual({ total: 12, completed: 0 });
+});

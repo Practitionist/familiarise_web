@@ -250,6 +250,45 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     expect(result.consultationsCompleted).toBe(1);
   });
 
+  it("does not complete a subscription with entitlement remaining (#1766)", async () => {
+    // Cycle one of a 12-plan is delivered and nothing is live: the old sweep
+    // flipped the request to COMPLETED (terminal) and stranded the other 8.
+    const delivered = Array.from({ length: 4 }, (_, i) => ({
+      startsAt: minutesAgo((5 - i) * 24 * 60),
+      endsAt: minutesAgo((5 - i) * 24 * 60 - 60),
+      completionStatus: "COMPLETED",
+      isTentative: false,
+      deletedAt: null,
+    }));
+    db.subscription.findMany.mockResolvedValue([
+      {
+        id: "sub-1",
+        status: "APPROVED",
+        sessionsTotal: 12,
+        schedulingPeriodStartsAt: minutesAgo(6 * 24 * 60),
+        schedulingTimezone: "UTC",
+        subscriptionPlan: {
+          title: "Intensive",
+          totalSessions: 12,
+          sessionsPerWeek: 4,
+          durationInMonths: 3,
+          consultantProfile: { userId: CONSULTANT, user: { name: "C" } },
+        },
+        requestedBy: { userId: CONSULTEE, user: { name: "B" } },
+        appointment: {
+          id: "apt-sub",
+          organizationId: null,
+          occurrences: delivered,
+        },
+      },
+    ]);
+
+    const result = await autoCompleteAppointments();
+
+    expect(result.subscriptionsCompleted).toBe(0);
+    expect(db.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
   it("hands over only after the hourly detector has seen the booking past its grace window", () => {
     expect(
       NO_SHOW_HANDOFF_MINUTES - NO_SHOW_GRACE_MINUTES,

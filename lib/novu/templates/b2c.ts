@@ -245,13 +245,16 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // #1766 — re-bodied: the id stays (20-workflow cap) but the event is now
+    // "your cycle is done and the next one is coming", not a renewal charge.
     workflowId: W.SUBSCRIPTION_RENEWED,
-    name: "Subscription renewed",
-    description: "The consultee, on renewal.",
+    name: "Subscription cycle done",
+    description:
+      "The consultee, when the last live session of a cycle completes with entitlement left.",
     category: "subscriptions",
     inApp: {
-      subject: "Subscription renewed",
-      body: "Your subscription to {{payload.planTitle}} with {{payload.consultantName}} has renewed for another cycle.",
+      subject: "Next sessions coming",
+      body: "Cycle {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {{payload.nextBatch}} sessions ({{payload.remainingSessions}} left).",
       redirect: "dashboardUrl",
     },
   },

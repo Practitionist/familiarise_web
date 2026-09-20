@@ -648,27 +648,33 @@ export function AppointmentDetailClient({
             isOrgContext={!!orgName}
           />
 
-          {vm.group && vm.group.total > 0 && postApproval && (
-            <div className="mt-4 pt-4 border-t border-border">
-              <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
-                <span>Program progress</span>
-                <span className="font-medium text-foreground">
-                  {vm.group.completed} of {vm.group.total} sessions
-                </span>
+          {/* #1766 — a subscription's header already carries "h of T"; a
+              second bar here would be a second number beside it (PR-V rule).
+              Classes keep the bar: their header has no session-progress line. */}
+          {vm.group &&
+            vm.group.total > 0 &&
+            postApproval &&
+            !usesSessionProgress && (
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="flex items-center justify-between text-xs text-muted-foreground mb-1.5">
+                  <span>Program progress</span>
+                  <span className="font-medium text-foreground">
+                    {vm.group.completed} of {vm.group.total} sessions
+                  </span>
+                </div>
+                <Progress
+                  value={
+                    // A group whose sessions have no slots yet has total 0,
+                    // and 0/0 is NaN — which reaches Progress as an
+                    // attribute value and renders a broken bar.
+                    vm.group.total > 0
+                      ? (vm.group.completed / vm.group.total) * 100
+                      : 0
+                  }
+                  className="h-2"
+                />
               </div>
-              <Progress
-                value={
-                  // A group whose sessions have no slots yet has total 0,
-                  // and 0/0 is NaN — which reaches Progress as an
-                  // attribute value and renders a broken bar.
-                  vm.group.total > 0
-                    ? (vm.group.completed / vm.group.total) * 100
-                    : 0
-                }
-                className="h-2"
-              />
-            </div>
-          )}
+            )}
         </div>
 
         <NeedsYouCallout

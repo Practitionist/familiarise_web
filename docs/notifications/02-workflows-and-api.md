@@ -226,13 +226,13 @@ sequenceDiagram
 
 ### Subscriptions
 
-| Workflow ID              | Trigger Function                                  | Recipients   | Payload Type          |
-| ------------------------ | ------------------------------------------------- | ------------ | --------------------- |
-| `subscription-started`   | `notifySubscriptionStarted(userId, payload)`      | Consultee    | `SubscriptionPayload` |
-| `subscription-cancelled` | `notifySubscriptionCancelled(userIds[], payload)` | Both parties | `SubscriptionPayload` |
-| `subscription-renewed`   | `notifySubscriptionRenewed(userId, payload)`      | Consultee    | `SubscriptionPayload` |
+| Workflow ID              | Trigger Function                                                | Recipients   | Payload Type          |
+| ------------------------ | --------------------------------------------------------------- | ------------ | --------------------- |
+| `subscription-started`   | `notifySubscriptionStarted(userId, payload)`                    | Consultee    | `SubscriptionPayload` |
+| `subscription-cancelled` | `notifySubscriptionCancelled(userIds[], payload)`               | Both parties | `SubscriptionPayload` |
+| `subscription-renewed`   | `notifySubscriptionRenewed(userId, payload, dedupeKey?, opts?)` | Consultee    | `SubscriptionPayload` |
 
-**SubscriptionPayload**: `subscriptionId?`, `planTitle`, `consultantName`, `consulteeName?`, `dashboardUrl`
+**SubscriptionPayload**: `subscriptionId?`, `planTitle`, `consultantName`, `consulteeName?`, `dashboardUrl`, and since #1766 `cycleOrdinal?`, `remainingSessions?`, `nextBatch?`. The `subscription-renewed` id is kept for the 20-workflow cap, but its step now reads "Cycle N of <plan> is done — <consultant> will schedule your next M sessions (R left)"; it is staged inside the completing transaction by `settleSubscriptionCycle` with the dedupe key `sub:<subscriptionId>:cycle:<n>` and attempted after commit, so a second completion pass over the same state adds no row. `npm run novu:sync` must run after the step body ships.
 
 ---
 

@@ -23,6 +23,7 @@ import { scopeToWhereOrgId } from "@/lib/api/scope/parse";
 import { readByIds } from "@/lib/data/read-by-ids";
 import {
   consultationRequestWhere,
+  nextCycleSubscriptionWhere,
   pendingConsultationWhere,
   pendingSubscriptionWhere,
   subscriptionRequestWhere,
@@ -30,6 +31,10 @@ import {
 import { readPayoutSetupNeeded } from "@/lib/data/needs-you";
 import { payoutSettingsHref } from "@/lib/payments/payouts/payout-requirements";
 import { reportSentryError } from "@/lib/observability/report";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { Prisma } from "@prisma/client";
 import { PAYOUT_CONSTANTS } from "@/lib/payments/payouts/constants";
 import { getConsultantResponseRate } from "@/lib/booking/response-rate";
@@ -75,6 +80,82 @@ const PERSONAL_ORG_PIN = scopeToWhereOrgId({ kind: "personal" });
 
 /** The "Organisation sessions" strip shows the next few, not the book. */
 const HOME_ORG_SESSIONS_TAKE = 5;
+/** The "Next cycle" strip shows the first few plans that need scheduling. */
+const HOME_NEXT_CYCLE_TAKE = 5;
+/** Candidates read before the JS `remaining > 0` filter (#1766). */
+const HOME_NEXT_CYCLE_SCAN = 50;
+
+/**
+ * #1766 — subscriptions whose live cycle is finished and whose entitlement
+ * is not: derived at read time, no job. Two steps because the predicate can
+ * say "delivered, nothing live" but only the helper can say "sessions left";
+ * top-level, never inside a transaction (PG_POOL_MAX=1).
+ */
+async function readNextCycles(
+  consultantProfileId: string,
+  now: Date,
+): Promise<TConsultantDashboardResponse["nextCycles"]> {
+  const candidates = await prisma.subscription.findMany({
+    where: nextCycleSubscriptionWhere(consultantProfileId, PERSONAL_SCOPE),
+    select: {
+      id: true,
+      sessionsTotal: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
+      subscriptionPlan: {
+        select: {
+          title: true,
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
+        },
+      },
+      requestedBy: { select: { user: { select: { name: true } } } },
+      appointment: {
+        select: {
+          occurrences: {
+            select: {
+              completionStatus: true,
+              isTentative: true,
+              deletedAt: true,
+              startsAt: true,
+              endsAt: true,
+            },
+          },
+        },
+      },
+    },
+    orderBy: { updatedAt: "asc" },
+    take: HOME_NEXT_CYCLE_SCAN,
+  });
+  return candidates
+    .map((row) => {
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: sessionsTotalOf(row),
+        sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
+        durationInMonths: row.subscriptionPlan.durationInMonths,
+        occurrences: row.appointment?.occurrences ?? [],
+        schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
+        schedulingTimezone: row.schedulingTimezone,
+        now,
+      });
+      return {
+        subscriptionId: row.id,
+        consulteeName: row.requestedBy?.user?.name ?? "Consultee",
+        planTitle: row.subscriptionPlan.title,
+        nextBatch: entitlement.cycle.nextBatch,
+        held: entitlement.held,
+        total: entitlement.total,
+        windowStart: entitlement.cycle.windowStart,
+        windowEnd: entitlement.cycle.windowEnd,
+        remaining: entitlement.remaining,
+        href: `/dashboard/consultant/${encodeURIComponent(consultantProfileId)}/requests/${encodeURIComponent(row.id)}/allocate?type=subscription`,
+      };
+    })
+    .filter((row) => row.remaining > 0)
+    .slice(0, HOME_NEXT_CYCLE_TAKE)
+    .map(({ remaining: _remaining, ...row }) => row);
+}
 
 /**
  * Every appointment this consultant owns or collaborates on. Shared by the
@@ -202,6 +283,9 @@ const appointmentInclude = {
       },
       schedulingPeriodStartsAt: true,
       schedulingPeriodEndsAt: true,
+      // #1766 — Home's session progress reads the frozen entitlement.
+      sessionsTotal: true,
+      schedulingTimezone: true,
       status: true,
     },
   },
@@ -789,6 +873,11 @@ export async function getConsultantDashboard(
             endDate: new Date(
               appointment.subscription.schedulingPeriodEndsAt,
             ).toISOString(),
+            // #1766 — the entitlement inputs calculateSessionProgress reads.
+            sessionsTotal: appointment.subscription.sessionsTotal,
+            schedulingPeriodStartsAt:
+              appointment.subscription.schedulingPeriodStartsAt,
+            schedulingTimezone: appointment.subscription.schedulingTimezone,
           }
         : undefined,
       webinar: appointment.webinar
@@ -823,6 +912,8 @@ export async function getConsultantDashboard(
     consultantProfileId,
     now,
   );
+  // #1766 — the next-cycle strip; sequential like the read above.
+  const nextCycles = await readNextCycles(consultantProfileId, now);
 
   // #1675 PR-Y2 — "Add your bank account to get paid". Sequential like the
   // reads above; a failure degrades to no row, never to a broken Home.
@@ -952,6 +1043,7 @@ export async function getConsultantDashboard(
     pendingRequestsCount,
     awaitingPayment,
     orgSessions,
+    nextCycles,
     responseRate,
     payoutSetup,
     performanceSnapshot: {

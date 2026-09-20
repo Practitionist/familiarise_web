@@ -12,6 +12,7 @@ import {
 } from "@/app/checkout/components/referral-credits";
 import { useToast } from "@/hooks/use-toast";
 import { CheckoutPlanSkeleton } from "@/app/checkout/CheckoutSkeletons";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   CheckoutInput,
   SubscriptionSearchParams,
@@ -183,33 +184,36 @@ export default function SubscriptionCheckoutPage({
     }
   }, [checkoutPlanQuery.error]);
 
-  // E2E-audit P0 fix — derive a default scheduling period when the buyer
-  // arrives without one. The plan-detail "Subscribe" CTA links here bare,
-  // and every payment control renders null in that case: no button, no
-  // error — a dead end that middleware faithfully preserves through sign-in
-  // as callbackUrl. A subscription is a fixed-term engagement, so defaulting
-  // the window to "starting now, one plan-duration long" matches what the
-  // expert-page flow collects explicitly; the server still re-validates the
-  // window against the plan inside the checkout transaction.
+  // E2E-audit P0 fix — derive a default start when the buyer arrives
+  // without one (the plan-detail "Subscribe" CTA links here bare), so the
+  // payment controls never render null. #1766 — only the START travels: the
+  // window is the first cycle and the server derives it in the consultant's
+  // zone; a client end is ignored there, so none is minted here.
   const effectiveSearchParams = useMemo((): SubscriptionSearchParams | null => {
-    if (
-      validatedSearchParams?.schedulingPeriodStartsAt &&
-      validatedSearchParams?.schedulingPeriodEndsAt
-    ) {
-      return validatedSearchParams;
-    }
     if (!validatedSearchParams) return null;
-    const months = planData?.data?.durationInMonths;
-    if (!months || months <= 0) return null;
-    const startsAt = new Date();
-    const endsAt = new Date(startsAt);
-    endsAt.setMonth(endsAt.getMonth() + months);
+    const { schedulingPeriodEndsAt: _ignored, ...rest } = validatedSearchParams;
     return {
-      ...validatedSearchParams,
-      schedulingPeriodStartsAt: startsAt.toISOString(),
-      schedulingPeriodEndsAt: endsAt.toISOString(),
+      ...rest,
+      schedulingPeriodStartsAt:
+        rest.schedulingPeriodStartsAt ?? new Date().toISOString(),
     };
-  }, [validatedSearchParams, planData?.data?.durationInMonths]);
+  }, [validatedSearchParams]);
+
+  // The first cycle as the buyer will see it, in the browser's zone (display
+  // only; the persisted window is the server's).
+  const firstCycle = useMemo(() => {
+    const plan = planData?.data;
+    const start = effectiveSearchParams?.schedulingPeriodStartsAt;
+    if (!plan || !start) return null;
+    return firstCycleWindow(
+      {
+        sessionsPerWeek: plan.sessionsPerWeek ?? 1,
+        durationInMonths: plan.durationInMonths ?? 1,
+      },
+      new Date(start),
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    );
+  }, [planData?.data, effectiveSearchParams?.schedulingPeriodStartsAt]);
 
   // Apply discount code
   const handleApplyDiscount = async (code?: string) => {
@@ -317,22 +321,15 @@ export default function SubscriptionCheckoutPage({
           throw new Error("Subscription plan not found");
         }
 
-        if (
-          !effectiveSearchParams.schedulingPeriodStartsAt ||
-          !effectiveSearchParams.schedulingPeriodEndsAt
-        ) {
-          throw new Error(
-            "Scheduling period dates are required for subscriptions",
-          );
+        if (!effectiveSearchParams.schedulingPeriodStartsAt) {
+          throw new Error("A start date is required for subscriptions");
         }
 
-        // Staleness check: verify scheduling period hasn't expired
-        const periodEnd = new Date(
-          effectiveSearchParams.schedulingPeriodEndsAt,
-        );
-        if (periodEnd.getTime() < Date.now()) {
+        // Staleness check: the first cycle the buyer was shown must not have
+        // fully elapsed before they paid.
+        if (firstCycle && firstCycle.end.getTime() < Date.now()) {
           throw new Error(
-            "The scheduling period has expired. Please go back and select new dates.",
+            "The start date has passed. Please go back and pick a new one.",
           );
         }
 
@@ -341,7 +338,6 @@ export default function SubscriptionCheckoutPage({
           planId: planData.data.id,
           schedulingPeriodStartsAt:
             effectiveSearchParams.schedulingPeriodStartsAt,
-          schedulingPeriodEndsAt: effectiveSearchParams.schedulingPeriodEndsAt,
           discountCode: appliedDiscount?.code,
           paymentGateway: gateway,
           displayCurrency: currency,
@@ -427,6 +423,7 @@ export default function SubscriptionCheckoutPage({
       selectedOrganizationId,
       billingState.bodyField,
       effectiveSearchParams,
+      firstCycle,
       currency,
       handleApiError,
       makeCheckoutRequest,
@@ -466,16 +463,15 @@ export default function SubscriptionCheckoutPage({
     checkoutTaxContext.exportZeroRated,
   ]);
 
-  // Periodic staleness check: warn if scheduling period has expired
+  // Periodic staleness check: warn once the first cycle has elapsed.
   useEffect(() => {
-    const periodEndStr = effectiveSearchParams?.schedulingPeriodEndsAt;
-    if (!periodEndStr) return;
+    const cycleEnd = firstCycle?.end;
+    if (!cycleEnd) return;
 
     const checkStaleness = () => {
-      const periodEnd = new Date(periodEndStr);
-      if (periodEnd.getTime() < Date.now()) {
+      if (cycleEnd.getTime() < Date.now()) {
         setStaleError(
-          "The scheduling period has expired. Please go back and select new dates.",
+          "The start date has passed. Please go back and pick a new one.",
         );
       }
     };
@@ -483,7 +479,7 @@ export default function SubscriptionCheckoutPage({
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [effectiveSearchParams?.schedulingPeriodEndsAt]);
+  }, [firstCycle?.end]);
 
   if (isLoading) {
     return <CheckoutPlanSkeleton />;
@@ -575,30 +571,37 @@ export default function SubscriptionCheckoutPage({
         <div className="grid gap-2">
           <div className="font-semibold">Subscription Details</div>
           <div className="grid gap-2">
-            {/* Scheduling Period — shown for the buyer-provided window or
-                the derived default (E2E-audit P0 fix) */}
+            {/* Start + first cycle (#1766): the buyer picked a start; the
+                consultant schedules one cycle at a time from it. */}
             {typeof effectiveSearchParams?.schedulingPeriodStartsAt ===
-              "string" &&
-              typeof effectiveSearchParams?.schedulingPeriodEndsAt ===
-                "string" && (
-                <>
+              "string" && (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="text-muted-foreground">Starts</div>
+                  <div className="text-right text-sm">
+                    {new Date(
+                      effectiveSearchParams.schedulingPeriodStartsAt,
+                    ).toLocaleDateString()}
+                  </div>
+                </div>
+                {firstCycle && (
                   <div className="flex items-center justify-between">
-                    <div className="text-muted-foreground">
-                      Scheduling Period
-                    </div>
+                    <div className="text-muted-foreground">First cycle</div>
                     <div className="text-right text-sm">
-                      {new Date(
-                        effectiveSearchParams.schedulingPeriodStartsAt,
-                      ).toLocaleDateString()}{" "}
-                      →{" "}
-                      {new Date(
-                        effectiveSearchParams.schedulingPeriodEndsAt,
-                      ).toLocaleDateString()}
+                      {firstCycle.start.toLocaleDateString()} →{" "}
+                      {firstCycle.end.toLocaleDateString()} ·{" "}
+                      {planData?.data?.sessionsPerWeek || 1} session
+                      {(planData?.data?.sessionsPerWeek || 1) === 1
+                        ? ""
+                        : "s"}{" "}
+                      per cycle · {planData?.data?.totalSessions ?? "—"} in the
+                      plan
                     </div>
                   </div>
-                  <Separator className="bg-border" />
-                </>
-              )}
+                )}
+                <Separator className="bg-border" />
+              </>
+            )}
             <div className="flex items-center justify-between">
               <div className="text-muted-foreground">Duration</div>
               <div>{planData?.data?.durationInMonths || 1} months</div>
@@ -869,7 +872,6 @@ export default function SubscriptionCheckoutPage({
                   {gateway.isActive ? (
                     <div className="flex gap-2">
                       {effectiveSearchParams?.schedulingPeriodStartsAt &&
-                      effectiveSearchParams?.schedulingPeriodEndsAt &&
                       gateway.gateway === "RAZORPAY" ? (
                         <RazorpayCheckout
                           checkoutData={createCheckoutData({
@@ -878,8 +880,6 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "RAZORPAY",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt:
-                              effectiveSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId
@@ -893,7 +893,6 @@ export default function SubscriptionCheckoutPage({
                           disabled={isMaintenanceBlocked}
                         />
                       ) : effectiveSearchParams?.schedulingPeriodStartsAt &&
-                        effectiveSearchParams?.schedulingPeriodEndsAt &&
                         gateway.gateway === "STRIPE" ? (
                         <StripeCheckout
                           checkoutData={createCheckoutData({
@@ -902,8 +901,6 @@ export default function SubscriptionCheckoutPage({
                             paymentGateway: "STRIPE",
                             schedulingPeriodStartsAt:
                               effectiveSearchParams.schedulingPeriodStartsAt,
-                            schedulingPeriodEndsAt:
-                              effectiveSearchParams.schedulingPeriodEndsAt,
                             discountCode: appliedDiscount?.code,
                             displayCurrency: currency,
                             useReferralCredits: selectedOrganizationId

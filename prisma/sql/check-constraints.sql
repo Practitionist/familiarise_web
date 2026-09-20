@@ -706,4 +706,10 @@ DROP INDEX IF EXISTS "cancellation_policy_scope_version";
 -- SPLIT
 CREATE UNIQUE INDEX IF NOT EXISTS "cancellation_policy_scope_version"
   ON "CancellationPolicy" ("organizationId", "version") NULLS NOT DISTINCT;
+-- 5. #1766 — STAGED for the next reset window (comment only; the column is
+--    nullable so pre-#1766 rows keep resolving through plan.totalSessions).
+--    Once every Subscription row carries its purchase-time entitlement:
+--    ALTER TABLE "Subscription" ALTER COLUMN "sessionsTotal" SET NOT NULL;
+--    ALTER TABLE "Subscription" ADD CONSTRAINT "subscription_sessions_total_min"
+--      CHECK ("sessionsTotal" >= 1);
 -- ============================================================================

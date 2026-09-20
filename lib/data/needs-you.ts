@@ -130,6 +130,41 @@ export async function readPayoutSetupNeeded(
 }
 
 /**
+ * #1766 — an APPROVED subscription whose live cycle has finished: at least
+ * one delivered session and no live SCHEDULED one. Whether entitlement is
+ * left (remaining > 0) is decided in JS through the entitlement helper — the
+ * predicate cannot count, so the caller filters after the read.
+ */
+export function nextCycleSubscriptionWhere(
+  consultantProfileId: string,
+  scope: Scope,
+): Prisma.SubscriptionWhereInput {
+  const scoped = subscriptionRequestWhere(
+    consultantProfileId,
+    scope,
+    "APPROVED",
+  );
+  return {
+    ...scoped,
+    deletedAt: null,
+    appointment: {
+      ...(scoped.appointment as Prisma.AppointmentWhereInput | undefined),
+      occurrences: {
+        some: {
+          completionStatus: { in: ["COMPLETED", "UNVERIFIED"] },
+          deletedAt: null,
+        },
+        none: {
+          completionStatus: "SCHEDULED",
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+    },
+  };
+}
+
+/**
  * @param userId              the signed-in user
  * @param consultantProfileId their delivering profile
  */
