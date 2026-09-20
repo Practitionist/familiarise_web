@@ -38,6 +38,8 @@ export function useConsultants(filters: IExpertFilters) {
     companies,
     language,
     affiliationType,
+    orgKind,
+    orgSlug,
   } = filters;
 
   const getKey = useCallback(
@@ -55,6 +57,8 @@ export function useConsultants(filters: IExpertFilters) {
         ...(minRating !== undefined && { minRating: String(minRating) }),
         ...(language && { language }),
         ...(affiliationType && { affiliationType }),
+        ...(orgKind && { orgKind }),
+        ...(orgSlug && { orgSlug }),
       });
       // Repeated params (not comma-joined) so a literal comma in a tag/company
       // name can't corrupt the filter — must match the API's getAll() read.
@@ -76,6 +80,8 @@ export function useConsultants(filters: IExpertFilters) {
       companies,
       language,
       affiliationType,
+      orgKind,
+      orgSlug,
     ],
   );
 
@@ -103,6 +109,8 @@ export function useConsultants(filters: IExpertFilters) {
       companies,
       language,
       affiliationType,
+      orgKind,
+      orgSlug,
     ],
     queryFn: ({ pageParam = 0 }) => fetchConsultantsData(getKey(pageParam)),
     getNextPageParam: (lastPage, pages) => {

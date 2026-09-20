@@ -19,6 +19,7 @@ interface ExpertResultsProps {
   /** When non-null, results are grouped by domain header. */
   groupByDomainId: string | null;
   sentinelRef: RefObject<HTMLDivElement>;
+  onSelect?: (consultant: IConsultantCardData) => void;
 }
 
 function EmptyState() {
@@ -57,7 +58,8 @@ function ExpertResultsImpl({
   isLoadingMore,
   groupByDomainId,
   sentinelRef,
-}: ExpertResultsProps) {
+  onSelect,
+}: Readonly<ExpertResultsProps>) {
   const grouped = groupConsultantsByDomain(consultants);
   const showEmpty = consultants.length === 0 && !isLoading && !isRefetching;
 
@@ -116,6 +118,7 @@ function ExpertResultsImpl({
                       key={consultant.id}
                       consultant={consultant}
                       metadata={metadata}
+                      onSelect={onSelect}
                     />
                   ))}
                 </div>
@@ -136,7 +139,11 @@ function ExpertResultsImpl({
                 delay: Math.min(index * 0.05, 0.6),
               }}
             >
-              <ConsultantCard consultant={consultant} metadata={metadata} />
+              <ConsultantCard
+                consultant={consultant}
+                metadata={metadata}
+                onSelect={onSelect}
+              />
             </motion.div>
           ))}
         </div>
