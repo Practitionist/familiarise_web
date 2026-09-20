@@ -15,6 +15,7 @@ import { requireOrgAccess } from "@/lib/auth-helpers";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
 import {
   capabilityOf,
+  defaultOverageBehaviorForFunding,
   isReachableOrgFundingPath,
   overageBehaviorUnsupportedReason,
 } from "@/lib/enterprise/reachable-paths";
@@ -41,20 +42,26 @@ const OverageBehaviorSchema = z.enum(["BLOCK", "CHARGE_MEMBER", "CHARGE_ORG"]);
 //   - CHARGE_* without a positive maxOveragePerCyclePaise = unbounded
 //     runaway liability (the breaker is the only hard stop);
 //   - surcharge with BLOCK = dead knob (nothing is ever charged).
+// `overageBehavior` is optional at the edge: omitted means "apply the
+// funding-aware default" (INVOICE → CHARGE_ORG, else BLOCK —
+// `defaultOverageBehaviorForFunding`), resolved by the route after it knows
+// the contract's funding source. Parse-time validation therefore treats an
+// omitted behaviour as BLOCK.
 const refineOverageCombo = (
   v: {
-    overageBehavior: "BLOCK" | "CHARGE_MEMBER" | "CHARGE_ORG";
+    overageBehavior?: "BLOCK" | "CHARGE_MEMBER" | "CHARGE_ORG";
     overageSurchargeBps?: number | null;
     maxOveragePerCyclePaise?: number | null;
   },
   ctx: z.RefinementCtx,
 ) => {
-  if (v.overageBehavior !== "BLOCK") {
+  const behavior = v.overageBehavior ?? "BLOCK";
+  if (behavior !== "BLOCK") {
     if (v.maxOveragePerCyclePaise == null || v.maxOveragePerCyclePaise < 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["maxOveragePerCyclePaise"],
-        message: `overageBehavior=${v.overageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling`,
+        message: `overageBehavior=${behavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling`,
       });
     }
   } else if ((v.overageSurchargeBps ?? 0) > 0) {
@@ -80,7 +87,11 @@ const LicensedSeatConfigSchema = z
       .min(0)
       .nullable()
       .optional(),
-    overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+    // Omitted → funding-aware default resolved by the route
+    // (`defaultOverageBehaviorForFunding`): INVOICE programmes charge the
+    // org, every other rail blocks. Never silently BLOCK an INVOICE
+    // programme out of its expansion revenue.
+    overageBehavior: OverageBehaviorSchema.optional(),
     priceCapPerEngagementPaise: z.coerce
       .number()
       .int()
@@ -100,9 +111,13 @@ const LicensedSeatConfigSchema = z
   .superRefine((v, ctx) => {
     // Unlimited coverage (null cap) never produces an overage — every overage
     // knob is dead config; reject rather than persist a misleading program.
+    // An omitted behaviour counts as BLOCK here (the funding-aware default is
+    // resolved by the route, which re-checks dead knobs against the effective
+    // behaviour for unlimited caps).
+    const behavior = v.overageBehavior ?? "BLOCK";
     if (v.coveredEngagementsPerCycle == null) {
       const deadKnobs: Array<[string, boolean]> = [
-        ["overageBehavior", v.overageBehavior !== "BLOCK"],
+        ["overageBehavior", behavior !== "BLOCK"],
         ["overageSurchargeBps", (v.overageSurchargeBps ?? 0) > 0],
         ["maxOveragePerCyclePaise", v.maxOveragePerCyclePaise != null],
         ["priceCapPerEngagementPaise", v.priceCapPerEngagementPaise != null],
@@ -136,7 +151,8 @@ const CreditPoolConfigSchema = z
     cycle: BillingCycleSchema,
     creditBudgetPerCycle: z.coerce.number().int().min(1),
     // #775 — over-budget routing + markup + ceiling (parity with LICENSED_SEAT).
-    overageBehavior: OverageBehaviorSchema.default("BLOCK"),
+    // Omitted → funding-aware default resolved by the route (see above).
+    overageBehavior: OverageBehaviorSchema.optional(),
     overageSurchargeBps: z.coerce.number().int().min(0).nullable().optional(),
     maxOveragePerCyclePaise: z.coerce
       .number()
@@ -320,13 +336,42 @@ export async function POST(
   // what happens past the cap. CHARGE_MEMBER on a wallet-funded contract only
   // failed at checkout, inside the booking transaction, so the refusal landed on
   // a member who had already picked a slot. Refuse it here instead.
+  //
+  // Funding-aware default: an omitted behaviour becomes CHARGE_ORG on INVOICE
+  // (over-cap accrues to the invoice the org already pays — expansion revenue
+  // with no refused booking) and BLOCK everywhere else. An unlimited seat cap
+  // can never overage, so it always falls back to BLOCK rather than demanding
+  // a breaker for a charge that cannot happen. A defaulted CHARGE_ORG must
+  // still satisfy the same guards as an explicit one: positive breaker
+  // ceiling (parse already rejects dead knobs on unlimited caps).
   const overageConfig =
     body.type === "LICENSED_SEAT"
       ? body.licensedSeatConfig
       : body.creditPoolConfig;
+  const seatCap =
+    body.type === "LICENSED_SEAT"
+      ? (body.licensedSeatConfig.coveredEngagementsPerCycle ?? null)
+      : undefined;
+  const canOverage = body.type !== "LICENSED_SEAT" || seatCap != null;
+  const effectiveOverageBehavior =
+    overageConfig.overageBehavior ??
+    (canOverage ? defaultOverageBehaviorForFunding(fundingSource) : "BLOCK");
+  const effectiveBreaker = overageConfig.maxOveragePerCyclePaise ?? null;
+  if (
+    effectiveOverageBehavior !== "BLOCK" &&
+    (effectiveBreaker == null || effectiveBreaker < 1)
+  ) {
+    return NextResponse.json(
+      {
+        error: `overageBehavior=${effectiveOverageBehavior} requires a positive maxOveragePerCyclePaise circuit-breaker ceiling`,
+        code: "OVERAGE_BREAKER_REQUIRED",
+      },
+      { status: 400 },
+    );
+  }
   const overageReason = overageBehaviorUnsupportedReason(
     fundingSource,
-    overageConfig.overageBehavior,
+    effectiveOverageBehavior,
     // #1458 — the surcharge is part of the rule, not a separate knob: CHARGE_ORG
     // is collectable on a wallet debit only while the marginal stays inside the
     // price that debit took.
@@ -391,7 +436,7 @@ export async function POST(
               cycle: body.licensedSeatConfig.cycle,
               coveredEngagementsPerCycle:
                 body.licensedSeatConfig.coveredEngagementsPerCycle ?? null,
-              overageBehavior: body.licensedSeatConfig.overageBehavior,
+              overageBehavior: effectiveOverageBehavior,
               priceCapPerEngagementPaise:
                 body.licensedSeatConfig.priceCapPerEngagementPaise ?? null,
               overageSurchargeBps:
@@ -406,7 +451,7 @@ export async function POST(
             create: {
               cycle: body.creditPoolConfig.cycle,
               creditBudgetPerCycle: body.creditPoolConfig.creditBudgetPerCycle,
-              overageBehavior: body.creditPoolConfig.overageBehavior,
+              overageBehavior: effectiveOverageBehavior,
               overageSurchargeBps:
                 body.creditPoolConfig.overageSurchargeBps ?? null,
               maxOveragePerCyclePaise:
