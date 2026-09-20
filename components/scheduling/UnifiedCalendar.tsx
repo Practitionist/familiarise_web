@@ -118,10 +118,18 @@ function getSlotsPerCall(sessionDurationInHours?: number): number {
   return Math.ceil((sessionDurationInHours || 1) / 0.5); // 30-min increments
 }
 
-/** Calendar days spanned by [start, end], inclusive of both ends (#1766). */
+/** Calendar days spanned by [start, end], inclusive of both ends (#1766).
+ * Diffs UTC-anchored day numbers built from the LOCAL y/m/d, not raw
+ * timestamps — a DST transition inside the window must not shave an hour off
+ * the elapsed-ms difference and round a real calendar day away (CodeRabbit). */
 function daysInclusive(start: Date, end: Date): number {
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-  return Math.floor((end.getTime() - start.getTime()) / ONE_DAY_MS) + 1;
+  const dayNumber = (date: Date) =>
+    Math.floor(
+      Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) /
+        ONE_DAY_MS,
+    );
+  return dayNumber(end) - dayNumber(start) + 1;
 }
 
 /** Minutes as a phrase a buyer would use — never a slot count (ADR B1). */
