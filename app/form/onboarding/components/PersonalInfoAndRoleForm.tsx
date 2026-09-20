@@ -70,6 +70,9 @@ const GENDER_OPTIONS = [
   { value: "PREFER_NOT_TO_SAY", label: "Prefer not to say" },
 ];
 
+/** Longer than a warm answer (~0.5 s), shorter than the cold-instance ceiling. */
+const INVITE_CHECK_TIMEOUT_MS = 8_000;
+
 const PersonalInfoAndRoleForm: React.FC<Props> = ({
   onNext,
   initialData,
@@ -105,10 +108,15 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
   // invite role (never the address) so the funnel stays honest; the emailed
   // link still accepts afterwards.
   const [continuedWithoutInvite, setContinuedWithoutInvite] = useState(false);
+  // The whole step waits on this one request, so it must settle: a cold
+  // instance can hold the connection for the full function ceiling, and
+  // the browser would show "Checking…" for as long as it is held open.
   const loadPendingInvites = useCallback(() => {
     setInviteCheckDone(false);
     setInviteCheckError(false);
-    fetch("/api/user/pending-invites")
+    fetch("/api/user/pending-invites", {
+      signal: AbortSignal.timeout(INVITE_CHECK_TIMEOUT_MS),
+    })
       .then((r) => (r.ok ? r.json() : Promise.reject("fetch failed")))
       .then((d) => {
         const invites = Array.isArray(d?.invites) ? d.invites : [];
@@ -225,15 +233,33 @@ const PersonalInfoAndRoleForm: React.FC<Props> = ({
       </div>
     );
   }
-  if (inviteCheckError && !pendingInvite) {
+  // The check can fail for as long as an instance stays cold; Retry alone
+  // would lock the user out of onboarding, so the form is always reachable.
+  if (inviteCheckError && !pendingInvite && !continuedWithoutInvite) {
     return (
       <div className="mx-auto max-w-md space-y-3 py-8 text-center">
         <p className="text-sm text-red-600">
-          Could not check for pending invitations.
+          We couldn&apos;t check for pending invitations.
         </p>
-        <Button size="sm" onClick={() => loadPendingInvites()}>
-          Retry
-        </Button>
+        <div className="flex items-center justify-center gap-3">
+          <Button size="sm" onClick={() => loadPendingInvites()}>
+            Retry
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              trackOnboardingEvent("invite_check_skipped", {});
+              setContinuedWithoutInvite(true);
+            }}
+          >
+            Continue without checking
+          </Button>
+        </div>
+        <p className="text-xs text-zinc-500">
+          If an organisation invited you, its emailed link still works
+          afterwards.
+        </p>
       </div>
     );
   }
