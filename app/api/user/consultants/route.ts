@@ -156,30 +156,34 @@ export async function GET(request: NextRequest) {
     } else if (affiliationType === "agency") {
       conditions.push({ isIndependent: false });
     }
-    // Org-kind sub-filter inside Agency/Org (AGENCY vs ENTERPRISE vs SOLO_PRACTICE).
-    if (orgKind) {
+    // Org-kind sub-filter inside Agency/Org (AGENCY vs ENTERPRISE vs SOLO_PRACTICE)
+    // + single-org drill-down. ONE shared memberships.some predicate so both
+    // constraints must hold on the SAME membership (two existentials would let
+    // different memberships satisfy each half). Mirrors orgMembershipInclude's
+    // public-org constraints so a filter can never surface experts via a
+    // private/suspended org whose badge link would 404 on
+    // /explore/enterprise/organisations/{slug}.
+    if (orgKind || orgSlug) {
       conditions.push({
         memberships: {
           some: {
             role: "EXPERT",
             status: "ACTIVE",
             organization: {
-              kind: orgKind as "AGENCY" | "ENTERPRISE" | "SOLO_PRACTICE",
+              ...(orgKind
+                ? {
+                    kind: orgKind as
+                      | "AGENCY"
+                      | "ENTERPRISE"
+                      | "SOLO_PRACTICE",
+                  }
+                : {}),
+              ...(orgSlug ? { slug: orgSlug } : {}),
               canHost: true,
               status: "ACTIVE",
+              isPublic: true,
               deletedAt: null,
             },
-          },
-        },
-      });
-    }
-    if (orgSlug) {
-      conditions.push({
-        memberships: {
-          some: {
-            role: "EXPERT",
-            status: "ACTIVE",
-            organization: { slug: orgSlug, canHost: true, deletedAt: null },
           },
         },
       });

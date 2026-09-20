@@ -67,7 +67,7 @@ export default function StickyFilterBar({
   onRemoveChip,
   onClearAll,
   resultSummary,
-}: StickyFilterBarProps) {
+}: Readonly<StickyFilterBarProps>) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const counts = metadata?.consultantMetadata.affiliationCounts;
   const orgKindCounts = metadata?.consultantMetadata.orgKindCounts;
@@ -167,16 +167,28 @@ export default function StickyFilterBar({
               {ORG_KIND_OPTIONS.map((opt) => {
                 const isActive = filters.orgKind === opt.value;
                 const count = orgKindCounts?.[opt.value];
+                // Disabled at zero: pre-migration (column not live yet) all
+                // counts are 0, and filtering by orgKind then would 500
+                // (P2022) instead of returning empty. The count is shown, so
+                // this never hides a non-empty set behind a stale zero — the
+                // metadata revalidates every 5 minutes.
+                const disabled = !isActive && count === 0;
                 return (
                   <button
                     key={opt.value}
                     aria-pressed={isActive}
+                    disabled={disabled}
+                    title={
+                      disabled
+                        ? "No experts in this category yet"
+                        : undefined
+                    }
                     onClick={() =>
                       updateFilters({
                         orgKind: isActive ? null : opt.value,
                       })
                     }
-                    className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       isActive
                         ? "bg-primary text-primary-foreground"
                         : "text-muted-foreground hover:bg-muted hover:text-foreground"

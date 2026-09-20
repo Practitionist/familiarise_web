@@ -97,7 +97,12 @@ export const orgMembershipInclude = {
         select: {
           name: true,
           slug: true,
-          kind: true,
+          // `kind: true` deliberately NOT selected: the column lands via db
+          // push after this PR merges, and this include runs at build time
+          // (getCuratedExperts prerenders /explore/experts) where the column
+          // may not exist yet — selecting it fails the build with P2022.
+          // Re-add once the column is live; toConsultantCard already reads it
+          // defensively. See orgKindCounts below for the same reason.
           brandingProfile: { select: { logo: true } },
         },
       },
@@ -275,28 +280,33 @@ export async function fetchExpertsMetadata() {
         // with memberships in two kinds counts once per kind — the tabs use
         // the independent/agency counts above; this powers the org-kind
         // sub-filter inside Agency/Org.
-        prisma.membership
-          .groupBy({
-            by: ["organizationId"],
-            where: {
-              role: "EXPERT",
-              status: "ACTIVE",
-              consultantProfile: {
-                verificationStatus: "VERIFIED",
-                deletedAt: null,
-                isIndependent: false,
-              },
-              organization: {
-                canHost: true,
+        //
+        // Fail-soft to zeros: this metadata runs at BUILD time (prerender of
+        // /explore/experts) where the `kind` column may not exist yet (P2022)
+        // because the column lands via db push after merge. A zeroed breakdown
+        // only hides the sub-filter counts — never the experts themselves.
+        (async () => {
+          try {
+            const rows = await prisma.membership.groupBy({
+              by: ["organizationId"],
+              where: {
+                role: "EXPERT",
                 status: "ACTIVE",
-                isPublic: true,
-                deletedAt: null,
-                kind: { not: null },
+                consultantProfile: {
+                  verificationStatus: "VERIFIED",
+                  deletedAt: null,
+                  isIndependent: false,
+                },
+                organization: {
+                  canHost: true,
+                  status: "ACTIVE",
+                  isPublic: true,
+                  deletedAt: null,
+                  kind: { not: null },
+                },
               },
-            },
-            _count: { organizationId: true },
-          })
-          .then(async (rows) => {
+              _count: { organizationId: true },
+            });
             if (rows.length === 0)
               return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
             const orgIds = rows.map((r) => r.organizationId);
@@ -314,7 +324,10 @@ export async function fetchExpertsMetadata() {
               }
             }
             return out;
-          }),
+          } catch {
+            return { AGENCY: 0, ENTERPRISE: 0, SOLO_PRACTICE: 0 };
+          }
+        })(),
         prisma.domain.findMany({
           select: {
             id: true,
@@ -496,29 +509,23 @@ export function affiliationWhere(
   const conditions: Prisma.ConsultantProfileWhereInput[] = [];
   if (affiliationType === "independent") conditions.push({ isIndependent: true });
   else if (affiliationType === "agency") conditions.push({ isIndependent: false });
-  if (orgKind) {
+  // Single shared memberships.some so orgKind + orgSlug must hold on the SAME
+  // membership (see the API route for why two existentials are wrong), with
+  // the same public-org constraints as orgMembershipInclude.
+  if (orgKind || orgSlug) {
     conditions.push({
       memberships: {
         some: {
           role: "EXPERT",
           status: "ACTIVE",
           organization: {
-            kind: orgKind,
+            ...(orgKind ? { kind: orgKind } : {}),
+            ...(orgSlug ? { slug: orgSlug } : {}),
             canHost: true,
             status: "ACTIVE",
+            isPublic: true,
             deletedAt: null,
           },
-        },
-      },
-    });
-  }
-  if (orgSlug) {
-    conditions.push({
-      memberships: {
-        some: {
-          role: "EXPERT",
-          status: "ACTIVE",
-          organization: { slug: orgSlug, canHost: true, deletedAt: null },
         },
       },
     });

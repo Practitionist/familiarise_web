@@ -41,12 +41,17 @@ interface ExpertDetailsSheetProps {
 export default function ExpertDetailsSheet({
   consultant,
   onClose,
-}: ExpertDetailsSheetProps) {
+}: Readonly<ExpertDetailsSheetProps>) {
   const { formatPrice } = useCurrency();
   const profileHref = consultant ? `/explore/experts/${consultant.id}` : "#";
   const plans = consultant?.subscriptionPlans ?? [];
   const cheapest = plans.length > 0 ? [...plans].sort((a, b) => a.price - b.price)[0] : null;
-  const trialPlan = plans.find((p) => p.trialEnabled);
+  // Cheapest trial across plans (mirrors ConsultantCard's trialOffer) — first
+  // in array order is not the headline offer when plans are unsorted.
+  const trialPlan =
+    [...plans]
+      .filter((p) => p.trialEnabled)
+      .sort((a, b) => a.trialPriceInPaise - b.trialPriceInPaise)[0] ?? null;
 
   return (
     <Sheet open={!!consultant} onOpenChange={(open) => !open && onClose()}>
@@ -245,10 +250,22 @@ export default function ExpertDetailsSheet({
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
-              <div className="grid grid-cols-2 gap-2">
-                <Button asChild variant="outline" className="h-10 rounded-xl text-sm">
-                  <Link href={`${profileHref}?action=trial`}>Trial</Link>
-                </Button>
+              <div
+                className={`grid gap-2 ${trialPlan ? "grid-cols-2" : "grid-cols-1"}`}
+              >
+                {trialPlan && (
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="h-10 rounded-xl text-sm"
+                  >
+                    <Link href={`${profileHref}?action=trial`}>
+                      {trialPlan.trialPriceInPaise > 0
+                        ? `Trial · ${formatPrice(trialPlan.trialPriceInPaise)}`
+                        : "Free intro call"}
+                    </Link>
+                  </Button>
+                )}
                 <Button asChild variant="outline" className="h-10 rounded-xl text-sm">
                   <Link href={`${profileHref}?action=book`}>Book session</Link>
                 </Button>

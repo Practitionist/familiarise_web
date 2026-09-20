@@ -64,14 +64,21 @@ export default function ExpertsInteractiveContent({
   );
 
   // Details drawer: selected expert id synced to ?expert=<id> (shareable,
-  // back-button closable) via replaceState so list scroll + infinite-query
-  // cache are preserved. The drawer resolves the id against the loaded list.
+  // back-button closable). Opening/closing pushes a history entry so browser
+  // Back closes (or reopens) the sheet, and a popstate listener syncs
+  // selectedId both ways. The drawer resolves the id against the loaded list,
+  // so list scroll + infinite-query cache are preserved. Deep links to experts
+  // beyond the loaded pages resolve once their page loads (or stay closed if
+  // the id matches nothing — no single-expert endpoint exists yet).
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const expert = params.get("expert");
-    if (expert) setSelectedId(expert);
-    // Once on mount: the filter hook owns the other params.
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      setSelectedId(params.get("expert"));
+    };
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
   }, []);
   const selectedConsultant = useMemo(
     () => consultants.find((c) => c.id === selectedId) ?? null,
@@ -81,13 +88,13 @@ export default function ExpertsInteractiveContent({
     setSelectedId(consultant.id);
     const url = new URL(window.location.href);
     url.searchParams.set("expert", consultant.id);
-    window.history.replaceState(window.history.state, "", url.toString());
+    window.history.pushState(window.history.state, "", url.toString());
   }, []);
   const closeDetails = useCallback(() => {
     setSelectedId(null);
     const url = new URL(window.location.href);
     url.searchParams.delete("expert");
-    window.history.replaceState(
+    window.history.pushState(
       window.history.state,
       "",
       `${url.pathname}${url.search}${url.hash}`,
@@ -114,11 +121,29 @@ export default function ExpertsInteractiveContent({
 
   const resultSummary = useMemo(() => {
     const total = metadata?.consultantMetadata.totalConsultants;
-    if (typeof total === "number" && chips.length === 0 && !filters.search) {
+    // The global total is only honest when NO filter is active — affiliation
+    // tabs (and orgKind/orgSlug) don't emit chips, so they must be checked
+    // explicitly or an Independent-filtered list would claim the full count.
+    const isUnfiltered =
+      chips.length === 0 &&
+      !filters.search &&
+      !filters.affiliationType &&
+      !filters.orgKind &&
+      !filters.orgSlug;
+    if (typeof total === "number" && isUnfiltered) {
       return `${total} experts`;
     }
     return `${consultants.length}${hasMore ? "+" : ""} shown`;
-  }, [metadata, chips.length, filters.search, consultants.length, hasMore]);
+  }, [
+    metadata,
+    chips.length,
+    filters.search,
+    filters.affiliationType,
+    filters.orgKind,
+    filters.orgSlug,
+    consultants.length,
+    hasMore,
+  ]);
 
   return (
     <section className="py-10 md:py-16">
