@@ -93,10 +93,10 @@ function rowBadge(row: Row) {
 export function PaymentsHistoryList({
   payments,
   consulteeId,
-}: {
+}: Readonly<{
   payments: ConsulteePaymentRow[];
   consulteeId: string;
-}) {
+}>) {
   const [chip, setChip] = useState<Chip>("all");
   const rows = useMemo(() => payments.map(toRow), [payments]);
   const shown = chip === "all" ? rows : rows.filter((r) => r.chip === chip);
@@ -107,8 +107,8 @@ export function PaymentsHistoryList({
     const out: { month: string; rows: Row[] }[] = [];
     for (const row of shown) {
       const month = MONTH.format(new Date(row.payment.createdAt));
-      const last = out[out.length - 1];
-      if (last && last.month === month) last.rows.push(row);
+      const last = out.at(-1);
+      if (last?.month === month) last.rows.push(row);
       else out.push({ month, rows: [row] });
     }
     return out;
@@ -128,7 +128,8 @@ export function PaymentsHistoryList({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Filter">
+      <fieldset className="flex flex-wrap gap-2 border-0 p-0 m-0">
+        <legend className="sr-only">Filter</legend>
         {CHIPS.map((c) => (
           <button
             key={c.key}
@@ -145,7 +146,7 @@ export function PaymentsHistoryList({
             {c.label}
           </button>
         ))}
-      </div>
+      </fieldset>
 
       {groups.length === 0 ? (
         <div className="rounded-xl border border-border bg-card">
@@ -173,7 +174,10 @@ export function PaymentsHistoryList({
   );
 }
 
-function HistoryRow({ row, consulteeId }: { row: Row; consulteeId: string }) {
+function HistoryRow({
+  row,
+  consulteeId,
+}: Readonly<{ row: Row; consulteeId: string }>) {
   const { payment, moneyState } = row;
   const detailHref = payment.appointmentId
     ? `/dashboard/consultee/${consulteeId}/appointments/${payment.appointmentId}`

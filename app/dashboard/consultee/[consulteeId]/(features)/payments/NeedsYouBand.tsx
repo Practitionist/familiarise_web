@@ -14,7 +14,9 @@ import {
  * and the cancel dialogs live there and are not forked here. Absent when
  * there is nothing to act on.
  */
-export function NeedsYouBand({ consulteeId }: { consulteeId: string }) {
+export function NeedsYouBand({
+  consulteeId,
+}: Readonly<{ consulteeId: string }>) {
   const { data } = useQuery({
     queryKey: ["pending-payments", consulteeId],
     queryFn: () => fetchPendingPayments(consulteeId),

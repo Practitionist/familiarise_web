@@ -65,7 +65,9 @@ async function fetchConsulteePayments(
   return json.data;
 }
 
-export function PaymentsTab({ consulteeId }: { consulteeId: string }) {
+export function PaymentsTab({
+  consulteeId,
+}: Readonly<{ consulteeId: string }>) {
   // Personal pin, matching the sibling Appointments page (ADR 19); the route
   // defaults personal without ?orgScope=. The RSC page seeds this exact key.
   const { data, isLoading, error } = useQuery({
@@ -112,10 +114,10 @@ export function PaymentsTab({ consulteeId }: { consulteeId: string }) {
 function PaymentsTabBody({
   data,
   consulteeId,
-}: {
+}: Readonly<{
   data: PaymentsData;
   consulteeId: string;
-}) {
+}>) {
   const { formatPrice } = useCurrency();
 
   // Net successful spend grouped per currency — a USD payment must never be

@@ -45,10 +45,10 @@ export default async function PaymentsPage({ params }: Readonly<PageProps>) {
 async function SeededPayments({
   consulteeId,
   userId,
-}: {
+}: Readonly<{
   consulteeId: string;
   userId: string;
-}) {
+}>) {
   const queryClient = new QueryClient();
   // The key MUST match PaymentsTab's useQuery key or hydration won't apply.
   // Personal pin (ADR 19): org-funded transactions belong to the org
