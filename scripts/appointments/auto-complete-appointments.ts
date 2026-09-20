@@ -47,6 +47,12 @@ import {
   transitionWebinarEvent,
 } from "@/lib/booking/transitions";
 import { transitionSlotsInChunks } from "@/lib/booking/slot-release";
+import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
+import { attemptTrigger } from "@/lib/novu/outbox";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import {
   classifyConsultantAttendance,
   isPastNoShowHandoff,
@@ -424,6 +430,9 @@ async function completeSubscriptions(): Promise<{
       subscriptionPlan: {
         select: {
           title: true,
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
           consultantProfile: {
             select: { userId: true, user: { select: { name: true } } },
           },
@@ -436,7 +445,13 @@ async function completeSubscriptions(): Promise<{
         include: {
           occurrences: {
             orderBy: { endsAt: "desc" },
-            take: 1,
+            select: {
+              startsAt: true,
+              endsAt: true,
+              completionStatus: true,
+              isTentative: true,
+              deletedAt: true,
+            },
           },
         },
       },
@@ -449,6 +464,23 @@ async function completeSubscriptions(): Promise<{
 
   for (const subscription of subscriptionsToComplete) {
     try {
+      // #1766 — COMPLETED is terminal: a plan whose live cycle ended but whose
+      // entitlement is not spent is waiting for its next cycle, not finished.
+      const entitlement = subscriptionEntitlement({
+        sessionsTotal: sessionsTotalOf(subscription),
+        sessionsPerWeek: subscription.subscriptionPlan.sessionsPerWeek,
+        durationInMonths: subscription.subscriptionPlan.durationInMonths,
+        occurrences: subscription.appointment?.occurrences ?? [],
+        schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+        schedulingTimezone: subscription.schedulingTimezone,
+      });
+      if (entitlement.remaining > 0) {
+        console.log(
+          `   ⏭️ Subscription ${subscription.id} has ${entitlement.remaining} session(s) left — next cycle pending`,
+        );
+        continue;
+      }
+
       // The latest occurrence end on the wrapper
       const latestEnd: Date | null =
         subscription.appointment?.occurrences[0]?.endsAt ?? null;
@@ -667,11 +699,15 @@ async function completeIndividualSlots(): Promise<{
           ...predicate,
           completionStatus: OccurrenceCompletionStatus.SCHEDULED,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          appointmentId: true,
+          appointment: { select: { subscriptionId: true } },
+        },
         orderBy: { endsAt: "asc" },
         take: MAX_SLOT_COMPLETIONS_PER_RUN,
       });
-      return transitionSlotsInChunks(
+      const moved = await transitionSlotsInChunks(
         cohort.map((s) => s.id),
         (idChunk) => ({
           where: { id: { in: idChunk }, ...liveHeldSlot, ...predicate },
@@ -681,6 +717,20 @@ async function completeIndividualSlots(): Promise<{
           allowZero: true,
         }),
       );
+      // #1766 — per distinct subscription wrapper, in a fresh transaction:
+      // the consultee's cycle bell, deduped on the cycle so a re-run is quiet.
+      const wrappers = new Set(
+        cohort
+          .filter((s) => s.appointment?.subscriptionId)
+          .map((s) => s.appointmentId),
+      );
+      for (const appointmentId of wrappers) {
+        const staged = await prisma.$transaction((tx) =>
+          settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+        );
+        for (const row of staged ?? []) await attemptTrigger(row);
+      }
+      return moved;
     };
     const completedCount = await runPass(
       { meeting: { endedAt: { not: null } } },

@@ -185,6 +185,36 @@ describe("expiry sweep × live reschedule proposals", () => {
     });
   });
 
+  it("an APPROVED subscription with one COMPLETED occurrence is in neither cohort (#1766)", async () => {
+    await expireStaleRequests();
+
+    // Both APPROVED sweeps (expire + nudge) exclude any wrapper holding a live
+    // non-tentative row; a COMPLETED row is exactly that, so a plan whose first
+    // cycle was delivered and is waiting on its next cycle is left alone.
+    const approvedReads = (prisma.subscription.findMany as jest.Mock).mock.calls
+      .map(([args]) => args)
+      .filter((args) => args?.where?.status === AppointmentStatus.APPROVED);
+    expect(approvedReads).toHaveLength(2);
+    const held = { isTentative: false, deletedAt: null };
+    for (const read of approvedReads) {
+      expect(read.where.NOT).toEqual({
+        appointment: { occurrences: { some: held } },
+      });
+    }
+    // The predicate carries no completionStatus filter, so a COMPLETED row
+    // satisfies `some` and takes the row out of the cohort.
+    const completedRow = {
+      isTentative: false,
+      deletedAt: null,
+      completionStatus: "COMPLETED",
+    };
+    expect(
+      Object.entries(held).every(
+        ([key, value]) => completedRow[key as keyof typeof held] === value,
+      ),
+    ).toBe(true);
+  });
+
   it("still expires and refunds a genuinely stale booking with no proposal", async () => {
     // The guard must not have turned the sweep into a no-op: with no live
     // proposal the cohort is still collected, expired and refunded.
