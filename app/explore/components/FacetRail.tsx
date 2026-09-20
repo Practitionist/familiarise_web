@@ -91,12 +91,15 @@ export default function FacetRail({
         className="hidden lg:block"
         style={{
           position: "sticky",
-          top: "calc(var(--header-height, 5rem) + 1rem)",
+          // --header-height omits the maintenance banner that Navbar.tsx adds
+          // to its own top offset, so without it the rail slides under the
+          // navbar by exactly the banner height while stuck.
+          top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 1rem)",
           alignSelf: "start",
         }}
         aria-label="Filters"
       >
-        <div className="max-h-[calc(100vh-var(--header-height,5rem)-3rem)] overflow-y-auto rounded-2xl border border-border bg-card p-4">
+        <div className="max-h-[calc(100vh-var(--maintenance-banner-height,0px)-var(--header-height,5rem)-3rem)] overflow-y-auto rounded-2xl border border-border bg-card p-4">
           {header}
           <div className="mt-2">{children}</div>
         </div>
