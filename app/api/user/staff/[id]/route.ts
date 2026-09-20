@@ -243,31 +243,8 @@ export async function PUT(
       });
     }
 
-    // Update notification preferences if provided
-    if (
-      body.allNotifications !== undefined ||
-      body.mentions !== undefined ||
-      body.directMessages !== undefined ||
-      body.updates !== undefined
-    ) {
-      await prisma.notificationPreference.upsert({
-        where: { userId: existingStaffProfile.userId },
-        update: {
-          allNotifications: body.allNotifications,
-          mentions: body.mentions,
-          directMessages: body.directMessages,
-          updates: body.updates,
-        },
-        create: {
-          userId: existingStaffProfile.userId,
-          allNotifications: body.allNotifications ?? false,
-          mentions: body.mentions ?? false,
-          directMessages: body.directMessages ?? false,
-          updates: body.updates ?? false,
-        },
-      });
-    }
-
+    // Notifications moved to the Novu-synced /api/novu/preferences panel;
+    // this route only handles cookie preferences now.
     // Update cookie preferences if provided
     if (body.analytics !== undefined || body.marketing !== undefined) {
       await prisma.cookiePreference.upsert({

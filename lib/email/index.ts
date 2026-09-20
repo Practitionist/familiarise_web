@@ -361,29 +361,6 @@ export async function renderPaymentSuccessEmail({
   };
 }
 
-/** Payment confirmation. */
-export async function sendPaymentSuccessEmail(
-  args: PaymentSuccessEmailArgs,
-  opts: SendOptions = {},
-) {
-  let message: RenderedEmail;
-  try {
-    message = await renderPaymentSuccessEmail(args);
-  } catch (error) {
-    console.error("[email] PAYMENT_SUCCESS render failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType: "PAYMENT_SUCCESS" } },
-    );
-    return { success: false as const, error };
-  }
-  return deliver(message, "PAYMENT_SUCCESS", {
-    entityRef: paymentRef(args.paymentReference),
-    budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
-    ...opts,
-  });
-}
-
 export interface PaymentFailedEmailArgs {
   email: string;
   name: string;
@@ -429,61 +406,7 @@ export async function renderPaymentFailedEmail({
   };
 }
 
-/** Payment failure with a retry link. */
-export async function sendPaymentFailedEmail(
-  args: PaymentFailedEmailArgs,
-  opts: SendOptions = {},
-) {
-  let message: RenderedEmail;
-  try {
-    message = await renderPaymentFailedEmail(args);
-  } catch (error) {
-    console.error("[email] PAYMENT_FAILED render failed:", error);
-    Sentry.captureException(
-      error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "email", emailType: "PAYMENT_FAILED" } },
-    );
-    return { success: false as const, error };
-  }
-  return deliver(message, "PAYMENT_FAILED", {
-    entityRef: paymentRef(args.paymentId),
-    budgetMs: EMAIL_BUDGET_MS.WEBHOOK,
-    ...opts,
-  });
-}
-
-/** Organization invitation. */
-export async function sendOrgInvitationEmail(
-  {
-    email,
-    inviterName,
-    orgName,
-    role,
-    inviteUrl,
-    expiresAt,
-  }: {
-    email: string;
-    inviterName: string;
-    orgName: string;
-    role: string;
-    inviteUrl: string;
-    expiresAt?: string;
-  },
-  opts: SendOptions = {},
-) {
-  return send(
-    "ORG_INVITATION",
-    OrgInvitationEmail({ inviterName, orgName, role, inviteUrl, expiresAt }),
-    {
-      from: SENDERS.notifications,
-      to: email,
-      subject: `You're invited to join ${orgName} on Familiarise`,
-    },
-    { budgetMs: EMAIL_BUDGET_MS.AUTH, ...opts },
-  );
-}
-
-/** Stage-only twin of `sendOrgInvitationEmail()`; attempt after the response. */
+/** Staged org invitation; attempt after the response. */
 export async function stageOrgInvitationEmail(
   {
     email,
