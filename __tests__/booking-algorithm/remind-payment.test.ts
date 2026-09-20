@@ -30,6 +30,9 @@ jest.mock("../../lib/email", () => ({
   deliver: (...a: unknown[]) => deliver(...a),
   EMAIL_BUDGET_MS: { REQUEST: 5_000 },
   SENDERS: { payments: "payments@test" },
+  // The sweep's automatic type, as the real module defines it; the pin below
+  // asserts the manual type differs from it.
+  PAYMENT_LINK_REMINDER_EMAIL_TYPE: "PAYMENT_LINK_REMINDER",
 }));
 // react-email's render() does not run under jest; the template is not the pin.
 jest.mock("../../lib/email/render", () => ({
@@ -55,7 +58,7 @@ jest.mock("../../lib/auth-helpers", () => ({
 import { NextRequest } from "next/server";
 import { POST as remindConsultation } from "../../app/api/bookings/consultations/[consultationId]/remind/route";
 import { PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE } from "../../lib/booking/remind-payment";
-import { PAYMENT_LINK_REMINDER_EMAIL_TYPE } from "../../lib/email/index";
+import { PAYMENT_LINK_REMINDER_EMAIL_TYPE } from "../../lib/email";
 
 const C_ID = "clzzzzzzz000consultation1";
 const IN_20H = new Date(Date.now() + 20 * 3_600_000);
@@ -101,6 +104,7 @@ describe("POST …/remind (B-3)", () => {
     expect(limit).toHaveBeenCalledWith("a-1");
     const [message, emailType, opts] = deliver.mock.calls[0];
     expect(emailType).toBe(PAYMENT_LINK_MANUAL_REMINDER_EMAIL_TYPE);
+    expect(PAYMENT_LINK_REMINDER_EMAIL_TYPE).toBe("PAYMENT_LINK_REMINDER");
     expect(emailType).not.toBe(PAYMENT_LINK_REMINDER_EMAIL_TYPE);
     expect(opts).toEqual({ entityRef: "payment:pay-1", budgetMs: 5_000 });
     expect(message.to).toBe("buyer@test");
