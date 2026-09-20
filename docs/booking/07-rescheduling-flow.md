@@ -209,7 +209,7 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** tab (`RequestRequestSchedulingTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
+The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`, #1775). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT`, and a reschedule surfaces as a `PENDING` row. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
 
 - Bare tentativeness is NOT the signal: every fresh request already carries tentative holds (request-for-approval and unpaid checkout create them that way), and tombstoned/stale duplicates linger. Counting bare `isTentative` over-counted reschedules (e.g. demanded 12 slots for a 4-session plan, #1739).
 - The ratio of **released** to total sessions determines the badge type.
