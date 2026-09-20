@@ -16,6 +16,7 @@ import {
   type EarningsResponse,
 } from "@/app/dashboard/consultant/[consultantId]/(features)/earnings/EarningsBuckets";
 import { PayoutWalkBody } from "@/app/dashboard/consultant/[consultantId]/(features)/earnings/PayoutWalkSheet";
+import { sumEarningBuckets } from "@/lib/dashboard/earnings-state";
 
 const NOW = new Date("2026-09-20T09:12:00Z");
 const AT = "2026-09-18T10:00:00Z";
@@ -104,6 +105,15 @@ const data: EarningsResponse = {
     earning("c", "PAID", { payoutId: "po_COMPLETED" }),
   ],
   payouts: [payout("COMPLETED")],
+  // The read's whole-account sums (Y-1's arithmetic run server-side).
+  totals: sumEarningBuckets(
+    [
+      earning("a", "READY", { refundedShareAmount: 5_000 }),
+      earning("b", "PENDING"),
+      earning("c", "PAID"),
+    ],
+    [payout("COMPLETED")],
+  ),
   pagination: { total: 3, limit: 200, offset: 0, hasMore: false },
   livePayoutsEnabled: false,
 };

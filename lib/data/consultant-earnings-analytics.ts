@@ -13,7 +13,12 @@ import {
   type ConsultantPayoutRow,
 } from "@/lib/payments/payouts/payout-service";
 import { isSponsoredPayment } from "@/lib/appointments/payment-display";
-import { sanitizePayoutFailure } from "@/lib/dashboard/earnings-state";
+import {
+  sanitizePayoutFailure,
+  sumEarningBuckets,
+  type BucketSums,
+} from "@/lib/dashboard/earnings-state";
+import { sumPaise } from "@/lib/payments/utils/money";
 
 export interface MonthlyEarning {
   /** Calendar month bucket, "YYYY-MM". */
@@ -137,6 +142,44 @@ function toPayoutRow(p: ConsultantPayoutRow): ConsultantPayoutRow {
 }
 
 /**
+ * #1675 PR-Y — the three tile sums over the WHOLE account, not the fetched
+ * page: one grouped read per status feeds Y-1's arithmetic, so the tiles and
+ * the row badges share one bucket map. Paid out is the shared instrument
+ * (payouts batch across scopes), so it is never org-scoped.
+ */
+async function getConsultantBucketTotals(
+  consultantProfileId: string,
+  organizationId: string | null | undefined,
+): Promise<BucketSums> {
+  const [byStatus, paid] = await Promise.all([
+    prisma.consultantEarnings.groupBy({
+      by: ["status"],
+      where: {
+        consultantProfileId,
+        ...(organizationId !== undefined
+          ? { payment: { organizationId } }
+          : {}),
+      },
+      _sum: { consultantSharePaise: true, refundedShareAmount: true },
+    }),
+    prisma.consultantPayout.aggregate({
+      where: { consultantProfileId, status: "COMPLETED" },
+      _sum: { netAmount: true },
+    }),
+  ]);
+  const sums = sumEarningBuckets(
+    byStatus.map((g) => ({
+      status: g.status,
+      holdUntil: null,
+      consultantSharePaise: sumPaise(g._sum.consultantSharePaise),
+      refundedShareAmount: sumPaise(g._sum.refundedShareAmount),
+    })),
+    [],
+  );
+  return { ...sums, paidOut: sumPaise(paid._sum.netAmount) };
+}
+
+/**
  * Single assembler for the GET /api/consultant/earnings response body,
  * shared by the route handler and the analytics page's SSR prefetch so the
  * dehydrated cache and the client refetch can never drift apart.
@@ -155,21 +198,23 @@ export async function buildConsultantEarningsPayload(
   const organizationId: string | null | undefined =
     "organizationId" in options ? options.organizationId : null;
 
-  const [summary, eligibility, history, monthlyEarnings] = await Promise.all([
-    getConsultantEarningsSummary(consultantProfileId, organizationId),
-    // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
-    // stays whole (shared instrument).
-    checkPayoutEligibility(consultantProfileId),
-    getConsultantEarnings(consultantProfileId, {
-      status,
-      limit,
-      offset,
-      organizationId,
-    }),
-    includeMonthly
-      ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
-      : Promise.resolve(undefined),
-  ]);
+  const [summary, eligibility, history, monthlyEarnings, totals] =
+    await Promise.all([
+      getConsultantEarningsSummary(consultantProfileId, organizationId),
+      // #org-appts (#1024) — VIEW splits by org-ness; payout eligibility
+      // stays whole (shared instrument).
+      checkPayoutEligibility(consultantProfileId),
+      getConsultantEarnings(consultantProfileId, {
+        status,
+        limit,
+        offset,
+        organizationId,
+      }),
+      includeMonthly
+        ? getConsultantMonthlyEarnings(consultantProfileId, 6, organizationId)
+        : Promise.resolve(undefined),
+      getConsultantBucketTotals(consultantProfileId, organizationId),
+    ]);
 
   // #1675 PR-Y — the Paid-out bucket. A plain read after the fan-out, not
   // inside it: PG_POOL_MAX=1 makes one more parallel read a wait, not a win.
@@ -180,6 +225,7 @@ export async function buildConsultantEarningsPayload(
     eligibility,
     earnings: history.earnings.map(toEarningRow),
     payouts: payouts.map(toPayoutRow),
+    totals,
     pagination: {
       total: history.total,
       limit,

@@ -5,6 +5,7 @@ import { AlertTriangle } from "lucide-react";
 
 import { EmptyState } from "@/components/dashboard/DataCard";
 import { Button } from "@/components/ui/button";
+import { useSession } from "@/lib/auth-client";
 import { EARNINGS_FETCH_CAP } from "@/lib/dashboard/earnings-state";
 import {
   EarningsBuckets,
@@ -21,6 +22,14 @@ import {
 export function EarningsSummaryPanel({
   consultantId,
 }: Readonly<{ consultantId: string }>) {
+  const { data: session } = useSession();
+  // The route is session-scoped while the server seed is keyed by the URL's
+  // consultantId (see AnalyticsPageClient): a privileged viewer's refetch would
+  // fetch THEIR earnings under this consultant's key, so refetching is gated.
+  const isOwnDashboard =
+    (session?.user as { consultantProfileId?: string } | undefined)
+      ?.consultantProfileId === consultantId;
+
   const { data, isLoading, isPlaceholderData, error, refetch } =
     useQuery<EarningsResponse>({
       queryKey: ["consultant-earnings", consultantId],
@@ -35,6 +44,7 @@ export function EarningsSummaryPanel({
       // The key carries no filter today; kept so a future key change cannot
       // regress to the blank-page-on-switch bug (#346) this file once had.
       placeholderData: keepPreviousData,
+      enabled: isOwnDashboard,
     });
 
   if (isLoading && !data) return <EarningsSkeleton />;
@@ -48,7 +58,13 @@ export function EarningsSummaryPanel({
           error instanceof Error ? error.message : "Please try again later."
         }
         action={
-          <Button variant="outline" onClick={() => refetch()}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              // refetch() bypasses `enabled`; re-apply the owner gate.
+              if (isOwnDashboard) void refetch();
+            }}
+          >
             Retry
           </Button>
         }

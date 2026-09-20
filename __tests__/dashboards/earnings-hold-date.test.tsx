@@ -12,6 +12,10 @@
 jest.mock("../../components/payouts/IndiaOnlyPayoutNotice", () => ({
   IndiaOnlyPayoutNotice: () => null,
 }));
+// The panel refetches only for the profile owner (the route is session-scoped).
+jest.mock("../../lib/auth-client", () => ({
+  useSession: () => ({ data: { user: { consultantProfileId: "c_1" } } }),
+}));
 
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -79,6 +83,7 @@ const response = {
     },
   ],
   payouts: [],
+  totals: { available: 0, pending: 1000, paidOut: 0 },
   pagination: { total: 1, limit: 200, offset: 0, hasMore: false },
   livePayoutsEnabled: false,
 };

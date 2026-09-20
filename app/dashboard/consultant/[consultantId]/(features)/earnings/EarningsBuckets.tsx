@@ -33,7 +33,6 @@ import {
   derivePayoutPresentation,
   nextPayoutCopy,
   presentationBadge,
-  sumEarningBuckets,
   type EarningBucket,
 } from "@/lib/dashboard/earnings-state";
 import type {
@@ -132,10 +131,9 @@ export function EarningsBuckets({
       })),
     [data.earnings, opts],
   );
-  const sums = useMemo(
-    () => sumEarningBuckets(data.earnings, data.payouts),
-    [data.earnings, data.payouts],
-  );
+  // Whole-account sums from the read (Y-1's arithmetic run server-side), so
+  // the tiles are never a partial total of the rows fetched.
+  const sums = data.totals;
   const counts = useMemo(() => {
     const c: Record<Segment, number> = {
       AVAILABLE: 0,
@@ -312,8 +310,7 @@ export function EarningsBuckets({
 
       {data.pagination.hasMore && (
         <p className="mt-2 text-xs text-muted-foreground">
-          Showing your latest {EARNINGS_FETCH_CAP} earnings; the tiles total
-          these.
+          Showing your latest {EARNINGS_FETCH_CAP} earnings.
         </p>
       )}
 
