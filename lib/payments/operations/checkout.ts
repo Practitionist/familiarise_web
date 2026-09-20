@@ -27,7 +27,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import {
   AppointmentsType,
   type Currency,
@@ -2541,17 +2541,19 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  // Determine if this is a scheduling period request or direct slot booking
-  const isSchedulingPeriodRequest =
-    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
-
-  // Calculate subscription dates based on booking type
-  const startDate = isSchedulingPeriodRequest
-    ? new Date(data.schedulingPeriodStartsAt!)
-    : new Date();
-  const endDate = isSchedulingPeriodRequest
-    ? new Date(data.schedulingPeriodEndsAt!)
-    : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
+  const isSchedulingPeriodRequest = !!data.schedulingPeriodStartsAt;
+  // #1766 — window = first cycle; a client end is clamped/ignored, never
+  // refused. Start from the client (default now), end derived server-side.
+  const schedulingTimezone = resolveSchedulingTimezone(
+    plan.consultantProfile?.user?.timezone,
+  );
+  const { start: startDate, end: endDate } = firstCycleWindow(
+    plan,
+    data.schedulingPeriodStartsAt
+      ? new Date(data.schedulingPeriodStartsAt)
+      : new Date(),
+    schedulingTimezone,
+  );
 
   // Check for existing pending/approved subscriptions with overlapping periods
   // This prevents same user from double-buying the same plan
@@ -2594,9 +2596,9 @@ export async function handleSubscriptionCheckout(
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
       // #1076 — caps bucket on the consultant's days, not the column default.
-      schedulingTimezone: resolveSchedulingTimezone(
-        plan.consultantProfile?.user?.timezone,
-      ),
+      schedulingTimezone,
+      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+      sessionsTotal: plan.totalSessions,
     },
   });
 
