@@ -42,7 +42,10 @@ import { readRequestsInbox } from "@/lib/data/requests-inbox";
 import { APPOINTMENT_LIST_SELECT } from "@/lib/booking/list-selects";
 import { getConsultantDashboard } from "@/lib/data/consultant-dashboard";
 import { GET as getInbox } from "@/app/api/bookings/inbox/route";
-import { inboxBucketOf } from "@/lib/dashboard/requests-inbox-state";
+import {
+  inboxBucketOf,
+  nextInboxSearch,
+} from "@/lib/dashboard/requests-inbox-state";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 
 import {
@@ -154,6 +157,31 @@ describe("readRequestsInbox (A-1)", () => {
         NOW,
       ),
     ).toBe("waiting-on-them");
+  });
+});
+
+describe("inbox URL state (QA #1783 case 3)", () => {
+  it("writes chip / sort / page exactly as it writes type", () => {
+    expect(nextInboxSearch("type=subscription", { chip: "next-cycle" })).toBe(
+      "type=subscription&chip=next-cycle",
+    );
+    expect(
+      nextInboxSearch("type=subscription&chip=next-cycle&page=2", {
+        sort: "money",
+      }),
+    ).toBe("type=subscription&chip=next-cycle&sort=money");
+    expect(
+      nextInboxSearch("type=subscription&chip=next-cycle", { page: 3 }),
+    ).toBe("type=subscription&chip=next-cycle&page=3");
+    // A type change clears the chip and page; a cleared chip is absent.
+    expect(
+      nextInboxSearch("type=subscription&chip=next-cycle&page=3", {
+        type: "trial",
+      }),
+    ).toBe("type=trial");
+    expect(
+      nextInboxSearch("type=subscription&chip=declined", { chip: null }),
+    ).toBe("type=subscription");
   });
 });
 

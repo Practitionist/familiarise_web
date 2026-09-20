@@ -267,3 +267,43 @@ export function readInboxParams(
     page: Number.isFinite(page) && page >= 1 ? page : 1,
   };
 }
+
+export interface InboxParamsPatch {
+  type?: InboxType;
+  chip?: InboxChip | null;
+  sort?: InboxSort;
+  page?: number;
+}
+
+/**
+ * The next search string after a tab / chip / sort / page change. A type
+ * change clears the chip and page; any other change resets the page; page 1
+ * and a cleared chip are absent, not "null". Other keys pass through.
+ */
+export function nextInboxSearch(
+  current: string,
+  patch: InboxParamsPatch,
+): string {
+  const next = new URLSearchParams(current);
+  const apply = (key: string, value: string | null) => {
+    if (value === null) next.delete(key);
+    else next.set(key, value);
+  };
+  if (patch.type !== undefined) {
+    apply("type", patch.type);
+    apply("chip", null);
+    apply("page", null);
+  }
+  if (patch.chip !== undefined) {
+    apply("chip", patch.chip);
+    apply("page", null);
+  }
+  if (patch.sort !== undefined) {
+    apply("sort", patch.sort);
+    apply("page", null);
+  }
+  if (patch.page !== undefined) {
+    apply("page", patch.page <= 1 ? null : String(patch.page));
+  }
+  return next.toString();
+}

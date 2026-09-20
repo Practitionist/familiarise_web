@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
   useMutation,
@@ -31,11 +31,11 @@ import {
   INBOX_TYPES,
   inboxQueryKey,
   inboxQueryString,
+  nextInboxSearch,
   readInboxParams,
   toStampDate,
-  type InboxChip,
+  type InboxParamsPatch,
   type InboxRowInput,
-  type InboxSort,
   type InboxType,
   type RequestsInboxPayload,
 } from "@/lib/dashboard/requests-inbox-state";
@@ -129,9 +129,13 @@ const requestPath = (row: InboxRowInput) =>
       : "consultations"
   }/${encodeURIComponent(row.id)}`;
 
-/** Tabs, chips, sort and page live in the URL; this reads and replaces them (no scroll). */
+/**
+ * Tabs, chips, sort and page live in the URL. Writes go through the native
+ * history API, which the App Router syncs into `useSearchParams` (Next 14.1+):
+ * the URL changes synchronously and no server round trip re-renders the page
+ * for a filter click (QA #1783 case 3 — `router.replace` left the URL behind).
+ */
 function useInboxUrlState() {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const params = useMemo(
@@ -139,37 +143,15 @@ function useInboxUrlState() {
     [searchParams],
   );
   const setParams = useCallback(
-    (patch: {
-      type?: InboxType;
-      chip?: InboxChip | null;
-      sort?: InboxSort;
-      page?: number;
-    }) => {
-      const next = new URLSearchParams(searchParams.toString());
-      const apply = (key: string, value: string | null) => {
-        if (value === null) next.delete(key);
-        else next.set(key, value);
-      };
-      if (patch.type !== undefined) {
-        apply("type", patch.type);
-        apply("chip", null);
-        apply("page", null);
-      }
-      if (patch.chip !== undefined) {
-        apply("chip", patch.chip);
-        apply("page", null);
-      }
-      if (patch.sort !== undefined) {
-        apply("sort", patch.sort);
-        apply("page", null);
-      }
-      if (patch.page !== undefined) {
-        apply("page", patch.page <= 1 ? null : String(patch.page));
-      }
-      const qs = next.toString();
-      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    (patch: InboxParamsPatch) => {
+      const qs = nextInboxSearch(searchParams.toString(), patch);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        qs ? `${pathname}?${qs}` : pathname,
+      );
     },
-    [pathname, router, searchParams],
+    [pathname, searchParams],
   );
   return { params, setParams };
 }
