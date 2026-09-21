@@ -1,5 +1,8 @@
 name: Prune System Events
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # 03:05 UTC daily. Staggered before prune-audit-logs (03:15).

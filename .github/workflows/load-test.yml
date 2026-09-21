@@ -1,5 +1,8 @@
 name: Load Test (Smoke)
 
+permissions:
+  contents: read
+
 # Manual-only: load tests are run deliberately against a staging clone, never
 # on a schedule against shared/dev data. See load-tests/smoke.js and the
 # capacity ladder (docs/enterprise/50-operations/08-capacity-ladder.md).
@@ -23,6 +26,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install k6
         run: |

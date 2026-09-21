@@ -308,6 +308,189 @@ for (const [pair, { slot, recurring, totalMinutes }] of coStarts) {
   }
 }
 
+// ------------------------------------------------------- posture matrix ---
+// #1792 — frozen workflow posture matrix, modeled on
+// lib/enterprise/reachable-paths.ts: no wildcard, no drift. Every workflow
+// file must be classified into exactly one tier; an unlisted file fails the
+// guard so a new cron cannot land without a deliberate posture decision.
+// Tiers:
+//   scheduled — cron-driven fleet: least-privilege token, no persisted creds,
+//     no lifecycle scripts at install, no registry-resolved tsx, serialized
+//     runs, bounded jobs, and a failure pager.
+//   manual — dispatch-only: same minus the pager (nothing schedules it).
+//   infra — CI/review/test runners: serialized runs only (they share fixtures
+//     and runners, not secrets or locks).
+type Tier = "scheduled" | "manual" | "infra";
+
+const WORKFLOW_TIERS: Record<string, Tier> = {
+  "advance-program-cycles.yml": "scheduled",
+  "alert-dispute-deadlines.yml": "scheduled",
+  "alert-orphaned-payments.yml": "scheduled",
+  "archive-webhook-events.yml": "scheduled",
+  "auto-complete-appointments.yml": "scheduled",
+  "auto-renew-contracts.yml": "scheduled",
+  "cascade-refund-earnings.yml": "scheduled",
+  "cleanup-abandoned-org-top-ups.yml": "scheduled",
+  "cleanup-abandoned-payments.yml": "scheduled",
+  "cleanup-auth-tokens.yml": "scheduled",
+  "cleanup-empty-folders.yml": "scheduled",
+  "cleanup-invalid-appointments.yml": "scheduled",
+  "cleanup-old-stream-recordings.yml": "scheduled",
+  "cleanup-stale-invitations.yml": "scheduled",
+  "cleanup-tentative-occurrences.yml": "scheduled",
+  "consent-retention-sweeper.yml": "scheduled",
+  "create-payout-batch.yml": "scheduled",
+  "cron-heartbeat.yml": "scheduled",
+  "databreach-deadline-alerts.yml": "scheduled",
+  "deactivate-expired-discounts.yml": "scheduled",
+  "detect-consultant-no-shows.yml": "scheduled",
+  "dispatch-outbound-webhooks.yml": "scheduled",
+  "dunning.yml": "scheduled",
+  "expire-contracts.yml": "scheduled",
+  "expire-credits.yml": "scheduled",
+  "expire-event-channels.yml": "scheduled",
+  "expire-reschedule-proposals.yml": "scheduled",
+  "expire-stale-requests.yml": "scheduled",
+  "expire-unpaid-trials.yml": "scheduled",
+  "generate-subscription-invoices.yml": "scheduled",
+  "gst-outward-register-export.yml": "scheduled",
+  "handle-lost-disputes.yml": "scheduled",
+  "handle-stuck-payouts.yml": "scheduled",
+  "irp-uploader.yml": "scheduled",
+  "mark-expired-recordings.yml": "scheduled",
+  "msme-payment-alerts.yml": "scheduled",
+  "process-data-exports.yml": "scheduled",
+  "process-payouts.yml": "scheduled",
+  "prune-audit-logs.yml": "scheduled",
+  "prune-system-events.yml": "scheduled",
+  "prune-system-job-executions.yml": "scheduled",
+  "purge-deleted-documents.yml": "scheduled",
+  "reconcile-disputes.yml": "scheduled",
+  "reconcile-document-storage.yml": "scheduled",
+  "reconcile-ledgers.yml": "scheduled",
+  "reconcile-occurrence-availability.yml": "scheduled",
+  "reconcile-orphaned-confirmations.yml": "scheduled",
+  "reconcile-orphaned-recordings.yml": "scheduled",
+  "reconcile-orphaned-sessions.yml": "scheduled",
+  "reconcile-payment-status.yml": "scheduled",
+  "reconcile-payout-status.yml": "scheduled",
+  "reconcile-pending-refunds.yml": "scheduled",
+  "release-earnings.yml": "scheduled",
+  "release-pending-trust-earnings.yml": "scheduled",
+  "retry-failed-emails.yml": "scheduled",
+  "retry-moderation-enforcement.yml": "scheduled",
+  "send-appointment-reminders.yml": "scheduled",
+  "settle-invoice-accruals.yml": "scheduled",
+  "sso-cert-expiry-alert.yml": "scheduled",
+  "stream-sync.yml": "scheduled",
+  "stream-webhook-drift.yml": "scheduled",
+  "sweep-abandoned-overage-charges.yml": "scheduled",
+  "sweep-orphaned-topup-captures.yml": "scheduled",
+  "sweep-stuck-webhook-events.yml": "scheduled",
+  "sweep-verification.yml": "scheduled",
+  "sync-payment-earnings.yml": "scheduled",
+  "tds-return-draft.yml": "scheduled",
+  "timeout-member-overages.yml": "scheduled",
+  "transfer-expiring-recordings.yml": "scheduled",
+  "wallet-low-balance.yml": "scheduled",
+  "gstr8-draft-export.yml": "manual",
+  "load-gate.yml": "manual",
+  "load-test.yml": "manual",
+  "ci.yaml": "infra",
+  "claude.yml": "infra",
+  "claude-code-review.yml": "infra",
+  "race-condition-tests.yml": "infra",
+};
+
+for (const file of files) {
+  const tier = WORKFLOW_TIERS[file];
+  if (!tier) {
+    errors.push(
+      `${file}: unclassified workflow — add it to WORKFLOW_TIERS in ` +
+        `scripts/ci/check-workflow-hygiene.ts with a deliberate tier ` +
+        `(scheduled | manual | infra); wildcards are not allowed`,
+    );
+    continue;
+  }
+  const raw = fs.readFileSync(path.join(WORKFLOW_DIR, file), "utf8");
+  const body = stripComments(raw);
+  const needs = (t: Tier[]): boolean => t.includes(tier);
+
+  // Least-privilege token: a top-level `permissions:` block must exist. Money
+  // crons with the default broad token hand a compromised lifecycle script
+  // write access plus every secret in env.
+  if (
+    needs(["scheduled", "manual"]) &&
+    !/^\s*permissions:\s*$/m.test(body)
+  ) {
+    errors.push(
+      `${file} [${tier}]: missing top-level \`permissions:\` (least-privilege ` +
+        `token; scheduled/manual jobs get \`contents: read\`)`,
+    );
+  }
+  // No persistent credentials in the git config left behind by checkout.
+  if (
+    needs(["scheduled", "manual"]) &&
+    /uses:\s*actions\/checkout@/.test(body) &&
+    !/persist-credentials:\s*false/.test(body)
+  ) {
+    errors.push(
+      `${file} [${tier}]: checkout without \`persist-credentials: false\``,
+    );
+  }
+  // S6505 — lifecycle scripts run with secrets in env; the one artifact we
+  // need (Prisma client) is generated explicitly with --no-install.
+  if (
+    needs(["scheduled", "manual"]) &&
+    /(^|\n)\s*run:\s*npm ci\s*(\n|$)/.test(body)
+  ) {
+    errors.push(
+      `${file} [${tier}]: bare \`npm ci\` runs lifecycle scripts with secrets ` +
+        `in env — use \`npm ci --ignore-scripts\` + \`npx --no-install prisma generate\``,
+    );
+  }
+  if (
+    needs(["scheduled", "manual"]) &&
+    /npx\s+(--yes\s+\S+\s+)?prisma generate/.test(body) &&
+    !/npx\s+--no-install\s+prisma generate/.test(body)
+  ) {
+    errors.push(
+      `${file} [${tier}]: \`prisma generate\` must be \`npx --no-install prisma generate\``,
+    );
+  }
+  // Unpinned tsx resolves whatever the registry serves on every tick.
+  if (
+    needs(["scheduled", "manual"]) &&
+    /npx\s+(--yes\s+\S*\s*)?tsx(?:@|\s)/.test(body)
+  ) {
+    errors.push(
+      `${file} [${tier}]: unpinned \`npx tsx\` — use \`node_modules/.bin/tsx\``,
+    );
+  }
+  // Every workflow serializes its own runs; cross-job stampedes are handled
+  // by withCronLock + the pool budget above, not by dropping triggers.
+  if (!/^concurrency:\s*$/m.test(body)) {
+    errors.push(`${file} [${tier}]: missing top-level \`concurrency:\``);
+  }
+  // Bounded jobs: an unbounded default (6h) masks hangs and bills minutes.
+  if (
+    needs(["scheduled", "manual"]) &&
+    !/timeout-minutes:\s*\d+/.test(body)
+  ) {
+    errors.push(`${file} [${tier}]: no \`timeout-minutes:\` on jobs`);
+  }
+  // A scheduled job with no failure pager fails silently (the pre-#709 shape).
+  if (
+    tier === "scheduled" &&
+    !body.includes("notify-ops-failure.sh")
+  ) {
+    errors.push(
+      `${file} [scheduled]: no \`Notify on failure\` step ` +
+        `(bash scripts/ci/notify-ops-failure.sh "<job>")`,
+    );
+  }
+}
+
 // ------------------------------------------------------------------ report ---
 
 if (errors.length > 0) {

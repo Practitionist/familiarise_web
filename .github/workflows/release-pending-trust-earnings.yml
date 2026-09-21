@@ -1,5 +1,8 @@
 name: Release PENDING_TRUST Earnings
 
+permissions:
+  contents: read
+
 # Hourly walk that promotes OrganizationEarnings rows out of PENDING_TRUST
 # (the invoice-fraud guard from #687) once the sponsoring org has either been
 # admin-verified to ACTIVE or paid at least one OrganizationInvoice. After
@@ -42,6 +45,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -50,13 +55,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run release pending-trust earnings job
-        run: npx --yes tsx@4.23.1 jobs/cleanup/release-pending-trust-earnings.ts
+        run: node_modules/.bin/tsx jobs/cleanup/release-pending-trust-earnings.ts
 
       - name: Notify on failure
         if: failure()
