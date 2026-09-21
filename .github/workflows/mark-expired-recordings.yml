@@ -2,8 +2,10 @@ name: Mark Expired Recordings
 
 on:
   schedule:
-    # Daily 03:20 UTC. #709 — off the 03:00 pile-up.
-    - cron: "20 3 * * *"
+    # Daily 03:21 UTC. #709 — off the 03:00 pile-up; staggered 1 min past
+    # sweep-verification (03:20) so the two Stream/Supabase-heavy jobs never
+    # share a start minute.
+    - cron: "21 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 concurrency:

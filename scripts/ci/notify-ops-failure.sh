@@ -33,6 +33,14 @@
 # familiarise_web DSN (project 4511593990914048); see 07-required-secrets.md.
 set -euo pipefail
 
+# Fail fast on the known-dead DSN so a misconfigured secret can never look
+# like a delivered page. The live project is 4511593990914048.
+case "${SENTRY_DSN:-}" in
+  */4509348818124800|*/4509348818124800\?*)
+    echo "::error::SENTRY_DSN names dead project 4509348818124800 — rotate to the live familiarise_web DSN (project 4511593990914048)" >&2
+    ;;
+esac
+
 JOB_NAME="${1:-unknown job}"
 RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
 

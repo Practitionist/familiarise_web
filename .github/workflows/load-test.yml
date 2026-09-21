@@ -3,6 +3,10 @@ name: Load Test (Smoke)
 # Manual-only: load tests are run deliberately against a staging clone, never
 # on a schedule against shared/dev data. See load-tests/smoke.js and the
 # capacity ladder (docs/enterprise/50-operations/08-capacity-ladder.md).
+concurrency:
+  group: load-test
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
     inputs:
