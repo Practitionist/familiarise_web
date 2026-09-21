@@ -111,6 +111,11 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     // by id alone would then hard-delete a CONFIRMED, paid top-up — losing the
     // org's money with no audit trail (deletion-policy: a confirmed top-up is
     // never reaped).
+    for (const c of candidates) {
+      console.log(
+        `   Reap candidate WalletTopUp ${c.id} (billingAccount ${c.billingAccountId}, order ${c.providerOrderId}, created ${c.createdAt.toISOString()})`,
+      );
+    }
     const deleted = await prisma.walletTopUp.deleteMany({
       where: {
         id: { in: candidates.map((c) => c.id) },
@@ -121,11 +126,17 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
     });
     reaped = deleted.count;
     // A deleted placeholder is otherwise forensically invisible (hard-delete
-    // frees the @unique providerOrderId slot). Log each reap so ops can tell
-    // abandonment from a missing webhook.
-    for (const c of candidates) {
+    // frees the @unique providerOrderId slot). Per-row "reaped" logs fire
+    // only when every candidate was actually deleted: a webhook can confirm
+    // a candidate between the read and the conditional delete, and logging
+    // that row as reaped would forge an audit record for a paid top-up.
+    if (reaped === candidates.length) {
+      for (const c of candidates) {
+        console.log(`   Reaped WalletTopUp ${c.id} (order ${c.providerOrderId})`);
+      }
+    } else {
       console.log(
-        `   Reaped WalletTopUp ${c.id} (billingAccount ${c.billingAccountId}, order ${c.providerOrderId}, created ${c.createdAt.toISOString()})`,
+        `   Reaped ${reaped} of ${candidates.length} candidates — the rest were confirmed concurrently and preserved`,
       );
     }
 

@@ -417,17 +417,51 @@ for (const file of files) {
   const needs = (t: Tier[]): boolean => t.includes(tier);
 
   // Least-privilege token: a TOP-LEVEL `permissions:` block must exist (column
-  // 0 — a job-level block does not scope the workflow token). Money crons
-  // with the default broad token hand a compromised lifecycle script write
-  // access plus every secret in env.
-  if (
-    needs(["scheduled", "manual"]) &&
-    !/^permissions:\s*$/m.test(body)
-  ) {
-    errors.push(
-      `${file} [${tier}]: missing top-level \`permissions:\` (least-privilege ` +
-        `token; scheduled/manual jobs get \`contents: read\`)`,
-    );
+  // 0 — a job-level block does not scope the workflow token) and every grant
+  // in it must be read-only. A `permissions: write-all` mapping or a
+  // `contents: write` grant passes a presence check while handing a
+  // compromised lifecycle script write access plus every secret in env.
+  if (needs(["scheduled", "manual"])) {
+    // Parsed by hand, not regex: an inline mapping (`permissions: write-all`)
+    // and an over-privileged grant (`contents: write`) both pass a
+    // presence-only check while handing a compromised lifecycle script write
+    // access plus every secret in env.
+    const lines = body.split("\n");
+    const at = lines.findIndex((l) => l.startsWith("permissions:"));
+    if (at === -1) {
+      errors.push(
+        `${file} [${tier}]: missing top-level \`permissions:\` (least-privilege ` +
+          `token; scheduled/manual jobs get \`contents: read\`)`,
+      );
+    } else if (lines[at].trim() !== "permissions:") {
+      errors.push(
+        `${file} [${tier}]: inline \`permissions:\` mapping (e.g. write-all) — ` +
+          `use an explicit block with read-only grants`,
+      );
+    } else {
+      const grants: Array<[string, string]> = [];
+      for (const line of lines.slice(at + 1)) {
+        const trimmed = line.trim();
+        if (trimmed === "" || trimmed.startsWith("#")) continue;
+        if (!line.startsWith("  ") || line.startsWith("   ")) break;
+        const colon = trimmed.indexOf(":");
+        if (colon === -1) break;
+        grants.push([trimmed.slice(0, colon), trimmed.slice(colon + 1).trim()]);
+      }
+      if (grants.length === 0) {
+        errors.push(
+          `${file} [${tier}]: empty top-level \`permissions:\` block — grant \`contents: read\``,
+        );
+      }
+      for (const [scope, access] of grants) {
+        if (access !== "read") {
+          errors.push(
+            `${file} [${tier}]: non-read-only grant \`${scope}: ${access}\` — ` +
+              `scheduled/manual jobs are read-only (contents: read)`,
+          );
+        }
+      }
+    }
   }
   // No persistent credentials in the git config left behind by checkout.
   if (

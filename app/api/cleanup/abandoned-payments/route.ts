@@ -78,7 +78,19 @@ export async function POST(req: NextRequest) {
       // #1703 D2 — the half-window pay-link reminder, same lock and limit.
       reminderResult = await remindApprovalPaymentsDue({ limit: perPass[2] });
     } finally {
-      await disconnectDatabase();
+      // A disconnect failure must never replace an in-flight pass error: the
+      // outer handler would then report the disconnect instead of the failed
+      // payment operation. Report-and-swallow here; the pass error (if any)
+      // propagates untouched.
+      try {
+        await disconnectDatabase();
+      } catch (disconnectError) {
+        reportSentryError(disconnectError, {
+          subsystem: "cron",
+          tags: { job: "cleanup-abandoned-payments-disconnect" },
+        });
+        console.error("Disconnect after abandoned-payments failed:", disconnectError);
+      }
     }
 
     Sentry.logger.info("cron:cleanup-abandoned-payments finished", {

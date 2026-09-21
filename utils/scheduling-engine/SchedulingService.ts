@@ -2805,7 +2805,14 @@ export class SchedulingService {
             } as Prisma.AppointmentWhereInput,
             select: {
               id: true,
-              occurrences: { select: { id: true, isTentative: true } },
+              occurrences: {
+                select: {
+                  id: true,
+                  isTentative: true,
+                  deletedAt: true,
+                  completionStatus: true,
+                },
+              },
             },
           });
           const liveOccurrenceIds = liveRows
@@ -2821,6 +2828,32 @@ export class SchedulingService {
             liveTentativeCount !== tentativeSlotCount ||
             liveOccurrenceIds.join(",") !== validatedOccurrenceIds.join(",")
           ) {
+            throw new AllocationConflictError(
+              "Reschedule state changed in another session. Reload and try again.",
+              "RESCHEDULE_STATE_CHANGED",
+            );
+          }
+          // The flip below only touches live, non-terminal rows (deletedAt
+          // null + SCHEDULED/UNVERIFIED) — the same set it must clear. A
+          // concurrent tombstone or cancel lands exactly here: the id-set
+          // above still matches, so without this gate the approval would
+          // succeed while the guarded flip silently skipped the dead row.
+          const flippableCount = liveRows.reduce(
+            (count, appointment) =>
+              count +
+              appointment.occurrences.filter(
+                (o) =>
+                  o.deletedAt === null &&
+                  (o.completionStatus === "SCHEDULED" ||
+                    o.completionStatus === "UNVERIFIED"),
+              ).length,
+            0,
+          );
+          const totalCount = liveRows.reduce(
+            (count, appointment) => count + appointment.occurrences.length,
+            0,
+          );
+          if (flippableCount !== totalCount) {
             throw new AllocationConflictError(
               "Reschedule state changed in another session. Reload and try again.",
               "RESCHEDULE_STATE_CHANGED",
@@ -2871,7 +2904,7 @@ export class SchedulingService {
           const appointmentIds = existingAppointments.map(
             (appointment) => appointment.id,
           );
-          await tx.appointmentOccurrence.updateMany({
+          const cleared = await tx.appointmentOccurrence.updateMany({
             where: {
               appointmentId: { in: appointmentIds },
               // Never clear tentative on dead rows: without these guards a
@@ -2884,6 +2917,15 @@ export class SchedulingService {
             },
             data: { isTentative: false },
           });
+          // Defense in depth for a tombstone racing the select above: the
+          // gate already proved every row flippable, so a short count means
+          // a concurrent writer moved one mid-flight — stale tab, not approval.
+          if (cleared.count !== flippableCount) {
+            throw new AllocationConflictError(
+              "Reschedule state changed in another session. Reload and try again.",
+              "RESCHEDULE_STATE_CHANGED",
+            );
+          }
 
           // #837 — stamp the batch's key on the FIRST appointment so a retry
           // replays this approval instead of re-running it (mirrors
