@@ -2874,6 +2874,11 @@ export class SchedulingService {
           await tx.appointmentOccurrence.updateMany({
             where: {
               appointmentId: { in: appointmentIds },
+              // Never clear tentative on dead rows: without these guards a
+              // CANCELLED/RESCHEDULED/tombstoned hold is resurrected as a live
+              // non-tentative row occupying the calendar.
+              deletedAt: null,
+              completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
             },
             data: { isTentative: false },
           });

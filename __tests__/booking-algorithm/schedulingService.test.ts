@@ -977,8 +977,14 @@ describe("Requested slot allocation", () => {
     });
 
     expect(result.success).toBe(true);
+    // Guarded clear: never resurrect CANCELLED/RESCHEDULED/tombstoned holds as
+    // live non-tentative rows.
     expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
-      where: { appointmentId: { in: ["apt-1"] } },
+      where: {
+        appointmentId: { in: ["apt-1"] },
+        deletedAt: null,
+        completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
+      },
       data: { isTentative: false },
     });
   });

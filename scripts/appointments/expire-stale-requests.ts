@@ -238,6 +238,10 @@ async function expirePendingConsultations(): Promise<{
           await transitionConsultationRequest(tx, {
             where: {
               id: stale.id,
+              // Repeat the cohort read's age predicate inside the CAS WHERE so
+              // a reschedule-refreshed requestedAt between read and write
+              // matches zero rows instead of expiring a live request.
+              requestedAt: { lt: expirationDate },
               appointment: {
                 rescheduleRequests: {
                   none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
