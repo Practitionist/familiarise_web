@@ -240,6 +240,42 @@ export function slotCellClassName(
   );
 }
 
+/**
+ * Screen-reader label for one grid cell, next to the paint tokens so the
+ * vocabulary cannot drift from what the legend documents (#1715).
+ *
+ * "Mon 21 Sep, 19:30–20:00, available": day + time RANGE (not just start) +
+ * state. Callers pass the already-resolved token key so `past` vs
+ * `unavailable` vs `outsidePeriod` never disagree between paint and speech.
+ */
+export function slotCellAriaLabel(
+  params: Readonly<{
+    start: Date;
+    end: Date;
+    statusKey: SlotStatusKey;
+    zone?: string;
+    pastSessionLabel?: string;
+  }>,
+): string {
+  const day = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(params.zone ? { timeZone: params.zone } : {}),
+  }).format(params.start);
+  const clock = (d: Date) =>
+    new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      ...(params.zone ? { timeZone: params.zone } : {}),
+    }).format(d);
+  const state =
+    params.statusKey === "thisEvent" && params.pastSessionLabel
+      ? params.pastSessionLabel
+      : SLOT_STATUS_PAINT[params.statusKey].label;
+  return `${day}, ${clock(params.start)}–${clock(params.end)}, ${state}`;
+}
+
 /** The booleans a cell resolves through, in the precedence they apply. */
 export interface SlotVisualFlags {
   isSelected: boolean;

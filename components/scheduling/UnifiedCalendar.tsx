@@ -80,6 +80,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   SLOT_STATUS_TOKENS,
   resolveSlotStatusKey,
+  slotCellAriaLabel,
   slotCellClassName,
   type SlotStatusKey,
 } from "@/lib/scheduling/interval-status-tokens";
@@ -102,7 +103,6 @@ import {
   formatClockTime,
   formatDateLabel,
   formatDateRangeLabel,
-  formatDateTimeLabel,
   formatDayLabel,
   formatDayOfMonth,
   formatMonthLabel,
@@ -943,6 +943,49 @@ export function UnifiedCalendar({
   // onSlotsSelectedRef) is what a deps-driven "focus" would become.
   const focusAppliedRef = useRef(false);
 
+  // #1715 — keyboard cell navigation: the grid as an ARIA grid with roving
+  // tabindex. Exactly one cell is tabbable; arrows move, Enter/Space selects
+  // through the SAME handleSlotClick path so auto-expand and guard toasts
+  // behave identically to mouse. Cells are keyed by startsAt ISO so focus
+  // survives a refetch/poll re-render.
+  const cellEls = useRef(new Map<string, HTMLElement>());
+  const [activeCellKey, setActiveCellKey] = useState<string | null>(null);
+  // Set when PageUp/PageDown changes the week: focus the first cell of the
+  // new week once it renders, rather than restoring the old ISO.
+  const pendingWeekFocusRef = useRef(false);
+  // Last cell that held DOM focus inside the grid; used to restore focus by
+  // key when a refetch replaces the node out from under the user.
+  const lastFocusedKeyRef = useRef<string | null>(null);
+  // Guard-refusal mirror for the polite live region (toasts already carry
+  // text; this mirrors the title + description for SR).
+  const [guardAnnouncement, setGuardAnnouncement] = useState("");
+
+  const registerCell = useCallback(
+    (key: string | null, el: HTMLElement | null) => {
+      if (!key) return;
+      if (el) cellEls.current.set(key, el);
+      else cellEls.current.delete(key);
+    },
+    [],
+  );
+
+  const focusCellByKey = useCallback((key: string) => {
+    setActiveCellKey(key);
+    lastFocusedKeyRef.current = key;
+    const el = cellEls.current.get(key);
+    if (el && document.activeElement !== el) el.focus({ preventScroll: false });
+  }, []);
+
+  // Mirror every guard toast into the polite live region. The toast UI already
+  // carries the text; SR users get title + description announced.
+  const toastGuard = useCallback(
+    (message: { title: string; description: string; variant?: string }) => {
+      toast(message as Parameters<typeof toast>[0]);
+      setGuardAnnouncement(`${message.title}. ${message.description}`);
+    },
+    [toast],
+  );
+
   /**
    * Builds an auto-expanded group of consecutive slots starting from a clicked slot.
    * Strategy: forward → backward → mixed → fallback to single slot.
@@ -1085,7 +1128,7 @@ export function UnifiedCalendar({
           allowedEnd,
         )
       ) {
-        toast(
+        toastGuard(
           outsideSchedulingWindow(
             formatAllowedRange(gridZone, allowedStart, allowedEnd),
           ),
@@ -1138,7 +1181,7 @@ export function UnifiedCalendar({
 
           // sessionsPerWeek is guaranteed truthy by the enclosing guard
           if (totalCompletedThisWeek >= sessionsPerWeek) {
-            toast(
+            toastGuard(
               weeklyLimitReached(
                 sessionsPerWeek,
                 schedulingWeekBucket(intervalStart, schedulingTimezone),
@@ -1158,7 +1201,7 @@ export function UnifiedCalendar({
           toggleSlot(slot);
           return;
         }
-        toast(pastSessionBlocked());
+        toastGuard(pastSessionBlocked());
         return;
       }
 
@@ -1169,14 +1212,14 @@ export function UnifiedCalendar({
           now.getTime() + TWENTY_FOUR_HOURS_IN_MS,
         );
         if (slot.startTime < imminentCutoff) {
-          toast(sessionTooSoon());
+          toastGuard(sessionTooSoon());
           return;
         }
       }
 
       // Block selection of unavailable, booked, or past non-event slots
       if (status.isInPast) {
-        toast(pastSlotBlocked());
+        toastGuard(pastSlotBlocked());
         return;
       }
 
@@ -1184,7 +1227,7 @@ export function UnifiedCalendar({
       // booking. Don't show "already booked"; guide the consultant to pick a new
       // time. The old slot is freed when the re-allocation completes.
       if (isCurrentEventTentative) {
-        toast(sessionBeingRescheduled());
+        toastGuard(sessionBeingRescheduled());
         return;
       }
 
@@ -1193,7 +1236,7 @@ export function UnifiedCalendar({
         !isCurrentEventSlot &&
         (!status.isAvailable || status.isBookedForDisplay)
       ) {
-        toast(slotUnavailable(Boolean(status.isBookedForDisplay)));
+        toastGuard(slotUnavailable(Boolean(status.isBookedForDisplay)));
         return;
       }
 
@@ -1212,7 +1255,9 @@ export function UnifiedCalendar({
           // Block selection if we can't find enough consecutive slots for a complete session
           const requiredSlots = slotLimits.slotsPerSession;
           if (requiredSlots > 1 && expandedGroup.length < requiredSlots) {
-            toast(notEnoughConsecutive(requiredSlots, expandedGroup.length));
+            toastGuard(
+              notEnoughConsecutive(requiredSlots, expandedGroup.length),
+            );
             return;
           }
 
@@ -1238,7 +1283,7 @@ export function UnifiedCalendar({
       weeklyConfirmedCallCounts,
       eventSlotsSet,
       eventTentativeSlotsSet,
-      toast,
+      toastGuard,
       gridZone,
     ],
   );
@@ -1477,30 +1522,210 @@ export function UnifiedCalendar({
       row.getBoundingClientRect().top - weekGridEl.getBoundingClientRect().top;
   }, [focus, weekGridEl, availableSlots, visibleRows, gridZone]);
 
-  // Render time cell
+  // #1715 — ordered cell keys for roving tabindex: every RENDERED cell
+  // (visible rows × 7 days) keyed by startsAt ISO, row-major. Folded bands
+  // contribute no rows, so Up/Down moves across VISIBLE rows, not raw ones.
+  const orderedCellKeys = useMemo(() => {
+    const keys: string[] = [];
+    for (const rowIndex of visibleRows) {
+      const interval = INTERVALS[rowIndex];
+      if (!interval) continue;
+      for (const date of weekDates) {
+        try {
+          keys.push(
+            getSlotStatusForInterval(interval, date).intervalStartUTCString,
+          );
+        } catch {
+          // A failed interval read must not break the whole grid's keyboard
+          // map; arrows simply skip the missing cell via the pos maps below.
+        }
+      }
+    }
+    return keys;
+  }, [visibleRows, weekDates, getSlotStatusForInterval]);
+
+  const keyToPos = useMemo(() => {
+    const map = new Map<string, { row: number; col: number }>();
+    visibleRows.forEach((rowIndex, rowPos) => {
+      weekDates.forEach((_date, col) => {
+        const keyIndex = rowPos * weekDates.length + col;
+        const key = orderedCellKeys[keyIndex];
+        if (key) map.set(key, { row: rowPos, col });
+      });
+    });
+    return map;
+  }, [visibleRows, weekDates, orderedCellKeys]);
+
+  const posToKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [key, pos] of keyToPos) map.set(`${pos.row}:${pos.col}`, key);
+    return map;
+  }, [keyToPos]);
+
+  // Default the roving tab stop to the first rendered cell; after a
+  // PageUp/PageDown week change, MOVE focus there. Button-driven week changes
+  // (prev/next/Today clicks) only reset the tab stop without stealing focus.
+  useEffect(() => {
+    if (orderedCellKeys.length === 0) return;
+    if (pendingWeekFocusRef.current) {
+      pendingWeekFocusRef.current = false;
+      focusCellByKey(orderedCellKeys[0]);
+      return;
+    }
+    if (!activeCellKey || !keyToPos.has(activeCellKey)) {
+      setActiveCellKey(orderedCellKeys[0]);
+    }
+  }, [orderedCellKeys, keyToPos, activeCellKey, focusCellByKey]);
+
+  // Focus survived a refetch only if it fell out to <body>: if the user moved
+  // somewhere else deliberately (Allocate button, header nav), the active
+  // element is that control and must be left alone.
+  useEffect(() => {
+    if (document.activeElement !== document.body) return;
+    const key = lastFocusedKeyRef.current;
+    if (!key) return;
+    const el = cellEls.current.get(key);
+    if (el && el.isConnected) el.focus({ preventScroll: true });
+  });
+
+  // #1715 — one delegated listener for the whole 7×48 grid. Arrows move
+  // across days (Left/Right) and intervals (Up/Down over VISIBLE rows),
+  // Home/End jump to the day's first/last interval, PageUp/PageDown reuse the
+  // week nav and land on the new week's first cell, Enter/Space selects
+  // through handleSlotClick (auto-expand + guard toasts identical to mouse).
+  const handleGridKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const currentKey =
+        target.closest("[data-slot-start]")?.getAttribute("data-slot-start") ??
+        activeCellKey;
+      if (!currentKey) return;
+      const pos = keyToPos.get(currentKey);
+      if (!pos) return;
+      const lastRow = visibleRows.length - 1;
+
+      const moveTo = (row: number, col: number) => {
+        const key = posToKey.get(`${row}:${col}`);
+        if (key) {
+          event.preventDefault();
+          focusCellByKey(key);
+        }
+      };
+
+      switch (event.key) {
+        case "ArrowLeft":
+          if (pos.col > 0) moveTo(pos.row, pos.col - 1);
+          else event.preventDefault();
+          break;
+        case "ArrowRight":
+          if (pos.col < weekDates.length - 1) moveTo(pos.row, pos.col + 1);
+          else event.preventDefault();
+          break;
+        case "ArrowUp":
+          if (pos.row > 0) moveTo(pos.row - 1, pos.col);
+          else event.preventDefault();
+          break;
+        case "ArrowDown":
+          if (pos.row < lastRow) moveTo(pos.row + 1, pos.col);
+          else event.preventDefault();
+          break;
+        case "Home":
+          event.preventDefault();
+          moveTo(0, pos.col);
+          break;
+        case "End":
+          event.preventDefault();
+          moveTo(lastRow, pos.col);
+          break;
+        case "PageUp":
+          event.preventDefault();
+          pendingWeekFocusRef.current = true;
+          setCurrentDate((d) => subWeeks(d, 1));
+          break;
+        case "PageDown":
+          event.preventDefault();
+          pendingWeekFocusRef.current = true;
+          setCurrentDate((d) => addWeeks(d, 1));
+          break;
+        case "Enter":
+        case " ": {
+          // Space scrolls the grid; selection replaces that here. Both go
+          // through the click path so keyboard and mouse cannot diverge.
+          event.preventDefault();
+          const interval = INTERVALS[visibleRows[pos.row]];
+          const date = weekDates[pos.col];
+          if (interval && date) handleSlotClick(interval, date);
+          break;
+        }
+        default:
+          break;
+      }
+    },
+    [
+      activeCellKey,
+      keyToPos,
+      posToKey,
+      visibleRows,
+      weekDates,
+      focusCellByKey,
+      handleSlotClick,
+    ],
+  );
+
+  // Render time cell. #1715: every cell carries the full day + time-range +
+  // state label (built next to the paint tokens), exactly one cell is
+  // tabbable (roving tabindex), and disabled-ness is ARIA rather than native
+  // so arrow-key focus can land on and announce unbookable cells.
   const renderTimeCell = useCallback(
     (interval: { hour: number; minute: number }, date: Date) => {
       const cell = describeCell(interval, date);
       const { status, statusKey, isCurrentEventSlot } = cell;
       const intervalStart = new Date(status.intervalStartUTCString);
-      const token = SLOT_STATUS_TOKENS[statusKey];
-      // Full state on every cell, so the visible word can leave the cell
-      // without the screen reader or the hover losing it (#1703 F1).
-      const accessibleLabel = `${token.label} · ${formatDateTimeLabel(intervalStart, { zone: gridZone })}`;
+      const intervalEnd = new Date(status.intervalEndUTCString);
+      // Day + time RANGE + state, e.g. "Mon 21 Sep, 7:30 pm–8:00 pm,
+      // Available" — so the visible word can leave the cell without the
+      // screen reader or the hover losing it (#1703 F1).
+      const accessibleLabel = slotCellAriaLabel({
+        start: intervalStart,
+        end: intervalEnd,
+        statusKey,
+        zone: gridZone,
+        pastSessionLabel:
+          statusKey === "thisEvent" && status.isInPast
+            ? "Past session"
+            : undefined,
+      });
+      const cellKey = status.intervalStartUTCString;
+      // Null until the ordered-keys effect defaults it: first rendered cell
+      // stays tabbable so Tab always lands on exactly one cell.
+      const isActive =
+        activeCellKey === null
+          ? orderedCellKeys[0] === cellKey
+          : activeCellKey === cellKey;
+      const tabIndex = isActive ? 0 : -1;
+      const onCellFocus = () => {
+        setActiveCellKey(cellKey);
+        lastFocusedKeyRef.current = cellKey;
+      };
 
       // Fast-exit: a cell with nothing published, nothing booked and already
       // past is never interactive, so it renders as a plain block instead of a
       // button. It paints from the same `unavailable` token as every other
       // dead cell — it used to be its own gray-100/gray-200 pair, which is how
       // past days and future days ended up disagreeing about what "nothing
-      // here" looks like (#1064).
+      // here" looks like (#1064). Keyboard-focusable (roving) so arrows land
+      // on and announce every interval in the spatial model.
       if (!status.isAvailable && !status.isBooked && status.isInPast) {
         return (
           <div
+            ref={(el) => registerCell(cellKey, el)}
             className={slotCellClassName("unavailable", { faded: true })}
             title={accessibleLabel}
             aria-label={accessibleLabel}
             role="img"
+            tabIndex={tabIndex}
+            onFocus={onCellFocus}
             // A selection that ages into this branch must stay findable by
             // "Go to selection" (#1703 F2).
             data-slot-start={status.intervalStartUTCString}
@@ -1561,16 +1786,24 @@ export function UnifiedCalendar({
           break;
       }
 
-      // Only disable in view mode or if no availability at all (gray slots)
-      const isButtonDisabled =
+      // ARIA-disabled, not native-disabled: a native disabled button leaves
+      // the tab order AND the arrow-key map, so unbookable cells could never
+      // be landed on or announced. Mouse behaviour is preserved — the click
+      // path still toasts the reason (or no-ops in view mode) — only the
+      // focusability changes. Previously-dead unpublished cells now surface
+      // the existing slotUnavailable toast on click instead of swallowing it.
+      const isCellDisabled =
         mode === "view" || (!status.isAvailable && !status.isBooked);
 
       const buttonElement = (
         <button
+          ref={(el) => registerCell(cellKey, el)}
           type="button"
           className={cellClassName}
           onClick={() => handleSlotClick(interval, date)}
-          disabled={isButtonDisabled}
+          onFocus={onCellFocus}
+          tabIndex={tabIndex}
+          aria-disabled={isCellDisabled || undefined}
           title={accessibleLabel}
           aria-label={accessibleLabel}
           data-slot-start={status.intervalStartUTCString}
@@ -1634,7 +1867,16 @@ export function UnifiedCalendar({
 
       return buttonElement;
     },
-    [describeCell, handleSlotClick, mode, eventType, gridZone],
+    [
+      describeCell,
+      handleSlotClick,
+      mode,
+      eventType,
+      gridZone,
+      activeCellKey,
+      orderedCellKeys,
+      registerCell,
+    ],
   );
 
   // Render month view
@@ -1902,9 +2144,16 @@ export function UnifiedCalendar({
 
           {/* Week grid — pt-1 keeps the first row's pills clear of the
               sticky week header; the row hairline below gives the sparse
-              cells grid structure without re-filling unavailable cells. */}
+              cells grid structure without re-filling unavailable cells.
+              #1715: an ARIA grid — one delegated keydown for arrows/Home/End/
+              PageUp/PageDown/Enter/Space, roving tabindex on the cells. */}
           <div
             ref={setWeekGridEl}
+            role="grid"
+            aria-label="Available times. Use arrow keys to move between times, Home and End within a day, Page Up and Page Down to change weeks, Enter to select."
+            aria-rowcount={visibleRows.length}
+            aria-colcount={weekDates.length}
+            onKeyDown={handleGridKeyDown}
             className="flex-1 overflow-y-auto scrollbar-thin min-h-0 pt-1"
           >
             {folded.allDead && (
@@ -1966,9 +2215,11 @@ export function UnifiedCalendar({
                   <div
                     key={`interval-row-${interval.hour}-${interval.minute}`}
                     data-row={rowIndex}
+                    role="row"
+                    aria-rowindex={rowIndex + 1}
                     className={`${GRID_COLS} gap-0.5 border-b border-border/40 md:gap-1`}
                   >
-                    <div className="min-w-0">
+                    <div className="min-w-0" role="rowheader">
                       <div className="flex h-7 items-start justify-end whitespace-nowrap pr-1 text-[10px] tabular-nums text-muted-foreground md:pr-2 md:text-xs">
                         {formatClockTime(
                           new Date(1970, 0, 1, interval.hour, interval.minute),
@@ -1976,12 +2227,24 @@ export function UnifiedCalendar({
                       </div>
                     </div>
                     {weekDates.map((date) => {
+                      // Wrapper owns the grid semantics (selected/disabled);
+                      // the inner control owns focus + label. One extra
+                      // describeCell per cell keeps the two from disagreeing.
+                      const gridCell = describeCell(interval, date);
+                      const gridSelected = gridCell.statusKey === "selected";
+                      const gridDisabled =
+                        mode === "view" ||
+                        (!gridCell.status.isAvailable &&
+                          !gridCell.status.isBooked);
                       const holdsNow =
                         isOnCalendarDay(date, now, gridZone) &&
                         nowRow === rowIndex;
                       return (
                         <div
                           key={date.toISOString()}
+                          role="gridcell"
+                          aria-selected={gridSelected}
+                          aria-disabled={gridDisabled || undefined}
                           className="relative col-span-1"
                         >
                           {renderTimeCell(interval, date)}
@@ -2012,9 +2275,15 @@ export function UnifiedCalendar({
 
       {/* Footer */}
       {aboveActionsSlot}
+      {/* #1715: polite mirror of guard refusals (toast titles + descriptions)
+          so keyboard/SR users hear why a selection was refused. */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {guardAnnouncement}
+      </div>
       <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          <div className="text-sm">
+          {/* #1715: the selection counter announces on change. */}
+          <div className="text-sm" aria-live="polite">
             {(() => {
               const text = (() => {
                 try {
