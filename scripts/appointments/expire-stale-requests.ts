@@ -948,7 +948,14 @@ async function expirePaymentPendingRequests(): Promise<{
       try {
         await prisma.$transaction((tx) =>
           transitionConsultationRequest(tx, {
-            where: { id: consultation.id, ...UNPAID_CONSULTATION },
+            where: {
+              id: consultation.id,
+              // Repeat the cohort read's age predicate inside the CAS WHERE:
+              // an updatedAt touch (reminder/nudge/reschedule) between read
+              // and write must match zero rows, not expire a live pay-link.
+              updatedAt: { lt: expirationDate },
+              ...UNPAID_CONSULTATION,
+            },
             to: AppointmentStatus.EXPIRED,
             fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
             data: { pendingPaymentUrl: null }, // Clear payment link
@@ -997,7 +1004,12 @@ async function expirePaymentPendingRequests(): Promise<{
       try {
         await prisma.$transaction((tx) =>
           transitionSubscriptionRequest(tx, {
-            where: { id: subscription.id, ...UNPAID_SUBSCRIPTION },
+            where: {
+              id: subscription.id,
+              // Same age-predicate repeat as the consultation arm above.
+              updatedAt: { lt: expirationDate },
+              ...UNPAID_SUBSCRIPTION,
+            },
             to: AppointmentStatus.EXPIRED,
             fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
             data: { pendingPaymentUrl: null }, // Clear payment link

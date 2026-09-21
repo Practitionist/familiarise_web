@@ -50,22 +50,33 @@ export async function POST(req: NextRequest) {
 
     // `limit` is split across the three passes (not passed in full to each):
     // at `?limit=10` the old shape did up to 30 row-ops + 10 gateway cancels
-    // inside one tick, sized past the ticker's 6s budget. The unbounded GitHub
-    // Actions run remains the backstop that drains whatever a bounded tick
-    // leaves behind (ADR 27).
+    // inside one tick, sized past the ticker's 6s budget. Shares sum to
+    // exactly `limit` (a `take: 0` pass reads nothing), so the combined work
+    // never exceeds the caller's budget — including limit 1 and 2, where a
+    // floor of 1 per pass would triple it. The unbounded GitHub Actions run
+    // remains the backstop that drains whatever a bounded tick leaves behind
+    // (ADR 27).
     const limit = parseLimitParam(req);
-    const perPass =
-      limit === undefined ? undefined : Math.max(1, Math.floor(limit / 3));
+    // Exact-budget split: shares sum to `limit` (limit 10 → [4,3,3];
+    // limit 2 → [1,1,0]; limit 1 → [1,0,0]). A `take: 0` pass reads nothing.
+    const perPass: Array<number | undefined> =
+      limit === undefined
+        ? [undefined, undefined, undefined]
+        : (() => {
+            const first = Math.ceil(limit / 3);
+            const second = Math.ceil((limit - first) / 2);
+            return [first, second, limit - first - second];
+          })();
     let paymentResult;
     let consultationResult;
     let reminderResult;
     try {
-      paymentResult = await cleanupAbandonedPayments({ limit: perPass });
+      paymentResult = await cleanupAbandonedPayments({ limit: perPass[0] });
       consultationResult = await cleanupExpiredApprovalPendingPayments({
-        limit: perPass,
+        limit: perPass[1],
       });
       // #1703 D2 — the half-window pay-link reminder, same lock and limit.
-      reminderResult = await remindApprovalPaymentsDue({ limit: perPass });
+      reminderResult = await remindApprovalPaymentsDue({ limit: perPass[2] });
     } finally {
       await disconnectDatabase();
     }

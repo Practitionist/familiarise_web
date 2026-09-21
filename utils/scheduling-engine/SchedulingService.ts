@@ -2876,7 +2876,9 @@ export class SchedulingService {
               appointmentId: { in: appointmentIds },
               // Never clear tentative on dead rows: without these guards a
               // CANCELLED/RESCHEDULED/tombstoned hold is resurrected as a live
-              // non-tentative row occupying the calendar.
+              // non-tentative row occupying the calendar. Deliberately NOT
+              // liveOccurrenceWhere: that admits COMPLETED, and an approval
+              // must never rewrite terminal history rows.
               deletedAt: null,
               completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
             },
