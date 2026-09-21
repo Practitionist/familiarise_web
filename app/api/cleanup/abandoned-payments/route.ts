@@ -85,9 +85,12 @@ export async function POST(req: NextRequest) {
       try {
         await disconnectDatabase();
       } catch (disconnectError) {
+        // Same job tag as the twin itself: the cron-lock-registry test
+        // requires every Sentry job literal on a money twin to be gated, and
+        // a `-disconnect` suffix would read as an ungated new job.
         reportSentryError(disconnectError, {
           subsystem: "cron",
-          tags: { job: "cleanup-abandoned-payments-disconnect" },
+          tags: { job: "cleanup-abandoned-payments", task: "disconnect" },
         });
         console.error("Disconnect after abandoned-payments failed:", disconnectError);
       }
