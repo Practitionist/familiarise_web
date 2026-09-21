@@ -120,6 +120,14 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
       },
     });
     reaped = deleted.count;
+    // A deleted placeholder is otherwise forensically invisible (hard-delete
+    // frees the @unique providerOrderId slot). Log each reap so ops can tell
+    // abandonment from a missing webhook.
+    for (const c of candidates) {
+      console.log(
+        `   Reaped WalletTopUp ${c.id} (billingAccount ${c.billingAccountId}, order ${c.providerOrderId}, created ${c.createdAt.toISOString()})`,
+      );
+    }
 
     console.log(
       `   Reaped ${reaped} pending WalletTopUp rows older than ${graceHours}h`,

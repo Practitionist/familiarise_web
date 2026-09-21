@@ -298,8 +298,10 @@ async function reconcilePendingRefundsUnlocked(
       const isVeryOld = refundAge > PLACEHOLDER_FAIL_AFTER_MS;
 
       if (isVeryOld) {
-        await prisma.refund.update({
-          where: { id: refund.id },
+        // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
+        // between the read and this write — only FAIL a still-PENDING row.
+        const claimed = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             metadata: {
@@ -310,6 +312,10 @@ async function reconcilePendingRefundsUnlocked(
             },
           },
         });
+        if (claimed.count === 0) {
+          skippedCount++;
+          continue;
+        }
 
         console.log(
           `❌ Marked refund ${refund.id} as FAILED - no matching gateway refund found`,
@@ -432,14 +438,18 @@ async function reconcilePendingRefundsUnlocked(
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
-        await prisma.refund.update({
-          where: { id: refund.id },
+        const claimed = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway reports the refund failed",
             failedAt: new Date(),
           },
         });
+        if (claimed.count === 0) {
+          skippedCount++;
+          continue;
+        }
         console.log(
           `❌ Real-id refund ${refund.id} (${refund.refundId}) failed at gateway`,
         );
