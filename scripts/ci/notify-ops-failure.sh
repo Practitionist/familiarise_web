@@ -34,10 +34,14 @@
 set -euo pipefail
 
 # Fail fast on the known-dead DSN so a misconfigured secret can never look
-# like a delivered page. The live project is 4511593990914048.
+# like a delivered page: Relay answers 200 on the first envelope (accepted,
+# then dropped), which would otherwise set delivered=1 and exit 0. A dead
+# sink is a red step for every job, money-critical or not. The live project
+# is 4511593990914048.
 case "${SENTRY_DSN:-}" in
   */4509348818124800|*/4509348818124800\?*)
     echo "::error::SENTRY_DSN names dead project 4509348818124800 — rotate to the live familiarise_web DSN (project 4511593990914048)" >&2
+    exit 1
     ;;
 esac
 

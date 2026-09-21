@@ -416,12 +416,13 @@ for (const file of files) {
   const body = stripComments(raw);
   const needs = (t: Tier[]): boolean => t.includes(tier);
 
-  // Least-privilege token: a top-level `permissions:` block must exist. Money
-  // crons with the default broad token hand a compromised lifecycle script
-  // write access plus every secret in env.
+  // Least-privilege token: a TOP-LEVEL `permissions:` block must exist (column
+  // 0 — a job-level block does not scope the workflow token). Money crons
+  // with the default broad token hand a compromised lifecycle script write
+  // access plus every secret in env.
   if (
     needs(["scheduled", "manual"]) &&
-    !/^\s*permissions:\s*$/m.test(body)
+    !/^permissions:\s*$/m.test(body)
   ) {
     errors.push(
       `${file} [${tier}]: missing top-level \`permissions:\` (least-privilege ` +
