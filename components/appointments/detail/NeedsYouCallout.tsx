@@ -4,7 +4,7 @@ import { useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import * as Sentry from "@sentry/nextjs";
 import { format } from "date-fns";
-import { CreditCard, LifeBuoy, Loader2, Timer } from "lucide-react";
+import { BellRing, CreditCard, LifeBuoy, Loader2, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -33,6 +33,7 @@ import {
   declineRequest,
   type DecidableRequest,
 } from "@/components/dashboard/shared/requests/request-decision";
+import { ApiResponseError } from "@/lib/fetch-helpers";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 /** The consultant's answer to a request, wired to the Requests page's mutations. */
@@ -46,10 +47,23 @@ export interface RequestDecision {
   onDecided: () => void;
 }
 
+/**
+ * #1775 — the consultant's two actions on an unpaid approval, wired to the
+ * remind / withdraw-approval routes by the detail page's mutations. Each
+ * resolves on 2xx and throws an `ApiResponseError` otherwise.
+ */
+export interface AwaitingPaymentActions {
+  remind: () => Promise<{ nextAllowedAt: string }>;
+  withdraw: () => Promise<unknown>;
+  /** Refetch: the row moved (withdrawn here, or changed elsewhere). */
+  onChanged: () => void;
+}
+
 export interface NeedsYouCalloutProps {
   presentation: BookingPresentation;
   names: { payer: string; consultant: string };
   heldCount: number;
+  awaitingPayment?: AwaitingPaymentActions;
   /** The live pay link's row, for the amount and its GST split. */
   pending: {
     amount: number | string;
@@ -187,7 +201,16 @@ function ApproveOrDecline({
       }
       if (!result.success)
         throw new Error(result.error || "Failed to allocate slots");
-      toast(timesConfirmed());
+      // #1775 B-9 — an unpaid request is approved, not confirmed: the pay
+      // order was minted and the client has the 24 h window to pay.
+      toast(
+        result.awaitingPayment
+          ? {
+              title: "Approved — the client has 24 h to pay",
+              description: `${names.payer} was sent the payment link; the times are held until it is paid.`,
+            }
+          : timesConfirmed(),
+      );
       decision.onDecided();
     } catch (error) {
       Sentry.captureException(
@@ -322,6 +345,166 @@ function ApproveOrDecline({
   );
 }
 
+/** "next in 5 h" against the limiter's own clock; empty once it has passed. */
+function nextReminderIn(nextAllowedAt: string, now = Date.now()): string {
+  const hours = Math.ceil((Date.parse(nextAllowedAt) - now) / 3_600_000);
+  if (!Number.isFinite(hours) || hours <= 0) return "";
+  return `next in ${hours} h`;
+}
+
+function RemindOrWithdraw({
+  actions,
+  names,
+  heldCount,
+  deadline,
+  onHelp,
+}: Readonly<{
+  actions: AwaitingPaymentActions;
+  names: NeedsYouCalloutProps["names"];
+  heldCount: number;
+  deadline: Date | undefined;
+  onHelp: () => void;
+}>) {
+  const [reminding, setReminding] = useState(false);
+  const [nextAllowedAt, setNextAllowedAt] = useState<string | null>(null);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const cooling = !!nextAllowedAt && Date.parse(nextAllowedAt) > Date.now();
+
+  const remind = async () => {
+    setReminding(true);
+    try {
+      const { nextAllowedAt: next } = await actions.remind();
+      setNextAllowedAt(next);
+      toast({
+        title: "Reminder sent",
+        description: `${names.payer} was sent the payment link again.`,
+      });
+    } catch (error) {
+      // 429 carries the limiter's clock: the button cools down on it too.
+      const next =
+        error instanceof ApiResponseError &&
+        error.code === "REMIND_RATE_LIMITED"
+          ? (error.body as { nextAllowedAt?: string } | undefined)
+              ?.nextAllowedAt
+          : undefined;
+      if (next) setNextAllowedAt(next);
+      toast({
+        title: next ? "A reminder was already sent today" : "Couldn't remind",
+        description:
+          error instanceof Error ? error.message : "Failed to send a reminder",
+        variant: next ? "default" : "destructive",
+      });
+    } finally {
+      setReminding(false);
+    }
+  };
+
+  const withdraw = async () => {
+    setWithdrawing(true);
+    try {
+      await actions.withdraw();
+      toast({
+        title: "Approval withdrawn",
+        description: `The held times are released and ${names.payer} was told.`,
+      });
+      setWithdrawOpen(false);
+      actions.onChanged();
+    } catch (error) {
+      if (error instanceof ApiResponseError && error.status === 409) {
+        toast(requestChangedElsewhere());
+        setWithdrawOpen(false);
+        actions.onChanged();
+        return;
+      }
+      Sentry.captureException(
+        error instanceof Error ? error : new Error(String(error)),
+        { tags: { subsystem: "client" } },
+      );
+      toast({
+        title: "Couldn't withdraw the approval",
+        description:
+          error instanceof Error ? error.message : "Failed to withdraw",
+        variant: "destructive",
+      });
+    } finally {
+      setWithdrawing(false);
+    }
+  };
+
+  const busy = reminding || withdrawing;
+  let heldLine = "";
+  if (heldCount === 1) heldLine = " The slot stays held until then.";
+  else if (heldCount > 1)
+    heldLine = ` ${heldCount} slots stay held until then.`;
+  return (
+    <Shell
+      onHelp={onHelp}
+      actions={
+        <>
+          {deadline && <TimeLeft deadline={deadline} />}
+          <Button
+            size="sm"
+            disabled={busy || cooling}
+            onClick={() => void remind()}
+          >
+            {reminding ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <BellRing className="mr-1.5 h-4 w-4" />
+            )}
+            {cooling && nextAllowedAt
+              ? `Reminder sent · ${nextReminderIn(nextAllowedAt)}`
+              : "Remind"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={busy}
+            onClick={() => setWithdrawOpen(true)}
+          >
+            Withdraw approval…
+          </Button>
+          <AlertDialog
+            open={withdrawOpen}
+            onOpenChange={(open) => !withdrawing && setWithdrawOpen(open)}
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Withdraw this approval?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  The held times are released and the client is told the
+                  approval was withdrawn.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={withdrawing}>
+                  Keep approval
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-red-600 text-white hover:bg-red-700"
+                  disabled={withdrawing}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    void withdraw();
+                  }}
+                >
+                  {withdrawing ? "Withdrawing…" : "Withdraw approval"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </>
+      }
+    >
+      {names.payer} has the payment link
+      {deadline ? ` until ${format(deadline, "EEE d MMM HH:mm")}` : ""}.
+      {heldLine}
+    </Shell>
+  );
+}
+
 /**
  * #1675 — the primary slot, one action for this role from
  * `presentation.nextAction`. Renders nothing when there is nothing to do.
@@ -335,6 +518,7 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
     onPay,
     requestAgainHref,
     decision,
+    awaitingPayment,
     onHelp,
     children,
   } = props;
@@ -347,6 +531,17 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
       return (
         <ApproveOrDecline
           decision={decision}
+          names={names}
+          heldCount={heldCount}
+          deadline={deadline}
+          onHelp={onHelp}
+        />
+      );
+    case "REMIND_OR_WITHDRAW":
+      if (!awaitingPayment) return null;
+      return (
+        <RemindOrWithdraw
+          actions={awaitingPayment}
           names={names}
           heldCount={heldCount}
           deadline={deadline}

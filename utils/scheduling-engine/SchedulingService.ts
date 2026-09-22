@@ -23,6 +23,7 @@ import {
   type DayOfWeek,
   Prisma,
   AppointmentStatus,
+  OccurrenceCompletionStatus,
   ScheduleType,
   AppointmentOccurrence,
 } from "@prisma/client";
@@ -87,6 +88,13 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import {
+  SETTLED_CONSULTATION,
+  SETTLED_SUBSCRIPTION,
+  UNPAID_CONSULTATION,
+  UNPAID_SUBSCRIPTION,
+  type ApprovalOutcome,
+} from "@/lib/booking/approve-request";
 import {
   isMinuteWithinWeeklySlot,
   TWENTY_FOUR_HOURS_IN_MS,
@@ -311,7 +319,11 @@ export class SchedulingService {
       requiredSessions?: number;
       unplacedSessions?: number;
     },
+    outcome?: ApprovalOutcome,
   ): Promise<StagedTrigger[]> {
+    // #1775 B-9 — nothing is booked before payment: an awaiting-payment
+    // approval's only consultee message is the pay-link email the mint sends.
+    if (outcome === "awaiting_payment") return [];
     const prisma = tx;
     let context: {
       userIds: string[];
@@ -1980,13 +1992,14 @@ export class SchedulingService {
           }
 
           // Update event status
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
             selectedSlots[0],
             config,
           );
+          await this.holdUntilPaid(tx, appointments, outcome);
 
           // #1065 — these times ARE the answer to the preference, so close it
           // here rather than leaving it open for the expiry sweep to mislabel.
@@ -2009,10 +2022,12 @@ export class SchedulingService {
                   unplacedSessions: requestedSessions - placedSessions,
                 }
               : undefined,
+            outcome,
           );
 
           return {
             success: true,
+            outcome,
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
@@ -2531,13 +2546,14 @@ export class SchedulingService {
           }
 
           // Update event status
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
             slots[0],
             config,
           );
+          await this.holdUntilPaid(tx, appointments, outcome);
 
           // #1065 — see autoAllocate: placing the replacement answers the ask.
           await this.resolveConsumedPreferenceRequests(
@@ -2548,6 +2564,7 @@ export class SchedulingService {
 
           return {
             success: true,
+            outcome,
             appointments,
             warnings: validation.warnings,
             deletedAppointmentIds, // AE-4
@@ -2555,6 +2572,8 @@ export class SchedulingService {
               tx,
               eventType,
               eventId,
+              undefined,
+              outcome,
             ),
           };
         },
@@ -2891,7 +2910,7 @@ export class SchedulingService {
           );
 
           // Update event status to approved (appointments already exist and verified)
-          await this.updateEventStatus(
+          const outcome = await this.updateEventStatus(
             tx,
             eventType,
             eventId,
@@ -2900,31 +2919,36 @@ export class SchedulingService {
           );
 
           // CRITICAL FIX: Clear isTentative flag on all slots after approval
-          // This ensures slots are no longer marked as pending reschedule
+          // This ensures slots are no longer marked as pending reschedule.
+          // #1775 B-9 — only once the money is settled: an unpaid approval
+          // keeps its rows as the hold the pay order is for (the capture
+          // webhook confirms them; a lapse or withdraw releases them).
           const appointmentIds = existingAppointments.map(
             (appointment) => appointment.id,
           );
-          const cleared = await tx.appointmentOccurrence.updateMany({
-            where: {
-              appointmentId: { in: appointmentIds },
-              // Never clear tentative on dead rows: without these guards a
-              // CANCELLED/RESCHEDULED/tombstoned hold is resurrected as a live
-              // non-tentative row occupying the calendar. Deliberately NOT
-              // liveOccurrenceWhere: that admits COMPLETED, and an approval
-              // must never rewrite terminal history rows.
-              deletedAt: null,
-              completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
-            },
-            data: { isTentative: false },
-          });
-          // Defense in depth for a tombstone racing the select above: the
-          // gate already proved every row flippable, so a short count means
-          // a concurrent writer moved one mid-flight — stale tab, not approval.
-          if (cleared.count !== flippableCount) {
-            throw new AllocationConflictError(
-              "Reschedule state changed in another session. Reload and try again.",
-              "RESCHEDULE_STATE_CHANGED",
-            );
+          if (outcome !== "awaiting_payment") {
+            const cleared = await tx.appointmentOccurrence.updateMany({
+              where: {
+                appointmentId: { in: appointmentIds },
+                // Never clear tentative on dead rows: without these guards a
+                // CANCELLED/RESCHEDULED/tombstoned hold is resurrected as a live
+                // non-tentative row occupying the calendar. Deliberately NOT
+                // liveOccurrenceWhere: that admits COMPLETED, and an approval
+                // must never rewrite terminal history rows.
+                deletedAt: null,
+                completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
+              },
+              data: { isTentative: false },
+            });
+            // Defense in depth for a tombstone racing the select above: the
+            // gate already proved every row flippable, so a short count means
+            // a concurrent writer moved one mid-flight — stale tab, not approval.
+            if (cleared.count !== flippableCount) {
+              throw new AllocationConflictError(
+                "Reschedule state changed in another session. Reload and try again.",
+                "RESCHEDULE_STATE_CHANGED",
+              );
+            }
           }
 
           // #837 — stamp the batch's key on the FIRST appointment so a retry
@@ -2955,12 +2979,15 @@ export class SchedulingService {
 
           return {
             success: true,
+            outcome,
             appointments: existingAppointments,
             warnings: validation.warnings,
             stagedNotices: await SchedulingService.stageAllocationNotices(
               tx,
               eventType,
               eventId,
+              undefined,
+              outcome,
             ),
           };
         },
@@ -4844,6 +4871,74 @@ export class SchedulingService {
   }
 
   /**
+   * #1775 B-9 — an unpaid approval's freshly placed sessions are the hold
+   * its pay order is for, not confirmed times: created confirmed by
+   * `createAppointments`, they are marked tentative here so the capture
+   * webhook confirms them and a lapse or withdraw releases them by status.
+   */
+  private static async holdUntilPaid(
+    tx: Tx,
+    appointments: { id: string }[],
+    outcome: ApprovalOutcome | undefined,
+  ): Promise<void> {
+    if (outcome !== "awaiting_payment" || appointments.length === 0) return;
+    await tx.appointmentOccurrence.updateMany({
+      where: {
+        appointmentId: { in: appointments.map((a) => a.id) },
+        deletedAt: null,
+        completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+      },
+      data: { isTentative: true },
+    });
+  }
+
+  /**
+   * #1775 B-9 — two CAS attempts, the money predicate in each WHERE. The
+   * first lands a settled request in APPROVED (the self-edge keeps
+   * re-allocation of a paid booking legal); the second lands an unpaid one in
+   * APPROVED_PENDING_PAYMENT from PENDING or from itself. Both missing means
+   * the row is not approvable (cancelled, expired, or a wrapper in an odd
+   * money state) and the allocation rolls back as before.
+   */
+  private static async approveByMoney<
+    W extends { id: string },
+    D extends object,
+  >(
+    eventId: string,
+    transition: (args: {
+      where: W;
+      to: AppointmentStatus;
+      fromIn: AppointmentStatus[];
+      data?: D;
+    }) => Promise<void>,
+    settled: Omit<W, "id">,
+    unpaid: Omit<W, "id">,
+    data?: D,
+  ): Promise<ApprovalOutcome> {
+    try {
+      await transition({
+        where: { id: eventId, ...settled } as W,
+        to: AppointmentStatus.APPROVED,
+        fromIn: ALLOCATION_APPROVABLE_FROM,
+        data,
+      });
+      return "approved";
+    } catch (error) {
+      if (!(error instanceof IllegalTransitionError)) throw error;
+    }
+    await transition({
+      where: { id: eventId, ...unpaid } as W,
+      to: AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      fromIn: [
+        AppointmentStatus.PENDING,
+        AppointmentStatus.APPROVED_PENDING_PAYMENT,
+      ],
+      data,
+    });
+    return "awaiting_payment";
+  }
+
+  /**
    * Update event status after allocation
    */
   private static async updateEventStatus(
@@ -4852,26 +4947,33 @@ export class SchedulingService {
     eventId: string,
     firstSlot: Date,
     config: EventConfig,
-  ): Promise<void> {
+  ): Promise<ApprovalOutcome | undefined> {
     switch (eventType) {
       // #836 — allocation racing a cancel/expiry must not resurrect the
       // request to APPROVED; the allowed-from guard rides the WHERE and a
       // miss rolls back the whole allocation tx. fromIn keeps the APPROVED
       // self-edge legal for re-allocation of an already-approved event.
+      // #1775 B-9 — allocation IS the approval, and the money decides where
+      // it lands: a settled wrapper (SUCCEEDED payment, or a free plan) goes
+      // to APPROVED; an unpaid request goes to APPROVED_PENDING_PAYMENT and
+      // the caller mints the pay order after the commit. Both predicates
+      // ride the CAS WHERE; an unpaid row that already awaits payment keeps
+      // its live link (self-edge), it is never re-stamped APPROVED.
       case "consultation":
-        await transitionConsultationRequest(tx, {
-          where: { id: eventId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: ALLOCATION_APPROVABLE_FROM,
-        });
-        break;
+        return this.approveByMoney(
+          eventId,
+          (args) => transitionConsultationRequest(tx, args),
+          SETTLED_CONSULTATION,
+          UNPAID_CONSULTATION,
+        );
 
       case "subscription":
-        await transitionSubscriptionRequest(tx, {
-          where: { id: eventId },
-          to: AppointmentStatus.APPROVED,
-          fromIn: ALLOCATION_APPROVABLE_FROM,
-          data: {
+        return this.approveByMoney(
+          eventId,
+          (args) => transitionSubscriptionRequest(tx, args),
+          SETTLED_SUBSCRIPTION,
+          UNPAID_SUBSCRIPTION,
+          {
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot
             // which could cause slots to appear outside the intended scheduling window
@@ -4886,8 +4988,7 @@ export class SchedulingService {
                 }
               : {}),
           },
-        });
-        break;
+        );
 
       case "webinar": {
         // Webinar model does NOT have startDate/endDate fields

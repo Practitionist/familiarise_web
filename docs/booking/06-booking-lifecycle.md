@@ -192,6 +192,14 @@ Consultations support two entry paths:
 
 The reason two paths exist is flexibility. Some consultants want to screen clients before accepting bookings; others want frictionless direct booking.
 
+#### Allocation is the approval, and the money decides where it lands (#1775 B-9)
+
+Every approval of a REQUEST-mode consultation or subscription from the UI — "Use requested times" on the Requests page, Approve on the detail page and the allocate page — goes through the allocate handler and `SchedulingService.updateEventStatus`, not through the detail PATCH route with `status: APPROVED`. Until 2026-09-20 that path CASed the request straight to `APPROVED` with no payment predicate and no pay order, so a priced request became "Confirmed · Nothing was charged" and the buyer was never asked to pay; the same from-set also let a re-allocation flip an awaiting-payment row to `APPROVED` while its pay order was still live. The service now makes two CAS attempts with the money predicate in each WHERE (`lib/booking/approve-request.ts`): first to `APPROVED` from `ALLOCATION_APPROVABLE_FROM` when the wrapper carries a SUCCEEDED, non-deleted payment or the plan is free (`SETTLED_*`), then to `APPROVED_PENDING_PAYMENT` from `PENDING` or from itself when no succeeded payment exists (`UNPAID_*`, the same arm the lapse core uses); both missing rolls the allocation back as before. On the awaiting-payment landing the placed sessions stay tentative (the requested path leaves its request-time holds as they are; the manual and auto paths mark the sessions they created tentative): they are the hold the pay order is for, the capture webhook confirms them, and a lapse or a withdraw releases them by status. The handler reads the outcome and, on `awaiting_payment`, runs `mintApprovalPaymentAfterCommit` before answering: the detail PATCH's post-commit block, now shared, which mints under the mint lock (a live PENDING intent is reused, so a retry or a re-allocation never mints a parallel order and a row that already carries a link mints nothing), CASes the link onto the row, tombstones an orphaned order and mails only a live link. A failed mint leaves the request awaiting payment with no link — the state the PATCH route leaves too — and is recorded as a PAYMENT system error; re-approving reuses the same intent. The response carries `awaitingPayment: true`, so the consultant's toast says the client has 24 hours to pay rather than "Confirmed".
+
+#### While the approval waits for payment (#1775)
+
+An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
+
 #### Sequence Diagram
 
 ```mermaid
@@ -1138,14 +1146,14 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Financial Notifications
 
-| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point          | Source         |
-| ---------------- | ------------------ | ---------------------- | ---------------------- | -------------- |
-| Refund processed | `refund-processed` | Consultee              | Refund API             | Refund routes  |
-| Refund requested | `refund-requested` | Admin users            | Refund request API     | Refund routes  |
-| Payout processed | `payout-processed` | Consultant             | Payout processing      | Payout scripts |
+| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point                                          | Source         |
+| ---------------- | ------------------ | ---------------------- | ------------------------------------------------------ | -------------- |
+| Refund processed | `refund-processed` | Consultee              | Refund API                                             | Refund routes  |
+| Refund requested | `refund-requested` | Admin users            | Refund request API                                     | Refund routes  |
+| Payout processed | `payout-processed` | Consultant             | Payout processing                                      | Payout scripts |
 | Payout failed    | `payout-failed`    | Consultant             | Payout rejection / gateway FAILED or CANCELLED webhook | Payout service |
-| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API   | Dispute routes |
-| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API | Dispute routes |
+| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API                                   | Dispute routes |
+| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API                                 | Dispute routes |
 
 ### Other Notifications
 

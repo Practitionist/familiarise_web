@@ -35,6 +35,7 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import prisma, { type Tx } from "@/lib/prisma";
 import { releaseParticipant } from "@/lib/booking/participants";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
   PAY_LINK_LAPSED_REASON,
@@ -1081,8 +1082,12 @@ async function cleanupExpiredApprovalPendingPaymentsUnlocked(
 }
 
 /**
- * One lapsed approval request: the shared CAS, the tentative-hold release,
- * the PENDING → EXPIRED payment flip, then the consultee notice on the win.
+ * One lapsed approval request: the shared lapse core (#1775 — the request
+ * CAS with the money predicate in its WHERE, the tentative-hold release by
+ * status, the PENDING → EXPIRED order tombstone), then the consultee notice
+ * on the win. #1319 — EXPIRED, not REJECTED: REJECTED reads as "the
+ * consultant declined" on every surface, and the CAS keeps a capture that
+ * raced this sweep from being clobbered.
  */
 async function expireOneLapsedRequest(
   kind: "consultation" | "subscription",
@@ -1090,7 +1095,6 @@ async function expireOneLapsedRequest(
     appointment: {
       id: string;
       organizationId: string | null;
-      payment: { id: string }[];
       occurrences: { startsAt: Date }[];
     } | null;
   },
@@ -1099,45 +1103,18 @@ async function expireOneLapsedRequest(
 ): Promise<void> {
   try {
     const outcome = await prisma.$transaction(async (tx) => {
-      // #1319 — the pay-link lapsed, so this is EXPIRED, not REJECTED:
-      // REJECTED reads as "the consultant declined" on every surface, and
-      // the CAS keeps a capture that raced this sweep from being clobbered.
-      // The same narrow CAS the abandoned sweep uses, so a row either pass
-      // claims is claimed once.
-      if (!(await expireLapsedPayLink(tx, kind, request.id))) {
+      const { moved } = await lapseApprovedRequest(tx, {
+        kind,
+        id: request.id,
+        reason: "PAYMENT_LAPSED",
+        actorUserId: null,
+      });
+      if (moved === 0) {
         console.log(
           `⏭️ Skipped ${kind} ${request.id} — status changed since the sweep read`,
         );
         return "skipped" as const;
       }
-
-      // Release the tentative hold by status; the rows stay for support.
-      if (request.appointment) {
-        const released = await transitionOccurrenceCompletion(tx, {
-          where: {
-            appointmentId: request.appointment.id,
-            isTentative: true,
-            deletedAt: null,
-          },
-          to: OccurrenceCompletionStatus.CANCELLED,
-          data: { deletedAt: new Date() },
-          allowZero: true,
-        });
-        console.log(
-          `🗑️ Released ${released} tentative slot(s) for ${kind} ${request.id}`,
-        );
-      }
-
-      // Mark expired payments as EXPIRED (timed out, not a gateway rejection)
-      for (const payment of request.appointment?.payment ?? []) {
-        // Conditional: only a still-PENDING row expires; a capture that
-        // raced this write keeps its SUCCEEDED status.
-        await tx.payment.updateMany({
-          where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-          data: { paymentStatus: PaymentStatus.EXPIRED },
-        });
-      }
-
       console.log(
         `✅ Reset ${kind} ${request.id} from APPROVED_PENDING_PAYMENT to EXPIRED`,
       );

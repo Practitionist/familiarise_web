@@ -83,6 +83,8 @@ import {
 // Mocked above; imported (not require()d) so the lock-scope pin below stays
 // free of a require-style import.
 import { lockAutoAllocate as mockLockAutoAllocate } from "../../utils/appointmentlock";
+// Mocked in ./setup; the B-9 pins read whether the booked bell was staged.
+import { notifyAppointmentBooked } from "../../lib/novu";
 
 // ─── Mock Transaction Factory ───────────────────────────────────────────────
 
@@ -3581,5 +3583,135 @@ describe("manual idempotent replay", () => {
     expect(result.success).toBe(false);
     expect(result.httpStatus).toBe(422);
     expect(result.errorCode).toBe("IDEMPOTENCY_KEY_REUSE");
+  });
+});
+
+// ─── #1775 B-9 — allocation lands by money ──────────────────────────────────
+// Allocation IS the approval of a REQUEST-mode booking, and the money decides
+// where it lands: a settled wrapper (SUCCEEDED payment, or a free plan) goes
+// to APPROVED; an unpaid request goes to APPROVED_PENDING_PAYMENT and the
+// handler mints the pay order after the commit. Both predicates ride the CAS
+// WHERE; a request already awaiting payment keeps its link (self-edge).
+
+describe("#1775 B-9 — allocation lands by money", () => {
+  const TWO_SLOTS = ["2025-01-06T10:00:00Z", "2025-01-06T10:30:00Z"];
+  const casWhere = (call: number) =>
+    mockTx.consultation.updateMany.mock.calls[call][0].where;
+  const casData = (call: number) =>
+    mockTx.consultation.updateMany.mock.calls[call][0].data;
+
+  it("unpaid PENDING consultation → APPROVED_PENDING_PAYMENT with the no-payment predicate, outcome awaiting_payment", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    // The settled CAS misses (no SUCCEEDED payment), the unpaid CAS wins.
+    mockTx.consultation.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: TWO_SLOTS,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.outcome).toBe("awaiting_payment");
+    // Nothing is booked before payment: the pay-link email the mint sends is
+    // the consultee's only message on this landing.
+    expect(notifyAppointmentBooked).not.toHaveBeenCalled();
+    expect(JSON.stringify(casWhere(0))).toContain(
+      '"paymentStatus":"SUCCEEDED"',
+    );
+    expect(casData(0).status).toBe(AppointmentStatus.APPROVED);
+    expect(casWhere(1)).toMatchObject({
+      id: "consult-1",
+      appointment: { payment: { none: { paymentStatus: "SUCCEEDED" } } },
+      status: { in: ["PENDING", "APPROVED_PENDING_PAYMENT"] },
+    });
+    expect(casData(1).status).toBe(AppointmentStatus.APPROVED_PENDING_PAYMENT);
+    // The placed sessions are the hold the pay order is for, not confirmed
+    // times: the capture webhook confirms them, a lapse releases them.
+    expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ completionStatus: "SCHEDULED" }),
+        data: { isTentative: true },
+      }),
+    );
+  });
+
+  it("paid PENDING consultation → APPROVED on the first CAS, no second attempt", async () => {
+    // The config read first; every later read (the CAS pre-read, the bell's
+    // notice read) sees the wrapper the booked bell needs.
+    mockTx.consultation.findUnique
+      .mockResolvedValueOnce(makeConsultationEvent())
+      .mockResolvedValue({
+        status: "PENDING",
+        consultationPlan: {
+          title: "Plan",
+          consultantProfile: { user: { id: "consultant-1", name: "Ethan" } },
+        },
+        requestedBy: { user: { id: "consultee-1", name: "Rachel" } },
+        appointment: {
+          id: "apt-1",
+          organizationId: null,
+          occurrences: [{ startsAt: new Date("2025-01-06T10:00:00Z") }],
+        },
+      });
+    mockTx.consultation.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: TWO_SLOTS,
+    });
+
+    expect(result.outcome).toBe("approved");
+    expect(notifyAppointmentBooked).toHaveBeenCalledTimes(1);
+    expect(mockTx.consultation.updateMany).toHaveBeenCalledTimes(1);
+    expect(mockTx.appointmentOccurrence.updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { isTentative: true } }),
+    );
+    expect(casWhere(0).status).toEqual({
+      in: ["PENDING", "APPROVED_PENDING_PAYMENT", "APPROVED"],
+    });
+    expect(JSON.stringify(casWhere(0))).toContain('"price":0');
+  });
+
+  it("re-allocating an APPROVED_PENDING_PAYMENT row keeps it awaiting payment (self-edge), never APPROVED", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({ status: "APPROVED_PENDING_PAYMENT" }),
+    );
+    mockTx.consultation.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: TWO_SLOTS,
+    });
+
+    expect(result.outcome).toBe("awaiting_payment");
+    expect(casData(1).status).toBe(AppointmentStatus.APPROVED_PENDING_PAYMENT);
+    // The mint that follows in the handler reuses the live link (see
+    // allocate-mints-on-awaiting-payment.test.ts).
+  });
+
+  it("both CAS attempts missing rolls the allocation back as an illegal transition", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(makeConsultationEvent());
+    mockTx.consultation.updateMany.mockResolvedValue({ count: 0 });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "manual",
+      slots: TWO_SLOTS,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.httpStatus).toBe(409);
+    expect(mockTx.consultation.updateMany).toHaveBeenCalledTimes(2);
   });
 });

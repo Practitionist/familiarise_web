@@ -29,6 +29,8 @@ import {
   isEventConsultant,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
+import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import { recordSystemError } from "@/lib/enterprise/system-events";
 
 const LOG_LABEL: Record<EventType, string> = {
   consultation: "[Consultation Allocation]",
@@ -150,9 +152,41 @@ export async function handleAllocate(
         console.warn(`${label} Warnings: ${result.warnings.join("; ")}`);
       }
 
+      // #1775 B-9 — an unpaid request landed in APPROVED_PENDING_PAYMENT:
+      // mint its pay order now, before the response, so the row carries the
+      // link the client is about to read (`after()` is best-effort). A mint
+      // that fails leaves the request awaiting payment with no link — the
+      // same state the detail PATCH leaves — recorded as a system error;
+      // re-approving reuses the same PENDING intent (#1181).
+      const awaitingPayment = result.outcome === "awaiting_payment";
+      if (
+        awaitingPayment &&
+        (eventType === "consultation" || eventType === "subscription")
+      ) {
+        const mint = await mintApprovalPaymentAfterCommit({
+          kind: eventType,
+          id: eventId,
+        });
+        if (mint.status === "mint_failed" || mint.status === "lapsed") {
+          await recordSystemError({
+            organizationId: null,
+            category: "PAYMENT",
+            summary: `Approval pay-link mint failed after allocation (${mint.status}) — approve again to retry`,
+            err:
+              mint.status === "mint_failed"
+                ? mint.error
+                : new Error(mint.message),
+            context: { eventType, eventId },
+          }).catch(() => {});
+        }
+      }
+
       return NextResponse.json({
         data: result.appointments,
         warnings: result.warnings,
+        // #1775 B-9 — the client says "the client has 24 h to pay", not
+        // "Confirmed", when the approval is waiting on the pay order.
+        awaitingPayment,
         // #1206 — derived, never stored: how much of the plan now has times.
         partial: result.partial,
         placedSessions: result.placedSessions,

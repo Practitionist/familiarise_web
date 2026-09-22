@@ -36,6 +36,7 @@ import {
   SLOT_TRANSITION_TX_OPTIONS,
   transitionSlotsInChunks,
 } from "@/lib/booking/slot-release";
+import { lapseApprovedRequest } from "@/lib/booking/lapse-approved-request";
 import {
   notifyConsulteeRequestExpired,
   PAY_LINK_LAPSED_REASON,
@@ -906,8 +907,8 @@ async function expirePaymentPendingRequests(): Promise<{
     Date.now() - PAYMENT_PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // The money predicate is repeated in each CAS WHERE below, so these read
-  // filters are an optimisation rather than the guard.
+  // The money predicate is repeated in the lapse core's CAS WHERE, so these
+  // read filters are an optimisation rather than the guard.
   const UNPAID_CONSULTATION = {
     appointment: {
       payment: { none: { paymentStatus: PaymentStatus.SUCCEEDED } },
@@ -945,35 +946,34 @@ async function expirePaymentPendingRequests(): Promise<{
     let consultationsExpired = 0;
     let consultationsSkipped = 0;
     for (const consultation of staleConsultations) {
-      try {
-        await prisma.$transaction((tx) =>
-          transitionConsultationRequest(tx, {
-            where: {
-              id: consultation.id,
-              // Repeat the cohort read's age predicate inside the CAS WHERE:
-              // an updatedAt touch (reminder/nudge/reschedule) between read
-              // and write must match zero rows, not expire a live pay-link.
-              updatedAt: { lt: expirationDate },
-              ...UNPAID_CONSULTATION,
-            },
-            to: AppointmentStatus.EXPIRED,
-            fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-            data: { pendingPaymentUrl: null }, // Clear payment link
+      // #1775 — the per-row lapse is the shared core the consultant's
+      // Withdraw also calls; a lost CAS is `moved: 0`, never a throw.
+      const { moved } = await prisma.$transaction(
+        (tx) =>
+          lapseApprovedRequest(tx, {
+            kind: "consultation",
+            id: consultation.id,
+            reason: "PAYMENT_LAPSED",
+            actorUserId: null,
+            // Repeat the cohort read's age predicate inside the CAS WHERE: an
+            // updatedAt touch between read and write must match zero rows.
+            olderThan: expirationDate,
           }),
-        );
-        consultationsExpired += 1;
-        // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
-        const notice = expiryNoticeFor(
-          "consultation",
-          consultation,
-          consultation.consultationPlan,
-          PAY_LINK_LAPSED_REASON,
-        );
-        if (notice) await notifyConsulteeRequestExpired(notice);
-      } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        SLOT_TRANSITION_TX_OPTIONS,
+      );
+      if (moved === 0) {
         consultationsSkipped += 1;
+        continue;
       }
+      consultationsExpired += 1;
+      // #1589 N-P0-03 — the fallback lapse notifies like the 24 h sweep.
+      const notice = expiryNoticeFor(
+        "consultation",
+        consultation,
+        consultation.consultationPlan,
+        PAY_LINK_LAPSED_REASON,
+      );
+      if (notice) await notifyConsulteeRequestExpired(notice);
     }
 
     console.log(
@@ -1001,32 +1001,31 @@ async function expirePaymentPendingRequests(): Promise<{
     let subscriptionsExpired = 0;
     let subscriptionsSkipped = 0;
     for (const subscription of staleSubscriptions) {
-      try {
-        await prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
-            where: {
-              id: subscription.id,
-              // Same age-predicate repeat as the consultation arm above.
-              updatedAt: { lt: expirationDate },
-              ...UNPAID_SUBSCRIPTION,
-            },
-            to: AppointmentStatus.EXPIRED,
-            fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
-            data: { pendingPaymentUrl: null }, // Clear payment link
+      const { moved } = await prisma.$transaction(
+        (tx) =>
+          lapseApprovedRequest(tx, {
+            kind: "subscription",
+            id: subscription.id,
+            reason: "PAYMENT_LAPSED",
+            actorUserId: null,
+            // Repeat the cohort read's age predicate inside the CAS WHERE: an
+            // updatedAt touch between read and write must match zero rows.
+            olderThan: expirationDate,
           }),
-        );
-        subscriptionsExpired += 1;
-        const notice = expiryNoticeFor(
-          "subscription",
-          subscription,
-          subscription.subscriptionPlan,
-          PAY_LINK_LAPSED_REASON,
-        );
-        if (notice) await notifyConsulteeRequestExpired(notice);
-      } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
+        SLOT_TRANSITION_TX_OPTIONS,
+      );
+      if (moved === 0) {
         subscriptionsSkipped += 1;
+        continue;
       }
+      subscriptionsExpired += 1;
+      const notice = expiryNoticeFor(
+        "subscription",
+        subscription,
+        subscription.subscriptionPlan,
+        PAY_LINK_LAPSED_REASON,
+      );
+      if (notice) await notifyConsulteeRequestExpired(notice);
     }
 
     console.log(

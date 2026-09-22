@@ -89,7 +89,7 @@ const TABLE: [
       payments: [pay("PENDING", 708_000, { expiresAt: IN_4D })],
     },
     "DUE",
-    "NONE",
+    "REMIND_OR_WITHDRAW",
     "PAY",
     "Held · link sent",
     "Awaiting payment",
@@ -226,6 +226,16 @@ describe("deriveBookingPresentation — the money line and the timeline", () => 
     expect(u.moneyState.line).toBe(
       "Not due yet — you are asked to pay after Ethan approves.",
     );
+  });
+
+  it("consultant AWAITING_PAYMENT: REMIND_OR_WITHDRAW carries the pay order's deadline (#1775)", () => {
+    const input = base(TABLE[1][1]);
+    const c = deriveBookingPresentation(input, "CONSULTANT", { now: NOW });
+    expect(c.nextAction).toEqual({
+      kind: "REMIND_OR_WITHDRAW",
+      label: "Remind",
+      deadline: IN_4D,
+    });
   });
 
   it("consultee AWAITING_PAYMENT: the PAY action carries the amount and the deadline", () => {

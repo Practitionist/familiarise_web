@@ -36,7 +36,10 @@ jest.mock("../../hooks/scheduling/useScheduling", () => ({
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { UnifiedCalendar } from "../../components/scheduling/UnifiedCalendar";
+import {
+  UnifiedCalendar,
+  weekStartFor,
+} from "../../components/scheduling/UnifiedCalendar";
 import {
   FOCUS_LEAD_ROWS,
   type TimePickerFocus,
@@ -358,5 +361,22 @@ describe("UnifiedCalendar allocate-page states (#1764, #1766)", () => {
 
     expect(host.textContent).toContain("Pick 3 for");
     expect(host.textContent).toContain("3 per week · 0 of 144 booked");
+  });
+});
+
+// #1775 PR-B — a subscription's week grid starts on its cycle's start day;
+// everything else keeps the Sunday the quota bucketing is pinned to.
+describe("weekStartFor (#1775)", () => {
+  it("subscription with a Wednesday cycle start → 3; consultation → 0", () => {
+    const wednesday = new Date(2026, 8, 23, 9, 0, 0); // 2026-09-23 is a Wednesday
+    expect(
+      weekStartFor({ eventType: "subscription", cycleStart: wednesday }),
+    ).toBe(3);
+    expect(
+      weekStartFor({ eventType: "consultation", cycleStart: wednesday }),
+    ).toBe(0);
+    expect(weekStartFor({ eventType: "subscription", cycleStart: null })).toBe(
+      0,
+    );
   });
 });

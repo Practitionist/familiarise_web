@@ -212,6 +212,12 @@ export type AllocationErrorCode =
 export interface AllocationResult {
   success: boolean;
   /**
+   * #1775 B-9 — where a consultation / subscription approval landed:
+   * `approved` (a settled wrapper) or `awaiting_payment` (the pay order is
+   * minted after the commit). Absent for group events and on failure.
+   */
+  outcome?: "approved" | "awaiting_payment";
+  /**
    * #1697 item 5 — outbox rows staged inside the write transaction.
    * `SchedulingService.allocate` strips this and attempts them post-commit;
    * it never reaches a route response.

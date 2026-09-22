@@ -60,6 +60,8 @@ export type MoneyStateKind =
 
 export type NextActionKind =
   | "APPROVE_OR_DECLINE"
+  /** #1775 — the consultant's actions on an unpaid approval. */
+  | "REMIND_OR_WITHDRAW"
   | "PAY"
   | "REQUEST_AGAIN"
   | "JOIN"
@@ -586,6 +588,10 @@ function deriveNext(
   if (viewer === "CONSULTANT") {
     if (booking === "REQUESTED")
       return { kind: "APPROVE_OR_DECLINE", label: "Approve", deadline };
+    // #1775 — the deadline is the pay order's own clock (the live PENDING
+    // row's expiresAt), the same one the consultee's PAY carries.
+    if (booking === "AWAITING_PAYMENT")
+      return { kind: "REMIND_OR_WITHDRAW", label: "Remind", deadline };
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
     return none;
