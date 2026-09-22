@@ -55,7 +55,9 @@ const GRID_CACHE_CONTROL = "private, max-age=30";
  * timeout. Every client asks for the visible day, week or month; anything
  * wider is refused so it paginates instead of timing out (supersedes #1577).
  */
-const MAX_AVAILABILITY_WINDOW_DAYS = 31;
+// 32, not 31: a 31-day month that ends daylight-saving time is 31 d + 1 h of
+// elapsed time, and the expert page reads a whole month in one call (#1785).
+const MAX_AVAILABILITY_WINDOW_DAYS = 32;
 const MAX_AVAILABILITY_WINDOW_MS =
   MAX_AVAILABILITY_WINDOW_DAYS * 24 * 60 * 60 * 1000;
 

@@ -40,7 +40,7 @@ interface ProfileSectionProps {
 /**
  * Profile tab of the consultant settings form — domain expertise,
  * professional background, enhanced profile (headline / socials / skills).
- * Presentational only: form state lives in SettingsTab so the combined
+ * Presentational only: form state lives in useConsultantSettingsForm so the combined
  * settings PUT payload is unchanged by the decomposition.
  */
 export function ProfileSection({
