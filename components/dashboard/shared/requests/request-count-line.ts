@@ -1,18 +1,13 @@
 import type { SubscriptionEntitlement } from "@/lib/booking/entitlement";
 
 /**
- * One short line under a request's title (#1766): a subscription reads its
- * entitlement words, never a bare slot count; anything else keeps the slot
- * phrasing the allocator validates against.
+ * One short line under a subscription request's title (#1766): its
+ * entitlement words, never a bare slot count. The inbox and the Home
+ * preview are the only callers, and both hand it an entitlement.
  */
 export function requestCountLine(request: {
-  requiredSlots?: number;
-  entitlement?: SubscriptionEntitlement;
+  entitlement: SubscriptionEntitlement;
 }): string {
-  if (request.entitlement) {
-    const { held, total, cycle } = request.entitlement;
-    return `${held} of ${total} booked · pick ${cycle.nextBatch}`;
-  }
-  if (request.requiredSlots === undefined) return "Slot count unavailable";
-  return `${request.requiredSlots} slot${request.requiredSlots !== 1 ? "s" : ""} to allocate`;
+  const { held, total, cycle } = request.entitlement;
+  return `${held} of ${total} booked · pick ${cycle.nextBatch}`;
 }
