@@ -23,6 +23,13 @@ type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
  * per window), not a firehose. Keyed by class only, deliberately not by
  * route: during a global outage every route reports the same underlying
  * fact, and per-route trickles would still scale with the fleet.
+ *
+ * Deliberately process-local, not Redis-backed: Redis IS the outage this
+ * guards — a shared limiter needs the downed dependency to answer, and must
+ * then fail open (restoring the firehose) or fail closed (dropping
+ * legitimate errors). Bound: warm instances × 6/hr/class, versus ~3,000/hr
+ * unthrottled during the 2026-09-21 outage. The complementary server-side
+ * inbound filter (dashboard-side, drops before quota) is the follow-up.
  */
 export const INFRA_THROTTLE_MS = 10 * 60 * 1000;
 export const INFRA_TRANSIENT_PATTERNS = [
