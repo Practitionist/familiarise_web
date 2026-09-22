@@ -92,7 +92,11 @@ const pendingStripeRow = {
   paymentGateway: "STRIPE",
   paymentIntent: "103e6474-6cc3-4d37-9673-25af4b1dd566",
   paymentStatus: "PENDING",
-  createdAt: new Date("2026-09-14T00:00:00Z"),
+  // Relative, never fixed: the row must sit inside the 7d reconcile window
+  // AND below the 7d orphan cutoff (report path, not retire path). A fixed
+  // date rotted past both cutoffs on 2026-09-21 and flipped this test to the
+  // retire path, whose mocked helper returns undefined (500, not 207).
+  createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
   user: null,
   appointment: null,
 };

@@ -1,5 +1,8 @@
 name: Consent Retention Sweeper
 
+permissions:
+  contents: read
+
 # DPDP ConsentArtifact retention sweep: counts (or deletes, gated by
 # DPDP_SWEEPER_DELETE) artifacts past their 7-year retention window.
 # NOT a financial cron — runs even in DEGRADED maintenance.
@@ -39,6 +42,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -47,13 +52,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run consent retention sweeper job
-        run: npx --yes tsx@4.23.1 jobs/compliance/consent-retention-sweeper.ts
+        run: node_modules/.bin/tsx jobs/compliance/consent-retention-sweeper.ts
 
       - name: Notify on failure
         if: failure()

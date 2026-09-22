@@ -94,11 +94,15 @@ const skipped: string[] = [];
 
 for (const file of fs
   .readdirSync(WORKFLOW_DIR)
-  .filter((f) => f.endsWith(".yml"))) {
+  .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))) {
   const body = fs.readFileSync(path.join(WORKFLOW_DIR, file), "utf8");
-  const crons = Array.from(body.matchAll(/-\s*cron:\s*["']([^"']+)["']/g)).map(
-    (m) => m[1].trim(),
-  );
+  const stripped = body
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("#"))
+    .join("\n");
+  const crons = Array.from(
+    stripped.matchAll(/-\s*cron:\s*["']?([^"'#\n]+?)["']?\s*(?:#.*)?$/gm),
+  ).map((m) => m[1].trim());
   if (crons.length === 0) continue;
 
   const intervals = crons

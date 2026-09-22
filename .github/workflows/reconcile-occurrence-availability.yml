@@ -1,5 +1,8 @@
 name: Reconcile Occurrence Availability
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run hourly
@@ -35,6 +38,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -43,7 +48,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
         run: npx --no-install --ignore-scripts prisma generate

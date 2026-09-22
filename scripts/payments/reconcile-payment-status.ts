@@ -622,13 +622,17 @@ async function reconcilePaymentStatusUnlocked(
   }
 
   // One issue that counts up, not one event per row per tick.
+  // FAMILIARISE_WEB-4P — recurrence means new orphans, not a new defect, so
+  // the pager must exclude it: `expected: "true"` (same tag convention as
+  // reportSentryError) is the stable key the alert rule filters on. The
+  // signal stays in logs/Sentry; only the page goes away.
   if (unresolvableCount > 0) {
     Sentry.captureMessage(
       `reconcile-payment-status: ${unresolvableCount} pending payments have gateway ids the gateway does not know`,
       {
         level: "warning",
         fingerprint: ["reconcile-payment-status", "unresolvable"],
-        tags: { subsystem: "payments" },
+        tags: { subsystem: "payments", expected: "true" },
         extra: { unresolvable },
       },
     );

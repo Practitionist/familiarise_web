@@ -1,5 +1,8 @@
 name: Dunning
 
+permissions:
+  contents: read
+
 # #779 §A — daily invoice dunning: flips ISSUED→OVERDUE past due date and
 # sends escalating 7-day reminders (cap 3). Runs after the invoice-gen +
 # expire-contracts crons so invoices are in their final state when read.
@@ -36,6 +39,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -44,13 +49,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run dunning job
-        run: npx --yes tsx@4.23.1 jobs/billing/dunning.ts
+        run: node_modules/.bin/tsx jobs/billing/dunning.ts
 
       - name: Notify on failure
         if: failure()

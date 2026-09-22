@@ -1006,10 +1006,12 @@ describe("Cancel Route Handler - POST", () => {
         expect.objectContaining({
           // RESCHEDULED counts too: a slot released by a pending reschedule is
           // not SCHEDULED, and skipping it left non-terminal rows on a booking
-          // that no longer exists.
+          // that no longer exists. UNVERIFIED counts as well: auto-complete
+          // stamps past-no-meeting sessions UNVERIFIED, and leaving them live
+          // keeps a non-tombstoned row on the calendar of a dead booking.
           where: {
             appointmentId: "apt-1",
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED"] },
+            completionStatus: { in: ["SCHEDULED", "RESCHEDULED", "UNVERIFIED"] },
           },
           // The tombstone is the other half of the soft-cancel (#676 A10).
           data: { completionStatus: "CANCELLED", deletedAt: expect.any(Date) },

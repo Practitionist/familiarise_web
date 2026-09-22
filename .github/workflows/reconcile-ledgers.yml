@@ -1,5 +1,8 @@
 name: Reconcile Ledgers
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run nightly at 03:45 UTC. The 03:00 UTC slot already hosts
@@ -37,6 +40,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -45,14 +50,14 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run ledger reconciliation
         id: reconcile
-        run: npx --yes tsx@4.23.1 jobs/reconcile/reconcile-ledgers.ts
+        run: node_modules/.bin/tsx jobs/reconcile/reconcile-ledgers.ts
 
       - name: Notify on discrepancies
         if: failure()

@@ -484,7 +484,10 @@ export async function POST(
             // filters on `deletedAt: null` (#676 A10, the shape
             // cleanup-abandoned-payments already writes).
             data: { deletedAt: new Date() },
-            fromIn: [...SLOT_RESCHEDULABLE_FROM],
+            // Cancel must also sweep UNVERIFIED slots: auto-complete stamps
+            // past-no-meeting sessions UNVERIFIED, and leaving them live keeps
+            // a non-tombstoned row occupying the calendar on a dead booking.
+            fromIn: [...SLOT_RESCHEDULABLE_FROM, "UNVERIFIED"],
             // A booking whose sessions are all delivered or already terminal
             // is still cancellable; matching no live slot is not a conflict.
             allowZero: true,

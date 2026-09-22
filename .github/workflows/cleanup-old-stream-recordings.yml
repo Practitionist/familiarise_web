@@ -1,5 +1,8 @@
 name: Cleanup Old Stream Recordings
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # 03:00 UTC daily. Staggered after abandoned-top-ups (02:00) and
@@ -46,13 +49,15 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: "npm"
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npx --yes tsx@4.23.1 jobs/cleanup/cleanup-old-stream-recordings.ts
+      - run: npm ci --ignore-scripts
+      - run: npx --no-install prisma generate
+      - run: node_modules/.bin/tsx jobs/cleanup/cleanup-old-stream-recordings.ts
       - name: Notify on failure
         if: failure()
         env:
