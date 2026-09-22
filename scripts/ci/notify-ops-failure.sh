@@ -33,17 +33,25 @@
 # familiarise_web DSN (project 4511593990914048); see 07-required-secrets.md.
 set -euo pipefail
 
-# Fail fast on the known-dead DSN so a misconfigured secret can never look
-# like a delivered page: Relay answers 200 on the first envelope (accepted,
-# then dropped), which would otherwise set delivered=1 and exit 0. A dead
-# sink is a red step for every job, money-critical or not. The live project
-# is 4511593990914048.
-case "${SENTRY_DSN:-}" in
-  */4509348818124800|*/4509348818124800\?*)
-    echo "::error::SENTRY_DSN names dead project 4509348818124800 — rotate to the live familiarise_web DSN (project 4511593990914048)" >&2
+# Positive DSN check, not a blocklist: on 2026-09-20 SENTRY_DSN pointed at
+# project 4509348818124800, which exists in no organisation. Relay answers
+# 200 on the first envelope (accepted, then dropped) and `403 … ProjectId`
+# once warm — so a well-formed but dead DSN looks delivered (delivered=1,
+# exit 0) and every failure goes unpaged. A blocklist of that one id would
+# rot: the next mis-rotation (a different wrong project, a typo) sails
+# through the same trap. This repo has exactly one live project (previews
+# share it per sentry.shared.config.ts #1086), so the check is inverted: a
+# SET SENTRY_DSN must name the live project or the step fails fast, for
+# every job, money-critical or not. Unset keeps the old lenient path below
+# (forks without secrets).
+LIVE_SENTRY_PROJECT="4511593990914048"
+if [ -n "${SENTRY_DSN:-}" ]; then
+  dsn_project_check="$(echo "$SENTRY_DSN" | sed -E 's#.*/([0-9]+)(\?.*)?$#\1#')"
+  if [ "$dsn_project_check" != "$LIVE_SENTRY_PROJECT" ]; then
+    echo "::error::SENTRY_DSN names project ${dsn_project_check:-unparseable} — expected live familiarise_web project ${LIVE_SENTRY_PROJECT}; rotate the secret (see 07-required-secrets.md)" >&2
     exit 1
-    ;;
-esac
+  fi
+fi
 
 JOB_NAME="${1:-unknown job}"
 RUN_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
