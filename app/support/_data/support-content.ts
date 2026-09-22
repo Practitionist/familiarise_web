@@ -466,15 +466,13 @@ export const supportArticles: SupportArticle[] = [
     related: ["payments/refunds-explained", "booking/reschedule"],
     sections: [
       {
-        heading: "Refund tiers (see /refund for the binding policy)",
+        heading: "Refund tiers (your booking's preview is binding)",
         paragraphs: [
-          "Open the appointment and choose Cancel to see a live preview of your exact refund before confirming. Indicative tiers:",
+          "Every booking snapshots its cancellation terms at purchase, so open the appointment and choose Cancel to see a live preview of your exact refund before confirming. As a guide, the platform default ladder is: 24 hours or more before — 100%; 2 to under 24 hours — 50%; under 2 hours — 0%. Organisation and program-specific policies may set different tiers, and the policy attached to your booking governs.",
         ],
         list: [
-          "1-on-1: more than 24h before — 100%; 12–24h — 50%; under 12h — 0%.",
-          "Webinar: more than 48h — 100%; 24–48h — 50%; under 24h — 0%.",
-          "Class: 7-day / 3-day tiers plus first-week pro-rata terms on the policy page.",
           "Subscription: cancel anytime; the current period is not refunded, access continues till it ends.",
+          "Consultant-initiated cancellations always refund in full.",
         ],
       },
       {
@@ -1390,10 +1388,16 @@ function expandQuery(query: string): string[] {
   if (!base) return [];
   const terms = new Set<string>([base]);
   const words = new Set(queryWords(query));
+  // Plural tolerance for synonym keys ("invoices" still fires the "invoice"
+  // synonyms). Strips one trailing "s" only, so "discard" never fires "card".
+  const singular = (w: string) => w.replace(/s$/, "");
   for (const [key, alts] of Object.entries(SYNONYMS)) {
     // Single-word keys match whole query words only ("card" must not fire on
     // "discard"); multi-word keys match as phrases.
-    const hit = key.includes(" ") ? base.includes(key) : words.has(key);
+    const hit = key.includes(" ")
+      ? base.includes(key)
+      : words.has(key) ||
+        [...words].some((w) => w !== key && singular(w) === key);
     if (hit) {
       for (const alt of alts) terms.add(normalize(alt));
     }
