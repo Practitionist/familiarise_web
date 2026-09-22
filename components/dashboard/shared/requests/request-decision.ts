@@ -102,6 +102,18 @@ export async function approveRequestedTimes(
   });
 }
 
+/** A refused decision, with the HTTP status and code the surface routes on (#1705). */
+export class DecisionError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "DecisionError";
+  }
+}
+
 /** Decline: rejects the whole request (and refunds anything paid). Throws on a refusal. */
 export async function declineRequest(
   request: Pick<DecidableRequest, "id" | "type">,
@@ -115,8 +127,15 @@ export async function declineRequest(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status: "REJECTED" }),
   });
-  const data = await response.json().catch(() => ({}));
+  const data = (await response.json().catch(() => ({}))) as {
+    error?: string;
+    code?: string;
+  };
   if (!response.ok) {
-    throw new Error(data.error || "Failed to decline request");
+    throw new DecisionError(
+      data.error || "Failed to decline request",
+      response.status,
+      data.code,
+    );
   }
 }

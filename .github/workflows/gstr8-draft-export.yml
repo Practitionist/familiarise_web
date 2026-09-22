@@ -47,3 +47,10 @@ jobs:
         # S8543/S6505 — run the locally-installed binary directly; no
         # on-demand package resolution at execution time.
         run: node_modules/.bin/tsx jobs/compliance/gstr8-draft-export.ts
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          SLACK_OPS_WEBHOOK_URL: ${{ secrets.SLACK_OPS_WEBHOOK_URL }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: bash scripts/ci/notify-ops-failure.sh "gstr8-draft-export"

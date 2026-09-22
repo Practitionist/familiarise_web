@@ -1,5 +1,8 @@
 name: Transfer Expiring Recordings
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run every 6 hours
@@ -41,6 +44,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -49,13 +54,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Transfer expiring recordings
-        run: npx --yes tsx@4.23.1 jobs/stream/transfer-expiring-recordings.ts
+        run: node_modules/.bin/tsx jobs/stream/transfer-expiring-recordings.ts
 
       - name: Notify on failure
         if: failure()

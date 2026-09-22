@@ -14,6 +14,46 @@ import {
 type SentryInitOptions = NonNullable<Parameters<typeof Sentry.init>[0]>;
 
 /**
+ * Quota guard: an infra outage must not eat the monthly errors budget to
+ * report itself. 2026-09-21: the Upstash 500k request cap produced 2,147
+ * UpstashError + ~900 CronLockUnavailableError events in 24h — 80% of the
+ * 5,000-error quota — all saying the same thing, while real defects queued
+ * behind them. Fail-closed refusals already surface via exit codes + the
+ * Actions failure pager; Sentry needs a trickle per error class (one event
+ * per window), not a firehose. Keyed by class only, deliberately not by
+ * route: during a global outage every route reports the same underlying
+ * fact, and per-route trickles would still scale with the fleet.
+ *
+ * Deliberately process-local, not Redis-backed: Redis IS the outage this
+ * guards — a shared limiter needs the downed dependency to answer, and must
+ * then fail open (restoring the firehose) or fail closed (dropping
+ * legitimate errors). Bound: warm instances × 6/hr/class, versus ~3,000/hr
+ * unthrottled during the 2026-09-21 outage. The complementary server-side
+ * inbound filter (dashboard-side, drops before quota) is the follow-up.
+ */
+export const INFRA_THROTTLE_MS = 10 * 60 * 1000;
+export const INFRA_TRANSIENT_PATTERNS = [
+  /max requests limit exceeded/i, // Upstash quota wall
+  /CronLockUnavailableError/, // fail-closed lock refusal (pager already fires)
+];
+
+const infraLastSent = new Map<string, number>();
+
+export function infraThrottleKey(event: {
+  message?: string;
+  exception?: { values?: Array<{ type?: string; value?: string }> };
+}): string | null {
+  const text = [
+    event.message ?? "",
+    ...(event.exception?.values ?? []).map(
+      (v) => `${v.type ?? ""}: ${v.value ?? ""}`,
+    ),
+  ].join(" | ");
+  const hit = INFRA_TRANSIENT_PATTERNS.find((re) => re.test(text));
+  return hit ? hit.source : null;
+}
+
+/**
  * `overrides` is layered on last and exists for ONE caller: the cron-job runner
  * in lib/observability/job-sentry.ts, which runs in a bare Node process where
  * NODE_ENV is unset and so the gating below reads differently than it does for
@@ -92,6 +132,17 @@ export function initSentry(overrides?: Partial<SentryInitOptions>): void {
       if (isExpectedError(hint?.originalException)) {
         event.level = "warning";
         event.tags = { ...event.tags, expected: "true" };
+      }
+      // Quota guard (see INFRA_TRANSIENT_PATTERNS): drop the repeats, keep
+      // one per class per window. Returning null drops before transport, so
+      // throttled events never consume quota.
+      const throttleKey = infraThrottleKey(event);
+      if (throttleKey !== null) {
+        const now = Date.now();
+        if (now - (infraLastSent.get(throttleKey) ?? 0) < INFRA_THROTTLE_MS) {
+          return null;
+        }
+        infraLastSent.set(throttleKey, now);
       }
       return event;
     },

@@ -367,35 +367,35 @@ export async function readInvoiceExposurePaise(
   db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
   organizationId: string,
 ): Promise<number> {
-  const [accrualAgg, outstandingAgg] = await Promise.all([
-    db.paymentLeg.aggregate({
-      where: {
-        source: {
-          in: [
-            "INVOICE_ACCRUAL",
-            "OVERAGE_INVOICE_ACCRUAL",
-            // Refunds append negative *_REVERSAL siblings (#786); without them
-            // a refunded seat kept counting against the limit.
-            "INVOICE_ACCRUAL_REVERSAL",
-            "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
-          ],
-        },
-        payment: {
-          organizationId,
-          paymentStatus: "SUCCEEDED",
-          billableToOrgInvoiceId: null,
-        },
+  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
+  // interactive-tx connection cannot serve concurrent queries (#1435).
+  const accrualAgg = await db.paymentLeg.aggregate({
+    where: {
+      source: {
+        in: [
+          "INVOICE_ACCRUAL",
+          "OVERAGE_INVOICE_ACCRUAL",
+          // Refunds append negative *_REVERSAL siblings (#786); without them
+          // a refunded seat kept counting against the limit.
+          "INVOICE_ACCRUAL_REVERSAL",
+          "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+        ],
       },
-      _sum: { amountPaise: true },
-    }),
-    db.organizationInvoice.aggregate({
-      where: {
+      payment: {
         organizationId,
-        status: { in: ["ISSUED", "OVERDUE"] },
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: null,
       },
-      _sum: { totalPaise: true },
-    }),
-  ]);
+    },
+    _sum: { amountPaise: true },
+  });
+  const outstandingAgg = await db.organizationInvoice.aggregate({
+    where: {
+      organizationId,
+      status: { in: ["ISSUED", "OVERDUE"] },
+    },
+    _sum: { totalPaise: true },
+  });
   return (
     sumPaise(accrualAgg._sum.amountPaise) +
     sumPaise(outstandingAgg._sum.totalPaise)
