@@ -249,3 +249,130 @@ export const getMonthYearString = (date: Date) => {
     year: "numeric",
   });
 };
+
+/** The query every settings section and the Requests page's paused banner share (#1703 D4). */
+export const consultantSettingsQueryKey = (consultantId: string) =>
+  ["consultant-settings", consultantId] as const;
+
+/**
+ * The Settings hub's sections (#1785 L-2), in the locked order. One entry is
+ * one URL under `/settings/<slug>`; `group` is the titled block the left nav
+ * shows it under. Settings stays ONE sidebar entry with these inside it —
+ * Material's settings pattern says to group with specific titles and never to
+ * split into synonyms such as "Preferences".
+ */
+export interface SettingsSection {
+  group: string;
+  key: SettingsSectionKey;
+  label: string;
+  slug: string;
+  description: string;
+}
+
+export type SettingsSectionKey =
+  | "profile"
+  | "verification"
+  | "booking"
+  | "get-paid"
+  | "notifications"
+  | "security";
+
+export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
+  {
+    group: "Profile & verification",
+    key: "profile",
+    label: "Profile",
+    slug: "profile",
+    description: "Your expertise, background and the links on your public page",
+  },
+  {
+    group: "Profile & verification",
+    key: "verification",
+    label: "Verification",
+    slug: "verification",
+    description: "The documents that put the verified mark on your profile",
+  },
+  {
+    group: "Booking requests",
+    key: "booking",
+    label: "Booking requests",
+    slug: "booking",
+    description:
+      "Whether people book you instantly or ask first, and how many can wait",
+  },
+  {
+    group: "Get paid",
+    key: "get-paid",
+    label: "Get paid",
+    slug: "get-paid",
+    description:
+      "Where your earnings go, and the tax details the law asks us to hold",
+  },
+  {
+    group: "Notifications",
+    key: "notifications",
+    label: "Notifications",
+    slug: "notifications",
+    description: "Which updates reach you, and on which channel",
+  },
+  {
+    group: "Security",
+    key: "security",
+    label: "Security",
+    slug: "security",
+    description: "Your password, sessions and connected accounts",
+  },
+];
+
+/** The sections in nav order, grouped under their titles. */
+export function settingsSectionGroups(): {
+  title: string;
+  sections: SettingsSection[];
+}[] {
+  const groups: { title: string; sections: SettingsSection[] }[] = [];
+  for (const section of SETTINGS_SECTIONS) {
+    const last = groups[groups.length - 1];
+    if (last?.title === section.group) {
+      last.sections.push(section);
+    } else {
+      groups.push({ title: section.group, sections: [section] });
+    }
+  }
+  return groups;
+}
+
+/** `/dashboard/consultant/<id>/settings/<slug>` for a section. */
+export function settingsSectionHref(
+  basePath: string,
+  section: Pick<SettingsSection, "slug">,
+): string {
+  return `${basePath}/settings/${section.slug}`;
+}
+
+/** The section a pathname is on, if it is on one. */
+export function settingsSectionForPath(
+  basePath: string,
+  pathname: string,
+): SettingsSection | null {
+  return (
+    SETTINGS_SECTIONS.find((s) => {
+      const href = settingsSectionHref(basePath, s);
+      return pathname === href || pathname.startsWith(`${href}/`);
+    }) ?? null
+  );
+}
+
+/**
+ * Where a legacy `settings?tab=<key>` deep link lands now that the tabs are
+ * gone (#1785). Availability left Settings for the sidebar; every other key
+ * is a hub section. Unknown keys and no key land on the first section.
+ */
+export function settingsTabRedirect(
+  basePath: string,
+  tab: string | null | undefined,
+): string {
+  if (tab === "availability") return `${basePath}/availability`;
+  const section =
+    SETTINGS_SECTIONS.find((s) => s.key === tab) ?? SETTINGS_SECTIONS[0];
+  return settingsSectionHref(basePath, section);
+}

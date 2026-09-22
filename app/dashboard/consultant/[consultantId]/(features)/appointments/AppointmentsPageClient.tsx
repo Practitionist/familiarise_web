@@ -14,8 +14,8 @@ import { AppointmentsPageSkeleton } from "@/components/appointments/skeletons";
 import { mapConsultantAppointments } from "@/lib/appointments/map-consultant";
 import { createConsultantQueries } from "@/lib/dashboard-queries";
 import { CONSULTANT_APPOINTMENTS_WINDOW_MONTHS } from "@/lib/appointments/window";
+import Link from "next/link";
 import { useConsultantAppointmentsAdapter } from "./ConsultantAppointmentsAdapter";
-import { TrialsTab } from "../trials/TrialsTab";
 
 /** Old HomeTab deep-links carry groupRecurringAppointments keys — map the
  *  non-recurring "single-<appointmentId>" form onto the VM row id. */
@@ -265,20 +265,27 @@ export default function AppointmentsPageClient({
                 )}
               </div>
             }
-            // ADR 19 folded trials onto Appointments on the org side because a
-            // trial IS an appointment. This is the personal half of that move —
-            // the standalone /trials nav entry is gone.
+            // #1775 — trial requests are a type tab of the Requests inbox now;
+            // the VALUE stays "trials" so ?tab=trials deep-links still land.
             extraTabs={[
               {
                 value: "trials",
-                // "Trial requests", not "Trials": the type chip one row below
-                // is already labelled "Trials" and filters the current bucket
-                // to TRIAL appointments. This tab is a different thing — the
-                // Trial queue, with its own status filter and a
-                // schedule action. One word for two results, a row apart.
-                // The VALUE stays "trials" so ?tab=trials deep-links survive.
                 label: "Trial requests",
-                content: <TrialsTab />,
+                content: (
+                  <EmptyState
+                    title="Trial requests moved to Requests"
+                    description="Pending and paid-but-unconfirmed trials sit beside your other requests; scheduled trials stay in this list."
+                    action={
+                      <Button asChild>
+                        <Link
+                          href={`/dashboard/consultant/${consultantId}/requests?type=trial`}
+                        >
+                          Open trial requests
+                        </Link>
+                      </Button>
+                    }
+                  />
+                ),
               },
             ]}
           />

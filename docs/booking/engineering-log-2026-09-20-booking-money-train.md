@@ -16,3 +16,24 @@ An `APPROVED_PENDING_PAYMENT` row had no consultant action: the pay order either
 - **B-7, the seed.** The first `QA_ACCOUNTS_PER_ROLE` users of each role, the `SeedPass123!` logins, get `timezone: "Asia/Kolkata"`; the random population keeps faker's spread.
 
 Docs touched: `docs/booking/06-booking-lifecycle.md` (the Remind and Withdraw paragraph plus the self-approval refusal) and `docs/booking/18-state-machines.md` (the consultant-initiated `APPROVED_PENDING_PAYMENT → EXPIRED` edge and the shared lapse body).
+# Engineering log — 2026-09-20 — the booking-money train
+
+**Date:** 2026-09-20 · **Issues:** #1775, #1704, #1705, #1766, #1639 · **Scope:** the consultant Requests inbox on the booking-presentation layer, the remind and withdraw lifecycle, and the money words every booking surface shares. Each PR of the train appends its own dated section below.
+
+## PR-A — the Requests inbox on the presentation layer (2026-09-20)
+
+### What changed
+
+The consultant Requests tab (`RequestSchedulingTab.tsx`, 1,793 lines) kept its own status-to-label switch, fetched only `PENDING` rows so an approved-but-unpaid request never appeared, and showed one flat table with no type filter, no sort and no deadline grouping. It is replaced by a Requests inbox built on one derived read, `readRequestsInbox` (`lib/data/requests-inbox.ts`), whose rows carry the `deriveBookingPresentation` input built through the `lifecycleOf` and `planOf` mappers, a derived deadline, a deadline bucket, the plan price and, for a subscription, its entitlement. The read's cohort is the `needs-you.ts` predicates Home already counts with (pending, awaiting payment, next cycle) plus trials in `PENDING` and `AWAITING_PAYMENT`; chips narrow it server-side, and sort and paging happen in the read over a bounded scan because deadline, money and bucket are derived rather than stored.
+
+The page at `/dashboard/consultant/[consultantId]/requests` became a server component: it runs `requirePersonalProfileAccess`, reads the URL's `type`, `chip`, `sort` and `page`, prefetches the read under the same key the client queries, and hydrates `RequestsInbox`. The organisation tree mounts the same component with `orgScope`. `/api/bookings/inbox` is the read's HTTP twin, answering with `Cache-Control: no-store` and validating the three enums to a 400. The inbox's pure half — the row shape, the URL enums, the bucket rule and the sort rules — lives in `lib/dashboard/requests-inbox-state.ts`, Prisma-free, in the same posture as `earnings-state.ts`.
+
+The inbox anatomy is three type tabs with counts, a chip row, a sort control and deadline buckets, with one primary action per row and secondary actions in a menu (a bottom sheet under 640 px). Batch approval exists only for rows whose approval needs no dialog and runs sequentially through the existing allocate PATCH. Remind and Withdraw approval call the routes PR-B ships, by contract. Trials fold in as a type tab; the schedule dialog was lifted out of the old Trials tab into `TrialAcceptDialog`, the Trials tab was deleted, and the Appointments page's "Trial requests" tab now points at the inbox. Home's "Pending requests" card became `RequestsInboxPreview`, the first five rows of the same read.
+
+### Findings that contradicted the spec
+
+There was no `trials/page.tsx` to turn into a redirect: `TrialsTab` was mounted as an extra tab inside `AppointmentsPageClient.tsx`, so that mount is what now points at the inbox. `toPresentationInput` and `presentationNames` are typed on the detail payload, so the list read uses the `lifecycleOf` and `planOf` mappers that `consultee-payments.ts` already uses and mirrors the names rule in a six-line helper. The `id` tiebreaker on the two list routes already shipped on `dev` through `requestListOrderBy`, so A-7 reduced to bounding occurrence includes to live rows. `deriveBookingPresentation` names a subscription whose live cycle has finished "Completed", which is the wrong word for a next-cycle row, so that one badge comes from the inbox's label map until the presentation layer grows an arm for it. The spec named three deadline buckets; a fourth, "Later", holds the answerable rows with more than a week left, because a subscription hold runs thirty days and calling that "This week" would be untrue.
+
+### Verification
+
+The read pin (`__tests__/dashboards/requests-inbox.test.ts`) runs the fixture of four rows through the read, the route and Home's dashboard read over one where-aware prisma mock; the render pin (`requests-inbox.test.tsx`) renders the rows into their buckets and asserts no status enum reaches the DOM. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and `jest __tests__/dashboards __tests__/booking-algorithm` were green before the push.

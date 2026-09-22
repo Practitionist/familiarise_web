@@ -157,7 +157,7 @@ describe("availability grid conditional GET", () => {
     expect(getSession).toHaveBeenLastCalledWith();
   });
 
-  it("refuses a window wider than 31 days with WINDOW_TOO_WIDE (supersedes #1577)", async () => {
+  it("refuses a window wider than 32 days with WINDOW_TOO_WIDE (supersedes #1577; 32 since #1785)", async () => {
     const res = await GET(
       new NextRequest(
         `${URL_BASE}?startDateInUtc=2026-09-01T00:00:00.000Z&endDateInUtc=2026-10-31T00:00:00.000Z&timezone=UTC`,
@@ -167,7 +167,7 @@ describe("availability grid conditional GET", () => {
     expect(res.status).toBe(400);
     await expect(res.json()).resolves.toMatchObject({
       code: "WINDOW_TOO_WIDE",
-      maxWindowDays: 31,
+      maxWindowDays: 32,
     });
     expect(mockedMarker).not.toHaveBeenCalled();
   });

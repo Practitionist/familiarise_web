@@ -80,7 +80,7 @@ export interface AllocationResponse {
   requiredSessions?: number;
   unplacedSessions?: number;
   placeableSessions?: number;
-  /** #1775 B-9 — the approval landed in APPROVED_PENDING_PAYMENT; the pay order was minted. */
+  /** #1775 — the approval minted a pay order; the client has 24 h to pay. */
   awaitingPayment?: boolean;
 }
 
@@ -269,7 +269,7 @@ export class AllocationService {
         placedSessions: data.placedSessions,
         requiredSessions: data.requiredSessions,
         unplacedSessions: data.unplacedSessions,
-        awaitingPayment: data.awaitingPayment,
+        awaitingPayment: data.awaitingPayment === true,
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);

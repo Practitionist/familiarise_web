@@ -1,51 +1,84 @@
-"use client";
+import {
+  HydrationBoundary,
+  QueryClient,
+  dehydrate,
+} from "@tanstack/react-query";
+import { PauseCircle } from "lucide-react";
+import Link from "next/link";
 
 import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
 import { DashboardHeader } from "@/components/dashboard/PageScaffold";
-import { RequestSchedulingTab } from "@/components/dashboard/shared/requests/RequestSchedulingTab";
+import { RequestsInbox } from "@/components/dashboard/shared/requests/RequestsInbox";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { useQuery } from "@tanstack/react-query";
-import { PauseCircle } from "lucide-react";
-import Link from "next/link";
-import { useParams } from "next/navigation";
-import { fetchConsultantData } from "../../utils/fetchHelpers";
+import { requirePersonalProfileAccess } from "@/lib/auth/personal-dashboard-access";
+import {
+  inboxQueryKey,
+  readInboxParams,
+} from "@/lib/dashboard/requests-inbox-state";
+import { readRequestsInbox } from "@/lib/data/requests-inbox";
+import prisma from "@/lib/prisma";
+import { getViewerZone } from "@/lib/time/viewer-zone-server";
+
+type PageProps = {
+  params: Promise<{ consultantId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+};
 
 /**
- * Requests tab page. RequestSchedulingTab owns its data: it resolves the
- * consultantId from the route via useParams and fetches the paginated
- * /api/bookings/consultations + /api/bookings/subscriptions endpoints with its
- * own loading/error states.
+ * /dashboard/consultant/[consultantId]/requests — the Requests inbox (#1775).
  *
- * Read-path scale fix: this page previously also ran the
- * /api/dashboard/consultant/[id]/requests query — the single heaviest
- * dashboard bundle (six unbounded datasets, 4-level includes) — purely to
- * gate rendering on isLoading/error; the response data was never read
- * anywhere. The endpoint is deleted and the tab renders immediately,
- * removing the double loading phase.
+ * A server component: the ownership guard runs before the read, the read
+ * seeds react-query under the SAME key `RequestsInbox` queries, and the URL
+ * (`?type=&chip=&sort=&page=`) is the state both sides render from — the
+ * earnings/detail page idiom.
  */
-export default function RequestsPage() {
-  const params = useParams<{ consultantId: string }>();
-  const consultantId = params?.consultantId ?? "";
-  // #1703 D4 — same key and fetcher as Settings, so a save there is seen here.
-  const { data: consultant } = useQuery({
-    queryKey: ["consultant-settings", consultantId],
-    queryFn: () => fetchConsultantData(consultantId),
-    enabled: consultantId !== "",
-    staleTime: 5 * 60 * 1000,
+export default async function RequestsPage({
+  params,
+  searchParams,
+}: Readonly<PageProps>) {
+  const { consultantId } = await params;
+  await requirePersonalProfileAccess("consultant", consultantId);
+  const sp = await searchParams;
+  const inbox = readInboxParams((key) => {
+    const v = sp[key];
+    return Array.isArray(v) ? (v[0] ?? null) : (v ?? null);
   });
-  const paused = consultant?.acceptingRequests === false;
-
-  const handleUpdate = () => {
-    // Handled internally by RequestSchedulingTab
+  const queryArgs = {
+    consultantProfileId: consultantId,
+    scope: "personal",
+    ...inbox,
   };
+
+  const queryClient = new QueryClient();
+  const [viewerZone, profile] = await Promise.all([
+    getViewerZone(),
+    prisma.consultantProfile.findUnique({
+      where: { id: consultantId },
+      select: { acceptingRequests: true },
+    }),
+  ]);
+  // Swallow, don't rethrow: a read failure degrades to a client-side fetch.
+  await queryClient
+    .prefetchQuery({
+      queryKey: inboxQueryKey(queryArgs),
+      queryFn: () =>
+        readRequestsInbox({
+          consultantProfileId: consultantId,
+          type: inbox.type,
+          chip: inbox.chip ?? undefined,
+          sort: inbox.sort,
+          page: inbox.page,
+        }),
+    })
+    .catch(() => undefined);
 
   return (
     <DashboardErrorBoundary>
       <DashboardHeader
         title="Requests"
-        subtitle="Pending booking requests awaiting slot allocation"
+        subtitle="Everything waiting on an answer, a payment or a next cycle"
       />
-      {paused && (
+      {profile?.acceptingRequests === false && (
         <Alert className="mt-6">
           <PauseCircle className="h-4 w-4" />
           <AlertDescription>
@@ -61,7 +94,12 @@ export default function RequestsPage() {
         </Alert>
       )}
       <div className="pt-6">
-        <RequestSchedulingTab type="all" onUpdate={handleUpdate} />
+        <HydrationBoundary state={dehydrate(queryClient)}>
+          <RequestsInbox
+            consultantProfileId={consultantId}
+            viewerZone={viewerZone.zone}
+          />
+        </HydrationBoundary>
       </div>
     </DashboardErrorBoundary>
   );

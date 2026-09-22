@@ -239,6 +239,10 @@ async function expirePendingConsultations(): Promise<{
           await transitionConsultationRequest(tx, {
             where: {
               id: stale.id,
+              // Repeat the cohort read's age predicate inside the CAS WHERE so
+              // a reschedule-refreshed requestedAt between read and write
+              // matches zero rows instead of expiring a live request.
+              requestedAt: { lt: expirationDate },
               appointment: {
                 rescheduleRequests: {
                   none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
@@ -951,6 +955,9 @@ async function expirePaymentPendingRequests(): Promise<{
             id: consultation.id,
             reason: "PAYMENT_LAPSED",
             actorUserId: null,
+            // Repeat the cohort read's age predicate inside the CAS WHERE: an
+            // updatedAt touch between read and write must match zero rows.
+            olderThan: expirationDate,
           }),
         SLOT_TRANSITION_TX_OPTIONS,
       );
@@ -1001,6 +1008,9 @@ async function expirePaymentPendingRequests(): Promise<{
             id: subscription.id,
             reason: "PAYMENT_LAPSED",
             actorUserId: null,
+            // Repeat the cohort read's age predicate inside the CAS WHERE: an
+            // updatedAt touch between read and write must match zero rows.
+            olderThan: expirationDate,
           }),
         SLOT_TRANSITION_TX_OPTIONS,
       );

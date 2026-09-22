@@ -66,7 +66,7 @@ function InactiveScheduleNote({
 /**
  * Availability tab of the consultant settings form. Presentational only —
  * all slot state, validation, and the WEEKLY↔CUSTOM switch lock live in
- * SettingsTab so the combined settings PUT payload stays exactly as it was
+ * useConsultantSettingsForm so the combined settings PUT payload stays as it was
  * before the monolith was decomposed.
  */
 export function AvailabilitySection({
@@ -133,8 +133,8 @@ export function AvailabilitySection({
         <p className="text-sm text-blue-700">
           <strong>Important:</strong> Consultees will only see slots from your
           selected schedule type. Choose &quot;Weekly Recurring&quot; for
-          regular appointments or &quot;Custom Schedule&quot; for specific
-          dates only.
+          regular appointments or &quot;Custom Schedule&quot; for specific dates
+          only.
         </p>
       </div>
 
@@ -214,73 +214,75 @@ export function AvailabilitySection({
               summary={`${Object.keys(customSlots).length} date(s) configured`}
             />
           ) : (
-          <div className="space-y-4">
-            <div className="calendar-container bg-card border p-4 rounded-lg">
-              <div className="flex justify-between items-center mb-4">
-                <button
-                  type="button"
-                  className="text-zinc-900 hover:bg-zinc-100 p-2 rounded-full"
-                  onClick={onPrevMonth}
-                  aria-label="Previous month"
-                >
-                  &larr;
-                </button>
-                <span className="font-medium">
-                  {getMonthYearString(currentDate)}
-                </span>
-                <button
-                  type="button"
-                  className="text-zinc-900 hover:bg-zinc-100 p-2 rounded-full"
-                  onClick={onNextMonth}
-                  aria-label="Next month"
-                >
-                  &rarr;
-                </button>
+            <div className="space-y-4">
+              <div className="calendar-container bg-card border p-4 rounded-lg">
+                <div className="flex justify-between items-center mb-4">
+                  <button
+                    type="button"
+                    className="text-zinc-900 hover:bg-zinc-100 p-2 rounded-full"
+                    onClick={onPrevMonth}
+                    aria-label="Previous month"
+                  >
+                    &larr;
+                  </button>
+                  <span className="font-medium">
+                    {getMonthYearString(currentDate)}
+                  </span>
+                  <button
+                    type="button"
+                    className="text-zinc-900 hover:bg-zinc-100 p-2 rounded-full"
+                    onClick={onNextMonth}
+                    aria-label="Next month"
+                  >
+                    &rarr;
+                  </button>
+                </div>
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
+                    <div key={day} className="text-sm font-medium">
+                      {day}
+                    </div>
+                  ))}
+                  {renderCalendarDays()}
+                </div>
               </div>
-              <div className="grid grid-cols-7 gap-1 text-center">
-                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((day) => (
-                  <div key={day} className="text-sm font-medium">
-                    {day}
-                  </div>
-                ))}
-                {renderCalendarDays()}
-              </div>
-            </div>
 
-            {/* A season of custom dates can run 40+ entries — contain them in
+              {/* A season of custom dates can run 40+ entries — contain them in
                 their own scroll region instead of stretching the page. */}
-            {Object.keys(customSlots).length > 0 && (
-              <p className="text-xs text-zinc-500">
-                {Object.keys(customSlots).length} date(s) configured
-              </p>
-            )}
-            <div className="max-h-[560px] overflow-y-auto pr-2 space-y-4">
-              {Object.keys(customSlots)
-                .sort((a, b) => a.localeCompare(b))
-                .map((dateString) => {
-                  // Parse YYYY-MM-DD as a LOCAL date — new Date("YYYY-MM-DD")
-                  // is UTC midnight, which renders as the PREVIOUS day for
-                  // users in timezones behind UTC.
-                  const [year, month, day] = dateString.split("-").map(Number);
-                  const date = new Date(year, month - 1, day);
-                  return (
-                    <AvailabilityGrid
-                      key={dateString}
-                      dayKey={dateString}
-                      label={date.toLocaleDateString("en-US", {
-                        weekday: "long",
-                        month: "long",
-                        day: "numeric",
-                      })}
-                      slots={customSlots[dateString]}
-                      onAddSlot={onAddSlot}
-                      onUpdateSlot={onUpdateSlot}
-                      onDeleteSlot={onDeleteSlot}
-                    />
-                  );
-                })}
+              {Object.keys(customSlots).length > 0 && (
+                <p className="text-xs text-zinc-500">
+                  {Object.keys(customSlots).length} date(s) configured
+                </p>
+              )}
+              <div className="max-h-[560px] overflow-y-auto pr-2 space-y-4">
+                {Object.keys(customSlots)
+                  .sort((a, b) => a.localeCompare(b))
+                  .map((dateString) => {
+                    // Parse YYYY-MM-DD as a LOCAL date — new Date("YYYY-MM-DD")
+                    // is UTC midnight, which renders as the PREVIOUS day for
+                    // users in timezones behind UTC.
+                    const [year, month, day] = dateString
+                      .split("-")
+                      .map(Number);
+                    const date = new Date(year, month - 1, day);
+                    return (
+                      <AvailabilityGrid
+                        key={dateString}
+                        dayKey={dateString}
+                        label={date.toLocaleDateString("en-US", {
+                          weekday: "long",
+                          month: "long",
+                          day: "numeric",
+                        })}
+                        slots={customSlots[dateString]}
+                        onAddSlot={onAddSlot}
+                        onUpdateSlot={onUpdateSlot}
+                        onDeleteSlot={onDeleteSlot}
+                      />
+                    );
+                  })}
+              </div>
             </div>
-          </div>
           )}
         </div>
       </RadioGroup>

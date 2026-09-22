@@ -37,6 +37,8 @@ export interface LapseApprovedRequestArgs {
   id: string;
   reason: LapseReason;
   actorUserId: string | null;
+  /** A sweep's cohort age, repeated inside the CAS WHERE (#1775). */
+  olderThan?: Date;
 }
 
 export type LapseOutcome =
@@ -67,16 +69,20 @@ export async function lapseApprovedRequest(
     fromIn: [AppointmentStatus.APPROVED_PENDING_PAYMENT],
     data: { pendingPaymentUrl: null },
   };
+  // #1775 — a sweep repeats its cohort read's age predicate inside the CAS
+  // WHERE: an updatedAt touch (reminder, nudge, reschedule) between read and
+  // write must match zero rows rather than expire a live pay-link.
+  const age = args.olderThan ? { updatedAt: { lt: args.olderThan } } : {};
   try {
     if (args.kind === "consultation") {
       await transitionConsultationRequest(tx, {
         ...meta,
-        where: { id: args.id, ...UNPAID_CONSULTATION },
+        where: { id: args.id, ...age, ...UNPAID_CONSULTATION },
       });
     } else {
       await transitionSubscriptionRequest(tx, {
         ...meta,
-        where: { id: args.id, ...UNPAID_SUBSCRIPTION },
+        where: { id: args.id, ...age, ...UNPAID_SUBSCRIPTION },
       });
     }
   } catch (error) {

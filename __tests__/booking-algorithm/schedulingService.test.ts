@@ -903,10 +903,15 @@ describe("Requested slot allocation", () => {
             id: "s1",
             startsAt: new Date("2025-01-06T10:00:00Z"),
             endsAt: new Date("2025-01-06T11:00:00Z"),
+            // In-txn fingerprint select shape: eligibility gate needs these.
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
           },
         ],
       },
     ]);
+    mockTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 1 });
 
     const result = await SchedulingService.allocate({
       eventType: "consultation",
@@ -935,9 +940,23 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        occurrences: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
       },
     ]);
+    mockTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 2 });
     mockValidateFn.mockResolvedValue({
       isValid: false,
       errors: ["Slots are in the past"],
@@ -968,7 +987,73 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        occurrences: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
+      },
+    ]);
+    mockTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 2 });
+
+    const result = await SchedulingService.allocate({
+      eventType: "consultation",
+      eventId: "consult-1",
+      mode: "requested",
+    });
+
+    expect(result.success).toBe(true);
+    // Guarded clear: never resurrect CANCELLED/RESCHEDULED/tombstoned holds as
+    // live non-tentative rows.
+    expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
+      where: {
+        appointmentId: { in: ["apt-1"] },
+        deletedAt: null,
+        completionStatus: { in: ["SCHEDULED", "UNVERIFIED"] },
+      },
+      data: { isTentative: false },
+    });
+  });
+
+  it("refuses approval when a concurrent tombstone lands between validation and flip", async () => {
+    mockTx.consultation.findUnique.mockResolvedValue(
+      makeConsultationEvent({
+        appointment: {
+          occurrences: [
+            { startsAt: new Date("2025-01-06T10:00:00Z") },
+            { startsAt: new Date("2025-01-06T10:30:00Z") },
+          ],
+        },
+      }),
+    );
+    // s2 was tombstoned after validation: ids still match, but it is no
+    // longer flippable — approval must fail, not half-clear the hold.
+    mockTx.appointment.findMany.mockResolvedValue([
+      {
+        id: "apt-1",
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: new Date("2025-01-06T10:31:00Z"),
+            completionStatus: "CANCELLED",
+          },
+        ],
       },
     ]);
 
@@ -978,11 +1063,11 @@ describe("Requested slot allocation", () => {
       mode: "requested",
     });
 
-    expect(result.success).toBe(true);
-    expect(mockTx.appointmentOccurrence.updateMany).toHaveBeenCalledWith({
-      where: { appointmentId: { in: ["apt-1"] } },
-      data: { isTentative: false },
-    });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Reschedule state changed");
+    expect(
+      mockTx.appointmentOccurrence.updateMany,
+    ).not.toHaveBeenCalled();
   });
 
   it("should update event status on success", async () => {
@@ -999,9 +1084,23 @@ describe("Requested slot allocation", () => {
     mockTx.appointment.findMany.mockResolvedValue([
       {
         id: "apt-1",
-        occurrences: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
       },
     ]);
+    mockTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 2 });
 
     await SchedulingService.allocate({
       eventType: "consultation",
@@ -1023,7 +1122,20 @@ describe("Requested slot allocation", () => {
     const existingApts = [
       {
         id: "apt-1",
-        occurrences: [{ id: "s1" }, { id: "s2" }],
+        occurrences: [
+          {
+            id: "s1",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+          {
+            id: "s2",
+            isTentative: true,
+            deletedAt: null,
+            completionStatus: "SCHEDULED",
+          },
+        ],
       },
     ];
     mockTx.consultation.findUnique.mockResolvedValue(
@@ -1037,6 +1149,7 @@ describe("Requested slot allocation", () => {
       }),
     );
     mockTx.appointment.findMany.mockResolvedValue(existingApts);
+    mockTx.appointmentOccurrence.updateMany.mockResolvedValue({ count: 2 });
 
     const result = await SchedulingService.allocate({
       eventType: "consultation",

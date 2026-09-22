@@ -63,7 +63,7 @@ import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
-import { RequestSchedulingTabMini } from "@/components/dashboard/shared/requests/RequestSchedulingTabMini";
+import { RequestsInboxPreview } from "@/components/dashboard/shared/requests/RequestsInboxPreview";
 import { PerformanceSnapshot } from "./PerformanceSnapshot";
 import { FinancialSummary } from "./FinancialSummary";
 import type {
@@ -636,7 +636,7 @@ export function HomeTab({
                     </p>
                   )}
                 <div className="max-h-[300px] overflow-y-auto -mx-5 px-5">
-                  <RequestSchedulingTabMini />
+                  <RequestsInboxPreview consultantProfileId={consultantId} />
                 </div>
               </DataCard>
 

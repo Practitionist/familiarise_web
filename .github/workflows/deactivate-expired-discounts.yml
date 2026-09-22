@@ -1,5 +1,8 @@
 name: Deactivate Expired Discounts
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Daily 00:15 UTC. #709 — off the midnight pile-up.
@@ -31,6 +34,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -39,13 +44,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Deactivate expired discounts
-        run: npx --yes tsx@4.23.1 jobs/cleanup/deactivate-expired-discounts.ts
+        run: node_modules/.bin/tsx jobs/cleanup/deactivate-expired-discounts.ts
 
       - name: Notify on failure
         if: failure()

@@ -1,6 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { endOfMonth, startOfMonth } from "date-fns";
+import { formatInTimeZone } from "date-fns-tz";
 import type { MutableRefObject } from "react";
 import type { TIntervalTiming } from "@/types/slots";
 
@@ -107,6 +109,51 @@ export function useAvailabilityWindow({
     // the allocation compute, and a cold-start 500 followed by a warm retry
     // is the normal shape on this host.
     staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+/** `yyyy-MM` of a month's first day in the viewer's zone — the month query's key part. */
+export function monthKeyOf(monthStart: Date, timezone: string): string {
+  return formatInTimeZone(monthStart, timezone, "yyyy-MM");
+}
+
+/**
+ * One read for the whole visible month (#1785 L-4), so the calendar can ring
+ * the days that really have a bookable time rather than the days that merely
+ * have hours published — the Cal.com trap (calcom/cal.diy#2329) was a day
+ * marked available when every slot on it was taken. The route's window cap
+ * is 32 days, which fits any month in one call. `staleTime` 60 s: the month
+ * marks may lag the day list by half a minute; the day list stays the truth
+ * the checkout re-validates anyway.
+ */
+export function useAvailabilityMonth({
+  consultantId,
+  monthStart,
+  timezone,
+  enabled = true,
+}: {
+  consultantId: string | undefined;
+  monthStart: Date;
+  timezone: string | null;
+  enabled?: boolean;
+}) {
+  const ready = enabled && !!consultantId && !!timezone;
+  const monthKey = timezone ? monthKeyOf(monthStart, timezone) : "";
+  return useQuery({
+    queryKey: ready
+      ? ["availability-month", consultantId, monthKey, timezone]
+      : ["availability-month", "disabled"],
+    queryFn: () =>
+      fetchWindow(
+        consultantId as string,
+        startOfMonth(monthStart),
+        endOfMonth(monthStart),
+        timezone as string,
+        false,
+      ),
+    enabled: ready,
+    staleTime: 60_000,
     retry: 1,
   });
 }
