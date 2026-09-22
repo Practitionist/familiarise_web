@@ -87,7 +87,19 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
  * entry means every tick. The check is on the wall-clock minute, so a late
  * tick (Netlify fires within the minute) still counts as its slot.
  */
+// #1792 — Upstash REST hit its 500k request cap (2026-09-21: every fail-closed
+// money cron red with CronLockUnavailableError). Per-invocation Redis cost
+// (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
+// batch size — is the burn lever. Targets with an Actions twin at equal or
+// better cadence ride the 15-minute slots; the ticker-only Novu relay rides
+// every 10. Every-tick keeps only the two latency-sensitive money confirms
+// with no equal backstop (payment-status q30m Actions, orphaned-confirmations
+// q30m Actions but chat-access latency is customer-visible).
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
+  "sweep-stuck-webhook-events": 15,
+  "sweep-orphaned-topup-captures": 15,
+  "dispatch-outbound-webhooks": 15,
+  "drain-notification-outbox": 10,
   "retry-failed-emails": 15,
   // #1686 — six sweeps whose Actions twin already tolerates 15 min; a 5 min
   // tick on twelve targets was a cold burst billed as duration (ticket #1112198).

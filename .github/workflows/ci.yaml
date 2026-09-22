@@ -19,6 +19,10 @@
 
 name: CI
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     # `feat/**` is here because a stacked train is the normal shape for large

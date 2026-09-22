@@ -1,5 +1,9 @@
 name: Race Condition Tests
 
+concurrency:
+  group: race-condition-tests
+  cancel-in-progress: false
+
 on:
   push:
     branches: [dev] # Only run when merged to dev

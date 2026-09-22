@@ -159,8 +159,8 @@ async function sendRemindersForWindow(window: {
     `Found ${upcomingOccurrences.length} slots in ${window.label} reminder window`,
   );
 
-  // Deduplicate by appointmentId (multiple slots per appointment)
-  const seenAppointments = new Set<string>();
+  // Per-slot dedupe via the Redis key below (not per-appointment): a
+  // multi-slot booking notifies each session in the window exactly once.
   // Sessions of one class share a plan; one collaborator read per plan (#1593).
   const collaboratorsByPlan = new Map<string, Promise<string[]>>();
   const planCollaborators = (planType: "webinar" | "class", planId: string) => {
@@ -178,8 +178,7 @@ async function sendRemindersForWindow(window: {
 
   for (const slot of upcomingOccurrences) {
     const apt = slot.appointment;
-    if (!apt || seenAppointments.has(apt.id)) continue;
-    seenAppointments.add(apt.id);
+    if (!apt) continue;
 
     try {
       // Determine event type and plan info
@@ -273,8 +272,13 @@ async function sendRemindersForWindow(window: {
 
       if (uniqueUserIds.length === 0) continue;
 
-      // Idempotency: skip if reminder already sent for this appointment+window
-      const redisKey = `reminder:${apt.id}:${window.label}`;
+      // Idempotency: skip if reminder already sent for this slot+window. The
+      // key is per slot (not per appointment) so a re-timed multi-slot
+      // booking still notifies its moved session. On Redis failure skip the
+      // send: fail-open double-notify is worse than a missed reminder the
+      // next tick redrives (fail-closed on the dedupe, fail-open on the cron
+      // lock stays as-is).
+      const redisKey = `reminder:${slot.id}:${window.label}`;
       const ttlSeconds = window.label === "24h" ? 26 * 3600 : 2 * 3600;
       try {
         const alreadySent = await redis.set(redisKey, "1", {
@@ -283,7 +287,7 @@ async function sendRemindersForWindow(window: {
         });
         if (!alreadySent) continue; // Key existed — already sent
       } catch {
-        // Redis unavailable — send anyway rather than skip silently
+        continue;
       }
 
       await notifyAppointmentReminder(
@@ -299,8 +303,9 @@ async function sendRemindersForWindow(window: {
           dashboardUrl: notificationHref(apt.organizationId, "appointments"),
         },
         // 24h and 1h payloads are identical — key the Novu transactionId by
-        // window so the second reminder isn't deduped away.
-        `${apt.id}:${window.label}`,
+        // slot+window so each session notifies once and the second window
+        // isn't deduped away.
+        `${slot.id}:${window.label}`,
       );
 
       // #1653 — the email twin, inside the same Redis guard so a re-run does

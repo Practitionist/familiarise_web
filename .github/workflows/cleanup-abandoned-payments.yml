@@ -1,5 +1,8 @@
 name: Cleanup Abandoned Payments
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run every 15 minutes
@@ -37,6 +40,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -45,13 +50,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run abandoned payment cleanup
-        run: npx --yes tsx@4.23.1 jobs/payments/cleanup-abandoned-payments.ts
+        run: node_modules/.bin/tsx jobs/payments/cleanup-abandoned-payments.ts
 
       - name: Notify on failure
         if: failure()

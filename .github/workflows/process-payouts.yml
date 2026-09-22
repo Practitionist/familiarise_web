@@ -1,5 +1,8 @@
 name: Process Payouts
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Run weekly on Mondays at 9:00 PM UTC (2:30 AM IST next day)
@@ -49,6 +52,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -57,13 +62,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run process payouts job
-        run: npx --yes tsx@4.23.1 jobs/payouts/process-payouts.ts
+        run: node_modules/.bin/tsx jobs/payouts/process-payouts.ts
 
       - name: Notify on failure
         if: failure()
