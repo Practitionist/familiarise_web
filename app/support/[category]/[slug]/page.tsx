@@ -11,18 +11,12 @@ import {
   getArticle,
   getCategory,
   relatedArticles,
-  supportArticles,
 } from "../../_data/support-content";
 
 export const revalidate = 3600;
-export const dynamicParams = false;
 
-export function generateStaticParams() {
-  return supportArticles.map((a) => ({
-    category: a.category,
-    slug: a.slug,
-  }));
-}
+// No generateStaticParams — same build-OOM rationale as [category]/page.tsx:
+// on-demand ISR instead of build-time prerender for all 41 articles.
 
 export async function generateMetadata({
   params,

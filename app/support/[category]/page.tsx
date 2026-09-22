@@ -11,11 +11,12 @@ import {
 } from "../_data/support-content";
 
 export const revalidate = 3600;
-export const dynamicParams = false;
 
-export function generateStaticParams() {
-  return supportCategories.map((c) => ({ category: c.slug }));
-}
+// No generateStaticParams: these pages render on demand and join the ISR
+// cache instead of prerendering at build. #1795 added ~50 support URLs and the
+// Netlify build OOM'd (exit 137 at static page 166/334, 8 GB container) —
+// cumulative prerender RSS is the constraint, and these pages touch no DB so
+// first-hit generation is fast. Sitemap still lists every URL for crawlers.
 
 export async function generateMetadata({
   params,

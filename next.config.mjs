@@ -168,6 +168,16 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
+    // #1795 — Netlify deploy-preview OOM'd (exit 137, Killed at static page
+    // 166/334) with the heap already capped at 6144 MB inside the 8 GB
+    // container, so prerender-worker RSS — not heap — is the constraint (same
+    // lesson as #1792's widenClientFileUpload). Default concurrency is 8
+    // workers × DB-touching prerenders; halving it on Netlify halves peak
+    // RSS at the cost of a slower static phase. CI/dev keep the default.
+    // Drop to 2 if exit 137 recurs.
+    ...(process.env.NETLIFY === "true"
+      ? { staticGenerationMaxConcurrency: 4 }
+      : {}),
     webpackMemoryOptimizations: true,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
