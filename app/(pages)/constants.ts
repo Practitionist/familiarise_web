@@ -41,6 +41,7 @@ export const INQUIRY_CATEGORIES = [
 
 // Support Resources Links
 export const SUPPORT_LINKS = [
+  { href: "/support", label: "Help Center" },
   { href: "/pricing", label: "Pricing & Platform Fees" },
   { href: "/refund", label: "Cancellation & Refund Policy" },
   { href: "/privacy", label: "Privacy Policy" },
@@ -76,6 +77,11 @@ export const PAGE_META = {
     title: "Cancellation & Refund Policy",
     description:
       "Understanding our cancellation and refund procedures for all service types",
+  },
+  support: {
+    title: "Help Center",
+    description:
+      "Guides and answers for booking, payments, video sessions, payouts, and organisations",
   },
 } as const;
 

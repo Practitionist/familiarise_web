@@ -11,6 +11,7 @@
  */
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,7 +33,15 @@ const EMPTY = {
 };
 
 export function ContactForm() {
-  const [values, setValues] = useState(EMPTY);
+  // Deep-link support: `/support/...` articles link here with
+  // `?category=<value>`. Validate against the known list before applying so
+  // a crafted URL can never select (or submit) an unknown category.
+  const searchParams = useSearchParams();
+  const [values, setValues] = useState(() => {
+    const requested = searchParams.get("category") ?? "";
+    const known = INQUIRY_CATEGORIES.some((c) => c.value === requested);
+    return known ? { ...EMPTY, category: requested } : EMPTY;
+  });
   const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
   const [formError, setFormError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});

@@ -1,5 +1,10 @@
 import type { MetadataRoute } from "next";
 
+import {
+  supportArticles,
+  supportCategories,
+} from "./support/_data/support-content";
+
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
 export default function sitemap(): MetadataRoute.Sitemap {
@@ -10,6 +15,15 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/about", priority: 0.8 },
     { path: "/pricing", priority: 0.8 },
     { path: "/contactus", priority: 0.7 },
+    { path: "/support", priority: 0.8 },
+    ...supportCategories.map((c) => ({
+      path: `/support/${c.slug}`,
+      priority: 0.7,
+    })),
+    ...supportArticles.map((a) => ({
+      path: `/support/${a.category}/${a.slug}`,
+      priority: 0.6,
+    })),
   ];
 
   return staticRoutes.map(({ path, priority }) => ({
