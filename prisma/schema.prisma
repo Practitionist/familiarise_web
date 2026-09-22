@@ -972,6 +972,12 @@ model Organization {
   canSponsor Boolean @default(true)
   canHost    Boolean @default(false)
 
+  // Explore-experts taxonomy (additive, nullable per #705 freeze): separates a
+  // staffing AGENCY from an ENTERPRISE buyer/host and a SOLO_PRACTICE host.
+  // `agency` affiliation (isIndependent=false) alone cannot tell LearnPro Agency
+  // apart from IIT Madras HYBRID or a solo host — this column can. Null = unclassified.
+  kind OrgKind?
+
   // #705 freeze — inert group-hierarchy columns (parentOrganizationId,
   // rootOrganizationId, OrgHierarchy self-relation) dropped: never read by any
   // code path. Subsidiary scoping remains a future structural change if a
@@ -1171,6 +1177,7 @@ model Organization {
 
   @@index([status])
   @@index([canSponsor, canHost])
+  @@index([kind])
   @@index([canHost, isPublic, status])
   // Directory listing filters on isPublic+status only; the index above can't
   // serve it because its leading column (canHost) is no longer in the predicate.
@@ -1351,6 +1358,15 @@ enum OrgStatus {
   ACTIVE
   SUSPENDED
   DEACTIVATED
+}
+
+/// Explore-experts host taxonomy: what kind of org hosts agency experts.
+/// AGENCY = staffing/intermediary (e.g. LearnPro Agency), ENTERPRISE = buyer/host
+/// (e.g. IIT Madras HYBRID), SOLO_PRACTICE = single-consultant host entity.
+enum OrgKind {
+  AGENCY
+  ENTERPRISE
+  SOLO_PRACTICE
 }
 
 enum OrgSizeBucket {
@@ -3093,6 +3109,8 @@ model ConsultantProfile {
   @@index([domainId])
   @@index([isVerified])
   @@index([verificationStatus])
+  @@index([isIndependent])
+  @@index([verificationStatus, isIndependent])
   // #705 — explore sorts and filters on the published score, not the raw mean.
   // #1300 — for a per-track sort with nulls last; a composite cannot serve a sort on
   // its trailing column, so two single-column indexes.
@@ -3796,6 +3814,12 @@ model Subscription {
 
   subscriptionPlan   SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id], onUpdate: Cascade, onDelete: Cascade)
   subscriptionPlanId String
+
+  /// #1766 — entitlement frozen at purchase, like Payment.amount; plan edits
+  /// never move it. Nullable only for pre-#1766 rows (the resolver falls back
+  /// to plan.totalSessions); NOT NULL + CHECK >= 1 staged in the
+  /// check-constraints banner.
+  sessionsTotal Int?
 
   appointment        Appointment?
   convertedFromTrial Trial?
@@ -5642,11 +5666,15 @@ model ConsultantEarnings {
   // NULL for a whole-purchase fee (subscription, class) until it is split.
   appointmentOccurrenceId String?
 
+  /// #1766 — 0-based earnings tranche of a subscription; NULL for every other row.
+  cycleOrdinal Int?
+
   // Status tracking
   status           EarningStatus  @default(PENDING)
-  // #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
-  // recomputed when a reschedule moves the call.
-  holdUntil        DateTime       @db.Timestamptz
+  /// #1569 — max(capture time, last live occurrence endsAt) + the hold hours;
+  /// recomputed when a reschedule moves the call. #1766 — NULL = tranche not
+  /// yet delivered; stamped by the completion path.
+  holdUntil        DateTime?      @db.Timestamptz
   paidAt           DateTime?      @db.Timestamptz
   // #1020-1 — the status an earning was in when an open dispute HELD it
   // (PENDING vs READY), so a WON/CLOSED release restores the true prior state
@@ -5666,9 +5694,9 @@ model ConsultantEarnings {
   payment           Payment           @relation(fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: Restrict)
   payout            ConsultantPayout? @relation(fields: [payoutId], references: [id])
 
-  // One row per (payment, consultant, role, occurrence): the NULLS NOT DISTINCT
-  // sidecar unique consultant_earnings_occurrence_key in prisma/sql; no
-  // @@unique/@@index on that set here (#1268).
+  // One row per (payment, consultant, role, occurrence, cycle): the NULLS NOT
+  // DISTINCT sidecar unique consultant_earnings_occurrence_key in prisma/sql;
+  // no @@unique/@@index on that set here (#1268, #1766).
   @@index([consultantProfileId, status])
   @@index([status, holdUntil])
   @@index([payoutId])

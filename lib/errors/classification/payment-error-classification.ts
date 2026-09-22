@@ -68,6 +68,8 @@ export const ErrorTypes = {
   ORG_CREDIT_LIMIT_REACHED: "ORG_CREDIT_LIMIT_REACHED_ERROR",
   CONSULTANT_NOT_ON_PANEL: "CONSULTANT_NOT_ON_PANEL_ERROR",
   CONSULTANT_EXCLUSIVE_ENGAGEMENT: "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
+  // #1766 — the buyer already holds this plan with entitlement left.
+  SUBSCRIPTION_ALREADY_ACTIVE: "SUBSCRIPTION_ALREADY_ACTIVE_ERROR",
   CURRENCY_UNSUPPORTED: "CURRENCY_UNSUPPORTED_ERROR",
   CREDIT_SHORTFALL: "CREDIT_SHORTFALL_ERROR",
   DISCOUNT_CURRENCY_MISMATCH: "DISCOUNT_CURRENCY_MISMATCH_ERROR",
@@ -396,12 +398,12 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     userMessage:
       "You are not an active member of this organisation, so it cannot sponsor this booking.",
   },
+  // #1744 row 4 — no userMessage: the thrown sentence names the rupee limit
+  // and the outstanding figure (assertWithinInvoiceCreditLimit).
   {
     code: "ORG_CREDIT_LIMIT_REACHED",
     errorType: ErrorTypes.ORG_CREDIT_LIMIT_REACHED,
     httpStatus: 402,
-    userMessage:
-      "Your organisation has reached its invoice credit limit. Outstanding invoices must be paid before new sponsored bookings.",
   },
   {
     code: "CONSULTANT_NOT_ON_PANEL",
@@ -416,6 +418,12 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     httpStatus: 409,
     userMessage:
       "This consultant works exclusively through their organisation; their independent plans cannot be booked.",
+  },
+  // #1766 — no userMessage: the thrown sentence names the sessions left.
+  {
+    code: "SUBSCRIPTION_ALREADY_ACTIVE",
+    errorType: ErrorTypes.SUBSCRIPTION_ALREADY_ACTIVE,
+    httpStatus: 409,
   },
   // #1564 — a non-INR plan price or settlement is a configuration the platform
   // does not offer, not a crash; 422 like the other unsupported-config codes.

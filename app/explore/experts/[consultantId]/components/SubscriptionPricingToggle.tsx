@@ -11,18 +11,14 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
-import {
-  CalendarIcon,
-  CheckCircle2,
-  Gift,
-  BookOpen,
-} from "lucide-react";
+import { CalendarIcon, CheckCircle2, Gift, BookOpen } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
 import Link from "next/link";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { PricingOption } from "../defaults";
 import { useToast } from "@/hooks/use-toast";
-import { addMonths, differenceInDays, format } from "date-fns";
+import { format } from "date-fns";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { TrialBookingModal } from "./TrialBookingModal";
 
@@ -91,7 +87,6 @@ export default function SubscriptionPricingToggle({
   const [schedulingStartDate, setSchedulingStartDate] = useState<Date | null>(
     null,
   );
-  const [schedulingEndDate, setSchedulingEndDate] = useState<Date | null>(null);
   const [isTrialModalOpen, setIsTrialModalOpen] = useState(false);
   const [selectedTrialPlan, setSelectedTrialPlan] = useState<{
     id: string;
@@ -107,7 +102,9 @@ export default function SubscriptionPricingToggle({
   }>({ isEligible: true, isLoading: false });
 
   const selectedOption = useMemo(() => {
-    return subscriptionOptions.find((opt) => opt.id === activeSubscriptionOption);
+    return subscriptionOptions.find(
+      (opt) => opt.id === activeSubscriptionOption,
+    );
   }, [activeSubscriptionOption, subscriptionOptions]);
 
   // Find the subscription plan for the current selection by id (not duration)
@@ -178,7 +175,10 @@ export default function SubscriptionPricingToggle({
           setTrialEligibility({ isEligible: true, isLoading: false });
         }
       } catch (error) {
-        Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "client" } });
+        Sentry.captureException(
+          error instanceof Error ? error : new Error(String(error)),
+          { tags: { subsystem: "client" } },
+        );
         console.error("Error checking trial eligibility:", error);
         setTrialEligibility({ isEligible: true, isLoading: false });
       }
@@ -211,58 +211,43 @@ export default function SubscriptionPricingToggle({
     }
   }, [autoOpenTrial, selectedPlanDetails, trialEligibility]);
 
-  const suggestedDates = useMemo(() => {
-    if (!selectedOption?.durationInMonths) {
-      return { start: new Date(), end: addMonths(new Date(), 1) };
-    }
-    const start = new Date();
-    const end = addMonths(start, selectedOption.durationInMonths);
-    return { start, end };
-  }, [selectedOption]);
+  // #1766 — the buyer picks a START only; the window is the first cycle and
+  // the server derives it again in the consultant's zone. Shown here in the
+  // viewer's zone so the summary reads in their own calendar.
+  const firstCycle = useMemo(() => {
+    if (!schedulingStartDate || !selectedOption) return null;
+    return firstCycleWindow(
+      {
+        sessionsPerWeek: selectedOption.sessionsPerWeek ?? 1,
+        durationInMonths: selectedOption.durationInMonths ?? 1,
+      },
+      schedulingStartDate,
+      timezone,
+    );
+  }, [schedulingStartDate, selectedOption, timezone]);
 
-  const validatePeriod = useCallback((
-    start: Date | null,
-    end: Date | null,
-  ): { valid: boolean; message?: string } => {
-    if (!start || !end) {
-      return {
-        valid: false,
-        message: "Please select both start and end dates",
-      };
-    }
+  const validatePeriod = useCallback(
+    (start: Date | null): { valid: boolean; message?: string } => {
+      if (!start) {
+        return { valid: false, message: "Please pick a start date" };
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (start < today) {
+        return { valid: false, message: "Start date cannot be in the past" };
+      }
+      return { valid: true };
+    },
+    [],
+  );
 
-    if (end <= start) {
-      return { valid: false, message: "End date must be after start date" };
-    }
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    if (start < today) {
-      return { valid: false, message: "Start date cannot be in the past" };
-    }
-
-    const durationInDays = differenceInDays(end, start);
-    const expectedDays = (selectedOption?.durationInMonths || 1) * 30;
-    const minDays = expectedDays - 7;
-    const maxDays = expectedDays + 7;
-
-    if (durationInDays < minDays || durationInDays > maxDays) {
-      return {
-        valid: false,
-        message: `Period should be approximately ${selectedOption?.durationInMonths} month(s). Selected: ${Math.round(durationInDays / 30)} month(s)`,
-      };
-    }
-
-    return { valid: true };
-  }, [selectedOption]);
-
-  const validation = useMemo(() => {
-    return validatePeriod(schedulingStartDate, schedulingEndDate);
-  }, [schedulingStartDate, schedulingEndDate, validatePeriod]);
+  const validation = useMemo(
+    () => validatePeriod(schedulingStartDate),
+    [schedulingStartDate, validatePeriod],
+  );
 
   const handleChoosePlan = () => {
-    setSchedulingStartDate(suggestedDates.start);
-    setSchedulingEndDate(suggestedDates.end);
+    setSchedulingStartDate(new Date());
     setIsDialogOpen(true);
   };
 
@@ -270,20 +255,21 @@ export default function SubscriptionPricingToggle({
     if (
       !validation.valid ||
       !schedulingStartDate ||
-      !schedulingEndDate ||
+      !firstCycle ||
       !selectedOption
     ) {
       toast({
-        title: "Invalid Dates",
-        description: validation.message || "Please select valid dates",
+        title: "Invalid start date",
+        description: validation.message || "Please pick a valid start date",
         variant: "destructive",
       });
       return;
     }
 
+    // The end travels for the checkout URL's shape only; the server ignores it.
     handleSubscriptionBooking(selectedOption, {
       startDate: schedulingStartDate,
-      endDate: schedulingEndDate,
+      endDate: firstCycle.end,
     });
 
     setIsDialogOpen(false);
@@ -346,221 +332,191 @@ export default function SubscriptionPricingToggle({
         {subscriptionOptions.map((option) => {
           const isActive = activeSubscriptionOption === option.id;
           return (
-          <motion.div
-            key={option.id}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{
-              opacity: isActive ? 1 : 0,
-              y: 0,
-            }}
-            transition={{ duration: 0.2 }}
-            className={isActive ? "block" : "hidden"}
-          >
-            {/* Pricing content — lives directly in glass parent */}
-            <div className="space-y-1">
-              <h3 className="text-lg font-bold text-white">{option.title}</h3>
-              <p className="text-xs text-zinc-500">{option.description}</p>
-            </div>
+            <motion.div
+              key={option.id}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{
+                opacity: isActive ? 1 : 0,
+                y: 0,
+              }}
+              transition={{ duration: 0.2 }}
+              className={isActive ? "block" : "hidden"}
+            >
+              {/* Pricing content — lives directly in glass parent */}
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-white">{option.title}</h3>
+                <p className="text-xs text-zinc-500">{option.description}</p>
+              </div>
 
-            <div className="flex items-end gap-2 my-5">
-              {/* #1396 — this is the headline price of a plan the server will
+              <div className="flex items-end gap-2 my-5">
+                {/* #1396 — this is the headline price of a plan the server will
                   charge, so it renders in the plan's own currency, exactly as
                   the trial price above it does for the reason given at #1167.
                   `formatPrice` took INR paise and applied the viewer's FX rate,
                   which relabelled the plan and disagreed with the trial line
                   two elements away. */}
-              <span className="text-5xl font-bold tracking-tight text-white">
-                {formatCurrencyAmount(option.price, option.priceCurrency || "INR")}
-              </span>
-              <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
-            </div>
+                <span className="text-5xl font-bold tracking-tight text-white">
+                  {formatCurrencyAmount(
+                    option.price,
+                    option.priceCurrency || "INR",
+                  )}
+                </span>
+                <span className="text-zinc-500 text-sm mb-1.5">/ month</span>
+              </div>
 
-            {option.features && option.features.length > 0 && (
-              <>
-                <div className="border-t border-white/[0.06] mb-4" />
-                <div className="space-y-2 mb-5">
-                  <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
-                    Includes
-                  </p>
-                  <ul className="space-y-2">
-                    {option.features?.map((feature, index) => (
-                      <li
-                        key={`feature-${index}`}
-                        className="text-zinc-200 flex items-center text-sm"
-                      >
-                        <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
-                        {feature}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </>
-            )}
-
-            {/* Button stack with proper spacing */}
-            <div className="space-y-2.5">
-              {/* Trial Button */}
-              {selectedPlanDetails?.trialEnabled && (
-                <Button
-                  className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
-                    trialEligibility.isEligible && !trialEligibility.isLoading
-                      ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
-                      : "bg-zinc-700/50 text-zinc-500 cursor-not-allowed"
-                  }`}
-                  disabled={
-                    !trialEligibility.isEligible || trialEligibility.isLoading
-                  }
-                  onClick={() => {
-                    if (!trialEligibility.isEligible) {
-                      toast({
-                        title: "Not Eligible",
-                        description:
-                          trialEligibility.reason ||
-                          "You have already requested a trial with this consultant",
-                        variant: "destructive",
-                      });
-                      return;
-                    }
-                    setSelectedTrialPlan({
-                      id: selectedPlanDetails.id,
-                      title: selectedPlanDetails.title,
-                      trialDurationMinutes:
-                        selectedPlanDetails.trialDurationMinutes ?? 0,
-                      trialPriceInPaise:
-                        selectedPlanDetails.trialPriceInPaise ?? 0,
-                      priceCurrency:
-                        selectedPlanDetails.priceCurrency ?? "INR",
-                    });
-                    setIsTrialModalOpen(true);
-                  }}
-                >
-                  <Gift className="w-4 h-4 mr-2" />
-                  {trialEligibility.isLoading
-                    ? "Checking eligibility..."
-                    : trialEligibility.isEligible
-                      ? `Book Trial (${trialCtaPrice}, ${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
-                      : "Trial Already Requested"}
-                </Button>
+              {option.features && option.features.length > 0 && (
+                <>
+                  <div className="border-t border-white/[0.06] mb-4" />
+                  <div className="space-y-2 mb-5">
+                    <p className="text-xs text-zinc-500 font-medium uppercase tracking-wider">
+                      Includes
+                    </p>
+                    <ul className="space-y-2">
+                      {option.features?.map((feature, index) => (
+                        <li
+                          key={`feature-${index}`}
+                          className="text-zinc-200 flex items-center text-sm"
+                        >
+                          <CheckCircle2 className="w-4 h-4 mr-2.5 text-emerald-400 flex-shrink-0" />
+                          {feature}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </>
               )}
 
-              {/* The toggle is a CHOOSER, not a brochure: pick a tier here,
+              {/* Button stack with proper spacing */}
+              <div className="space-y-2.5">
+                {/* Trial Button */}
+                {selectedPlanDetails?.trialEnabled && (
+                  <Button
+                    className={`w-full font-semibold rounded-xl h-12 text-sm transition-all duration-200 ${
+                      trialEligibility.isEligible && !trialEligibility.isLoading
+                        ? "bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white shadow-lg shadow-emerald-900/30"
+                        : "bg-zinc-700/50 text-zinc-500 cursor-not-allowed"
+                    }`}
+                    disabled={
+                      !trialEligibility.isEligible || trialEligibility.isLoading
+                    }
+                    onClick={() => {
+                      if (!trialEligibility.isEligible) {
+                        toast({
+                          title: "Not Eligible",
+                          description:
+                            trialEligibility.reason ||
+                            "You have already requested a trial with this consultant",
+                          variant: "destructive",
+                        });
+                        return;
+                      }
+                      setSelectedTrialPlan({
+                        id: selectedPlanDetails.id,
+                        title: selectedPlanDetails.title,
+                        trialDurationMinutes:
+                          selectedPlanDetails.trialDurationMinutes ?? 0,
+                        trialPriceInPaise:
+                          selectedPlanDetails.trialPriceInPaise ?? 0,
+                        priceCurrency:
+                          selectedPlanDetails.priceCurrency ?? "INR",
+                      });
+                      setIsTrialModalOpen(true);
+                    }}
+                  >
+                    <Gift className="w-4 h-4 mr-2" />
+                    {trialEligibility.isLoading
+                      ? "Checking eligibility..."
+                      : trialEligibility.isEligible
+                        ? `Book Trial (${trialCtaPrice}, ${selectedPlanDetails.trialDurationMinutes ?? 0} min)`
+                        : "Trial Already Requested"}
+                  </Button>
+                )}
+
+                {/* The toggle is a CHOOSER, not a brochure: pick a tier here,
                   read the roadmap/FAQ on the plan page. It used to try to be
                   both, which is what forced a 12-week roadmap into a 450px
                   column and then into a modal. */}
-              {selectedPlanDetails?.id && (
-                <Button
-                  asChild
-                  variant="outline"
-                  className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
-                >
-                  <Link
-                    href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
+                {selectedPlanDetails?.id && (
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="w-full bg-white/[0.05] border border-white/[0.12] text-zinc-200 hover:bg-white/[0.10] hover:text-white font-medium rounded-xl h-11 text-sm transition-all duration-200"
                   >
-                    <BookOpen className="w-4 h-4 mr-2" />
-                    Open details
-                  </Link>
-                </Button>
-              )}
+                    <Link
+                      href={`/explore/programs/plans/subscriptions/${selectedPlanDetails.id}`}
+                    >
+                      <BookOpen className="w-4 h-4 mr-2" />
+                      Open details
+                    </Link>
+                  </Button>
+                )}
 
-              {/* Primary CTA */}
-              <Button
-                className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
-                onClick={handleChoosePlan}
-              >
-                Subscribe
-              </Button>
-            </div>
-          </motion.div>
+                {/* Primary CTA */}
+                <Button
+                  className="w-full bg-white text-zinc-900 hover:bg-zinc-100 font-semibold rounded-xl h-12 text-sm tracking-wide transition-all duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.15)]"
+                  onClick={handleChoosePlan}
+                >
+                  Subscribe
+                </Button>
+              </div>
+            </motion.div>
           );
         })}
       </div>
 
-      {/* Scheduling Period Dialog */}
+      {/* Start-date dialog (#1766) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[550px] lg:max-w-[650px] max-h-[90vh] overflow-y-auto bg-zinc-900 text-white p-0 border border-zinc-800 rounded-2xl shadow-2xl z-[1002] scrollbar-hide">
           <DialogHeader className="p-6 border-b border-zinc-800">
             <DialogTitle className="text-xl font-semibold">
-              Select Scheduling Period
+              When do you want to start?
             </DialogTitle>
             <DialogDescription className="text-zinc-400">
-              Choose when you&apos;d like your{" "}
-              {selectedOption?.durationInMonths} month subscription to run
+              Your consultant schedules one cycle at a time; the first cycle
+              starts on the date you pick.
             </DialogDescription>
           </DialogHeader>
 
           <div className="p-8 space-y-6">
-            {/* Date Inputs */}
-            <div className="space-y-5">
-              {/* Start Date */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                  <CalendarIcon className="h-4 w-4" />
-                  Start Date
-                </label>
-                <input
-                  type="date"
-                  value={
-                    schedulingStartDate
-                      ? format(schedulingStartDate, "yyyy-MM-dd")
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const date = e.target.value
-                      ? new Date(e.target.value)
-                      : null;
-                    setSchedulingStartDate(date);
-                  }}
-                  min={format(new Date(), "yyyy-MM-dd")}
-                  className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                  style={{ colorScheme: "dark" }}
-                />
-              </div>
-
-              {/* End Date */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
-                  <CalendarIcon className="h-4 w-4" />
-                  End Date
-                </label>
-                <input
-                  type="date"
-                  value={
-                    schedulingEndDate
-                      ? format(schedulingEndDate, "yyyy-MM-dd")
-                      : ""
-                  }
-                  onChange={(e) => {
-                    const date = e.target.value
-                      ? new Date(e.target.value)
-                      : null;
-                    setSchedulingEndDate(date);
-                  }}
-                  min={
-                    schedulingStartDate
-                      ? format(schedulingStartDate, "yyyy-MM-dd")
-                      : format(new Date(), "yyyy-MM-dd")
-                  }
-                  className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
-                  style={{ colorScheme: "dark" }}
-                />
-              </div>
+            {/* Start Date */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-2 text-zinc-400">
+                <CalendarIcon className="h-4 w-4" />
+                Start Date
+              </label>
+              <input
+                type="date"
+                value={
+                  schedulingStartDate
+                    ? format(schedulingStartDate, "yyyy-MM-dd")
+                    : ""
+                }
+                onChange={(e) => {
+                  // Local midnight of the picked calendar day: `new Date("yyyy-MM-dd")`
+                  // is UTC midnight, a day early west of Greenwich.
+                  const [y, m, d] = e.target.value.split("-").map(Number);
+                  setSchedulingStartDate(
+                    e.target.value ? new Date(y, m - 1, d) : null,
+                  );
+                }}
+                min={format(new Date(), "yyyy-MM-dd")}
+                className="w-full px-5 py-3.5 bg-zinc-800/60 border-2 border-zinc-700/50 rounded-xl text-white text-base font-medium focus:outline-none focus:ring-2 focus:ring-zinc-500/50 focus:border-zinc-500 transition-all hover:border-zinc-600 cursor-pointer"
+                style={{ colorScheme: "dark" }}
+              />
             </div>
 
-            {/* Period Summary */}
-            {schedulingStartDate && schedulingEndDate && (
+            {/* First-cycle summary */}
+            {schedulingStartDate && firstCycle && selectedOption && (
               <div className="p-4 bg-zinc-800/50 rounded-xl border border-zinc-700/50">
-                <p className="text-sm text-zinc-500 mb-1">Selected Period:</p>
+                <p className="text-sm text-zinc-500 mb-1">First cycle:</p>
                 <p className="text-white font-semibold text-lg">
-                  {format(schedulingStartDate, "MMM dd, yyyy")} →{" "}
-                  {format(schedulingEndDate, "MMM dd, yyyy")}
+                  {format(firstCycle.start, "MMM dd, yyyy")} →{" "}
+                  {format(firstCycle.end, "MMM dd, yyyy")}
                 </p>
                 <p className="text-sm text-zinc-500 mt-1">
-                  Duration: ~
-                  {Math.round(
-                    differenceInDays(schedulingEndDate, schedulingStartDate) /
-                      30,
-                  )}{" "}
-                  month(s)
+                  {selectedOption.sessionsPerWeek ?? 1} session
+                  {(selectedOption.sessionsPerWeek ?? 1) === 1 ? "" : "s"} per
+                  cycle · {selectedOption.totalSessions ?? "—"} in the plan
                 </p>
               </div>
             )}
@@ -609,7 +565,6 @@ export default function SubscriptionPricingToggle({
           trialCurrency={selectedTrialPlan.priceCurrency}
         />
       )}
-
     </Tabs>
   );
 }

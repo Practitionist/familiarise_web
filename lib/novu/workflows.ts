@@ -57,6 +57,7 @@ export const NOVU_WORKFLOWS = {
   NEW_BOOKING_REQUEST: "new-booking-request",
   VERIFICATION_STATUS_CHANGED: "verification-status-changed",
   PAYOUT_PROCESSED: "payout-processed",
+  PAYOUT_FAILED: "payout-failed",
 
   // Admin / System
   GENERAL_ANNOUNCEMENT: "general-announcement",
@@ -475,6 +476,10 @@ export type SubscriptionPayload = {
   consultantName: string;
   consulteeName?: string;
   dashboardUrl: string;
+  /** #1766 — the cycle just finished (1-based) and what the plan still owes. */
+  cycleOrdinal?: number;
+  remainingSessions?: number;
+  nextBatch?: number;
 };
 
 export type BookingRequestPayload = NotificationScope & {
@@ -929,7 +934,18 @@ export type OrgPayoutCompletedPayload = {
   orgName: string;
   payoutId: string;
   amount: string;
+  /**
+   * #1474 — what the rail actually transferred (post-withholding). This is
+   * the received figure the org reconciles against its bank credit, NOT the
+   * pre-withholding share.
+   */
   amountPaise: number;
+  /** Pre-withholding gross the TDS was computed on (`netPayoutPaise`). */
+  netPayoutPaise?: number;
+  /** Withheld at completion (0/undefined when nothing was withheld). */
+  tdsAmountPaise?: number;
+  /** Formatted `tdsAmountPaise`, present only when something was withheld. */
+  withheld?: string;
   currency: string;
   dashboardUrl: string;
 };
@@ -1003,7 +1019,18 @@ export type OrgPayoutFailedPayload = {
   orgName: string;
   payoutId: string;
   amount: string;
+  /**
+   * #1474 — FAILED (nothing left the platform): the attempted gross.
+   * REVERSED (bank returned settled cash): what went out and came back,
+   * i.e. the post-withholding figure, same basis as the COMPLETED bell.
+   */
   amountPaise: number;
+  /** Pre-withholding gross the batch was built on. */
+  netPayoutPaise?: number;
+  /** Withheld at completion; 0/undefined when nothing moved (FAILED). */
+  tdsAmountPaise?: number;
+  /** Formatted `tdsAmountPaise`, present only when something was withheld. */
+  withheld?: string;
   currency: string;
   reason: string;
   kind: "FAILED" | "REVERSED";

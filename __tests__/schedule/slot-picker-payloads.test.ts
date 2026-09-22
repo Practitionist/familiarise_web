@@ -30,6 +30,7 @@ import prisma from "../../lib/prisma";
 import { readAppointmentDetail } from "../../lib/data/appointment-detail";
 import { readAllocationRequest } from "../../lib/data/allocation-request";
 import { readManageTimingsTarget } from "../../lib/data/manage-timings-target";
+import { checkoutSchema, createCheckoutData } from "../../schemas/checkout";
 
 const ALLOWED_SLOT_KEYS = [
   "appointmentId",
@@ -91,7 +92,11 @@ describe("readManageTimingsTarget slot payload", () => {
         },
         // #1554 — the roster rides on the wrapper, not the rows.
         participants: [
-          { userId: "user-1", role: "CONSULTEE", user: { name: ATTENDEE_NAME } },
+          {
+            userId: "user-1",
+            role: "CONSULTEE",
+            user: { name: ATTENDEE_NAME },
+          },
         ],
         // #1554 — the whole programme is the one wrapper's rows.
         occurrences: [
@@ -163,7 +168,10 @@ describe("readAllocationRequest slot payload", () => {
   });
 
   it("carries the request's requested times", async () => {
-    const request = await readAllocationRequest("consultation-1", "consultation");
+    const request = await readAllocationRequest(
+      "consultation-1",
+      "consultation",
+    );
 
     expect(request?.slots).toHaveLength(1);
     expect(Object.keys(request!.slots[0]).sort()).toEqual(ALLOWED_SLOT_KEYS);
@@ -244,8 +252,7 @@ describe("readAllocationRequest slot payload", () => {
     // A consultation id queried as a subscription: the page tries the named
     // table first, then the other one, redirecting to ?type=<correct> — so
     // the miss must be a null, never a throw or a wrong-typed row.
-    const subscriptionFindUnique = prisma.subscription
-      .findUnique as jest.Mock;
+    const subscriptionFindUnique = prisma.subscription.findUnique as jest.Mock;
     subscriptionFindUnique.mockResolvedValue(null);
 
     await expect(
@@ -254,5 +261,73 @@ describe("readAllocationRequest slot payload", () => {
     expect(subscriptionFindUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: "consultation-1" } }),
     );
+  });
+});
+
+// #1766 — the subscription checkout page sends a START only; the window is
+// the first cycle and the server derives it, so no client end travels.
+describe("subscription checkout payload", () => {
+  it("subscription payload carries start only", () => {
+    const start = "2026-03-02T09:00:00.000Z";
+    const payload = createCheckoutData({
+      appointmentType: "SUBSCRIPTION",
+      planId: "plan-1",
+      paymentGateway: "RAZORPAY",
+      schedulingPeriodStartsAt: start,
+    });
+
+    expect(payload.schedulingPeriodStartsAt).toBe(start);
+    expect(payload.schedulingPeriodEndsAt).toBeUndefined();
+    expect(checkoutSchema.safeParse(payload).success).toBe(true);
+  });
+});
+
+// #1766 — the allocate page's window is the CURRENT CYCLE and its heading
+// reads the entitlement; the reader derives both from the row's frozen
+// `sessionsTotal`, the plan and the wrapper's rows.
+describe("readAllocationRequest subscription entitlement", () => {
+  const findUnique = prisma.subscription.findUnique as jest.Mock;
+  const NOW = new Date("2026-03-02T09:00:00.000Z");
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    jest.setSystemTime(NOW);
+    findUnique.mockResolvedValue({
+      id: "sub-1",
+      status: "APPROVED",
+      schedulingPeriodStartsAt: new Date("2026-02-02T00:00:00.000Z"),
+      schedulingPeriodEndsAt: new Date("2026-02-08T23:59:59.999Z"),
+      schedulingTimezone: "UTC",
+      sessionsTotal: 12,
+      requestedBy: { userId: "user-1", user: { name: "Buyer" } },
+      subscriptionPlan: {
+        title: "Intensive",
+        consultantProfileId: "consultant-1",
+        sessionsPerWeek: 4,
+        sessionDurationInHours: 1,
+        durationInMonths: 3,
+        // A plan edit after purchase: the frozen 12 must win.
+        totalSessions: 16,
+      },
+      appointment: {
+        occurrences: [1, 2, 3, 4]
+          .map((day) => pollutedSlot(`s${day}`, `2026-02-0${day}T10:00:00Z`))
+          .map((slot) => ({ ...slot, completionStatus: "COMPLETED" })),
+      },
+    });
+  });
+
+  afterEach(() => jest.useRealTimers());
+
+  it("returns the next cycle's window and batch off the frozen entitlement", async () => {
+    const request = await readAllocationRequest("sub-1", "subscription");
+
+    expect(findUnique.mock.calls[0][0].select.sessionsTotal).toBe(true);
+    expect(request?.totalSessions).toBe(12);
+    expect(request?.entitlement?.completed).toBe(4);
+    expect(request?.entitlement?.cycle.nextBatch).toBe(4);
+    // The stored first-cycle period has lapsed: the window rolls to now.
+    expect(request?.allowedStart).toEqual(NOW);
+    expect(request?.allowedEnd?.toISOString()).toBe("2026-03-08T23:59:59.999Z");
   });
 });

@@ -75,6 +75,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // a Novu failure must never fail the unsubscribe.
     try {
       await updateSubscriberPreferences(userId, {
+        allNotifications: updated.allNotifications,
         inApp: updated.inAppEnabled,
         email: false,
         push: updated.pushEnabled,

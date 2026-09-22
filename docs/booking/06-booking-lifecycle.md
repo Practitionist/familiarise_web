@@ -1118,11 +1118,11 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Subscription Notifications
 
-| Lifecycle Event        | Novu Workflow ID         | Recipients             | Trigger Point             | Source              |
-| ---------------------- | ------------------------ | ---------------------- | ------------------------- | ------------------- |
-| Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SchedulingService` |
-| Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes |
-| Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts     |
+| Lifecycle Event         | Novu Workflow ID         | Recipients             | Trigger Point                                                               | Source                                                                                              |
+| ----------------------- | ------------------------ | ---------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Subscription started    | `subscription-started`   | Consultee              | Slot allocation completed                                                   | `SchedulingService`                                                                                 |
+| Subscription cancelled  | `subscription-cancelled` | Consultee + Consultant | Cancellation API                                                            | Cancellation routes                                                                                 |
+| Subscription cycle done | `subscription-renewed`   | Consultee              | The last live occurrence of a cycle completes with entitlement left (#1766) | `lib/booking/subscription-cycle.ts` from the Stream completion handlers and the auto-complete sweep |
 
 ### Financial Notifications
 
@@ -1131,6 +1131,7 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 | Refund processed | `refund-processed` | Consultee              | Refund API             | Refund routes  |
 | Refund requested | `refund-requested` | Admin users            | Refund request API     | Refund routes  |
 | Payout processed | `payout-processed` | Consultant             | Payout processing      | Payout scripts |
+| Payout failed    | `payout-failed`    | Consultant             | Payout rejection / gateway FAILED or CANCELLED webhook | Payout service |
 | Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API   | Dispute routes |
 | Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API | Dispute routes |
 

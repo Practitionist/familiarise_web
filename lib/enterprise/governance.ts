@@ -17,6 +17,16 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 export const UNVERIFIED_ORG_SEAT_CAP = 5;
 
 /**
+ * Default low-balance floor (paise) stamped on every new WALLET-funded
+ * BillingAccount. Enrols the org in low-balance alerts from day one so a
+ * draining wallet pages billing admins BEFORE checkouts start failing with
+ * WALLET_INSUFFICIENT_FUNDS — failed checkouts are silently lost bookings.
+ * Covers a typical consultation plus buffer; adjustable per-org via
+ * PATCH /billing-account (nullable = alerts off).
+ */
+export const DEFAULT_WALLET_MIN_BALANCE_PAISE = 200_000; // ₹2,000
+
+/**
  * Default credit limit assigned to new INVOICE-funded orgs that have
  * not yet been verified or paid their first invoice. Defends against
  * the "book everything then ghost" abuse pattern (#687 invoice fraud).

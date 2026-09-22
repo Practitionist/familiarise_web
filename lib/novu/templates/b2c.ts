@@ -166,6 +166,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.PAYOUT_FAILED,
+    name: "Payout failed",
+    description:
+      "The consultant, when a payout fails or is cancelled (earnings return to READY for the next batch).",
+    category: "payments",
+    inApp: {
+      subject: "Payout needs attention",
+      body: "Your payout of {{payload.amount}} could not be completed{% if payload.payoutId %} ({{payload.payoutId}}){% endif %}. The earnings are back in your balance for the next payout run.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.DISPUTE_CREATED,
     name: "Dispute opened",
     description: "The consultant and ops, when a chargeback is raised.",
@@ -245,13 +257,16 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // #1766 — re-bodied: the id stays (20-workflow cap) but the event is now
+    // "your cycle is done and the next one is coming", not a renewal charge.
     workflowId: W.SUBSCRIPTION_RENEWED,
-    name: "Subscription renewed",
-    description: "The consultee, on renewal.",
+    name: "Subscription cycle done",
+    description:
+      "The consultee, when the last live session of a cycle completes with entitlement left.",
     category: "subscriptions",
     inApp: {
-      subject: "Subscription renewed",
-      body: "Your subscription to {{payload.planTitle}} with {{payload.consultantName}} has renewed for another cycle.",
+      subject: "Next sessions coming",
+      body: "Cycle {{payload.cycleOrdinal}} of {{payload.planTitle}} is done — {{payload.consultantName}} will schedule your next {{payload.nextBatch}} sessions ({{payload.remainingSessions}} left).",
       redirect: "dashboardUrl",
     },
   },

@@ -133,9 +133,11 @@ Consultees find plans through:
 
 - `planId` (required)
 - `paymentGateway` (required)
-- `schedulingPeriodStartsAt` / `schedulingPeriodEndsAt` (for subscriptions)
+- `schedulingPeriodStartsAt` (for subscriptions; the buyer answers "When do you want to start?")
 - `discountCode` (optional)
 - `referralCreditAmount` (optional)
+
+As of #1766 the subscription's scheduling window is the first cycle only. The server derives `schedulingPeriodEndsAt` as the start plus one cycle (seven zone-days for a weekly plan) in the consultant's scheduling timezone through `firstCycleWindow`, and a `schedulingPeriodEndsAt` sent by an older client is accepted and ignored rather than refused. The same checkout writes `Subscription.sessionsTotal` from the plan, which freezes the entitlement at purchase.
 
 ### 3c. Payment Processing
 
@@ -231,14 +233,15 @@ Database: Appointment + AppointmentOccurrence records created
 
 **Atomic unit:** 30-minute slots. There are 48 slots per day (00:00-23:30 UTC).
 
-**For a subscription** with `sessionsPerWeek=2`, `sessionDurationInHours=1`, `durationInMonths=1`:
+**For a subscription** the allocator places one cycle at a time (#1766). With `sessionsPerWeek=2`, `sessionDurationInHours=1` and a frozen `sessionsTotal=8`:
 
-1. `weeks = countWeeks(startDate, endDate)` -- e.g., 4 weeks
-2. `totalSessions = sessionsPerWeek x weeks = 2 x 4 = 8` sessions
-3. `slotsPerSession = ceil(sessionDurationInHours / 0.5) = ceil(1 / 0.5) = 2` slots
-4. `totalSlots = totalSessions x slotsPerSession = 8 x 2 = 16` thirty-minute slots
+1. `nextBatch` comes from `subscriptionEntitlement` -- 2 sessions for a fresh plan, 0 once those two are placed, 2 again once they are delivered.
+2. `slotsPerSession = ceil(sessionDurationInHours / 0.5) = ceil(1 / 0.5) = 2` slots
+3. `requiredSlots = nextBatch x slotsPerSession = 2 x 2 = 4` thirty-minute slots for this run
 
-**For a class**, the math is identical but uses `sessionsPerWeek` instead of `sessionsPerWeek`, and slots are shared across all enrolled consultees.
+The allocate page's footer, the Requests tab's required count and the server's `calculateRequiredSlots` all read the same `nextBatch`, and the heading on the allocate page is `Schedule the next N sessions · this cycle <start> – <end> · <held> of <total> scheduled`, produced by `subscriptionCycleHeading`. A subscription that already holds sessions always takes the additive arm of the allocator: nothing is deleted or excluded, the batch must be exactly `nextBatch` sessions, and the held count is re-checked under the per-event advisory lock so a stale tab cannot append a second cycle.
+
+**For a class**, the math is still period-based: `weeks = countWeeks(startDate, endDate)`, `totalSessions = sessionsPerWeek x weeks`, `totalSlots = totalSessions x slotsPerSession`, and slots are shared across all enrolled consultees.
 
 ### 4d. Availability Model
 
@@ -311,13 +314,13 @@ For a class, the same appointment structure is created during allocation (1 appo
 
 **Completion tracking** (`AppointmentOccurrence.completionStatus`):
 
-| Status        | Meaning                                                                     |
-| ------------- | --------------------------------------------------------------------------- |
-| `SCHEDULED`   | Future session, not yet held                                                |
+| Status        | Meaning                                                              |
+| ------------- | -------------------------------------------------------------------- |
+| `SCHEDULED`   | Future session, not yet held                                         |
 | `COMPLETED`   | Session held -- `Meeting` record exists OR manually marked           |
 | `UNVERIFIED`  | Past the end time but no `Meeting` record (possible offline session) |
-| `CANCELLED`   | Explicitly cancelled                                                        |
-| `RESCHEDULED` | Replaced via reallocation                                                   |
+| `CANCELLED`   | Explicitly cancelled                                                 |
+| `RESCHEDULED` | Replaced via reallocation                                            |
 
 **Auto-complete cron** (`scripts/appointments/auto-complete-appointments.ts`, runs hourly):
 
@@ -474,7 +477,7 @@ Recurring events depend on these automated jobs:
 | Job                            | Schedule      | Purpose                                                                        | Source                                               |
 | ------------------------------ | ------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- |
 | `auto-complete-appointments`   | Hourly        | Mark past sessions COMPLETED/UNVERIFIED                                        | `scripts/appointments/auto-complete-appointments.ts` |
-| `tentative-occurrences`              | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-occurrences/`                   |
+| `tentative-occurrences`        | Every 2 hours | Clean up stale tentative slots (> 24 hours, `TENTATIVE_EXPIRATION_HOURS = 24`) | `app/api/cleanup/tentative-occurrences/`             |
 | `expire-stale-requests`        | Daily         | Mark PENDING requests as EXPIRED (> 30 days)                                   | `app/api/cleanup/`                                   |
 | `release-earnings`             | Hourly        | PENDING -> READY when hold expires                                             | `jobs/earnings/release-earnings.ts`                  |
 | `create-payout-batch`          | Weekly Mon    | Collect READY earnings into batches                                            | `jobs/payouts/create-payout-batch.ts`                |
@@ -496,7 +499,7 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | **Appointments**      | 1 Appointment per session, each has N slots              | 1 Appointment per session (shared by all participants via M2M user relation on slots)                     |
 | **Slot sharing**      | Slots connected to consultant + 1 consultee              | New enrollees are linked to ALL existing slots of ALL appointments (`handleClassCheckout` line 1510-1524) |
 | **Collaborators**     | Not supported                                            | `Collaborator[]` (`collaboratorType: CLASS`) with `revenueShareBps` shares                                |
-| **Trial**             | Yes (`Trial` model)                               | No                                                                                                        |
+| **Trial**             | Yes (`Trial` model)                                      | No                                                                                                        |
 | **Recording**         | No                                                       | Optional                                                                                                  |
 | **Certificate**       | No                                                       | Optional                                                                                                  |
 | **Capacity**          | No (1:1)                                                 | Yes (per-instance `maxParticipants`; full means sold out)                                                 |
@@ -512,12 +515,12 @@ All cron jobs are triggered via GitHub Actions workflows in `.github/workflows/`
 | Topic                                    | Document                                            |
 | ---------------------------------------- | --------------------------------------------------- |
 | Full booking lifecycle (all event types) | `docs/booking/06-booking-lifecycle.md`              |
-| Slot math and calculations               | `docs/booking/03-interval-math-and-calculations.md`     |
+| Slot math and calculations               | `docs/booking/03-interval-math-and-calculations.md` |
 | API reference for allocation/validation  | `docs/booking/04-api-reference.md`                  |
 | Concurrency and distributed locking      | `docs/booking/12-concurrency-and-locking.md`        |
 | Checkout and payment integration         | `docs/booking/10-checkout-payment-integration.md`   |
 | Cancellation flow                        | `docs/booking/08-cancellation-flow.md`              |
-| Trial sessions (subscription-only)       | `docs/booking/09-trials.md`                 |
+| Trial sessions (subscription-only)       | `docs/booking/09-trials.md`                         |
 | Event capacity (class/webinar-only)      | `docs/booking/02-event-types-and-validation.md`     |
 | Payout architecture                      | `docs/payments/payouts/01-architecture.md`          |
 | Earnings lifecycle                       | `docs/payments/payouts/02-earnings-lifecycle.md`    |

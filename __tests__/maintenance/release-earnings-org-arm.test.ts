@@ -79,11 +79,19 @@ import prisma from "@/lib/prisma";
 import { releaseEarningsFromHold } from "@/scripts/earnings/release-earnings";
 
 const mockedPrisma = prisma as unknown as {
+  consultantEarnings: { findMany: jest.Mock; updateMany: jest.Mock };
   organizationEarnings: { findMany: jest.Mock; updateMany: jest.Mock };
   $transaction: jest.Mock;
 };
 
 describe("#1471 — release-earnings releases host-organization earnings", () => {
+  afterEach(() => {
+    // The consultant arm is a stubbed empty table except where a case
+    // installs its own; restore it whether or not that case passed.
+    mockedPrisma.consultantEarnings.findMany.mockResolvedValue([]);
+    mockedPrisma.consultantEarnings.updateMany.mockResolvedValue({ count: 0 });
+  });
+
   beforeEach(() => {
     releasedIds.length = 0;
     mockedPrisma.$transaction.mockImplementation(async (fn: unknown) =>
@@ -136,6 +144,52 @@ describe("#1471 — release-earnings releases host-organization earnings", () =>
         data: { status: "READY" },
       }),
     );
+  });
+
+  it("never claims a null-hold row (#1766 — an undelivered subscription tranche)", async () => {
+    // `holdUntil <= now` is NULL-safe in SQL: a NULL never compares true. The
+    // table stub applies the same three-valued rule so the pin fails the day
+    // the predicate is rewritten in a way that matches an unstamped tranche.
+    const consultantRows = [
+      {
+        id: "ce_stamped_past",
+        status: "PENDING",
+        holdUntil: new Date("2026-06-01T00:00:00.000Z"),
+        consultantSharePaise: 40_000,
+        consultantProfile: { user: { name: "Asha", email: "a@x" } },
+        payment: { id: "pay-1", amount: 100_000 },
+      },
+      {
+        id: "ce_unstamped_tranche",
+        status: "PENDING",
+        holdUntil: null,
+        consultantSharePaise: 40_000,
+        consultantProfile: { user: { name: "Asha", email: "a@x" } },
+        payment: { id: "pay-1", amount: 100_000 },
+      },
+    ];
+    const claimed: string[] = [];
+    const consultantMocks = mockedPrisma.consultantEarnings;
+    consultantMocks.findMany.mockImplementation(
+      async (args: { where: { status: string; holdUntil: { lte: Date } } }) =>
+        consultantRows.filter(
+          (r) =>
+            r.status === args.where.status &&
+            r.holdUntil !== null &&
+            r.holdUntil.getTime() <= args.where.holdUntil.lte.getTime(),
+        ),
+    );
+    consultantMocks.updateMany.mockImplementation(
+      async (args: { where: { id: { in: string[] } } }) => {
+        claimed.push(...args.where.id.in);
+        return { count: args.where.id.in.length };
+      },
+    );
+
+    const result = await releaseEarningsFromHold();
+
+    expect(result.releasedCount).toBe(1);
+    expect(claimed).toEqual(["ce_stamped_past"]);
   });
 
   it("applies the ticker limit to the organization arm as its own budget", async () => {

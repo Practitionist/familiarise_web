@@ -75,9 +75,14 @@ import { reportSentryError } from "@/lib/observability/report";
 import { recordOrgTDSDeduction } from "@/lib/payments/tax/tds-service";
 import {
   markOrgPayoutCompleted,
+  markOrgPayoutFailed,
   markOrgPayoutReversed,
   OrgPayoutWithholdingMismatchError,
 } from "@/lib/payments/payouts/org-payout-service";
+import {
+  notifyOrgPayoutCompleted,
+  notifyOrgPayoutFailed,
+} from "@/lib/novu/org-workflows";
 
 const PAYOUT_ID = "op_7cf818fb";
 const ORG_ID = "org-host-1";
@@ -284,5 +289,47 @@ describe("#1470 — markOrgPayoutReversed mirrors the corrected posting", () => 
       expect.any(OrgPayoutWithholdingMismatchError),
       expect.objectContaining({ op: "markOrgPayoutReversed" }),
     );
+  });
+});
+
+describe("#1474 — payout bells report the received figure, not the gross", () => {
+  it("COMPLETED bell carries post-withholding amountPaise + the TDS slice", async () => {
+    await markOrgPayoutCompleted(PAYOUT_ID);
+
+    expect(notifyOrgPayoutCompleted).toHaveBeenCalledTimes(1);
+    const [, payload] = (notifyOrgPayoutCompleted as jest.Mock).mock.calls[0];
+    // The org reconciles this against its bank credit: 851,664, not 852,516.
+    expect(payload.amountPaise).toBe(AMOUNT_PAISE);
+    expect(payload.netPayoutPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.tdsAmountPaise).toBe(TDS_PAISE);
+  });
+
+  it("REVERSED bell carries the returned post-withholding cash + the TDS slice", async () => {
+    await markOrgPayoutReversed(PAYOUT_ID, "bank returned funds");
+
+    expect(notifyOrgPayoutFailed).toHaveBeenCalledTimes(1);
+    const [, payload] = (notifyOrgPayoutFailed as jest.Mock).mock.calls[0];
+    expect(payload.kind).toBe("REVERSED");
+    expect(payload.amountPaise).toBe(AMOUNT_PAISE);
+    expect(payload.netPayoutPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.tdsAmountPaise).toBe(TDS_PAISE);
+  });
+
+  it("PROCESSING→FAILED bell names the attempted gross with zero withholding, even when the row retains batch-time TDS", async () => {
+    // The batch persists a computed tdsAmountPaise that is only actually
+    // withheld at COMPLETED. A pre-settlement failure must not render it.
+    mockedPrisma.organizationPayout.findUniqueOrThrow.mockResolvedValue(
+      payoutRow({ tdsAmountPaise: TDS_PAISE }),
+    );
+
+    const result = await markOrgPayoutFailed(PAYOUT_ID, "gateway rejected");
+
+    expect(result).toEqual({ wasNoOp: false, status: "FAILED" });
+    expect(notifyOrgPayoutFailed).toHaveBeenCalledTimes(1);
+    const [, payload] = (notifyOrgPayoutFailed as jest.Mock).mock.calls[0];
+    expect(payload.kind).toBe("FAILED");
+    expect(payload.amountPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.netPayoutPaise).toBe(NET_PAYOUT_PAISE);
+    expect(payload.tdsAmountPaise).toBe(0);
   });
 });

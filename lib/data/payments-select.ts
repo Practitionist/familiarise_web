@@ -60,3 +60,37 @@ export const ADMIN_DISPUTE_SELECT = {
   reason: true,
   createdAt: true,
 } as const;
+
+/** #1675 — which rail funded a buyer's row and for how much. `sourceRef` (a
+ *  wallet, invoice or programme id) is an org billing internal and stays out. */
+export const FUNDING_LEG_SUMMARY_SELECT = {
+  source: true,
+  amountPaise: true,
+} as const;
+
+/** The buyer's own view of one Payment row, as `derivePaymentPresentation`
+ *  reads it (lib/dashboard/money-state.ts): the amount line, the rail, the
+ *  receipt pointers, live refunds and the dispute status — never gateway ids.
+ *  Shared by the history row and its CHARGE_MEMBER co-pay children. */
+export const BUYER_PAYMENT_DISPLAY_SELECT = {
+  id: true,
+  amount: true,
+  originalAmount: true,
+  taxAmount: true,
+  currency: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  paymentGateway: true,
+  receiptUrl: true,
+  expiresAt: true,
+  createdAt: true,
+  consumerInvoice: { select: CONSUMER_INVOICE_SUMMARY_SELECT },
+  legs: { select: FUNDING_LEG_SUMMARY_SELECT },
+  // Buyer-side only: a withdrawn refund row is an operator's concern.
+  refunds: {
+    where: { deletedAt: null },
+    select: REFUND_SUMMARY_SELECT,
+    orderBy: { createdAt: "desc" },
+  },
+  disputes: { select: { status: true } },
+} as const;

@@ -53,7 +53,14 @@ is real money on the first run — so the prerequisites below are hard gates.
       new environments must not rely on it (#677 PM-1).
 - [ ] **Payout accounts VERIFIED** for every org/consultant in the first batch
       (`OrganizationPayoutAccount.status === "VERIFIED"`; the contact +
-      fund-account side-channel finished provisioning).
+      fund-account side-channel finished provisioning). Consultants onboard
+      themselves at `/dashboard/consultant/[consultantId]/settings/payouts`
+      (PR-Y2, #1675): the page offers the reverse penny drop (₹1 paid from
+      their own UPI app, account details returned by RazorpayX and persisted
+      reference-only) or manual bank/UPI entry with the standard penny drop,
+      and the same page takes the PAN and entity type that Section 194-O
+      withholding reads. Neither validation runs in RazorpayX test mode, so a
+      consultant verified on a preview is a consultant verified by hand.
 - [ ] **TDS + MSME fields populated** on the payouts (`tdsAmountPaise`,
       `mustPayByDate` — both payout paths stamp these as of #776).
 - [ ] **Idempotency keys present** (`payout_<profile>_<batch>`, NOT NULL) so a

@@ -28,6 +28,7 @@ import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { abortIfMaintenance } from "@/lib/maintenance-cron";
 import * as Sentry from "@sentry/nextjs";
@@ -104,15 +105,24 @@ export async function runExpireContracts(): Promise<ExpireStats> {
             // future had its end date rewritten and was counted again in
             // `assignmentsClosed`. The comment above always said "still-ACTIVE
             // assignments"; the query did not say it.
-            const closed = await tx.programAssignment.updateMany({
-              where: {
-                programId: { in: programIds },
-                status: "ACTIVE",
-                periodEnd: { gte: now },
-              },
-              data: { periodEnd: now, status: "CLOSED" },
-            });
-            assignmentsClosed += closed.count;
+            // #1744 W5 — closed per program so each programme's seats are
+            // released in the same transaction that closed its assignments.
+            for (const programId of programIds) {
+              const closed = await tx.programAssignment.updateMany({
+                where: {
+                  programId,
+                  status: "ACTIVE",
+                  periodEnd: { gte: now },
+                },
+                data: { periodEnd: now, status: "CLOSED" },
+              });
+              assignmentsClosed += closed.count;
+              await releaseSeatsForClosedAssignments(
+                tx,
+                programId,
+                closed.count,
+              );
+            }
           }
 
           await tx.orgAuditLog.create({

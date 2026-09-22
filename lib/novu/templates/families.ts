@@ -133,6 +133,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "dispute-resolved": "refund",
 
   "payout-processed": "payout",
+  "payout-failed": "payout",
 
   "referral-bonus-earned": "referral",
   "referee-welcome-bonus": "referral",

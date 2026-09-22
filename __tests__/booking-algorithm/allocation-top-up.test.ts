@@ -61,15 +61,17 @@ import { attemptTrigger, notifyAppointmentBooked } from "@/lib/novu";
 import { SchedulingService } from "@/utils/scheduling-engine/SchedulingService";
 import { ScheduleType, DayOfWeek } from "@prisma/client";
 
-/** Mondays 09:00–11:00 UTC — room for one 1-hour session a week, forever. */
-const MONDAY_MORNINGS = {
-  id: "weekly-monday-9",
-  startDay: DayOfWeek.MONDAY,
-  endDay: DayOfWeek.MONDAY,
-  startTimeUtc: 9 * 60,
-  endTimeUtc: 11 * 60,
-  utcOffsetMinutes: 0,
-};
+/** One 09:00–11:00 UTC window on `day`; the 1/day cap makes it one session. */
+function morningOn(day: DayOfWeek) {
+  return {
+    id: `weekly-${day.toLowerCase()}-9`,
+    startDay: day,
+    endDay: day,
+    startTimeUtc: 9 * 60,
+    endTimeUtc: 11 * 60,
+    utcOffsetMinutes: 0,
+  };
+}
 
 const mockPrisma = prisma as unknown as {
   $transaction: jest.Mock;
@@ -108,31 +110,37 @@ function wrapperWith(occurrences: ReturnType<typeof confirmedOccurrence>[]) {
   };
 }
 
-// Weeks 1 and 2 of a four-session plan are already booked and paid for.
+// #1766 — a 2-a-week, four-session plan: cycle one holds two sessions. The
+// Monday of cycle one is booked and paid for; the Tuesday is still owed.
 const WEEK_1 = confirmedOccurrence(1, "2025-01-06T09:00:00.000Z");
-const WEEK_2 = confirmedOccurrence(2, "2025-01-13T09:00:00.000Z");
-// What the same event looks like once the top-up has run.
-const WEEK_3 = confirmedOccurrence(3, "2025-01-20T09:00:00.000Z");
-const WEEK_4 = confirmedOccurrence(4, "2025-01-27T09:00:00.000Z");
+const WEEK_2 = confirmedOccurrence(2, "2025-01-07T09:00:00.000Z");
+// What the whole plan looks like once both cycles have been placed.
+const WEEK_3 = confirmedOccurrence(3, "2025-01-13T09:00:00.000Z");
+const WEEK_4 = confirmedOccurrence(4, "2025-01-14T09:00:00.000Z");
 
 function makeSubscription(
   occurrences: ReturnType<typeof confirmedOccurrence>[],
 ) {
   return {
     id: "sub-topup",
+    sessionsTotal: 4,
     schedulingPeriodStartsAt: new Date("2025-01-06T00:00:00Z"),
-    schedulingPeriodEndsAt: new Date("2025-02-28T00:00:00Z"),
+    schedulingPeriodEndsAt: new Date("2025-01-12T23:59:59Z"),
+    schedulingTimezone: "UTC",
     subscriptionPlan: {
       title: "Weekly coaching",
       consultantProfileId: "consultant-profile-1",
-      durationInMonths: 2,
-      sessionsPerWeek: 1,
+      durationInMonths: 1,
+      sessionsPerWeek: 2,
       sessionDurationInHours: 1,
       totalSessions: 4,
       consultantProfile: {
         user: { id: "consultant-1", name: "Consultant", timezone: "UTC" },
         scheduleType: ScheduleType.WEEKLY,
-        availabilityWindowsWeekly: [MONDAY_MORNINGS],
+        availabilityWindowsWeekly: [
+          morningOn(DayOfWeek.MONDAY),
+          morningOn(DayOfWeek.TUESDAY),
+        ],
         availabilityWindowsCustom: [],
       },
     },
@@ -177,7 +185,6 @@ function makeNoDeleteTx() {
               id: WRAPPER_ID,
               occurrences: [
                 WEEK_1,
-                WEEK_2,
                 ...data.occurrences.create.map((row) => ({
                   ...row,
                   id: `occ-week-${row.ordinal}`,
@@ -197,7 +204,7 @@ function makeNoDeleteTx() {
       findMany: jest.fn().mockResolvedValue([]),
       count: jest.fn().mockResolvedValue(0),
       // #1554 — nextOrdinal continues the wrapper's numbering.
-      aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 2 } }),
+      aggregate: jest.fn().mockResolvedValue({ _max: { ordinal: 1 } }),
     },
     $executeRaw: jest.fn().mockResolvedValue(1),
   };
@@ -230,18 +237,16 @@ beforeEach(() => {
     (callback: (tx: typeof mockTx) => unknown) => callback(mockTx),
   );
   notifyBooked.mockResolvedValue([{ success: true, staged: STAGED_ROW }]);
-  mockTx.subscription.findUnique.mockResolvedValue(
-    makeSubscription([WEEK_1, WEEK_2]),
-  );
+  mockTx.subscription.findUnique.mockResolvedValue(makeSubscription([WEEK_1]));
   mockPrisma.subscription.findUnique.mockImplementation(() =>
     mockTx.subscription.findUnique(),
   );
   // One array answers all three reads: the event's own wrapper, the
-  // consultant's occupancy scan and the consultee's. The confirmed sessions
-  // therefore block their own intervals, which is what a top-up requires.
-  mockPrisma.appointment.findMany.mockResolvedValue([
-    wrapperWith([WEEK_1, WEEK_2]),
-  ]);
+  // consultant's occupancy scan and the consultee's. The confirmed session
+  // therefore blocks its own interval, which is what a top-up requires.
+  mockPrisma.appointment.findMany.mockResolvedValue([wrapperWith([WEEK_1])]);
+  // #1766 — the in-txn held-count re-check sees the same one session.
+  mockTx.appointmentOccurrence.count.mockResolvedValue(1);
 
   mockValidateFn.mockResolvedValue({ isValid: true, errors: [], warnings: [] });
   mockRevalidateConflictsFn.mockResolvedValue({
@@ -256,7 +261,7 @@ afterEach(() => {
 });
 
 describe("#1206 top-up allocation", () => {
-  it("places only the two missing sessions and deletes nothing", async () => {
+  it("places only the missing session of the cycle and deletes nothing", async () => {
     const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-topup",
@@ -267,23 +272,20 @@ describe("#1206 top-up allocation", () => {
 
     expect(result.success).toBe(true);
     expect(result.noChange).toBeUndefined();
-    // #1554 — the wrapper is reused, never re-created; the two sessions the
-    // plan was short continue its ordinals.
+    // #1554 — the wrapper is reused, never re-created; the session the cycle
+    // was short continues its ordinals.
     expect(mockTx.appointment.create).not.toHaveBeenCalled();
     expect(result.appointments).toHaveLength(1);
     expect(
       mockTx.appointment.update.mock.calls[0][0].data.occurrences.create.map(
         (row: { ordinal: number }) => row.ordinal,
       ),
-    ).toEqual([3, 4]);
-    // Weeks 1 and 2 are untouched: they are already at the weekly cap and
-    // their intervals are in the booked set, so the search skipped straight
-    // to weeks 3 and 4 — one occurrence row per call (#1554).
-    expect(createdSlotStarts()).toEqual([
-      "2025-01-20T09:00:00.000Z",
-      "2025-01-27T09:00:00.000Z",
-    ]);
-    // The plan is whole again, so no partial notice is owed.
+    ).toEqual([2]);
+    // Monday is untouched: it already holds the day's one session and its
+    // interval is in the booked set, so the search went to Tuesday — one
+    // occurrence row per call (#1554). #1766 — cycle two is NOT pre-scheduled.
+    expect(createdSlotStarts()).toEqual(["2025-01-07T09:00:00.000Z"]);
+    // The cycle is whole again, so no partial notice is owed.
     expect(result.partial).toBeUndefined();
     // #1697 item 5 — the booked notice is staged INSIDE the write transaction
     // (the `tx` option), attempted after commit, and never leaks to the caller.
@@ -294,7 +296,7 @@ describe("#1206 top-up allocation", () => {
   });
 
   it("returns noChange and notifies nobody once the plan is complete", async () => {
-    // The state the run above leaves behind: all four sessions confirmed.
+    // Both cycles placed: all four sessions confirmed.
     const complete = [WEEK_1, WEEK_2, WEEK_3, WEEK_4];
     mockTx.subscription.findUnique.mockResolvedValue(
       makeSubscription(complete),
@@ -323,29 +325,19 @@ describe("#1206 top-up allocation", () => {
     expect(notifyBooked).not.toHaveBeenCalled();
   });
 
-  it("without the flag, the same event still goes for the delete", async () => {
-    // The contrast that makes the pin above mean something. Same fixture, no
-    // flag: the ordinary auto path re-plans, which starts by deleting the two
-    // paid sessions — and this transaction has no delete to give it.
-    mockTx.appointment.findMany.mockResolvedValue([
-      wrapperWith([WEEK_1, WEEK_2]),
-    ]);
-
+  it("without the flag, a held subscription still appends instead of re-planning (#1766)", async () => {
+    // Before #1766 the ordinary auto path re-planned, which started by
+    // deleting the paid session. A subscription with held sessions now takes
+    // the additive arm whatever the flag says — and this transaction has no
+    // delete members, so any regression throws instead of quietly passing.
     const result = await SchedulingService.allocate({
       eventType: "subscription",
       eventId: "sub-topup",
       mode: "auto",
     });
 
-    expect(result.success).toBe(false);
-    // The mock transaction has no delete members, so the delete path throws
-    // here instead of quietly passing. 5xx answers never carry raw error
-    // text (a TypeError reading "...deleteMany is not a function" is
-    // operator detail), so the contract is the fixed copy + UNKNOWN_ERROR.
-    expect(result.error).toBe(
-      "Couldn't save these times — check whether they appear, then retry.",
-    );
-    expect(result.errorCode).toBe("UNKNOWN_ERROR");
-    expect(result.httpStatus).toBe(500);
+    expect(result.success).toBe(true);
+    expect(mockTx.appointment.create).not.toHaveBeenCalled();
+    expect(createdSlotStarts()).toEqual(["2025-01-07T09:00:00.000Z"]);
   });
 });

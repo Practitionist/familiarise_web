@@ -38,6 +38,8 @@ export interface OrgActivationSnapshot {
   stuckPayoutCount: number;
   walletLowBalancePaise: number | null; // null = not a wallet org
   creditPoolMaxUtilizationPct: number | null;
+  /** #1744 — live programmes still set to the refused CHARGE_MEMBER. */
+  memberBilledOverageProgramNames?: string[];
 }
 
 export interface ActivationStep {
@@ -191,6 +193,19 @@ export function deriveActionCenter(
       title: `Program usage at ${Math.round(s.creditPoolMaxUtilizationPct)}%`,
       body: "A program is close to its cap. Top up or upsize before members hit overage.",
       ctaLabel: "View programs",
+      ctaHref: `${base}/programs`,
+    });
+  }
+
+  for (const name of s.memberBilledOverageProgramNames ?? []) {
+    // #1744 — CHARGE_MEMBER is refused at configuration time; a programme
+    // saved before the guard keeps writing off the over-cap portion.
+    items.push({
+      key: `member-billed-overage:${name}`,
+      severity: "warning",
+      title: `Programme ${name} bills members for overage`,
+      body: "Charging members is no longer offered: the member pays after the session while the consultant is paid on the full price. Switch the programme to BLOCK or CHARGE_ORG.",
+      ctaLabel: "Edit programme",
       ctaHref: `${base}/programs`,
     });
   }

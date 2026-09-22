@@ -31,6 +31,14 @@ export const CATEGORY_FLAG: Record<PreferenceCategory, string> = {
 
 /** Workspace routing (BELL_ONLY / EMAIL_ONLY / NEITHER) gates every bell. */
 const ROUTING_BELL_FLAG = "routingBell";
+/**
+ * Q1 fix — the master toggle and the in-app channel toggle now gate the bell.
+ * `updateSubscriberPreferences` mirrors `allNotifications` → `masterEnabled`
+ * and `inAppEnabled` → `preferInApp`; both default true so legacy subscribers
+ * with no flags keep receiving (null-safe via the "false" comparison below).
+ */
+const MASTER_FLAG = "masterEnabled";
+const PREFER_IN_APP_FLAG = "preferInApp";
 
 type NotFalse = { "!=": [{ var: string }, "false"] };
 export type SkipRule = { and: NotFalse[] };
@@ -40,7 +48,11 @@ function notFalse(flag: string): NotFalse {
 }
 
 export function inAppSkipRule(category: PreferenceCategory | null): SkipRule {
-  const rules = [notFalse(ROUTING_BELL_FLAG)];
+  const rules = [
+    notFalse(ROUTING_BELL_FLAG),
+    notFalse(MASTER_FLAG),
+    notFalse(PREFER_IN_APP_FLAG),
+  ];
   if (category) rules.push(notFalse(CATEGORY_FLAG[category]));
   return { and: rules };
 }

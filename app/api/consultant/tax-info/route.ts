@@ -3,7 +3,7 @@
  * Manage PAN, GSTIN, and other tax-related info for consultants
  */
 
-import * as Sentry from "@sentry/nextjs";
+import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
@@ -20,7 +20,9 @@ const updateTaxInfoSchema = z.object({
   // (null ⇒ no ₹5L exemption). Until a consultant declares it here, every
   // payout over-withholds rather than wrongly granting companies the
   // individual exemption.
-  taxEntityType: z.enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"]).optional(),
+  taxEntityType: z
+    .enum(["INDIVIDUAL", "HUF", "PARTNERSHIP", "LLP", "COMPANY"])
+    .optional(),
   // MSME declaration — #1230 intake writer. The payout deadline engine reads
   // msmeStatus/writtenAgreementWithFamiliarise on ConsultantProfile to stamp
   // mustPayByDate (MSMED 15/45-day terms + §16 interest exposure); nothing
@@ -36,9 +38,9 @@ const updateTaxInfoSchema = z.object({
  * Get the authenticated consultant's tax info
  */
 // S3776 — PAN encryption extracted so PUT stays under the complexity budget.
-function buildPanFields(panNumber: string | undefined):
-  | { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string }
-  | undefined {
+function buildPanFields(
+  panNumber: string | undefined,
+): { panEncrypted: Uint8Array<ArrayBuffer>; panLast4: string } | undefined {
   if (!panNumber) return undefined;
   const { encrypted, last4 } = encryptPAN(panNumber);
   return { panEncrypted: encrypted, panLast4: last4 };
@@ -107,7 +109,10 @@ export async function GET() {
       msmeWrittenAgreement: consultantProfile.writtenAgreementWithFamiliarise,
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    reportSentryError(error, {
+      subsystem: "consultant",
+      op: "GET /api/consultant/tax-info",
+    });
     console.error("Tax info GET error:", error);
     return NextResponse.json(
       { error: "Failed to fetch tax info" },
@@ -161,7 +166,8 @@ export async function PUT(req: NextRequest) {
     // Encrypt PAN if provided
     const panFields = buildPanFields(validated.panNumber);
 
-    const taxInfo = await prisma.consultantTaxInfo.upsert({      where: { consultantProfileId: consultantProfile.id },
+    const taxInfo = await prisma.consultantTaxInfo.upsert({
+      where: { consultantProfileId: consultantProfile.id },
       create: {
         consultantProfileId: consultantProfile.id,
         panEncrypted: panFields?.panEncrypted ?? null,
@@ -219,7 +225,8 @@ export async function PUT(req: NextRequest) {
       taxEntityType: taxInfo.taxEntityType ?? null,
       msmeStatus: profileAfter?.msmeStatus ?? null,
       udyamNumber: profileAfter?.udyamNumber ?? null,
-      msmeWrittenAgreement: profileAfter?.writtenAgreementWithFamiliarise ?? false,
+      msmeWrittenAgreement:
+        profileAfter?.writtenAgreementWithFamiliarise ?? false,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {
@@ -228,7 +235,12 @@ export async function PUT(req: NextRequest) {
         { status: 400 },
       );
     }
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "consultant" } });
+    // #1675 PR-Y2 — the same rail every other route reports through; the
+    // raw captureException here never produced an issue on the preview.
+    reportSentryError(error, {
+      subsystem: "consultant",
+      op: "PUT /api/consultant/tax-info",
+    });
     console.error("Tax info PUT error:", error);
     return NextResponse.json(
       { error: "Failed to update tax info" },
