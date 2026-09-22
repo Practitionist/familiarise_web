@@ -92,6 +92,9 @@ describe("cron-tick targetRequest", () => {
 
 // #1686 — six sweeps run on the 15-minute slots only; the customer-visible
 // five stay on every tick (ADR 27 consequences, 2026-09-17).
+// #1792 — Upstash 500k cap: every-tick keeps only the two latency-sensitive
+// money confirms; the rest ride 10/15-minute slots (each has an Actions twin
+// at equal or better cadence, except the ticker-only Novu relay at 10).
 describe("cron-tick dueTargets cadence", () => {
   const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
@@ -106,6 +109,9 @@ describe("cron-tick dueTargets cadence", () => {
       "cascade-refund-earnings",
       "reconcile-refunds",
       "abandoned-payments",
+      "sweep-stuck-webhook-events",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
       "retry-failed-emails",
       // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
       "expire-unpaid-trials",
@@ -124,13 +130,15 @@ describe("cron-tick dueTargets cadence", () => {
     for (const name of [
       "reconcile-payment-status",
       "reconcile-orphaned-confirmations",
-      "sweep-orphaned-topup-captures",
-      "dispatch-outbound-webhooks",
-      "drain-notification-outbox",
-      "sweep-stuck-webhook-events",
     ]) {
       expect(off).toContain(name);
     }
+  });
+
+  it("fires the ticker-only Novu relay every 10 minutes", () => {
+    // No Actions twin exists, so 15 would strand bells; 10 halves its burn.
+    expect(dueTargets(at(5))).not.toContain("drain-notification-outbox");
+    expect(dueTargets(at(10))).toContain("drain-notification-outbox");
   });
 });
 

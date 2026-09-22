@@ -1,9 +1,14 @@
 name: Mark Expired Recordings
 
+permissions:
+  contents: read
+
 on:
   schedule:
-    # Daily 03:20 UTC. #709 — off the 03:00 pile-up.
-    - cron: "20 3 * * *"
+    # Daily 03:21 UTC. #709 — off the 03:00 pile-up; staggered 1 min past
+    # sweep-verification (03:20) so the two Stream/Supabase-heavy jobs never
+    # share a start minute.
+    - cron: "21 3 * * *"
   workflow_dispatch: # Allow manual triggering
 
 concurrency:
@@ -38,6 +43,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -46,13 +53,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Mark expired recordings
-        run: npx --yes tsx@4.23.1 jobs/stream/mark-expired-recordings.ts
+        run: node_modules/.bin/tsx jobs/stream/mark-expired-recordings.ts
 
       - name: Notify on failure
         if: failure()

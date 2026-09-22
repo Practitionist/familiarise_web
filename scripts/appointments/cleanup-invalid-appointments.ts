@@ -109,11 +109,14 @@ export interface CleanupResult {
   success: boolean;
 }
 
-// Statuses that should not be cleaned up (already terminal)
+// Statuses that should not be cleaned up (already terminal). COMPLETED is
+// terminal too: without it all four detectors read COMPLETED bookings as
+// cleanable and rely on the CAS skip to avoid COMPLETED→CANCELLED corruption.
 const TERMINAL_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CANCELLED,
   AppointmentStatus.REJECTED,
   AppointmentStatus.EXPIRED,
+  AppointmentStatus.COMPLETED,
 ];
 
 /**

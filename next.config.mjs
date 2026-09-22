@@ -351,7 +351,12 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
   // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
+  // #1792 — off on Netlify: the 2026-09-21 build OOM'd (exit 137, Killed at
+  // static page 211/282) with heap already at the 8 GB container ceiling, so
+  // container RSS — not heap — is the constraint. The widened client upload
+  // holds the full client source-map set in memory during the finalize phase;
+  // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  widenClientFileUpload: process.env.NETLIFY !== "true",
 
   // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
   // This can increase your server load as well as your hosting bill.

@@ -1,5 +1,8 @@
 name: DPDP DataBreach 72h Deadline Alerts
 
+permissions:
+  contents: read
+
 on:
   schedule:
     # Hourly at :27 — the 72-hour DPDP reporting deadline is sharp;
@@ -38,6 +41,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -46,13 +51,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Run DataBreach deadline alerts
-        run: npx --yes tsx@4.23.1 jobs/compliance/databreach-deadline-alerts.ts
+        run: node_modules/.bin/tsx jobs/compliance/databreach-deadline-alerts.ts
 
       - name: Notify on failure
         if: failure()

@@ -154,9 +154,12 @@ export async function postLedgerTxn(
     return { transactionId: existing.id, created: false };
   }
 
-  const accountIds = await Promise.all(
-    input.postings.map((p) => resolveAccountId(db, p.account)),
-  );
+  // Sequential: resolveAccountId upserts on `tx`; Promise.all here issues
+  // concurrent writes on the single PG_POOL_MAX=1 connection (#1435).
+  const accountIds: string[] = [];
+  for (const p of input.postings) {
+    accountIds.push(await resolveAccountId(db, p.account));
+  }
 
   let txn: { id: string };
   try {
