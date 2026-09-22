@@ -176,7 +176,13 @@ const nextConfig = {
     // RSS at the cost of a slower static phase. CI/dev keep the default.
     // Drop to 2 if exit 137 recurs.
     ...(process.env.NETLIFY === "true"
-      ? { staticGenerationMaxConcurrency: 4 }
+      ? {
+          staticGenerationMaxConcurrency: 4,
+          // Prerender source maps are held in memory through the static
+          // phase; Netlify trades them for survival (Next memory guide),
+          // CI/dev keep them for prerender stack-trace quality.
+          enablePrerenderSourceMaps: false,
+        }
       : {}),
     webpackMemoryOptimizations: true,
     // Only packages Next does NOT already optimize by default. Its built-in
