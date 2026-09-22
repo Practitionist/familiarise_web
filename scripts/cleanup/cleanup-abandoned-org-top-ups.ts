@@ -136,7 +136,7 @@ async function cleanupAbandonedOrgTopUpsUnlocked(
       }
     } else {
       console.log(
-        `   Reaped ${reaped} of ${candidates.length} candidates — the rest were confirmed concurrently and preserved`,
+        `   Reaped ${reaped} of ${candidates.length} candidates — the remaining candidates changed or were removed concurrently`,
       );
     }
 
