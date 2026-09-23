@@ -5,6 +5,10 @@ import { ChevronRight } from "lucide-react";
 
 import { ArticleActions } from "../../_components/ArticleActions";
 import {
+  SupportSidebar,
+  SupportSidebarMobile,
+} from "../../_components/SupportSidebar";
+import {
   articleUrl,
   articlesForCategory,
   CONTENT_ISO_DATE,
@@ -100,8 +104,12 @@ export default async function SupportArticlePage({
           </ol>
         </nav>
 
-        <div className="grid gap-10 lg:grid-cols-[1fr_280px]">
-          <article className="min-w-0">
+        <SupportSidebarMobile />
+        <div className="flex gap-10">
+          <div className="hidden xl:block">
+            <SupportSidebar />
+          </div>
+          <article className="min-w-0 flex-1">
             <h1 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight">
               {article.title}
             </h1>
@@ -169,44 +177,46 @@ export default async function SupportArticlePage({
             </div>
           </article>
 
-          <aside className="space-y-4 lg:sticky lg:top-24 lg:self-start">
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <p className="text-sm font-semibold">On this page</p>
-              <ul className="mt-3 space-y-1.5">
-                {article.sections.map((section) => (
-                  <li key={section.heading}>
-                    <a
-                      href={`#${slugify(section.heading)}`}
-                      className="block text-sm text-muted-foreground hover:text-foreground"
-                    >
-                      {section.heading}
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <ArticleActions article={article} />
-            </div>
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <p className="text-sm font-semibold">
-                More in {categoryData.title}
-              </p>
-              <ul className="mt-3 space-y-1.5">
-                {articlesForCategory(category)
-                  .filter((a) => a.slug !== article.slug)
-                  .slice(0, 5)
-                  .map((a) => (
-                    <li key={a.slug}>
-                      <Link
-                        href={articleUrl(a)}
+          <aside className="hidden w-64 shrink-0 space-y-4 lg:block xl:w-72">
+            <div className="sticky top-24 space-y-4">
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <p className="text-sm font-semibold">On this page</p>
+                <ul className="mt-3 space-y-1.5">
+                  {article.sections.map((section) => (
+                    <li key={section.heading}>
+                      <a
+                        href={`#${slugify(section.heading)}`}
                         className="block text-sm text-muted-foreground hover:text-foreground"
                       >
-                        {a.title}
-                      </Link>
+                        {section.heading}
+                      </a>
                     </li>
                   ))}
-              </ul>
+                </ul>
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <ArticleActions article={article} />
+              </div>
+              <div className="rounded-2xl border border-border bg-card p-5">
+                <p className="text-sm font-semibold">
+                  More in {categoryData.title}
+                </p>
+                <ul className="mt-3 space-y-1.5">
+                  {articlesForCategory(category)
+                    .filter((a) => a.slug !== article.slug)
+                    .slice(0, 5)
+                    .map((a) => (
+                      <li key={a.slug}>
+                        <Link
+                          href={articleUrl(a)}
+                          className="block text-sm text-muted-foreground hover:text-foreground"
+                        >
+                          {a.title}
+                        </Link>
+                      </li>
+                    ))}
+                </ul>
+              </div>
             </div>
           </aside>
         </div>

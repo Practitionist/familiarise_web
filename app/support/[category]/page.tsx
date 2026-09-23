@@ -4,10 +4,13 @@ import { notFound } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 
 import {
+  SupportSidebar,
+  SupportSidebarMobile,
+} from "../_components/SupportSidebar";
+import {
   articleUrl,
   articlesForCategory,
   getCategory,
-  supportCategories,
 } from "../_data/support-content";
 
 export const revalidate = 3600;
@@ -62,8 +65,10 @@ export default async function SupportCategoryPage({
           </ol>
         </nav>
 
-        <div className="grid gap-10 lg:grid-cols-[1fr_280px]">
-          <div>
+        <div className="flex gap-10">
+          <SupportSidebar />
+          <div className="min-w-0 flex-1">
+            <SupportSidebarMobile />
             <h1 className="text-fluid-3xl md:text-fluid-4xl font-bold tracking-tight">
               {data.title}
             </h1>
@@ -71,7 +76,7 @@ export default async function SupportCategoryPage({
               {data.description}
             </p>
 
-            <div className="mt-8 space-y-8">
+            <div className="mt-8 space-y-4">
               {articles.map((article) => (
                 <Link
                   key={article.slug}
@@ -87,32 +92,9 @@ export default async function SupportCategoryPage({
                 </Link>
               ))}
             </div>
-          </div>
 
-          <aside className="lg:sticky lg:top-24 lg:self-start">
-            <div className="rounded-2xl border border-border bg-card p-5">
-              <p className="text-sm font-semibold">All topics</p>
-              <ul className="mt-3 space-y-1">
-                {supportCategories.map((c) => (
-                  <li key={c.slug}>
-                    <Link
-                      href={`/support/${c.slug}`}
-                      aria-current={c.slug === category ? "page" : undefined}
-                      className={
-                        c.slug === category
-                          ? "block rounded-lg bg-muted px-3 py-2 text-sm font-medium"
-                          : "block rounded-lg px-3 py-2 text-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground"
-                      }
-                    >
-                      {c.title}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="mt-4 rounded-2xl border border-border bg-card p-5">
-              <p className="text-sm font-semibold">Still stuck?</p>
+            <div className="mt-8 rounded-2xl border border-border bg-muted/40 p-5">
+              <p className="font-semibold">Still stuck?</p>
               <p className="mt-1 text-sm text-muted-foreground">
                 We reply within 24–48 hours on business days.
               </p>
@@ -123,7 +105,7 @@ export default async function SupportCategoryPage({
                 Contact support
               </Link>
             </div>
-          </aside>
+          </div>
         </div>
       </div>
     </section>

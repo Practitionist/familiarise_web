@@ -15,7 +15,7 @@ import {
   supportCategories,
 } from "../_data/support-content";
 
-const ICONS: Record<string, typeof UserRound> = {
+export const SUPPORT_ICONS: Record<string, typeof UserRound> = {
   account: UserRound,
   booking: CalendarClock,
   payments: CreditCard,
@@ -31,7 +31,7 @@ export function CategoryGrid() {
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {supportCategories.map((category) => {
-        const Icon = ICONS[category.icon] ?? LifeBuoy;
+        const Icon = SUPPORT_ICONS[category.icon] ?? LifeBuoy;
         const count = articlesForCategory(category.slug).length;
         return (
           <Link
