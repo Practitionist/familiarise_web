@@ -62,7 +62,15 @@ async function resolveGuardSession() {
   const lookup = await lookupSession(true);
   if (lookup.kind === "failed")
     throw new SessionLookupFailedError(lookup.cause);
-  if (lookup.kind === "none") await redirectWithCookieCleanup();
+  if (lookup.kind === "none") {
+    await redirectWithCookieCleanup();
+    // Unreachable: the cleanup route redirects (Next's redirect() throws).
+    // Stated explicitly because `await` on a `Promise<never>` does not narrow
+    // the `lookup` union the way a sync never-returning call did (TS2339).
+    throw new SessionLookupFailedError(
+      new Error("stale-session cleanup did not redirect"),
+    );
+  }
   return lookup.session;
 }
 
