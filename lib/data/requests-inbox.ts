@@ -690,11 +690,39 @@ function planCohort(
 }
 
 /**
- * Cohort reads run concurrently: each sub-cohort is an independent bounded
- * scan (take 200), so serial awaits only summed their latencies. With
- * PG_POOL_MAX=1 the pool still serialises on Netlify, but locally and under
- * larger pools this is a direct saving — and the queue wait is still shorter
- * than sequential round trips.
+ * Bounded concurrency for the serverless pool: with PG_POOL_MAX=1 every extra
+ * concurrent query queues behind the single connection, and a 6-deep queue at
+ * ~700ms each can exceed the 3s PG_CONNECT_TIMEOUT_MS before it starts.
+ * Cap in-flight reads (2 when pool<=1, else 6) instead of unbounded
+ * Promise.all — still parallel locally, safe on Netlify.
+ */
+function poolLimit(): number {
+  const max = Number(process.env.PG_POOL_MAX);
+  return Number.isFinite(max) && max <= 1 ? 2 : 6;
+}
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = new Array(Math.min(limit, items.length))
+    .fill(null)
+    .map(async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * Cohort reads run concurrently (bounded): each sub-cohort is an independent
+ * bounded scan (take 200), so serial awaits only summed their latencies.
  */
 async function readCohort(
   cp: string,
@@ -702,20 +730,17 @@ async function readCohort(
   plan: CohortPlan,
   now: Date,
 ): Promise<InboxRowInput[]> {
+  const limit = poolLimit();
   const [consultationGroups, subscriptionGroups, nextCycleRows, trialRows] =
     await Promise.all([
-      Promise.all(
-        plan.consultationStatuses.map(async (where) => {
-          const found = await findConsultations(where);
-          return found.map((c) => consultationRow(c, cp, now));
-        }),
-      ),
-      Promise.all(
-        plan.subscriptionStatuses.map(async (where) => {
-          const found = await findSubscriptions(where);
-          return found.map((s) => subscriptionRow(s, cp, now, "subscription"));
-        }),
-      ),
+      mapLimit(plan.consultationStatuses, limit, async (where) => {
+        const found = await findConsultations(where);
+        return found.map((c) => consultationRow(c, cp, now));
+      }),
+      mapLimit(plan.subscriptionStatuses, limit, async (where) => {
+        const found = await findSubscriptions(where);
+        return found.map((s) => subscriptionRow(s, cp, now, "subscription"));
+      }),
       plan.nextCycle ? readNextCycleRows(cp, scope, now) : Promise.resolve([]),
       plan.trialStatuses.length > 0
         ? findTrials(trialWhere(cp, scope, plan.trialStatuses)).then((found) =>
@@ -768,52 +793,61 @@ async function readCounts(
   now: Date,
   known: { type: InboxType; total: number } | null,
 ): Promise<Record<InboxType, number>> {
-  // All counts are independent — run them concurrently instead of 5+ serial
-  // round trips. The `known` shortcut still avoids re-counting the active tab
-  // (its total came from the cohort scan above).
-  const [
-    consultationPending,
-    consultationAwaiting,
-    subscriptionPending,
-    subscriptionAwaiting,
-    nextCycle,
-    trial,
-  ] = await Promise.all([
-    known?.type === "consultation"
-      ? Promise.resolve(0)
-      : prisma.consultation.count({
-          where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
-        }),
-    known?.type === "consultation"
-      ? Promise.resolve(0)
-      : prisma.consultation.count({
-          where: {
-            ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-            deletedAt: null,
-          },
-        }),
-    known?.type === "subscription"
-      ? Promise.resolve(0)
-      : prisma.subscription.count({
-          where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
-        }),
-    known?.type === "subscription"
-      ? Promise.resolve(0)
-      : prisma.subscription.count({
-          where: {
-            ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-            deletedAt: null,
-          },
-        }),
-    known?.type === "subscription"
-      ? Promise.resolve(0)
-      : countNextCycle(cp, scope, now),
-    known?.type === "trial"
-      ? Promise.resolve(0)
-      : prisma.trial.count({
-          where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
-        }),
-  ]);
+  // Counts are independent but pool-bounded (see poolLimit above): 6 at once
+  // can queue past PG_CONNECT_TIMEOUT_MS on pool=1. The `known` shortcut
+  // still avoids re-counting the active tab (its total came from the cohort).
+  type CountTask = () => Promise<number>;
+  const tasks: CountTask[] = [];
+  if (known?.type !== "consultation") {
+    tasks.push(() =>
+      prisma.consultation.count({
+        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+      }),
+    );
+    tasks.push(() =>
+      prisma.consultation.count({
+        where: {
+          ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+          deletedAt: null,
+        },
+      }),
+    );
+  }
+  if (known?.type !== "subscription") {
+    tasks.push(() =>
+      prisma.subscription.count({
+        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
+      }),
+    );
+    tasks.push(() =>
+      prisma.subscription.count({
+        where: {
+          ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+          deletedAt: null,
+        },
+      }),
+    );
+    tasks.push(() => countNextCycle(cp, scope, now));
+  }
+  if (known?.type !== "trial") {
+    tasks.push(() =>
+      prisma.trial.count({
+        where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
+      }),
+    );
+  }
+  const results = await mapLimit(tasks, poolLimit(), (run) => run());
+  let i = 0;
+  const consultationPending =
+    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
+  const consultationAwaiting =
+    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
+  const subscriptionPending =
+    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const subscriptionAwaiting =
+    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const nextCycle = known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const trial = known?.type === "trial" ? 0 : (results[i++] ?? 0);
   const counts: Record<InboxType, number> = {
     consultation:
       known?.type === "consultation"

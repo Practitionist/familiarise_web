@@ -191,16 +191,16 @@ export function RequestsInbox({
     queryKey,
     queryFn: () => fetchInbox(inboxQueryString(queryArgs)),
     staleTime: 30_000,
-    // Perf: cache-first tab switches. The old `always` + focus refetch fired
-    // a full /api/bookings/inbox read (200-row scan + 5 counts) on every
-    // mount and window focus, so switching tabs felt like a reload. Freshness
-    // is now: staleTime 30s + manual Refresh + invalidation on approve/decline.
-    // Matches the global ReactQueryProvider cache-first policy.
-    refetchOnMount: false,
+    // Perf: cache-first tab switches. The old `always` refetched even with
+    // fresh cache, so every mount felt like a reload. `true` (stale-only)
+    // shows cache instantly and background-refetches only when >30s old;
+    // `false` would pin stale data forever. Focus stays off — the throttled
+    // visibility listener below owns return-to-tab freshness.
+    refetchOnMount: true,
     refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
   });
-  const data = query.data;
+  const { data, dataUpdatedAt, isPlaceholderData } = query;
   const rows = useMemo(() => data?.rows ?? [], [data]);
 
   const invalidate = useCallback(() => {
@@ -235,15 +235,15 @@ export function RequestsInbox({
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, [refetch]);
   useEffect(() => {
-    if (!data) return;
-    lastFetchRef.current = Date.now();
+    if (!data || isPlaceholderData) return;
+    lastFetchRef.current = dataUpdatedAt;
     const known = knownTotalRef.current;
     if (returnedRef.current && known !== null) {
       setNewBadge(requestsFreshnessBadge(known, data.meta.total));
     }
     returnedRef.current = false;
     knownTotalRef.current = data.meta.total;
-  }, [data]);
+  }, [data, dataUpdatedAt, isPlaceholderData]);
 
   const scrolledRef = useRef(false);
   useEffect(() => {
@@ -265,31 +265,48 @@ export function RequestsInbox({
   );
 
   // Hover/intent prefetch for sibling tabs + chips (TanStack prefetching
-  // best practice: onMouseEnter/onFocus, staleTime-guarded, throttled 5s).
-  // Each new type/chip is a fresh inbox key + /api/bookings/inbox read, so
-  // warming it makes the click feel instant with no extra DB load on mount.
+  // best practice: onMouseEnter/onFocus, staleTime-guarded). Hovering across
+  // several chips must not queue one full inbox read per chip ahead of the
+  // click: intent is debounced 150ms and at most 2 prefetches fly at once.
   const prefetchedKeysRef = useRef(new Set<string>());
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightRef = useRef(0);
+  const MAX_PREFETCH_IN_FLIGHT = 2;
+  useEffect(
+    () => () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    },
+    [],
+  );
   const prefetchInbox = useCallback(
     (type: InboxType, chip: InboxChip | null) => {
-      const args = {
-        consultantProfileId,
-        scope: orgScope,
-        type,
-        chip,
-        sort: params.sort,
-        page: 1,
-      };
-      const key = inboxQueryKey(args).join("|");
-      if (prefetchedKeysRef.current.has(key)) return;
-      prefetchedKeysRef.current.add(key);
-      setTimeout(() => prefetchedKeysRef.current.delete(key), 5000);
-      void queryClient
-        .prefetchQuery({
-          queryKey: inboxQueryKey(args),
-          queryFn: () => fetchInbox(inboxQueryString(args)),
-          staleTime: 30_000,
-        })
-        .catch(() => undefined);
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = setTimeout(() => {
+        const args = {
+          consultantProfileId,
+          scope: orgScope,
+          type,
+          chip,
+          sort: params.sort,
+          page: 1,
+        };
+        const key = inboxQueryKey(args).join("|");
+        if (prefetchedKeysRef.current.has(key)) return;
+        if (inFlightRef.current >= MAX_PREFETCH_IN_FLIGHT) return;
+        prefetchedKeysRef.current.add(key);
+        setTimeout(() => prefetchedKeysRef.current.delete(key), 5000);
+        inFlightRef.current += 1;
+        void queryClient
+          .prefetchQuery({
+            queryKey: inboxQueryKey(args),
+            queryFn: () => fetchInbox(inboxQueryString(args)),
+            staleTime: 30_000,
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+          });
+      }, 150);
     },
     [consultantProfileId, orgScope, params.sort, queryClient],
   );

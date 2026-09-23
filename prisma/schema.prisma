@@ -3927,7 +3927,7 @@ model Trial {
   // Expiry job scans for overdue unpaid trials.
   @@index([status, paymentDueAt])
   // Requests inbox filters by consultant + status + orders by requestedAt.
-  @@index([consultantProfileId, status])
+  // The 3-col covers the 2-col prefix, so only one is kept.
   @@index([consultantProfileId, status, requestedAt])
 }
 
