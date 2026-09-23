@@ -342,9 +342,11 @@ export async function GET(
       e.recordings.length > 0;
 
     const transform = {
-      consultations: (
-        await Promise.all(
-          consultations.map(async (c: ConsultationWithResources) => ({
+      // URLs are minted AFTER the filter: the old code minted a signed URL
+      // per recording per row and then threw rows away in shouldInclude.
+      consultations: await withUrls(
+        consultations
+          .map((c: ConsultationWithResources) => ({
             id: c.id,
             planTitle: c.consultationPlan.title,
             consultantName: c.consultationPlan.consultantProfile.user.name,
@@ -352,15 +354,15 @@ export async function GET(
             status: c.status,
             date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
-            recordings: await extractRecordings(
+            recordings: collectRecordings(
               c.appointment ? [c.appointment] : [],
             ),
-          })),
-        )
-      ).filter(shouldInclude),
-      subscriptions: (
-        await Promise.all(
-          subscriptions.map(async (s: SubscriptionWithResources) => ({
+          }))
+          .filter(shouldInclude),
+      ),
+      subscriptions: await withUrls(
+        subscriptions
+          .map((s: SubscriptionWithResources) => ({
             id: s.id,
             planTitle: s.subscriptionPlan.title,
             consultantName: s.subscriptionPlan.consultantProfile.user.name,
@@ -368,15 +370,15 @@ export async function GET(
             status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
-            recordings: await extractRecordings(
+            recordings: collectRecordings(
               s.appointment ? [s.appointment] : [],
             ),
-          })),
-        )
-      ).filter((e) => e.status !== "PENDING" && shouldInclude(e)),
-      webinars: (
-        await Promise.all(
-          webinars.map(async (w: WebinarWithResources) => ({
+          }))
+          .filter((e) => e.status !== "PENDING" && shouldInclude(e)),
+      ),
+      webinars: await withUrls(
+        webinars
+          .map((w: WebinarWithResources) => ({
             id: w.id,
             planTitle: w.webinarPlan.title,
             consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
@@ -385,15 +387,15 @@ export async function GET(
             status: w.status,
             date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
             materials: w.webinarPlan.materials,
-            recordings: await extractRecordings(
+            recordings: collectRecordings(
               w.appointment ? [w.appointment] : [],
             ),
-          })),
-        )
-      ).filter(shouldInclude),
-      classes: (
-        await Promise.all(
-          classes.map(async (cl: ClassWithResources) => ({
+          }))
+          .filter(shouldInclude),
+      ),
+      classes: await withUrls(
+        classes
+          .map((cl: ClassWithResources) => ({
             id: cl.id,
             planTitle: cl.classPlan.title,
             consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
@@ -404,15 +406,15 @@ export async function GET(
               cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
-            recordings: await extractRecordings(
+            recordings: collectRecordings(
               cl.appointment ? [cl.appointment] : [],
             ),
-          })),
-        )
-      ).filter(shouldInclude),
-      trials: (
-        await Promise.all(
-          trials.map(async (t: TrialWithResources) => ({
+          }))
+          .filter(shouldInclude),
+      ),
+      trials: await withUrls(
+        trials
+          .map((t: TrialWithResources) => ({
             id: t.id,
             planTitle: `Trial: ${t.subscriptionPlan.title}`,
             consultantName:
@@ -422,12 +424,12 @@ export async function GET(
             status: t.status,
             date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
             materials: t.subscriptionPlan.materials,
-            recordings: await extractRecordings(
+            recordings: collectRecordings(
               t.appointment ? [t.appointment] : [],
             ),
-          })),
-        )
-      ).filter(shouldInclude),
+          }))
+          .filter(shouldInclude),
+      ),
     };
 
     return NextResponse.json({ data: transform, success: true });
@@ -444,20 +446,67 @@ export async function GET(
   }
 }
 
-async function extractRecordings(appointments: AppointmentWithSlots[]) {
-  const recordings = appointments.flatMap((apt) =>
+type RawRecording = NonNullable<
+  AppointmentWithSlots["occurrences"][number]["meeting"]
+>["recordings"][number];
+
+/** Flatten slots → recordings without minting URLs (sync, free). */
+function collectRecordings(appointments: AppointmentWithSlots[]) {
+  return appointments.flatMap((apt) =>
     apt.occurrences.flatMap((slot) => slot.meeting?.recordings ?? []),
   );
+}
 
-  return Promise.all(
-    recordings.map(async (rec) => ({
-      id: rec.id,
-      title: rec.title,
-      durationInMinutes: rec.durationInMinutes,
-      recordedAt: rec.recordedAt,
-      playbackUrl: await getBestRecordingUrl(rec),
-      thumbnailUrl: rec.thumbnailUrl,
-      status: rec.status,
-    })),
-  );
+/** The recording shape the client receives (never the full DB row). */
+type RecordingView = Pick<
+  RawRecording,
+  | "id"
+  | "title"
+  | "durationInMinutes"
+  | "recordedAt"
+  | "thumbnailUrl"
+  | "status"
+> & { playbackUrl: string | null };
+
+/**
+ * Mint playback URLs with bounded concurrency: every AVAILABLE recording
+ * costs one Supabase signed-URL mint, and the old code fanned them out
+ * unbounded (one per recording on the page). 6 at a time keeps tail latency
+ * flat without serialising the page.
+ */
+async function mintRecordingUrls(
+  recordings: RawRecording[],
+): Promise<RecordingView[]> {
+  const out: RecordingView[] = new Array(recordings.length);
+  let next = 0;
+  const workers = new Array(Math.min(6, recordings.length))
+    .fill(null)
+    .map(async () => {
+      while (next < recordings.length) {
+        const i = next++;
+        const rec = recordings[i];
+        out[i] = {
+          id: rec.id,
+          title: rec.title,
+          durationInMinutes: rec.durationInMinutes,
+          recordedAt: rec.recordedAt,
+          playbackUrl: await getBestRecordingUrl(rec),
+          thumbnailUrl: rec.thumbnailUrl,
+          status: rec.status,
+        };
+      }
+    });
+  await Promise.all(workers);
+  return out;
+}
+
+/** Mint URLs only for rows that survived the filter (see shouldInclude). */
+async function withUrls<R extends { recordings: RawRecording[] }>(
+  rows: R[],
+): Promise<Array<Omit<R, "recordings"> & { recordings: RecordingView[] }>> {
+  const out = new Array(rows.length);
+  for (let i = 0; i < rows.length; i++) {
+    out[i] = { ...rows[i], recordings: await mintRecordingUrls(rows[i].recordings) };
+  }
+  return out;
 }
