@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { motion } from "framer-motion";
+import { MobileBookingBar } from "@/app/explore/components/MobileBookingBar";
 import { ArrowLeft } from "lucide-react";
 import {
   addDays,
@@ -391,10 +391,10 @@ export function ExpertProfileClient({
   ]);
 
   return (
-    <main className="bg-muted">
+    <main className="explore-detail min-h-screen">
       {/* Back Navigation */}
       <div className="bg-card border-b border-border">
-        <div className="w-full px-4 md:px-8 lg:px-12 py-4">
+        <div className="explore-detail-shell py-4">
           <Link
             href="/explore/experts"
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
@@ -406,15 +406,10 @@ export function ExpertProfileClient({
       </div>
 
       {/* Main Content Area - Profile, About, Availability + Pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 py-8 md:py-12">
-        <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
+      <div className="explore-detail-shell py-8 md:py-12">
+        <div className="flex flex-col gap-8 xl:flex-row xl:gap-10">
           {/* Main Content */}
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div className="min-w-0 flex-1">
             <div className="space-y-8">
               <ProfileHeader
                 userDetails={userDetails}
@@ -445,18 +440,15 @@ export function ExpertProfileClient({
                 />
               ) : null}
             </div>
-          </motion.div>
+          </div>
 
           {/* Sidebar - Pricing */}
-          <motion.div
+          <div
             ref={pricingRef}
-            className="w-full xl:w-[450px] 2xl:w-[500px] flex-shrink-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
+            id="expert-booking"
+            className="explore-booking-target w-full flex-shrink-0 xl:w-[400px] 2xl:w-[430px]"
           >
             <ExpertPricing
-              userDetails={userDetails}
               consultantDetails={consultantDetails}
               handleConsultationBooking={handleConsultationBooking}
               handleSubscriptionBooking={handleSubscriptionBooking}
@@ -472,38 +464,28 @@ export function ExpertProfileClient({
               autoOpenTrial={autoOpenTrial}
               onRefreshSlots={refreshSlots}
             />
-          </motion.div>
+          </div>
         </div>
       </div>
 
       {/* Classes & Webinars - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-8">
+      <div className="explore-detail-shell pb-8">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
+          <div className="min-w-0 flex-1">
             <ClassesAndWebinars
               classPlans={consultantDetails.classPlans}
               webinarPlans={consultantDetails.webinarPlans}
             />
-          </motion.div>
+          </div>
           {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div className="hidden xl:block w-[400px] 2xl:w-[430px] flex-shrink-0" />
         </div>
       </div>
 
       {/* Reviews - Below main content only, not under pricing */}
-      <div className="w-full px-4 md:px-8 lg:px-12 pb-12">
+      <div className="explore-detail-shell pb-12">
         <div className="flex flex-col xl:flex-row gap-8 xl:gap-12">
-          <motion.div
-            className="flex-1 min-w-0"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
-          >
+          <div className="min-w-0 flex-1">
             <ReviewsSection
               reviews={reviews}
               reviewTracks={reviewTracks}
@@ -528,11 +510,16 @@ export function ExpertProfileClient({
                 />
               }
             />
-          </motion.div>
+          </div>
           {/* Spacer to match pricing sidebar width */}
-          <div className="hidden xl:block w-[450px] 2xl:w-[500px] flex-shrink-0" />
+          <div className="hidden xl:block w-[400px] 2xl:w-[430px] flex-shrink-0" />
         </div>
       </div>
+      <MobileBookingBar
+        targetId="expert-booking"
+        context="Expert sessions and mentorship"
+        label="Explore booking options"
+      />
     </main>
   );
 }

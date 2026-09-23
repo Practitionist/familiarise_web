@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
@@ -169,35 +168,16 @@ export default function ExpertsInteractiveContent({
               "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 13rem)",
           }}
         >
-          <SectionHeader
-            title="Browse Familiarise Experts"
-            icon={<Search className="w-5 h-5 text-white" />}
-          />
-
-          {/* Search banner (not sticky) */}
-          <motion.div
-            className="mb-6"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-          >
-            <div className="relative mb-6 py-10 px-6 rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-800 to-zinc-700 overflow-hidden">
-              <div className="absolute inset-0 opacity-10">
-                <div className="absolute top-0 right-0 w-72 h-72 bg-white rounded-full blur-3xl -translate-y-1/2 translate-x-1/4" />
-                <div className="absolute bottom-0 left-0 w-56 h-56 bg-white rounded-full blur-3xl translate-y-1/2 -translate-x-1/4" />
-              </div>
-              <div className="relative text-center">
-                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2">
-                  Find Your Perfect Expert
-                </h2>
-                <p className="text-zinc-400 text-sm md:text-base max-w-lg mx-auto">
-                  Search by name, skill, or specialty to connect with top
-                  consultants
-                </p>
-              </div>
-            </div>
-          </motion.div>
+          <div className="explore-section">
+            <SectionHeader
+              title="Browse Familiarise Experts"
+              icon={<Search className="w-5 h-5 text-white" />}
+            />
+            <p className="mb-7 text-sm text-muted-foreground md:text-base">
+              Search by name or specialty, then refine by experience, price, and
+              availability.
+            </p>
+          </div>
 
           {/* Sticky settings navbar: search + sort + affiliation tabs +
               org-kind sub-filter + chips. Advanced facets live in the

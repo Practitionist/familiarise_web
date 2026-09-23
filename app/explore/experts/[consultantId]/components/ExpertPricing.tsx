@@ -1,7 +1,5 @@
 "use client";
 
-import Image from "next/image";
-import { User } from "@prisma/client";
 import type { ConsultantDetailData } from "../types";
 import { TIntervalTiming } from "@/types/slots";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,7 +12,7 @@ import {
   RotateCcw,
   CheckCircle,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useState } from "react";
 
 import { PricingOption } from "../defaults";
@@ -29,7 +27,6 @@ const getSubscriptionDurationLabel = (durationInMonths: number): string => {
 };
 
 interface ExpertPricingProps {
-  userDetails: User;
   consultantDetails: ConsultantDetailData;
   handleConsultationBooking: (consultationPlanId: string) => Promise<void>;
   handleSubscriptionBooking: (
@@ -50,7 +47,6 @@ interface ExpertPricingProps {
 }
 
 export function ExpertPricing({
-  userDetails,
   consultantDetails,
   handleConsultationBooking,
   handleSubscriptionBooking,
@@ -66,6 +62,7 @@ export function ExpertPricing({
   autoOpenTrial,
   onRefreshSlots,
 }: Readonly<ExpertPricingProps>) {
+  const reduceMotion = useReducedMotion();
   const [activeServiceTab, setActiveServiceTab] = useState<
     "consultations" | "subscriptions"
   >(autoOpenTrial ? "subscriptions" : "consultations");
@@ -207,22 +204,9 @@ export function ExpertPricing({
   const hasSubscriptions = subscriptionOptions.length > 0;
 
   return (
-    <div className="sticky top-24 space-y-4">
-      {/* Profile Image Card — refined, no flat border */}
-      <div className="rounded-3xl overflow-hidden shadow-2xl shadow-black/30 ring-1 ring-white/10">
-        <div className="aspect-[4/3] relative">
-          <Image
-            alt="Profile"
-            className="object-cover"
-            fill
-            src={userDetails.image || "/placeholder.svg"}
-            sizes="(max-width: 768px) 100vw, 400px"
-          />
-        </div>
-      </div>
-
-      {/* Pricing Card — glassmorphism dark */}
-      <div className="bg-zinc-950/90 backdrop-blur-xl rounded-3xl p-6 shadow-2xl shadow-black/40 border border-white/[0.07] ring-1 ring-white/[0.04]">
+    <div className="space-y-4 xl:sticky xl:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1rem)]">
+      {/* The profile portrait is already prominent in the header; booking leads here. */}
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-950 p-6 shadow-elevation-2">
         {/* Header */}
         <div className="text-center mb-5">
           <h3 className="text-xl font-bold text-white mb-1">Book a Session</h3>
@@ -258,11 +242,11 @@ export function ExpertPricing({
                     <motion.div
                       layoutId="service-type-pill"
                       className="absolute inset-0 bg-white rounded-xl shadow-sm"
-                      transition={{
-                        type: "spring",
-                        bounce: 0.15,
-                        duration: 0.35,
-                      }}
+                      transition={
+                        reduceMotion
+                          ? { duration: 0 }
+                          : { type: "spring", bounce: 0.15, duration: 0.35 }
+                      }
                     />
                   )}
                   <span className="relative z-10 flex items-center gap-2">

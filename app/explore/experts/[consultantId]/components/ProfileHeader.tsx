@@ -34,12 +34,12 @@ export function ProfileHeader({
   // review count is the wrong number beside a per-track mean.
   const headlineCount = displayedScoreCount(consultantDetails, "ONE_TO_ONE");
   return (
-    <div className="bg-card rounded-2xl border border-border p-6 md:p-8">
-      <div className="flex flex-col sm:flex-row gap-6">
+    <div className="rounded-3xl border border-border bg-card p-6 shadow-sm md:p-9">
+      <div className="flex flex-col gap-7 sm:flex-row md:gap-9">
         {/* Profile Display Image - Square format */}
         <div className="relative flex-shrink-0">
           {userDetails.profileDisplayImage ? (
-            <div className="w-32 h-32 md:w-48 md:h-48 rounded-xl overflow-hidden ring-4 ring-muted relative">
+            <div className="relative h-36 w-36 overflow-hidden rounded-2xl ring-1 ring-border md:h-44 md:w-44">
               <Image
                 src={userDetails.profileDisplayImage}
                 alt={userDetails.name || "Expert"}
@@ -55,7 +55,7 @@ export function ProfileHeader({
             </div>
           ) : (
             <>
-              <Avatar className="w-24 h-24 md:w-32 md:h-32 ring-4 ring-muted">
+              <Avatar className="h-32 w-32 ring-1 ring-border md:h-40 md:w-40">
                 <AvatarImage
                   src={userDetails.image || "/placeholder-user.jpg"}
                   alt={userDetails.name || "Expert"}
@@ -77,39 +77,36 @@ export function ProfileHeader({
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="flex flex-wrap items-start gap-3 mb-2">
-            <h1 className="text-fluid-3xl font-bold tracking-tight text-foreground">
+          <div className="mb-2">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+              Familiarise expert
+            </p>
+            <h1 className="text-fluid-4xl font-semibold tracking-tight text-foreground">
               {userDetails.name}
             </h1>
             {consultantDetails.headline && (
-              <Badge className="bg-primary text-primary-foreground hover:bg-primary/90">
+              <p className="mt-2 text-base leading-relaxed text-muted-foreground md:text-lg">
                 {consultantDetails.headline}
-              </Badge>
+              </p>
             )}
           </div>
 
           {/* Rating. #1300 — the published 1:1 score, no fallback (#1566), with
               "based on N clients"; the reviews section below lists both tracks.
               Null until five distinct clients have rated. */}
-          <div className="flex items-center gap-3 mb-4">
+          <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
             {headlineScore.score !== null && (
               <>
-                <div className="flex items-center gap-1">
-                  {[...Array(5)].map((_, i) => (
-                    <Star
-                      key={i}
-                      className={`w-5 h-5 ${
-                        i < Math.floor(headlineScore.score!)
-                          ? "fill-amber-400 text-amber-400"
-                          : "fill-muted text-muted"
-                      }`}
-                    />
-                  ))}
-                </div>
+                <Star
+                  className="h-4 w-4 fill-amber-400 text-amber-400"
+                  aria-hidden="true"
+                />
                 <span className="font-semibold text-foreground">
                   {headlineScore.score.toFixed(1)}
                 </span>
-                <span className="text-muted-foreground/70">•</span>
+                <span className="text-muted-foreground/70" aria-hidden="true">
+                  ·
+                </span>
               </>
             )}
             <span className="text-muted-foreground">
