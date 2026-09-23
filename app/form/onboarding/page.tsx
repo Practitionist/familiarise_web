@@ -720,7 +720,18 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        signOut();
+        const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
+        const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
+        signOut({
+          fetchOptions: {
+            onSuccess: () => {
+              window.location.href = signinHref;
+            },
+            onError: () => {
+              window.location.href = signinHref;
+            },
+          },
+        });
         return;
       }
       // Controlled inputs surface blanks as "" — coerce to undefined so the
@@ -779,7 +790,18 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        signOut();
+        const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
+        const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
+        signOut({
+          fetchOptions: {
+            onSuccess: () => {
+              window.location.href = signinHref;
+            },
+            onError: () => {
+              window.location.href = signinHref;
+            },
+          },
+        });
         return;
       }
 
@@ -843,7 +865,16 @@ const MultiStepForm: React.FC = () => {
             description: "Your session has expired. Please sign in again.",
             variant: "destructive",
           });
-          signOut();
+          signOut({
+            fetchOptions: {
+              onSuccess: () => {
+                window.location.href = "/auth/signin";
+              },
+              onError: () => {
+                window.location.href = "/auth/signin";
+              },
+            },
+          });
           return;
         }
 
@@ -942,12 +973,16 @@ const MultiStepForm: React.FC = () => {
       }
 
       if (safeCallback) {
-        router.push(safeCallback);
+        // Terminal navigation: replace, never push. Leaving /form/onboarding
+        // in history makes Back from the destination return to a wizard that
+        // immediately bounces forward again (requireNotOnboarded sees a fully
+        // onboarded user) — the same Back ping-pong the auth pages avoid.
+        router.replace(safeCallback);
         return;
       }
 
       if (pendingToken) {
-        router.push(`/organizations/invite/${pendingToken}`);
+        router.replace(`/organizations/invite/${pendingToken}`);
         return;
       }
 
@@ -958,16 +993,16 @@ const MultiStepForm: React.FC = () => {
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
+        router.replace(`/dashboard/consultant/${result.user.consultantProfileId}`);
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
       ) {
-        router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
+        router.replace(`/dashboard/consultee/${result.user.consulteeProfileId}`);
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
-        router.push(`/dashboard/staff/${result.user.staffProfileId}`);
+        router.replace(`/dashboard/staff/${result.user.staffProfileId}`);
       } else {
-        router.push("/dashboard");
+        router.replace("/dashboard");
       }
     } catch (error: unknown) {
       trackOnboardingEvent("submit_error", { error: "unhandled_exception" });

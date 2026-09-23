@@ -137,14 +137,13 @@ function SignUpContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message
+  // If already logged in, show redirecting message. Generic on purpose —
+  // the cached `onboardingCompleted` can be stale (see the force-fresh effect
+  // above); naming the destination flashed the wrong one for a frame.
   if (session?.user) {
-    const destination = session.user.onboardingCompleted
-      ? "dashboard"
-      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <p className="text-white">Redirecting to {destination}...</p>
+        <p className="text-white">Redirecting…</p>
       </div>
     );
   }
@@ -296,11 +295,13 @@ function SignUpContent() {
         // Session created (verification-disabled fallback). The referral code
         // was persisted at first touch and is applied on the onboarding landing
         // (covers OAuth + verified-email paths uniformly). #880
+        // Replace, never push: leaving /auth/signup in history makes Back from
+        // onboarding/dashboard ping-pong forward again.
         toast({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
-        router.push(onboardingUrl);
+        router.replace(onboardingUrl);
       }
     } catch (error: unknown) {
       Sentry.captureException(

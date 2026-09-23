@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo } from "react";
+import { use, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -452,22 +452,26 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.role === "STAFF" ||
       userDetails.consultantProfileId === consultantId);
 
-  // Redirect unauthorized users to their appropriate dashboard
+  // Redirect unauthorized users to their appropriate dashboard. Guarded to a
+  // single navigation: without it a stale `user-details` payload (≤5-min
+  // React-Query cache, or a profile just added server-side) could bounce
+  // /dashboard → back here → /dashboard while the server router resolves the
+  // other way, flashing "Redirecting to your dashboard..." in a loop.
+  const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsultantAccess) {
-      if (userDetails.consultantProfileId) {
-        router.replace(
-          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
-        );
-      } else if (userDetails.consulteeProfileId) {
-        router.replace(
-          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
-        );
-      } else {
-        router.replace("/dashboard");
-      }
+      const target = userDetails.consultantProfileId
+        ? `/dashboard/consultant/${userDetails.consultantProfileId}/home`
+        : userDetails.consulteeProfileId
+          ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
+          : "/dashboard";
+      // Never replace to the URL we are already on, and never queue the same
+      // target twice (Strict-Mode double effects / duplicate query emissions).
+      if (target === pathname || navigatedRef.current === target) return;
+      navigatedRef.current = target;
+      router.replace(target);
     }
   }, [
     userDetails,
@@ -476,6 +480,7 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     isSessionLoading,
     userId,
     router,
+    pathname,
   ]);
 
   // Prefetch critical routes on mount

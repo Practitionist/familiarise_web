@@ -153,14 +153,14 @@ function SignInContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message
+  // If already logged in, show redirecting message. Deliberately generic:
+  // the cached `onboardingCompleted` can be ≤5-min stale, and naming the
+  // destination from it flashed "dashboard" one frame before the force-fresh
+  // check above sent the user to onboarding (or vice-versa).
   if (session?.user) {
-    const destination = session.user.onboardingCompleted
-      ? "dashboard"
-      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <p className="text-white">Redirecting to {destination}...</p>
+        <p className="text-white">Redirecting…</p>
       </div>
     );
   }

@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo } from "react";
+import { use, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -229,20 +229,24 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.consulteeProfileId === consulteeId);
 
   // Redirect unauthorized users to their own dashboard (capability-routed).
+  // Guarded to a single navigation: without it a stale `user-details` payload
+  // could bounce /dashboard → back here → /dashboard while the server router
+  // resolves the other way, flashing "Redirecting to your dashboard...".
+  const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsulteeAccess) {
-      if (
+      const target =
         userDetails.consulteeProfileId &&
         userDetails.consulteeProfileId !== consulteeId
-      ) {
-        router.replace(
-          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
-        );
-      } else {
-        router.replace("/dashboard");
-      }
+          ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
+          : "/dashboard";
+      // Never replace to the URL we are already on, and never queue the same
+      // target twice (Strict-Mode double effects / duplicate query emissions).
+      if (target === pathname || navigatedRef.current === target) return;
+      navigatedRef.current = target;
+      router.replace(target);
     }
   }, [
     userDetails,
@@ -252,6 +256,7 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
     userId,
     router,
     consulteeId,
+    pathname,
   ]);
 
   // Prefetch
