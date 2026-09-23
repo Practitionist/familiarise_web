@@ -689,28 +689,46 @@ function planCohort(
   return plan;
 }
 
-/** Sequential reads on purpose: PG_POOL_MAX=1 serialises them anyway. */
+/**
+ * Cohort reads run concurrently: each sub-cohort is an independent bounded
+ * scan (take 200), so serial awaits only summed their latencies. With
+ * PG_POOL_MAX=1 the pool still serialises on Netlify, but locally and under
+ * larger pools this is a direct saving — and the queue wait is still shorter
+ * than sequential round trips.
+ */
 async function readCohort(
   cp: string,
   scope: Scope,
   plan: CohortPlan,
   now: Date,
 ): Promise<InboxRowInput[]> {
-  const rows: InboxRowInput[] = [];
-  for (const where of plan.consultationStatuses) {
-    const found = await findConsultations(where);
-    rows.push(...found.map((c) => consultationRow(c, cp, now)));
-  }
-  for (const where of plan.subscriptionStatuses) {
-    const found = await findSubscriptions(where);
-    rows.push(...found.map((s) => subscriptionRow(s, cp, now, "subscription")));
-  }
-  if (plan.nextCycle) rows.push(...(await readNextCycleRows(cp, scope, now)));
-  if (plan.trialStatuses.length > 0) {
-    const found = await findTrials(trialWhere(cp, scope, plan.trialStatuses));
-    rows.push(...found.map((t) => trialRow(t, cp, now)));
-  }
-  return rows;
+  const [consultationGroups, subscriptionGroups, nextCycleRows, trialRows] =
+    await Promise.all([
+      Promise.all(
+        plan.consultationStatuses.map(async (where) => {
+          const found = await findConsultations(where);
+          return found.map((c) => consultationRow(c, cp, now));
+        }),
+      ),
+      Promise.all(
+        plan.subscriptionStatuses.map(async (where) => {
+          const found = await findSubscriptions(where);
+          return found.map((s) => subscriptionRow(s, cp, now, "subscription"));
+        }),
+      ),
+      plan.nextCycle ? readNextCycleRows(cp, scope, now) : Promise.resolve([]),
+      plan.trialStatuses.length > 0
+        ? findTrials(trialWhere(cp, scope, plan.trialStatuses)).then((found) =>
+            found.map((t) => trialRow(t, cp, now)),
+          )
+        : Promise.resolve([]),
+    ]);
+  return [
+    ...consultationGroups.flat(),
+    ...subscriptionGroups.flat(),
+    ...nextCycleRows,
+    ...trialRows,
+  ];
 }
 
 /** #1766 — the predicate cannot count; `remaining > 0` is decided here. */
@@ -750,44 +768,63 @@ async function readCounts(
   now: Date,
   known: { type: InboxType; total: number } | null,
 ): Promise<Record<InboxType, number>> {
+  // All counts are independent — run them concurrently instead of 5+ serial
+  // round trips. The `known` shortcut still avoids re-counting the active tab
+  // (its total came from the cohort scan above).
+  const [
+    consultationPending,
+    consultationAwaiting,
+    subscriptionPending,
+    subscriptionAwaiting,
+    nextCycle,
+    trial,
+  ] = await Promise.all([
+    known?.type === "consultation"
+      ? Promise.resolve(0)
+      : prisma.consultation.count({
+          where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
+        }),
+    known?.type === "consultation"
+      ? Promise.resolve(0)
+      : prisma.consultation.count({
+          where: {
+            ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+            deletedAt: null,
+          },
+        }),
+    known?.type === "subscription"
+      ? Promise.resolve(0)
+      : prisma.subscription.count({
+          where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
+        }),
+    known?.type === "subscription"
+      ? Promise.resolve(0)
+      : prisma.subscription.count({
+          where: {
+            ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
+            deletedAt: null,
+          },
+        }),
+    known?.type === "subscription"
+      ? Promise.resolve(0)
+      : countNextCycle(cp, scope, now),
+    known?.type === "trial"
+      ? Promise.resolve(0)
+      : prisma.trial.count({
+          where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
+        }),
+  ]);
   const counts: Record<InboxType, number> = {
-    consultation: 0,
-    subscription: 0,
-    trial: 0,
+    consultation:
+      known?.type === "consultation"
+        ? known.total
+        : consultationPending + consultationAwaiting,
+    subscription:
+      known?.type === "subscription"
+        ? known.total
+        : subscriptionPending + subscriptionAwaiting + nextCycle,
+    trial: known?.type === "trial" ? known.total : trial,
   };
-  if (known?.type === "consultation") counts.consultation = known.total;
-  else {
-    counts.consultation =
-      (await prisma.consultation.count({
-        where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
-      })) +
-      (await prisma.consultation.count({
-        where: {
-          ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-          deletedAt: null,
-        },
-      }));
-  }
-  if (known?.type === "subscription") counts.subscription = known.total;
-  else {
-    counts.subscription =
-      (await prisma.subscription.count({
-        where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
-      })) +
-      (await prisma.subscription.count({
-        where: {
-          ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
-          deletedAt: null,
-        },
-      })) +
-      (await countNextCycle(cp, scope, now));
-  }
-  if (known?.type === "trial") counts.trial = known.total;
-  else {
-    counts.trial = await prisma.trial.count({
-      where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
-    });
-  }
   return counts;
 }
 
@@ -799,6 +836,24 @@ export async function readRequestsInbox(
   const limit = args.limit ?? INBOX_DEFAULT_LIMIT;
   const cp = args.consultantProfileId;
   const plan = planCohort(cp, scope, args.type, args.chip, now);
+  // Chip-filtered views don't reuse the cohort total for tab counts, so the
+  // list scan and the tab counts are independent — run them together. The
+  // default (no chip) view reuses its own total, so it stays sequential.
+  if (args.chip) {
+    const [rows, counts] = await Promise.all([
+      readCohort(cp, scope, plan, now).then((cohort) =>
+        sortInboxRows(cohort, args.sort),
+      ),
+      readCounts(cp, scope, now, null),
+    ]);
+    const total = rows.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(Math.max(1, args.page), pages);
+    return toPlain({
+      rows: rows.slice((page - 1) * limit, page * limit),
+      meta: { total, page, limit, counts },
+    });
+  }
   const cohort = sortInboxRows(
     await readCohort(cp, scope, plan, now),
     args.sort,
@@ -807,11 +862,6 @@ export async function readRequestsInbox(
   const pages = Math.max(1, Math.ceil(total / limit));
   const page = Math.min(Math.max(1, args.page), pages);
   const rows = cohort.slice((page - 1) * limit, page * limit);
-  const counts = await readCounts(
-    cp,
-    scope,
-    now,
-    args.chip ? null : { type: args.type, total },
-  );
+  const counts = await readCounts(cp, scope, now, { type: args.type, total });
   return toPlain({ rows, meta: { total, page, limit, counts } });
 }

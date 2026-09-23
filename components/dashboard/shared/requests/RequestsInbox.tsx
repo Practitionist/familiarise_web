@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
@@ -34,6 +34,7 @@ import {
   nextInboxSearch,
   readInboxParams,
   toStampDate,
+  type InboxChip,
   type InboxParamsPatch,
   type InboxRowInput,
   type InboxType,
@@ -161,7 +162,8 @@ function useInboxUrlState() {
  * The consultant Requests inbox (#1775): type tabs, chips, sort and deadline
  * buckets over `readRequestsInbox`, every word from the presentation layer,
  * one primary action per row. State lives in the URL; the RSC page seeds the
- * query and this component keeps it fresh (30 s stale, refetch on focus).
+ * query and this component keeps it fresh (30 s stale, cache-first: no
+ * mount/focus refetch — manual Refresh is the truth).
  */
 export function RequestsInbox({
   consultantProfileId,
@@ -189,8 +191,13 @@ export function RequestsInbox({
     queryKey,
     queryFn: () => fetchInbox(inboxQueryString(queryArgs)),
     staleTime: 30_000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: true,
+    // Perf: cache-first tab switches. The old `always` + focus refetch fired
+    // a full /api/bookings/inbox read (200-row scan + 5 counts) on every
+    // mount and window focus, so switching tabs felt like a reload. Freshness
+    // is now: staleTime 30s + manual Refresh + invalidation on approve/decline.
+    // Matches the global ReactQueryProvider cache-first policy.
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
     placeholderData: keepPreviousData,
   });
   const data = query.data;
@@ -206,15 +213,21 @@ export function RequestsInbox({
     });
   }, [consultantProfileId, queryClient]);
 
-  // "N new · Refresh": a return to the tab refetches; if the total grew, say
-  // so rather than letting rows move silently under the pointer (#1705).
+  // "N new · Refresh": a return to the tab refetches ONLY when the cached
+  // payload is stale (>30s); if the total grew, say so rather than letting
+  // rows move silently under the pointer (#1705). Previously every
+  // visibilitychange refired unconditionally.
   const [newBadge, setNewBadge] = useState<string | null>(null);
   const knownTotalRef = useRef<number | null>(null);
   const returnedRef = useRef(false);
+  const lastFetchRef = useRef<number>(Date.now());
   const { refetch } = query;
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState !== "visible") return;
+      // Throttle: skip when the cache is still fresh — tab switches stay instant.
+      if (Date.now() - lastFetchRef.current < 30_000) return;
+      lastFetchRef.current = Date.now();
       returnedRef.current = true;
       void refetch();
     };
@@ -223,6 +236,7 @@ export function RequestsInbox({
   }, [refetch]);
   useEffect(() => {
     if (!data) return;
+    lastFetchRef.current = Date.now();
     const known = knownTotalRef.current;
     if (returnedRef.current && known !== null) {
       setNewBadge(requestsFreshnessBadge(known, data.meta.total));
@@ -239,6 +253,46 @@ export function RequestsInbox({
     scrolledRef.current = true;
     el.scrollIntoView({ block: "center" });
   }, [focusId, rows]);
+
+  // Tab switches are non-urgent: keep old rows on screen (keepPreviousData
+  // above) while the new cohort streams in, instead of blocking the click.
+  const [, startTransition] = useTransition();
+  const setParamsTransition = useCallback(
+    (patch: InboxParamsPatch) => {
+      startTransition(() => setParams(patch));
+    },
+    [setParams],
+  );
+
+  // Hover/intent prefetch for sibling tabs + chips (TanStack prefetching
+  // best practice: onMouseEnter/onFocus, staleTime-guarded, throttled 5s).
+  // Each new type/chip is a fresh inbox key + /api/bookings/inbox read, so
+  // warming it makes the click feel instant with no extra DB load on mount.
+  const prefetchedKeysRef = useRef(new Set<string>());
+  const prefetchInbox = useCallback(
+    (type: InboxType, chip: InboxChip | null) => {
+      const args = {
+        consultantProfileId,
+        scope: orgScope,
+        type,
+        chip,
+        sort: params.sort,
+        page: 1,
+      };
+      const key = inboxQueryKey(args).join("|");
+      if (prefetchedKeysRef.current.has(key)) return;
+      prefetchedKeysRef.current.add(key);
+      setTimeout(() => prefetchedKeysRef.current.delete(key), 5000);
+      void queryClient
+        .prefetchQuery({
+          queryKey: inboxQueryKey(args),
+          queryFn: () => fetchInbox(inboxQueryString(args)),
+          staleTime: 30_000,
+        })
+        .catch(() => undefined);
+    },
+    [consultantProfileId, orgScope, params.sort, queryClient],
+  );
 
   // ---- selection + batch -------------------------------------------------
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -610,7 +664,9 @@ export function RequestsInbox({
                 variant="outline"
                 size="sm"
                 disabled={refreshing || data.meta.page <= 1}
-                onClick={() => setParams({ page: data.meta.page - 1 })}
+                onClick={() =>
+                  setParamsTransition({ page: data.meta.page - 1 })
+                }
               >
                 Prev
               </Button>
@@ -621,7 +677,9 @@ export function RequestsInbox({
                 variant="outline"
                 size="sm"
                 disabled={refreshing || data.meta.page >= totalPages}
-                onClick={() => setParams({ page: data.meta.page + 1 })}
+                onClick={() =>
+                  setParamsTransition({ page: data.meta.page + 1 })
+                }
               >
                 Next
               </Button>
@@ -648,12 +706,18 @@ export function RequestsInbox({
           value={params.type}
           onValueChange={(next) => {
             setSelected(new Set());
-            setParams({ type: next as InboxType });
+            setParamsTransition({ type: next as InboxType });
           }}
         >
           <TabsList aria-label="Request type">
             {INBOX_TYPES.map((type) => (
-              <TabsTrigger key={type} value={type} className="gap-1.5">
+              <TabsTrigger
+                key={type}
+                value={type}
+                className="gap-1.5"
+                onMouseEnter={() => prefetchInbox(type, null)}
+                onFocus={() => prefetchInbox(type, null)}
+              >
                 {TYPE_LABEL[type]}
                 {counts && (
                   <span className="rounded-full bg-muted px-1.5 text-[11px] tabular-nums text-muted-foreground">
@@ -683,7 +747,7 @@ export function RequestsInbox({
           <InboxSortControl
             value={params.sort}
             disabled={loading}
-            onChange={(sort) => setParams({ sort })}
+            onChange={(sort) => setParamsTransition({ sort })}
           />
           {/* Refresh stays the truth: it re-reads now, whatever the clock says. */}
           <Button
@@ -711,8 +775,9 @@ export function RequestsInbox({
         disabled={loading}
         onChange={(next) => {
           setSelected(new Set());
-          setParams({ chip: next });
+          setParamsTransition({ chip: next });
         }}
+        onHoverChip={(c) => prefetchInbox(params.type, c)}
       />
 
       {renderBody()}

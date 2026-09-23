@@ -3708,6 +3708,8 @@ model Consultation {
   @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
+  // Inbox tab counts filter by status + order by requestedAt across plans.
+  @@index([status, requestedAt])
 }
 
 model SubscriptionPlan {
@@ -3838,6 +3840,8 @@ model Subscription {
   @@index([requestedById, status])
   @@index([requestedAt])
   @@index([cancelledAt])
+  // Inbox tab counts filter by status + order by requestedAt across plans.
+  @@index([status, requestedAt])
 }
 
 enum AppointmentStatus {
@@ -3922,6 +3926,9 @@ model Trial {
   @@index([organizationId])
   // Expiry job scans for overdue unpaid trials.
   @@index([status, paymentDueAt])
+  // Requests inbox filters by consultant + status + orders by requestedAt.
+  @@index([consultantProfileId, status])
+  @@index([consultantProfileId, status, requestedAt])
 }
 
 enum TrialStatus {

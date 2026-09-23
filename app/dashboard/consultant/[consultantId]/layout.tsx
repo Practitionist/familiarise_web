@@ -485,9 +485,12 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     // Once per access-resolution, NOT per navigation: `pathname` used to be
     // a dep, re-scheduling this idle prefetch on every tab switch (even while
     // already on the target route). App Router dedupes redundant prefetches.
+    // Requests warmed too: it is the heaviest tab (inbox scan + counts), so
+    // its RSC payload must be in the router cache before the first click.
     return schedulePrefetch(() => {
       router.prefetch(`${basePath}/home`);
       router.prefetch(`${basePath}/appointments`);
+      router.prefetch(`${basePath}/requests`);
     }, 3000);
   }, [userId, consultantId, router, hasConsultantAccess, basePath]);
 
