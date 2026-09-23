@@ -14,7 +14,7 @@
  */
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,6 +40,14 @@ export interface ScopedListTableProps<T> {
   rowKey: (row: T) => string;
   /** Optional toolbar (filters etc.) rendered above the table. */
   toolbar?: React.ReactNode;
+  /**
+   * Client-side pagination: page clicks write `?page=` via
+   * `history.replaceState` (no RSC round-trip, no loading.tsx flash) and the
+   * consumer's `useSearchParams`-keyed `useQuery` refetches. Only for lists
+   * whose server page ignores `page` — appointments reads it server-side and
+   * must keep the default `Link` behavior.
+   */
+  clientSidePagination?: boolean;
 }
 
 export function ScopedListTable<T>({
@@ -56,7 +64,9 @@ export function ScopedListTable<T>({
   emptyMessage = "No records found.",
   rowKey,
   toolbar,
+  clientSidePagination = false,
 }: ScopedListTableProps<T>) {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const totalPages = Math.max(1, Math.ceil(total / perPage));
 
@@ -64,6 +74,18 @@ export function ScopedListTable<T>({
     const sp = new URLSearchParams(searchParams?.toString() ?? "");
     sp.set("page", String(newPage));
     return `?${sp.toString()}`;
+  };
+
+  const goToPage = (newPage: number): void => {
+    const sp = new URLSearchParams(searchParams?.toString() ?? "");
+    if (newPage <= 1) sp.delete("page");
+    else sp.set("page", String(newPage));
+    const qs = sp.toString();
+    window.history.replaceState(
+      window.history.state,
+      "",
+      qs ? `${pathname}?${qs}` : pathname,
+    );
   };
 
   return (
@@ -127,19 +149,42 @@ export function ScopedListTable<T>({
               {Math.min(page * perPage, total)} of {total}
             </span>
             <div className="flex gap-2">
-              <Button asChild variant="outline" size="sm" disabled={page <= 1}>
-                <Link href={buildPageHref(Math.max(1, page - 1))}>Prev</Link>
-              </Button>
-              <Button
-                asChild
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-              >
-                <Link href={buildPageHref(Math.min(totalPages, page + 1))}>
-                  Next
-                </Link>
-              </Button>
+              {clientSidePagination ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page <= 1}
+                    onClick={() => goToPage(Math.max(1, page - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                    onClick={() => goToPage(Math.min(totalPages, page + 1))}
+                  >
+                    Next
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button asChild variant="outline" size="sm" disabled={page <= 1}>
+                    <Link href={buildPageHref(Math.max(1, page - 1))}>Prev</Link>
+                  </Button>
+                  <Button
+                    asChild
+                    variant="outline"
+                    size="sm"
+                    disabled={page >= totalPages}
+                  >
+                    <Link href={buildPageHref(Math.min(totalPages, page + 1))}>
+                      Next
+                    </Link>
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         )}

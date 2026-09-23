@@ -216,6 +216,9 @@ export function DocumentsPage() {
         rowKey={(r) => r.id}
         toolbar={toolbar}
         emptyMessage="No documents match this filter."
+        // Page data is client-fetched (useQuery keyed on ?page=); a Link would
+        // pay a full RSC round-trip whose payload is unchanged.
+        clientSidePagination
       />
     </div>
   );
