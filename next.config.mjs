@@ -182,6 +182,12 @@ const nextConfig = {
           // phase; Netlify trades them for survival (Next memory guide),
           // CI/dev keep them for prerender stack-trace quality.
           enablePrerenderSourceMaps: false,
+          // Bounds the jest-worker pools for BOTH compile and static
+          // generation (build/index.js getNumberOfWorkers). Default is 4
+          // workers; with maxConcurrency 4 the worst case drops from
+          // 4×8=32 to 2×4=8 pages in flight. Builds get slower — that is
+          // the trade, and a slow green build beats a fast red one.
+          cpus: 2,
         }
       : {}),
     webpackMemoryOptimizations: true,
