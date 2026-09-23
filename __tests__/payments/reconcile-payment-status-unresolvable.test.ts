@@ -56,6 +56,18 @@ jest.mock("../../app/api/webhooks/razorpay-dispatch", () => ({
   routeCapturedPayment: jest.fn(),
 }));
 
+// #1757 — the orphan retire path is the abandoned-payments unit; pin the
+// delegation, not the unit (it has its own suite).
+const retireOrphanPendingPayment = jest.fn();
+jest.mock("../../scripts/payments/cleanup-abandoned-payments", () => ({
+  retireOrphanPendingPayment: (...a: unknown[]) =>
+    retireOrphanPendingPayment(...a),
+}));
+const recordSystemEvent = jest.fn();
+jest.mock("../../lib/enterprise/system-events", () => ({
+  recordSystemEvent: (...a: unknown[]) => recordSystemEvent(...a),
+}));
+
 import type { NextRequest } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import Stripe from "stripe";
@@ -80,7 +92,11 @@ const pendingStripeRow = {
   paymentGateway: "STRIPE",
   paymentIntent: "103e6474-6cc3-4d37-9673-25af4b1dd566",
   paymentStatus: "PENDING",
-  createdAt: new Date("2026-09-14T00:00:00Z"),
+  // Relative, never fixed: the row must sit inside the 7d reconcile window
+  // AND below the 7d orphan cutoff (report path, not retire path). A fixed
+  // date rotted past both cutoffs on 2026-09-21 and flipped this test to the
+  // retire path, whose mocked helper returns undefined (500, not 207).
+  createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
   user: null,
   appointment: null,
 };
@@ -90,9 +106,10 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     jest.clearAllMocks();
     process.env.CRON_SECRET = SECRET;
     process.env.STRIPE_SECRET_KEY = "sk_test_x";
-    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
-      pendingStripeRow,
-    ]);
+    // The window query answers with the row; the orphan-cohort query is empty.
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([pendingStripeRow])
+      .mockResolvedValueOnce([]);
   });
 
   it("counts a resource_missing row as unresolvable and answers 207", async () => {
@@ -137,5 +154,91 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     expect(body.unresolvableCount).toBe(0);
     expect(prisma.payment.updateMany).not.toHaveBeenCalled();
     expect(mockCaptureMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * #1757 — a PENDING row nothing can claim (no `expiresAt`, no tentative hold,
+ * so abandoned-payments never selects it) was re-reported every five minutes
+ * for the same ids (FAMILIARISE_WEB-4P). Past the orphan age an unknown-id
+ * answer now retires it through the abandoned-payments unit and reports once;
+ * a younger one keeps the report-only behaviour.
+ */
+describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const oldRow = {
+    ...pendingStripeRow,
+    id: "pay-old",
+    createdAt: new Date(Date.now() - 10 * DAY),
+  };
+  const youngRow = {
+    ...pendingStripeRow,
+    id: "pay-young",
+    createdAt: new Date(Date.now() - 1 * DAY),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.CRON_SECRET = SECRET;
+    process.env.STRIPE_SECRET_KEY = "sk_test_x";
+    delete process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS;
+    mockRetrieve.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), {
+        code: "resource_missing",
+        statusCode: 404,
+      }),
+    );
+    retireOrphanPendingPayment.mockResolvedValue({
+      outcome: "retired",
+      errors: [],
+    });
+  });
+
+  it("10-day-old → retired via the helper + SystemEvent; 1-day-old → reported only", async () => {
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([youngRow])
+      .mockResolvedValueOnce([oldRow]);
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(207);
+    expect(body.success).toBe(true);
+    expect(body.retiredCount).toBe(1);
+    expect(body.unresolvableCount).toBe(1);
+    expect(retireOrphanPendingPayment).toHaveBeenCalledTimes(1);
+    expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-old");
+    // The row is never written directly here — the helper owns the CAS.
+    expect(prisma.payment.updateMany).not.toHaveBeenCalled();
+    expect(recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(recordSystemEvent.mock.calls[0][0]).toMatchObject({
+      category: "PAYMENT",
+      message: expect.stringContaining("PAYMENT_ORPHAN_RETIRED: pay-old"),
+    });
+    // One Sentry message for the retired ids and one for the reported ids.
+    const messages = mockCaptureMessage.mock.calls.map(([m]) => String(m));
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("retired 1 orphan"),
+        expect.stringContaining("1 pending payments"),
+      ]),
+    );
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it("the orphan age is read from RECONCILE_ORPHAN_PENDING_MAX_AGE_MS", async () => {
+    process.env.RECONCILE_ORPHAN_PENDING_MAX_AGE_MS = String(
+      12 * 60 * 60 * 1000,
+    );
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([youngRow])
+      .mockResolvedValueOnce([]);
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(body.retiredCount).toBe(1);
+    expect(body.unresolvableCount).toBe(0);
+    expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-young");
   });
 });

@@ -30,8 +30,13 @@ import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
 import { useTimezone } from "./hooks/useTimezone";
-import { useAvailabilityWindow } from "./hooks/useAvailabilityWindow";
+import {
+  useAvailabilityMonth,
+  useAvailabilityWindow,
+} from "./hooks/useAvailabilityWindow";
+import { dayState, isSelectableDay } from "./day-state";
 import { formatInTimeZone } from "date-fns-tz";
+import { cn } from "@/utils/tailwind";
 
 interface ExpertProfileClientProps {
   consultantDetails: ConsultantDetailData;
@@ -97,6 +102,15 @@ export function ExpertProfileClient({
     bypassRef: bypassCacheOnce,
   });
 
+  // #1785 L-4 — one read for the visible month drives the day marks. It is
+  // keyed on the month, so paging the calendar costs one request per month
+  // and re-opening the dialog on a loaded month costs none.
+  const monthQuery = useAvailabilityMonth({
+    consultantId: consultantDetails?.id,
+    monthStart: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1),
+    timezone: !isTimezoneLoading ? (timezone ?? null) : null,
+  });
+
   const selectedDateKey =
     selectedDate && timezone && !isTimezoneLoading
       ? formatInTimeZone(selectedDate, timezone, "yyyy-MM-dd")
@@ -116,9 +130,14 @@ export function ExpertProfileClient({
 
   const refreshSlots = useCallback(
     () =>
-      queryClient.invalidateQueries({
-        queryKey: ["availability", consultantDetails?.id],
-      }),
+      Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ["availability", consultantDetails?.id],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ["availability-month", consultantDetails?.id],
+        }),
+      ]).then(() => undefined),
     [queryClient, consultantDetails?.id],
   );
 
@@ -257,6 +276,11 @@ export function ExpertProfileClient({
     [consultantDetails, session?.user?.id, router, toast],
   );
 
+  // Day cells carry their state without colour (#1785 L-4): a ring and a bold
+  // number on a day with a bookable time, plain grey and disabled on a day
+  // without, dimmed and disabled in the past, a dot under today. The marks
+  // come from the month read; while it loads the cells pulse, and if it
+  // fails the cells stay plain and clickable under a one-line notice.
   const renderCalendar = useCallback(() => {
     const daysInMonth = new Date(
       currentDate.getFullYear(),
@@ -271,6 +295,9 @@ export function ExpertProfileClient({
 
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
     const days = [];
+    const now = new Date();
+    const marks = monthQuery.data ?? null;
+    const marksLoading = monthQuery.isPending && !!timezone;
 
     for (let i = 0; i < adjustedFirstDay; i++) {
       days.push(
@@ -288,28 +315,80 @@ export function ExpertProfileClient({
         selectedDate?.getDate() === i &&
         selectedDate?.getMonth() === currentDate.getMonth() &&
         selectedDate?.getFullYear() === currentDate.getFullYear();
+      const key = timezone
+        ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
+        : null;
+      const state = dayState(
+        date,
+        now,
+        marks && key ? (marks[key] ?? []) : null,
+      );
+      const isToday = state.startsWith("today");
+      const selectable = isSelectableDay(state);
+      const bookable = state === "bookable" || state === "today+bookable";
 
       days.push(
         <button
           key={i}
-          className={`w-10 h-10 lg:w-11 lg:h-11 rounded-full text-base font-medium transition-all duration-200 flex items-center justify-center
-            ${
-              isSelected
-                ? "bg-white text-zinc-900 shadow-md"
-                : "text-zinc-300 hover:bg-zinc-700/60"
-            }`}
+          type="button"
+          disabled={!selectable}
+          aria-pressed={isSelected}
+          aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
+          className={cn(
+            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
+            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+            !isSelected &&
+              bookable &&
+              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+            !isSelected &&
+              (state === "unknown" || state === "today+unknown") &&
+              "font-medium text-zinc-300 hover:bg-zinc-700/60",
+            !isSelected &&
+              (state === "none" || state === "today+none") &&
+              "text-zinc-500",
+            state === "past" && "opacity-40 text-zinc-500",
+            marksLoading &&
+              state !== "past" &&
+              !isSelected &&
+              "animate-pulse ring-1 ring-white/10",
+          )}
           onClick={() => {
             setSelectedDate(date);
             setSelectedSlot(null);
           }}
         >
           {i}
+          {isToday && (
+            <span
+              aria-hidden="true"
+              className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+            />
+          )}
         </button>,
       );
     }
 
+    if (monthQuery.isError) {
+      days.push(
+        <p
+          key="marks-error"
+          role="status"
+          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
+        >
+          Couldn&apos;t load availability marks — pick a day to see its times.
+        </p>,
+      );
+    }
+
     return days;
-  }, [currentDate, selectedDate]);
+  }, [
+    currentDate,
+    selectedDate,
+    timezone,
+    monthQuery.data,
+    monthQuery.isPending,
+    monthQuery.isError,
+  ]);
 
   return (
     <main className="bg-muted">

@@ -17,8 +17,15 @@
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { deriveGstBreakdown } from "@/lib/compliance/gst";
+import { numericStateCode } from "@/lib/compliance/state-codes";
 import { recordSystemError } from "@/lib/enterprise/system-events";
+import { dispatchWebhookEvent } from "@/lib/enterprise/outbound-webhooks/dispatch";
+import { notifyOrgInvoiceIssued } from "@/lib/novu/org-workflows";
+import { attemptTrigger, type StagedTrigger } from "@/lib/novu";
+import { reportSentryError } from "@/lib/observability/report";
+import { getAppUrl } from "@/lib/url";
 import { generateOrgInvoiceNumber } from "./invoice-numbering";
+import { supplierStateCode } from "./consumer-invoice";
 import { transitionOverage } from "./overage-transitions";
 
 export interface RollupResult {
@@ -53,7 +60,10 @@ export async function rollupOrgInvoiceAccruals(params: {
     where: { id: organizationId },
     select: {
       id: true,
+      name: true,
       slug: true,
+      status: true,
+      deletedAt: true,
       invoiceNumberPrefix: true,
       billingAccountId: true,
       dataResidencyRegion: true,
@@ -64,6 +74,12 @@ export async function rollupOrgInvoiceAccruals(params: {
     },
   });
   if (!org?.billingAccountId) return EMPTY;
+  // #1744 row 6 — a wound-down org is never billed again; DELETE refuses while
+  // an accrual is still unbilled, so anything left here is settled history.
+  if (org.status === "DEACTIVATED" || org.deletedAt) return EMPTY;
+
+  // #1447 — GSTIN-first supplier state; a mismatch throws before any tx opens.
+  const supplierState = supplierStateCode();
 
   // #1357 7.4 — orphaned overage events are collected in the tx and written
   // AFTER it commits. `recordSystemError` goes through the global client, so a
@@ -91,7 +107,7 @@ export async function rollupOrgInvoiceAccruals(params: {
   // skipping THAT left the org unbilled until the next monthly cycle with only
   // a console.log to show for it. Exhausted retries surface as P2034 to the
   // caller, which reports rather than swallows.
-  const result = await withSerializableRetry(() =>
+  const outcome = await withSerializableRetry(() =>
     prisma.$transaction(
       async (tx) => {
         // A retried attempt must not inherit the discarded one's orphans.
@@ -130,7 +146,7 @@ export async function rollupOrgInvoiceAccruals(params: {
             },
           },
         });
-        if (accrued.length === 0) return EMPTY;
+        if (accrued.length === 0) return { result: EMPTY, notifyStaged: [] };
 
         const lines = accrued
           .map((p, i) => ({
@@ -146,12 +162,17 @@ export async function rollupOrgInvoiceAccruals(params: {
           .filter((l) => l.unitPricePaise > 0)
           .map((l, i) => ({ ...l, position: i }));
         const subtotal = lines.reduce((s, l) => s + l.unitPricePaise, 0);
-        if (subtotal <= 0) return EMPTY;
+        if (subtotal <= 0) return { result: EMPTY, notifyStaged: [] };
 
+        // #1744 row 3 — the buyer GSTIN's first two digits are the place of
+        // supply; an org that never filled its state still gets the right head.
         const gst = deriveGstBreakdown({
           subtotalPaise: subtotal,
-          supplierStateCode: process.env.SUPPLIER_STATE_CODE ?? "KA",
-          buyerStateCode: org.taxInfo?.gstStateCode ?? null,
+          supplierStateCode: supplierState,
+          buyerStateCode:
+            org.taxInfo?.gstStateCode ??
+            numericStateCode(org.taxInfo?.gstin, null),
+          buyerGstin: org.taxInfo?.gstin ?? null,
           buyerCountry: org.dataResidencyRegion === "IN" ? "IN" : "US",
           hsnCode: org.taxInfo?.hsnDefault,
         });
@@ -254,6 +275,9 @@ export async function rollupOrgInvoiceAccruals(params: {
         const overageEvents = await tx.overageEvent.findMany({
           where: {
             overageBehavior: "CHARGE_ORG",
+            // #1744 row 6 — only PENDING events can move to ACCRUED; a
+            // REVERSED/FAILED one is not an orphan, it is already settled.
+            chargeStatus: "PENDING",
             settledAt: null,
             bookingUtilization: { paymentId: { in: accrued.map((p) => p.id) } },
           },
@@ -292,17 +316,66 @@ export async function rollupOrgInvoiceAccruals(params: {
           }
         }
 
+        // #1744 row 2 — an ISSUED rollup invoice tells the owners and the
+        // integrators, like the subscription cron does. Both are staged on
+        // this tx (#1669 outbox): a rollback takes them too, and one row per
+        // invoice is guaranteed by the billableToOrgInvoiceId stamp above.
+        let notifyStaged: StagedTrigger[] = [];
+        if (issueImmediately) {
+          const origin = getAppUrl();
+          notifyStaged = await notifyOrgInvoiceIssued(
+            organizationId,
+            {
+              invoiceNumber,
+              orgName: org.name,
+              totalPaise: gst.totalPaise,
+              currency: "INR",
+              dueDate: dueDate.toISOString(),
+              dashboardUrl: `${origin}/dashboard/organization/${organizationId}/billing`,
+              pdfUrl: `${origin}/api/organizations/${organizationId}/billing-account/invoices/${invoice.id}/pdf`,
+            },
+            { tx, entityRef: `orgInvoice:${invoice.id}` },
+          );
+          await dispatchWebhookEvent({
+            prisma: tx,
+            organizationId,
+            eventType: "invoice.issued",
+            payload: {
+              invoiceId: invoice.id,
+              invoiceNumber,
+              totalPaise: gst.totalPaise,
+              displayCurrency: "INR",
+              dueDate: dueDate.toISOString(),
+              purchaseOrderId: null,
+              contractId: null,
+            },
+          });
+        }
+
         return {
-          invoiceId: invoice.id,
-          invoiceNumber,
-          billedPaymentCount: accrued.length,
-          subtotalPaise: gst.subtotalPaise,
-          totalPaise: gst.totalPaise,
+          result: {
+            invoiceId: invoice.id,
+            invoiceNumber,
+            billedPaymentCount: accrued.length,
+            subtotalPaise: gst.subtotalPaise,
+            totalPaise: gst.totalPaise,
+          },
+          notifyStaged,
         };
       },
       { isolationLevel: "Serializable", maxWait: 10_000, timeout: 15_000 },
     ),
   );
+  const { result, notifyStaged } = outcome;
+
+  // #1744 row 2 — the post-commit attempt; `attemptTrigger` never throws, the
+  // guard only protects the loop so a bell failure cannot hide a committed invoice.
+  try {
+    for (const row of notifyStaged) await attemptTrigger(row);
+  } catch (e) {
+    reportSentryError(e, { subsystem: "payments" });
+    console.error("[invoice-rollup] invoice-issued notify attempt failed:", e);
+  }
 
   // Awaited, not voided: the caller is a cron that disconnects Prisma as soon
   // as it returns, and these rows are the only record that an event was left

@@ -7,6 +7,7 @@
  * - discountLimiter:        10/min per user  — POST /api/payments/discounts/validate (brute-force)
  * - waitlistLimiter:        3/hr per IP      — POST /api/waitlist (newsletter signup spam)
  * - referralApplyLimiter:   3/24h per user   — POST /api/referrals/apply (farming)
+ * - remindLimiter:          1/24h per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775)
  * - spamLimiter:            5/hr per user    — support-tickets, feedbacks, reviews, report
  * - cspReportLimiter:       120/min per IP   — POST /api/csp-report (browser-generated)
  * - trialRequestLimiter:    3/24h per user   — POST /api/trials (spam prevention)
@@ -89,6 +90,9 @@ export const waitlistLimiter = makeLimiter(3, "1 h", "rl:waitlist");
 
 /** 3 per 24 hours — POST /api/referrals/apply */
 export const referralApplyLimiter = makeLimiter(3, "24 h", "rl:referral-apply");
+
+/** 1 per 24 hours per appointment — POST /api/bookings/{consultations,subscriptions}/[id]/remind (#1775) */
+export const remindLimiter = makeLimiter(1, "24 h", "rl:remind");
 
 /** 5 per hour — support-tickets, feedbacks, reviews, report (scope key by route) */
 export const spamLimiter = makeLimiter(5, "1 h", "rl:spam");

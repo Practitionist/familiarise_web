@@ -19,6 +19,10 @@
 
 name: CI
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   pull_request:
     # `feat/**` is here because a stacked train is the normal shape for large
@@ -50,6 +54,13 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Shell syntax + shellcheck
+        # #1757 — scripts/ci/notify-ops-failure.sh is the alert path for every
+        # money cron; a script that does not parse is a dead sink nobody sees.
+        run: |
+          for f in scripts/ci/*.sh; do bash -n "$f"; done
+          shellcheck scripts/ci/*.sh
 
       - name: Prettier Check
         id: prettier

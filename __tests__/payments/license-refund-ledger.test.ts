@@ -126,6 +126,9 @@ function paymentRow(overrides: Record<string, unknown> = {}) {
       },
     ],
     bookingUtilization: { id: "util-1", engagementsConsumed: 1 },
+    // #1582 C-P0-03 — the cascade reads the cumulative cap through these.
+    refunds: [],
+    disputes: [],
     ...overrides,
   };
 }

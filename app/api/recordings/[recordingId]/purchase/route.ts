@@ -20,13 +20,15 @@ import {
   loadOwnedListingRecording,
 } from "@/lib/stream/recording-listing-access";
 import { isDurablyOurs } from "@/lib/stream/recording-storage";
+import {
+  BookingLockUnavailableError,
+  lockRecordingPurchase,
+  RecordingPurchaseInProgressError,
+} from "@/utils/appointmentlock";
 
 type RouteParams = { params: Promise<{ recordingId: string }> };
 
-export async function POST(
-  _request: NextRequest,
-  { params }: RouteParams,
-) {
+export async function POST(_request: NextRequest, { params }: RouteParams) {
   try {
     const session = await getSession();
     if (!session?.user?.id) {
@@ -42,7 +44,10 @@ export async function POST(
     });
     if (loaded.status !== "ok") {
       return NextResponse.json(
-        { error: "Recording is not available for purchase", code: "NOT_LISTED" },
+        {
+          error: "Recording is not available for purchase",
+          code: "NOT_LISTED",
+        },
         { status: 404 },
       );
     }
@@ -61,7 +66,10 @@ export async function POST(
       !isDiscoverablePlanPlan(loaded.plan.plan)
     ) {
       return NextResponse.json(
-        { error: "This recording is no longer available for purchase.", code: "NOT_ELIGIBLE" },
+        {
+          error: "This recording is no longer available for purchase.",
+          code: "NOT_ELIGIBLE",
+        },
         { status: 409 },
       );
     }
@@ -76,82 +84,97 @@ export async function POST(
       );
     }
 
-    const [owned, pendingOrder] = await Promise.all([
-      prisma.recordingPurchase.findFirst({
-        where: { recordingId, buyerId: session.user.id, status: "SUCCEEDED" },
-        select: { gatewayOrderId: true },
-      }),
-      prisma.recordingPurchase.findFirst({
-        where: { recordingId, buyerId: session.user.id, status: "PENDING" },
-        select: { gatewayOrderId: true, amountPaise: true },
-      }),
-    ]);
-    if (owned) {
+    const buyerId = session.user.id;
+    const amountPaise = loaded.listPricePaise;
+    // #1584 P2-P0-02 — read → mint → create under one lock, and the PENDING
+    // re-read happens INSIDE it so a second caller resumes, never re-mints.
+    const outcome = await lockRecordingPurchase(
+      recordingId,
+      buyerId,
+      async () => {
+        const [owned, pendingOrder] = await Promise.all([
+          prisma.recordingPurchase.findFirst({
+            where: { recordingId, buyerId, status: "SUCCEEDED" },
+            select: { gatewayOrderId: true },
+          }),
+          prisma.recordingPurchase.findFirst({
+            where: { recordingId, buyerId, status: "PENDING" },
+            select: { gatewayOrderId: true, amountPaise: true },
+          }),
+        ]);
+        if (owned) return { kind: "owned" as const };
+        if (pendingOrder) {
+          return {
+            kind: "resumed" as const,
+            orderId: pendingOrder.gatewayOrderId,
+            amount: Number(pendingOrder.amountPaise),
+            currency: "INR",
+          };
+        }
+
+        const order = await createRazorpayOrder({
+          amount: Number(amountPaise),
+          currency: "INR",
+          paymentGateway: "RAZORPAY",
+          metadata: {
+            type: "recording_purchase",
+            recordingId,
+            userId: buyerId,
+          },
+        });
+
+        try {
+          await prisma.recordingPurchase.create({
+            data: {
+              recordingId,
+              buyerId,
+              gatewayOrderId: order.id,
+              amountPaise,
+              status: "PENDING",
+            },
+          });
+        } catch (rowError) {
+          // A payable order must not outlive its ledger row — best-effort cancel
+          // at the gateway, then surface the failure.
+          console.error("Failed to persist replay purchase:", rowError);
+          try {
+            await cancelRazorpayOrder(order.id);
+          } catch (cancelError) {
+            console.error("Failed to cancel stranded order:", cancelError);
+          }
+          throw rowError;
+        }
+        return {
+          kind: "minted" as const,
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+        };
+      },
+    );
+
+    if (outcome.kind === "owned") {
       return NextResponse.json(
         { error: "You already own this recording", code: "ALREADY_ENTITLED" },
         { status: 400 },
       );
     }
-    // Double-click guard: resume the still-live order instead of minting a
-    // second payable one for the same (buyer, recording) pair.
-    if (pendingOrder) {
-      return NextResponse.json(
-        {
-          data: {
-            orderId: pendingOrder.gatewayOrderId,
-            amount: Number(pendingOrder.amountPaise),
-            currency: "INR",
-          },
-        },
-        { status: 200 },
-      );
-    }
-
-    const amountPaise = loaded.listPricePaise;
-    const order = await createRazorpayOrder({
-      amount: Number(amountPaise),
-      currency: "INR",
-      paymentGateway: "RAZORPAY",
-      metadata: {
-        type: "recording_purchase",
-        recordingId,
-        userId: session.user.id,
-      },
-    });
-
-    try {
-      await prisma.recordingPurchase.create({
-        data: {
-          recordingId,
-          buyerId: session.user.id,
-          gatewayOrderId: order.id,
-          amountPaise,
-          status: "PENDING",
-        },
-      });
-    } catch (rowError) {
-      // A payable order must not outlive its ledger row — best-effort cancel
-      // at the gateway, then surface the failure.
-      console.error("Failed to persist replay purchase:", rowError);
-      try {
-        await cancelRazorpayOrder(order.id);
-      } catch (cancelError) {
-        console.error("Failed to cancel stranded order:", cancelError);
-      }
-      throw rowError;
-    }
-
+    const { kind, ...data } = outcome;
     return NextResponse.json(
-      {
-        data: {
-          orderId: order.id,
-          amount: order.amount,
-          currency: order.currency,
-        },
-      },
-      { status: 201 },
+      { data },
+      { status: kind === "minted" ? 201 : 200 },
     );
   } catch (error) {
+    // The mint lock's refusals are typed (409 busy / 503 Redis down), not faults.
+    if (
+      error instanceof RecordingPurchaseInProgressError ||
+      error instanceof BookingLockUnavailableError
+    ) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.httpStatus },
+      );
+    }
     console.error("Error creating replay purchase:", error);
     return NextResponse.json(
       { error: "Failed to start purchase" },

@@ -192,6 +192,14 @@ Consultations support two entry paths:
 
 The reason two paths exist is flexibility. Some consultants want to screen clients before accepting bookings; others want frictionless direct booking.
 
+#### Allocation is the approval, and the money decides where it lands (#1775 B-9)
+
+Every approval of a REQUEST-mode consultation or subscription from the UI — "Use requested times" on the Requests page, Approve on the detail page and the allocate page — goes through the allocate handler and `SchedulingService.updateEventStatus`, not through the detail PATCH route with `status: APPROVED`. Until 2026-09-20 that path CASed the request straight to `APPROVED` with no payment predicate and no pay order, so a priced request became "Confirmed · Nothing was charged" and the buyer was never asked to pay; the same from-set also let a re-allocation flip an awaiting-payment row to `APPROVED` while its pay order was still live. The service now makes two CAS attempts with the money predicate in each WHERE (`lib/booking/approve-request.ts`): first to `APPROVED` from `ALLOCATION_APPROVABLE_FROM` when the wrapper carries a SUCCEEDED, non-deleted payment or the plan is free (`SETTLED_*`), then to `APPROVED_PENDING_PAYMENT` from `PENDING` or from itself when no succeeded payment exists (`UNPAID_*`, the same arm the lapse core uses); both missing rolls the allocation back as before. On the awaiting-payment landing the placed sessions stay tentative (the requested path leaves its request-time holds as they are; the manual and auto paths mark the sessions they created tentative): they are the hold the pay order is for, the capture webhook confirms them, and a lapse or a withdraw releases them by status. The handler reads the outcome and, on `awaiting_payment`, runs `mintApprovalPaymentAfterCommit` before answering: the detail PATCH's post-commit block, now shared, which mints under the mint lock (a live PENDING intent is reused, so a retry or a re-allocation never mints a parallel order and a row that already carries a link mints nothing), CASes the link onto the row, tombstones an orphaned order and mails only a live link. A failed mint leaves the request awaiting payment with no link — the state the PATCH route leaves too — and is recorded as a PAYMENT system error; re-approving reuses the same intent. The response carries `awaitingPayment: true`, so the consultant's toast says the client has 24 hours to pay rather than "Confirmed".
+
+#### While the approval waits for payment (#1775)
+
+An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
+
 #### Sequence Diagram
 
 ```mermaid
@@ -826,6 +834,18 @@ flowchart TD
     style AF9 fill:#d4edda
 ```
 
+### The consultant's Requests inbox
+
+The surface where the approval flow is answered is the consultant's Requests inbox, mounted at `/dashboard/consultant/[consultantId]/requests` and, for organisation-funded work, at `/dashboard/organization/[orgId]/requests` (PR-A of the 2026-09-20 booking-money train, #1775). It replaced the older Requests tab, which kept its own status-to-label switch, fetched only `PENDING` rows and showed one flat table. The inbox is one server read, `readRequestsInbox` in `lib/data/requests-inbox.ts`, that the page seeds react-query with on the server and `/api/bookings/inbox` answers on every refetch with `Cache-Control: no-store`, so the first paint and every refresh carry the same rows.
+
+The inbox has three type tabs (Consultations, Subscriptions, Trials), a chip row that narrows a tab server-side (Answer today, Awaiting payment, Next cycle, Declined), a sort control (priority, deadline, money, newest, oldest) and, inside a tab, deadline buckets. "Answer today" holds a request whose hold has under a day left or has already run out, "This week" holds one with under seven days, "Later" holds the rest of what the consultant must answer (a subscription hold runs thirty days), and "Waiting on them" holds every row whose next step belongs to the other side: an approved request waiting on its pay link, or an approved subscription whose live cycle has finished and whose entitlement has sessions left. The tabs, chips, sort and page live in the URL, so a link to `?type=subscription&chip=next-cycle` opens the inbox exactly there.
+
+Every word a row shows about a booking comes from `deriveBookingPresentation` in `lib/dashboard/money-state.ts`: the state badge, the money line and the next action are the derivation's, and the inbox carries no status switch of its own. The only label the derivation cannot supply is the badge for a finished cycle with sessions left, which the inbox's label map names "Next cycle open". A subscription row reads its entitlement words ("Schedule the next 2 · 4 of 24 booked"), never a bare slot count.
+
+Each row has one primary action, mirroring the detail page's needs-you callout. A requested row offers Approve, which opens the existing requested-times dialog when the consultee's held times cover what the plan needs (or answers an open consultee proposal through the respond endpoint) and otherwise links to the allocate page; Decline sits in the row's secondary menu behind a confirmation. Rows whose approval needs no dialog can be selected and batch-approved: the bar approves them one after another through the same allocate PATCH a single approval uses, because each call takes its own lock and mints its own pay order, and a 409 is reported and never retried. An awaiting-payment row offers Remind as its primary action and Withdraw approval as its secondary one; both call routes that the sibling PR-B ships under a fixed contract (`POST /api/bookings/{consultations|subscriptions}/[id]/remind` answering `200 { nextAllowedAt }` or `429 { code: "REMIND_RATE_LIMITED", nextAllowedAt }`, and `POST …/[id]/withdraw-approval` answering `200 { status: "EXPIRED" }` or `409 { code: "REQUEST_CHANGED_ELSEWHERE" }`), and the row renders "Remind sent · next in N h" from `nextAllowedAt`. A next-cycle row offers Allocate, linking to the allocate page. A 409 from any write keeps the row, shows "This request changed elsewhere — refreshed" and refetches in place.
+
+Trials fold into the inbox as a type tab. A pending trial's primary action is "Pick a time", which opens the schedule dialog lifted out of the old Trials tab (`TrialAcceptDialog`), and Decline is its secondary action; a paid trial awaiting payment shows only its countdown, because no reminder route exists for trials yet. Scheduled trials stay on the Appointments page, where the former Trial requests tab now points at the inbox. Home's "Pending requests" card is the first five rows of the same read, and Home's pending, awaiting-payment and next-cycle counts read the same `needs-you.ts` predicates the inbox reads, so the two surfaces cannot disagree about a number.
+
 ### Comparison Table
 
 | Aspect                               | Direct Checkout                                                    | Approval Flow                                  |
@@ -1118,21 +1138,22 @@ Notifications are sent via Novu workflows. All workflow IDs are defined in `lib/
 
 ### Subscription Notifications
 
-| Lifecycle Event        | Novu Workflow ID         | Recipients             | Trigger Point             | Source              |
-| ---------------------- | ------------------------ | ---------------------- | ------------------------- | ------------------- |
-| Subscription started   | `subscription-started`   | Consultee              | Slot allocation completed | `SchedulingService` |
-| Subscription cancelled | `subscription-cancelled` | Consultee + Consultant | Cancellation API          | Cancellation routes |
-| Subscription renewed   | `subscription-renewed`   | Consultee              | Renewal processing        | Renewal scripts     |
+| Lifecycle Event         | Novu Workflow ID         | Recipients             | Trigger Point                                                               | Source                                                                                              |
+| ----------------------- | ------------------------ | ---------------------- | --------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Subscription started    | `subscription-started`   | Consultee              | Slot allocation completed                                                   | `SchedulingService`                                                                                 |
+| Subscription cancelled  | `subscription-cancelled` | Consultee + Consultant | Cancellation API                                                            | Cancellation routes                                                                                 |
+| Subscription cycle done | `subscription-renewed`   | Consultee              | The last live occurrence of a cycle completes with entitlement left (#1766) | `lib/booking/subscription-cycle.ts` from the Stream completion handlers and the auto-complete sweep |
 
 ### Financial Notifications
 
-| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point          | Source         |
-| ---------------- | ------------------ | ---------------------- | ---------------------- | -------------- |
-| Refund processed | `refund-processed` | Consultee              | Refund API             | Refund routes  |
-| Refund requested | `refund-requested` | Admin users            | Refund request API     | Refund routes  |
-| Payout processed | `payout-processed` | Consultant             | Payout processing      | Payout scripts |
-| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API   | Dispute routes |
-| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API | Dispute routes |
+| Lifecycle Event  | Novu Workflow ID   | Recipients             | Trigger Point                                          | Source         |
+| ---------------- | ------------------ | ---------------------- | ------------------------------------------------------ | -------------- |
+| Refund processed | `refund-processed` | Consultee              | Refund API                                             | Refund routes  |
+| Refund requested | `refund-requested` | Admin users            | Refund request API                                     | Refund routes  |
+| Payout processed | `payout-processed` | Consultant             | Payout processing                                      | Payout scripts |
+| Payout failed    | `payout-failed`    | Consultant             | Payout rejection / gateway FAILED or CANCELLED webhook | Payout service |
+| Dispute created  | `dispute-created`  | Consultee + Consultant | Dispute creation API                                   | Dispute routes |
+| Dispute resolved | `dispute-resolved` | Consultee + Consultant | Dispute resolution API                                 | Dispute routes |
 
 ### Other Notifications
 

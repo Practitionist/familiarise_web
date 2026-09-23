@@ -46,6 +46,9 @@ export interface AllocationRequest {
   /** #1206 — the consultant's explicit "place what fits now". Only ever sent
    * on the second attempt, after the server has said how many sessions fit. */
   allowPartial?: boolean;
+  /** #1766 — sent when the subscription already holds sessions; the server
+   * derives the same answer and appends the next cycle either way. */
+  topUp?: boolean;
   /**
    * The consultant explicitly accepting the stored times as-is. Honoured
    * server-side only for the event's consultant or a privileged caller —
@@ -77,6 +80,8 @@ export interface AllocationResponse {
   requiredSessions?: number;
   unplacedSessions?: number;
   placeableSessions?: number;
+  /** #1775 — the approval minted a pay order; the client has 24 h to pay. */
+  awaitingPayment?: boolean;
 }
 
 export interface AllocationCallOptions {
@@ -90,6 +95,8 @@ export interface AllocationCallOptions {
   idempotencyKey?: string;
   /** #1206 — allocate the sessions that fit instead of refusing them all. */
   allowPartial?: boolean;
+  /** #1766 — the event already holds sessions; append the next cycle. */
+  topUp?: boolean;
   /** The consultant explicitly accepting the stored times as-is. */
   override?: boolean;
 }
@@ -218,6 +225,7 @@ export class AllocationService {
         requiredSessions?: number;
         unplacedSessions?: number;
         placeableSessions?: number;
+        awaitingPayment?: boolean;
       } = {};
       let parseFailed = false;
       try {
@@ -261,6 +269,7 @@ export class AllocationService {
         placedSessions: data.placedSessions,
         requiredSessions: data.requiredSessions,
         unplacedSessions: data.unplacedSessions,
+        awaitingPayment: data.awaitingPayment === true,
       };
     } catch (error) {
       console.error(`Allocation request failed (${url}):`, error);
@@ -396,6 +405,7 @@ export class AllocationService {
       initialAllocation: allocationOptions?.initialAllocation,
       expectedTentativeSlotCount: allocationOptions?.expectedTentativeSlotCount,
       allowPartial: allocationOptions?.allowPartial,
+      topUp: allocationOptions?.topUp,
       override: allocationOptions?.override,
     };
 

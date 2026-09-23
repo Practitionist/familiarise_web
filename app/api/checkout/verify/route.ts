@@ -1,22 +1,128 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import {
   getRazorpayClient,
   withRazorpaySdkTimeout,
 } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { applyRateLimit, checkoutLimiter } from "@/lib/rate-limit";
+import {
+  deriveBookingPresentation,
+  type BookingStateKind,
+  type MoneyStateKind,
+} from "@/lib/dashboard/money-state";
+import type { Prisma } from "@prisma/client";
+
+/**
+ * #1586 P1-J07/J08 — what the buyer's booking actually is once the money is
+ * SUCCEEDED, so the success page can stop inferring "confirmed" from the
+ * payment status alone (true for the #827 loser and the amount-mismatch case).
+ * #1675 — the same derivation the dashboard reads (lib/dashboard/money-state).
+ */
+export type BookingState = BookingStateKind;
+export type MoneyState = MoneyStateKind;
+
+const VERIFY_INCLUDE = {
+  user: true,
+  appointment: {
+    include: {
+      consultation: { include: { consultationPlan: true, requestedBy: true } },
+      subscription: { include: { subscriptionPlan: true, requestedBy: true } },
+      webinar: { include: { webinarPlan: true } },
+      class: { include: { classPlan: true } },
+      occurrences: true,
+    },
+  },
+} satisfies Prisma.PaymentInclude;
+
+function loadVerifyPayment(paymentIntent: string) {
+  return prisma.payment.findUnique({
+    where: { paymentIntent },
+    include: VERIFY_INCLUDE,
+  });
+}
+
+// Typed off the extended client, whose BigInt columns surface as number.
+type VerifyPayment = NonNullable<Awaited<ReturnType<typeof loadVerifyPayment>>>;
+
+/** Null = the pipeline has not landed yet; the page keeps its "confirming" copy. */
+async function deriveBookingState(
+  payment: VerifyPayment,
+): Promise<{ bookingState: BookingState; moneyState: MoneyState } | null> {
+  const appointment = payment.appointment;
+  if (!appointment) return null;
+  // One extra round-trip: a Phase-2 auto-refund (#837) is the only sign the
+  // buyer's money is coming back while paymentStatus still says SUCCEEDED.
+  const refunds = await prisma.refund.findMany({
+    where: { paymentId: payment.id, status: { in: ["PENDING", "SUCCEEDED"] } },
+    select: { status: true, amountPaise: true },
+  });
+  const request = appointment.consultation ?? appointment.subscription;
+  const presentation = deriveBookingPresentation(
+    {
+      appointmentType: appointment.appointmentType,
+      request: request
+        ? {
+            status: request.status,
+            kind: appointment.consultation ? "CONSULTATION" : "SUBSCRIPTION",
+            requestedAt: request.requestedAt,
+          }
+        : null,
+      occurrences: appointment.occurrences,
+      payments: [
+        {
+          id: payment.id,
+          paymentStatus: payment.paymentStatus,
+          paymentMethod: payment.paymentMethod,
+          paymentGateway: payment.paymentGateway,
+          receiptUrl: payment.receiptUrl,
+          consumerInvoice: null,
+          amount: payment.amount,
+          taxAmount: payment.taxAmount,
+          currency: payment.currency,
+          createdAt: payment.createdAt,
+          expiresAt: payment.expiresAt,
+        },
+      ],
+      refunds,
+      disputes: [],
+      childPayments: [],
+      sponsorOrgName: null,
+      holdExpiresAt: null,
+      names: { payer: "you", consultant: "the consultant" },
+    },
+    "CONSULTEE",
+  );
+  // #1763 — a terminal outcome (refund underway/done, or the booking itself
+  // died) must answer even while unsettled, or the success page polls forever.
+  const moneyTerminal: MoneyStateKind[] = ["REFUND_PENDING", "REFUNDED"];
+  const bookingTerminal: BookingStateKind[] = [
+    "CANCELLED",
+    "DECLINED",
+    "PAYMENT_LAPSED",
+  ];
+  if (
+    !presentation.settled &&
+    !moneyTerminal.includes(presentation.moneyState.state) &&
+    !bookingTerminal.includes(presentation.bookingState.state)
+  )
+    return null;
+  return {
+    bookingState: presentation.bookingState.state,
+    moneyState: presentation.moneyState.state,
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: ?sync=true drives
+    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     // Get payment intent from query parameters
     const { searchParams } = new URL(req.url);
@@ -32,39 +138,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Find payment record with appointment details
-    const payment = await prisma.payment.findUnique({
-      where: { paymentIntent },
-      include: {
-        user: true,
-        appointment: {
-          include: {
-            consultation: {
-              include: {
-                consultationPlan: true,
-                requestedBy: true,
-              },
-            },
-            subscription: {
-              include: {
-                subscriptionPlan: true,
-                requestedBy: true,
-              },
-            },
-            webinar: {
-              include: {
-                webinarPlan: true,
-              },
-            },
-            class: {
-              include: {
-                classPlan: true,
-              },
-            },
-            occurrences: true,
-          },
-        },
-      },
-    });
+    let payment = await loadVerifyPayment(paymentIntent);
 
     if (!payment) {
       return NextResponse.json({ error: "Payment not found" }, { status: 404 });
@@ -148,13 +222,10 @@ export async function GET(req: NextRequest) {
             gatewayPaymentId: captured?.id,
           });
 
-          // Re-read payment to reflect the pipeline's outcome
-          const updated = await prisma.payment.findUnique({
-            where: { paymentIntent },
-          });
-          if (updated) {
-            (payment as typeof updated).paymentStatus = updated.paymentStatus;
-          }
+          // Re-read the whole graph: bookingState below reads the request
+          // status and the occurrences the pipeline just flipped (#1586).
+          const updated = await loadVerifyPayment(paymentIntent);
+          if (updated) payment = updated;
         }
       } catch (syncError) {
         // Non-fatal: the webhook and the stuck-event sweeper remain the durable
@@ -190,11 +261,14 @@ export async function GET(req: NextRequest) {
       appointmentType = payment.appointment.appointmentType;
     }
 
+    const derived = await deriveBookingState(payment);
+
     // Return success response with appointment details
     return NextResponse.json({
       paymentIntent: payment.paymentIntent,
       appointmentType,
       status: "SUCCEEDED",
+      ...(derived ?? {}),
       message: "Payment verified successfully",
       appointment: payment.appointment
         ? {
@@ -217,8 +291,10 @@ export async function GET(req: NextRequest) {
       { tags: { subsystem: "checkout" } },
     );
     console.error("Payment verification error:", error);
+    // #1586 P1-J32 — a typed 500 so the success page keeps polling instead of
+    // routing a possibly-charged buyer to the failure page.
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", errorType: "VERIFICATION_FAILED" },
       { status: 500 },
     );
   }

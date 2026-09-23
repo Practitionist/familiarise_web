@@ -1,34 +1,23 @@
 "use client";
 
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Search, Zap, Building2, Users } from "lucide-react";
+import { Search } from "lucide-react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { useCurrency } from "@/hooks/useCurrency";
 import SectionHeader from "@/app/explore/components/SectionHeader";
-import FilterChips from "@/app/explore/components/FilterChips";
-import FacetRail from "@/app/explore/components/FacetRail";
 import {
   useConsultants,
   useExpertsFilters,
   useInfiniteScroll,
   useExpertFilterChips,
 } from "./hooks";
-import type { IExpertsMetaData, AffiliationType } from "./utils";
-import { FilterPanel } from "./components/FilterPanel";
-import { SearchBar, type SortOption } from "./components/SearchBar";
+import type { IExpertsMetaData } from "./utils";
+import StickyFilterBar from "./components/StickyFilterBar";
 import StaticTopRows from "./components/StaticTopRows";
 import ExpertResults from "./components/ExpertResults";
-
-const AFFILIATION_TABS: {
-  value: AffiliationType;
-  label: string;
-  icon: React.ElementType;
-}[] = [
-  { value: null, label: "All Experts", icon: Users },
-  { value: "independent", label: "Independent", icon: Zap },
-  { value: "agency", label: "Agency / Org", icon: Building2 },
-];
+import ExpertDetailsSheet from "./components/ExpertDetailsSheet";
+import type { SortOption } from "./components/SearchBar";
 
 interface ExpertsInteractiveContentProps {
   metadata: IExpertsMetaData | null;
@@ -40,7 +29,7 @@ export default function ExpertsInteractiveContent({
   metadata,
   trendingExperts,
   newestExperts,
-}: ExpertsInteractiveContentProps) {
+}: Readonly<ExpertsInteractiveContentProps>) {
   const { filters, updateFilters, clearFilters } = useExpertsFilters();
   const browseSectionRef = useRef<HTMLDivElement>(null);
   const { formatPrice } = useCurrency();
@@ -74,6 +63,44 @@ export default function ExpertsInteractiveContent({
     formatPrice,
   );
 
+  // Details drawer: selected expert id synced to ?expert=<id> (shareable,
+  // back-button closable). Opening/closing pushes a history entry so browser
+  // Back closes (or reopens) the sheet, and a popstate listener syncs
+  // selectedId both ways. The drawer resolves the id against the loaded list,
+  // so list scroll + infinite-query cache are preserved. Deep links to experts
+  // beyond the loaded pages resolve once their page loads (or stay closed if
+  // the id matches nothing — no single-expert endpoint exists yet).
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    const syncFromUrl = () => {
+      const params = new URLSearchParams(window.location.search);
+      setSelectedId(params.get("expert"));
+    };
+    syncFromUrl();
+    window.addEventListener("popstate", syncFromUrl);
+    return () => window.removeEventListener("popstate", syncFromUrl);
+  }, []);
+  const selectedConsultant = useMemo(
+    () => consultants.find((c) => c.id === selectedId) ?? null,
+    [consultants, selectedId],
+  );
+  const openDetails = useCallback((consultant: IConsultantCardData) => {
+    setSelectedId(consultant.id);
+    const url = new URL(window.location.href);
+    url.searchParams.set("expert", consultant.id);
+    window.history.pushState(window.history.state, "", url.toString());
+  }, []);
+  const closeDetails = useCallback(() => {
+    setSelectedId(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("expert");
+    window.history.pushState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }, []);
+
   // Scroll to the browse section, optionally setting a sort first.
   const scrollToBrowse = useCallback(
     (sort?: SortOption) => {
@@ -92,6 +119,32 @@ export default function ExpertsInteractiveContent({
     [updateFilters],
   );
 
+  const resultSummary = useMemo(() => {
+    const total = metadata?.consultantMetadata.totalConsultants;
+    // The global total is only honest when NO filter is active — affiliation
+    // tabs (and orgKind/orgSlug) don't emit chips, so they must be checked
+    // explicitly or an Independent-filtered list would claim the full count.
+    const isUnfiltered =
+      chips.length === 0 &&
+      !filters.search &&
+      !filters.affiliationType &&
+      !filters.orgKind &&
+      !filters.orgSlug;
+    if (typeof total === "number" && isUnfiltered) {
+      return `${total} experts`;
+    }
+    return `${consultants.length}${hasMore ? "+" : ""} shown`;
+  }, [
+    metadata,
+    chips.length,
+    filters.search,
+    filters.affiliationType,
+    filters.orgKind,
+    filters.orgSlug,
+    consultants.length,
+    hasMore,
+  ]);
+
   return (
     <section className="py-10 md:py-16">
       <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12">
@@ -109,43 +162,19 @@ export default function ExpertsInteractiveContent({
         <div
           ref={browseSectionRef}
           id="all-experts"
-          className="scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
+          // Deep-links must land below the fixed header AND the sticky filter
+          // bar (~3 rows); same banner-aware formula as the bar itself.
+          style={{
+            scrollMarginTop:
+              "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem) + 13rem)",
+          }}
         >
           <SectionHeader
             title="Browse Familiarise Experts"
             icon={<Search className="w-5 h-5 text-white" />}
           />
 
-          {/* Affiliation type toggle: All | Independent | Agency/Org */}
-          <motion.div
-            className="mb-6"
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.05 }}
-          >
-            <div className="inline-flex items-center gap-1 p-1 bg-muted rounded-xl border border-border">
-              {AFFILIATION_TABS.map(({ value, label, icon: Icon }) => {
-                const isActive = filters.affiliationType === value;
-                return (
-                  <button
-                    key={String(value)}
-                    onClick={() => updateFilters({ affiliationType: value })}
-                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                      isActive
-                        ? "bg-card text-foreground shadow-sm border border-border"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-
-          {/* Search banner */}
+          {/* Search banner (not sticky) */}
           <motion.div
             className="mb-6"
             initial={{ opacity: 0, y: 20 }}
@@ -170,54 +199,39 @@ export default function ExpertsInteractiveContent({
             </div>
           </motion.div>
 
-          {/* Filters move into a sticky rail (mobile: Sheet drawer) so the
-              results keep the full column instead of starting below a
-              three-row filter grid. */}
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-[280px_1fr]">
-            <FacetRail activeCount={chips.length} onClearAll={clearAll}>
-              <FilterPanel
-                metadata={metadata}
-                filters={filters}
-                updateFilters={updateFilters}
-              />
-            </FacetRail>
+          {/* Sticky settings navbar: search + sort + affiliation tabs +
+              org-kind sub-filter + chips. Advanced facets live in the
+              Filters sheet (no sidebar grid). */}
+          <StickyFilterBar
+            metadata={metadata}
+            filters={filters}
+            updateFilters={updateFilters}
+            chips={chips}
+            onRemoveChip={removeChip}
+            onClearAll={clearAll}
+            resultSummary={resultSummary}
+          />
 
-            <div className="min-w-0">
-              <div className="mb-6">
-                <SearchBar
-                  onSearch={(term) => updateFilters({ search: term })}
-                  onSort={(option) => updateFilters({ sort: option })}
-                  sortBy={filters.sort}
-                  initialSearch={filters.search}
-                />
-              </div>
-
-              {chips.length > 0 && (
-                <div className="mb-6">
-                  <FilterChips
-                    filters={chips}
-                    onRemove={removeChip}
-                    onClearAll={clearAll}
-                  />
-                </div>
-              )}
-
-              {/* Kept as a full-width vertical stack, not a grid: ConsultantCard
-                  is a two-column card (profile + plan tabs) that collapses
-                  badly inside a narrow grid cell. */}
-              <ExpertResults
-                consultants={consultants}
-                metadata={metadata}
-                isLoading={isLoading}
-                isRefetching={isRefetching}
-                isLoadingMore={isLoadingMore}
-                groupByDomainId={filters.domain}
-                sentinelRef={sentinelRef}
-              />
-            </div>
-          </div>
+          {/* Single-column results: ConsultantCard is a two-column card
+              (profile + plan tabs) that collapses badly inside a narrow
+              grid cell, so the sidebar grid was removed. */}
+          <ExpertResults
+            consultants={consultants}
+            metadata={metadata}
+            isLoading={isLoading}
+            isRefetching={isRefetching}
+            isLoadingMore={isLoadingMore}
+            groupByDomainId={filters.domain}
+            sentinelRef={sentinelRef}
+            onSelect={openDetails}
+          />
         </div>
       </div>
+
+      <ExpertDetailsSheet
+        consultant={selectedConsultant}
+        onClose={closeDetails}
+      />
     </section>
   );
 }

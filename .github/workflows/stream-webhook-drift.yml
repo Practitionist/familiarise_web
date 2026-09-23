@@ -77,6 +77,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -93,7 +95,7 @@ jobs:
       - name: Check webhook subscription against the handled event list
         # Exit 2 means real drift, exit 1 means the check could not run at all
         # (missing credential). Both fail the job; the log says which.
-        run: npx --yes --ignore-scripts tsx@4.23.1 scripts/stream/ensure-webhook-subscription.ts --check
+        run: node_modules/.bin/tsx scripts/stream/ensure-webhook-subscription.ts --check
 
       - name: Notify on failure
         # Only on the scheduled leg: a pull-request failure is already visible

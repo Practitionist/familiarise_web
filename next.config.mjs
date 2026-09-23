@@ -168,6 +168,29 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: !!process.env.NETLIFY },
   // Reduce Webpack memory usage during builds (Next.js 15+, low-risk experimental)
   experimental: {
+    // #1795 — Netlify deploy-preview OOM'd (exit 137, Killed at static page
+    // 166/334) with the heap already capped at 6144 MB inside the 8 GB
+    // container, so prerender-worker RSS — not heap — is the constraint (same
+    // lesson as #1792's widenClientFileUpload). Default concurrency is 8
+    // workers × DB-touching prerenders; halving it on Netlify halves peak
+    // RSS at the cost of a slower static phase. CI/dev keep the default.
+    // Netlify-only survival tuning (exit 137, 8 GB container). NONE of this
+    // affects the shipped site's speed — it only changes how many pages the
+    // build cooks at once. Minimum parallelism: 1 worker × 2 pages in flight
+    // (from 4×8=32). Builds get much slower; that is explicitly accepted.
+    // If Netlify's build time limit ever binds, raise maxConcurrency first.
+    ...(process.env.NETLIFY === "true"
+      ? {
+          staticGenerationMaxConcurrency: 2,
+          // Prerender source maps are held in memory through the static
+          // phase; Netlify trades them for survival (Next memory guide),
+          // CI/dev keep them for prerender stack-trace quality.
+          enablePrerenderSourceMaps: false,
+          // Bounds the jest-worker pools for BOTH compile and static
+          // generation (build/index.js getNumberOfWorkers). Default is 4.
+          cpus: 1,
+        }
+      : {}),
     webpackMemoryOptimizations: true,
     // Only packages Next does NOT already optimize by default. Its built-in
     // list covers lucide-react, recharts and date-fns among others, so listing
@@ -351,7 +374,12 @@ export default withSentryConfig(withBundleAnalyzer(nextConfig), {
   // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
 
   // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
+  // #1792 — off on Netlify: the 2026-09-21 build OOM'd (exit 137, Killed at
+  // static page 211/282) with heap already at the 8 GB container ceiling, so
+  // container RSS — not heap — is the constraint. The widened client upload
+  // holds the full client source-map set in memory during the finalize phase;
+  // CI/dev keeps it for stack-trace quality, Netlify skips it for survival.
+  widenClientFileUpload: process.env.NETLIFY !== "true",
 
   // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
   // This can increase your server load as well as your hosting bill.

@@ -62,6 +62,11 @@ export interface RefundReconciliationResult {
    * keys). Terminal: the row is moved to FAILED instead of polled forever.
    */
   failedUnknownId: number;
+  /**
+   * #1757 — the subset of `failedCount` retired because no live client exists
+   * for the row's gateway (fenced or unimplemented) and it was over 24 h old.
+   */
+  failedGatewayDisabled: number;
   errors: string[];
   timestamp: string;
 }
@@ -120,7 +125,9 @@ async function reconcilePendingRefundsUnlocked(
   let skippedCount = 0;
   let skippedFenced = 0;
   let failedUnknownId = 0;
+  let failedGatewayDisabled = 0;
   let totalProcessed = 0;
+  const retiredNoClient: string[] = [];
 
   /**
    * #1458 — a PENDING refund on a gateway this deployment has fenced off is not
@@ -134,6 +141,39 @@ async function reconcilePendingRefundsUnlocked(
    */
   const isFencedGateway = (gateway: PaymentGateway): boolean =>
     gateway === PaymentGateway.STRIPE && process.env.STRIPE_ENABLED !== "true";
+
+  /**
+   * #1757 — a row no live client can ever settle (fenced or unimplemented
+   * gateway) was skipped on every tick forever. Past 24 h it is FAILED with
+   * `GATEWAY_DISABLED` through the same CAS the unknown-id path uses, which
+   * re-opens the refundable balance; younger rows keep the skip.
+   */
+  const retireIfNoLiveClient = async (refund: {
+    id: string;
+    refundId: string;
+    createdAt: Date;
+    payment: { paymentGateway: PaymentGateway };
+  }): Promise<boolean> => {
+    if (Date.now() - refund.createdAt.getTime() <= PLACEHOLDER_FAIL_AFTER_MS) {
+      return false;
+    }
+    const claim = await prisma.refund.updateMany({
+      where: { id: refund.id, status: RefundStatus.PENDING },
+      data: {
+        status: RefundStatus.FAILED,
+        failureReason: "GATEWAY_DISABLED",
+        failedAt: new Date(),
+      },
+    });
+    if (claim.count !== 1) return false;
+    failedCount++;
+    failedGatewayDisabled++;
+    retiredNoClient.push(refund.id);
+    console.log(
+      `❌ Refund ${refund.id} (${refund.refundId}) retired FAILED/GATEWAY_DISABLED - no live ${refund.payment.paymentGateway} client and over 24h old`,
+    );
+    return true;
+  };
 
   // ------------------------------------------------------------------
   // Pass 1 — placeholders
@@ -169,6 +209,7 @@ async function reconcilePendingRefundsUnlocked(
         refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
         refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
       ) {
+        if (await retireIfNoLiveClient(refund)) continue;
         console.log(
           `⏭️ Skipping refund ${refund.id} - unsupported gateway: ${refund.payment.paymentGateway}`,
         );
@@ -176,6 +217,7 @@ async function reconcilePendingRefundsUnlocked(
         continue;
       }
       if (isFencedGateway(refund.payment.paymentGateway)) {
+        if (await retireIfNoLiveClient(refund)) continue;
         console.log(
           `⏭️ Skipping refund ${refund.id} - ${refund.payment.paymentGateway} is fenced off for this deployment`,
         );
@@ -256,8 +298,10 @@ async function reconcilePendingRefundsUnlocked(
       const isVeryOld = refundAge > PLACEHOLDER_FAIL_AFTER_MS;
 
       if (isVeryOld) {
-        await prisma.refund.update({
-          where: { id: refund.id },
+        // CAS: a `refund.created` webhook may bind this row to SUCCEEDED
+        // between the read and this write — only FAIL a still-PENDING row.
+        const claimed = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             metadata: {
@@ -268,6 +312,10 @@ async function reconcilePendingRefundsUnlocked(
             },
           },
         });
+        if (claimed.count === 0) {
+          skippedCount++;
+          continue;
+        }
 
         console.log(
           `❌ Marked refund ${refund.id} as FAILED - no matching gateway refund found`,
@@ -327,10 +375,12 @@ async function reconcilePendingRefundsUnlocked(
         refund.payment.paymentGateway !== PaymentGateway.STRIPE &&
         refund.payment.paymentGateway !== PaymentGateway.RAZORPAY
       ) {
+        if (await retireIfNoLiveClient(refund)) continue;
         skippedCount++;
         continue;
       }
       if (isFencedGateway(refund.payment.paymentGateway)) {
+        if (await retireIfNoLiveClient(refund)) continue;
         skippedCount++;
         skippedFenced++;
         continue;
@@ -388,14 +438,18 @@ async function reconcilePendingRefundsUnlocked(
         );
         reconciledCount++;
       } else if (gatewayRefund.status === RefundStatus.FAILED) {
-        await prisma.refund.update({
-          where: { id: refund.id },
+        const claimed = await prisma.refund.updateMany({
+          where: { id: refund.id, status: RefundStatus.PENDING },
           data: {
             status: RefundStatus.FAILED,
             failureReason: "Gateway reports the refund failed",
             failedAt: new Date(),
           },
         });
+        if (claimed.count === 0) {
+          skippedCount++;
+          continue;
+        }
         console.log(
           `❌ Real-id refund ${refund.id} (${refund.refundId}) failed at gateway`,
         );
@@ -444,6 +498,20 @@ async function reconcilePendingRefundsUnlocked(
     }
   }
 
+  // One expected warning per run listing the ids, never one per row per tick.
+  if (retiredNoClient.length > 0) {
+    reportSentryMessage(
+      `reconcile-pending-refunds: retired ${retiredNoClient.length} PENDING refund(s) with no live gateway client (GATEWAY_DISABLED)`,
+      {
+        subsystem: "payments",
+        op: "refund-reconcile.gateway-disabled",
+        expected: true,
+        level: "warning",
+        extra: { retired: retiredNoClient },
+      },
+    );
+  }
+
   return {
     success: errors.length === 0,
     totalProcessed,
@@ -452,6 +520,7 @@ async function reconcilePendingRefundsUnlocked(
     skippedCount,
     skippedFenced,
     failedUnknownId,
+    failedGatewayDisabled,
     errors,
     timestamp: new Date().toISOString(),
   };

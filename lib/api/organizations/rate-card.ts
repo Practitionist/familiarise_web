@@ -44,6 +44,11 @@ export const DEFAULT_RATE_CARD: ResolvedRateCard = {
   orgBps: 1000, // 10%
   consultantBps: 8000, // 80%
 };
+// PRICING DECISION (open, needs owner sign-off — do NOT change casually):
+// 10/10/80 anchors design-partner deals, but it concedes 10pts of take rate
+// vs the B2C 20/80 split (PAYOUT_CONSTANTS) on every hosted booking. Proposed
+// self-serve anchor is 15/10/75. Flip only with a dated pricing note; every
+// hosted booking without a scoped card settles on this row.
 
 /**
  * #1335 — is settlement allowed to forward the booking's contract/plan scope?

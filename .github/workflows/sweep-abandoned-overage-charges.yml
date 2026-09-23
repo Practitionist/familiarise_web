@@ -1,5 +1,8 @@
 name: Sweep Abandoned Overage Charges
 
+permissions:
+  contents: read
+
 # #785 (task #25) — FAILs never-paid PENDING CHARGE_MEMBER overage side-charges so
 # they stop counting toward the per-cycle circuit-breaker ceiling. Runs daily.
 
@@ -36,6 +39,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -44,13 +49,13 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: npx --no-install prisma generate
 
       - name: Sweep abandoned overage charges
-        run: npx --yes tsx@4.23.1 jobs/cleanup/sweep-abandoned-overage-charges.ts
+        run: node_modules/.bin/tsx jobs/cleanup/sweep-abandoned-overage-charges.ts
 
       - name: Notify on failure
         if: failure()

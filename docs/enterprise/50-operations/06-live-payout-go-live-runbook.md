@@ -53,7 +53,14 @@ is real money on the first run — so the prerequisites below are hard gates.
       new environments must not rely on it (#677 PM-1).
 - [ ] **Payout accounts VERIFIED** for every org/consultant in the first batch
       (`OrganizationPayoutAccount.status === "VERIFIED"`; the contact +
-      fund-account side-channel finished provisioning).
+      fund-account side-channel finished provisioning). Consultants onboard
+      themselves at `/dashboard/consultant/[consultantId]/settings/payouts`
+      (PR-Y2, #1675): the page offers the reverse penny drop (₹1 paid from
+      their own UPI app, account details returned by RazorpayX and persisted
+      reference-only) or manual bank/UPI entry with the standard penny drop,
+      and the same page takes the PAN and entity type that Section 194-O
+      withholding reads. Neither validation runs in RazorpayX test mode, so a
+      consultant verified on a preview is a consultant verified by hand.
 - [ ] **TDS + MSME fields populated** on the payouts (`tdsAmountPaise`,
       `mustPayByDate` — both payout paths stamp these as of #776).
 - [ ] **Idempotency keys present** (`payout_<profile>_<batch>`, NOT NULL) so a
@@ -67,7 +74,7 @@ is real money on the first run — so the prerequisites below are hard gates.
 
 ## RazorpayX go-live realities the checklist must cover
 
-The checklist above proves the *submission* path, but the gateway's own
+The checklist above proves the _submission_ path, but the gateway's own
 lifecycle has three sharp edges that only matter once real money is
 moving. Each is documented in detail in
 [`payout-pipeline`](../10-money-and-ledger/07-payout-pipeline.md) §3; they
@@ -127,13 +134,15 @@ DATABASE_URL=… DIRECT_URL=… npx tsx scripts/smoke/org-payout-sandbox-smoke.t
 Sandbox-proof items, each mapped to an assertion the smoke makes (or a manual
 step for the ones that need real sandbox creds):
 
-| Proof item | How |
-|---|---|
-| Flag off ⇒ no disbursement | smoke: `submittedToGateway === false`, status `PROCESSING` |
-| No money leaves while gated | smoke: `providerPayoutId == null` after process |
-| TDS/MSME stamped before submit | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`) |
-| Idempotency key never null | schema `@unique` + creator stamps `payout_<profile>_<batch>` |
-| Real sandbox submit succeeds | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
+| Proof item                                      | How                                                                                                                                                                                      |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Flag off ⇒ no disbursement                      | smoke: `submittedToGateway === false`, status `PROCESSING`                                                                                                                               |
+| No money leaves while gated                     | smoke: `providerPayoutId == null` after process                                                                                                                                          |
+| TDS/MSME stamped before submit                  | inspect a real batch in staging (`tdsAmountPaise`, `mustPayByDate`)                                                                                                                      |
+| Idempotency key never null                      | schema `@unique` + creator stamps `payout_<profile>_<batch>`                                                                                                                             |
+| Real sandbox submit succeeds                    | **manual**: set `RAZORPAYX_SANDBOX_KEY`/`_SECRET`, submit one payout against the RazorpayX sandbox host, confirm the `payout.processed` webhook lands and `markOrgPayoutCompleted` fires |
+| `TDS_ENGINE` is not accidentally `LEGACY`       | inspect the deployed environment: the default is `"194O"` (Section 194-O, the e-commerce-operator posture), `LEGACY` is deprecated and must be an explicit opt-in                        |
+| `ENABLE_TDS_194O_GROSS` is off unless CA-signed | the 194-O gross-base switch stays off in production until chartered-accountant sign-off, per [TDS overview](../../compliance/01-tds-overview.md)                                         |
 
 ## Flip procedure
 

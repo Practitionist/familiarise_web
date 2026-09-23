@@ -17,6 +17,11 @@ export interface OrgPayoutFailedEmailProps {
   reason: string;
   dashboardUrl: string;
   unsubscribeUrl?: string | null;
+  /**
+   * #1474 — pre-formatted withheld TDS slice, e.g. "₹8.52". Rendered only
+   * when present (a REVERSED payout that carried withholding).
+   */
+  withheldText?: string | null;
 }
 
 // #1653 — ORG_PAYOUT_FAILED; one template for both kinds, as the bell does.
@@ -27,6 +32,7 @@ export const OrgPayoutFailedEmail = ({
   reason,
   dashboardUrl,
   unsubscribeUrl,
+  withheldText,
 }: OrgPayoutFailedEmailProps) => {
   const reversed = kind === "REVERSED";
   const title = reversed
@@ -51,6 +57,12 @@ export const OrgPayoutFailedEmail = ({
       <Text style={paragraph}>
         Reason given: <strong>{reason}</strong>
       </Text>
+      {withheldText ? (
+        <Text style={paragraph}>
+          This includes <strong>{withheldText}</strong> withheld as TDS, which
+          is netted on the return.
+        </Text>
+      ) : null}
       <Text style={paragraph}>
         The earnings behind it are back in the payable balance and will go out
         with the next payout run. If the reason points at the bank details,

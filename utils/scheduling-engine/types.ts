@@ -212,6 +212,12 @@ export type AllocationErrorCode =
 export interface AllocationResult {
   success: boolean;
   /**
+   * #1775 B-9 — where a consultation / subscription approval landed:
+   * `approved` (a settled wrapper) or `awaiting_payment` (the pay order is
+   * minted after the commit). Absent for group events and on failure.
+   */
+  outcome?: "approved" | "awaiting_payment";
+  /**
    * #1697 item 5 — outbox rows staged inside the write transaction.
    * `SchedulingService.allocate` strips this and attempts them post-commit;
    * it never reaches a route response.
@@ -301,6 +307,9 @@ export interface EventConfig {
   sessionDurationInHours?: number; // For subscriptions/classes (per session)
   sessionsPerWeek?: number; // For subscriptions/classes
   totalSessions?: number; // Authoritative session count from subscription plan
+  /** #1766 — sessions this allocation may place: the subscription's current
+   * cycle `nextBatch`. When set, the period below is that cycle's window. */
+  cycleTargetSessions?: number;
   schedulingPeriodStartsAt?: Date; // For subscriptions/classes
   schedulingPeriodEndsAt?: Date; // For subscriptions/classes
   // Timezone defining the limit day/week buckets (ADR B9). Subscription/Class

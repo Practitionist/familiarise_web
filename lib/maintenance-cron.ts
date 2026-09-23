@@ -29,6 +29,9 @@ import { flushJobSentry } from "@/lib/observability/job-sentry";
 // become inconsistent during a partial deployment.
 // Exported for the lock-registry drift test (#1169): every member that is
 // cron-scheduled must hold a fail-closed lock.
+// #1582/#1598 — `sweep-stuck-webhook-events`, `reconcile-orphaned-confirmations`
+// and `sweep-orphaned-topup-captures` DO move money, but only by re-driving a
+// webhook DEGRADED already exempts, so they are deliberately not listed here.
 export const FINANCIAL_JOB_NAMES = new Set([
   "process-payouts",
   "create-payout-batch",

@@ -31,6 +31,7 @@
 import "dotenv/config";
 import prisma from "@/lib/prisma";
 import { AUDIT_ACTIONS } from "@/lib/enterprise/audit-actions";
+import { releaseSeatsForClosedAssignments } from "@/lib/api/organizations/seat-count";
 import {
   decideCycleTransition,
   nextPeriodEnd,
@@ -182,6 +183,8 @@ export async function runAdvanceProgramCycles(): Promise<AdvanceStats> {
                 data: { status: "CLOSED", rolledAt: now },
               });
               if (claim.count === 0) return { outcome: "skipped" as const };
+              // #1744 row 4 — a successorless close gives the billed seat back.
+              await releaseSeatsForClosedAssignments(tx, a.programId, 1);
 
               await tx.orgAuditLog.create({
                 data: {

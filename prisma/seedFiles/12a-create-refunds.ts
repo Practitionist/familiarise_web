@@ -2,21 +2,15 @@ import { faker } from "@faker-js/faker";
 import { PaymentGateway, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 
-// Status distribution: 60% SUCCEEDED, 20% PENDING, 15% FAILED, 5% CANCELLED
-const STATUS_WEIGHTS: { status: RefundStatus; weight: number }[] = [
-  { status: "SUCCEEDED", weight: 60 },
-  { status: "PENDING", weight: 20 },
-  { status: "FAILED", weight: 15 },
-  { status: "CANCELLED", weight: 5 },
-];
-
-// FAMILIARISE_WEB-3V — a gateway-backed row must never claim to be in flight
-// at a gateway that never saw its id; the 20% moves to 70% SUCCEEDED, 25% FAILED.
-const GATEWAY_STATUS_WEIGHTS: { status: RefundStatus; weight: number }[] = [
-  { status: "SUCCEEDED", weight: 70 },
-  { status: "FAILED", weight: 25 },
-  { status: "CANCELLED", weight: 5 },
-];
+/**
+ * #1757 — every seeded refund is SUCCEEDED. A PENDING row on a gateway that
+ * never saw its id (FAMILIARISE_WEB-3V) or has no live client (STRIPE fenced,
+ * CARD unimplemented) is a row no sweep can settle; FAILED rows would page the
+ * payer through notifyFailedRefunds. Settled is the only seed-safe state.
+ */
+export function seedRefundStatus(_gateway: PaymentGateway): RefundStatus {
+  return "SUCCEEDED";
+}
 
 // Refund reasons
 const REFUND_REASONS = [
@@ -31,23 +25,6 @@ const REFUND_REASONS = [
   "Billing error correction",
   "Partial refund for shortened session",
 ];
-
-function getWeightedStatus(gateway: PaymentGateway): RefundStatus {
-  const weights =
-    gateway === "RAZORPAY" || gateway === "STRIPE"
-      ? GATEWAY_STATUS_WEIGHTS
-      : STATUS_WEIGHTS;
-  const totalWeight = weights.reduce((sum, item) => sum + item.weight, 0);
-  let random = faker.number.int({ min: 1, max: totalWeight });
-
-  for (const item of weights) {
-    random -= item.weight;
-    if (random <= 0) {
-      return item.status;
-    }
-  }
-  return "SUCCEEDED";
-}
 
 /**
  * Generate gateway-specific refund ID
@@ -100,7 +77,7 @@ export async function createRefunds(): Promise<void> {
   for (let i = 0; i < Math.min(NUM_REFUNDS, succeededPayments.length); i++) {
     try {
       const payment = succeededPayments[i];
-      const status = getWeightedStatus(payment.paymentGateway);
+      const status = seedRefundStatus(payment.paymentGateway);
 
       // Refund amount: 70% full refund, 30% partial refund
       const isFullRefund = faker.datatype.boolean({ probability: 0.7 });
@@ -120,17 +97,8 @@ export async function createRefunds(): Promise<void> {
         requestDate: faker.date.recent({ days: 30 }).toISOString(),
       };
 
-      if (status === "SUCCEEDED") {
-        metadata.processedAt = faker.date.recent({ days: 14 }).toISOString();
-        metadata.transferId = faker.string.alphanumeric(16);
-      } else if (status === "FAILED") {
-        metadata.failureReason = faker.helpers.arrayElement([
-          "Insufficient funds in merchant account",
-          "Original payment was already refunded",
-          "Card no longer valid",
-          "Bank declined the refund",
-        ]);
-      }
+      metadata.processedAt = faker.date.recent({ days: 14 }).toISOString();
+      metadata.transferId = faker.string.alphanumeric(16);
 
       await prisma.refund.create({
         data: {

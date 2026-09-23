@@ -21,7 +21,7 @@
  * every fixture field is compile-checked against what the handler reads.
  */
 
-import type { DisputeStatus, EarningStatus } from "@prisma/client";
+import { Prisma, type DisputeStatus, type EarningStatus } from "@prisma/client";
 
 /** The payload shape recordSystemError receives (lib/enterprise/system-events). */
 interface SystemErrorPayload {
@@ -700,5 +700,27 @@ describe("#1020-2 — already-paid earnings enter the LOST clawback", () => {
         amountPaise: 1_000,
       }),
     );
+  });
+});
+
+describe("#1582 C-P1-01d — handleDisputeUpdated retries a serialization abort", () => {
+  test("a first-attempt P2034 is retried in-process, not rethrown", async () => {
+    seedPayment(10_000);
+    await seedOpenDispute(5_000);
+    mockedTransaction.mockImplementationOnce(async () => {
+      throw new Prisma.PrismaClientKnownRequestError("could not serialize", {
+        code: "P2034",
+        clientVersion: "test",
+      });
+    });
+
+    await expect(
+      handleDisputeUpdated("disp_1", "won", null),
+    ).resolves.toBeUndefined();
+
+    // The aborted attempt and the retry each opened a transaction, and the
+    // retry's commit landed the status.
+    expect(mockedTransaction).toHaveBeenCalledTimes(2);
+    expect(store.disputes[0].status).toBe("WON");
   });
 });

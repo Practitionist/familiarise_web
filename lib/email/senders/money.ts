@@ -194,10 +194,19 @@ export interface OrgPayoutFailedEmailArgs {
   kind: "FAILED" | "REVERSED";
   orgName: string;
   payoutId: string;
+  /**
+   * #1474 — same basis as the bell: FAILED names the attempted gross,
+   * REVERSED names the cash that went out and came back (post-TDS).
+   */
   amountPaise: Paise;
   currency: string;
   reason: string;
   dashboardUrl: string;
+  /**
+   * #1474 — pre-formatted withheld slice, e.g. "₹8.52". Rendered only when
+   * present (REVERSED with withholding).
+   */
+  withheldText?: string;
 }
 
 /** From the payout webhook, after the FAILED or REVERSED claim commits. */
@@ -229,6 +238,7 @@ export async function sendOrgPayoutFailedEmail(
           reason: args.reason,
           dashboardUrl: args.dashboardUrl,
           unsubscribeUrl: r.unsubscribeUrl,
+          withheldText: args.withheldText,
         }),
     });
   });

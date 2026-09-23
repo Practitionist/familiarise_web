@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import {
   Card,
   CardContent,
@@ -148,14 +149,20 @@ export default function ContactUsPage() {
           {/* Contact Form */}
           <Card className="shadow-elevation-1">
             <CardHeader>
-              <CardTitle className="text-fluid-2xl">Send us a Message</CardTitle>
+              <CardTitle className="text-fluid-2xl">
+                Send us a Message
+              </CardTitle>
               <CardDescription>
                 Fill out the form below and we'll get back to you as soon as
                 possible
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <ContactForm />
+              {/* Suspense boundary: ContactForm reads ?category= for
+                  deep-links from /support articles. */}
+              <Suspense>
+                <ContactForm />
+              </Suspense>
             </CardContent>
           </Card>
         </div>

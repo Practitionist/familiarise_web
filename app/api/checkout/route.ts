@@ -26,8 +26,6 @@ import { Prisma } from "@prisma/client";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
-import prisma from "@/lib/prisma";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -50,36 +48,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const validatedData = checkoutSchema.parse(body);
 
-    // #1583 E-P1-01 — a subscription's scheduling period may not outrun the
-    // plan's own window; the plan is not known at the Zod edge, so it is
-    // checked here, before any lock or money work.
-    if (
-      validatedData.appointmentType === "SUBSCRIPTION" &&
-      validatedData.schedulingPeriodStartsAt &&
-      validatedData.schedulingPeriodEndsAt
-    ) {
-      const plan = await prisma.subscriptionPlan.findUnique({
-        where: { id: validatedData.planId },
-        select: { durationInMonths: true },
-      });
-      const periodStart = new Date(validatedData.schedulingPeriodStartsAt);
-      const periodEnd = new Date(validatedData.schedulingPeriodEndsAt);
-      if (
-        plan &&
-        periodEnd >
-          calculateSubscriptionEndDate(periodStart, plan.durationInMonths)
-      ) {
-        return NextResponse.json(
-          {
-            error: `The scheduling period is longer than this plan's ${plan.durationInMonths}-month window.`,
-            errorType: "AVAILABILITY_ERROR",
-            code: "SCHEDULING_PERIOD_TOO_LONG",
-            timestamp: new Date().toISOString(),
-          },
-          { status: 400 },
-        );
-      }
-    }
     // Only allow mock payments in development — prevent client-side bypass in production
     const isMockPayment =
       body.isMockPayment === true && process.env.NODE_ENV === "development";
@@ -329,10 +297,14 @@ export async function POST(req: NextRequest) {
     const classified = classifyError(error, "Checkout failed");
     logClassifiedError("Checkout", classified, error);
 
+    // A coded refusal that names a retry window (CREDIT_SHORTFALL after a
+    // concurrent spend, #1582 B-P1-01) lets the client auto-retry once.
+    const retryAfter = (error as { retryAfter?: unknown } | null)?.retryAfter;
     return NextResponse.json(
       {
         error: classified.errorMessage,
         errorType: classified.errorType,
+        ...(typeof retryAfter === "number" ? { retryAfter } : {}),
         timestamp: new Date().toISOString(),
       },
       { status: classified.httpStatus },

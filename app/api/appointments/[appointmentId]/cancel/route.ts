@@ -38,6 +38,7 @@ import {
 import { reportSentryError } from "@/lib/observability/report";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
+import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
   refundWholeEventPayments,
   type WholeEventRefundSummary,
@@ -483,7 +484,10 @@ export async function POST(
             // filters on `deletedAt: null` (#676 A10, the shape
             // cleanup-abandoned-payments already writes).
             data: { deletedAt: new Date() },
-            fromIn: [...SLOT_RESCHEDULABLE_FROM],
+            // Cancel must also sweep UNVERIFIED slots: auto-complete stamps
+            // past-no-meeting sessions UNVERIFIED, and leaving them live keeps
+            // a non-tombstoned row occupying the calendar on a dead booking.
+            fromIn: [...SLOT_RESCHEDULABLE_FROM, "UNVERIFIED"],
             // A booking whose sessions are all delivered or already terminal
             // is still cancellable; matching no live slot is not a conflict.
             allowZero: true,
@@ -492,6 +496,15 @@ export async function POST(
           await setParticipantStatus(tx, sweepScope, "CANCELLED");
 
           await declineOpenReschedules(tx, appointmentId, auditMeta);
+
+          // #1766 — no completion will stamp the remaining tranches now; the
+          // refund below claws back its share and the rest still pays out.
+          if (appointment.subscription && bookingCtx?.paidPayment) {
+            await stampTranchesOnCancel(tx, {
+              paymentId: bookingCtx.paidPayment.id,
+              now: cancellationData.cancelledAt,
+            });
+          }
 
           return {
             success: true,
@@ -569,6 +582,9 @@ export async function POST(
           hoursUntilNextSession: bookingCtx.hoursUntilNextSession,
           slotsTotal: bookingCtx.slotsTotal,
           sessionsRemaining: bookingCtx.sessionsRemaining,
+          sessionsTotal: bookingCtx.sessionsTotal,
+          sessionsCompleted: bookingCtx.sessionsCompleted,
+          scheduledStarts: bookingCtx.scheduledStarts,
           isSubscription: !!appointment.subscription,
           isConsultantInitiated,
           isFreeCreditFunded,

@@ -214,10 +214,12 @@ describe("Novu workflow templates", () => {
     expect(inAppSkipRule("support")).toEqual({
       and: [
         { "!=": [{ var: "subscriber.data.routingBell" }, "false"] },
+        { "!=": [{ var: "subscriber.data.masterEnabled" }, "false"] },
+        { "!=": [{ var: "subscriber.data.preferInApp" }, "false"] },
         { "!=": [{ var: "subscriber.data.categorySupport" }, "false"] },
       ],
     });
-    expect(inAppSkipRule(null).and).toHaveLength(1);
+    expect(inAppSkipRule(null).and).toHaveLength(3);
   });
 
   it("runs for a never-written flag under Novu's own != — the boolean form did not", () => {
@@ -241,7 +243,11 @@ describe("Novu workflow templates", () => {
       if (!Number.isNaN(na) && !Number.isNaN(nb)) return na !== nb;
       return a !== b;
     };
-    const [, comparison] = inAppSkipRule("support").and[1]["!="];
+    const categoryClause = inAppSkipRule("support").and.find(
+      (clause) =>
+        clause["!="][0].var === "subscriber.data.categorySupport",
+    )!;
+    const [, comparison] = categoryClause["!="];
     expect(novuNotEqual(null, comparison)).toBe(true); // never written → runs
     expect(novuNotEqual(true, comparison)).toBe(true); // opted in → runs
     expect(novuNotEqual(false, comparison)).toBe(false); // opted out → skipped

@@ -45,6 +45,8 @@ export interface AllocationOptions {
    * on the event consultant, so a consultee sending it is silently downgraded.
    */
   override?: boolean;
+  /** #1766 — the subscription already holds sessions; append the next cycle. */
+  topUp?: boolean;
   // Timezone defining the limit day/week buckets (ADR B9); defaults to
   // Asia/Kolkata in the shared helpers.
   schedulingTimezone?: string;
@@ -195,6 +197,7 @@ export class AllocationAlgorithms {
           initialAllocation: options.initialAllocation,
           expectedTentativeSlotCount: options.expectedTentativeSlotCount,
           override: options.override,
+          topUp: options.topUp,
         },
       );
 

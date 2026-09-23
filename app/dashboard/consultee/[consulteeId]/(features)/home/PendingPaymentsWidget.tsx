@@ -29,6 +29,9 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { cn } from "@/utils/tailwind";
 import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
+import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
+import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
+import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
 
 interface PendingPayment {
   id: string;
@@ -49,6 +52,70 @@ interface PendingPayment {
    * not the consultation/subscription row that `id` refers to.
    */
   appointmentId?: string | null;
+}
+
+/**
+ * The route's whole payload. HomeTab shares this query key, so both readers
+ * must return the same shape (#1675 added the lapsed rows next to the list).
+ */
+export interface PendingPaymentsPayload {
+  pendingPayments: PendingPayment[];
+  lapsedPayLinks: LapsedPayLink[];
+}
+
+export async function fetchPendingPayments(
+  consulteeId: string,
+): Promise<PendingPaymentsPayload> {
+  const response = await fetch(
+    `/api/dashboard/consultee/${consulteeId}/pending-payments`,
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch pending payments");
+  }
+  const data = await response.json();
+  return {
+    pendingPayments: data.pendingPayments || [],
+    lapsedPayLinks: data.lapsedPayLinks || [],
+  };
+}
+
+/**
+ * #1675 — the row's words come from the one derivation the detail page uses:
+ * an approved, unpaid request is AWAITING_PAYMENT and its action is "Pay ₹X".
+ */
+function rowPresentation(payment: PendingPayment) {
+  return deriveBookingPresentation(
+    {
+      appointmentType: payment.type.toUpperCase(),
+      request: {
+        status: "APPROVED_PENDING_PAYMENT",
+        kind: payment.type.toUpperCase(),
+        requestedAt: payment.approvedAt,
+      },
+      occurrences: [],
+      payments: [
+        {
+          id: payment.id,
+          paymentStatus: "PENDING",
+          paymentMethod: "CARD",
+          paymentGateway: "RAZORPAY",
+          receiptUrl: null,
+          consumerInvoice: null,
+          amount: payment.amount,
+          currency: payment.currency || "INR",
+          createdAt: payment.approvedAt,
+          expiresAt: payment.expiresAt,
+        },
+      ],
+      refunds: [],
+      disputes: [],
+      childPayments: [],
+      sponsorOrgName: null,
+      holdExpiresAt: payment.expiresAt,
+      names: { payer: "you", consultant: payment.consultantName },
+    },
+    "CONSULTEE",
+  );
 }
 
 type PendingCancelTarget =
@@ -80,26 +147,19 @@ export function PendingPaymentsWidget({
   // when the refetch should fire. The global refetchOnWindowFocus is false, so
   // this query opts back in explicitly.
   const {
-    data: pendingPayments = [],
+    data: payload,
     isLoading: loading,
     error: queryError,
   } = useQuery({
     queryKey: ["pending-payments", consulteeId],
-    queryFn: async (): Promise<PendingPayment[]> => {
-      const response = await fetch(
-        `/api/dashboard/consultee/${consulteeId}/pending-payments`,
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch pending payments");
-      }
-      const data = await response.json();
-      return data.pendingPayments || [];
-    },
+    queryFn: () => fetchPendingPayments(consulteeId),
     // No interval: focus alone covers this. Someone waiting on a payment
     // comes back to the tab, which is exactly when the refetch fires.
     refetchOnWindowFocus: true,
     staleTime: 30 * 1000,
   });
+  const pendingPayments = payload?.pendingPayments ?? [];
+  const lapsedPayLinks = payload?.lapsedPayLinks ?? [];
   const error = queryError
     ? queryError instanceof Error
       ? queryError.message
@@ -233,6 +293,16 @@ export function PendingPaymentsWidget({
     );
   }
 
+  // #1675 — a lapsed link is not a pending payment, so it never turns the
+  // card amber or joins the count; it sits under the list as a muted row.
+  const lapsedSection = lapsedPayLinks.length > 0 && (
+    <div className="divide-y divide-border">
+      {lapsedPayLinks.map((link) => (
+        <LapsedPayLinkRow key={link.id} link={link} />
+      ))}
+    </div>
+  );
+
   // Empty state
   if (pendingPayments.length === 0) {
     return (
@@ -243,15 +313,17 @@ export function PendingPaymentsWidget({
             Pending Payments
           </h3>
         </div>
-        <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
-          <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
-            <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+        {lapsedSection || (
+          <div className="px-5 py-8 text-center flex-1 flex flex-col items-center justify-center">
+            <div className="mx-auto h-10 w-10 rounded-full bg-emerald-50 dark:bg-emerald-900/30 flex items-center justify-center mb-2">
+              <CreditCard className="h-5 w-5 text-emerald-500 dark:text-emerald-300" />
+            </div>
+            <p className="text-sm text-muted-foreground">No pending payments</p>
+            <p className="text-xs text-muted-foreground/70 mt-0.5">
+              You&apos;re all caught up!
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground">No pending payments</p>
-          <p className="text-xs text-muted-foreground/70 mt-0.5">
-            You&apos;re all caught up!
-          </p>
-        </div>
+        )}
       </div>
     );
   }
@@ -288,6 +360,17 @@ export function PendingPaymentsWidget({
       <div className="divide-y divide-amber-100 flex-1">
         {pendingPayments.map((payment) => {
           const isGatewayPending = payment.source === "gateway_pending";
+          const { bookingState, nextAction } = rowPresentation(payment);
+          // #1763 — `nextAction.label` runs its own `money()` helper, so an
+          // INR row diverged from the row's own `formatPrice` amount above.
+          const isNonInr =
+            payment.currency && payment.currency.toUpperCase() !== "INR";
+          const payLabel =
+            nextAction.kind !== "PAY"
+              ? "Pay now"
+              : isNonInr
+                ? nextAction.label
+                : formatPrice(payment.amount);
 
           return (
             <div key={payment.id} className="px-5 py-3.5">
@@ -329,7 +412,7 @@ export function PendingPaymentsWidget({
                     </span>
                   ) : (
                     <span>
-                      Approved{" "}
+                      {bookingState.label} · approved{" "}
                       {formatDistanceToNow(new Date(payment.approvedAt), {
                         addSuffix: true,
                       })}
@@ -404,7 +487,7 @@ export function PendingPaymentsWidget({
                         className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
                       >
                         <Link href={`/checkout/plans/trial/${payment.id}`}>
-                          Pay Now
+                          {payLabel}
                         </Link>
                       </Button>
                     ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
@@ -418,7 +501,7 @@ export function PendingPaymentsWidget({
                           target="_blank"
                           rel="noopener noreferrer"
                         >
-                          Pay Now
+                          {payLabel}
                           <ExternalLink className="ml-1 h-3 w-3" />
                         </a>
                       </Button>
@@ -428,7 +511,7 @@ export function PendingPaymentsWidget({
                         disabled
                         className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
                       >
-                        Pay Now
+                        {payLabel}
                         <ExternalLink className="ml-1 h-3 w-3" />
                       </Button>
                     )}
@@ -439,6 +522,9 @@ export function PendingPaymentsWidget({
           );
         })}
       </div>
+      {lapsedSection && (
+        <div className="border-t border-amber-100">{lapsedSection}</div>
+      )}
       {pendingPayments.length > 1 && (
         <div className="px-5 py-3 border-t border-amber-100">
           <Button

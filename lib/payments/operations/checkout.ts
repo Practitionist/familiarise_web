@@ -27,7 +27,11 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { PaymentError } from "@/lib/payments/core/types";
 import prisma, { type Tx } from "@/lib/prisma";
 import { CheckoutInput, checkoutSchema } from "@/schemas/checkout";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import {
+  firstCycleWindow,
+  sessionsTotalOf,
+  subscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import {
   AppointmentsType,
   type Currency,
@@ -185,9 +189,38 @@ type SubscriptionCheckoutResult = {
  */
 const GATEWAY_NOTE_MAX_CHARS = 256;
 
+/**
+ * #1766 — the statuses under which a subscription still holds its
+ * entitlement. SCHEDULED is legal in REQUEST_ALLOWED_FROM though no writer
+ * reaches it yet; listing it keeps the guard right if one appears.
+ */
+const LIVE_SUBSCRIPTION_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.PENDING,
+  AppointmentStatus.APPROVED,
+  AppointmentStatus.APPROVED_PENDING_PAYMENT,
+  AppointmentStatus.SCHEDULED,
+];
+
 /** Why a superseded open order's booking was cancelled (#1463). */
 const SUPERSEDED_HOLD_NOTE =
   "Superseded by a newer checkout attempt for the same booking";
+
+/**
+ * #1582 B-P1-01b — coded refusals raised INSIDE the checkout transaction that
+ * are modelled outcomes (tagged expected at Sentry). The overage-funding codes
+ * stay out on purpose: they mean a programme is configured in a shape we
+ * cannot collect on and must keep paging.
+ */
+const IN_TX_MODELLED_REFUSAL_CODES: ReadonlySet<string> = new Set([
+  "ORG_NOT_OPERATIONAL",
+  "ORG_CANNOT_SPONSOR",
+  "ORG_MEMBERSHIP_REQUIRED",
+  "ORG_CREDIT_LIMIT_REACHED",
+  "CONSULTANT_NOT_ON_PANEL",
+  "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+  "CREDIT_SHORTFALL",
+  "SUBSCRIPTION_ALREADY_ACTIVE",
+]);
 
 /**
  * Build payment metadata for both payment intents and webhook handlers
@@ -305,6 +338,27 @@ function slotRunWindow(
 }
 
 /**
+ * #1744 row 4 — the one credit-limit predicate both gates share: the booking
+ * being priced counts, so `exposure + booking > limit` refuses. Copy is in
+ * whole rupees; the limit is a business figure, not a paise integer.
+ */
+export function assertWithinInvoiceCreditLimit(
+  exposurePaise: number,
+  bookingPaise: number,
+  limitPaise: number,
+): void {
+  if (exposurePaise + bookingPaise <= limitPaise) return;
+  const rupees = (p: number) =>
+    `₹${Math.round(p / 100).toLocaleString("en-IN")}`;
+  throw Object.assign(
+    new Error(
+      `This booking would take the organisation past its invoice credit limit of ${rupees(limitPaise)} (${rupees(exposurePaise)} already outstanding). Outstanding invoices must be paid before new bookings.`,
+    ),
+    { httpStatus: 402, code: "ORG_CREDIT_LIMIT_REACHED" },
+  );
+}
+
+/**
  * #1591 J3-P1-01 — an org's open invoice exposure: unbilled accruals NET of
  * their refund reversal legs (mirrors invoice-rollup.ts, which bills the net),
  * plus invoices already issued and unpaid. Both credit-limit gates read this.
@@ -313,35 +367,35 @@ export async function readInvoiceExposurePaise(
   db: Pick<Tx, "paymentLeg" | "organizationInvoice">,
   organizationId: string,
 ): Promise<number> {
-  const [accrualAgg, outstandingAgg] = await Promise.all([
-    db.paymentLeg.aggregate({
-      where: {
-        source: {
-          in: [
-            "INVOICE_ACCRUAL",
-            "OVERAGE_INVOICE_ACCRUAL",
-            // Refunds append negative *_REVERSAL siblings (#786); without them
-            // a refunded seat kept counting against the limit.
-            "INVOICE_ACCRUAL_REVERSAL",
-            "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
-          ],
-        },
-        payment: {
-          organizationId,
-          paymentStatus: "SUCCEEDED",
-          billableToOrgInvoiceId: null,
-        },
+  // Sequential (never Promise.all on `tx`): under PG_POOL_MAX=1 a single
+  // interactive-tx connection cannot serve concurrent queries (#1435).
+  const accrualAgg = await db.paymentLeg.aggregate({
+    where: {
+      source: {
+        in: [
+          "INVOICE_ACCRUAL",
+          "OVERAGE_INVOICE_ACCRUAL",
+          // Refunds append negative *_REVERSAL siblings (#786); without them
+          // a refunded seat kept counting against the limit.
+          "INVOICE_ACCRUAL_REVERSAL",
+          "OVERAGE_INVOICE_ACCRUAL_REVERSAL",
+        ],
       },
-      _sum: { amountPaise: true },
-    }),
-    db.organizationInvoice.aggregate({
-      where: {
+      payment: {
         organizationId,
-        status: { in: ["ISSUED", "OVERDUE"] },
+        paymentStatus: "SUCCEEDED",
+        billableToOrgInvoiceId: null,
       },
-      _sum: { totalPaise: true },
-    }),
-  ]);
+    },
+    _sum: { amountPaise: true },
+  });
+  const outstandingAgg = await db.organizationInvoice.aggregate({
+    where: {
+      organizationId,
+      status: { in: ["ISSUED", "OVERDUE"] },
+    },
+    _sum: { totalPaise: true },
+  });
   return (
     sumPaise(accrualAgg._sum.amountPaise) +
     sumPaise(outstandingAgg._sum.totalPaise)
@@ -956,7 +1010,12 @@ export async function calculateAmountAndValidate(
         });
 
         if (webinarCapacity.isFull) {
-          throw new Error("Webinar is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Webinar is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
 
         amount = plan.price;
@@ -1007,7 +1066,12 @@ export async function calculateAmountAndValidate(
         });
 
         if (classCapacity.isFull) {
-          throw new Error("Class is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Class is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
 
         amount = plan.price;
@@ -1056,8 +1120,11 @@ export async function calculateAmountAndValidate(
             priceCurrency,
           )
         ) {
-          throw new Error(
-            "Discount code currency does not match plan currency",
+          // #1586 J32 — its prose matched the "discount code" AVAILABILITY
+          // pattern and told the buyer the plan was gone.
+          throw Object.assign(
+            new Error("Discount code currency does not match plan currency"),
+            { httpStatus: 400, code: "DISCOUNT_CURRENCY_MISMATCH" },
           );
         }
 
@@ -1989,13 +2056,23 @@ async function revalidateInsideLock(
         where: { id: orgContext.organizationId },
         select: { status: true, canSponsor: true },
       });
+      // #1582 B-P1-01b — registered codes rethrow unchanged through the tx
+      // catch (isBusinessErrorCode) instead of collapsing to 500 UNKNOWN.
       if (
         !org ||
-        !org.canSponsor ||
         (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION")
       ) {
-        throw new Error(
-          "This organization can no longer sponsor bookings. Please refresh and try again.",
+        throw Object.assign(
+          new Error(
+            "This organization can no longer sponsor bookings. Please refresh and try again.",
+          ),
+          { httpStatus: 403, code: "ORG_NOT_OPERATIONAL" },
+        );
+      }
+      if (!org.canSponsor) {
+        throw Object.assign(
+          new Error("This organization is not configured to sponsor bookings."),
+          { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
         );
       }
       const membership = await tx.membership.findUnique({
@@ -2003,7 +2080,10 @@ async function revalidateInsideLock(
         select: { status: true },
       });
       if (membership?.status !== "ACTIVE") {
-        throw new Error("You are not an active member of this organization.");
+        throw Object.assign(
+          new Error("You are not an active member of this organization."),
+          { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
+        );
       }
       if (orgContext.programAssignmentId) {
         const assignment = await tx.programAssignment.findFirst({
@@ -2095,8 +2175,11 @@ async function revalidateInsideLock(
           (row) => row.consultantProfileId === plan.consultantProfileId,
         )
       ) {
-        throw new Error(
-          "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+        throw Object.assign(
+          new Error(
+            "This consultant is not on your organization's approved panel for this program. Choose a listed consultant or ask your organization admin.",
+          ),
+          { httpStatus: 409, code: "CONSULTANT_NOT_ON_PANEL" },
         );
       }
     }
@@ -2115,8 +2198,11 @@ async function revalidateInsideLock(
         select: { id: true },
       });
       if (exclusive) {
-        throw new Error(
-          "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+        throw Object.assign(
+          new Error(
+            "This consultant works exclusively through their organization; their independent plans cannot be booked.",
+          ),
+          { httpStatus: 409, code: "CONSULTANT_EXCLUSIVE_ENGAGEMENT" },
         );
       }
     }
@@ -2296,7 +2382,12 @@ async function revalidateInsideLock(
         });
 
         if (capacity.isFull) {
-          throw new Error("Webinar is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Webinar is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
         break;
       }
@@ -2332,7 +2423,12 @@ async function revalidateInsideLock(
         });
 
         if (capacity.isFull) {
-          throw new Error("Class is full");
+          // #1757 — a coded refusal (EVENT_FULL, 409), not a fault; the tx
+          // catch rethrows registered codes unchanged.
+          throw Object.assign(new Error("Class is full"), {
+            httpStatus: 409,
+            code: "EVENT_FULL",
+          });
         }
         break;
       }
@@ -2483,45 +2579,76 @@ export async function handleSubscriptionCheckout(
     throw new Error("Subscription plan not found");
   }
 
-  // Determine if this is a scheduling period request or direct slot booking
-  const isSchedulingPeriodRequest =
-    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
+  const isSchedulingPeriodRequest = !!data.schedulingPeriodStartsAt;
+  // #1766 — window = first cycle; a client end is clamped/ignored, never
+  // refused. Start from the client (default now), end derived server-side.
+  const schedulingTimezone = resolveSchedulingTimezone(
+    plan.consultantProfile?.user?.timezone,
+  );
+  const { start: startDate, end: endDate } = firstCycleWindow(
+    plan,
+    data.schedulingPeriodStartsAt
+      ? new Date(data.schedulingPeriodStartsAt)
+      : new Date(),
+    schedulingTimezone,
+  );
 
-  // Calculate subscription dates based on booking type
-  const startDate = isSchedulingPeriodRequest
-    ? new Date(data.schedulingPeriodStartsAt!)
-    : new Date();
-  const endDate = isSchedulingPeriodRequest
-    ? new Date(data.schedulingPeriodEndsAt!)
-    : calculateSubscriptionEndDate(startDate, plan.durationInMonths);
-
-  // Check for existing pending/approved subscriptions with overlapping periods
-  // This prevents same user from double-buying the same plan
-  const existingSubscription = await tx.subscription.findFirst({
+  // #1766 — the double-buy guard follows the entitlement, not the window: a
+  // live row with sessions left blocks; a spent one is a renewal-as-repurchase.
+  const liveRows = await tx.subscription.findMany({
     where: {
       subscriptionPlanId: plan.id,
       requestedById: consulteeProfileId,
-      status: {
-        in: [
-          AppointmentStatus.PENDING,
-          AppointmentStatus.APPROVED,
-          AppointmentStatus.APPROVED_PENDING_PAYMENT,
-        ],
-      },
-      OR: [
-        {
-          AND: [
-            { schedulingPeriodStartsAt: { lte: endDate } },
-            { schedulingPeriodEndsAt: { gte: startDate } },
-          ],
+      deletedAt: null,
+      status: { in: LIVE_SUBSCRIPTION_STATUSES },
+    },
+    select: {
+      sessionsTotal: true,
+      schedulingPeriodStartsAt: true,
+      schedulingTimezone: true,
+      subscriptionPlan: {
+        select: {
+          totalSessions: true,
+          sessionsPerWeek: true,
+          durationInMonths: true,
         },
-      ],
+      },
+      appointment: {
+        select: {
+          occurrences: {
+            select: {
+              startsAt: true,
+              endsAt: true,
+              completionStatus: true,
+              isTentative: true,
+              deletedAt: true,
+            },
+          },
+        },
+      },
     },
   });
-
-  if (existingSubscription) {
-    throw new Error(
-      "You already have a pending or active subscription for this plan with overlapping dates.",
+  const sessionsLeft = liveRows.reduce(
+    (max, row) =>
+      Math.max(
+        max,
+        subscriptionEntitlement({
+          sessionsTotal: sessionsTotalOf(row),
+          sessionsPerWeek: row.subscriptionPlan.sessionsPerWeek,
+          durationInMonths: row.subscriptionPlan.durationInMonths,
+          occurrences: row.appointment?.occurrences ?? [],
+          schedulingPeriodStartsAt: row.schedulingPeriodStartsAt,
+          schedulingTimezone: row.schedulingTimezone,
+        }).remaining,
+      ),
+    0,
+  );
+  if (sessionsLeft > 0) {
+    throw Object.assign(
+      new Error(
+        `You already have this plan with ${sessionsLeft} session${sessionsLeft === 1 ? "" : "s"} left — schedule those first.`,
+      ),
+      { httpStatus: 409, code: "SUBSCRIPTION_ALREADY_ACTIVE" },
     );
   }
 
@@ -2536,9 +2663,9 @@ export async function handleSubscriptionCheckout(
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
       // #1076 — caps bucket on the consultant's days, not the column default.
-      schedulingTimezone: resolveSchedulingTimezone(
-        plan.consultantProfile?.user?.timezone,
-      ),
+      schedulingTimezone,
+      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+      sessionsTotal: plan.totalSessions,
     },
   });
 
@@ -2668,7 +2795,11 @@ export async function handleWebinarCheckout(
   });
 
   if (capacity.isFull) {
-    throw new Error("Webinar is full");
+    // #1757 — a coded refusal (EVENT_FULL, 409), not a fault.
+    throw Object.assign(new Error("Webinar is full"), {
+      httpStatus: 409,
+      code: "EVENT_FULL",
+    });
   }
 
   // FIX Issue #5: Validate webinar is scheduled before allowing booking
@@ -2802,7 +2933,11 @@ export async function handleClassCheckout(
   });
 
   if (capacity.isFull) {
-    throw new Error("Class is full");
+    // #1757 — a coded refusal (EVENT_FULL, 409), not a fault.
+    throw Object.assign(new Error("Class is full"), {
+      httpStatus: 409,
+      code: "EVENT_FULL",
+    });
   }
 
   // H5 FIX: Validate class hasn't already ended (all sessions past).
@@ -3018,14 +3153,21 @@ export async function handleCheckout(
     // PR-1d: PENDING_VERIFICATION orgs may transact for INVOICE bookings
     // under the credit-limit gate (#687 invoice-fraud guard). Anything
     // else still requires fully ACTIVE status.
+    // #1582 B-P1-01c — typed 403s; the pre-tx twins of the in-tx re-checks.
     if (org.status !== "ACTIVE" && org.status !== "PENDING_VERIFICATION") {
-      throw new Error(
-        `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+      throw Object.assign(
+        new Error(
+          `Organization is ${org.status.toLowerCase()}; cannot process bookings.`,
+        ),
+        { httpStatus: 403, code: "ORG_NOT_OPERATIONAL" },
       );
     }
     if (!org.canSponsor) {
-      throw new Error(
-        "This organization is not configured to sponsor bookings (canSponsor=false).",
+      throw Object.assign(
+        new Error(
+          "This organization is not configured to sponsor bookings (canSponsor=false).",
+        ),
+        { httpStatus: 403, code: "ORG_CANNOT_SPONSOR" },
       );
     }
 
@@ -3066,7 +3208,11 @@ export async function handleCheckout(
       select: { role: true, status: true, id: true },
     });
     if (!callerMembership || callerMembership.status !== "ACTIVE") {
-      throw new Error("You are not an active member of this organization.");
+      // qa-1753 — the pre-tx twin of the in-tx check carries the same code.
+      throw Object.assign(
+        new Error("You are not an active member of this organization."),
+        { httpStatus: 403, code: "ORG_MEMBERSHIP_REQUIRED" },
+      );
     }
 
     // #701 — DPDP consent gate. The member is having a session booked + paid on
@@ -3123,15 +3269,8 @@ export async function handleCheckout(
             ? explicitLimit
             : Math.min(explicitLimit, governanceLimit);
       creditEffectiveLimit = effectiveLimit;
-
-      if (effectiveLimit !== null) {
-        const exposure = await readInvoiceExposurePaise(prisma, org.id);
-        if (exposure >= effectiveLimit) {
-          throw new Error(
-            `Organization has reached its invoice credit limit (${effectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
-          );
-        }
-      }
+      // #1744 row 4 — the fast-fail exposure check moved below STEP 1: it needs
+      // this booking's price, which is not derived yet at this point.
     }
 
     // Resolve a currently-active ProgramAssignment for this member that
@@ -3218,6 +3357,19 @@ export async function handleCheckout(
       // needs it to scope the self-hold exclusion to a resumable hold.
       organizationId,
     );
+
+    // INVOICE fundingSource: fast-fail on the credit limit before any lock is
+    // taken. #1744 row 4 — the booking itself counts: `exposure >= limit` let
+    // one booking of any size through at ₹1 under the limit, so the predicate
+    // is `exposure + this booking > limit` here and inside the tx alike.
+    if (
+      fundingSource === "INVOICE" &&
+      creditEffectiveLimit !== null &&
+      organizationId
+    ) {
+      const exposure = await readInvoiceExposurePaise(prisma, organizationId);
+      assertWithinInvoiceCreditLimit(exposure, amount, creditEffectiveLimit);
+    }
 
     const displayCurrencyAtCheckout =
       validatedData.displayCurrency?.toUpperCase() || currency;
@@ -3542,14 +3694,14 @@ export async function handleCheckout(
                 tx,
                 organizationId,
               );
-              // Same gate as the pre-lock check (>= limit), re-run inside the tx so
-              // a concurrent sibling's just-committed accrual is visible — SSI then
+              // Same gate as the pre-lock check, re-run inside the tx so a
+              // concurrent sibling's just-committed accrual is visible — SSI then
               // aborts the loser of a racing pair instead of both straddling the cap.
-              if (exposure >= creditEffectiveLimit) {
-                throw new Error(
-                  `Organization has reached its invoice credit limit (${creditEffectiveLimit} paise). Outstanding invoices must be paid before new bookings.`,
-                );
-              }
+              assertWithinInvoiceCreditLimit(
+                exposure,
+                amount,
+                creditEffectiveLimit,
+              );
             }
 
             let createdAppointment;
@@ -4034,9 +4186,13 @@ export async function handleCheckout(
               // The payment intent was created with a reduced amount based on TX1's
               // credit calculation, so proceeding would undercharge the user.
               if (actualCredits < creditsApplied) {
-                throw new Error(
-                  `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
-                    `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                // #1586 J32 — a modelled race, answered 409 + retryAfter.
+                throw Object.assign(
+                  new Error(
+                    `CREDIT_SHORTFALL: expected ${creditsApplied} paise credits but only ${actualCredits} available. ` +
+                      `Payment ${payment.id} amount is stale. Aborting for retry.`,
+                  ),
+                  { httpStatus: 409, code: "CREDIT_SHORTFALL", retryAfter: 2 },
                 );
               }
               actualCreditsApplied = creditsApplied; // In paise
@@ -4324,6 +4480,10 @@ export async function handleCheckout(
         // through on its registered code; tagging is a separate list by
         // design, so without this line the routine refusal kept paging.
         dbErrorCode === "WALLET_INSUFFICIENT_FUNDS" ||
+        // #1582 B-P1-01b — the in-tx org/panel/credit refusals and the
+        // CREDIT_SHORTFALL race are answers, not faults.
+        (typeof dbErrorCode === "string" &&
+          IN_TX_MODELLED_REFUSAL_CODES.has(dbErrorCode)) ||
         (dbError instanceof Error &&
           modelledOutcomePatterns.some((msg) =>
             // Word-bounded: bare `includes` let "full" match "successful" and

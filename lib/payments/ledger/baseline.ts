@@ -126,6 +126,13 @@ export const LEDGER_BASELINE: BaselineEntry[] = [
     expires: "2026-10-31",
   },
   {
+    kind: "EARNINGS_LEDGER_DRIFT",
+    entityId: "a1a1a1a1-0008-4b1a-9c1a-0000000000a1",
+    reason:
+      "qa-1753 fixture: the recovery-created booking journal stays (append-only) after its Payment/earnings fixtures were deleted — clears at the pre-MVP reset",
+    expires: "2026-10-31",
+  },
+  {
     kind: "REVERSED_EARNING_WITHOUT_REFUND_TXN",
     entityId: "065cb340-6718-466b-904d-dbc735bfa725",
     reason: "seed artifact (report 22c63944) — clears at the pre-MVP reset",

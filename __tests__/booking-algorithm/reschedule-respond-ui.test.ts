@@ -6,6 +6,8 @@
 
 import fs from "fs";
 import path from "path";
+import { requestCountLine } from "@/components/dashboard/shared/requests/request-count-line";
+import { subscriptionEntitlement } from "@/lib/booking/entitlement";
 
 const read = (rel: string) =>
   fs.readFileSync(path.join(process.cwd(), rel), "utf8");
@@ -22,8 +24,13 @@ const adapter = read(
 const eventActions = read(
   "components/appointments/consultee/useEventActions.ts",
 );
-const allocationTab = read(
-  "components/dashboard/shared/requests/RequestSchedulingTab.tsx",
+// #1775 — the Requests tab became the inbox: the row decides, the inbox calls.
+const inbox = read("components/dashboard/shared/requests/RequestsInbox.tsx");
+const inboxRow = read("components/dashboard/shared/requests/InboxRow.tsx");
+const inboxRead = read("lib/data/requests-inbox.ts");
+// #1675 — the decline call moved into the module both surfaces share.
+const requestDecision = read(
+  "components/dashboard/shared/requests/request-decision.ts",
 );
 const reschedulePage = read(
   "app/dashboard/consultee/[consulteeId]/(features)/appointments/[appointmentId]/reschedule/page.tsx",
@@ -77,31 +84,35 @@ describe("#1163 — cancel/reschedule invalidation reaches the detail hub", () =
   it("the adapter threads its resolved consulteeId instead of trusting useParams", () => {
     expect(eventActions).toContain("consulteeIdOverride");
     // The adapter passes the id it resolved (options → params → session).
-    expect(adapter).toMatch(/useEventActions\(\{[\s\S]*?consulteeId,[\s\S]*?\}\)/);
+    expect(adapter).toMatch(
+      /useEventActions\(\{[\s\S]*?consulteeId,[\s\S]*?\}\)/,
+    );
   });
 });
 
 describe("#1163 — the consultant inbox answers proposals", () => {
-  it("Use Requested Times routes an answerable proposal through respond-accept", () => {
-    expect(allocationTab).toContain("answerableProposal");
-    expect(allocationTab).toContain("/reschedule/respond");
-    expect(allocationTab).toContain('action: "accept"');
+  it("Approve routes an answerable proposal through respond-accept", () => {
+    expect(inbox).toContain("answerableProposal");
+    expect(inbox).toContain("/reschedule/respond");
+    expect(inbox).toContain('action: "accept"');
     // The suppression is lifted BY the proposal, not removed outright.
-    expect(allocationTab).toContain("rescheduledSlotCount");
+    expect(inboxRow).toContain("rescheduledSlotCount === 0");
   });
 
   it("only a PENDING_REVIEW consultee-initiated proposal with times is answerable", () => {
-    expect(allocationTab).toContain('proposal.status !== "PENDING_REVIEW"');
-    expect(allocationTab).toContain('proposal.initiatorRole !== "CONSULTEE"');
-    expect(allocationTab).toContain("currentRoundSlots(proposal).length === 0");
+    expect(inboxRow).toContain('p?.status !== "PENDING_REVIEW"');
+    expect(inboxRow).toContain('p.initiatorRole !== "CONSULTEE"');
+    expect(inboxRow).toContain("t.round === p.round).length === 0");
   });
 
   it("decline is confirmed, covers subscriptions, and disables in flight", () => {
-    expect(allocationTab).toContain("handleDeclineConfirm");
-    expect(allocationTab).toContain("/api/bookings/subscriptions/");
-    expect(allocationTab).toContain('JSON.stringify({ status: "REJECTED" })');
-    expect(allocationTab).toContain("declining");
-    expect(allocationTab).toContain("AlertDialog");
+    expect(inbox).toContain(
+      "declineRequest({ id: row.id, type: requestType(row) })",
+    );
+    expect(requestDecision).toContain("/api/bookings/subscriptions/");
+    expect(requestDecision).toContain('JSON.stringify({ status: "REJECTED" })');
+    expect(inbox).toContain("decline.isPending");
+    expect(inbox).toContain("AlertDialog");
   });
 });
 
@@ -109,5 +120,41 @@ describe("#1163 — the reschedule page refuses trial subjects", () => {
   it("renders a friendly refusal instead of a picker that 403s at submit", () => {
     expect(reschedulePage).toContain('appointmentType === "TRIAL"');
     expect(reschedulePage).toContain("can&apos;t be rescheduled");
+  });
+});
+
+describe("#1766 — the Requests inbox sizes a subscription's batch off the entitlement", () => {
+  it("asks for this cycle's nextBatch, never the lifetime total", () => {
+    // The requiredSlots arm for a fresh subscription (no tentative rows).
+    const arm = inboxRead.slice(
+      inboxRead.indexOf("const freshBatch ="),
+      inboxRead.indexOf(
+        "return finish(",
+        inboxRead.indexOf("const freshBatch ="),
+      ),
+    );
+    expect(arm).toContain("entitlement.cycle.nextBatch * slotsPerSession");
+    expect(arm).not.toContain("totalSessions * slotsPerSession");
+    expect(inboxRead).toContain("sessionsTotalOf(s)");
+    expect(inboxRead).not.toContain("countSundayWeeksInclusive");
+  });
+});
+
+describe("#1766 — the Requests list row reads entitlement words", () => {
+  it("says booked-of-total and the pick, never a bare slot count, for a subscription", () => {
+    const entitlement = subscriptionEntitlement({
+      sessionsTotal: 12,
+      sessionsPerWeek: 4,
+      durationInMonths: 3,
+      occurrences: [],
+      schedulingPeriodStartsAt: new Date("2026-03-02T00:00:00Z"),
+      schedulingTimezone: "UTC",
+    });
+    expect(requestCountLine({ entitlement })).toBe("0 of 12 booked · pick 4");
+    // The row renders through the helper, not an inline slot count.
+    expect(inboxRow).toContain(
+      "requestCountLine({ entitlement: row.entitlement })",
+    );
+    expect(inboxRow).not.toContain("to allocate");
   });
 });

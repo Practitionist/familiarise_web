@@ -1399,10 +1399,12 @@ export async function calculateRevenueSplit(
   // total and push the owner's remainder NEGATIVE); the owner absorbs every
   // floored paisa as the pool's designated residual party. Σbps > 10000 is a
   // mis-configured plan: refuse rather than mint money.
+  // #1584 P1-EC05 — the same 90 % ceiling invite/update enforce: a legacy
+  // 9001–10000 bps set would otherwise settle with the owner under 10 %.
   const bpsSum = acceptedCollabs.reduce((a, c) => a + c.revenueShareBps, 0);
-  if (bpsSum > 10_000) {
+  if (bpsSum > MAX_COLLAB_BPS) {
     throw new Error(
-      `calculateRevenueSplit: collaborator shares sum to ${bpsSum} bps (> 10000) on ${planType} plan ${planId}`,
+      `calculateRevenueSplit: collaborator shares sum to ${bpsSum} bps (> ${MAX_COLLAB_BPS}) on ${planType} plan ${planId}`,
     );
   }
   let collaboratorTotal = 0;

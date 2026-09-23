@@ -64,6 +64,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 
 import { POST } from "../../app/api/checkout/route";
+import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
 import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
 
 function checkoutRequest(body: Record<string, unknown> = {}) {
@@ -118,6 +119,29 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     expect(context.tags?.expected).toBe("true");
   });
 
+  // #1757 — "Webinar is full" was a bare Error; the prose classifier answered
+  // the buyer but checkout's outer catch paged it as a fault (FAMILIARISE_WEB-2J).
+  it("answers EVENT_FULL 409 as a modelled outcome, and the toast copy points at the way out", async () => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(new Error("Webinar is full"), {
+        httpStatus: 409,
+        code: "EVENT_FULL",
+      }),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body.errorType).toBe("EVENT_FULL_ERROR");
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
+    expect(getErrorToast("EVENT_FULL_ERROR").description).toContain(
+      "join the waitlist",
+    );
+  });
+
   it("still captures an unrecognised failure at Sentry's default level", async () => {
     handleCheckout.mockRejectedValue(new Error("connection terminated"));
 
@@ -136,6 +160,70 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
       expect(context.level).toBeUndefined();
       expect(context.tags?.expected).not.toBe("true");
     }
+  });
+});
+
+// #1582 B-P1-01b/c, #1564, #1586 J32 — the refusals that were still bare
+// Errors (500 UNKNOWN + a Sentry fault each) now carry registered codes.
+describe("every newly typed refusal answers its own status, tagged expected", () => {
+  const cases: Array<[string, number, string]> = [
+    ["ORG_NOT_OPERATIONAL", 403, "ORG_NOT_OPERATIONAL_ERROR"],
+    ["ORG_CANNOT_SPONSOR", 403, "ORG_CANNOT_SPONSOR_ERROR"],
+    ["ORG_MEMBERSHIP_REQUIRED", 403, "ORG_MEMBERSHIP_REQUIRED_ERROR"],
+    ["CONSULTANT_NOT_ON_PANEL", 409, "CONSULTANT_NOT_ON_PANEL_ERROR"],
+    [
+      "CONSULTANT_EXCLUSIVE_ENGAGEMENT",
+      409,
+      "CONSULTANT_EXCLUSIVE_ENGAGEMENT_ERROR",
+    ],
+    ["CURRENCY_UNSUPPORTED", 422, "CURRENCY_UNSUPPORTED_ERROR"],
+    ["NON_INR_SETTLEMENT", 422, "CURRENCY_UNSUPPORTED_ERROR"],
+    ["CREDIT_SHORTFALL", 409, "CREDIT_SHORTFALL_ERROR"],
+    ["DISCOUNT_CURRENCY_MISMATCH", 400, "DISCOUNT_CURRENCY_MISMATCH_ERROR"],
+  ];
+
+  it.each(cases)("%s → %i %s", async (code, httpStatus, errorType) => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(new Error(`internal detail for ${code}`), {
+        code,
+        httpStatus,
+      }),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(httpStatus);
+    expect(body.errorType).toBe(errorType);
+    // The registered userMessage replaces the thrown (internal) message.
+    expect(body.error).not.toContain("internal detail");
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
+  });
+
+  // #1744 row 4 — the credit-limit refusal has no registry userMessage: the
+  // site's rupee sentence must reach the caller unchanged, still 402 + expected.
+  it("ORG_CREDIT_LIMIT_REACHED passes the rupee-formatted sentence through", async () => {
+    handleCheckout.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "This booking would take the organisation past its invoice credit limit of ₹50,000 (₹49,999 already outstanding). Outstanding invoices must be paid before new bookings.",
+        ),
+        { code: "ORG_CREDIT_LIMIT_REACHED", httpStatus: 402 },
+      ),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(402);
+    expect(body.errorType).toBe("ORG_CREDIT_LIMIT_REACHED_ERROR");
+    expect(body.error).toContain("₹50,000");
+    expect(body.error).not.toMatch(/paise/i);
+    const context = soleCaptureContext();
+    expect(context.level).toBe("info");
+    expect(context.tags?.expected).toBe("true");
   });
 });
 

@@ -209,7 +209,7 @@ After the consultee initiates a reschedule, the request appears on the consultan
 
 ### How Rescheduled Requests Appear
 
-The consultant's dashboard includes a **Requests** tab (`RequestRequestSchedulingTab.tsx`). This tab fetches all consultations and subscriptions with `status: PENDING`. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
+The consultant's dashboard includes a **Requests** inbox (`components/dashboard/shared/requests/RequestsInbox.tsx` over `lib/data/requests-inbox.ts`, #1775). Its read returns consultations and subscriptions in `PENDING` and `APPROVED_PENDING_PAYMENT`, and a reschedule surfaces as a `PENDING` row. When a request is a reschedule (as opposed to a fresh booking), the system detects this by examining the slots with the canonical `isReleasedForReschedule` predicate (`utils/scheduling-engine/types.ts`): a row counts as released only when it is tentative **and** `completionStatus === "RESCHEDULED"` **and** live (`deletedAt == null`).
 
 - Bare tentativeness is NOT the signal: every fresh request already carries tentative holds (request-for-approval and unpaid checkout create them that way), and tombstoned/stale duplicates linger. Counting bare `isTentative` over-counted reschedules (e.g. demanded 12 slots for a 4-session plan, #1739).
 - The ratio of **released** to total sessions determines the badge type.
@@ -299,20 +299,20 @@ This path runs the full auto-allocation algorithm. It is reschedule-aware -- see
 ```mermaid
 sequenceDiagram
     participant Con as Consultant (Browser)
-    participant Tab as RequestRequestSchedulingTab
-    participant API_List as GET /api/requests
+    participant Tab as RequestsInbox
+    participant API_List as GET /api/bookings/inbox
     participant API_Alloc as POST /api/allocate
     participant DB as Database
     participant Service as SchedulingService
 
-    Con->>Tab: Opens Requests tab
-    Tab->>API_List: Fetch PENDING requests
-    API_List->>DB: Query consultations/subscriptions<br/>where status = PENDING
-    DB-->>API_List: Return events with slots
-    API_List-->>Tab: Events with tentative slot counts
+    Con->>Tab: Opens the Requests inbox
+    Tab->>API_List: Fetch the tab's cohort
+    API_List->>DB: readRequestsInbox: consultations/subscriptions<br/>where status in (PENDING, APPROVED_PENDING_PAYMENT)
+    DB-->>API_List: Return rows with live occurrences
+    API_List-->>Tab: Rows with released/tentative counts and a deadline bucket
 
-    Tab->>Tab: Calculate badges per request
-    Note over Tab: Count tentative vs total slots<br/>Determine badge type and color
+    Tab->>Tab: Derive each row's words
+    Note over Tab: deriveBookingPresentation names the state;<br/>rescheduledSlotCount gates "Approve"
 
     Tab->>Con: Display requests with badges
 

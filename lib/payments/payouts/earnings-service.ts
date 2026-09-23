@@ -135,7 +135,50 @@ export {
   assertEarningStatusTransitionLegal,
 } from "./earning-status";
 import { assertEarningStatusTransitionLegal } from "./earning-status";
+import { allocateCycleClawback } from "./earnings-reversal";
 import { prorate, sumPaise } from "@/lib/payments/utils/money";
+import {
+  sessionsTotalOf,
+  subscriptionTranches,
+  type SubscriptionTranches,
+} from "@/lib/booking/entitlement";
+
+/**
+ * #1766 — the cycle shape a subscription's earnings are split into: one
+ * PENDING tranche per cycle, stamped by the completion path when the cycle's
+ * last session completes. Null for anything that is not a subscription with
+ * a plan, so the caller falls back to the single whole-purchase row.
+ */
+async function resolveSubscriptionTranches(
+  tx: Tx,
+  appointmentId: string | null | undefined,
+): Promise<SubscriptionTranches | null> {
+  if (!appointmentId) return null;
+  const appointment = await tx.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      subscription: {
+        select: {
+          sessionsTotal: true,
+          subscriptionPlan: {
+            select: {
+              totalSessions: true,
+              sessionsPerWeek: true,
+              durationInMonths: true,
+            },
+          },
+        },
+      },
+    },
+  });
+  const sub = appointment?.subscription;
+  if (!sub) return null;
+  const tranches = subscriptionTranches(
+    sub.subscriptionPlan,
+    sessionsTotalOf(sub),
+  );
+  return tranches.total > 0 ? tranches : null;
+}
 
 // ============================================
 // Org Split Resolution
@@ -344,9 +387,12 @@ async function resolveOrgSplit(
   };
 
   if (payoutRecipient === "ORGANIZATION") {
-    // Internal/salaried consultant: org absorbs the consultant slice.
+    // Internal/salaried consultant: org absorbs the consultant slice, so the
+    // persisted bps say so too (#1584 P1-EC01 — the snapshot was self-inconsistent).
     return {
       ...base,
+      orgBps: base.orgBps + base.consultantBps,
+      consultantBps: 0,
       platformFeePaise,
       orgShare: grossAmount - platformFeePaise,
       consultantSharePaise: 0,
@@ -757,23 +803,89 @@ export async function createEarningsFromPayment({
               );
             }
           } else {
-            // Single-owner payment (no collaborators or not a webinar/class)
-            const earnings = await tx.consultantEarnings.create({
-              data: {
+            // #1766 — a subscription is delivered-enforced escrow: one PENDING
+            // tranche per cycle, holdUntil NULL until the cycle's last session
+            // completes (settleSubscriptionCycle stamps it). Shares are floored
+            // per tranche and every residual paisa lands on tranche 0, so the
+            // rows sum to the fee and the pool exactly (EARNINGS_LEDGER_DRIFT).
+            const tranches =
+              appointmentType === "SUBSCRIPTION"
+                ? await resolveSubscriptionTranches(tx, payment.appointmentId)
+                : null;
+            if (tranches) {
+              const perTranche = (k: number) => ({
+                gross: prorate(
+                  grossAmount,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+                fee: prorate(
+                  platformFeePaise,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+                share: prorate(
+                  totalConsultantPool,
+                  tranches.capacityOf(k),
+                  tranches.total,
+                ),
+              });
+              const tail = Array.from({ length: tranches.count - 1 }, (_, i) =>
+                perTranche(i + 1),
+              );
+              const sumOf = (key: "gross" | "fee" | "share") =>
+                tail.reduce((acc, t) => acc + t[key], 0);
+              const rows = [
+                {
+                  gross: grossAmount - sumOf("gross"),
+                  fee: platformFeePaise - sumOf("fee"),
+                  share: totalConsultantPool - sumOf("share"),
+                },
+                ...tail,
+              ];
+              const trancheData = (
+                k: number,
+                row: { gross: number; fee: number; share: number },
+              ) => ({
                 consultantProfileId,
                 paymentId: payment.id,
-                grossAmount,
-                platformFeePaise,
-                consultantSharePaise: totalConsultantPool,
+                grossAmount: row.gross,
+                platformFeePaise: row.fee,
+                consultantSharePaise: row.share,
                 appointmentOccurrenceId: anchor.appointmentOccurrenceId,
-                // #687 E-02 — see multi-party branch above.
+                cycleOrdinal: k,
                 status: initialEarningStatus,
-                holdUntil,
-                currency: "INR",
-              },
-            });
+                holdUntil: null,
+                currency: "INR" as const,
+              });
+              const first = await tx.consultantEarnings.create({
+                data: trancheData(0, rows[0]),
+              });
+              ownerId = first.id;
+              if (rows.length > 1) {
+                await tx.consultantEarnings.createMany({
+                  data: rows.slice(1).map((row, i) => trancheData(i + 1, row)),
+                });
+              }
+            } else {
+              // Single-owner payment (no collaborators or not a webinar/class)
+              const earnings = await tx.consultantEarnings.create({
+                data: {
+                  consultantProfileId,
+                  paymentId: payment.id,
+                  grossAmount,
+                  platformFeePaise,
+                  consultantSharePaise: totalConsultantPool,
+                  appointmentOccurrenceId: anchor.appointmentOccurrenceId,
+                  // #687 E-02 — see multi-party branch above.
+                  status: initialEarningStatus,
+                  holdUntil,
+                  currency: "INR",
+                },
+              });
 
-            ownerId = earnings.id;
+              ownerId = earnings.id;
+            }
           }
 
           // Create OrganizationEarnings row for the HOST/HYBRID org (3-way split).
@@ -1283,10 +1395,29 @@ export async function getConsultantEarnings(
             originalAmount: true,
             currency: true,
             createdAt: true,
+            // #1675 PR-Y — the sponsor (legs are the funding truth, the method
+            // the pre-legs fallback) and the plan title the row is named by.
+            paymentMethod: true,
+            organizationId: true,
+            organization: { select: { name: true } },
+            legs: { select: { source: true } },
             appointment: {
               select: {
                 id: true,
                 appointmentType: true,
+                consultation: {
+                  select: { consultationPlan: { select: { title: true } } },
+                },
+                subscription: {
+                  select: { subscriptionPlan: { select: { title: true } } },
+                },
+                trial: {
+                  select: { subscriptionPlan: { select: { title: true } } },
+                },
+                webinar: {
+                  select: { webinarPlan: { select: { title: true } } },
+                },
+                class: { select: { classPlan: { select: { title: true } } } },
               },
             },
           },
@@ -1427,6 +1558,20 @@ export async function refundEarnings(
     );
   }
 
+  // #1766 — subscription tranches: one clawback over the summed share,
+  // consumed newest-tranche-first (same allocator as applyRefundCascade).
+  const trancheRows = allEarnings.filter(
+    (e) => typeof e.cycleOrdinal === "number",
+  );
+  const trancheAbsorb = new Map(
+    allocateCycleClawback(
+      trancheRows,
+      prorateRefundPaise(
+        trancheRows.reduce((s, e) => s + e.consultantSharePaise, 0),
+      ),
+    ).map((a) => [a.id, a.absorbPaise] as const),
+  );
+
   // Refund each earnings record (supports multi-party collaborator payments)
   for (const earnings of allEarnings) {
     // C7 FIX: Guard against already-refunded earnings.
@@ -1444,7 +1589,10 @@ export async function refundEarnings(
       0,
       earnings.consultantSharePaise - alreadyRefunded,
     );
-    const rawShare = prorateRefundPaise(earnings.consultantSharePaise);
+    const rawShare =
+      typeof earnings.cycleOrdinal !== "number"
+        ? prorateRefundPaise(earnings.consultantSharePaise)
+        : (trancheAbsorb.get(earnings.id) ?? 0);
     const shareToReverse = Math.min(rawShare, maxReversible);
 
     if (shareToReverse <= 0) {
@@ -1513,70 +1661,6 @@ export async function refundEarnings(
       },
     });
   }
-
-  return true;
-}
-
-/**
- * Hold earnings (e.g., for dispute investigation)
- */
-export async function holdEarnings(
-  earningsId: string,
-  reason?: string,
-): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
-    where: { id: earningsId },
-  });
-
-  if (!earnings) {
-    console.warn(`Earnings not found: ${earningsId}`);
-    return false;
-  }
-
-  // Can only hold if pending or ready
-  if (
-    earnings.status !== EarningStatus.PENDING &&
-    earnings.status !== EarningStatus.READY
-  ) {
-    console.warn(
-      `Cannot hold earnings ${earningsId} - status is ${earnings.status}`,
-    );
-    return false;
-  }
-
-  await prisma.consultantEarnings.update({
-    where: { id: earningsId },
-    data: {
-      status: EarningStatus.HELD,
-    },
-  });
-
-  console.log(
-    `Earnings ${earningsId} held. Reason: ${reason || "Not specified"}`,
-  );
-  return true;
-}
-
-/**
- * Release held earnings back to ready state
- */
-export async function releaseHeldEarnings(
-  earningsId: string,
-): Promise<boolean> {
-  const earnings = await prisma.consultantEarnings.findUnique({
-    where: { id: earningsId },
-  });
-
-  if (!earnings || earnings.status !== EarningStatus.HELD) {
-    return false;
-  }
-
-  await prisma.consultantEarnings.update({
-    where: { id: earningsId },
-    data: {
-      status: EarningStatus.READY,
-    },
-  });
 
   return true;
 }

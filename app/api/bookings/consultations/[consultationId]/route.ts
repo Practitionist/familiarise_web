@@ -1,19 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma, { type Tx } from "@/lib/prisma";
-import {
-  PaymentGateway,
-  PaymentStatus,
-  Prisma,
-  AppointmentStatus,
-} from "@prisma/client";
+import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApprovalWindowLapsedError,
-  createApprovalPaymentIntent,
-} from "@/lib/payments/operations/approval-payment";
-import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
+import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
@@ -28,11 +19,11 @@ import {
   refusePlanNotOwned,
 } from "@/lib/booking/request-route-guards";
 import { PARTY_USER_SELECT } from "@/lib/booking/list-selects";
+import { APPROVAL_STATUSES_DETAIL_ONLY } from "@/lib/booking/list-query";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import { refundRejectedRequest } from "@/lib/booking/rejection-refund";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { MAX_TEXT_LENGTH } from "@/lib/validation/limits";
-import { sendPaymentLinkEmail } from "@/lib/email";
 import {
   requireApiAuth,
   isPrivileged,
@@ -42,42 +33,6 @@ import { createDirectMessageChannel } from "@/actions/stream/chat/channel.action
 import { streamLogger } from "@/lib/stream-logger";
 import { bookingOrgId } from "@/lib/stream-utils";
 import { reportSentryError } from "@/lib/observability/report";
-import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
-
-/**
- * Type for consultation with all related details needed for payment processing.
- * Derived via the extended client — raw GetPayload would re-introduce bigint
- * money fields (#780).
- */
-type ConsultationWithDetails = Prisma.Result<
-  typeof prisma.consultation,
-  {
-    include: {
-      consultationPlan: {
-        include: {
-          consultantProfile: {
-            include: {
-              user: {
-                select: { id: true; name: true; email: true; image: true };
-              };
-            };
-          };
-        };
-      };
-      requestedBy: {
-        include: {
-          user: { select: { id: true; name: true; email: true; image: true } };
-        };
-      };
-      appointment: {
-        include: {
-          occurrences: true;
-        };
-      };
-    };
-  },
-  "findFirstOrThrow"
->;
 
 export async function GET(
   request: Request,
@@ -460,6 +415,20 @@ export async function PATCH(
       );
     }
 
+    // #1775 — a dual-profile user was both sides of the request, so the
+    // participant check passed and they could approve their own booking.
+    if (
+      APPROVAL_STATUSES_DETAIL_ONLY.has(status) &&
+      existingConsultation.consultationPlan.consultantProfile.user.id ===
+        existingConsultation.requestedBy.user.id &&
+      !isPrivileged(session.user.role)
+    ) {
+      return NextResponse.json(
+        { error: "You cannot approve your own request", code: "SELF_APPROVAL" },
+        { status: 403 },
+      );
+    }
+
     // #1004 — declining is the CONSULTANT's act. The transition guard enforces
     // only the from-state, and REJECTED is legal from PENDING and
     // APPROVED_PENDING_PAYMENT, so without this the consultee could reject
@@ -708,50 +677,40 @@ export async function PATCH(
             })
           : null;
 
-      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (see the
-      // in-tx comment for why). On mint failure the consultation stays
-      // APPROVED_PENDING_PAYMENT with no link — the same failure mode the
-      // trial path chose — and the consultant is told to retry the approval,
-      // which re-enters here idempotently.
+      // #1169 PR 2 — mint the pay-link AFTER the transaction commits (a
+      // gateway round-trip inside the Serializable tx pinned a connection and
+      // left a live link on rollback). #1775 B-9 — the block is the shared
+      // post-commit mint every approval writer calls: it reuses a live
+      // PENDING intent on a retry (#1181), CASes the link onto the row,
+      // tombstones an orphaned order and mails only a live link.
       let mintedLink: {
         paymentUrl: string;
-        paymentAmount: number;
-        paymentCurrency: string;
+        paymentAmount?: number;
+        paymentCurrency?: string;
       } | null = null;
       if (
         ("needsPaymentLink" in result && result.needsPaymentLink) ||
         needsLinkRetry
       ) {
-        // The 502 below invites a retry; the retry reuses the same PENDING
-        // payment (#1181) rather than minting a parallel order — so a second
-        // live link can never reach the consultee. Everything after a
-        // successful mint therefore reports and continues: a 502 past this
-        // point would still be wrong, because it reads as a failure the
-        // consultant should answer by re-approving.
-        let paymentResult;
-        try {
-          paymentResult = await generatePaymentLink(result.data);
-        } catch (linkError) {
-          // #1319 review — a lapsed approval is not a retryable mint failure:
-          // the dead intent's request has already been swept, so re-approving
-          // would loop forever. Answer 409 and tell the consultee to re-request.
-          if (linkError instanceof ApprovalWindowLapsedError) {
-            return NextResponse.json(
-              {
-                data: result.data,
-                error: linkError.message,
-                requiresPayment: true,
-                paymentUrl: null,
-              },
-              { status: 409 },
-            );
-          }
-          Sentry.captureException(
-            linkError instanceof Error
-              ? linkError
-              : new Error(String(linkError)),
-            { tags: { subsystem: "bookings" } },
+        const mint = await mintApprovalPaymentAfterCommit({
+          kind: "consultation",
+          id: consultationId,
+        });
+        // A lapsed approval is not a retryable mint failure (#1319 review):
+        // the dead intent's request has already been swept.
+        if (mint.status === "lapsed") {
+          return NextResponse.json(
+            {
+              data: result.data,
+              error: mint.message,
+              requiresPayment: true,
+              paymentUrl: null,
+            },
+            { status: 409 },
           );
+        }
+        // The 502 invites a retry; the retry reuses the same PENDING payment.
+        if (mint.status === "mint_failed") {
           return NextResponse.json(
             {
               data: result.data,
@@ -763,97 +722,14 @@ export async function PATCH(
             { status: 502 },
           );
         }
-
-        mintedLink = {
-          paymentUrl: paymentResult.checkoutUrl,
-          paymentAmount: paymentResult.amount,
-          paymentCurrency: paymentResult.currency,
-        };
-
-        try {
-          // #1583 A-P0-06 — a CAS on the exact shape the link belongs to: a
-          // mint landing after the lapse sweep EXPIRED the request must not
-          // re-arm a link; zero rows is reported, never thrown.
-          const persisted = await prisma.consultation.updateMany({
-            where: {
-              id: consultationId,
-              status: AppointmentStatus.APPROVED_PENDING_PAYMENT,
-              pendingPaymentUrl: null,
-            },
-            data: {
-              pendingPaymentUrl: paymentResult.checkoutUrl,
-              requestNotes: result.data.requestNotes
-                ? `${result.data.requestNotes}\n\n[System] Payment link generated and sent to user.`
-                : `[System] Payment link generated and sent to user.`,
-            },
-          });
-          if (persisted.count === 0) {
-            // The request moved since the mint (lapsed, paid, or a sibling
-            // persisted first): the orphaned order is tombstoned and only a
-            // link still live on the row may reach the consultee.
-            const outcome = await reconcileOrphanedPayLink({
-              kind: "consultation",
-              id: consultationId,
-              paymentIntentId: paymentResult.paymentIntentId,
-              checkoutUrl: paymentResult.checkoutUrl,
-            });
-            mintedLink = outcome.url
-              ? { ...mintedLink, paymentUrl: outcome.url }
-              : null;
-          }
-        } catch (persistError) {
-          // The row's state is unproven, so the link is not delivered; the
-          // consultant re-approves and the retry reuses the same PENDING
-          // intent (#1181), so nothing is minted twice.
-          mintedLink = null;
-          console.error(
-            `⚠️ Failed to persist payment link for consultation ${consultationId}:`,
-            persistError instanceof Error
-              ? persistError.message
-              : "Unknown error",
-          );
-          Sentry.captureException(
-            persistError instanceof Error
-              ? persistError
-              : new Error(String(persistError)),
-            { tags: { subsystem: "bookings" } },
-          );
-        }
-
-        // Only a link that is live on the row is mailed (#1583 A-P0-06).
-        if (mintedLink) {
-          try {
-            await sendPaymentLinkEmail({
-              email: result.data.requestedBy.user.email || "",
-              name: result.data.requestedBy.user.name || "User",
-              consultantName:
-                result.data.consultationPlan.consultantProfile.user.name ||
-                "Consultant",
-              appointmentType: "consultation" as const,
-              amount: paymentResult.amount,
-              currency: paymentResult.currency,
-              paymentUrl: mintedLink.paymentUrl,
-              expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
-            });
-            console.log(
-              `📧 Payment link email sent for consultation ${consultationId}`,
-            );
-          } catch (emailError) {
-            // Link exists on the dashboard via pendingPaymentUrl; email is
-            // best-effort.
-            console.error(
-              `⚠️ Failed to send payment link email for consultation ${consultationId}:`,
-              emailError instanceof Error
-                ? emailError.message
-                : "Unknown error",
-            );
-            Sentry.captureException(
-              emailError instanceof Error
-                ? emailError
-                : new Error(String(emailError)),
-              { tags: { subsystem: "bookings" } },
-            );
-          }
+        if (mint.status === "minted") {
+          mintedLink = {
+            paymentUrl: mint.paymentUrl,
+            paymentAmount: mint.paymentAmount,
+            paymentCurrency: mint.paymentCurrency,
+          };
+        } else if (mint.status === "already_live") {
+          mintedLink = { paymentUrl: mint.paymentUrl };
         }
       }
 
@@ -989,40 +865,6 @@ async function checkConsultationPayment(
   });
 
   return (consultation?.appointment?.payment?.length ?? 0) > 0;
-}
-
-/**
- * Generate payment link for approved consultation
- */
-async function generatePaymentLink(consultation: ConsultationWithDetails) {
-  const { consultationPlan, requestedBy, appointment } = consultation;
-
-  // Extract slot times if appointment/slots exist
-  const slot = appointment?.occurrences?.[0];
-  const startsAt = slot?.startsAt?.toISOString();
-  const endsAt = slot?.endsAt?.toISOString();
-
-  return await createApprovalPaymentIntent({
-    userId: requestedBy.user.id,
-    appointmentType: "CONSULTATION",
-    consultationId: consultation.id,
-    // #1181 — the request created this appointment at submit time; threading
-    // it stamps Payment.appointmentId so capture confirms THAT row instead of
-    // building a twin off metadata, and the duplicate-payment guard (which
-    // walks appointment.payment) can see approval payments at all.
-    appointmentId: appointment?.id ?? undefined,
-    planId: consultationPlan.id,
-    // #1165 — settlement is INR-only and Razorpay is the KYC'd primary
-    // gateway; the trial path already minted on it. Param stays configurable
-    // for a future scale decision.
-    paymentGateway: PaymentGateway.RAZORPAY,
-    // #1166 ORG-9 — org sponsorship survives the approval flow: the request
-    // stamped the appointment, and the payment carries it from there.
-    organizationId: appointment?.organizationId ?? undefined,
-    startsAt,
-    endsAt,
-    notes: consultation.requestNotes ?? undefined,
-  });
 }
 
 // (removed) createAppointmentForConsultation — #1169 PR 2 / CORE-3.

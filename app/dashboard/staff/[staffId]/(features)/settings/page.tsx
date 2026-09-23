@@ -27,6 +27,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { NotificationPreferencesPanel } from "@/components/notifications";
+import { useSession } from "@/lib/auth-client";
 import { SettingsSkeleton } from "@/components/dashboard/DashboardSkeletons";
 import {
   CookiePreference,
@@ -63,6 +64,7 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
   const { staffId } = resolvedParams;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
 
   // Fetch data on component mount
   const { data, isPending, isError, refetch } = useQuery({
@@ -136,28 +138,6 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
     });
   };
 
-  const handleNotificationChange = (
-    checked: boolean,
-    name: keyof NotificationPreference,
-  ) => {
-    setStaffData((prev) => {
-      if (!prev) return prev;
-      const currentPrefs = prev.user.notificationPreferences ?? {
-        userId: prev.user.id,
-      }; // Create stub if null
-      return {
-        ...prev,
-        user: {
-          ...prev.user,
-          notificationPreferences: {
-            ...currentPrefs,
-            [name]: checked,
-          } as NotificationPreference, // Assert type
-        },
-      };
-    });
-  };
-
   const handleCookieChange = (
     checked: boolean,
     name: keyof CookiePreference,
@@ -216,12 +196,6 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           break;
         case "preferences":
           payload = {
-            allNotifications:
-              staffData!.user.notificationPreferences?.allNotifications,
-            mentions: staffData!.user.notificationPreferences?.mentions,
-            directMessages:
-              staffData!.user.notificationPreferences?.directMessages,
-            updates: staffData!.user.notificationPreferences?.updates,
             analytics: staffData!.user.cookiePreferences?.analytics,
             marketing: staffData!.user.cookiePreferences?.marketing,
           };
@@ -490,108 +464,21 @@ export default function StaffSettingsPage({ params }: Readonly<PageProps>) {
           </CardFooter>
         </Card>
 
-        {/* Novu Notification Preferences */}
-        <NotificationPreferencesPanel />
+        {/* Novu Notification Preferences — the panel edits the SESSION
+            user's preferences, so an admin viewing another staff member's
+            page must not see it (#1738 review). */}
+        {session?.user?.id === staffData.user.id && (
+          <NotificationPreferencesPanel />
+        )}
 
-        {/* Preferences Card */}
+        {/* Cookie Preferences Card (notifications live in the
+            Novu-synced panel above) */}
         <Card>
           <CardHeader>
-            <CardTitle>Preferences</CardTitle>
-            <CardDescription>
-              Manage notification and cookie preferences.
-            </CardDescription>
+            <CardTitle>Cookie Preferences</CardTitle>
+            <CardDescription>Manage cookie preferences.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-6">
-            {/* Notification Preferences */}
-            <div className="space-y-4">
-              <h3 className="font-medium">Notifications</h3>
-              <div className="flex items-center justify-between space-x-2">
-                <Label
-                  htmlFor="allNotifications"
-                  className="flex flex-col space-y-1 cursor-pointer"
-                >
-                  <span>All Notifications</span>
-                  <span className="font-normal leading-snug text-muted-foreground">
-                    Enable or disable all notifications globally.
-                  </span>
-                </Label>
-                <Switch
-                  id="allNotifications"
-                  name="allNotifications"
-                  checked={
-                    staffData.user.notificationPreferences?.allNotifications ??
-                    false
-                  }
-                  onCheckedChange={(checked) =>
-                    handleNotificationChange(checked, "allNotifications")
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between space-x-2">
-                <Label
-                  htmlFor="mentions"
-                  className="flex flex-col space-y-1 cursor-pointer"
-                >
-                  <span>Mentions</span>
-                  <span className="font-normal leading-snug text-muted-foreground">
-                    Receive notifications for @mentions.
-                  </span>
-                </Label>
-                <Switch
-                  id="mentions"
-                  name="mentions"
-                  checked={
-                    staffData.user.notificationPreferences?.mentions ?? false
-                  }
-                  onCheckedChange={(checked) =>
-                    handleNotificationChange(checked, "mentions")
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between space-x-2">
-                <Label
-                  htmlFor="directMessages"
-                  className="flex flex-col space-y-1 cursor-pointer"
-                >
-                  <span>Direct Messages</span>
-                  <span className="font-normal leading-snug text-muted-foreground">
-                    Receive notifications for direct messages.
-                  </span>
-                </Label>
-                <Switch
-                  id="directMessages"
-                  name="directMessages"
-                  checked={
-                    staffData.user.notificationPreferences?.directMessages ??
-                    false
-                  }
-                  onCheckedChange={(checked) =>
-                    handleNotificationChange(checked, "directMessages")
-                  }
-                />
-              </div>
-              <div className="flex items-center justify-between space-x-2">
-                <Label
-                  htmlFor="updates"
-                  className="flex flex-col space-y-1 cursor-pointer"
-                >
-                  <span>Platform Updates</span>
-                  <span className="font-normal leading-snug text-muted-foreground">
-                    Receive notifications about platform updates and news.
-                  </span>
-                </Label>
-                <Switch
-                  id="updates"
-                  name="updates"
-                  checked={
-                    staffData.user.notificationPreferences?.updates ?? false
-                  }
-                  onCheckedChange={(checked) =>
-                    handleNotificationChange(checked, "updates")
-                  }
-                />
-              </div>
-            </div>
             {/* Cookie Preferences */}
             <div className="space-y-4">
               <h3 className="font-medium">Cookie Preferences</h3>

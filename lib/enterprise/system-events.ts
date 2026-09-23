@@ -14,7 +14,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 import type { Prisma, SystemEventSeverity } from "@prisma/client";
 import { emitTelemetryLog } from "@/lib/observability/betterstack-telemetry";
 
@@ -54,6 +54,13 @@ export interface RecordSystemEventParams {
    * row is the only audit trail; see the note on the function below.
    */
   strict?: boolean;
+  /**
+   * #1582 B-P1-02 — the client to write through. Inside a transaction pass
+   * `tx`: with PG_POOL_MAX=1 a global-client insert queues behind the open
+   * transaction and dies at the 3 s connect timeout if Phase 1 outlives it.
+   * Same convention as `recordTDSDeduction`. Defaults to the global client.
+   */
+  db?: Tx | typeof prisma;
 }
 
 /**
@@ -70,8 +77,9 @@ export async function recordSystemEvent(
   params: RecordSystemEventParams,
 ): Promise<void> {
   const severity = params.severity ?? "INFO";
+  const db = params.db ?? prisma;
   try {
-    await prisma.systemEvent.create({
+    await db.systemEvent.create({
       data: {
         organizationId: params.organizationId ?? null,
         category: params.category,
@@ -122,6 +130,8 @@ export async function recordSystemError(params: {
   err: unknown;
   context?: Record<string, unknown>;
   correlationId?: string | null;
+  /** #1582 B-P1-02 — see RecordSystemEventParams.db. */
+  db?: Tx | typeof prisma;
 }): Promise<void> {
   const errorMessage =
     params.err instanceof Error ? params.err.message : String(params.err);
@@ -138,6 +148,7 @@ export async function recordSystemError(params: {
       ...(stack ? { stack } : {}),
     },
     correlationId: params.correlationId,
+    db: params.db,
   });
 
   // Escalate to Sentry so engineers see it without querying the DB.

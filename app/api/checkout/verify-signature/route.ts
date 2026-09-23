@@ -32,7 +32,7 @@ import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireApiAuth } from "@/lib/auth-helpers";
 import { getRazorpayClient } from "@/lib/payments/core/razorpay";
 import { routeCapturedPayment } from "@/app/api/webhooks/razorpay-dispatch";
 import { checkoutLimiter, applyRateLimit } from "@/lib/rate-limit";
@@ -51,10 +51,11 @@ const verifySignatureSchema = z.object({
 export async function POST(req: NextRequest) {
   try {
     const razorpayClient = getRazorpayClient();
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // #1584 P1-AZ01 — force-fresh like POST /api/checkout: this door drives
+    // routeCapturedPayment, so a banned or revoked session must not reach it.
+    const authResult = await requireApiAuth();
+    if (authResult.error) return authResult.error;
+    const { session } = authResult;
 
     // #1353 — the same 5/min budget `/api/checkout` applies, for the same
     // reason: this route makes an outbound `payments.fetch` per call and then

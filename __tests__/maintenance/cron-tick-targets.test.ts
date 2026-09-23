@@ -26,6 +26,10 @@ function loadTicker(): {
   targetRequest: TargetRequest;
   dueTargets: (now: Date) => string[];
   statusFor: (failed: { name: string; status: number }[]) => number;
+  bucketFor: (
+    status: number,
+    maintenance?: boolean,
+  ) => "ok" | "held" | "failed";
 } {
   const file = path.join(
     __dirname,
@@ -88,6 +92,9 @@ describe("cron-tick targetRequest", () => {
 
 // #1686 — six sweeps run on the 15-minute slots only; the customer-visible
 // five stay on every tick (ADR 27 consequences, 2026-09-17).
+// #1792 — Upstash 500k cap: every-tick keeps only the two latency-sensitive
+// money confirms; the rest ride 10/15-minute slots (each has an Actions twin
+// at equal or better cadence, except the ticker-only Novu relay at 10).
 describe("cron-tick dueTargets cadence", () => {
   const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
@@ -102,6 +109,9 @@ describe("cron-tick dueTargets cadence", () => {
       "cascade-refund-earnings",
       "reconcile-refunds",
       "abandoned-payments",
+      "sweep-stuck-webhook-events",
+      "sweep-orphaned-topup-captures",
+      "dispatch-outbound-webhooks",
       "retry-failed-emails",
       // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
       "expire-unpaid-trials",
@@ -120,13 +130,15 @@ describe("cron-tick dueTargets cadence", () => {
     for (const name of [
       "reconcile-payment-status",
       "reconcile-orphaned-confirmations",
-      "sweep-orphaned-topup-captures",
-      "dispatch-outbound-webhooks",
-      "drain-notification-outbox",
-      "sweep-stuck-webhook-events",
     ]) {
       expect(off).toContain(name);
     }
+  });
+
+  it("fires the ticker-only Novu relay every 10 minutes", () => {
+    // No Actions twin exists, so 15 would strand bells; 10 halves its burn.
+    expect(dueTargets(at(5))).not.toContain("drain-notification-outbox");
+    expect(dueTargets(at(10))).toContain("drain-notification-outbox");
   });
 });
 
@@ -144,5 +156,21 @@ describe("cron-tick statusFor", () => {
         { name: "reconcile-orphaned-confirmations", status: 0 },
       ]),
     ).toBe(200);
+  });
+});
+
+// #1598 P1-W03 — a twin refusing inside a maintenance hold answers 503 with
+// a `phase` in the body; that is a healthy hold and joins the 409 bucket. A
+// bare 503 (dead route, platform, dependency) stays a failure.
+describe("cron-tick bucketFor", () => {
+  const { bucketFor } = loadTicker();
+
+  it("sorts a maintenance 503 with the lock-held 409, a bare 503 as failed", () => {
+    expect(bucketFor(503, true)).toBe("held");
+    expect(bucketFor(503)).toBe("failed");
+    expect(bucketFor(409)).toBe("held");
+    expect(bucketFor(200)).toBe("ok");
+    expect(bucketFor(500)).toBe("failed");
+    expect(bucketFor(0)).toBe("failed");
   });
 });

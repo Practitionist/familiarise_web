@@ -7,6 +7,7 @@ import {
   endOfMonth,
   addDays,
   getDaysInMonth,
+  type Day,
 } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
 import { AllocationService } from "@/lib/scheduling/allocationService";
@@ -70,6 +71,13 @@ export interface UseCalendarDataOptions {
    */
   gridZone?: string;
   /**
+   * #1775 — the day the week grid starts on (a subscription's cycle start);
+   * the fetch window and the visible dates follow it so the columns drawn
+   * are the columns fetched. Defaults to Sunday, which the quota bucketing
+   * (weekKey/countWeeks) stays pinned to regardless.
+   */
+  weekStartsOn?: Day;
+  /**
    * Request the per-interval tooltip metadata (title/participant of an
    * overlapping appointment). Defaults FALSE — the route 403s the request for
    * anyone who is not the owning consultant, so a surface that asks for it
@@ -95,8 +103,34 @@ interface AppointmentConsultation {
 interface AppointmentSubscription {
   id?: string;
   status?: string;
-  subscriptionPlan?: EventPlanInfo;
+  subscriptionPlan?: EventPlanInfo & {
+    sessionsPerWeek?: number;
+    durationInMonths?: number;
+    totalSessions?: number;
+  };
   requestedBy?: { user?: { name?: string } };
+  /** #1766 — the entitlement frozen at purchase (null on pre-#1766 rows). */
+  sessionsTotal?: number | null;
+  schedulingPeriodStartsAt?: string;
+  schedulingTimezone?: string;
+}
+
+/** #1766 — what the cycle heading needs from the subscription row. */
+export interface SubscriptionMeta {
+  sessionsTotal: number;
+  sessionsPerWeek: number;
+  durationInMonths: number;
+  schedulingPeriodStartsAt: string;
+  schedulingTimezone: string;
+}
+
+/** #1766 — one live-or-dead row of the event's wrapper, as the helper reads it. */
+export interface EventOccurrence {
+  startsAt: string;
+  endsAt: string;
+  completionStatus: string | null;
+  isTentative: boolean;
+  deletedAt: string | null;
 }
 
 interface AppointmentWebinar {
@@ -115,6 +149,7 @@ interface AppointmentSlotRaw {
   isTentative?: boolean;
   /** Present on occurrence rows; absent on older payloads — see the split below. */
   completionStatus?: string | null;
+  deletedAt?: string | null;
   user?: Array<{ name?: string }>;
 }
 
@@ -126,6 +161,29 @@ interface Appointment {
   subscription?: AppointmentSubscription;
   webinar?: AppointmentWebinar;
   class?: AppointmentClass;
+}
+
+/** The entitlement inputs, or null when the payload predates them. */
+function subscriptionMetaOf(
+  subscription: AppointmentSubscription | undefined,
+): SubscriptionMeta | null {
+  const plan = subscription?.subscriptionPlan;
+  if (
+    !subscription?.schedulingPeriodStartsAt ||
+    !subscription.schedulingTimezone ||
+    plan?.sessionsPerWeek === undefined ||
+    plan.durationInMonths === undefined ||
+    plan.totalSessions === undefined
+  ) {
+    return null;
+  }
+  return {
+    sessionsTotal: subscription.sessionsTotal ?? plan.totalSessions,
+    sessionsPerWeek: plan.sessionsPerWeek,
+    durationInMonths: plan.durationInMonths,
+    schedulingPeriodStartsAt: subscription.schedulingPeriodStartsAt,
+    schedulingTimezone: subscription.schedulingTimezone,
+  };
 }
 
 interface ConsultantData {
@@ -199,6 +257,10 @@ interface CalendarData {
   // alongside eventSlots; replaces re-deriving this from a separate
   // whole-window appointment fetch on every slot click.
   weeklyConfirmedCallCounts: Record<string, number>;
+  /** #1766 — the event's own wrapper rows, raw, for the entitlement helper. */
+  eventOccurrences: EventOccurrence[];
+  /** #1766 — null until the subscription row has arrived (or for other types). */
+  subscriptionMeta: SubscriptionMeta | null;
   loading: boolean;
   error: string | null;
 }
@@ -238,6 +300,7 @@ export function useCalendarData(
     sessionDurationInHours,
     consulteeUserId,
     includeAppointmentDetails = false,
+    weekStartsOn = 0,
   } = options;
   const gridZone = options.gridZone ?? gridTimeZone();
   const { toast } = useToast();
@@ -260,6 +323,12 @@ export function useCalendarData(
   const [weeklyConfirmedCallCounts, setWeeklyConfirmedCallCounts] = useState<
     Record<string, number>
   >({});
+  // #1766 — see CalendarData.eventOccurrences / subscriptionMeta.
+  const [eventOccurrences, setEventOccurrences] = useState<EventOccurrence[]>(
+    [],
+  );
+  const [subscriptionMeta, setSubscriptionMeta] =
+    useState<SubscriptionMeta | null>(null);
   // Start loading on mount when autoLoad is on so the first paint shows the
   // grid skeleton instead of the "No calendar data available" empty state.
   const [loading, setLoading] = useState(autoLoad);
@@ -374,10 +443,10 @@ export function useCalendarData(
         // read in the grid zone, so the window matches the columns drawn.
         const { start: startDate, end: endDate } = dayRangeBounds(
           view === "week"
-            ? startOfWeek(currentDate, { weekStartsOn: 0 })
+            ? startOfWeek(currentDate, { weekStartsOn })
             : startOfMonth(currentDate),
           view === "week"
-            ? endOfWeek(currentDate, { weekStartsOn: 0 })
+            ? endOfWeek(currentDate, { weekStartsOn })
             : endOfMonth(currentDate),
           gridZone,
         );
@@ -501,6 +570,7 @@ export function useCalendarData(
       consulteeUserId,
       includeAppointmentDetails,
       gridZone,
+      weekStartsOn,
     ],
   );
 
@@ -512,6 +582,8 @@ export function useCalendarData(
       setEventSlots([]);
       setEventTentativeSlots([]);
       setWeeklyConfirmedCallCounts({});
+      setEventOccurrences([]);
+      setSubscriptionMeta(null);
       return;
     }
 
@@ -602,9 +674,27 @@ export function useCalendarData(
         }
         setEventSlots(confirmedSlots);
         setEventTentativeSlots(tentativeSlots);
+        // #1766 — the raw rows and the row's entitlement inputs travel as-is;
+        // the helper, not this hook, turns them into the cycle heading.
+        setEventOccurrences(
+          activeData.flatMap((appointment) =>
+            ((appointment.occurrences || []) as AppointmentSlotRaw[]).map(
+              (slot) => ({
+                startsAt: slot.startsAt,
+                endsAt: slot.endsAt,
+                completionStatus: slot.completionStatus ?? null,
+                isTentative: slot.isTentative ?? false,
+                deletedAt: slot.deletedAt ?? null,
+              }),
+            ),
+          ),
+        );
+        setSubscriptionMeta(subscriptionMetaOf(activeData[0]?.subscription));
       } else {
         setEventSlots([]);
         setEventTentativeSlots([]);
+        setEventOccurrences([]);
+        setSubscriptionMeta(null);
       }
     } catch (error) {
       console.error("Error fetching event slots:", error);
@@ -615,6 +705,8 @@ export function useCalendarData(
       setEventSlots([]);
       setEventTentativeSlots([]);
       setWeeklyConfirmedCallCounts({});
+      setEventOccurrences([]);
+      setSubscriptionMeta(null);
     }
   }, [eventType, eventId, consultantId, sessionDurationInHours]);
 
@@ -625,10 +717,10 @@ export function useCalendarData(
   const visibleDates = useMemo((): Date[] => {
     const dates: Date[] = [];
     if (view === "week") {
-      // Sunday start, pinned: weekKey/countWeeks bucket quota weeks on
-      // Sundays, so an implicit locale default drifting to Monday would
-      // silently misalign the fetch window with the weekly caps.
-      const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
+      // Explicit start, never the locale default: weekKey/countWeeks bucket
+      // quota weeks on Sundays regardless, and the grid's own start (#1775)
+      // must match the fetch window above or cells go blank.
+      const weekStart = startOfWeek(currentDate, { weekStartsOn });
       for (let i = 0; i < 7; i++) {
         dates.push(addDays(weekStart, i));
       }
@@ -640,7 +732,7 @@ export function useCalendarData(
       }
     }
     return dates;
-  }, [currentDate, view]);
+  }, [currentDate, view, weekStartsOn]);
 
   /**
    * #997 Phase 2 — the server (availability-with-allocation, requested with
@@ -958,6 +1050,8 @@ export function useCalendarData(
     eventSlots,
     eventTentativeSlots,
     weeklyConfirmedCallCounts,
+    eventOccurrences,
+    subscriptionMeta,
     loading,
     error,
 

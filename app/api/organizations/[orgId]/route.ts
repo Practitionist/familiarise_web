@@ -23,6 +23,7 @@ import { transitionOrganization } from "@/lib/enterprise/transitions";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import { purgeOrgSurfaces } from "@/lib/data/public-cache";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
+import { numericStateCode } from "@/lib/compliance/state-codes";
 
 const SizeBucketSchema = z.enum([
   "SMALL_1_50",
@@ -166,6 +167,11 @@ export async function PATCH(
     );
   }
   const body = parsed.data;
+  // #1744 row 3 — a supplied GSTIN's prefix is the buyer's GST state and wins
+  // over a hand-typed code; without a GSTIN the typed code (or null) stands.
+  const gstStateCode: string | null | undefined = body.gstin
+    ? (numericStateCode(body.gstin, null) ?? body.gstStateCode)
+    : body.gstStateCode;
 
   // Field-level gate: OWNER passes everything; otherwise every touched field
   // must be inside the caller's remit. 403 names the offending fields so the
@@ -432,7 +438,7 @@ export async function PATCH(
           ...(body.gstin !== undefined ||
           body.pan !== undefined ||
           body.gstRegStatus !== undefined ||
-          body.gstStateCode !== undefined
+          gstStateCode !== undefined
             ? {
                 taxInfo: {
                   upsert: {
@@ -441,9 +447,7 @@ export async function PATCH(
                       ...(body.gstRegStatus !== undefined && {
                         gstRegStatus: body.gstRegStatus,
                       }),
-                      ...(body.gstStateCode !== undefined && {
-                        gstStateCode: body.gstStateCode,
-                      }),
+                      ...(gstStateCode !== undefined && { gstStateCode }),
                       ...(body.pan
                         ? (() => {
                             const { encrypted, last4 } = encryptPAN(body.pan);
@@ -456,9 +460,7 @@ export async function PATCH(
                       ...(body.gstRegStatus !== undefined && {
                         gstRegStatus: body.gstRegStatus,
                       }),
-                      ...(body.gstStateCode !== undefined && {
-                        gstStateCode: body.gstStateCode,
-                      }),
+                      ...(gstStateCode !== undefined && { gstStateCode }),
                       ...(body.pan !== undefined &&
                         (body.pan
                           ? (() => {
@@ -630,6 +632,30 @@ export async function DELETE(
           httpStatus: 404,
         });
       }
+      // #1744 row 6 — money not yet on any invoice blocks too: an unbilled
+      // INVOICE accrual and a PENDING/ACCRUED overage would vanish with the org.
+      const [unbilledAccruals, openOverages] = await Promise.all([
+        tx.payment.count({
+          where: {
+            organizationId: orgId,
+            paymentStatus: "SUCCEEDED",
+            billableToOrgInvoiceId: null,
+            legs: {
+              some: {
+                source: { in: ["INVOICE_ACCRUAL", "OVERAGE_INVOICE_ACCRUAL"] },
+              },
+            },
+          },
+        }),
+        tx.overageEvent.count({
+          where: {
+            programAssignment: {
+              program: { contract: { organizationId: orgId } },
+            },
+            chargeStatus: { in: ["PENDING", "ACCRUED"] },
+          },
+        }),
+      ]);
 
       const live: string[] = [];
       if (current._count.contracts > 0)
@@ -644,6 +670,10 @@ export async function DELETE(
         live.push(`${current._count.payouts} in-flight payout(s)`);
       if ((current.billingAccount?.walletBalance ?? 0) !== 0)
         live.push("a non-zero wallet balance");
+      if (unbilledAccruals > 0)
+        live.push(`${unbilledAccruals} unbilled invoice accrual(s)`);
+      if (openOverages > 0)
+        live.push(`${openOverages} unsettled overage charge(s)`);
       if (live.length > 0) {
         throw Object.assign(
           new Error(

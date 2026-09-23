@@ -423,6 +423,18 @@ export async function createRazorpayRefund({
     );
   }
 
+  // #1584 P2-P0-01 — Razorpay refunds the ENTIRE payment when `amount` is
+  // omitted, so `amount || undefined` promoted 0/NaN to a full refund. The
+  // only caller (operations/refund.ts) already passes a positive Int; this
+  // is defence at the boundary, same shape as the Stripe guard.
+  if (amount === undefined || !Number.isSafeInteger(amount) || amount <= 0) {
+    throw new RefundError(
+      `Refund amount must be a positive whole number of paise (got ${String(amount)})`,
+      "INVALID_AMOUNT",
+      "RAZORPAY",
+    );
+  }
+
   try {
     // First, get the payment ID from the order
     const payments = await withRazorpaySdkTimeout("orders.fetchPayments", () =>
@@ -438,15 +450,21 @@ export async function createRazorpayRefund({
     }
 
     // PM-12 — an order can carry failed attempts before the captured one;
-    // items[0] is creation-ordered, so refunding it blindly can target a
-    // non-captured payment. Prefer the captured payment.
-    const payment =
-      payments.items.find((p) => p.status === "captured") ?? payments.items[0];
+    // items[0] is creation-ordered. #1584 P1-GW01b — never fall back to it:
+    // an order with no captured payment has nothing to refund.
+    const payment = payments.items.find((p) => p.status === "captured");
+    if (!payment) {
+      throw new RefundError(
+        `Order ${paymentIntentId} has no captured payment — nothing to refund`,
+        "NOT_CAPTURED",
+        "RAZORPAY",
+      );
+    }
 
     // Create refund on the payment. Raw HTTP, not the SDK — see postRefund.
     const refund = await postRefund({
       paymentId: payment.id,
-      amount: amount || undefined, // already in smallest currency unit (paise)
+      amount, // already in smallest currency unit (paise)
       notes: {
         reason: reason || "requested_by_customer",
         ...metadata,

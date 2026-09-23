@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { reportSentryError } from "@/lib/observability/report";
 import type { Session } from "@/lib/auth";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import type {
   FundingSource,
   Organization,
@@ -430,14 +431,44 @@ export async function requireOrgAccess(
   // don't need a second round-trip. Non-capability callers pay the same
   // (cheap) cost — this read is LEFT JOIN one row keyed on a unique
   // index.
-  const org = await prisma.organization.findUnique({
-    where: { id: organizationId },
-    include: {
-      billingAccount: {
-        select: { id: true, fundingSource: true },
+  // FAMILIARISE_WEB-5W — pre-migration rollout: the generated client knows
+  // `Organization.kind` before `db push` creates the column, and a bare
+  // `findUnique` selects every scalar, so the gate 500s with P2022 on every
+  // org route. Answer that exact case with 503 + Retry-After (same posture
+  // as a failed session lookup above): the deploy is mid-rollout, the
+  // client must retry, and nothing must read it as "no access". Scoped to
+  // P2022 only; every other defect still throws to the route's handler.
+  let org;
+  try {
+    org = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        billingAccount: {
+          select: { id: true, fundingSource: true },
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2022"
+    ) {
+      // Expected-true warning (not a page): drift windows are normal during
+      // rollout, but the column must actually land via db push afterwards.
+      reportSentryError(error, {
+        subsystem: "auth",
+        op: "requireOrgAccess.schema-drift",
+        expected: true,
+      });
+      return {
+        error: NextResponse.json(
+          { error: "Service temporarily unavailable — retry shortly" },
+          { status: 503, headers: { "Retry-After": "2" } },
+        ),
+      };
+    }
+    throw error;
+  }
   if (!org) {
     return {
       error: NextResponse.json(

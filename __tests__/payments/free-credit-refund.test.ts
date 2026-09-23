@@ -84,6 +84,10 @@ jest.mock("../../lib/payments/operations/refund", () => ({
 
 jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   applyReversal: (...a: unknown[]) => mockApplyReversal(...a),
+  // #1582 C-P1-02c — the real clawback journal, so the pin sees its posting.
+  postPayoutClawback: jest.requireActual(
+    "../../lib/payments/operations/reversal-engine",
+  ).postPayoutClawback,
 }));
 
 jest.mock("../../lib/referrals/service", () => ({
@@ -478,5 +482,17 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
       ),
     ).toBe(true);
     expect(sum(postings, "DEBIT")).toBe(sum(postings, "CREDIT"));
+    // #1582 C-P1-02c — the counter and the clawback journal are one write:
+    // exactly one balanced `clawback:<refund>:<payout>` posting in the tx.
+    const clawbackPosts = mockPostLedgerTxn.mock.calls.filter(
+      ([, arg]: [unknown, { idempotencyKey: string }]) =>
+        arg.idempotencyKey.startsWith("clawback:"),
+    );
+    expect(clawbackPosts).toHaveLength(1);
+    expect(clawbackPosts[0][1].idempotencyKey).toBe(
+      "clawback:refund-row-1:opayout-7",
+    );
+    expect(sum(clawbackPosts[0][1].postings, "DEBIT")).toBe(20_000);
+    expect(sum(clawbackPosts[0][1].postings, "CREDIT")).toBe(20_000);
   });
 });

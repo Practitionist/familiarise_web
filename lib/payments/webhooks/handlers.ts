@@ -23,7 +23,7 @@ import {
   OccurrenceCompletionStatus,
   TrialStatus,
 } from "@prisma/client";
-import { calculateSubscriptionEndDate } from "@/utils/dateUtils";
+import { firstCycleWindow } from "@/lib/booking/entitlement";
 import { buildOccupiedAppointmentFilter } from "@/utils/scheduling-engine/occupancyPolicy";
 import {
   REQUEST_ALLOWED_FROM,
@@ -281,7 +281,9 @@ async function reportTerminalCaptureRace(params: {
     select: { paymentStatus: true },
   });
   const currentStatus = fresh?.paymentStatus ?? params.observedStatus;
-  void recordSystemError({
+  // #1582 B-P1-02 — written through the caller's client (PG_POOL_MAX=1): a
+  // global-client insert inside the tx would queue and die at the connect timeout.
+  await recordSystemError({
     organizationId: null,
     category: "PAYMENT",
     summary: `Capture for order ${params.orderId} landed on a ${currentStatus} payment — status left alone, refund by hand`,
@@ -292,6 +294,7 @@ async function reportTerminalCaptureRace(params: {
       currentStatus,
       reason: params.reason,
     },
+    db: params.db,
   }).catch(() => {});
   reportSentryMessage(
     "Capture landed on a terminal payment — status not restamped",
@@ -308,12 +311,35 @@ async function reportTerminalCaptureRace(params: {
   );
 }
 
+/**
+ * #1440 — thrown when a recovery's link write matches no row: another
+ * recovery (or the webhook itself) linked the appointment first. Rolls the
+ * tx back so the appointment built here never commits unlinked.
+ */
+export class RecoveryAlreadyDoneError extends Error {
+  readonly code = "ALREADY_RECOVERED" as const;
+  readonly httpStatus = 409 as const;
+  constructor(paymentId: string) {
+    super(`Payment ${paymentId} already has an appointment linked`);
+    this.name = "RecoveryAlreadyDoneError";
+  }
+}
+
 export async function handlePaymentSuccess(
   paymentIntentId: string,
   rawMetadata: Record<string, string>,
   gatewayAmountPaise?: number,
   gatewayPaymentId?: string,
-): Promise<void> {
+  /**
+   * #1440 — `recover: true` (admin recovery route only) lets a SUCCEEDED row
+   * with NO appointment skip the idempotency short-circuit and run the
+   * LEGACY appointment build with the supplied metadata. Every other state
+   * keeps the webhook behaviour exactly; the link write's CAS predicate is
+   * the single-writer guard (ADR 21).
+   */
+  options?: { recover?: boolean },
+): Promise<PaymentSuccessTxResult["outcome"] | null> {
+  const recovering = options?.recover === true;
   // #679 transition dual-read (see normalizeLegacySlotKeys) — in-flight
   // Razorpay orders created pre-rename replay webhooks with legacy slot
   // keys; normalize ONCE here so validation AND the legacy create flow
@@ -361,7 +387,14 @@ export async function handlePaymentSuccess(
             throw err;
           }
 
-          if (payment.paymentStatus === PaymentStatus.SUCCEEDED) {
+          const recoverable =
+            recovering &&
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            payment.appointmentId === null;
+          if (
+            payment.paymentStatus === PaymentStatus.SUCCEEDED &&
+            !recoverable
+          ) {
             console.log(
               `Payment ${paymentIntentId} has already been processed.`,
             );
@@ -493,6 +526,9 @@ export async function handlePaymentSuccess(
           try {
             validateWebhookMetadata(metadata);
           } catch (validationError) {
+            // #1440 — a recovery with bad metadata is the operator's error;
+            // the row is already SUCCEEDED, so there is nothing to restamp.
+            if (recoverable) throw validationError;
             const errorMessage =
               validationError instanceof ZodError
                 ? validationError.errors
@@ -589,13 +625,17 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
           // (the dev replay route used to fail metadata validation). Confirming
           // an EXPIRED payment would flip a hold the abandoned-payments sweep
           // has already released, so a terminal row is reported, not booked.
-          const confirmed = await tx.payment.updateMany({
-            where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
-            data: {
-              paymentStatus: PaymentStatus.SUCCEEDED,
-              ...capturedGatewayId,
-            },
-          });
+          // #1440 — a recovery starts from SUCCEEDED; its guard is the link
+          // write's CAS in createAppointmentFromWebhook, not this stamp.
+          const confirmed = recoverable
+            ? { count: 1 }
+            : await tx.payment.updateMany({
+                where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
+                data: {
+                  paymentStatus: PaymentStatus.SUCCEEDED,
+                  ...capturedGatewayId,
+                },
+              });
           if (confirmed.count === 0) {
             await reportTerminalCaptureRace({
               db: tx,
@@ -812,7 +852,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         reason:
           "legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap)",
       });
-      return;
+      return null;
     }
     void recordSystemError({
       organizationId: null,
@@ -841,11 +881,11 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return null;
   }
 
   // If transaction returned null, the payment was already processed or had a metadata error
-  if (!txResult) return;
+  if (!txResult) return null;
 
   // #837 — the gateway captured a different amount than we ordered. Auto-refund
   // the whole capture (never confirm a booking for the wrong money) and skip
@@ -884,7 +924,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #1695 — the hold was released before the money landed. Nothing to
@@ -918,7 +958,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         context: { paymentId: txResult.paymentId },
       }).catch(() => {});
     }
-    return;
+    return txResult.outcome;
   }
 
   // #855 — the capture landed after the booking was cancelled. The payment is
@@ -939,7 +979,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // #837 — the #827 first-confirmed-wins guard blocked this booking: the payment
@@ -984,7 +1024,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         refundError,
       );
     }
-    return;
+    return txResult.outcome;
   }
 
   // Phase 2: Non-critical post-transaction work (earnings, invoice, notifications)
@@ -1323,6 +1363,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
       );
     }
   })();
+  return txResult.outcome;
 }
 
 /**
@@ -1425,10 +1466,20 @@ export async function handlePaymentFailure(paymentIntentId: string) {
       return;
     }
 
-    await tx.payment.update({
-      where: { id: payment.id },
+    // ADR 21 / #1582 B-P0-01 — CAS in WHERE: a `payment.failed` for attempt 1
+    // racing the capture of attempt 2 must not overwrite SUCCEEDED.
+    const { count } = await tx.payment.updateMany({
+      where: { id: payment.id, paymentStatus: PaymentStatus.PENDING },
       data: { paymentStatus: PaymentStatus.FAILED },
     });
+    if (count === 0) {
+      reportSentryMessage("payment.failed lost the race to a capture", {
+        subsystem: "payments",
+        expected: true,
+        extra: { paymentIntentId },
+      });
+      return;
+    }
 
     if (payment.appointment) {
       await cleanupFailedPaymentAppointment(tx, payment.appointment.id);
@@ -1459,7 +1510,8 @@ export async function handlePaymentFailure(paymentIntentId: string) {
         failureReason: payment.description || "Payment could not be processed",
         retryUrl: `${getAppUrl()}/dashboard`,
       },
-      { tx, entityRef: `payment:${payment.id}` },
+      // Payment failure is urgent: bypass quiet-hours deferral.
+      { tx, entityRef: `payment:${payment.id}`, deferrable: false },
     );
 
     console.log(
@@ -1558,10 +1610,17 @@ async function createAppointmentFromWebhook(
       throw new Error(`Unsupported appointment type: ${appointmentType}`);
   }
 
-  await tx.payment.update({
-    where: { id: payment.id },
+  // #1440 / ADR 21 — the link is a CAS: SUCCEEDED (this tx stamped it, or the
+  // recovery read it) and still unlinked. A miss means another writer won.
+  const linked = await tx.payment.updateMany({
+    where: {
+      id: payment.id,
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      appointmentId: null,
+    },
     data: { appointmentId: appointment.id },
   });
+  if (linked.count === 0) throw new RecoveryAlreadyDoneError(payment.id);
 
   return appointment;
 }
@@ -1662,22 +1721,18 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
   });
   if (!plan) throw new Error("Subscription plan not found");
 
-  // Check if this is a scheduling period request (no slots) or direct slot booking
-  const isSchedulingPeriodRequest =
-    data.schedulingPeriodStartsAt && data.schedulingPeriodEndsAt;
-
-  let startDate: Date;
-  let endDate: Date;
-
-  if (isSchedulingPeriodRequest) {
-    // Use provided scheduling period dates (safe to assert since checked above)
-    startDate = new Date(data.schedulingPeriodStartsAt!);
-    endDate = new Date(data.schedulingPeriodEndsAt!);
-  } else {
-    // Calculate subscription period from current date
-    startDate = new Date();
-    endDate = calculateSubscriptionEndDate(startDate, plan.durationInMonths);
-  }
+  // #1766 — window = first cycle; a client end is clamped/ignored, never
+  // refused. Twin of handleSubscriptionCheckout.
+  const schedulingTimezone = resolveSchedulingTimezone(
+    plan.consultantProfile?.user?.timezone,
+  );
+  const { start: startDate, end: endDate } = firstCycleWindow(
+    plan,
+    data.schedulingPeriodStartsAt
+      ? new Date(data.schedulingPeriodStartsAt)
+      : new Date(),
+    schedulingTimezone,
+  );
 
   const subscription = await tx.subscription.create({
     data: {
@@ -1688,9 +1743,9 @@ async function createSubscription(tx: Tx, data: SubscriptionData) {
       bookingSource: "DIRECT_CHECKOUT",
       schedulingPeriodStartsAt: startDate,
       schedulingPeriodEndsAt: endDate,
-      schedulingTimezone: resolveSchedulingTimezone(
-        plan.consultantProfile?.user?.timezone,
-      ),
+      schedulingTimezone,
+      // #1766 — the entitlement is frozen at purchase; plan edits never move it.
+      sessionsTotal: plan.totalSessions,
     },
   });
 
@@ -1871,12 +1926,15 @@ async function confirmApprovalStatus(
         freshStatus !== AppointmentStatus.COMPLETED
       ) {
         capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); the catch keeps a
+        // telemetry failure from aborting money.
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for consultation ${entityId} in terminal state ${freshStatus} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "consultation", entityId },
+          db: tx,
         }).catch(() => {});
       }
     }
@@ -1891,14 +1949,16 @@ async function confirmApprovalStatus(
       throw new Error(`Subscription ${entityId} not found`);
     }
 
-    const flagTerminal = (status: AppointmentStatus) => {
+    const flagTerminal = async (status: AppointmentStatus) => {
       capturedAfterTerminal = true; // #855 — Phase 2 auto-refunds
-      void recordSystemError({
+      // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+      await recordSystemError({
         organizationId: null,
         category: "PAYMENT",
         summary: `Payment captured for subscription ${entityId} in terminal state ${status} — refund needed`,
         err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
         context: { entityType: "subscription", entityId },
+        db: tx,
       }).catch(() => {});
     };
 
@@ -1933,13 +1993,13 @@ async function confirmApprovalStatus(
             `ℹ️ Subscription ${entityId} already ${freshStatus} when the capture landed — nothing to move`,
           );
         } else {
-          flagTerminal(freshStatus);
+          await flagTerminal(freshStatus);
         }
       }
     } else if (!LIVE_REQUEST_STATUSES.has(subscription.status)) {
       // #1583 A-P0-01 — REJECTED and EXPIRED are as dead as CANCELLED: a
       // capture on any of them is money for a booking nobody will deliver.
-      flagTerminal(subscription.status);
+      await flagTerminal(subscription.status);
     } else {
       console.log(
         `ℹ️ Subscription ${entityId} payment received - keeping status as ${subscription.status} (consultant will allocate slots)`,
@@ -2056,7 +2116,9 @@ export async function confirmExistingAppointment(
           select: { id: true },
         });
         if (!alreadyRecorded) {
-          void recordSystemError({
+          // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1); also keeps the
+          // once-per-appointment probe above in the same snapshot.
+          await recordSystemError({
             organizationId: null,
             category: "PAYMENT",
             summary: `Double-booking blocked at confirmation: appointment ${appointmentId} overlaps an already-confirmed slot — the payment needs a refund`,
@@ -2067,6 +2129,7 @@ export async function confirmExistingAppointment(
               slotId: slot.id,
             },
             correlationId,
+            db: tx,
           }).catch(() => {});
         }
         // #837 — slots stay tentative here; the webhook's Phase 2 auto-refunds
@@ -2106,12 +2169,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for class ${classId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "class", entityId: classId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }
@@ -2158,12 +2223,14 @@ export async function confirmExistingAppointment(
         select: { status: true },
       });
       if (!fresh || !BENIGN_EVENT_STATUSES.includes(fresh.status)) {
-        void recordSystemError({
+        // #1582 B-P1-02 — through the tx (PG_POOL_MAX=1).
+        await recordSystemError({
           organizationId: null,
           category: "PAYMENT",
           summary: `Payment captured for webinar ${webinarId} in non-live state ${fresh?.status ?? "unknown"} — refund needed`,
           err: new Error("CAPTURE_AFTER_TERMINAL_STATE"),
           context: { entityType: "webinar", entityId: webinarId },
+          db: tx,
         }).catch(() => {});
         return { capturedAfterTerminal: true };
       }

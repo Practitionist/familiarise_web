@@ -42,6 +42,21 @@ stateDiagram-v2
     end note
 ```
 
+### What the consultant sees
+
+Until PR-Y (#1675, #1527 W2) no consultant route read `ConsultantPayout` at all, so the withholding was invisible to the person it was withheld from. The Paid-out segment of the Earnings page now lists the consultant's payouts through `getConsultantPayouts` in `lib/payments/payouts/payout-service.ts`, whose select (`CONSULTANT_PAYOUT_SELECT`) carries the money walk, the dates, the failure reason and the UTR and never `providerPayoutId`, `idempotencyKey` or batch internals. Each row is worded by `derivePayoutPresentation` in `lib/dashboard/earnings-state.ts`, as the table below shows, and opens a sheet that walks share → TDS at the stamped `tdsRateAppliedBps` (Section 194-O) → net, with the UTR and the date.
+
+| `PayoutStatus`        | Badge                 | Tone     | Line                                                                                              |
+| --------------------- | --------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `PENDING`, `APPROVED` | Queued                | neutral  | "Queued for the next payout run"                                                                  |
+| `PROCESSING`          | On its way            | info     | "Sent to your bank"                                                                               |
+| `COMPLETED`           | Paid                  | success  | "Paid <date> · UTR <utr>"                                                                         |
+| `FAILED`              | Failed                | warning  | The failure reason reduced to plain words by `sanitizePayoutFailure`, then "; we retry on Monday" |
+| `CANCELLED`           | Cancelled             | neutral  | "Cancelled before it was sent — the money stays in your balance"                                  |
+| `REVERSED`            | Returned by your bank | critical | "Your bank sent the transfer back — check your account details"                                   |
+
+The failure reason is sanitised on the server before the payload leaves (`buildConsultantEarningsPayload`), because the raw gateway text can embed a provider payout id; the sanitiser is idempotent so the client derivation can run it again safely.
+
 ---
 
 ## Weekly Batch Creation

@@ -5,7 +5,8 @@
  * Pattern follows lib/email/deliver.ts (graceful degradation).
  */
 import * as Sentry from "@sentry/nextjs";
-import type { Tx } from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
+import { computeQuietHoursNotBefore } from "./quiet-hours";
 import { getNovuClient, isNovuConfigured } from "./client";
 import {
   attemptTrigger,
@@ -103,8 +104,67 @@ export interface TriggerOptions {
   // (PG_POOL_MAX=1 deadlocks a global-client read inside an open transaction).
   // #1697 item 5 — "user" too: the recipient-timezone read must ride the
   // caller's transaction for the same single-connection reason.
+  // Quiet-hours reads ride it too (via the `user` → `notificationPreferences`
+  // include in resolveQuietHoursNotBefore, so no extra delegate is needed).
   tx?: Pick<Tx, "notificationOutbox" | "membership" | "user">;
   entityRef?: string;
+  /**
+   * Urgent workflows (payment failure) bypass quiet-hours deferral entirely:
+   * no `notBefore` is stamped, so every path — inline, post-commit, drain —
+   * sends immediately. Defaults true (routine product notices defer).
+   */
+  deferrable?: boolean;
+}
+
+/**
+ * Q3 fix — quiet-hours deferral. Loads each recipient's quiet-hours config
+ * (riding the caller's tx when one is open, per the PG_POOL_MAX=1 note above)
+ * and returns the latest window-end, so a batch waits until every recipient
+ * is out of quiet hours. BROADCAST has no recipients and is never deferred.
+ * Never throws: on any failure returns undefined (send ASAP).
+ */
+async function resolveQuietHoursNotBefore(
+  recipients: string[],
+  opts: TriggerOptions | undefined,
+): Promise<Date | undefined> {
+  if (recipients.length === 0) return undefined;
+  try {
+    const db = opts?.tx ?? prisma;
+    const rows = await db.user.findMany({
+      where: { id: { in: recipients } },
+      select: {
+        timezone: true,
+        notificationPreferences: {
+          select: {
+            quietHoursEnabled: true,
+            quietHoursStart: true,
+            quietHoursEnd: true,
+            quietHoursTimezone: true,
+          },
+        },
+      },
+    });
+    const now = new Date();
+    let latest: Date | undefined;
+    for (const row of rows) {
+      const pref = row.notificationPreferences;
+      if (!pref?.quietHoursEnabled) continue;
+      const notBefore = computeQuietHoursNotBefore(
+        {
+          quietHoursEnabled: true,
+          quietHoursStart: pref.quietHoursStart,
+          quietHoursEnd: pref.quietHoursEnd,
+          quietHoursTimezone: pref.quietHoursTimezone,
+          fallbackTimezone: row.timezone,
+        },
+        now,
+      );
+      if (notBefore && (!latest || notBefore > latest)) latest = notBefore;
+    }
+    return latest;
+  } catch {
+    return undefined;
+  }
 }
 
 // Unconfigured Novu in a deployed env means notifications silently vanish —
@@ -125,17 +185,42 @@ async function stageAndAttempt(
   args: Omit<StageTriggerArgs, "tx" | "entityRef">,
   opts: TriggerOptions | undefined,
 ): Promise<TriggerResult> {
-  const staged = await stageTrigger({ ...args, ...opts });
+  // Q3: stamp quiet-hours deferral before staging. An explicit notBefore from
+  // the caller wins; otherwise defer to the latest recipient window-end
+  // (one row carries one floor, so a group notice waits until every
+  // recipient is out of quiet hours rather than waking some of them).
+  // Non-deferrable (urgent) workflows skip the computation entirely.
+  const notBefore =
+    args.notBefore ??
+    (opts?.deferrable === false || args.kind === "BROADCAST"
+      ? undefined
+      : await resolveQuietHoursNotBefore(args.recipients, opts));
+  const staged = await stageTrigger({
+    ...args,
+    ...(notBefore && { notBefore }),
+    ...opts,
+  });
   if (!isNovuConfigured()) {
     reportNotConfigured(args.workflowId);
     return { success: false, error: "Novu not configured" };
   }
   if (!staged) {
-    // Staging failed outside a transaction: send-first, as before #1654, so
-    // a database hiccup does not also drop the bell.
+    // Staging failed outside a transaction. A quiet-hours floor lives only in
+    // the row, so a deferred notice has nowhere to wait: fail closed rather
+    // than wake the recipient early (stageTrigger already reported to Sentry).
+    if (notBefore && notBefore.getTime() > Date.now()) {
+      return {
+        success: false,
+        error: "Stage failed; quiet-hours notice not sent",
+      };
+    }
+    // Otherwise send-first, as before #1654, so a database hiccup does not
+    // also drop the bell.
     return sendUnstaged(args);
   }
   if (opts?.tx) return { success: true, staged };
+  // attemptTrigger holds future-notBefore rows for the drain (single
+  // enforcement point — covers inline and post-commit attempts alike).
   return attemptTrigger(staged);
 }
 
@@ -596,14 +681,19 @@ export async function notifyRefundFailed(userId: string, payload: RefundInput) {
   );
 }
 
+// `dedupeKey` should be the Refund row id: the wire payload carries no refund
+// identifier, so two refunds of the same amount/reason/scope would otherwise
+// hash to one outbox row and ops would see only the first (#1738 review).
 export async function notifyRefundRequested(
   adminUserIds: string[],
   payload: RefundInput,
+  dedupeKey?: string,
 ) {
   return triggerForMultiple(
     NOVU_WORKFLOWS.REFUND_REQUESTED,
     adminUserIds,
     refundWire(payload),
+    dedupeKey,
   );
 }
 
@@ -755,11 +845,24 @@ export async function notifySubscriptionCancelled(
   );
 }
 
+/**
+ * #1766 — staged from the completion path when a cycle's last live session
+ * completes with entitlement left; `dedupeKey` is `sub:<id>:cycle:<ordinal>`
+ * so a second completion pass over the same state reuses the outbox row.
+ */
 export async function notifySubscriptionRenewed(
   userId: string,
   payload: SubscriptionPayload,
+  dedupeKey?: string,
+  opts?: TriggerOptions,
 ) {
-  return triggerWorkflow(NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED, userId, payload);
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.SUBSCRIPTION_RENEWED,
+    userId,
+    payload,
+    dedupeKey,
+    opts,
+  );
 }
 
 // ============================================================================
@@ -864,6 +967,28 @@ export async function notifyPayoutProcessed(
     NOVU_WORKFLOWS.PAYOUT_PROCESSED,
     consultantUserId,
     wire,
+  );
+}
+
+/**
+ * The consultant, when a payout FAILS or is CANCELLED (earnings released
+ * back to READY). Urgent money news — never deferred by quiet hours.
+ */
+export async function notifyPayoutFailed(
+  consultantUserId: string,
+  payload: PayoutInput,
+) {
+  const wire: PayoutPayload = {
+    ...payload,
+    amount: formatNotificationMoney(payload.amount, payload.currency),
+    amountPaise: payload.amount,
+  };
+  return triggerWorkflow(
+    NOVU_WORKFLOWS.PAYOUT_FAILED,
+    consultantUserId,
+    wire,
+    undefined,
+    { deferrable: false },
   );
 }
 
