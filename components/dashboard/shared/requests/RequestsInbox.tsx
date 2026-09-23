@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   keepPreviousData,
@@ -132,28 +132,54 @@ const requestPath = (row: InboxRowInput) =>
   }/${encodeURIComponent(row.id)}`;
 
 /**
- * Tabs, chips, sort and page live in the URL. Writes go through the native
- * history API, which the App Router syncs into `useSearchParams` (Next 14.1+):
- * the URL changes synchronously and no server round trip re-renders the page
- * for a filter click (QA #1783 case 3 — `router.replace` left the URL behind).
+ * Tabs, chips, sort and page live in the URL for shareability, but the UI
+ * reads them from LOCAL state. `history.replaceState` only changes the
+ * address bar: Next patches it to dispatch ACTION_RESTORE, which commits
+ * after the RSC round-trip for the new URL (slow on dynamic pages, stuck
+ * forever when that fetch fails — preview QA showed URL+API updating while
+ * the list stayed frozen). The local override flips the query key instantly;
+ * genuine navigations (mount, back/forward) clear it so the URL wins.
+ * Same discipline as UrlTabs' localActive (QA #1783 case 3 — `router.replace`
+ * left the URL behind, so the URL is still written, just never waited on).
  */
 function useInboxUrlState() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const params = useMemo(
+  const urlParams = useMemo(
     () => readInboxParams((key) => searchParams.get(key)),
     [searchParams],
   );
+  const [local, setLocal] = useState<typeof urlParams | null>(null);
+  // A real navigation syncs useSearchParams — drop the override, URL wins.
+  useEffect(() => {
+    setLocal(null);
+  }, [searchParams]);
+  const params = local ?? urlParams;
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
   const setParams = useCallback(
     (patch: InboxParamsPatch) => {
-      const qs = nextInboxSearch(searchParams.toString(), patch);
+      // Seed from the EFFECTIVE params, not searchParams (stale after the
+      // first replaceState): otherwise a chip click after a type click would
+      // drop `type` from the URL.
+      const cur = paramsRef.current;
+      const base = new URLSearchParams();
+      base.set("type", cur.type);
+      base.set("sort", cur.sort);
+      if (cur.chip) base.set("chip", cur.chip);
+      if (cur.page > 1) base.set("page", String(cur.page));
+      const qs = nextInboxSearch(base.toString(), patch);
+      const get = (key: string) => new URLSearchParams(qs).get(key);
+      const next = readInboxParams(get);
+      paramsRef.current = next;
+      setLocal(next);
       window.history.replaceState(
         window.history.state,
         "",
         qs ? `${pathname}?${qs}` : pathname,
       );
     },
-    [pathname, searchParams],
+    [pathname],
   );
   return { params, setParams };
 }
@@ -254,15 +280,9 @@ export function RequestsInbox({
     el.scrollIntoView({ block: "center" });
   }, [focusId, rows]);
 
-  // Tab switches are non-urgent: keep old rows on screen (keepPreviousData
-  // above) while the new cohort streams in, instead of blocking the click.
-  const [, startTransition] = useTransition();
-  const setParamsTransition = useCallback(
-    (patch: InboxParamsPatch) => {
-      startTransition(() => setParams(patch));
-    },
-    [setParams],
-  );
+  // setParams is synchronous local state (see useInboxUrlState) — the tab
+  // flips instantly and keepPreviousData holds old rows while the new cohort
+  // streams in. No transition: there is nothing non-urgent left to defer.
 
   // Hover/intent prefetch for sibling tabs + chips (TanStack prefetching
   // best practice: onMouseEnter/onFocus, staleTime-guarded). Hovering across
@@ -682,7 +702,7 @@ export function RequestsInbox({
                 size="sm"
                 disabled={refreshing || data.meta.page <= 1}
                 onClick={() =>
-                  setParamsTransition({ page: data.meta.page - 1 })
+                  setParams({ page: data.meta.page - 1 })
                 }
               >
                 Prev
@@ -695,7 +715,7 @@ export function RequestsInbox({
                 size="sm"
                 disabled={refreshing || data.meta.page >= totalPages}
                 onClick={() =>
-                  setParamsTransition({ page: data.meta.page + 1 })
+                  setParams({ page: data.meta.page + 1 })
                 }
               >
                 Next
@@ -723,7 +743,7 @@ export function RequestsInbox({
           value={params.type}
           onValueChange={(next) => {
             setSelected(new Set());
-            setParamsTransition({ type: next as InboxType });
+            setParams({ type: next as InboxType });
           }}
         >
           <TabsList aria-label="Request type">
@@ -764,7 +784,7 @@ export function RequestsInbox({
           <InboxSortControl
             value={params.sort}
             disabled={loading}
-            onChange={(sort) => setParamsTransition({ sort })}
+            onChange={(sort) => setParams({ sort })}
           />
           {/* Refresh stays the truth: it re-reads now, whatever the clock says. */}
           <Button
@@ -792,7 +812,7 @@ export function RequestsInbox({
         disabled={loading}
         onChange={(next) => {
           setSelected(new Set());
-          setParamsTransition({ chip: next });
+          setParams({ chip: next });
         }}
         onHoverChip={(c) => prefetchInbox(params.type, c)}
       />
