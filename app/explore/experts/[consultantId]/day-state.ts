@@ -54,8 +54,10 @@ export function isSelectableDay(state: DayState): boolean {
   return state !== "past" && state !== "none" && state !== "today+none";
 }
 
-/** Match the calendar mark to the duration windows actually shown in the picker. */
-export function durationDayState(
+export type DayBookingKind = "instant" | "request" | null;
+
+/** Match the date's mark and booking path to the duration windows in the picker. */
+export function durationDayMark(
   date: Date,
   now: Date,
   daySlots: (TIntervalTiming & { isAllocated: boolean })[] | null,
@@ -63,24 +65,44 @@ export function durationDayState(
   timezone: string,
   bookingMode: BookingMode,
   acceptingRequests: boolean,
-): DayState {
+): { state: DayState; kind: DayBookingKind } {
   if (!isSameDay(date, now) && startOfDay(date) < startOfDay(now)) {
-    return "past";
+    return { state: "past", kind: null };
   }
-  if (daySlots === null) return dayState(date, now, null);
+  if (daySlots === null) {
+    return { state: dayState(date, now, null), kind: null };
+  }
 
   const windows = breakDownSlotsPreservingStatus(
     daySlots,
     durationInHours,
     timezone,
   );
-  const actionableWindows = acceptingRequests
-    ? windows
-    : windows.filter(
-        (slot) =>
-          consultationCtaFor(bookingMode, slot.isAllocated).action ===
-          "checkout",
-      );
+  const cutoff = now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS;
+  const actionableWindows = windows.filter((slot) => {
+    if (
+      slot.bookingStatus === "fully-booked" ||
+      new Date(slot.startsAt).getTime() < cutoff
+    ) {
+      return false;
+    }
+    return (
+      acceptingRequests ||
+      consultationCtaFor(bookingMode, slot.isAllocated).action === "checkout"
+    );
+  });
 
-  return dayState(date, now, actionableWindows);
+  const hasInstantWindow = actionableWindows.some(
+    (slot) =>
+      consultationCtaFor(bookingMode, slot.isAllocated).action === "checkout",
+  );
+
+  return {
+    state: dayState(date, now, actionableWindows),
+    kind: hasInstantWindow
+      ? "instant"
+      : actionableWindows.length > 0
+        ? "request"
+        : null,
+  };
 }

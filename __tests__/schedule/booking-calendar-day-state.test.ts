@@ -9,7 +9,7 @@
  */
 import {
   dayState,
-  durationDayState,
+  durationDayMark,
   isSelectableDay,
   type DayMarkSlot,
 } from "@/app/explore/experts/[consultantId]/day-state";
@@ -92,7 +92,10 @@ const halfHourSlot = (
   };
 };
 
-describe("durationDayState", () => {
+const durationDayState = (...args: Parameters<typeof durationDayMark>) =>
+  durationDayMark(...args).state;
+
+describe("durationDayMark", () => {
   const shortOpening = [halfHourSlot(20, 10, 0), halfHourSlot(20, 10, 30)];
   const twoHourOpening = [
     ...shortOpening,
@@ -181,6 +184,70 @@ describe("durationDayState", () => {
     expect(
       durationDayState(day(20), NOW, null, 2, TEST_TIMEZONE, "INSTANT", true),
     ).toBe("unknown");
+  });
+
+  it("distinguishes instant dates from approval-only dates", () => {
+    expect(
+      durationDayMark(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ).kind,
+    ).toBe("instant");
+    expect(
+      durationDayMark(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "REQUEST",
+        true,
+      ).kind,
+    ).toBe("request");
+    expect(
+      durationDayMark(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "REQUEST",
+        false,
+      ).kind,
+    ).toBeNull();
+
+    const contended = {
+      ...halfHourSlot(20, 11, 0),
+      isAllocated: true,
+      bookingStatus: "partially-booked" as const,
+    };
+    expect(
+      durationDayMark(
+        day(20),
+        NOW,
+        [contended],
+        0.5,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ).kind,
+    ).toBe("request");
+    expect(
+      durationDayMark(
+        day(20),
+        NOW,
+        [halfHourSlot(20, 10, 0), contended],
+        0.5,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ).kind,
+    ).toBe("instant");
   });
 
   it("does not mark a duration window that starts inside the booking lead time", () => {

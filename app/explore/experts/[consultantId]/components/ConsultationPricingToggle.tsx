@@ -524,6 +524,29 @@ export default function ConsultationPricingToggle({
                         <div className="grid grid-cols-7 gap-2">
                           {renderCalendar(selectedDuration)}
                         </div>
+                        {(consultantDetails.bookingMode !== "REQUEST" ||
+                          consultantDetails.acceptingRequests !== false) && (
+                          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-700/50 pt-3 text-xs text-zinc-400">
+                            {consultantDetails.bookingMode !== "REQUEST" && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="h-2 w-2 rounded-full bg-emerald-400"
+                                />
+                                Book now
+                              </span>
+                            )}
+                            {consultantDetails.acceptingRequests !== false && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="h-2 w-2 rounded-full bg-amber-400"
+                                />
+                                Request approval
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -581,6 +604,9 @@ export default function ConsultationPricingToggle({
                           onSelect={setSelectedSlot}
                           bookingMode={
                             consultantDetails.bookingMode ?? "INSTANT"
+                          }
+                          acceptingRequests={
+                            consultantDetails.acceptingRequests !== false
                           }
                         />
                       </div>

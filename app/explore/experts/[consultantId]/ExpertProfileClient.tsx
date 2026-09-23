@@ -34,7 +34,7 @@ import {
   useAvailabilityMonth,
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
-import { durationDayState, isSelectableDay } from "./day-state";
+import { durationDayMark, isSelectableDay } from "./day-state";
 import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
@@ -316,7 +316,7 @@ export function ExpertProfileClient({
         const key = timezone
           ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
           : null;
-        const state = durationDayState(
+        const { state, kind } = durationDayMark(
           date,
           now,
           marks && key ? (marks[key] ?? []) : null,
@@ -327,7 +327,12 @@ export function ExpertProfileClient({
         );
         const isToday = state.startsWith("today");
         const selectable = isSelectableDay(state);
-        const bookable = state === "bookable" || state === "today+bookable";
+        const availabilityLabel =
+          kind === "instant"
+            ? ", book-now times available"
+            : kind === "request"
+              ? ", times available by request"
+              : "";
 
         days.push(
           <button
@@ -335,13 +340,19 @@ export function ExpertProfileClient({
             type="button"
             disabled={!selectable}
             aria-pressed={isSelected}
-            aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
+            aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${availabilityLabel}`}
             className={cn(
               "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
               isSelected && "bg-white font-medium text-zinc-900 shadow-md",
+              isSelected && kind && "ring-2 ring-offset-2 ring-offset-zinc-800",
+              isSelected && kind === "instant" && "ring-emerald-400",
+              isSelected && kind === "request" && "ring-amber-400",
               !isSelected &&
-                bookable &&
-                "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+                kind === "instant" &&
+                "bg-emerald-400/10 font-semibold text-emerald-200 ring-1 ring-emerald-400/70 hover:bg-emerald-400/20",
+              !isSelected &&
+                kind === "request" &&
+                "bg-amber-400/10 font-semibold text-amber-200 ring-1 ring-amber-400/70 hover:bg-amber-400/20",
               !isSelected &&
                 (state === "unknown" || state === "today+unknown") &&
                 "font-medium text-zinc-300 hover:bg-zinc-700/60",
