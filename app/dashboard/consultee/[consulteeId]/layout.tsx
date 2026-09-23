@@ -229,10 +229,13 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.consulteeProfileId === consulteeId);
 
   // Redirect unauthorized users to their own dashboard (capability-routed).
-  // Guarded to a single navigation: without it a stale `user-details` payload
-  // could bounce /dashboard → back here → /dashboard while the server router
-  // resolves the other way, flashing "Redirecting to your dashboard...".
-  const navigatedRef = useRef<string | null>(null);
+  // Guarded and keyed by pathname+target (see the consultant layout): this
+  // layout stays mounted across nested routes, so a *different* unauthorized
+  // pathname must re-arm the navigation instead of being skipped as a
+  // duplicate of an earlier one.
+  const navigatedRef = useRef<{ pathname: string; target: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
@@ -243,9 +246,15 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
           ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
           : "/dashboard";
       // Never replace to the URL we are already on, and never queue the same
-      // target twice (Strict-Mode double effects / duplicate query emissions).
-      if (target === pathname || navigatedRef.current === target) return;
-      navigatedRef.current = target;
+      // pathname→target pair twice (Strict-Mode double effects / duplicate
+      // query emissions).
+      if (target === pathname) return;
+      if (
+        navigatedRef.current?.pathname === pathname &&
+        navigatedRef.current?.target === target
+      )
+        return;
+      navigatedRef.current = { pathname, target };
       router.replace(target);
     }
   }, [

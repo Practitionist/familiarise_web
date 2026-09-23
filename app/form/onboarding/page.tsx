@@ -399,14 +399,26 @@ function describeDraftField(field: string | null): string {
 
 /**
  * Dead-session recovery: sign out, then return to sign-in preserving the
- * wizard destination (path + query, so `?callbackUrl=` and `?add=CONSULTANT`
- * survive). Success navigates straight there; a failed sign-out may leave a
- * valid cookie behind, so the error path goes through the stale-session
+ * wizard destination. Success navigates straight there; a failed sign-out may
+ * leave a valid cookie behind, so the error path goes through the stale-session
  * cleanup endpoint first (fail closed) — otherwise sign-in would bounce
  * straight back to the wizard on the live cookie.
+ *
+ * Ordinary recovery (`?callbackUrl=/checkout/…`) passes the validated ORIGINAL
+ * callback through — wrapping the whole onboarding URL would nest it, and after
+ * completion the guard would see a fully-onboarded user on the wizard (without
+ * add mode) and drop them on the dashboard, never reaching checkout. Add mode
+ * (`?add=CONSULTANT`) keeps the full wizard URL, which requireNotOnboarded
+ * admits for eligible users.
  */
 function signOutToSignin() {
-  const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const params = new URLSearchParams(search);
+  const inner = safeSameOriginPath(params.get("callbackUrl"));
+  const here =
+    inner && params.get("add") !== "CONSULTANT"
+      ? inner
+      : `/form/onboarding${search ? `?${params.toString()}` : ""}`;
   const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
   const cleanupHref = `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(here)}`;
   signOut({

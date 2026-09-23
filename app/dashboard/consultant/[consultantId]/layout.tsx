@@ -452,12 +452,17 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.role === "STAFF" ||
       userDetails.consultantProfileId === consultantId);
 
-  // Redirect unauthorized users to their appropriate dashboard. Guarded to a
-  // single navigation: without it a stale `user-details` payload (≤5-min
-  // React-Query cache, or a profile just added server-side) could bounce
-  // /dashboard → back here → /dashboard while the server router resolves the
-  // other way, flashing "Redirecting to your dashboard..." in a loop.
-  const navigatedRef = useRef<string | null>(null);
+  // Redirect unauthorized users to their appropriate dashboard. Guarded:
+  // without it a stale `user-details` payload (≤5-min React-Query cache, or a
+  // profile just added server-side) could bounce /dashboard → back here →
+  // /dashboard while the server router resolves the other way, flashing
+  // "Redirecting to your dashboard..." in a loop. Keyed by pathname+target:
+  // this layout stays mounted across nested routes, so a *different*
+  // unauthorized pathname must re-arm the navigation instead of being skipped
+  // as a duplicate of an earlier one.
+  const navigatedRef = useRef<{ pathname: string; target: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
@@ -469,9 +474,15 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
         target = `/dashboard/consultee/${userDetails.consulteeProfileId}/home`;
       }
       // Never replace to the URL we are already on, and never queue the same
-      // target twice (Strict-Mode double effects / duplicate query emissions).
-      if (target === pathname || navigatedRef.current === target) return;
-      navigatedRef.current = target;
+      // pathname→target pair twice (Strict-Mode double effects / duplicate
+      // query emissions).
+      if (target === pathname) return;
+      if (
+        navigatedRef.current?.pathname === pathname &&
+        navigatedRef.current?.target === target
+      )
+        return;
+      navigatedRef.current = { pathname, target };
       router.replace(target);
     }
   }, [
