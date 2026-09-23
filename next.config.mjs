@@ -174,20 +174,21 @@ const nextConfig = {
     // lesson as #1792's widenClientFileUpload). Default concurrency is 8
     // workers × DB-touching prerenders; halving it on Netlify halves peak
     // RSS at the cost of a slower static phase. CI/dev keep the default.
-    // Drop to 2 if exit 137 recurs.
+    // Netlify-only survival tuning (exit 137, 8 GB container). NONE of this
+    // affects the shipped site's speed — it only changes how many pages the
+    // build cooks at once. Minimum parallelism: 1 worker × 2 pages in flight
+    // (from 4×8=32). Builds get much slower; that is explicitly accepted.
+    // If Netlify's build time limit ever binds, raise maxConcurrency first.
     ...(process.env.NETLIFY === "true"
       ? {
-          staticGenerationMaxConcurrency: 4,
+          staticGenerationMaxConcurrency: 2,
           // Prerender source maps are held in memory through the static
           // phase; Netlify trades them for survival (Next memory guide),
           // CI/dev keep them for prerender stack-trace quality.
           enablePrerenderSourceMaps: false,
           // Bounds the jest-worker pools for BOTH compile and static
-          // generation (build/index.js getNumberOfWorkers). Default is 4
-          // workers; with maxConcurrency 4 the worst case drops from
-          // 4×8=32 to 2×4=8 pages in flight. Builds get slower — that is
-          // the trade, and a slow green build beats a fast red one.
-          cpus: 2,
+          // generation (build/index.js getNumberOfWorkers). Default is 4.
+          cpus: 1,
         }
       : {}),
     webpackMemoryOptimizations: true,
