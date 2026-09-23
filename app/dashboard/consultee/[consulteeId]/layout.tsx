@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo } from "react";
+import { use, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -229,20 +229,33 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.consulteeProfileId === consulteeId);
 
   // Redirect unauthorized users to their own dashboard (capability-routed).
+  // Guarded and keyed by pathname+target (see the consultant layout): this
+  // layout stays mounted across nested routes, so a *different* unauthorized
+  // pathname must re-arm the navigation instead of being skipped as a
+  // duplicate of an earlier one.
+  const navigatedRef = useRef<{ pathname: string; target: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (isLoadingUser || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsulteeAccess) {
-      if (
+      const target =
         userDetails.consulteeProfileId &&
         userDetails.consulteeProfileId !== consulteeId
-      ) {
-        router.replace(
-          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
-        );
-      } else {
-        router.replace("/dashboard");
-      }
+          ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
+          : "/dashboard";
+      // Never replace to the URL we are already on, and never queue the same
+      // pathname→target pair twice (Strict-Mode double effects / duplicate
+      // query emissions).
+      if (target === pathname) return;
+      if (
+        navigatedRef.current?.pathname === pathname &&
+        navigatedRef.current?.target === target
+      )
+        return;
+      navigatedRef.current = { pathname, target };
+      router.replace(target);
     }
   }, [
     userDetails,
@@ -252,6 +265,7 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
     userId,
     router,
     consulteeId,
+    pathname,
   ]);
 
   // Prefetch

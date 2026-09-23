@@ -689,28 +689,71 @@ function planCohort(
   return plan;
 }
 
-/** Sequential reads on purpose: PG_POOL_MAX=1 serialises them anyway. */
+/**
+ * Bounded concurrency for the serverless pool: with PG_POOL_MAX=1 every extra
+ * concurrent query queues behind the single connection, and a 6-deep queue at
+ * ~700ms each can exceed the 3s PG_CONNECT_TIMEOUT_MS before it starts.
+ * Cap in-flight reads (2 when pool<=1, else 6) instead of unbounded
+ * Promise.all — still parallel locally, safe on Netlify.
+ */
+function poolLimit(): number {
+  const max = Number(process.env.PG_POOL_MAX);
+  return Number.isFinite(max) && max <= 1 ? 2 : 6;
+}
+
+async function mapLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const workers = new Array(Math.min(limit, items.length))
+    .fill(null)
+    .map(async () => {
+      while (next < items.length) {
+        const i = next++;
+        out[i] = await fn(items[i]);
+      }
+    });
+  await Promise.all(workers);
+  return out;
+}
+
+/**
+ * Cohort reads run concurrently (bounded): each sub-cohort is an independent
+ * bounded scan (take 200), so serial awaits only summed their latencies.
+ */
 async function readCohort(
   cp: string,
   scope: Scope,
   plan: CohortPlan,
   now: Date,
 ): Promise<InboxRowInput[]> {
-  const rows: InboxRowInput[] = [];
-  for (const where of plan.consultationStatuses) {
-    const found = await findConsultations(where);
-    rows.push(...found.map((c) => consultationRow(c, cp, now)));
-  }
-  for (const where of plan.subscriptionStatuses) {
-    const found = await findSubscriptions(where);
-    rows.push(...found.map((s) => subscriptionRow(s, cp, now, "subscription")));
-  }
-  if (plan.nextCycle) rows.push(...(await readNextCycleRows(cp, scope, now)));
-  if (plan.trialStatuses.length > 0) {
-    const found = await findTrials(trialWhere(cp, scope, plan.trialStatuses));
-    rows.push(...found.map((t) => trialRow(t, cp, now)));
-  }
-  return rows;
+  const limit = poolLimit();
+  const [consultationGroups, subscriptionGroups, nextCycleRows, trialRows] =
+    await Promise.all([
+      mapLimit(plan.consultationStatuses, limit, async (where) => {
+        const found = await findConsultations(where);
+        return found.map((c) => consultationRow(c, cp, now));
+      }),
+      mapLimit(plan.subscriptionStatuses, limit, async (where) => {
+        const found = await findSubscriptions(where);
+        return found.map((s) => subscriptionRow(s, cp, now, "subscription"));
+      }),
+      plan.nextCycle ? readNextCycleRows(cp, scope, now) : Promise.resolve([]),
+      plan.trialStatuses.length > 0
+        ? findTrials(trialWhere(cp, scope, plan.trialStatuses)).then((found) =>
+            found.map((t) => trialRow(t, cp, now)),
+          )
+        : Promise.resolve([]),
+    ]);
+  return [
+    ...consultationGroups.flat(),
+    ...subscriptionGroups.flat(),
+    ...nextCycleRows,
+    ...trialRows,
+  ];
 }
 
 /** #1766 — the predicate cannot count; `remaining > 0` is decided here. */
@@ -750,44 +793,72 @@ async function readCounts(
   now: Date,
   known: { type: InboxType; total: number } | null,
 ): Promise<Record<InboxType, number>> {
-  const counts: Record<InboxType, number> = {
-    consultation: 0,
-    subscription: 0,
-    trial: 0,
-  };
-  if (known?.type === "consultation") counts.consultation = known.total;
-  else {
-    counts.consultation =
-      (await prisma.consultation.count({
+  // Counts are independent but pool-bounded (see poolLimit above): 6 at once
+  // can queue past PG_CONNECT_TIMEOUT_MS on pool=1. The `known` shortcut
+  // still avoids re-counting the active tab (its total came from the cohort).
+  type CountTask = () => Promise<number>;
+  const tasks: CountTask[] = [];
+  if (known?.type !== "consultation") {
+    tasks.push(() =>
+      prisma.consultation.count({
         where: { ...pendingConsultationWhere(cp, scope), deletedAt: null },
-      })) +
-      (await prisma.consultation.count({
+      }),
+    );
+    tasks.push(() =>
+      prisma.consultation.count({
         where: {
           ...consultationRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
           deletedAt: null,
         },
-      }));
+      }),
+    );
   }
-  if (known?.type === "subscription") counts.subscription = known.total;
-  else {
-    counts.subscription =
-      (await prisma.subscription.count({
+  if (known?.type !== "subscription") {
+    tasks.push(() =>
+      prisma.subscription.count({
         where: { ...pendingSubscriptionWhere(cp, scope), deletedAt: null },
-      })) +
-      (await prisma.subscription.count({
+      }),
+    );
+    tasks.push(() =>
+      prisma.subscription.count({
         where: {
           ...subscriptionRequestWhere(cp, scope, "APPROVED_PENDING_PAYMENT"),
           deletedAt: null,
         },
-      })) +
-      (await countNextCycle(cp, scope, now));
+      }),
+    );
+    tasks.push(() => countNextCycle(cp, scope, now));
   }
-  if (known?.type === "trial") counts.trial = known.total;
-  else {
-    counts.trial = await prisma.trial.count({
-      where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
-    });
+  if (known?.type !== "trial") {
+    tasks.push(() =>
+      prisma.trial.count({
+        where: trialWhere(cp, scope, ["PENDING", "AWAITING_PAYMENT"]),
+      }),
+    );
   }
+  const results = await mapLimit(tasks, poolLimit(), (run) => run());
+  let i = 0;
+  const consultationPending =
+    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
+  const consultationAwaiting =
+    known?.type === "consultation" ? 0 : (results[i++] ?? 0);
+  const subscriptionPending =
+    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const subscriptionAwaiting =
+    known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const nextCycle = known?.type === "subscription" ? 0 : (results[i++] ?? 0);
+  const trial = known?.type === "trial" ? 0 : (results[i++] ?? 0);
+  const counts: Record<InboxType, number> = {
+    consultation:
+      known?.type === "consultation"
+        ? known.total
+        : consultationPending + consultationAwaiting,
+    subscription:
+      known?.type === "subscription"
+        ? known.total
+        : subscriptionPending + subscriptionAwaiting + nextCycle,
+    trial: known?.type === "trial" ? known.total : trial,
+  };
   return counts;
 }
 
@@ -799,6 +870,24 @@ export async function readRequestsInbox(
   const limit = args.limit ?? INBOX_DEFAULT_LIMIT;
   const cp = args.consultantProfileId;
   const plan = planCohort(cp, scope, args.type, args.chip, now);
+  // Chip-filtered views don't reuse the cohort total for tab counts, so the
+  // list scan and the tab counts are independent — run them together. The
+  // default (no chip) view reuses its own total, so it stays sequential.
+  if (args.chip) {
+    const [rows, counts] = await Promise.all([
+      readCohort(cp, scope, plan, now).then((cohort) =>
+        sortInboxRows(cohort, args.sort),
+      ),
+      readCounts(cp, scope, now, null),
+    ]);
+    const total = rows.length;
+    const pages = Math.max(1, Math.ceil(total / limit));
+    const page = Math.min(Math.max(1, args.page), pages);
+    return toPlain({
+      rows: rows.slice((page - 1) * limit, page * limit),
+      meta: { total, page, limit, counts },
+    });
+  }
   const cohort = sortInboxRows(
     await readCohort(cp, scope, plan, now),
     args.sort,
@@ -807,11 +896,6 @@ export async function readRequestsInbox(
   const pages = Math.max(1, Math.ceil(total / limit));
   const page = Math.min(Math.max(1, args.page), pages);
   const rows = cohort.slice((page - 1) * limit, page * limit);
-  const counts = await readCounts(
-    cp,
-    scope,
-    now,
-    args.chip ? null : { type: args.type, total },
-  );
+  const counts = await readCounts(cp, scope, now, { type: args.type, total });
   return toPlain({ rows, meta: { total, page, limit, counts } });
 }

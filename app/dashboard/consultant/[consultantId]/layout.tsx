@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo } from "react";
+import { use, useEffect, useMemo, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -452,22 +452,38 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
       userDetails.role === "STAFF" ||
       userDetails.consultantProfileId === consultantId);
 
-  // Redirect unauthorized users to their appropriate dashboard
+  // Redirect unauthorized users to their appropriate dashboard. Guarded:
+  // without it a stale `user-details` payload (≤5-min React-Query cache, or a
+  // profile just added server-side) could bounce /dashboard → back here →
+  // /dashboard while the server router resolves the other way, flashing
+  // "Redirecting to your dashboard..." in a loop. Keyed by pathname+target:
+  // this layout stays mounted across nested routes, so a *different*
+  // unauthorized pathname must re-arm the navigation instead of being skipped
+  // as a duplicate of an earlier one.
+  const navigatedRef = useRef<{ pathname: string; target: string } | null>(
+    null,
+  );
   useEffect(() => {
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsultantAccess) {
+      let target = "/dashboard";
       if (userDetails.consultantProfileId) {
-        router.replace(
-          `/dashboard/consultant/${userDetails.consultantProfileId}/home`,
-        );
+        target = `/dashboard/consultant/${userDetails.consultantProfileId}/home`;
       } else if (userDetails.consulteeProfileId) {
-        router.replace(
-          `/dashboard/consultee/${userDetails.consulteeProfileId}/home`,
-        );
-      } else {
-        router.replace("/dashboard");
+        target = `/dashboard/consultee/${userDetails.consulteeProfileId}/home`;
       }
+      // Never replace to the URL we are already on, and never queue the same
+      // pathname→target pair twice (Strict-Mode double effects / duplicate
+      // query emissions).
+      if (target === pathname) return;
+      if (
+        navigatedRef.current?.pathname === pathname &&
+        navigatedRef.current?.target === target
+      )
+        return;
+      navigatedRef.current = { pathname, target };
+      router.replace(target);
     }
   }, [
     userDetails,
@@ -476,6 +492,7 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     isSessionLoading,
     userId,
     router,
+    pathname,
   ]);
 
   // Prefetch critical routes on mount
@@ -485,9 +502,14 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     // Once per access-resolution, NOT per navigation: `pathname` used to be
     // a dep, re-scheduling this idle prefetch on every tab switch (even while
     // already on the target route). App Router dedupes redundant prefetches.
+    // Route-shell prefetch only: for this dynamic page Next.js warms the shell
+    // through loading.tsx, so the first click shows the skeleton instantly and
+    // the inbox read streams in. Deliberately no inbox-data prefetch here —
+    // that would cost a full scan + counts for a tab the user may not open.
     return schedulePrefetch(() => {
       router.prefetch(`${basePath}/home`);
       router.prefetch(`${basePath}/appointments`);
+      router.prefetch(`${basePath}/requests`);
     }, 3000);
   }, [userId, consultantId, router, hasConsultantAccess, basePath]);
 

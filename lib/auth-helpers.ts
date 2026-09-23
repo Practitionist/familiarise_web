@@ -219,20 +219,6 @@ export function checkOwnership(
 }
 
 /**
- * Checks if the session user is a participant in a consultation.
- * Returns true if they are either the consultant or consultee.
- */
-export function isConsultationParticipant(
-  session: Session,
-  consultantProfileId: string | null | undefined,
-  consulteeProfileId: string | null | undefined,
-): boolean {
-  const isConsultant = session.user.consultantProfileId === consultantProfileId;
-  const isConsultee = session.user.consulteeProfileId === consulteeProfileId;
-  return isConsultant || isConsultee;
-}
-
-/**
  * Creates a standardized 403 Forbidden response.
  */
 export function forbiddenResponse(message = "Forbidden"): NextResponse {
@@ -244,13 +230,6 @@ export function forbiddenResponse(message = "Forbidden"): NextResponse {
  */
 export function unauthorizedResponse(message = "Unauthorized"): NextResponse {
   return NextResponse.json({ error: message }, { status: 401 });
-}
-
-/**
- * Creates a standardized 422 Unprocessable Entity response.
- */
-export function unprocessableResponse(message: string): NextResponse {
-  return NextResponse.json({ error: message }, { status: 422 });
 }
 
 /**

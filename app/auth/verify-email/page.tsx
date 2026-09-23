@@ -5,11 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { humanizeAuthError } from "@/lib/labels/auth-errors";
-import { sendVerificationEmail, useSession } from "@/lib/auth-client";
+import { sendVerificationEmail, useSession, getSession } from "@/lib/auth-client";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { AuthCardSkeleton } from "../AuthCardSkeleton";
 
 export default function VerifyEmail() {
@@ -47,14 +47,46 @@ function VerifyEmailContent() {
   // Success path: after the link is clicked, BetterAuth verifies + auto-signs-in
   // (autoSignInAfterVerification) and redirects here authenticated. Send the
   // user on to onboarding — the referral capture (if any) is applied there.
+  //
+  // `useSession()` can serve the ≤5-min cookie-cache payload, and acting on a
+  // stale `onboardingCompleted` sent us one way while the server guard (always
+  // force-fresh) immediately bounced us back — the same signin↔dashboard↔
+  // onboarding flicker fixed on signin/signup. Re-read force-fresh before
+  // committing, and keep the navigation idempotent (single replace).
+  const navigatedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!isPending && session?.user) {
-      router.replace(
-        session.user.onboardingCompleted
-          ? safeCallbackUrl || "/dashboard"
-          : onboardingUrl,
-      );
-    }
+    if (isPending || !session?.user) return;
+    const cachedCompleted = !!session.user.onboardingCompleted;
+
+    let cancelled = false;
+    const resolveAndGo = (completed: boolean) => {
+      if (cancelled) return;
+      const target = completed ? safeCallbackUrl || "/dashboard" : onboardingUrl;
+      if (navigatedRef.current === target) return;
+      navigatedRef.current = target;
+      router.replace(target);
+    };
+
+    getSession({ query: { disableCookieCache: true } })
+      .then(({ data, error: sessionError }) => {
+        // Better Auth resolves (rather than rejects) HTTP-level failures as
+        // `{ data: null, error }` — fall back to the cached value instead of
+        // stranding the page on the skeleton until the next store update.
+        if (sessionError) {
+          resolveAndGo(cachedCompleted);
+          return;
+        }
+        // Session revoked between paint and check — no protected redirect.
+        if (!data?.user) return;
+        resolveAndGo(!!data.user.onboardingCompleted);
+      })
+      .catch(() => {
+        resolveAndGo(cachedCompleted);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [isPending, session, router, safeCallbackUrl, onboardingUrl]);
 
   const handleResend = async () => {
