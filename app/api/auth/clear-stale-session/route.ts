@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { safeSameOriginPath } from "@/lib/safe-callback-url";
 
 /**
@@ -19,6 +20,12 @@ const SESSION_COOKIES = [
   "__Secure-better-auth.session_data",
 ];
 
+// Query inputs on app/api/** routes are Zod-parsed per repo convention; the
+// bound also keeps an unbounded query string out of URL parsing + the
+// Location header. Invalid input is treated as absent so cleanup stays
+// reachable — it is a recovery endpoint, not a gated one.
+const callbackUrlSchema = z.string().max(2048).optional();
+
 export async function GET(request: Request) {
   const cookieStore = await cookies();
   for (const name of SESSION_COOKIES) {
@@ -26,8 +33,11 @@ export async function GET(request: Request) {
   }
 
   const url = new URL("/auth/signin", request.url);
+  const rawCallbackUrl =
+    new URL(request.url).searchParams.get("callbackUrl") ?? undefined;
+  const parsedCallbackUrl = callbackUrlSchema.safeParse(rawCallbackUrl);
   const safe = safeSameOriginPath(
-    new URL(request.url).searchParams.get("callbackUrl"),
+    parsedCallbackUrl.success ? parsedCallbackUrl.data : undefined,
   );
   if (
     safe &&

@@ -397,6 +397,30 @@ function describeDraftField(field: string | null): string {
     : "longest answers";
 }
 
+/**
+ * Dead-session recovery: sign out, then return to sign-in preserving the
+ * wizard destination (path + query, so `?callbackUrl=` and `?add=CONSULTANT`
+ * survive). Success navigates straight there; a failed sign-out may leave a
+ * valid cookie behind, so the error path goes through the stale-session
+ * cleanup endpoint first (fail closed) — otherwise sign-in would bounce
+ * straight back to the wizard on the live cookie.
+ */
+function signOutToSignin() {
+  const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
+  const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
+  const cleanupHref = `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(here)}`;
+  signOut({
+    fetchOptions: {
+      onSuccess: () => {
+        window.location.href = signinHref;
+      },
+      onError: () => {
+        window.location.href = cleanupHref;
+      },
+    },
+  });
+}
+
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   // Add mode (PR-6): `?add=CONSULTANT` on an onboarded learner / org operator
@@ -720,18 +744,7 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
-        const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
-        signOut({
-          fetchOptions: {
-            onSuccess: () => {
-              window.location.href = signinHref;
-            },
-            onError: () => {
-              window.location.href = signinHref;
-            },
-          },
-        });
+        signOutToSignin();
         return;
       }
       // Controlled inputs surface blanks as "" — coerce to undefined so the
@@ -790,18 +803,7 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        const here = `/form/onboarding${typeof window !== "undefined" ? window.location.search : ""}`;
-        const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
-        signOut({
-          fetchOptions: {
-            onSuccess: () => {
-              window.location.href = signinHref;
-            },
-            onError: () => {
-              window.location.href = signinHref;
-            },
-          },
-        });
+        signOutToSignin();
         return;
       }
 
@@ -865,16 +867,7 @@ const MultiStepForm: React.FC = () => {
             description: "Your session has expired. Please sign in again.",
             variant: "destructive",
           });
-          signOut({
-            fetchOptions: {
-              onSuccess: () => {
-                window.location.href = "/auth/signin";
-              },
-              onError: () => {
-                window.location.href = "/auth/signin";
-              },
-            },
-          });
+          signOutToSignin();
           return;
         }
 

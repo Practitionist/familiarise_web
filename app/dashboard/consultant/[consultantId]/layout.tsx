@@ -462,11 +462,12 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     if (isLoadingUserDetails || isSessionLoading || !userId) return;
 
     if (userDetails && !hasConsultantAccess) {
-      const target = userDetails.consultantProfileId
-        ? `/dashboard/consultant/${userDetails.consultantProfileId}/home`
-        : userDetails.consulteeProfileId
-          ? `/dashboard/consultee/${userDetails.consulteeProfileId}/home`
-          : "/dashboard";
+      let target = "/dashboard";
+      if (userDetails.consultantProfileId) {
+        target = `/dashboard/consultant/${userDetails.consultantProfileId}/home`;
+      } else if (userDetails.consulteeProfileId) {
+        target = `/dashboard/consultee/${userDetails.consulteeProfileId}/home`;
+      }
       // Never replace to the URL we are already on, and never queue the same
       // target twice (Strict-Mode double effects / duplicate query emissions).
       if (target === pathname || navigatedRef.current === target) return;

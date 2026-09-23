@@ -141,7 +141,6 @@ Small utilities that wrap `NextResponse.json` with canonical error shapes:
 
 - `unauthorizedResponse(message?)` → 401
 - `forbiddenResponse(message?)` → 403
-- `unprocessableResponse(message)` → 422
 
 Use these when you need to return an error outside one of the auth helpers (e.g., "found the resource but the state is wrong").
 

@@ -108,7 +108,14 @@ function SignUpContent() {
     };
 
     getSession({ query: { disableCookieCache: true } })
-      .then(({ data }) => {
+      .then(({ data, error: sessionError }) => {
+        // Better Auth resolves (rather than rejects) HTTP-level failures as
+        // `{ data: null, error }` — fall back to the cached value instead of
+        // stranding the page on the interstitial until the next store update.
+        if (sessionError) {
+          resolveAndGo(!!session.user?.onboardingCompleted);
+          return;
+        }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
         resolveAndGo(!!data.user.onboardingCompleted);
