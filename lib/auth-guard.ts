@@ -9,6 +9,7 @@ import {
 import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
+import { safeSameOriginPath } from "@/lib/safe-callback-url";
 import {
   hasBackofficePermission,
   type BackofficeSurface,
@@ -31,9 +32,24 @@ const PROFILE_KEY_BY_ROLE: Partial<Record<string, keyof SessionUser>> = {
  * (only possible in Route Handlers) and then redirects to /auth/signin.
  * This prevents the redirect loop where middleware sees a stale cookie
  * and keeps bouncing between /dashboard and /auth/signin.
+ *
+ * Preserves the intended destination (middleware's `x-pathname`) as
+ * `?callbackUrl=` so a stale-cookie bounce on a deep link returns there
+ * after re-signin instead of dropping on the dashboard. Never threads an
+ * auth URL back into itself — that would land an authenticated user on
+ * /auth/signin with a self callback and re-trigger the redirect effect.
  */
-function redirectWithCookieCleanup(): never {
-  redirect("/api/auth/clear-stale-session");
+async function redirectWithCookieCleanup(): Promise<never> {
+  const current = (await headers()).get("x-pathname");
+  const safe = safeSameOriginPath(current);
+  const selfLoop =
+    !safe ||
+    safe.startsWith("/auth/") ||
+    safe.startsWith("/api/auth/clear-stale-session");
+  if (selfLoop) redirect("/api/auth/clear-stale-session");
+  redirect(
+    `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(safe as string)}`,
+  );
 }
 
 /**
@@ -46,7 +62,15 @@ async function resolveGuardSession() {
   const lookup = await lookupSession(true);
   if (lookup.kind === "failed")
     throw new SessionLookupFailedError(lookup.cause);
-  if (lookup.kind === "none") redirectWithCookieCleanup();
+  if (lookup.kind === "none") {
+    await redirectWithCookieCleanup();
+    // Unreachable: the cleanup route redirects (Next's redirect() throws).
+    // Stated explicitly because `await` on a `Promise<never>` does not narrow
+    // the `lookup` union the way a sync never-returning call did (TS2339).
+    throw new SessionLookupFailedError(
+      new Error("stale-session cleanup did not redirect"),
+    );
+  }
   return lookup.session;
 }
 
@@ -85,7 +109,7 @@ export async function requireAuth() {
   // deletion has not landed yet — worth checking explicitly rather than relying
   // on row deletion alone.
   if (session.user.banned === true) {
-    redirectWithCookieCleanup();
+    await redirectWithCookieCleanup();
   }
   return session;
 }
@@ -133,7 +157,7 @@ export async function requireOnboarded() {
   // payload before row deletion lands, and this guard must not admit it to
   // the dashboard on payload alone.
   if (session.user.banned === true) {
-    redirectWithCookieCleanup();
+    await redirectWithCookieCleanup();
   }
   if (!session.user.onboardingCompleted) {
     redirect(await onboardingRedirectTarget());
@@ -196,12 +220,14 @@ export async function requireBackofficePage(surface: BackofficeSurface) {
  * Require that onboarding is NOT fully completed (for the onboarding page).
  * Redirects fully-onboarded users to their dashboard.
  * Uses disableCookieCache to avoid stale values.
+ *
+ * Resolves via lookupSession like requireAuth/requireOnboarded: a lookup that
+ * did not complete must throw to the boundary (retry) rather than clear a
+ * valid cookie — otherwise a cold-instance stall on /form/onboarding would
+ * sign a signed-in user out and bounce them signin→onboarding→signin.
  */
 export async function requireNotOnboarded() {
-  const session = await getSession(true);
-  if (!session?.user?.id) {
-    redirectWithCookieCleanup();
-  }
+  const session = await resolveGuardSession();
   if (isFullyOnboarded(session.user)) {
     // Add mode (PR-6): an onboarded learner or org operator may re-enter the
     // wizard to add a consultant identity. Layouts cannot read search params,

@@ -108,7 +108,14 @@ function SignUpContent() {
     };
 
     getSession({ query: { disableCookieCache: true } })
-      .then(({ data }) => {
+      .then(({ data, error: sessionError }) => {
+        // Better Auth resolves (rather than rejects) HTTP-level failures as
+        // `{ data: null, error }` — fall back to the cached value instead of
+        // stranding the page on the interstitial until the next store update.
+        if (sessionError) {
+          resolveAndGo(!!session.user?.onboardingCompleted);
+          return;
+        }
         // Session revoked between paint and check — no protected redirect.
         if (!data?.user) return;
         resolveAndGo(!!data.user.onboardingCompleted);
@@ -137,14 +144,13 @@ function SignUpContent() {
     return <AuthFormSkeleton />;
   }
 
-  // If already logged in, show redirecting message
+  // If already logged in, show redirecting message. Generic on purpose —
+  // the cached `onboardingCompleted` can be stale (see the force-fresh effect
+  // above); naming the destination flashed the wrong one for a frame.
   if (session?.user) {
-    const destination = session.user.onboardingCompleted
-      ? "dashboard"
-      : "onboarding";
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-950">
-        <p className="text-white">Redirecting to {destination}...</p>
+        <p className="text-white">Redirecting…</p>
       </div>
     );
   }
@@ -296,11 +302,13 @@ function SignUpContent() {
         // Session created (verification-disabled fallback). The referral code
         // was persisted at first touch and is applied on the onboarding landing
         // (covers OAuth + verified-email paths uniformly). #880
+        // Replace, never push: leaving /auth/signup in history makes Back from
+        // onboarding/dashboard ping-pong forward again.
         toast({
           title: "Account Created Successfully!",
           description: "Redirecting to onboarding...",
         });
-        router.push(onboardingUrl);
+        router.replace(onboardingUrl);
       }
     } catch (error: unknown) {
       Sentry.captureException(

@@ -397,6 +397,42 @@ function describeDraftField(field: string | null): string {
     : "longest answers";
 }
 
+/**
+ * Dead-session recovery: sign out, then return to sign-in preserving the
+ * wizard destination. Success navigates straight there; a failed sign-out may
+ * leave a valid cookie behind, so the error path goes through the stale-session
+ * cleanup endpoint first (fail closed) — otherwise sign-in would bounce
+ * straight back to the wizard on the live cookie.
+ *
+ * Ordinary recovery (`?callbackUrl=/checkout/…`) passes the validated ORIGINAL
+ * callback through — wrapping the whole onboarding URL would nest it, and after
+ * completion the guard would see a fully-onboarded user on the wizard (without
+ * add mode) and drop them on the dashboard, never reaching checkout. Add mode
+ * (`?add=CONSULTANT`) keeps the full wizard URL, which requireNotOnboarded
+ * admits for eligible users.
+ */
+function signOutToSignin() {
+  const search = typeof window !== "undefined" ? window.location.search : "";
+  const params = new URLSearchParams(search);
+  const inner = safeSameOriginPath(params.get("callbackUrl"));
+  const here =
+    inner && params.get("add") !== "CONSULTANT"
+      ? inner
+      : `/form/onboarding${search ? `?${params.toString()}` : ""}`;
+  const signinHref = `/auth/signin?callbackUrl=${encodeURIComponent(here)}`;
+  const cleanupHref = `/api/auth/clear-stale-session?callbackUrl=${encodeURIComponent(here)}`;
+  signOut({
+    fetchOptions: {
+      onSuccess: () => {
+        window.location.href = signinHref;
+      },
+      onError: () => {
+        window.location.href = cleanupHref;
+      },
+    },
+  });
+}
+
 const MultiStepForm: React.FC = () => {
   const { data: session } = useSession();
   // Add mode (PR-6): `?add=CONSULTANT` on an onboarded learner / org operator
@@ -720,7 +756,7 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        signOut();
+        signOutToSignin();
         return;
       }
       // Controlled inputs surface blanks as "" — coerce to undefined so the
@@ -779,7 +815,7 @@ const MultiStepForm: React.FC = () => {
           description: "Please sign in again to continue.",
           variant: "destructive",
         });
-        signOut();
+        signOutToSignin();
         return;
       }
 
@@ -843,7 +879,7 @@ const MultiStepForm: React.FC = () => {
             description: "Your session has expired. Please sign in again.",
             variant: "destructive",
           });
-          signOut();
+          signOutToSignin();
           return;
         }
 
@@ -942,12 +978,16 @@ const MultiStepForm: React.FC = () => {
       }
 
       if (safeCallback) {
-        router.push(safeCallback);
+        // Terminal navigation: replace, never push. Leaving /form/onboarding
+        // in history makes Back from the destination return to a wizard that
+        // immediately bounces forward again (requireNotOnboarded sees a fully
+        // onboarded user) — the same Back ping-pong the auth pages avoid.
+        router.replace(safeCallback);
         return;
       }
 
       if (pendingToken) {
-        router.push(`/organizations/invite/${pendingToken}`);
+        router.replace(`/organizations/invite/${pendingToken}`);
         return;
       }
 
@@ -958,16 +998,16 @@ const MultiStepForm: React.FC = () => {
       // Redirect based on role (server has already updated the user record,
       // session cookie will refresh automatically)
       if (finalData.role === "CONSULTANT" && result.user.consultantProfileId) {
-        router.push(`/dashboard/consultant/${result.user.consultantProfileId}`);
+        router.replace(`/dashboard/consultant/${result.user.consultantProfileId}`);
       } else if (
         finalData.role === "CONSULTEE" &&
         result.user.consulteeProfileId
       ) {
-        router.push(`/dashboard/consultee/${result.user.consulteeProfileId}`);
+        router.replace(`/dashboard/consultee/${result.user.consulteeProfileId}`);
       } else if (finalData.role === "STAFF" && result.user.staffProfileId) {
-        router.push(`/dashboard/staff/${result.user.staffProfileId}`);
+        router.replace(`/dashboard/staff/${result.user.staffProfileId}`);
       } else {
-        router.push("/dashboard");
+        router.replace("/dashboard");
       }
     } catch (error: unknown) {
       trackOnboardingEvent("submit_error", { error: "unhandled_exception" });

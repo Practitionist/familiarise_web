@@ -131,7 +131,6 @@ await requireOrgAccess(orgId, {
 | Helper | Purpose |
 |---|---|
 | `checkOwnership(session, resourceOwnerId, profileType)` | Checks if session user owns a resource via their profile ID |
-| `isConsultationParticipant(session, consultantId, consulteeId)` | Checks if user is consultant or consultee in a consultation |
 | `authorizeEventAccess(session, eventType, eventId)` | Authorizes access to consultations, subscriptions, webinars, classes. Checks ownership, collaboration, or privileged role. |
 
 ### 6.4 Response Helpers
@@ -140,7 +139,6 @@ await requireOrgAccess(orgId, {
 |---|---|---|
 | `forbiddenResponse(msg?)` | 403 | User is authenticated but not authorized |
 | `unauthorizedResponse(msg?)` | 401 | No valid session |
-| `unprocessableResponse(msg)` | 422 | Valid request but business logic prevents it |
 
 ## 7. Capability Gates
 
