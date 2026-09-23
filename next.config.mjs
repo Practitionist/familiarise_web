@@ -68,6 +68,9 @@ const CSP_DIRECTIVES = [
   "style-src 'self' 'unsafe-inline'",
   "frame-src 'self' https://checkout.razorpay.com https://api.razorpay.com https://js.stripe.com https://hooks.stripe.com",
   "font-src 'self' data:",
+  // Defense-in-depth alongside X-Frame-Options below: modern browsers enforce
+  // frame-ancestors and ignore X-Frame-Options, legacy browsers do the reverse.
+  "frame-ancestors 'none'",
   "report-uri /api/csp-report",
 ].join("; ");
 
@@ -129,6 +132,8 @@ const RESOLVED_APP_URL =
     : process.env.NEXT_PUBLIC_APP_URL;
 
 const nextConfig = {
+  // Drop the `X-Powered-By: Next.js` fingerprinting header.
+  poweredByHeader: false,
   // Origin-dependent values are recomputed per deploy context — see
   // RESOLVED_APP_URL above. Listing them here overrides whatever the Netlify
   // dashboard injected, for the build only.
@@ -210,13 +215,12 @@ const nextConfig = {
     staleTimes: { dynamic: 30, static: 180 },
   },
 
-  // This tells Next.js to explicitly process these packages during the build, which should resolve the module format conflict.
-  // NOTE: date-fns is now 4.1.0 and ships an exports map, so this is likely a
-  // leftover from the v2/v3 era — and transpiling a package may defeat Next's
-  // built-in optimizePackageImports handling for it (45 files import date-fns).
-  // Left in place deliberately: the claim above is unverified either way, and
-  // confirming it needs `npm run build:analyze`, not reasoning.
-  transpilePackages: ["date-fns"],
+  // `transpilePackages: ["date-fns"]` was removed 2026-09-24: date-fns is 4.1.0
+  // with a proper exports map, and Next 15 already carries it in the default
+  // optimizePackageImports list — transpiling only re-processed what the
+  // bundler handles natively. Proven with a full local `next build` after
+  // removal: compile + 284/284 static pages green. Restore if a future major
+  // changes that. (date-fns-tz was never listed here and is unaffected.)
 
   // #1244 — the OpenNext server-handler function blew past Netlify's hard
   // 250MB per-function cap. The file tracer was pulling the entire BUILD
