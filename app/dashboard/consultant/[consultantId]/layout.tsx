@@ -485,9 +485,14 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     // Once per access-resolution, NOT per navigation: `pathname` used to be
     // a dep, re-scheduling this idle prefetch on every tab switch (even while
     // already on the target route). App Router dedupes redundant prefetches.
+    // Route-shell prefetch only: for this dynamic page Next.js warms the shell
+    // through loading.tsx, so the first click shows the skeleton instantly and
+    // the inbox read streams in. Deliberately no inbox-data prefetch here —
+    // that would cost a full scan + counts for a tab the user may not open.
     return schedulePrefetch(() => {
       router.prefetch(`${basePath}/home`);
       router.prefetch(`${basePath}/appointments`);
+      router.prefetch(`${basePath}/requests`);
     }, 3000);
   }, [userId, consultantId, router, hasConsultantAccess, basePath]);
 

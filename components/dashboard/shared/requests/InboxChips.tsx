@@ -16,11 +16,13 @@ export function InboxChips({
   active,
   disabled,
   onChange,
+  onHoverChip,
 }: Readonly<{
   type: InboxType;
   active: InboxChip | null;
   disabled: boolean;
   onChange: (chip: InboxChip | null) => void;
+  onHoverChip?: (chip: InboxChip | null) => void;
 }>) {
   return (
     <fieldset className="flex flex-wrap gap-1.5 border-0 p-0">
@@ -40,6 +42,8 @@ export function InboxChips({
               !on && "bg-background",
             )}
             onClick={() => onChange(on ? null : chip)}
+            onMouseEnter={() => onHoverChip?.(on ? null : chip)}
+            onFocus={() => onHoverChip?.(on ? null : chip)}
           >
             {CHIP_LABEL[chip]}
           </Button>
