@@ -233,8 +233,17 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           {/* Sidebar */}
           <div className="lg:col-span-1">
             <div className="flex flex-col gap-6 lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1rem)]">
+              {/* Registration Card */}
+              <div id="class-booking" className="explore-booking-target">
+                <ClientClassRegistration
+                  plan={plan}
+                  maxParticipants={plan.maxParticipants ?? undefined}
+                  consultantUserId={plan.consultantProfile?.user?.id}
+                />
+              </div>
+
               {/* Instructor Card */}
-              <Card className="order-2 rounded-2xl border-border shadow-sm">
+              <Card className="rounded-2xl border-border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Instructor</CardTitle>
                 </CardHeader>
@@ -276,7 +285,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="order-3 rounded-2xl border-border shadow-sm">
+                <Card className="rounded-2xl border-border shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />
@@ -317,18 +326,6 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </CardContent>
                 </Card>
               )}
-
-              {/* Registration Card */}
-              <div
-                id="class-booking"
-                className="explore-booking-target order-1"
-              >
-                <ClientClassRegistration
-                  plan={plan}
-                  maxParticipants={plan.maxParticipants ?? undefined}
-                  consultantUserId={plan.consultantProfile?.user?.id}
-                />
-              </div>
             </div>
           </div>
         </div>

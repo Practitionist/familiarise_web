@@ -73,9 +73,12 @@ describe("MobileBookingBar", () => {
     });
     const button = host.querySelector("button");
     expect(button?.textContent).toContain("View options");
+    expect(host.querySelector('section[aria-label="Booking shortcut"]')).not.toBeNull();
     act(() => {
       button?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
+    expect(document.activeElement).toBe(target);
+    expect(target.tabIndex).toBe(-1);
     expect(scrollIntoView).toHaveBeenCalledWith({
       behavior: "instant",
       block: "start",

@@ -32,9 +32,8 @@ export function MobileBookingBar({
   if (!show) return null;
 
   return (
-    <div
+    <section
       className="explore-mobile-booking md:hidden"
-      role="region"
       aria-label="Booking shortcut"
     >
       <div className="min-w-0">
@@ -44,10 +43,17 @@ export function MobileBookingBar({
       <button
         type="button"
         onClick={() => {
+          const target = document.getElementById(targetId);
+          if (!target) return;
+
+          // Keep focus in the booking area when the shortcut disappears on scroll.
+          if (!target.hasAttribute("tabindex")) target.tabIndex = -1;
+          target.focus({ preventScroll: true });
+
           const reduce = window.matchMedia(
             "(prefers-reduced-motion: reduce)",
           ).matches;
-          document.getElementById(targetId)?.scrollIntoView({
+          target.scrollIntoView({
             behavior: reduce ? "instant" : "smooth",
             block: "start",
           });
@@ -56,6 +62,6 @@ export function MobileBookingBar({
       >
         View options <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
       </button>
-    </div>
+    </section>
   );
 }

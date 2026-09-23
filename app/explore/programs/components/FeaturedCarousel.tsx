@@ -38,14 +38,13 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
     setCurrentIndex(index);
   };
 
-  const prev = () =>
-    goTo((currentIndex - 1 + programs.length) % programs.length);
-  const next = () => goTo((currentIndex + 1) % programs.length);
-
   if (isLoading) return <SkeletonSlide />;
   if (programs.length === 0) return null;
 
-  const program = programs[currentIndex];
+  const activeIndex = Math.min(currentIndex, programs.length - 1);
+  const prev = () => goTo((activeIndex - 1 + programs.length) % programs.length);
+  const next = () => goTo((activeIndex + 1) % programs.length);
+  const program = programs[activeIndex];
 
   // Extract instructor work experiences for company logos
   const workExperiences =
@@ -150,7 +149,7 @@ function FeaturedCarouselImpl({ programs, isLoading }: FeaturedCarouselProps) {
                 key={i}
                 onClick={() => goTo(i)}
                 className={`w-2 h-2 rounded-full transition-all duration-200 ${
-                  i === currentIndex
+                  i === activeIndex
                     ? "bg-primary w-6"
                     : "bg-muted-foreground/30 hover:bg-muted-foreground/50"
                 }`}

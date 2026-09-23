@@ -201,8 +201,28 @@ export function WebinarDetails({
           {/* Sidebar */}
           <div className="lg:col-span-1">
             <div className="flex flex-col gap-6 lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1rem)]">
+              {/* Registration Card */}
+              <div id="webinar-booking" className="explore-booking-target">
+                <ClientWebinarRegistration
+                  webinarPlanId={plan.id}
+                  webinarId={webinarId}
+                  price={plan.price}
+                  currency={plan.priceCurrency}
+                  nextSessionDate={
+                    nextSession ? new Date(nextSession) : undefined
+                  }
+                  sessionStatus={sessionStatus}
+                  appointment={plan.webinars?.[0]?.appointment}
+                  maxParticipants={plan.maxParticipants ?? 100}
+                  instanceMaxParticipants={
+                    plan.webinars?.[0]?.maxParticipants ?? null
+                  }
+                  consultantUserId={plan.consultantProfile?.user?.id}
+                />
+              </div>
+
               {/* Instructor Card */}
-              <Card className="order-2 rounded-2xl border-border shadow-sm">
+              <Card className="rounded-2xl border-border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Host</CardTitle>
                 </CardHeader>
@@ -244,7 +264,7 @@ export function WebinarDetails({
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="order-3 rounded-2xl border-border shadow-sm">
+                <Card className="rounded-2xl border-border shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />
@@ -284,29 +304,6 @@ export function WebinarDetails({
                   </CardContent>
                 </Card>
               )}
-
-              {/* Registration Card */}
-              <div
-                id="webinar-booking"
-                className="explore-booking-target order-1"
-              >
-                <ClientWebinarRegistration
-                  webinarPlanId={plan.id}
-                  webinarId={webinarId}
-                  price={plan.price}
-                  currency={plan.priceCurrency}
-                  nextSessionDate={
-                    nextSession ? new Date(nextSession) : undefined
-                  }
-                  sessionStatus={sessionStatus}
-                  appointment={plan.webinars?.[0]?.appointment}
-                  maxParticipants={plan.maxParticipants ?? 100}
-                  instanceMaxParticipants={
-                    plan.webinars?.[0]?.maxParticipants ?? null
-                  }
-                  consultantUserId={plan.consultantProfile?.user?.id}
-                />
-              </div>
             </div>
           </div>
         </div>
