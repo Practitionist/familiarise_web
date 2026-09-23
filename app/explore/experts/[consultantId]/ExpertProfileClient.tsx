@@ -34,7 +34,7 @@ import {
   useAvailabilityMonth,
   useAvailabilityWindow,
 } from "./hooks/useAvailabilityWindow";
-import { dayState, isSelectableDay } from "./day-state";
+import { durationDayState, isSelectableDay } from "./day-state";
 import { formatInTimeZone } from "date-fns-tz";
 import { cn } from "@/utils/tailwind";
 
@@ -276,119 +276,125 @@ export function ExpertProfileClient({
     [consultantDetails, session?.user?.id, router, toast],
   );
 
-  // Day cells carry their state without colour (#1785 L-4): a ring and a bold
-  // number on a day with a bookable time, plain grey and disabled on a day
-  // without, dimmed and disabled in the past, a dot under today. The marks
-  // come from the month read; while it loads the cells pulse, and if it
-  // fails the cells stay plain and clickable under a one-line notice.
-  const renderCalendar = useCallback(() => {
-    const daysInMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth() + 1,
-      0,
-    ).getDate();
-    const firstDayOfMonth = new Date(
-      currentDate.getFullYear(),
-      currentDate.getMonth(),
-      1,
-    ).getDay();
-
-    const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
-    const days = [];
-    const now = new Date();
-    const marks = monthQuery.data ?? null;
-    const marksLoading = monthQuery.isPending && !!timezone;
-
-    for (let i = 0; i < adjustedFirstDay; i++) {
-      days.push(
-        <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
-      );
-    }
-
-    for (let i = 1; i <= daysInMonth; i++) {
-      const date = new Date(
+  // The date mark must use the active plan's duration, just like the slot list:
+  // a raw 30-minute opening cannot promise a two-hour consultation.
+  const renderCalendar = useCallback(
+    (durationInHours: number) => {
+      const daysInMonth = new Date(
+        currentDate.getFullYear(),
+        currentDate.getMonth() + 1,
+        0,
+      ).getDate();
+      const firstDayOfMonth = new Date(
         currentDate.getFullYear(),
         currentDate.getMonth(),
-        i,
-      );
-      const isSelected =
-        selectedDate?.getDate() === i &&
-        selectedDate?.getMonth() === currentDate.getMonth() &&
-        selectedDate?.getFullYear() === currentDate.getFullYear();
-      const key = timezone
-        ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
-        : null;
-      const state = dayState(
-        date,
-        now,
-        marks && key ? (marks[key] ?? []) : null,
-      );
-      const isToday = state.startsWith("today");
-      const selectable = isSelectableDay(state);
-      const bookable = state === "bookable" || state === "today+bookable";
+        1,
+      ).getDay();
 
-      days.push(
-        <button
-          key={i}
-          type="button"
-          disabled={!selectable}
-          aria-pressed={isSelected}
-          aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
-          className={cn(
-            "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
-            isSelected && "bg-white font-medium text-zinc-900 shadow-md",
-            !isSelected &&
-              bookable &&
-              "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "unknown" || state === "today+unknown") &&
-              "font-medium text-zinc-300 hover:bg-zinc-700/60",
-            !isSelected &&
-              (state === "none" || state === "today+none") &&
-              "text-zinc-500",
-            state === "past" && "opacity-40 text-zinc-500",
-            marksLoading &&
-              state !== "past" &&
+      const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
+      const days = [];
+      const now = new Date();
+      const marks = monthQuery.data ?? null;
+      const marksLoading = monthQuery.isPending && !!timezone;
+
+      for (let i = 0; i < adjustedFirstDay; i++) {
+        days.push(
+          <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
+        );
+      }
+
+      for (let i = 1; i <= daysInMonth; i++) {
+        const date = new Date(
+          currentDate.getFullYear(),
+          currentDate.getMonth(),
+          i,
+        );
+        const isSelected =
+          selectedDate?.getDate() === i &&
+          selectedDate?.getMonth() === currentDate.getMonth() &&
+          selectedDate?.getFullYear() === currentDate.getFullYear();
+        const key = timezone
+          ? formatInTimeZone(date, timezone, "yyyy-MM-dd")
+          : null;
+        const state = durationDayState(
+          date,
+          now,
+          marks && key ? (marks[key] ?? []) : null,
+          durationInHours,
+          timezone || "UTC",
+          consultantDetails.bookingMode ?? "INSTANT",
+          consultantDetails.acceptingRequests !== false,
+        );
+        const isToday = state.startsWith("today");
+        const selectable = isSelectableDay(state);
+        const bookable = state === "bookable" || state === "today+bookable";
+
+        days.push(
+          <button
+            key={i}
+            type="button"
+            disabled={!selectable}
+            aria-pressed={isSelected}
+            aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${bookable ? ", times available" : ""}`}
+            className={cn(
+              "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
+              isSelected && "bg-white font-medium text-zinc-900 shadow-md",
               !isSelected &&
-              "animate-pulse ring-1 ring-white/10",
-          )}
-          onClick={() => {
-            setSelectedDate(date);
-            setSelectedSlot(null);
-          }}
-        >
-          {i}
-          {isToday && (
-            <span
-              aria-hidden="true"
-              className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
-            />
-          )}
-        </button>,
-      );
-    }
+                bookable &&
+                "ring-1 ring-white/40 font-semibold text-zinc-100 hover:bg-zinc-700/60",
+              !isSelected &&
+                (state === "unknown" || state === "today+unknown") &&
+                "font-medium text-zinc-300 hover:bg-zinc-700/60",
+              !isSelected &&
+                (state === "none" || state === "today+none") &&
+                "text-zinc-500",
+              state === "past" && "opacity-40 text-zinc-500",
+              marksLoading &&
+                state !== "past" &&
+                !isSelected &&
+                "motion-safe:animate-pulse",
+            )}
+            onClick={() => {
+              setSelectedDate(date);
+              setSelectedSlot(null);
+            }}
+          >
+            {i}
+            {isToday && (
+              <span
+                aria-hidden="true"
+                className="absolute bottom-1 left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-current"
+              />
+            )}
+          </button>,
+        );
+      }
 
-    if (monthQuery.isError) {
-      days.push(
-        <p
-          key="marks-error"
-          role="status"
-          className="col-span-7 pt-2 text-center text-xs text-zinc-500"
-        >
-          Couldn&apos;t load availability marks — pick a day to see its times.
-        </p>,
-      );
-    }
+      if (monthQuery.isError) {
+        days.push(
+          <p
+            key="marks-error"
+            role="status"
+            className="col-span-7 pt-2 text-center text-xs text-zinc-500"
+          >
+            Couldn&apos;t load availability marks — pick a day to see its times.
+          </p>,
+        );
+      }
 
-    return days;
-  }, [
-    currentDate,
-    selectedDate,
-    timezone,
-    monthQuery.data,
-    monthQuery.isPending,
-    monthQuery.isError,
-  ]);
+      return days;
+    },
+    [
+      currentDate,
+      selectedDate,
+      timezone,
+      consultantDetails.bookingMode,
+      consultantDetails.acceptingRequests,
+      monthQuery.data,
+      monthQuery.isPending,
+      monthQuery.isError,
+    ],
+  );
 
   return (
     <main className="explore-detail min-h-screen">

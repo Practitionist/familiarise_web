@@ -57,7 +57,7 @@ interface ConsultationPricingToggleProps {
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
+  renderCalendar: (durationInHours: number) => JSX.Element[];
   slotTimings: TIntervalTiming[];
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
@@ -304,7 +304,13 @@ export default function ConsultationPricingToggle({
   const handleBookNowClick = () => {
     const today = new Date();
     setSelectedDate(today);
+    setSelectedSlot(null);
     setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  };
+
+  const handlePlanChange = (planId: string) => {
+    setActiveConsultationOption(planId);
+    setSelectedSlot(null);
   };
 
   if (consultationOptions.length === 0) {
@@ -334,7 +340,7 @@ export default function ConsultationPricingToggle({
   return (
     <Tabs
       value={activeConsultationOption}
-      onValueChange={setActiveConsultationOption}
+      onValueChange={handlePlanChange}
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
@@ -463,7 +469,7 @@ export default function ConsultationPricingToggle({
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                              className="h-9 rounded-lg border border-zinc-600 bg-zinc-800/30 px-3 text-zinc-200 hover:border-zinc-400 hover:bg-zinc-700/50 hover:text-white"
                               onClick={handleBookNowClick}
                             >
                               Today
@@ -516,7 +522,7 @@ export default function ConsultationPricingToggle({
                           <div>Su</div>
                         </div>
                         <div className="grid grid-cols-7 gap-2">
-                          {renderCalendar()}
+                          {renderCalendar(selectedDuration)}
                         </div>
                       </div>
                     </div>

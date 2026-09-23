@@ -37,7 +37,7 @@ interface ExpertPricingProps {
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
+  renderCalendar: (durationInHours: number) => JSX.Element[];
   slotTimings: TIntervalTiming[];
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;

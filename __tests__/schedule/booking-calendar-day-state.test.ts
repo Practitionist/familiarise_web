@@ -1,16 +1,24 @@
 /**
+ * @jest-environment node
+ */
+
+/**
  * #1785 L-4 — the booking calendar's day cells carry real state. The ring
  * needs at least one slot that is neither past nor fully booked (the
  * cal.diy#2329 rule), so a day whose every slot is taken earns nothing.
  */
 import {
   dayState,
+  durationDayState,
   isSelectableDay,
   type DayMarkSlot,
 } from "@/app/explore/experts/[consultantId]/day-state";
+import { DayOfWeek } from "@prisma/client";
+import type { TIntervalTiming } from "@/types/slots";
 
 // A fixed Wednesday, 10:00 local time; the lead time is 15 minutes.
 const NOW = new Date(2026, 9, 14, 10, 0, 0);
+const TEST_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const day = (d: number) => new Date(2026, 9, d);
 const at = (d: number, h: number, extra: Partial<DayMarkSlot> = {}) => ({
   startsAt: new Date(2026, 9, d, h, 0, 0).toISOString(),
@@ -57,5 +65,152 @@ describe("dayState (#1785 L-4)", () => {
     expect(isSelectableDay("past")).toBe(false);
     expect(isSelectableDay("none")).toBe(false);
     expect(isSelectableDay("today+none")).toBe(false);
+  });
+});
+
+const halfHourSlot = (
+  dayNumber: number,
+  hour: number,
+  minute: number,
+  bookingStatus: "available" | "fully-booked" = "available",
+): TIntervalTiming & { isAllocated: boolean } => {
+  const start = new Date(2026, 9, dayNumber, hour, minute);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  return {
+    slotId: `slot-${start.toISOString()}`,
+    dateInISO: start.toISOString(),
+    dayOfWeek: DayOfWeek.TUESDAY,
+    startsAt: start.toISOString(),
+    endsAt: end.toISOString(),
+    availabilityWindowId: "window-1",
+    appointmentOccurrenceId: "",
+    localStartTime: start.toISOString().slice(11, 16),
+    localEndTime: end.toISOString().slice(11, 16),
+    isAllocated: bookingStatus === "fully-booked",
+    bookingStatus,
+    type: "WEEKLY",
+  };
+};
+
+describe("durationDayState", () => {
+  const shortOpening = [halfHourSlot(20, 10, 0), halfHourSlot(20, 10, 30)];
+  const twoHourOpening = [
+    ...shortOpening,
+    halfHourSlot(20, 11, 0),
+    halfHourSlot(20, 11, 30),
+  ];
+
+  it("marks a day only when a window fits the selected plan length", () => {
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        shortOpening,
+        1,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("bookable");
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        shortOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("none");
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("bookable");
+  });
+
+  it("does not promise a long window across an unavailable atom", () => {
+    const brokenOpening = [
+      ...shortOpening,
+      halfHourSlot(20, 11, 0, "fully-booked"),
+      halfHourSlot(20, 11, 30),
+    ];
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        brokenOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("none");
+  });
+
+  it("respects request pauses and preserves unknown loading state", () => {
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "REQUEST",
+        false,
+      ),
+    ).toBe("none");
+    expect(
+      durationDayState(
+        day(20),
+        NOW,
+        twoHourOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        false,
+      ),
+    ).toBe("bookable");
+    expect(
+      durationDayState(day(20), NOW, null, 2, TEST_TIMEZONE, "INSTANT", true),
+    ).toBe("unknown");
+  });
+
+  it("does not mark a duration window that starts inside the booking lead time", () => {
+    const todayOpening = [
+      halfHourSlot(14, 10, 0),
+      halfHourSlot(14, 10, 30),
+      halfHourSlot(14, 11, 0),
+      halfHourSlot(14, 11, 30),
+    ];
+    expect(
+      durationDayState(
+        day(14),
+        NOW,
+        todayOpening,
+        2,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("today+none");
+    expect(
+      durationDayState(
+        day(14),
+        NOW,
+        todayOpening.slice(1),
+        1,
+        TEST_TIMEZONE,
+        "INSTANT",
+        true,
+      ),
+    ).toBe("today+bookable");
   });
 });
