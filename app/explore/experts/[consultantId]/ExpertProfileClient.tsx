@@ -299,7 +299,10 @@ export function ExpertProfileClient({
 
       for (let i = 0; i < adjustedFirstDay; i++) {
         days.push(
-          <div key={`empty-${i}`} className="w-10 h-10 lg:w-11 lg:h-11"></div>,
+          <div
+            key={`empty-${i}`}
+            className="aspect-square w-full max-w-11"
+          ></div>,
         );
       }
 
@@ -342,7 +345,7 @@ export function ExpertProfileClient({
             aria-pressed={isSelected}
             aria-label={`${date.toLocaleDateString(undefined, { day: "numeric", month: "long" })}${isToday ? ", today" : ""}${availabilityLabel}`}
             className={cn(
-              "relative flex h-10 w-10 items-center justify-center rounded-full text-base transition-all duration-200 lg:h-11 lg:w-11",
+              "relative flex aspect-square w-full max-w-11 items-center justify-center rounded-full text-sm transition-all duration-200 sm:text-base",
               isSelected && "bg-white font-medium text-zinc-900 shadow-md",
               isSelected && kind && "ring-2 ring-offset-2 ring-offset-zinc-800",
               isSelected && kind === "instant" && "ring-emerald-400",
