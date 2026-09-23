@@ -330,23 +330,21 @@ export async function GET(
         }),
       ]);
 
-    // Include if COMPLETED or has at least 1 material/recording
-    type TransformedEvent = {
-      status: string;
-      materials: unknown[];
-      recordings: unknown[];
-    };
-    const shouldInclude = (e: TransformedEvent) =>
+    // Include if COMPLETED or has at least 1 material/recording. Seeds carry
+    // the appointment (not recordings) so the filter + mint share one shape.
+    const shouldIncludeSeed = (e: ResourceRowSeed) =>
       e.status === "COMPLETED" ||
       e.materials.length > 0 ||
-      e.recordings.length > 0;
+      collectRecordings(e.appointment ? [e.appointment] : []).length > 0;
 
     const transform = {
       // URLs are minted AFTER the filter: the old code minted a signed URL
       // per recording per row and then threw rows away in shouldInclude.
+      // The five types share one seed shape + one filter/mint pass so the
+      // per-type code is only the field mapping (Sonar duplication gate).
       consultations: await withUrls(
         consultations
-          .map((c: ConsultationWithResources) => ({
+          .map((c: ConsultationWithResources): ResourceRowSeed => ({
             id: c.id,
             planTitle: c.consultationPlan.title,
             consultantName: c.consultationPlan.consultantProfile.user.name,
@@ -354,15 +352,13 @@ export async function GET(
             status: c.status,
             date: c.appointment?.occurrences?.[0]?.startsAt || c.requestedAt,
             materials: c.consultationPlan.materials,
-            recordings: collectRecordings(
-              c.appointment ? [c.appointment] : [],
-            ),
+            appointment: c.appointment,
           }))
-          .filter(shouldInclude),
+          .filter(shouldIncludeSeed),
       ),
       subscriptions: await withUrls(
         subscriptions
-          .map((s: SubscriptionWithResources) => ({
+          .map((s: SubscriptionWithResources): ResourceRowSeed => ({
             id: s.id,
             planTitle: s.subscriptionPlan.title,
             consultantName: s.subscriptionPlan.consultantProfile.user.name,
@@ -370,15 +366,13 @@ export async function GET(
             status: s.status,
             date: s.schedulingPeriodStartsAt || s.requestedAt,
             materials: s.subscriptionPlan.materials,
-            recordings: collectRecordings(
-              s.appointment ? [s.appointment] : [],
-            ),
+            appointment: s.appointment,
           }))
-          .filter((e) => e.status !== "PENDING" && shouldInclude(e)),
+          .filter((e) => e.status !== "PENDING" && shouldIncludeSeed(e)),
       ),
       webinars: await withUrls(
         webinars
-          .map((w: WebinarWithResources) => ({
+          .map((w: WebinarWithResources): ResourceRowSeed => ({
             id: w.id,
             planTitle: w.webinarPlan.title,
             consultantName: w.webinarPlan.consultantProfile?.user.name ?? null,
@@ -387,15 +381,13 @@ export async function GET(
             status: w.status,
             date: w.appointment?.occurrences?.[0]?.startsAt || w.createdAt,
             materials: w.webinarPlan.materials,
-            recordings: collectRecordings(
-              w.appointment ? [w.appointment] : [],
-            ),
+            appointment: w.appointment,
           }))
-          .filter(shouldInclude),
+          .filter(shouldIncludeSeed),
       ),
       classes: await withUrls(
         classes
-          .map((cl: ClassWithResources) => ({
+          .map((cl: ClassWithResources): ResourceRowSeed => ({
             id: cl.id,
             planTitle: cl.classPlan.title,
             consultantName: cl.classPlan.consultantProfile?.user.name ?? null,
@@ -406,15 +398,13 @@ export async function GET(
               cl.appointment?.occurrences?.[0]?.startsAt ||
               cl.createdAt,
             materials: cl.classPlan.materials,
-            recordings: collectRecordings(
-              cl.appointment ? [cl.appointment] : [],
-            ),
+            appointment: cl.appointment,
           }))
-          .filter(shouldInclude),
+          .filter(shouldIncludeSeed),
       ),
       trials: await withUrls(
         trials
-          .map((t: TrialWithResources) => ({
+          .map((t: TrialWithResources): ResourceRowSeed => ({
             id: t.id,
             planTitle: `Trial: ${t.subscriptionPlan.title}`,
             consultantName:
@@ -424,11 +414,9 @@ export async function GET(
             status: t.status,
             date: t.appointment?.occurrences?.[0]?.startsAt || t.requestedAt,
             materials: t.subscriptionPlan.materials,
-            recordings: collectRecordings(
-              t.appointment ? [t.appointment] : [],
-            ),
+            appointment: t.appointment,
           }))
-          .filter(shouldInclude),
+          .filter(shouldIncludeSeed),
       ),
     };
 
@@ -500,13 +488,31 @@ async function mintRecordingUrls(
   return out;
 }
 
-/** Mint URLs only for rows that survived the filter (see shouldInclude). */
-async function withUrls<R extends { recordings: RawRecording[] }>(
-  rows: R[],
-): Promise<Array<Omit<R, "recordings"> & { recordings: RecordingView[] }>> {
+/** One seed shape for all five booking types (Sonar duplication gate). */
+interface ResourceRowSeed {
+  id: string;
+  planTitle: string;
+  consultantName: string | null;
+  consultantImage: string | null;
+  status: string;
+  date: Date;
+  materials: unknown[];
+  appointment: AppointmentWithSlots | null;
+}
+
+/** Mint URLs only for rows that survived the filter (see shouldIncludeSeed). */
+async function withUrls(
+  rows: ResourceRowSeed[],
+): Promise<Array<Omit<ResourceRowSeed, "appointment"> & { recordings: RecordingView[] }>> {
   const out = new Array(rows.length);
   for (let i = 0; i < rows.length; i++) {
-    out[i] = { ...rows[i], recordings: await mintRecordingUrls(rows[i].recordings) };
+    const { appointment, ...rest } = rows[i];
+    out[i] = {
+      ...rest,
+      recordings: await mintRecordingUrls(
+        collectRecordings(appointment ? [appointment] : []),
+      ),
+    };
   }
   return out;
 }
