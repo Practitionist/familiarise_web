@@ -16,6 +16,7 @@ An `APPROVED_PENDING_PAYMENT` row had no consultant action: the pay order either
 - **B-7, the seed.** The first `QA_ACCOUNTS_PER_ROLE` users of each role, the `SeedPass123!` logins, get `timezone: "Asia/Kolkata"`; the random population keeps faker's spread.
 
 Docs touched: `docs/booking/06-booking-lifecycle.md` (the Remind and Withdraw paragraph plus the self-approval refusal) and `docs/booking/18-state-machines.md` (the consultant-initiated `APPROVED_PENDING_PAYMENT → EXPIRED` edge and the shared lapse body).
+
 # Engineering log — 2026-09-20 — the booking-money train
 
 **Date:** 2026-09-20 · **Issues:** #1775, #1704, #1705, #1766, #1639 · **Scope:** the consultant Requests inbox on the booking-presentation layer, the remind and withdraw lifecycle, and the money words every booking surface shares. Each PR of the train appends its own dated section below.
@@ -37,3 +38,17 @@ There was no `trials/page.tsx` to turn into a redirect: `TrialsTab` was mounted 
 ### Verification
 
 The read pin (`__tests__/dashboards/requests-inbox.test.ts`) runs the fixture of four rows through the read, the route and Home's dashboard read over one where-aware prisma mock; the render pin (`requests-inbox.test.tsx`) renders the rows into their buckets and asserts no status enum reaches the DOM. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and `jest __tests__/dashboards __tests__/booking-algorithm` were green before the push.
+
+## PR-1 — booking money rules (2026-09-25)
+
+PR-1 folds the old PR-C, PR-D, PR-E and PR-F specs into one branch, together with three live money defects found on `dev` and the #1746 and #1429 fold-ins. Each group below records what changed and why.
+
+### Group P — live money defects
+
+A Razorpay approval or trial "pay link" is the order id, and seven Pay surfaces refused anything that was not an https URL, so no approval could be paid (P-1). The fix is one pure helper, `payLinkHref`, that resolves an order id to a new pay page at `/checkout/pay/[paymentId]`, and an existing-order mode on `RazorpayCheckout` that opens the order without calling checkout. The earnings release sweep released rows whose payment still had a refund in flight (P-2); the cohort and the release CAS now both require that the payment has no PENDING refund. A cancel whose gateway call threw reported the refund as FAILED even though `refund.ts` keeps the row PENDING for reconcile (P-3); the route now reads the row and answers PENDING, which absorbs #1639 item 2.
+
+### Group C — plans are paid at purchase, paid trials are charged at request
+
+A plan can no longer be approved unpaid through either door: the detail PATCH and the allocate path both answer `409 SUBSCRIPTION_UNPAID`, and a failed consultation mint on the allocate path is now a typed answer rather than a 200. `Payment.capturedAt` is the 48-hour clock, stamped by the single writer's three confirmation CAS writes and never by a replay. A paid plan with no allocated session 48 hours after capture expires with reason `UNALLOCATED_48H` and is refunded in full, with the bell staged in the same transaction, and the consultant is nudged at 12, 24 and 36 hours. The presentation layer names the wait: the consultant's next action is `ALLOCATE`, "Schedule cycle 1" with a deadline, and "Schedule the next N" once a cycle is delivered.
+
+A paid trial is now charged when it is requested. The request creates a placeholder appointment and mints the order against it; capture stamps the trial paid while it stays `PENDING`; acceptance requires that payment and places the session on the placeholder. A decline, or 48 hours without an answer, refunds in full; a learner cancelling before a session exists is refunded in full because missing notice is infinite notice; and the trial's earning waits for completion before its hold starts. Neither capturedAt nor the charge-at-request flow backfills anything: rows written before the column exist fall back to `createdAt`.

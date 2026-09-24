@@ -3800,7 +3800,7 @@ model Subscription {
   requestedById      String
   requestedAt        DateTime            @default(now()) @db.Timestamptz
   requestNotes       String?
-  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  pendingPaymentUrl  String? // Legacy APPROVED_PENDING_PAYMENT link only; a plan is paid at purchase (#1775)
   bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
@@ -3878,13 +3878,11 @@ model Trial {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
-  // Paid-trial pay-link (mirrors Consultation/Subscription). Column frozen
-  // now (schema gate); wiring needs createApprovalPaymentIntent to accept
-  // TRIAL — deliberate lib/payments change, tracked as a follow-up.
+  // #1775 — a paid trial's pay page, minted at request against its placeholder
+  // appointment; cleared at capture (paymentId set) or when the trial ends.
   pendingPaymentUrl String?
 
-  // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
-  // checkout hand-off). Frozen with the wiring follow-up, same as above.
+  // Ledger truth once a paid trial's payment is captured; null means unpaid.
   payment   Payment? @relation("TrialPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   paymentId String?  @unique
 
@@ -3905,10 +3903,8 @@ model Trial {
   requestedAt DateTime  @default(now()) @db.Timestamptz
   completedAt DateTime? @db.Timestamptz
 
-  /// Deadline for a paid trial's pay-link, set when the consultant accepts.
-  /// 24h from acceptance, or the session start if that comes first — a slot
-  /// three hours out must not stay payable past the slot itself. The expiry
-  /// job cancels AWAITING_PAYMENT trials past this and frees the slot.
+  /// Deadline for a paid trial's pay link: request + the 24 h pay window (#1775).
+  /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
@@ -3932,12 +3928,12 @@ model Trial {
 }
 
 enum TrialStatus {
-  PENDING // Requested, awaiting consultant action
-  AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
+  PENDING // Requested, awaiting consultant action; a paid trial is paid here (#1775)
+  AWAITING_PAYMENT // Legacy: accepted before payment; new paid trials pay at request
   SCHEDULED // Time slot confirmed
   COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
+  CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
   REJECTED // Declined by consultant
 }
 

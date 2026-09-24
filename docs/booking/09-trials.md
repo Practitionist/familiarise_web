@@ -60,15 +60,15 @@ Key characteristics:
 
 ### TrialStatus Enum
 
-| Value              | Description                                                            |
-| ------------------ | ---------------------------------------------------------------------- |
-| `PENDING`          | Requested, awaiting consultant action                                  |
-| `AWAITING_PAYMENT` | Accepted by the consultant, slot held, waiting on the consultee to pay |
-| `SCHEDULED`        | Time slot confirmed                                                    |
-| `COMPLETED`        | Trial session finished                                                 |
-| `CONVERTED`        | Consultee subscribed after trial                                       |
-| `CANCELLED`        | Cancelled by consultee                                                 |
-| `REJECTED`         | Declined by consultant                                                 |
+| Value              | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| `PENDING`          | Requested, awaiting consultant action; a paid trial is paid here  |
+| `AWAITING_PAYMENT` | Legacy: accepted before payment under the pre-#1775 flow          |
+| `SCHEDULED`        | Time slot confirmed                                               |
+| `COMPLETED`        | Trial session finished                                            |
+| `CONVERTED`        | Consultee subscribed after trial                                  |
+| `CANCELLED`        | Cancelled by consultee, lapsed unpaid, or unanswered for 48 hours |
+| `REJECTED`         | Declined by consultant                                            |
 
 ---
 
@@ -176,6 +176,8 @@ sequenceDiagram
 6. **Conversion** -- If the consultee subscribes, the trial status transitions to `CONVERTED` and `convertedToSubscriptionId` is set.
 
 ### Paying for a trial
+
+Since #1775 a paid trial is charged when it is requested, not when it is accepted. The request creates a placeholder appointment and mints the order against it, the buyer pays on the branded checkout page, and the capture stamps the trial's `paymentId` while it stays `PENDING`. The consultant can accept only a paid trial (`409 TRIAL_UNPAID` otherwise), and the session is then created on the placeholder appointment. A decline, or 48 hours without an answer (`TRIAL_UNANSWERED`), refunds the payment in full and stages the `trial-refunded` bell for the learner. The "Pay to confirm" button on the checkout page lands on `/checkout/pay/[paymentId]`, which opens the existing Razorpay order.
 
 A priced trial is paid for on our own checkout page at
 `/checkout/plans/trial/[trialId]`, and every "Pay Now" affordance in the product

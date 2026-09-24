@@ -200,6 +200,10 @@ Every approval of a REQUEST-mode consultation or subscription from the UI — "U
 
 An approved request that nobody has paid for gives the consultant two actions on its detail page. **Remind** re-sends the approval's own pay-link email with the existing `pendingPaymentUrl` and the open order's amount and expiry; nothing is minted, and the route (`POST /api/bookings/{consultations,subscriptions}/[id]/remind`) is limited to one call per 24 hours per appointment, measured from the last manual reminder's own outbox row (the Upstash window reports its reset on the UTC day bucket, so it is only the same-second burst guard underneath), answering `429 REMIND_RATE_LIMITED` with `nextAllowedAt` = the last send plus 24 hours when the window has not passed and `409 NOT_AWAITING_PAYMENT` when there is no live PENDING order to remind about. The manual reminder's outbox row carries its own email type (`PAYMENT_LINK_MANUAL_REMINDER`), so the sweep's automatic half-window reminder (`PAYMENT_LINK_REMINDER`) and a manual one never dedupe each other in either direction. **Withdraw approval** (`POST …/[id]/withdraw-approval`) runs the shared lapse core (`lib/booking/lapse-approved-request.ts`, the same per-row body the 7-day sweep uses) under the appointment lock in one Serializable transaction: the request moves `APPROVED_PENDING_PAYMENT → EXPIRED` by a CAS whose WHERE also carries the money predicate, the open PENDING order is tombstoned to `EXPIRED` by status (a Razorpay order cannot be voided, so the row is the tombstone), the tentative holds are released by status, and the consultee is told after the commit. Both race orders are safe. A capture that wins first has already flipped the request through the single writer, so the withdraw's CAS matches zero rows and the route answers `409 REQUEST_CHANGED_ELSEWHERE` with nothing written. A capture that lands after the withdraw meets the `EXPIRED` Payment row and takes the webhook handler's `captured_after_release` arm, which claims the row as `SUCCEEDED` and refunds through the booking front door, so the late payment refunds itself. Separately, both detail PATCH routes now refuse an approval status from a user who is both the consultant and the consultee of the same request (`403 SELF_APPROVAL`) unless privileged; the participant check alone let a dual-profile user approve their own booking.
 
+#### Paying an approval from any surface (#1775 P-1)
+
+For Razorpay the stored pay link on an approval is the order id, not a URL, so no "Pay" button could open it until 2026-09-25. Every surface now resolves its target through `payLinkHref` in `lib/payments/pay-link-href.ts`, which turns an order id into our own pay page at `/checkout/pay/[paymentId]` and leaves a hosted https link alone. The page is a server component that only the payer can open: a paid order redirects to the booking, a live order opens in the Razorpay sheet through `RazorpayCheckout`'s existing-order mode (which never calls `POST /api/checkout`), and an expired or failed order is re-minted through the request's own path before it opens. The pay-link email carries the same page as an absolute URL.
+
 #### Sequence Diagram
 
 ```mermaid
@@ -292,6 +296,10 @@ The capture webhook moves a consultation to `APPROVED` only from `PENDING` or `A
 ### 5b. Subscription
 
 A subscription is a recurring 1:1 arrangement with multiple sessions over a scheduling period. The critical difference from a consultation is that **the consultant allocates session slots after purchase**, not during checkout. This is the most complex 1:1 flow.
+
+#### Plans are paid at purchase (#1775)
+
+A subscription plan is always paid at checkout; the consultant's booking mode applies to consultations only, and the expert page shows its request badge only on the consultations tab. The consultant must allocate the first cycle within 48 hours of the capture (`Payment.capturedAt`, falling back to `createdAt` for rows written before the column existed), or the buyer is refunded in full. The only request-then-pay leg a plan ever had is closed: the detail PATCH answers `409 SUBSCRIPTION_UNPAID` for a plan with no settled payment, and the allocate path refuses the same plan instead of parking it in `APPROVED_PENDING_PAYMENT`. The expiry sweep's `expireUnallocatedPaidSubscriptions` arm moves a paid `PENDING` plan with no live session and no live proposal to `EXPIRED` with reason `UNALLOCATED_48H`, repeating the whole cohort predicate in the CAS WHERE, refunds it through `refundBookingPayment`, and stages the `subscription-unallocated-refunded` bell to both parties inside the same transaction. Before that deadline the consultant is nudged at 12, 24 and 36 hours after the capture, and the consultant's next action on the booking is "Schedule cycle 1" with the deadline shown. Once a cycle is delivered with entitlement left, the next action becomes "Schedule the next N" without a deadline.
 
 #### Why the Consultant Allocates Later
 
@@ -628,7 +636,11 @@ This scopes by `classId` (not a single `appointmentId`) because the class's wrap
 
 ### 5e. Trial
 
-A trial is a free 1:1 session tied to a subscription plan. It is the only event type with NO payment involved. The purpose is to let a consultee "try before they buy" -- experience a session with the consultant before committing to a subscription.
+A trial is a 1:1 session tied to a subscription plan, either free or priced by the plan's `trialPriceInPaise`. The purpose is to let a consultee "try before they buy" -- experience a session with the consultant before committing to a subscription.
+
+#### Paid trials are charged at request (#1775)
+
+A paid trial is charged when it is requested and refunded in full if the consultant declines it or does not answer within 48 hours. `POST /api/trials` creates a placeholder `TRIAL` appointment with no session in the same transaction as the trial, then mints the order against that appointment after the commit and hands the buyer the branded trial checkout. The capture webhook stamps the trial's `paymentId` and leaves it `PENDING`, because the consultant has not answered yet. Accepting requires that payment (`409 TRIAL_UNPAID` otherwise) and places the session on the placeholder appointment instead of creating a new one. The expiry sweep cancels an unpaid trial past its pay window without moving money, and cancels a paid trial nobody answered within 48 hours with reason `TRIAL_UNANSWERED` (the enum has no `EXPIRED`), refunding it in full; a decline refunds in full through the consultant-initiated tier. A learner who cancels before a session exists is refunded in full, because no session is read as infinite notice. The trial's earning is written undelivered (`holdUntil` null) and completion starts the hold. The free-trial flow below is unchanged.
 
 #### How Trials Differ
 
