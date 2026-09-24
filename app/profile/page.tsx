@@ -24,12 +24,13 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { authClient, signOut, useSession } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 import { AUTH_PROVIDERS, AuthProviderId } from "@/lib/auth-providers";
 import { PROVIDER_ICONS } from "@/components/auth/auth-icons";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, useCallback } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   User as UserIcon,
   Settings,
@@ -356,11 +357,7 @@ export default function Profile() {
       });
       // Small delay to show the toast before signing out
       setTimeout(() => {
-        signOut({
-          fetchOptions: {
-            onSuccess: () => router.push("/auth/signin"),
-          },
-        });
+        void signOutEverywhere("/auth/signin");
       }, 1000);
     } catch {
       toast({
@@ -394,12 +391,10 @@ export default function Profile() {
           title: "Account Deleted",
           description: "Your account has been permanently deleted.",
         });
+        // Post-delete target is "/" (not /auth/signin): the account is gone,
+        // so landing on sign-in with a dead session is the worse terminal.
         setTimeout(() => {
-          signOut({
-            fetchOptions: {
-              onSuccess: () => router.push("/"),
-            },
-          });
+          void signOutEverywhere("/");
         }, 1000);
       } else {
         const data = await res.json();

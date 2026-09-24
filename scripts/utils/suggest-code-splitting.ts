@@ -4,7 +4,7 @@
  * This script analyzes the codebase to suggest components that would benefit
  * from code splitting and dynamic imports to improve performance.
  *
- * Usage: ts-node scripts/suggest-code-splitting.ts
+ * Usage: npx tsx scripts/utils/suggest-code-splitting.ts
  */
 
 import * as fs from "fs";

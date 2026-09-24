@@ -1,4 +1,4 @@
-#!/usr/bin/env ts-node
+#!/usr/bin/env tsx
 
 /**
  * Build Diagnostics Tool
@@ -8,7 +8,7 @@
  * 2. Checking for common failure patterns
  * 3. Providing actionable recommendations
  *
- * Usage: npx ts-node -P tsconfig.scripts.json scripts/diagnose-build.ts
+ * Usage: npx tsx scripts/utils/diagnose-build.ts
  */
 
 import { execSync } from "child_process";

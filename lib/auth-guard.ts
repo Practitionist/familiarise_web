@@ -9,7 +9,7 @@ import {
 import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import {
   hasBackofficePermission,
   type BackofficeSurface,
@@ -124,14 +124,12 @@ async function onboardingRedirectTarget(
   extraParams?: Record<string, string>,
 ): Promise<string> {
   const params = new URLSearchParams(extraParams);
-  const current = (await headers()).get("x-pathname");
-  if (
-    current &&
-    current.startsWith("/") &&
-    !current.startsWith("//") &&
-    !current.startsWith("/form/onboarding")
-  ) {
-    params.set("callbackUrl", current);
+  // Canonicalize through the sentinel-origin check first: it rejects
+  // backslash/control-char smuggling the prefix checks below cannot see.
+  // The onboarding root itself is rejected after canonicalization.
+  const safe = safeSameOriginPath((await headers()).get("x-pathname"));
+  if (safe && !safe.startsWith("/form/onboarding")) {
+    params.set("callbackUrl", safe);
   }
   const query = params.toString();
   return query ? `/form/onboarding?${query}` : "/form/onboarding";

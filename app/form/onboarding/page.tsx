@@ -28,6 +28,7 @@ import { AlertTriangle, Check, History, LogOut, RotateCcw } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import { useToast } from "@/hooks/use-toast";
 import { signOut, useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import {
   describeIssuePath,
   stepKeyForField,
@@ -38,7 +39,7 @@ import {
   getPendingReferral,
   clearPendingReferral,
 } from "@/lib/pending-referral";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -1077,15 +1078,7 @@ const MultiStepForm: React.FC = () => {
               Step {step + 1} of {totalSteps}
             </span>
             <button
-              onClick={() =>
-                signOut({
-                  fetchOptions: {
-                    onSuccess: () => {
-                      window.location.href = "/";
-                    },
-                  },
-                })
-              }
+              onClick={() => void signOutEverywhere("/")}
               className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
               title="Sign out"
             >

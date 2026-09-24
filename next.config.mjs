@@ -205,7 +205,6 @@ const nextConfig = {
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "@radix-ui/react-icons",
       // Imported by components/notifications/NotificationInbox.tsx and not in
       // the default list.
       "@novu/nextjs",

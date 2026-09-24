@@ -1,5 +1,8 @@
 import { signOut } from "@/lib/auth-client";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
+// SDK-free path on purpose (#248): `@/providers/StreamProvider` only
+// re-exports this helper, and importing through the provider would drag the
+// Stream video/chat SDK into every bundle that signs out (e.g. Navbar).
+import { disconnectStreamClients } from "@/lib/stream/disconnect";
 
 /**
  * Sign out from every live surface: tear down Stream video/chat sockets

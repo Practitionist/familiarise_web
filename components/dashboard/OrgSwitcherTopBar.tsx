@@ -35,9 +35,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { signOut, useSession } from "@/lib/auth-client";
+import { useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { resolvePersonalDashboardHref } from "@/lib/labels/personal-dashboard";
-import { disconnectStreamClients } from "@/providers/StreamProvider";
 
 /**
  * Render the top bar with: back link → personal dashboard,
@@ -77,19 +77,7 @@ export function OrgSwitcherTopBar({
   const backHref = personalHref ?? "/dashboard";
 
   const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // Stream cleanup is best-effort — never block the sign-out
-      // because a chat client failed to disconnect cleanly.
-    }
-    signOut({
-      fetchOptions: {
-        onSuccess: () => {
-          window.location.href = "/auth/signin";
-        },
-      },
-    });
+    await signOutEverywhere("/auth/signin");
   };
 
   const userName = session?.user?.name ?? null;

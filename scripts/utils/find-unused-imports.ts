@@ -4,7 +4,7 @@
  * This script scans TypeScript/JavaScript files to find potentially unused imports
  * It helps identify imports that can be removed to reduce bundle size
  *
- * Usage: ts-node scripts/find-unused-imports.ts
+ * Usage: npx tsx scripts/utils/find-unused-imports.ts
  */
 
 import * as fs from "fs";
