@@ -19,10 +19,8 @@ import {
   Layers,
   Star,
 } from "lucide-react";
-import { signOut, useSession } from "@/lib/auth-client";
-// Import the logout helper from the SDK-free module (not @/providers/StreamProvider)
-// so the root navbar no longer statically links the Stream video/chat SDK. #248
-import { disconnectStreamClients } from "@/lib/stream/disconnect";
+import { useSession } from "@/lib/auth-client";
+import { signOutEverywhere } from "@/lib/auth/sign-out";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import Link from "next/link";
@@ -546,18 +544,8 @@ const Navbar = () => {
   if (isChromeHidden(pathname)) return null;
 
   const handleSignOut = async () => {
-    try {
-      await disconnectStreamClients();
-    } catch {
-      // Don't block sign-out if disconnect fails
-    }
-    signOut({
-      fetchOptions: {
-        onSuccess: () => {
-          window.location.href = "/auth/signin";
-        },
-      },
-    });
+    // signOutEverywhere keeps the #248 SDK-free disconnect path internally.
+    await signOutEverywhere("/auth/signin");
     closeMenu();
   };
 

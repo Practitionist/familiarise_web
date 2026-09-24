@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrencyAmount } from "@/utils/formatting";
+import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { Gift, Clock, Loader2, CheckCircle } from "lucide-react";
 
 interface TrialBookingModalProps {
@@ -48,7 +49,7 @@ export function TrialBookingModal({
   const isPaidTrial = trialPriceInPaise > 0;
   const priceLabel = isPaidTrial
     ? formatCurrencyAmount(trialPriceInPaise, trialCurrency)
-    : "Free trial";
+    : FREE_TRIAL_LABEL;
   const { data: session } = useSession();
   const router = useRouter();
   const pathname = usePathname();

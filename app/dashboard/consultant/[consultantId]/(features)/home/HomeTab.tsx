@@ -60,6 +60,7 @@ import {
   type OccurrenceJoinState,
 } from "@/lib/appointments/occurrences";
 import { getAppointmentLifecycleStatus } from "@/lib/appointments/map-consultant";
+import { CHIP_LABEL } from "@/components/dashboard/shared/requests/labels";
 import { TAppointment } from "@/types/appointment";
 import { getJoinableOccurrence } from "../../utils/joinState";
 import { getInitials } from "@/utils/formatting";
@@ -645,7 +646,7 @@ export function HomeTab({
                   into Today/Upcoming. */}
               {awaitingPayment && awaitingPayment.count > 0 && (
                 <DataCard
-                  title="Awaiting payment"
+                  title={CHIP_LABEL["awaiting-payment"]}
                   icon={Clock}
                   headerAction={
                     <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">
