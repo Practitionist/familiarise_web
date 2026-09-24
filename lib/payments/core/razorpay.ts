@@ -308,6 +308,32 @@ export async function ensureRazorpayCustomer(userId: string): Promise<string> {
 }
 
 /**
+ * #1771 row 5 — erasure deletes every saved-card token on the Customer and
+ * returns how many it removed. Throws a typed error when the client is absent.
+ */
+export async function deleteRazorpayCustomerTokens(
+  customerId: string,
+): Promise<number> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - cannot delete saved-card tokens",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const tokens = await withRazorpaySdkTimeout("customers.fetchTokens", () =>
+    razorpayClient.customers.fetchTokens(customerId),
+  );
+  for (const token of tokens.items) {
+    await withRazorpaySdkTimeout("customers.deleteToken", () =>
+      razorpayClient.customers.deleteToken(customerId, token.id),
+    );
+  }
+  return tokens.items.length;
+}
+
+/**
  * Cancel a Razorpay order (best effort - cannot actually cancel after payment)
  */
 export async function cancelRazorpayOrder(orderId: string): Promise<void> {
