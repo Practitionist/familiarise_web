@@ -5,7 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-import { roundTime, timeToMinutes } from "../utils/time";
+import { roundTime, timeToMinutes12h } from "../utils/time";
 import { mergeConsecutiveSlotsForDisplay } from "../utils/mergeSlots";
 import type { PickerInterval } from "../types";
 import { SLOT_STATUS_TOKENS } from "@/lib/scheduling/interval-status-tokens";
@@ -35,7 +35,7 @@ export const CustomAvailability: React.FC<CustomAvailabilityProps> = ({
     return days.map((day) => {
       const sorted = day.slots.slice().sort((a, b) => {
         return (
-          timeToMinutes(a.localStartTime) - timeToMinutes(b.localStartTime)
+          timeToMinutes12h(a.localStartTime) - timeToMinutes12h(b.localStartTime)
         );
       });
       return {
