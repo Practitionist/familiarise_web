@@ -26,6 +26,8 @@ export interface LedgerOccurrence {
   endsAt: Date;
   completionStatus: OccurrenceCompletionStatus;
   movedAt: Date | null;
+  /** #1780 row 4 — a session the host cancelled; still counts toward N. */
+  hostCancelledAt?: Date | null;
 }
 
 export interface SeatLedger {
@@ -60,7 +62,12 @@ export function seatLedgerFrom(args: {
   const remaining = held
     .filter((o) => isLiveAhead(o, now))
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-  const ordinals = new Set([...delivered, ...remaining].map((o) => o.ordinal));
+  // A host-cancelled session keeps its place in the seat's count (E-2): it
+  // is either made up or refunded one unit, so the unit must not move.
+  const hostCancelled = held.filter((o) => o.hostCancelledAt);
+  const ordinals = new Set(
+    [...delivered, ...remaining, ...hostCancelled].map((o) => o.ordinal),
+  );
   const heldCount = Math.min(N, ordinals.size) || N;
   const deliveredHeld = Math.min(delivered.length, heldCount);
   return {
@@ -86,6 +93,15 @@ export function seriesCancelRefundPaise(
   return left > BigInt(0) ? left : BigInt(0);
 }
 
+const LEDGER_OCCURRENCE_SELECT = {
+  ordinal: true,
+  startsAt: true,
+  endsAt: true,
+  completionStatus: true,
+  movedAt: true,
+  hostCancelledAt: true,
+} as const;
+
 /** Reads the seat's sessions and its plan size, on the caller's client. */
 export async function seatLedger(
   db: Pick<Tx, "appointment" | "appointmentOccurrence">,
@@ -106,13 +122,7 @@ export async function seatLedger(
       deletedAt: null,
       isTentative: false,
     },
-    select: {
-      ordinal: true,
-      startsAt: true,
-      endsAt: true,
-      completionStatus: true,
-      movedAt: true,
-    },
+    select: LEDGER_OCCURRENCE_SELECT,
   });
   return seatLedgerFrom({
     N: appointment?.class?.classPlan?.totalSessions ?? occurrences.length,
@@ -142,4 +152,63 @@ export function isHostMove(
     (prior.startsAt.getTime() !== row.startsAt.getTime() ||
       prior.endsAt.getTime() !== row.endsAt.getTime())
   );
+}
+
+/** #1780 E-1 — the series as a whole: what it delivered, owes and missed. */
+export interface SeriesLedger {
+  N: number;
+  delivered: number;
+  remaining: number;
+  neverScheduled: number;
+  /** Sessions the host cancelled, made up or not (misses = host cancellations). */
+  misses: number;
+  /** The learner may leave with every undelivered session refunded (E-5). */
+  exitRight: boolean;
+}
+
+/** Three misses, or a quarter of the series, gives the learner an exit right. */
+export const exitRightFor = (misses: number, N: number): boolean =>
+  misses > 0 && (misses >= 3 || 4 * misses >= N);
+
+/** Pure: the series ledger from its sessions. */
+export function seriesLedgerFrom(args: {
+  N: number;
+  occurrences: LedgerOccurrence[];
+  now: Date;
+}): SeriesLedger {
+  const { N, now } = args;
+  const delivered = args.occurrences.filter((o) => isDelivered(o, now)).length;
+  const remaining = args.occurrences.filter((o) => isLiveAhead(o, now)).length;
+  const misses = args.occurrences.filter((o) => o.hostCancelledAt).length;
+  return {
+    N,
+    delivered,
+    remaining,
+    neverScheduled: Math.max(0, N - delivered - remaining),
+    misses,
+    exitRight: exitRightFor(misses, N),
+  };
+}
+
+/** Reads the class wrapper's sessions and plan size on the caller's client. */
+export async function seriesLedger(
+  db: Pick<Tx, "appointment" | "appointmentOccurrence">,
+  appointmentId: string,
+  now = new Date(),
+): Promise<SeriesLedger> {
+  const appointment = await db.appointment.findUnique({
+    where: { id: appointmentId },
+    select: {
+      class: { select: { classPlan: { select: { totalSessions: true } } } },
+    },
+  });
+  const occurrences = await db.appointmentOccurrence.findMany({
+    where: { appointmentId, deletedAt: null, isTentative: false },
+    select: LEDGER_OCCURRENCE_SELECT,
+  });
+  return seriesLedgerFrom({
+    N: appointment?.class?.classPlan?.totalSessions ?? occurrences.length,
+    occurrences,
+    now,
+  });
 }

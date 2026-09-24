@@ -4949,8 +4949,10 @@ model AppointmentOccurrence {
   attendances MeetingAttendance[]
 
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
-  movedAt   DateTime? @db.Timestamptz // #1780 decision 9 — stamped when the host moves this session; waives the leave window
+  deletedAt       DateTime? @db.Timestamptz
+  movedAt         DateTime? @db.Timestamptz // #1780 decision 9 — stamped when the host moves this session; waives the leave window
+  hostCancelledAt DateTime? @db.Timestamptz // #1780 row 4 — the host cancelled this one session (a miss; no deletedAt)
+  seatsSettledAt  DateTime? @db.Timestamptz // #1780 row 4 — its make-up happened or every seat got its unit back
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
