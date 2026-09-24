@@ -20,6 +20,22 @@ type DocumentReadAction = "view" | "delete";
 // Shared auth + access gate for GET + DELETE (were near-identical 30-line
 // preambles in each handler). PATCH stays separate: consultant-only OR,
 // tombstone filter, rate limit, and body parsing.
+function notFoundMessage(
+  action: DocumentReadAction,
+  isDevelopment: boolean,
+  appointmentId: string,
+  documentId: string,
+): string {
+  if (isDevelopment) {
+    return action === "delete"
+      ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
+      : `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`;
+  }
+  return action === "delete"
+    ? "Document not found, access denied, or already reviewed"
+    : "Document not found or access denied";
+}
+
 async function resolveAppointmentDocument(
   params: Promise<{ appointmentId: string; documentId: string }>,
   action: DocumentReadAction,
@@ -143,13 +159,12 @@ async function resolveAppointmentDocument(
       error: NextResponse.json(
         {
           error: "Document not found",
-          message: isDevelopment
-            ? action === "delete"
-              ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
-              : `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
-            : action === "delete"
-              ? "Document not found, access denied, or already reviewed"
-              : "Document not found or access denied",
+          message: notFoundMessage(
+            action,
+            isDevelopment,
+            appointmentId,
+            documentId,
+          ),
           code: "NOT_FOUND",
         },
         { status: 404 },
