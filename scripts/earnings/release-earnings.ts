@@ -21,7 +21,7 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { EarningStatus, Prisma } from "@prisma/client";
+import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -65,6 +65,18 @@ export interface ReleaseEarningsOptions {
  *
  * @returns ReleaseResult with counts and error details
  */
+/**
+ * #1775 P-2 — an earning whose payment has a refund still in flight is not
+ * released: the clawback cascade sizes itself when that refund settles, and a
+ * READY (or paid-out) row would pay the consultant money that is leaving.
+ * Repeated in the claim's WHERE so a refund opened mid-run keeps the row.
+ */
+const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
+  payment: {
+    refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  },
+};
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(
@@ -109,6 +121,7 @@ async function releaseEarningsFromHoldUnlocked(
           where: {
             status: EarningStatus.PENDING,
             holdUntil: { lte: now },
+            ...NO_OPEN_REFUND,
           },
           include: {
             consultantProfile: {
@@ -125,6 +138,7 @@ async function releaseEarningsFromHoldUnlocked(
           where: {
             id: { in: rows.map((r) => r.id) },
             status: EarningStatus.PENDING,
+            ...NO_OPEN_REFUND,
           },
           data: {
             status: EarningStatus.READY,
