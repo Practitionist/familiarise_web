@@ -389,3 +389,33 @@ describe("derivePaymentPresentation — a list row's money is the detail page's"
     expect(asRow.settled).toBe(asDetail.settled);
   });
 });
+
+describe("the refund timeline (#1780)", () => {
+  const refund = (status: string, amountPaise: number, refundId: string) => ({
+    status,
+    amountPaise,
+    refundId,
+    createdAt: NOW,
+  });
+  const refundStep = (r: ReturnType<typeof refund>) =>
+    deriveBookingPresentation(
+      base({ request: req("APPROVED"), payments: paid, refunds: [r] }),
+      "CONSULTEE",
+      { now: NOW },
+    ).timeline.filter((e) => e.kind);
+
+  it.each([
+    [refund("PENDING", 708_000, "pending_1"), "refund-requested", /requested/],
+    [
+      refund("PENDING", 708_000, "rfnd_1"),
+      "refund-processing",
+      /5–7 working days, UPI 1–3/,
+    ],
+    [refund("SUCCEEDED", 200_000, "rfnd_2"), "refund-completed", /\(partial\)/],
+    [refund("FAILED", 708_000, "rfnd_3"), "refund-failed", /failed/],
+  ])("%# emits one %s step", (r, kind, label) => {
+    const [step] = refundStep(r);
+    expect(step.kind).toBe(kind);
+    expect(step.label).toMatch(label);
+  });
+});

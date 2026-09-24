@@ -85,13 +85,13 @@ describe("deriveEarningPresentation — every EarningStatus lands in one bucket"
     expect(Object.values(EarningStatus)).toHaveLength(7);
   });
 
-  it("a dispute hold names the dispute; a null hold and a matured hold read honestly", () => {
-    expect(
-      deriveEarningPresentation(
-        earning("HELD", { preDisputeStatus: "READY" }),
-        LIVE,
-      ).line,
-    ).toMatch(/dispute/);
+  it("a dispute hold reads plainly and stays out of Available; a null hold and a matured hold read honestly", () => {
+    const held = deriveEarningPresentation(
+      earning("HELD", { preDisputeStatus: "READY" }),
+      LIVE,
+    );
+    expect(held.line).toBe("On hold — payment under review");
+    expect(held.bucket).toBe("PENDING");
     expect(
       deriveEarningPresentation(earning("PENDING", { holdUntil: null }), LIVE)
         .line,

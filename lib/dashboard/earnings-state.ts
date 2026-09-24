@@ -169,8 +169,9 @@ export function deriveEarningPresentation(
         bucket,
         label: "On hold",
         tone: "caution",
+        // #1771 row 8 — plain words; HELD stays out of AVAILABLE (bucketOf).
         line: e.preDisputeStatus
-          ? "Held while a dispute on this booking is reviewed"
+          ? "On hold — payment under review"
           : "Held for account review — support can tell you more",
         availableOn: null,
       };
