@@ -48,6 +48,9 @@ import {
 import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { notificationHref } from "@/lib/novu/resolve-href";
+import type { Tx } from "@/lib/prisma";
 import {
   EMAIL_BUDGET_MS,
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
@@ -715,6 +718,36 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
   }
 }
 
+/** #1775 C-6 — both parties hear that the unscheduled plan is refunded in full. */
+async function stageUnallocatedRefundBell(
+  tx: Pick<Tx, "notificationOutbox">,
+  row: {
+    id: string;
+    requestedBy: { user: { id: string; name: string | null } } | null;
+    subscriptionPlan: {
+      title: string;
+      consultantProfile: { user: { id: string } };
+    };
+    appointment: { organizationId: string | null } | null;
+  },
+): Promise<void> {
+  const consulteeId = row.requestedBy?.user.id;
+  if (!consulteeId) return;
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+    recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+    payload: {
+      planTitle: row.subscriptionPlan.title,
+      consulteeName: row.requestedBy?.user.name ?? "The buyer",
+      dashboardUrl: notificationHref(
+        row.appointment?.organizationId,
+        "appointments",
+      ),
+    },
+    dedupeKey: `sub-unalloc:${row.id}`,
+  });
+}
+
 /**
  * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
  * ago) with no live session and no live proposal expires with reason
@@ -738,7 +771,14 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
       where: { status: AppointmentStatus.PENDING, ...cohort },
       select: {
         ...EXPIRY_NOTICE_SELECT,
-        subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
+        subscriptionPlan: {
+          select: {
+            title: true,
+            consultantProfile: {
+              select: { id: true, user: { select: { id: true, name: true } } },
+            },
+          },
+        },
       },
       orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
@@ -748,15 +788,17 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
     const expiredIds: string[] = [];
     for (const subscription of stale) {
       try {
-        await prisma.$transaction((tx) =>
-          transitionSubscriptionRequest(tx, {
+        await prisma.$transaction(async (tx) => {
+          await transitionSubscriptionRequest(tx, {
             where: { id: subscription.id, ...cohort },
             to: AppointmentStatus.EXPIRED,
             fromIn: [AppointmentStatus.PENDING],
             actorUserId: null,
             reason: "UNALLOCATED_48H",
-          }),
-        );
+          });
+          // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
+          await stageUnallocatedRefundBell(tx, subscription);
+        });
         expiredIds.push(subscription.id);
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;

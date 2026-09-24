@@ -271,6 +271,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // #1775 C-6 — staged inside the 48 h sweep's CAS transaction.
+    workflowId: W.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+    name: "Plan refunded — not scheduled",
+    description:
+      "Both parties, when a paid plan's first cycle was not scheduled within 48 h of payment.",
+    category: "subscriptions",
+    inApp: {
+      subject: "Plan refunded in full",
+      body: "{{payload.planTitle}} was not scheduled within 48 h of payment, so {{payload.consulteeName}} is refunded in full.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.TRIAL_SESSION_REQUESTED,
     name: "Trial requested",
     description: "The consultant, when a consultee asks for a free trial.",

@@ -31,6 +31,19 @@ jest.mock("../../lib/prisma", () => {
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: { findMany: jest.fn() },
+    // #1775 C-6 — an upsert keyed on transactionId, as the outbox is.
+    notificationOutbox: {
+      rows: new Map<string, unknown>(),
+      upsert: jest.fn(
+        async (q: { where: { transactionId: string }; create: unknown }) => {
+          const rows = (db.notificationOutbox as { rows: Map<string, unknown> })
+            .rows;
+          if (!rows.has(q.where.transactionId))
+            rows.set(q.where.transactionId, q.create);
+          return rows.get(q.where.transactionId);
+        },
+      ),
+    },
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.
@@ -47,6 +60,19 @@ jest.mock("../../lib/novu/service", () => ({
 }));
 jest.mock("../../lib/novu/outbox", () => ({
   deriveTransactionId: (...parts: unknown[]) => parts.join("|"),
+  // The real staging shape: one upsert keyed on the derived transaction id.
+  stageTrigger: (args: {
+    tx: { notificationOutbox: { upsert: (q: unknown) => unknown } };
+    workflowId: string;
+    recipients: string[];
+    dedupeKey: string;
+  }) =>
+    args.tx.notificationOutbox.upsert({
+      where: {
+        transactionId: `${args.workflowId}|${args.recipients.join(",")}|${args.dedupeKey}`,
+      },
+      create: { recipients: args.recipients },
+    }),
 }));
 jest.mock("../../lib/email", () => ({
   EMAIL_BUDGET_MS: { JOB: 1 },
@@ -271,6 +297,12 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     id: "sub-paid",
     live,
     capturedAt: new Date(Date.now() - 49 * 60 * 60 * 1000),
+    requestedBy: { user: { id: "u-buyer", name: "Buyer" } },
+    subscriptionPlan: {
+      title: "Mentorship",
+      consultantProfile: { user: { id: "u-expert", name: "Expert" } },
+    },
+    appointment: { id: "apt-1", organizationId: null, occurrences: [] },
   });
   const readCohort =
     (rows: ReturnType<typeof paidRow>[]) =>
@@ -308,6 +340,25 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     expect(refundBookingPayment.mock.calls[0][0]).not.toHaveProperty(
       "amountPaise",
     );
+  });
+
+  it("stages one bell to both parties, however often the sweep stages it (#1775 C-6)", async () => {
+    const outbox = (
+      prisma as unknown as {
+        notificationOutbox: { rows: Map<string, { recipients: string[] }> };
+      }
+    ).notificationOutbox;
+    outbox.rows.clear();
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      readCohort([paidRow(0)]),
+    );
+    await expireStaleRequests();
+    await expireStaleRequests();
+    expect(outbox.rows.size).toBe(1);
+    expect([...outbox.rows.values()][0].recipients).toEqual([
+      "u-buyer",
+      "u-expert",
+    ]);
   });
 
   it("leaves a plan with one live session alone", async () => {

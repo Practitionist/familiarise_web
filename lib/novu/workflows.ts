@@ -52,6 +52,8 @@ export const NOVU_WORKFLOWS = {
   SUBSCRIPTION_STARTED: "subscription-started",
   SUBSCRIPTION_CANCELLED: "subscription-cancelled",
   SUBSCRIPTION_RENEWED: "subscription-renewed",
+  // #1775 C-6 — a paid plan not scheduled within 48 h, refunded in full.
+  SUBSCRIPTION_UNALLOCATED_REFUNDED: "subscription-unallocated-refunded",
 
   // Consultant-specific
   NEW_BOOKING_REQUEST: "new-booking-request",
