@@ -114,16 +114,13 @@ const SDK_CALL_TIMEOUT_MS = 30_000;
 export function withRazorpaySdkTimeout<T>(
   op: string,
   call: () => Promise<T>,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
       () =>
-        reject(
-          new Error(
-            `Razorpay SDK ${op} timed out after ${SDK_CALL_TIMEOUT_MS}ms`,
-          ),
-        ),
-      SDK_CALL_TIMEOUT_MS,
+        reject(new Error(`Razorpay SDK ${op} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
     );
     try {
       call().then(
@@ -237,6 +234,8 @@ export async function createRazorpayOrder({
 // Customers (saved cards, #1771 row 1)
 // ============================================================================
 
+const CUSTOMER_CREATE_TIMEOUT_MS = 8_000;
+
 /**
  * Returns the buyer's Razorpay Customer id, creating the Customer once.
  *
@@ -277,13 +276,17 @@ export async function ensureRazorpayCustomer(userId: string): Promise<string> {
   }
   const contact = normalizeRazorpayContact(user.phone);
   const name = user.name.trim().slice(0, 50);
-  const customer = await withRazorpaySdkTimeout("customers.create", () =>
-    razorpayClient.customers.create({
-      ...(name.length >= 3 ? { name } : {}),
-      email: user.email,
-      ...(contact ? { contact } : {}),
-      fail_existing: 0,
-    }),
+  // Checkout calls this under its slot lock, so a slow Customer API must give up early.
+  const customer = await withRazorpaySdkTimeout(
+    "customers.create",
+    () =>
+      razorpayClient.customers.create({
+        ...(name.length >= 3 ? { name } : {}),
+        email: user.email,
+        ...(contact ? { contact } : {}),
+        fail_existing: 0,
+      }),
+    CUSTOMER_CREATE_TIMEOUT_MS,
   );
 
   try {

@@ -30,6 +30,8 @@ interface InstantPreview {
   netPaise: number;
   label: string;
   nextAllowedAt: string | null;
+  /** The first failing payout gate; the POST would refuse while it is set. */
+  reason: string | null;
 }
 
 interface InstantOutcome {
@@ -144,7 +146,11 @@ export function GetPaidNowSheet({
         <Button
           className="mt-6 w-full"
           disabled={
-            !data || data.readyPaise <= 0 || usedToday || payNow.isPending
+            !data ||
+            !!data.reason ||
+            data.readyPaise <= 0 ||
+            usedToday ||
+            payNow.isPending
           }
           onClick={() => payNow.mutate()}
         >

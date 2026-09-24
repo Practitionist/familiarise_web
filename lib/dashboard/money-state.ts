@@ -768,9 +768,12 @@ function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
       return {
         at,
         actor: "",
-        label: partial
-          ? `Refunded ${money(r.amountPaise, paid.currency)} (partial)`
-          : "Refunded",
+        // Locked 2026-09-13: a sponsored member paid nothing, so no amount.
+        label: !partial
+          ? "Refunded"
+          : funding === "ORG"
+            ? "Refunded (partial)"
+            : `Refunded ${money(r.amountPaise, paid.currency)} (partial)`,
         done: true,
         kind: "refund-completed",
       };
