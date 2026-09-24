@@ -3,10 +3,12 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
+import * as Sentry from "@sentry/nextjs";
 import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
@@ -1446,6 +1448,31 @@ async function processStripePayout(
  * Without this, the payout status, earnings status, and consultant stats
  * could get out of sync if any individual DB call fails mid-way.
  */
+/**
+ * R-5 — a payout status the mapping does not know. The caller keeps the row's
+ * current status and returns; this leaves a Sentry breadcrumb and a WARN
+ * system event so a new gateway status is noticed instead of silently mapped.
+ */
+export async function reportUnknownPayoutStatus(input: {
+  provider: PaymentGateway;
+  providerPayoutId: string;
+  status: string;
+  eventType?: string;
+}): Promise<void> {
+  Sentry.addBreadcrumb({
+    category: "payouts",
+    level: "warning",
+    message: `Unknown ${input.provider} payout status "${input.status}"`,
+    data: input,
+  });
+  await recordSystemEvent({
+    category: "PAYOUT",
+    severity: "WARN",
+    message: `Unknown ${input.provider} payout status "${input.status}" for ${input.providerPayoutId}; status left unchanged`,
+    context: input,
+  });
+}
+
 export async function handlePayoutWebhook(
   _provider: PaymentGateway,
   providerPayoutId: string,
@@ -1481,8 +1508,17 @@ export async function handlePayoutWebhook(
     case "PROCESSING":
       payoutStatus = PayoutStatus.PROCESSING;
       break;
-    default:
+    case "PENDING":
       payoutStatus = PayoutStatus.PENDING;
+      break;
+    default:
+      // R-5 — an unknown status keeps the row as it is; it never downgrades to PENDING.
+      await reportUnknownPayoutStatus({
+        provider: _provider,
+        providerPayoutId,
+        status: String(status),
+      });
+      return;
   }
 
   await prisma.$transaction(async (tx) => {
