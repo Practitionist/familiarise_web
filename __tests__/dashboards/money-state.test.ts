@@ -389,3 +389,48 @@ describe("derivePaymentPresentation — a list row's money is the detail page's"
     expect(asRow.settled).toBe(asDetail.settled);
   });
 });
+
+// #1775 C-5 — a paid plan waits on the consultant: cycle 1 within 48 h of the
+// capture, then each next cycle once the last one is done.
+describe("ALLOCATE (#1775 C-5)", () => {
+  const capturedAt = new Date("2026-09-19T12:00:00Z");
+  const paidPending = base({
+    occurrences: [],
+    payments: [pay("SUCCEEDED", 708_000, { capturedAt })],
+    holdExpiresAt: null,
+  });
+
+  it("asks the consultant to schedule cycle 1 by capture + 48 h; the consultee waits", () => {
+    const consultant = deriveBookingPresentation(paidPending, "CONSULTANT", {
+      now: NOW,
+    });
+    expect(consultant.bookingState.state).toBe("AWAITING_ALLOCATION");
+    expect(consultant.nextAction).toEqual({
+      kind: "ALLOCATE",
+      label: "Schedule cycle 1",
+      deadline: new Date("2026-09-21T12:00:00Z"),
+    });
+    expect(
+      deriveBookingPresentation(paidPending, "CONSULTEE", { now: NOW })
+        .nextAction.kind,
+    ).toBe("NONE");
+  });
+
+  it("asks for the next cycle, without a deadline, once the last one is done", () => {
+    const presentation = deriveBookingPresentation(
+      base({
+        request: req("APPROVED"),
+        occurrences: [slot(false, PAST)],
+        payments: paid,
+        holdExpiresAt: null,
+        entitlement: { remaining: 4, nextBatch: 4 },
+      }),
+      "CONSULTANT",
+      { now: NOW },
+    );
+    expect(presentation.nextAction).toEqual({
+      kind: "ALLOCATE",
+      label: "Schedule the next 4",
+    });
+  });
+});

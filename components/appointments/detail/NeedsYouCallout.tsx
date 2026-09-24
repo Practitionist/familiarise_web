@@ -548,6 +548,24 @@ export function NeedsYouCallout(props: NeedsYouCalloutProps) {
           onHelp={onHelp}
         />
       );
+    // #1775 C-5 — a paid plan waiting for cycle 1 (or its next cycle).
+    case "ALLOCATE":
+      if (!decision) return null;
+      return (
+        <Shell
+          onHelp={onHelp}
+          actions={
+            <>
+              {deadline && <TimeLeft deadline={deadline} />}
+              <Button size="sm" asChild>
+                <Link href={decision.allocateHref}>{nextAction.label}</Link>
+              </Button>
+            </>
+          }
+        >
+          {bookingState.why}
+        </Shell>
+      );
     case "PAY": {
       if (!pending) return null;
       const amount = formatCurrencyAmount(

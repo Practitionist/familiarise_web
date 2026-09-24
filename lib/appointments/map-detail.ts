@@ -11,7 +11,7 @@ import type {
   TDetailAppointment,
 } from "@/lib/data/appointment-detail";
 import type { TAppointment } from "@/types/appointment";
-import { subscriptionEntitlement } from "@/lib/booking/entitlement";
+import { detailEntitlement } from "./presentation-input";
 import { deriveBucket } from "./bucket";
 import {
   getAnchorTime,
@@ -146,31 +146,10 @@ export function mapAppointmentDetail(
   const completed = live.filter((s) => isOccurrenceOver(s, now)).length;
   // #1766 — a subscription's programme is its frozen entitlement, so the
   // count reads "0 of T" before allocation instead of vanishing at 0 rows.
-  const sub = appointment.subscription;
-  const plan = sub?.subscriptionPlan;
-  const subscriptionGroup =
-    appointment.appointmentType === "SUBSCRIPTION" &&
-    sub &&
-    plan &&
-    typeof plan.sessionsPerWeek === "number" &&
-    typeof plan.durationInMonths === "number" &&
-    typeof plan.totalSessions === "number"
-      ? (() => {
-          const e = subscriptionEntitlement({
-            sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
-            sessionsPerWeek: plan.sessionsPerWeek,
-            durationInMonths: plan.durationInMonths,
-            occurrences: occurrences.map((o) => ({
-              ...o,
-              endsAt: o.endsAt ?? o.startsAt,
-            })),
-            schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
-            schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
-            now,
-          });
-          return { total: e.total, completed: e.completed };
-        })()
-      : null;
+  const entitlement = detailEntitlement(appointment, now);
+  const subscriptionGroup = entitlement
+    ? { total: entitlement.total, completed: entitlement.completed }
+    : null;
 
   const counterpart =
     role === "consultee"

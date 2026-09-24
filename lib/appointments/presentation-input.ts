@@ -5,7 +5,11 @@
  */
 
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
-import { sessionsTotalOf } from "@/lib/booking/entitlement";
+import {
+  sessionsTotalOf,
+  subscriptionEntitlement,
+  type SubscriptionEntitlement,
+} from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
 import {
   requestHoldDeadline,
@@ -33,7 +37,43 @@ function toPaymentInput(
     currency: p.currency,
     createdAt: p.createdAt,
     expiresAt: "expiresAt" in p ? p.expiresAt : null,
+    capturedAt: "capturedAt" in p ? p.capturedAt : null,
   };
+}
+
+/**
+ * #1766 / #1775 C-5 — a subscription's frozen entitlement, or null when the
+ * detail read lacks the plan shape. The header count and the next-cycle
+ * ALLOCATE arm both read it.
+ */
+export function detailEntitlement(
+  a: Detail,
+  now = new Date(),
+): SubscriptionEntitlement | null {
+  const sub = a.subscription;
+  const plan = sub?.subscriptionPlan;
+  if (
+    a.appointmentType !== "SUBSCRIPTION" ||
+    !sub ||
+    !plan ||
+    typeof plan.sessionsPerWeek !== "number" ||
+    typeof plan.durationInMonths !== "number" ||
+    typeof plan.totalSessions !== "number"
+  ) {
+    return null;
+  }
+  return subscriptionEntitlement({
+    sessionsTotal: sub.sessionsTotal ?? plan.totalSessions,
+    sessionsPerWeek: plan.sessionsPerWeek,
+    durationInMonths: plan.durationInMonths,
+    occurrences: a.occurrences.map((o) => ({
+      ...o,
+      endsAt: o.endsAt ?? o.startsAt,
+    })),
+    schedulingPeriodStartsAt: sub.schedulingPeriodStartsAt ?? now,
+    schedulingTimezone: sub.schedulingTimezone ?? "Asia/Kolkata",
+    now,
+  });
 }
 
 type Money = bigint | number | string;
@@ -165,7 +205,14 @@ export function toPresentationInput(
     history: a.statusHistory,
     plan: planOf(a),
     names: args.names,
+    entitlement: entitlementSummary(detailEntitlement(a)),
   };
+}
+
+function entitlementSummary(
+  e: SubscriptionEntitlement | null,
+): BookingPresentationInput["entitlement"] {
+  return e ? { remaining: e.remaining, nextBatch: e.cycle.nextBatch } : null;
 }
 
 /** Who pays and who delivers, by name; the derivation swaps in "you" per viewer. */

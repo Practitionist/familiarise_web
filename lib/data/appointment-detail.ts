@@ -152,6 +152,8 @@ export async function readAppointmentDetail(appointmentId: string) {
           // #1428 — the tentative-hold deadline shown on the detail page;
           // without it a held slot has no way to say when it releases.
           expiresAt: true,
+          // #1775 C-5 — the 48 h allocate-or-refund clock.
+          capturedAt: true,
           // Which rail funded the row (lib/appointments/payment-display.ts):
           // an org-funded booking shows its sponsor and no amount.
           organizationId: true,

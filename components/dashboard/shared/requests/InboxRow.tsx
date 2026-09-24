@@ -115,7 +115,7 @@ export function rowActions(
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
 ): RowActions {
   const { bookingState, nextAction } = presentation;
-  if (row.kind === "next-cycle") {
+  if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
   if (row.kind === "trial") {
@@ -207,8 +207,7 @@ export function moneyLine(
   if (moneyState.state === "NOT_DUE" && row.amountPaise !== null) {
     return `${formatCurrencyAmount(row.amountPaise, row.currency)} · ${moneyState.line}`;
   }
-  if (row.kind === "trial" && row.amountPaise === null)
-    return FREE_TRIAL_LABEL;
+  if (row.kind === "trial" && row.amountPaise === null) return FREE_TRIAL_LABEL;
   return moneyState.line;
 }
 
