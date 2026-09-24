@@ -83,6 +83,22 @@ export type MintApprovalOutcome =
   /** The gateway mint threw; the caller decides between 502 and a system error. */
   | { status: "mint_failed"; error: unknown };
 
+/**
+ * #1780 R-4 — a mint failure that is a state answer, not a fault: another
+ * action minted the order first (PAYMENT_ALREADY_EXISTS) or the request is
+ * already paid (ALREADY_PAID). Read by code so this light module never loads
+ * the payments barrel. Null means a real fault (502).
+ */
+export function approvalMintConflict(
+  error: unknown,
+): { code: string; message: string } | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "PAYMENT_ALREADY_EXISTS" || code === "ALREADY_PAID") {
+    return { code, message: (error as Error).message };
+  }
+  return null;
+}
+
 const MINT_PARTY_SELECT = {
   requestedBy: {
     select: { user: { select: { id: true, name: true, email: true } } },

@@ -29,7 +29,10 @@ import {
   isEventConsultant,
 } from "@/lib/auth-helpers";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
-import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import {
+  approvalMintConflict,
+  mintApprovalPaymentAfterCommit,
+} from "@/lib/booking/approve-request";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 
 const LOG_LABEL: Record<EventType, string> = {
@@ -172,6 +175,16 @@ export async function handleAllocate(
         if (mint.status === "lapsed") {
           return NextResponse.json(
             { error: mint.message, errorCode: "ILLEGAL_TRANSITION" },
+            { status: 409 },
+          );
+        }
+        const conflict =
+          mint.status === "mint_failed"
+            ? approvalMintConflict(mint.error)
+            : null;
+        if (conflict) {
+          return NextResponse.json(
+            { error: conflict.message, errorCode: conflict.code },
             { status: 409 },
           );
         }

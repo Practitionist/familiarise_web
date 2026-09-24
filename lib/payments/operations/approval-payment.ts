@@ -126,13 +126,27 @@ export class ApprovalWindowLapsedError extends Error {
  * carries a 409 like ApprovalLockLostError rather than surfacing as a 500.
  */
 export class ApprovalPaymentExistsError extends Error {
-  readonly code = "APPROVAL_PAYMENT_EXISTS";
+  // #1780 R-4 — the registered business code the routes answer with.
+  readonly code = "PAYMENT_ALREADY_EXISTS";
   readonly httpStatus = 409;
   constructor() {
     super(
       "A payment link for this request was just created by another action. Refresh to see it.",
     );
     this.name = "ApprovalPaymentExistsError";
+  }
+}
+
+/**
+ * #1780 R-4 — the request behind this mint is already paid. A typed 409 (was
+ * a bare Error the routes answered as a 502 "mint failed").
+ */
+export class ApprovalAlreadyPaidError extends Error {
+  readonly code = "ALREADY_PAID";
+  readonly httpStatus = 409;
+  constructor() {
+    super("This request has already been paid");
+    this.name = "ApprovalAlreadyPaidError";
   }
 }
 
@@ -225,7 +239,7 @@ export async function createApprovalPaymentIntent(
 
     if (existingPayment) {
       if (existingPayment.paymentStatus === PaymentStatus.SUCCEEDED) {
-        throw new Error("This request has already been paid");
+        throw new ApprovalAlreadyPaidError();
       }
 
       if (isDeadApprovalIntent(existingPayment, new Date())) {
@@ -358,7 +372,7 @@ export async function createApprovalPaymentIntent(
           // The old order was captured; the routes answer this the same way
           // the pre-read does. Handing back a link would email a pay-link
           // for a paid order.
-          throw new Error("This request has already been paid");
+          throw new ApprovalAlreadyPaidError();
         }
         if (fresh?.paymentStatus === PaymentStatus.PENDING) {
           // Another mint replaced the order first; its link is the live one.

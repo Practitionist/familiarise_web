@@ -166,6 +166,7 @@ jest.mock("../../lib/payments/operations/checkout", () => ({
 import { Prisma } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import {
+  ApprovalAlreadyPaidError,
   ApprovalPaymentExistsError,
   ApprovalWindowLapsedError,
   createApprovalPaymentIntent,
@@ -750,4 +751,10 @@ describe("approval routes thread the appointment (source contract)", () => {
       expect(read(rel)).toMatch(/appointmentId:/);
     }
   });
+});
+
+// #1780 R-4 — both mint conflicts carry the registered business code.
+it("types the exists and already-paid refusals with their codes", () => {
+  expect(new ApprovalPaymentExistsError().code).toBe("PAYMENT_ALREADY_EXISTS");
+  expect(new ApprovalAlreadyPaidError().code).toBe("ALREADY_PAID");
 });

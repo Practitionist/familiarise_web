@@ -28,6 +28,11 @@ jest.mock("../../lib/rate-limit", () => ({
 const mintAfterCommit = jest.fn();
 jest.mock("../../lib/booking/approve-request", () => ({
   mintApprovalPaymentAfterCommit: (...a: unknown[]) => mintAfterCommit(...a),
+  // #1780 R-4 — the real mapper: it reads only the error's code.
+  approvalMintConflict: (e: { code?: string; message: string }) =>
+    e.code === "PAYMENT_ALREADY_EXISTS" || e.code === "ALREADY_PAID"
+      ? { code: e.code, message: e.message }
+      : null,
 }));
 const recordSystemError = jest.fn().mockResolvedValue(undefined);
 jest.mock("../../lib/enterprise/system-events", () => ({
@@ -106,6 +111,28 @@ describe("handleAllocate (#1775 B-9)", () => {
     expect(recordSystemError).toHaveBeenCalledWith(
       expect.objectContaining({ category: "PAYMENT" }),
     );
+  });
+});
+
+describe("approval mint conflicts (#1780 R-4)", () => {
+  it("an exists-error answers 409 PAYMENT_ALREADY_EXISTS, not 502", async () => {
+    allocate.mockResolvedValue({
+      success: true,
+      outcome: "awaiting_payment",
+      appointments: [],
+    });
+    mintAfterCommit.mockResolvedValue({
+      status: "mint_failed",
+      // The shape ApprovalPaymentExistsError carries (approval-payment.ts).
+      error: Object.assign(new Error("A payment link was just created"), {
+        code: "PAYMENT_ALREADY_EXISTS",
+      }),
+    });
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      errorCode: "PAYMENT_ALREADY_EXISTS",
+    });
   });
 });
 

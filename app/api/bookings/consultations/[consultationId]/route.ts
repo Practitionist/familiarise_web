@@ -5,7 +5,10 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { PaymentStatus, Prisma, AppointmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { NextRequest, NextResponse } from "next/server";
-import { mintApprovalPaymentAfterCommit } from "@/lib/booking/approve-request";
+import {
+  approvalMintConflict,
+  mintApprovalPaymentAfterCommit,
+} from "@/lib/booking/approve-request";
 import {
   APPROVAL_LOCK_TTL_MS,
   ApprovalLockLostError,
@@ -715,6 +718,17 @@ export async function PATCH(
               requiresPayment: true,
               paymentUrl: null,
             },
+            { status: 409 },
+          );
+        }
+        // #1780 R-4 — a conflict is a 409 with its code, never a 502.
+        const conflict =
+          mint.status === "mint_failed"
+            ? approvalMintConflict(mint.error)
+            : null;
+        if (conflict) {
+          return NextResponse.json(
+            { data: result.data, error: conflict.message, code: conflict.code },
             { status: 409 },
           );
         }

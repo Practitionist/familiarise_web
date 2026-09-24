@@ -6,6 +6,7 @@ import { Prisma, AppointmentStatus } from "@prisma/client";
 import { addMonths } from "date-fns";
 import { NextRequest, NextResponse } from "next/server";
 import {
+  approvalMintConflict,
   mintApprovalPaymentAfterCommit,
   SETTLED_SUBSCRIPTION,
 } from "@/lib/booking/approve-request";
@@ -626,6 +627,17 @@ export async function PATCH(
               requiresPayment: true,
               paymentUrl: null,
             },
+            { status: 409 },
+          );
+        }
+        // #1780 R-4 — a conflict is a 409 with its code, never a 502.
+        const conflict =
+          mint.status === "mint_failed"
+            ? approvalMintConflict(mint.error)
+            : null;
+        if (conflict) {
+          return NextResponse.json(
+            { data: result.data, error: conflict.message, code: conflict.code },
             { status: 409 },
           );
         }
