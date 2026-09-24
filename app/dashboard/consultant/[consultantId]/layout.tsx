@@ -1,8 +1,6 @@
 "use client";
 
-import { useParams, usePathname, useRouter } from "next/navigation";
-import { use, useEffect, useMemo, useRef } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { use, useMemo } from "react";
 import { motion } from "framer-motion";
 import {
   Home,
@@ -20,8 +18,6 @@ import {
   MessageSquareText,
   HelpCircle,
   LifeBuoy,
-  Building2,
-  UserRound,
   UserX,
   Lock,
   WifiOff,
@@ -29,25 +25,16 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-import {
-  PersonalDashboardShell,
-  PersonalDashboardShellSkeleton,
-} from "@/components/dashboard/PersonalDashboardShell";
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
+import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-override";
 import {
-  BreadcrumbOverrideProvider,
-  useBreadcrumbOverride,
-} from "@/components/dashboard/breadcrumb-override";
-import { DashboardErrorBoundary } from "@/components/DashboardErrorBoundary";
-import StreamProvider from "@/providers/StreamProvider";
-import NovuProvider from "@/providers/NovuProvider";
-import { useNovuSubscriberSync } from "@/hooks/useNovuSubscriberSync";
+  PersonalDashboardLayoutCore,
+  type PersonalDashboardExtras,
+  type PersonalDashboardExtrasCtx,
+  type PersonalDashboardUser,
+} from "@/components/dashboard/PersonalDashboardLayoutCore";
+import { consultantFetchers } from "@/lib/dashboard-queries";
 import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
-import { useSession } from "@/lib/auth-client";
-import { signOutEverywhere } from "@/lib/auth/sign-out";
-import { getEffectiveUserId } from "@/utils/auth";
-import { useServerUserId } from "@/components/dashboard/ServerUserId";
-import { consultantFetchers, schedulePrefetch } from "@/lib/dashboard-queries";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import {
   VerificationPendingOverlay,
@@ -183,8 +170,8 @@ const PAGE_LABELS: Record<string, string> = {
 // against the route tree: `offerings` has only `[type]/…` children and
 // `participants` only `[eventType]/…`.
 //
-// Offerings is special-cased below: the crumb stays, but its href is rewritten
-// to the Event Planner, which is the actual listings surface for those rows.
+// Offerings is special-cased in the core: the crumb stays, but its href is
+// rewritten to the Event Planner, which is the actual listings surface.
 const PATHLESS_SEGMENTS = new Set(["offerings", "participants"]);
 
 /** Offering types that appear as `/offerings/[type]/…` URL segments. */
@@ -195,12 +182,7 @@ const OFFERING_TYPE_SEGMENTS = new Set([
   "class",
 ]);
 
-// Opaque record ids (cuid / uuid) in nested routes carry no meaning as crumbs.
-const looksLikeRecordId = (segment: string) =>
-  /^[a-z0-9]{20,}$/i.test(segment) ||
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-    segment,
-  );
+const PREFETCH_SUFFIXES = ["home", "appointments", "requests"];
 
 interface PageProps {
   children: React.ReactNode;
@@ -356,30 +338,95 @@ function ErrorDisplay({ message }: { message: string }) {
   );
 }
 
-function AccessCard({
-  Icon,
-  title,
-  children,
-}: {
-  Icon: LucideIcon;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-center min-h-svh bg-zinc-100">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white p-8 rounded-2xl shadow-xl border border-zinc-200 max-w-md text-center"
-      >
-        <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-amber-100 flex items-center justify-center">
-          <Icon className="w-8 h-8 text-amber-600" />
-        </div>
-        <h2 className="text-xl font-bold text-zinc-900 mb-2">{title}</h2>
-        {children}
-      </motion.div>
-    </div>
+// Profile payload as the layout consumes it: the composed consultant record
+// (user identity + verification status). The fetcher returns the API shape;
+// the accessors below read it structurally.
+interface ConsultantDetails {
+  user?: {
+    id?: string;
+    name?: string | null;
+    image?: string | null;
+  } | null;
+  verificationStatus?: VerificationStatus | string;
+}
+
+async function fetchConsultantUser(
+  userId: string,
+): Promise<PersonalDashboardUser | null> {
+  const response = await fetch(`/api/user/${userId}`);
+  if (!response.ok) throw new Error("Failed to fetch user details");
+  const result = await response.json();
+  return result.data as PersonalDashboardUser | null;
+}
+
+// Verification state + reviewer feedback as shell extras. The consultant-data
+// payload carries the coarse status; the verification query adds the latest
+// submission's rejectionReason / feedbackDetails / per-document feedback so
+// the REJECTED gate can finally show WHY. ADMIN/STAFF inspecting someone's
+// dashboard are never gated (and /api/verification/status reads the signed-in
+// user, which would be the admin's own — mismatched — record).
+function useConsultantExtras({
+  profile,
+  userDetails,
+  userId,
+  routeParam,
+  basePath,
+  pathname,
+}: PersonalDashboardExtrasCtx<ConsultantDetails>): PersonalDashboardExtras {
+  const verificationStatus = (profile?.verificationStatus ?? undefined) as
+    | VerificationStatus
+    | undefined;
+  const isOwnDashboard = userDetails?.consultantProfileId === routeParam;
+  const { data: verification } = useVerificationStatus(
+    userId,
+    !!verificationStatus &&
+      verificationStatus !== "VERIFIED" &&
+      !!isOwnDashboard,
   );
+
+  const verificationHref = `${basePath}/settings/verification`;
+  // Gating policy: waiting states get a browsable dashboard + banner;
+  // REJECTED gets the full-screen gate with the reviewer feedback threaded
+  // in. Settings stays reachable in every state (it hosts the fix).
+  const isSettingsPage = pathname.includes("/settings");
+  const showRejectedGate =
+    verificationStatus === "REJECTED" && !isSettingsPage && !!isOwnDashboard;
+  const showVerificationBanner =
+    (verificationStatus === "PENDING_VERIFICATION" ||
+      verificationStatus === "UNDER_REVIEW") &&
+    !isSettingsPage &&
+    !!isOwnDashboard;
+
+  return {
+    overlay: showRejectedGate ? (
+      <VerificationPendingOverlay
+        status="REJECTED"
+        rejectionReason={
+          verification?.latestRequest?.rejectionReason ?? undefined
+        }
+        feedbackDetails={
+          verification?.latestRequest?.feedbackDetails ?? undefined
+        }
+        documentFeedback={verification?.latestRequest?.documentFeedback}
+        resubmitUrl={verificationHref}
+      />
+    ) : undefined,
+    banner:
+      showVerificationBanner && verificationStatus ? (
+        <VerificationBanner
+          status={verificationStatus}
+          resubmitUrl={verificationHref}
+        />
+      ) : undefined,
+    badges: verificationStatus
+      ? [
+          {
+            label: verificationStatusBadge(verificationStatus).label,
+            className: verificationStatusBadge(verificationStatus).className,
+          },
+        ]
+      : [],
+  };
 }
 
 export default function ConsultantLayout(props: Readonly<PageProps>) {
@@ -391,147 +438,10 @@ export default function ConsultantLayout(props: Readonly<PageProps>) {
 }
 
 function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
-  const resolvedParams = use(params);
-  const consultantId = resolvedParams.consultantId;
+  const { consultantId } = use(params);
   const basePath = `/dashboard/consultant/${consultantId}`;
-  const pathname = usePathname();
-  const routeParams = useParams();
-  const { data: session, isPending: isSessionLoading } = useSession();
-  const router = useRouter();
 
-  // Fall back to the server-resolved id: useSession() is still pending during
-  // SSR, so without this the query key below is ["user-details", undefined] and
-  // the server seed in app/dashboard/layout.tsx can never be read (#1105).
-  const serverUserId = useServerUserId();
-  const userId = getEffectiveUserId(session) ?? serverUserId;
-
-  // Sync user as Novu subscriber (once per session)
-  useNovuSubscriberSync();
-
-  // Fetch user details to check consultant access
-  const { data: userDetails, isLoading: isLoadingUserDetails } = useQuery({
-    queryKey: ["user-details", userId],
-    queryFn: async () => {
-      const response = await fetch(`/api/user/${userId}`);
-      if (!response.ok) throw new Error("Failed to fetch user details");
-      const result = await response.json();
-      return result.data;
-    },
-    enabled: !!userId && !isSessionLoading,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-  });
-
-  // Fetch consultant data with placeholderData to prevent loading flashes
-  const {
-    data: consultantData,
-    error,
-    isLoading,
-  } = useQuery({
-    queryKey: ["consultant-data", consultantId],
-    queryFn: () => consultantFetchers.details(consultantId),
-    enabled: !!userId && !isSessionLoading,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
-    retry: 2,
-    placeholderData: (previousData) => previousData,
-  });
-
-  // Check if user has access to this consultant dashboard:
-  // - ADMIN: Can access ANY dashboard
-  // - STAFF: Can view consultant and consultee dashboards
-  // - CONSULTANT: Can only access their OWN dashboard
-  // Capability-based (#org-appts): access is owning the consultantProfile, NOT
-  // holding UserRole=CONSULTANT — an org EXPERT whose marketplace identity is
-  // CONSULTEE still owns a consultantProfile and must reach their delivery
-  // surfaces. ADMIN/STAFF may inspect anyone's.
-  const hasConsultantAccess =
-    userDetails &&
-    (userDetails.role === "ADMIN" ||
-      userDetails.role === "STAFF" ||
-      userDetails.consultantProfileId === consultantId);
-
-  // Redirect unauthorized users to their appropriate dashboard. Guarded:
-  // without it a stale `user-details` payload (≤5-min React-Query cache, or a
-  // profile just added server-side) could bounce /dashboard → back here →
-  // /dashboard while the server router resolves the other way, flashing
-  // "Redirecting to your dashboard..." in a loop. Keyed by pathname+target:
-  // this layout stays mounted across nested routes, so a *different*
-  // unauthorized pathname must re-arm the navigation instead of being skipped
-  // as a duplicate of an earlier one.
-  const navigatedRef = useRef<{ pathname: string; target: string } | null>(
-    null,
-  );
-  useEffect(() => {
-    if (isLoadingUserDetails || isSessionLoading || !userId) return;
-
-    if (userDetails && !hasConsultantAccess) {
-      let target = "/dashboard";
-      if (userDetails.consultantProfileId) {
-        target = `/dashboard/consultant/${userDetails.consultantProfileId}/home`;
-      } else if (userDetails.consulteeProfileId) {
-        target = `/dashboard/consultee/${userDetails.consulteeProfileId}/home`;
-      }
-      // Never replace to the URL we are already on, and never queue the same
-      // pathname→target pair twice (Strict-Mode double effects / duplicate
-      // query emissions).
-      if (target === pathname) return;
-      if (
-        navigatedRef.current?.pathname === pathname &&
-        navigatedRef.current?.target === target
-      )
-        return;
-      navigatedRef.current = { pathname, target };
-      router.replace(target);
-    }
-  }, [
-    userDetails,
-    hasConsultantAccess,
-    isLoadingUserDetails,
-    isSessionLoading,
-    userId,
-    router,
-    pathname,
-  ]);
-
-  // Prefetch critical routes on mount
-  useEffect(() => {
-    if (!userId || !consultantId || !hasConsultantAccess) return;
-
-    // Once per access-resolution, NOT per navigation: `pathname` used to be
-    // a dep, re-scheduling this idle prefetch on every tab switch (even while
-    // already on the target route). App Router dedupes redundant prefetches.
-    // Route-shell prefetch only: for this dynamic page Next.js warms the shell
-    // through loading.tsx, so the first click shows the skeleton instantly and
-    // the inbox read streams in. Deliberately no inbox-data prefetch here —
-    // that would cost a full scan + counts for a tab the user may not open.
-    return schedulePrefetch(() => {
-      router.prefetch(`${basePath}/home`);
-      router.prefetch(`${basePath}/appointments`);
-      router.prefetch(`${basePath}/requests`);
-    }, 3000);
-  }, [userId, consultantId, router, hasConsultantAccess, basePath]);
-
-  // Verification state + reviewer feedback. The consultant-data payload
-  // carries the coarse status; the verification query adds the latest
-  // submission's rejectionReason / feedbackDetails / per-document feedback
-  // so the REJECTED gate can finally show WHY.
-  const verificationStatus = consultantData?.verificationStatus as
-    | VerificationStatus
-    | undefined;
-  // ADMIN/STAFF inspecting someone's dashboard must never be gated (and
-  // /api/verification/status reads the SIGNED-IN user, which would be the
-  // admin's own — mismatched — record). Gate + fetch only for the owner.
-  const isOwnDashboard = userDetails?.consultantProfileId === consultantId;
-  const { data: verification } = useVerificationStatus(
-    userId,
-    !!verificationStatus &&
-      verificationStatus !== "VERIFIED" &&
-      !!isOwnDashboard,
-  );
-
-  // Unread badge count for the Chats nav item
+  // Unread badge count for the Messages nav item
   const chatUnreadCount = useChatUnreadCount();
   const navGroups = useMemo(
     () =>
@@ -549,260 +459,51 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
     [chatUnreadCount],
   );
 
-  // Org memberships for the bottom chip's "Switch to organization" section
-  const orgMemberships = useMemo(() => {
-    const raw = (session?.user as Record<string, unknown> | undefined)
-      ?.organizationMemberships;
-    if (!Array.isArray(raw)) return [];
-    return raw.map((m: Record<string, unknown>) => ({
-      organizationId: String(m.organizationId ?? ""),
-      organizationName: String(m.organizationName ?? ""),
-    }));
-  }, [session?.user]);
-
-  const { overrideLabel } = useBreadcrumbOverride();
-
-  // Every value the current route bound to a dynamic param. Such a segment is
-  // never a URL of its own, so its crumb must not be a link.
-  const paramValues = useMemo(() => {
-    const values = new Set<string>();
-    for (const value of Object.values(routeParams ?? {})) {
-      for (const part of Array.isArray(value) ? value : [value]) {
-        if (part) values.add(part);
-      }
-    }
-    return values;
-  }, [routeParams]);
-
-  // Full breadcrumb trail — every URL segment after the consultant id
-  // becomes a crumb; opaque record ids are dropped (or replaced with an
-  // override label such as the appointment title). Parent crumbs keep an
-  // href so users can click back (e.g. Appointments from a detail page),
-  // but only when the accumulated path is a route the app can actually serve.
-  const breadcrumbs = useMemo(() => {
-    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
-    const onOfferings = parts[0] === "offerings";
-    // Offerings have no list route of their own — the Event Planner is where
-    // those rows live. Point both the "Offerings" crumb and the type crumb
-    // (consultation / subscription / …) there so the trail is clickable
-    // without prefetching a 404.
-    const offeringsListingHref = `${basePath}/planner`;
-
-    const crumbs: { label: string; href?: string }[] = [];
-    let acc = basePath;
-
-    for (const seg of parts) {
-      acc = `${acc}/${seg}`;
-      if (looksLikeRecordId(seg)) {
-        // The label goes HERE, in the id's own position — that segment IS the
-        // record, so its human name belongs where the id was. Previously this
-        // was deferred to after the loop and only applied when the id was the
-        // LAST segment, so a task route (…/<id>/timings) reset the flag on its
-        // way past and the override never rendered at all.
-        if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
-        continue;
-      }
-
-      if (
-        seg === "offerings" ||
-        (onOfferings && OFFERING_TYPE_SEGMENTS.has(seg))
-      ) {
-        crumbs.push({
-          label: PAGE_LABELS[seg] ?? seg,
-          href: offeringsListingHref,
-        });
-        continue;
-      }
-
-      const navigable = !PATHLESS_SEGMENTS.has(seg) && !paramValues.has(seg);
-      crumbs.push({
-        label: PAGE_LABELS[seg] ?? seg,
-        ...(navigable ? { href: acc } : {}),
-      });
-    }
-
-    return crumbs.map((crumb, index) => {
-      const isLast = index === crumbs.length - 1;
-      // Keep a link when the visible crumb is still a parent of the URL
-      // (happens when the last segment was an opaque id we stripped).
-      if (isLast && crumb.href && pathname === crumb.href) {
-        return { label: crumb.label };
-      }
-      return crumb;
-    });
-  }, [pathname, basePath, overrideLabel, paramValues]);
-
-  // Memoize StreamProvider children to prevent re-initialization on tab
-  // switches. Must be called before any early returns (Rules of Hooks).
-  const memoizedStreamContent = useMemo(
-    () =>
-      consultantData?.user?.id ? (
-        <StreamProvider
-          userId={consultantData.user.id}
-          enableChat={true}
-          enableVideo={true}
-        >
-          <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-        </StreamProvider>
-      ) : (
-        <DashboardErrorBoundary>{children}</DashboardErrorBoundary>
-      ),
-    [consultantData?.user?.id, children],
-  );
-
-  // Authentication check
-  if (
-    process.env.NODE_ENV !== "development" &&
-    process.env.NODE_ENV !== "test" &&
-    !session?.user?.id &&
-    !isSessionLoading
-  ) {
-    return (
-      <AccessCard Icon={Lock} title="Authentication Required">
-        <p className="text-zinc-600">
-          Please sign in to access your dashboard.
-        </p>
-        <a
-          href="/auth/signin"
-          className="inline-block mt-6 px-6 py-2.5 bg-zinc-900 text-white rounded-lg font-medium hover:bg-zinc-800 transition-colors"
-        >
-          Sign In
-        </a>
-      </AccessCard>
-    );
-  }
-
-  // Access denied — before the skeleton so unauthorized users never see it
-  if (userDetails && !hasConsultantAccess) {
-    return (
-      <AccessCard Icon={Lock} title="Access Denied">
-        <p className="text-zinc-600">
-          You don&apos;t have permission to access this Consultant Dashboard.
-        </p>
-        <p className="text-sm text-zinc-500 mt-2">
-          Redirecting to your dashboard...
-        </p>
-      </AccessCard>
-    );
-  }
-
-  // Initial loading — only while access is still being determined
-  if (
-    (isLoading || isLoadingUserDetails || isSessionLoading) &&
-    !consultantData &&
-    !userDetails
-  ) {
-    return <PersonalDashboardShellSkeleton />;
-  }
-
-  // Error state
-  if (error && !consultantData) {
-    return (
-      <ErrorDisplay
-        message={
-          error instanceof Error ? error.message : "Failed to load dashboard"
-        }
-      />
-    );
-  }
-
-  const userName = consultantData?.user?.name ?? session?.user?.name ?? null;
-  const userImage = consultantData?.user?.image ?? session?.user?.image ?? null;
-  const settingsHref = `${basePath}/settings`;
-  const verificationHref = `${settingsHref}/verification`;
-
-  // Bottom chip dropdown — org context switching only. Settings and Help are
-  // sidebar entries under Support now, so this comment used to say the exact
-  // opposite of what the code does; leaving it would have invited someone to
-  // "restore" a second link to the same href. Sign Out renders as the
-  // standalone red button below.
-  const bottomUserChipActions = [
-    // Settings is a sidebar entry under Support now; a second link to the same
-    // href is the duplicate-destination problem ADR 19 exists to stop.
-    ...(orgMemberships.length > 0
-      ? [
-          { type: "separator" as const },
-          { type: "label" as const, label: "Switch to organization" },
-          ...orgMemberships.map((m) => ({
-            type: "item" as const,
-            label: m.organizationName,
-            href: `/dashboard/organization/${m.organizationId}/home`,
-            icon: Building2,
-          })),
-        ]
-      : []),
-  ];
-
-  // Gating policy: waiting states get a browsable dashboard + banner;
-  // REJECTED gets the full-screen gate with the reviewer feedback threaded
-  // in. Settings stays reachable in every state (it hosts the fix).
-  const isSettingsPage = pathname.includes("/settings");
-  const showRejectedGate =
-    verificationStatus === "REJECTED" && !isSettingsPage && !!isOwnDashboard;
-  const showVerificationBanner =
-    (verificationStatus === "PENDING_VERIFICATION" ||
-      verificationStatus === "UNDER_REVIEW") &&
-    !isSettingsPage &&
-    !!isOwnDashboard;
-
   return (
-    <NovuProvider>
-      {showRejectedGate && (
-        <VerificationPendingOverlay
-          status="REJECTED"
-          rejectionReason={
-            verification?.latestRequest?.rejectionReason ?? undefined
-          }
-          feedbackDetails={
-            verification?.latestRequest?.feedbackDetails ?? undefined
-          }
-          documentFeedback={verification?.latestRequest?.documentFeedback}
-          resubmitUrl={verificationHref}
-        />
-      )}
-      <PersonalDashboardShell
-        groups={navGroups}
-        basePath={basePath}
-        title="Consultant Dashboard"
-        subtitle={userName}
-        headerImage={userImage}
-        bottomUserChip={{
-          name: userName,
-          image: userImage,
-          role: "Consultant",
-        }}
-        bottomUserChipActions={bottomUserChipActions}
-        contextBar={{
-          identity: {
-            name: userName ?? "Consultant",
-            image: userImage,
-            FallbackIcon: UserRound,
-          },
-          badges: verificationStatus
-            ? [
-                {
-                  label: verificationStatusBadge(verificationStatus).label,
-                  className:
-                    verificationStatusBadge(verificationStatus).className,
-                },
-              ]
-            : [],
-          breadcrumbs,
-        }}
-        mobileTabs={MOBILE_TABS}
-        banner={
-          showVerificationBanner && verificationStatus ? (
-            <VerificationBanner
-              status={verificationStatus}
-              resubmitUrl={verificationHref}
-            />
-          ) : undefined
+    <PersonalDashboardLayoutCore<ConsultantDetails>
+      routeParam={consultantId}
+      basePath={basePath}
+      title="Consultant Dashboard"
+      chipRole="Consultant"
+      identityFallbackName="Consultant"
+      navGroups={navGroups}
+      mobileTabs={MOBILE_TABS}
+      pageLabels={PAGE_LABELS}
+      pathlessSegments={PATHLESS_SEGMENTS}
+      offeringsConfig={{
+        typeSegments: OFFERING_TYPE_SEGMENTS,
+        listingHref: "planner",
+      }}
+      fetchUser={fetchConsultantUser}
+      profileQueryKey={["consultant-data", consultantId]}
+      fetchProfile={() =>
+        consultantFetchers.details(consultantId) as Promise<
+          ConsultantDetails | null
+        >
+      }
+      profileStreamUserId={(profile) => profile?.user?.id}
+      profileDisplayName={(profile) => profile?.user?.name}
+      profileDisplayImage={(profile) => profile?.user?.image}
+      hasAccess={(user) =>
+        !!user &&
+        (user.role === "ADMIN" ||
+          user.role === "STAFF" ||
+          user.consultantProfileId === consultantId)
+      }
+      resolveRedirectTarget={(user) => {
+        if (user.consultantProfileId) {
+          return `/dashboard/consultant/${user.consultantProfileId}/home`;
         }
-        pathname={pathname}
-        onSignOut={() => void signOutEverywhere()}
-      >
-        {memoizedStreamContent}
-      </PersonalDashboardShell>
-    </NovuProvider>
+        if (user.consulteeProfileId) {
+          return `/dashboard/consultee/${user.consulteeProfileId}/home`;
+        }
+        return "/dashboard";
+      }}
+      prefetchSuffixes={PREFETCH_SUFFIXES}
+      renderError={(message) => <ErrorDisplay message={message} />}
+      useExtras={useConsultantExtras}
+    >
+      {children}
+    </PersonalDashboardLayoutCore>
   );
 }

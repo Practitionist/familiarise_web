@@ -4,24 +4,14 @@
  * Admin dashboard chrome. Sits inside the server `layout.tsx`, which runs the
  * requireUserRole("ADMIN") guard and resolves the identity props server-side.
  *
- * The nav array used to live here as a flat list of 17 items, duplicated
- * almost item-for-item in StaffShell. Both shells now build from
- * `buildBackofficeNav`, so the two trees can't drift apart again — the admin
- * tree simply resolves more items out of the same definition.
- *
- * Settings lives in the bottom user chip rather than the nav: it's the
- * operator's own profile page, not a platform surface. It previously had no
- * entry anywhere and zero inbound links, so it was unreachable.
+ * Thin caller over the shared `BackofficeShell` (Batch C2) — the admin tree
+ * is the `tree="admin"` parameterization, so it cannot drift from the staff
+ * tree. Settings lives in the bottom user chip rather than the nav: it's the
+ * operator's own profile page, not a platform surface.
  */
 
-import { useMemo } from "react";
-import { Settings } from "lucide-react";
-
-import {
-  OperatorDashboardShell,
-  type OperatorDashboardShellProps,
-} from "@/components/dashboard/OperatorDashboardShell";
-import { buildBackofficeNav } from "@/lib/dashboard/backoffice-nav";
+import type { OperatorDashboardShellProps } from "@/components/dashboard/OperatorDashboardShell";
+import { BackofficeShell } from "@/components/dashboard/BackofficeShell";
 
 export function AdminShell({
   userName,
@@ -36,34 +26,16 @@ export function AdminShell({
   OperatorDashboardShellProps,
   "userName" | "userEmail" | "userImage" | "children"
 > & { showTds?: boolean }) {
-  const groups = useMemo(
-    () => buildBackofficeNav("admin", { showTds }),
-    [showTds],
-  );
-
   return (
-    <OperatorDashboardShell
-      sidebarGroups={groups}
+    <BackofficeShell
+      tree="admin"
       basePath="/dashboard/admin"
-      title="Admin Portal"
-      breadcrumbRoot="Admin"
-      footerLabel="Familiarise Admin v1.0"
-      avatarFallback="A"
       userName={userName}
       userEmail={userEmail}
       userImage={userImage}
-      bottomUserChipRole="Admin"
-      bottomUserChipActions={[
-        {
-          type: "item",
-          label: "Settings",
-          href: "/dashboard/admin/settings",
-          icon: Settings,
-        },
-      ]}
-      prefetchPaths={["/dashboard/admin/home", "/dashboard/admin/payments"]}
+      showTds={showTds}
     >
       {children}
-    </OperatorDashboardShell>
+    </BackofficeShell>
   );
 }
