@@ -228,3 +228,40 @@ export function expireBackupInterest(now = new Date()) {
     data: { status: BackupInterestStatus.EXPIRED },
   });
 }
+
+/**
+ * F-3 — the one call a release path makes, inside its transaction and before
+ * it frees the rows: every window this appointment still holds (tentative
+ * holds only, unless a confirmed booking is being cancelled) tells its
+ * waiting learners. A rollback takes the staged notices with it.
+ */
+export async function stageNoticesForAppointmentHolds(
+  tx: Tx,
+  appointmentId: string,
+  opts: { includeConfirmed?: boolean } = {},
+  now = new Date(),
+): Promise<void> {
+  const held = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      deletedAt: null,
+      completionStatus: "SCHEDULED",
+      endsAt: { gt: now },
+      consultantProfileId: { not: null },
+      ...(opts.includeConfirmed ? {} : { isTentative: true }),
+    },
+    select: { consultantProfileId: true, startsAt: true, endsAt: true },
+  });
+  for (const row of held) {
+    if (!row.consultantProfileId) continue;
+    await stageBackupInterestNotices(
+      tx,
+      {
+        consultantProfileId: row.consultantProfileId,
+        windowStart: row.startsAt,
+        windowEnd: row.endsAt,
+      },
+      now,
+    );
+  }
+}

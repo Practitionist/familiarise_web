@@ -1,3 +1,4 @@
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import prisma from "@/lib/prisma";
@@ -506,6 +507,14 @@ export async function PATCH(
               where: { id: subscriptionId },
               to: status,
             });
+            // #1778 — a decline frees the held times: tell anyone waiting.
+            if (status === AppointmentStatus.REJECTED) {
+              const held = await tx.appointment.findFirst({
+                where: { subscriptionId: subscriptionId, deletedAt: null },
+                select: { id: true },
+              });
+              if (held) await stageNoticesForAppointmentHolds(tx, held.id);
+            }
             const subscription = await tx.subscription.findUniqueOrThrow({
               where: { id: subscriptionId },
               include: {

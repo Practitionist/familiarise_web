@@ -1,3 +1,4 @@
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
@@ -494,6 +495,12 @@ export async function POST(
           // The from-set rides in `fromIn`, never in `where`: the helper
           // overwrites `completionStatus` in the caller's WHERE with its own
           // from-set, so a status left there is silently discarded.
+          // #1778 — a cancelled 1:1 frees its times: tell anyone waiting.
+          if (appointment.consultation || appointment.subscription) {
+            await stageNoticesForAppointmentHolds(tx, appointmentId, {
+              includeConfirmed: true,
+            });
+          }
           await transitionOccurrenceCompletion(tx, {
             ...auditMeta,
             where: sweepScope,

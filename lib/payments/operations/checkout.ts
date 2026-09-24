@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -605,6 +606,8 @@ async function releaseSupersededHolds(params: {
     for (const appointment of appointments) {
       if (appointment.webinarId || appointment.classId) continue;
 
+      // #1778 — the superseded hold frees its times: tell anyone waiting.
+      await stageNoticesForAppointmentHolds(tx, appointment.id);
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
       await transitionOccurrenceCompletion(tx, {
