@@ -5,12 +5,15 @@ import {
 } from "@tanstack/react-query";
 import HomePageClient from "./HomePageClient";
 import { getStaffStats } from "@/lib/data/staff-stats";
+import { requireBackofficePage } from "@/lib/auth-guard";
 
 type PageProps = {
   params: Promise<{ staffId: string }>;
 };
 
 export default async function StaffHomePage({ params }: Readonly<PageProps>) {
+  // Page-level back-office gate (C5): sidebar hiding is not access control.
+  await requireBackofficePage("users.read");
   const { staffId } = await params;
   const queryClient = new QueryClient();
 
