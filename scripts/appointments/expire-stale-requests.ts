@@ -49,6 +49,7 @@ import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
 import { stageBell } from "@/lib/novu/stage-bell";
+import { expireBackupInterest } from "@/lib/booking/backup-interest";
 import { notificationHref } from "@/lib/novu/resolve-href";
 import type { Tx } from "@/lib/prisma";
 import {
@@ -1258,6 +1259,15 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // Expire APPROVED_PENDING_PAYMENT requests
   const paymentPendingResult = await expirePaymentPendingRequests();
   allErrors.push(...paymentPendingResult.errors);
+
+  // #1778 — backup interest in a window that has passed can never be booked.
+  const backupInterestExpired = await expireBackupInterest()
+    .then((r) => r.count)
+    .catch((error: unknown) => {
+      allErrors.push(`Failed to expire backup interest: ${error}`);
+      return 0;
+    });
+  console.log(`   Backup interest expired: ${backupInterestExpired}`);
 
   const totalPaymentPending =
     paymentPendingResult.consultationsExpired +

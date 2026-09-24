@@ -29,6 +29,10 @@ jest.mock("../../lib/prisma", () => {
     },
     bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
+    // #1778 — the sweep's backup-interest expiry arm.
+    windowBackupInterest: {
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     $disconnect: jest.fn(),
   };
   // The payment-pending arm now expires each request in its own transaction.

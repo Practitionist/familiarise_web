@@ -13,6 +13,7 @@ import {
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
+import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
@@ -2293,6 +2294,8 @@ export async function confirmExistingAppointment(
       { appointmentId, status: "HELD" },
       "CONFIRMED",
     );
+    // #1778 — the buyer's own backup interest in these times is fulfilled.
+    if (userId) await markBookedWindows(tx, appointmentId, userId);
   }
 
   // Update status for consultation and subscription
@@ -2322,6 +2325,30 @@ export async function confirmExistingAppointment(
   // the guard above correctly refused it.
 
   return { capturedAfterTerminal };
+}
+
+/** #1778 — every confirmed window of this booking marks the buyer's own interest BOOKED. */
+async function markBookedWindows(
+  tx: Tx,
+  appointmentId: string,
+  userId: string,
+) {
+  const windows = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      ...liveOccurrenceWhere,
+      consultantProfileId: { not: null },
+    },
+    select: { consultantProfileId: true, startsAt: true, endsAt: true },
+  });
+  for (const w of windows) {
+    if (!w.consultantProfileId) continue;
+    await markBackupInterestBooked(tx, userId, {
+      consultantProfileId: w.consultantProfileId,
+      windowStart: w.startsAt,
+      windowEnd: w.endsAt,
+    });
+  }
 }
 
 /**

@@ -145,3 +145,12 @@ it("a release notifies two waiting learners once; a booking marks only the booke
   await markBackupInterestBooked(tx, "u-2", window);
   expect(rows.map((r) => r.status)).toEqual(["NOTIFIED", "BOOKED"]);
 });
+
+it("the sweep arm expires only open rows whose window has passed", async () => {
+  await register("u-1", 9);
+  rows[0].windowEnd = new Date(Date.now() - 1000);
+  const { expireBackupInterest } =
+    await import("@/lib/booking/backup-interest");
+  await expireBackupInterest();
+  expect(rows[0].status).toBe("EXPIRED");
+});

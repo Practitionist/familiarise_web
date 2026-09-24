@@ -222,7 +222,7 @@ export function markBackupInterestBooked(
 }
 
 /** F-4 — rows whose window has passed are EXPIRED (the stale-request sweep). */
-export function expireBackupInterest(now = new Date()) {
+export async function expireBackupInterest(now = new Date()) {
   return prisma.windowBackupInterest.updateMany({
     where: { windowEnd: { lt: now }, status: { in: OPEN } },
     data: { status: BackupInterestStatus.EXPIRED },
