@@ -1,9 +1,10 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextRequest, NextResponse, after } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@prisma/client";
+import { Prisma, type AppointmentDocument } from "@prisma/client";
 
 import { getSession } from "@/lib/auth-server";
+import type { Session } from "@/lib/auth";
 import { applyRateLimit, documentReviewLimiter } from "@/lib/rate-limit";
 import {
   isReviewTransitionAllowed,
@@ -13,6 +14,152 @@ import { notifyDocumentReviewed } from "@/lib/novu/service";
 import { notificationScope } from "@/lib/novu/workflows";
 import { scopedHref } from "@/lib/novu/resolve-href";
 // GET - Get specific document details
+
+type DocumentReadAction = "view" | "delete";
+
+// Shared auth + access gate for GET + DELETE (were near-identical 30-line
+// preambles in each handler). PATCH stays separate: consultant-only OR,
+// tombstone filter, rate limit, and body parsing.
+async function resolveAppointmentDocument(
+  params: Promise<{ appointmentId: string; documentId: string }>,
+  action: DocumentReadAction,
+): Promise<
+  | {
+      session: Session;
+      appointmentId: string;
+      documentId: string;
+      document: AppointmentDocument;
+      isDevelopment: boolean;
+      error?: never;
+    }
+  | {
+      session?: never;
+      appointmentId?: never;
+      documentId?: never;
+      document?: never;
+      isDevelopment?: never;
+      error: NextResponse;
+    }
+> {
+  const session = await getSession(true);
+  if (!session?.user?.id) {
+    return {
+      error: NextResponse.json(
+        {
+          error: "Authentication required",
+          message: `Please sign in to ${action} documents`,
+          code: "UNAUTHORIZED",
+        },
+        { status: 401 },
+      ),
+    };
+  }
+
+  const { appointmentId, documentId } = await params;
+
+  // In development mode with explicit bypass flag, allow access for testing.
+  // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety.
+  const isDevelopment =
+    process.env.NODE_ENV === "development" &&
+    process.env.DEV_BYPASS_AUTH === "true";
+
+  // Build access control conditions - bypass in development
+  const whereClause: Prisma.AppointmentDocumentWhereInput = {
+    id: documentId,
+    appointmentId,
+    ...(action === "delete"
+      ? {
+          reviewStatus: "PENDING" as const, // Only allow deletion of pending documents
+          deletedAt: null, // Already-tombstoned rows are invisible to deletion
+        }
+      : {}),
+  };
+
+  if (!isDevelopment) {
+    const userId = session.user.id;
+    const consulteeBranches = [
+      // User is the consultee
+      {
+        consultation: {
+          requestedBy: {
+            user: {
+              id: userId,
+            },
+          },
+        },
+      },
+      // User is part of subscription (consultee)
+      {
+        subscription: {
+          requestedBy: {
+            user: {
+              id: userId,
+            },
+          },
+        },
+      },
+    ];
+    whereClause.appointment = {
+      OR:
+        action === "delete"
+          ? consulteeBranches
+          : [
+              ...consulteeBranches,
+              // User is the consultant
+              {
+                consultation: {
+                  consultationPlan: {
+                    consultantProfile: {
+                      user: {
+                        id: userId,
+                      },
+                    },
+                  },
+                },
+              },
+              // User is part of subscription (consultant)
+              {
+                subscription: {
+                  subscriptionPlan: {
+                    consultantProfile: {
+                      user: {
+                        id: userId,
+                      },
+                    },
+                  },
+                },
+              },
+            ],
+    };
+  }
+
+  // Verify access and get document
+  const document = await prisma.appointmentDocument.findFirst({
+    where: whereClause,
+  });
+
+  if (!document) {
+    return {
+      error: NextResponse.json(
+        {
+          error: "Document not found",
+          message: isDevelopment
+            ? action === "delete"
+              ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
+              : `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
+            : action === "delete"
+              ? "Document not found, access denied, or already reviewed"
+              : "Document not found or access denied",
+          code: "NOT_FOUND",
+        },
+        { status: 404 },
+      ),
+    };
+  }
+
+  return { session, appointmentId, documentId, document, isDevelopment };
+}
+
 export async function GET(
   request: NextRequest,
   {
@@ -20,101 +167,13 @@ export async function GET(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        {
-          error: "Authentication required",
-          message: "Please sign in to view documents",
-          code: "UNAUTHORIZED",
-        },
-        { status: 401 },
-      );
-    }
-
-    const { appointmentId, documentId } = await params;
-
-    // In development mode with explicit bypass flag, allow access to any document for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
-    const isDevelopment =
-      process.env.NODE_ENV === "development" &&
-      process.env.DEV_BYPASS_AUTH === "true";
-
-    // Build access control conditions - bypass in development
-    const whereClause: Prisma.AppointmentDocumentWhereInput = {
-      id: documentId,
-      appointmentId,
-    };
-
-    if (!isDevelopment) {
-      whereClause.appointment = {
-        OR: [
-          // User is the consultee
-          {
-            consultation: {
-              requestedBy: {
-                user: {
-                  id: session.user.id,
-                },
-              },
-            },
-          },
-          // User is the consultant
-          {
-            consultation: {
-              consultationPlan: {
-                consultantProfile: {
-                  user: {
-                    id: session.user.id,
-                  },
-                },
-              },
-            },
-          },
-          // User is part of subscription (consultee)
-          {
-            subscription: {
-              requestedBy: {
-                user: {
-                  id: session.user.id,
-                },
-              },
-            },
-          },
-          // User is part of subscription (consultant)
-          {
-            subscription: {
-              subscriptionPlan: {
-                consultantProfile: {
-                  user: {
-                    id: session.user.id,
-                  },
-                },
-              },
-            },
-          },
-        ],
-      };
-    }
-
-    // Verify access and get document
-    const document = await prisma.appointmentDocument.findFirst({
-      where: whereClause,
-    });
-
-    if (!document) {
-      return NextResponse.json(
-        {
-          error: "Document not found",
-          message: isDevelopment
-            ? `[DEV MODE] Document ${documentId} not found for appointment ${appointmentId}.`
-            : "Document not found or access denied",
-          code: "NOT_FOUND",
-        },
-        { status: 404 },
-      );
-    }
-
+    const {
+      document,
+      documentId,
+      isDevelopment,
+      error: accessError,
+    } = await resolveAppointmentDocument(params, "view");
+    if (accessError) return accessError;
     // In development mode, log access bypass
     if (isDevelopment) {
       console.log(
@@ -374,79 +433,14 @@ export async function DELETE(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        {
-          error: "Authentication required",
-          message: "Please sign in to delete documents",
-          code: "UNAUTHORIZED",
-        },
-        { status: 401 },
-      );
-    }
-
-    const { appointmentId, documentId } = await params;
-
-    // In development mode with explicit bypass flag, allow any user to delete documents for testing
-    // Requires both NODE_ENV=development AND DEV_BYPASS_AUTH=true for safety
-    const isDevelopment =
-      process.env.NODE_ENV === "development" &&
-      process.env.DEV_BYPASS_AUTH === "true";
-
-    // Build access control conditions - bypass in development
-    const whereClause: Prisma.AppointmentDocumentWhereInput = {
-      id: documentId,
+    const {
+      session,
       appointmentId,
-      reviewStatus: "PENDING", // Only allow deletion of pending documents
-      deletedAt: null, // Already-tombstoned rows are invisible to deletion
-    };
-
-    if (!isDevelopment) {
-      whereClause.appointment = {
-        OR: [
-          // User is the consultee for consultation
-          {
-            consultation: {
-              requestedBy: {
-                user: {
-                  id: session.user.id,
-                },
-              },
-            },
-          },
-          // User is the consultee for subscription
-          {
-            subscription: {
-              requestedBy: {
-                user: {
-                  id: session.user.id,
-                },
-              },
-            },
-          },
-        ],
-      };
-    }
-
-    // Verify user is the consultee and document is not yet reviewed
-    const document = await prisma.appointmentDocument.findFirst({
-      where: whereClause,
-    });
-
-    if (!document) {
-      return NextResponse.json(
-        {
-          error: "Document not found",
-          message: isDevelopment
-            ? `[DEV MODE] Document ${documentId} not found, not pending, or already reviewed.`
-            : "Document not found, access denied, or already reviewed",
-          code: "NOT_FOUND",
-        },
-        { status: 404 },
-      );
-    }
-
+      documentId,
+      isDevelopment,
+      error: accessError,
+    } = await resolveAppointmentDocument(params, "delete");
+    if (accessError) return accessError;
     // Soft delete — tombstone the row; the nightly cleanup job removes the
     // storage object after a grace window, then hard-deletes. Immediate
     // storage deletion here used to make an accidental click unrecoverable

@@ -6,8 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { apiError } from "@/lib/errors/api-error";
 import { settleReversePennyDrop } from "@/lib/payments/payouts/reverse-penny-drop";
 
@@ -17,23 +16,12 @@ interface RouteParams {
 
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 404 },
-      );
-    }
+    const { profileId, error: profileError } =
+      await requireOwnConsultantProfile();
+    if (profileError) return profileError;
     const { validationId } = await params;
     const outcome = await settleReversePennyDrop(
-      consultantProfile.id,
+      profileId,
       validationId,
     );
     return NextResponse.json(outcome, {

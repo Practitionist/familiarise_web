@@ -4,28 +4,15 @@
  */
 
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
-import { getSession } from "@/lib/auth-server";
+import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { apiError } from "@/lib/errors/api-error";
 import { readConsultantPayoutSetup } from "@/lib/data/consultant-payout-setup";
 
 export async function GET() {
   try {
-    const session = await getSession(true);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 404 },
-      );
-    }
-    const setup = await readConsultantPayoutSetup(consultantProfile.id);
+    const { profileId, error } = await requireOwnConsultantProfile();
+    if (error) return error;
+    const setup = await readConsultantPayoutSetup(profileId);
     // Money-setup truth is never cached (#1675).
     return NextResponse.json(setup, {
       headers: { "Cache-Control": "no-store" },
