@@ -1,5 +1,10 @@
 "use client";
 
+import {
+  HELD_BY_SOMEONE_ELSE,
+  NotifyWhenFreeButton,
+  type BackupWindowRequest,
+} from "@/components/booking/NotifyWhenFreeButton";
 import { CalendarIcon } from "@/assets/icons";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { motion } from "framer-motion";
 import { ClockIcon, CheckCircle2, RefreshCw } from "lucide-react";
 import { useSession } from "@/lib/auth-client";
-import { requireJsonResponse } from "@/lib/fetch-helpers";
+import { ApiResponseError, requireJsonResponse } from "@/lib/fetch-helpers";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -89,6 +94,10 @@ export default function ConsultationPricingToggle({
   const [activeConsultationOption, setActiveConsultationOption] =
     useState<string>(consultationOptions[0]?.id ?? "");
   const [isRequestingApproval, setIsRequestingApproval] = useState(false);
+  // #1778 — the window another learner holds, offered as "notify me".
+  const [heldWindow, setHeldWindow] = useState<BackupWindowRequest | null>(
+    null,
+  );
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const activePlanOption = useMemo(
@@ -288,6 +297,19 @@ export default function ConsultationPricingToggle({
       setSelectedSlot(null);
     } catch (error) {
       console.error("Error requesting approval:", error);
+      if (
+        error instanceof ApiResponseError &&
+        error.code &&
+        HELD_BY_SOMEONE_ELSE.has(error.code)
+      ) {
+        setHeldWindow({
+          consultantProfileId: consultantDetails.id,
+          windowStart: selectedSlot.startsAt,
+          windowEnd: selectedSlot.endsAt,
+          planKind: "CONSULTATION",
+          planId: activePlan.id,
+        });
+      }
       toast({
         title: "Couldn't submit approval request",
         description:
@@ -603,6 +625,10 @@ export default function ConsultationPricingToggle({
                     >
                       {isRequestingApproval ? "Submitting..." : cta.label}
                     </Button>
+                    {heldWindow &&
+                      heldWindow.windowStart === selectedSlot?.startsAt && (
+                        <NotifyWhenFreeButton window={heldWindow} />
+                      )}
                   </div>
                 </DialogContent>
               </Dialog>

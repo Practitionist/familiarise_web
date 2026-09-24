@@ -54,6 +54,7 @@ import { ActionRequiredPanel } from "@/components/dashboard/ActionRequiredPanel"
 import { deriveConsulteeActionItems } from "@/lib/dashboard/action-items";
 import { StatusBadge } from "@/components/dashboard/StatusBadge";
 import { isExternalPayHref } from "@/lib/payments/pay-link-href";
+import { WaitingTimesStrip } from "@/components/booking/WaitingTimesStrip";
 import {
   appointmentStatusBadge,
   eventStatusBadge,
@@ -1066,6 +1067,10 @@ export default function HomeTab({
         {/* Right sidebar — stretch to match monthly schedule */}
         <div className="lg:h-full">
           <PendingPaymentsWidget consulteeId={consulteeId} />
+          {/* #1778 — held times this learner asked to hear about. */}
+          <div className="mt-4">
+            <WaitingTimesStrip />
+          </div>
         </div>
       </motion.div>
     </motion.div>
