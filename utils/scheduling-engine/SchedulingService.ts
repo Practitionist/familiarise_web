@@ -88,6 +88,7 @@ import {
   transitionSubscriptionRequest,
 } from "@/lib/booking/transitions";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import {
   SETTLED_CONSULTATION,
   SETTLED_SUBSCRIPTION,
@@ -599,6 +600,7 @@ export class SchedulingService {
       error instanceof AllocationConflictError ||
       error instanceof AllocationIdempotencyMismatchError ||
       error instanceof IllegalTransitionError ||
+      error instanceof BookingRuleError ||
       error instanceof ProgramAssignmentLimitError ||
       isUniqueViolation(error) ||
       isExclusionViolation(error) ||
@@ -659,6 +661,13 @@ export class SchedulingService {
     }
     if (error instanceof AllocationIdempotencyMismatchError) {
       return { errorCode: error.errorCode, httpStatus: error.httpStatus };
+    }
+    // #1775 C-1 — an unpaid plan; the allocation rolled back.
+    if (
+      error instanceof BookingRuleError &&
+      error.code === "SUBSCRIPTION_UNPAID"
+    ) {
+      return { errorCode: "SUBSCRIPTION_UNPAID", httpStatus: error.httpStatus };
     }
     // #836 — consultee cancelled (or request expired) while the consultant
     // was allocating; the whole allocation tx rolled back.
@@ -4912,7 +4921,7 @@ export class SchedulingService {
       data?: D;
     }) => Promise<void>,
     settled: Omit<W, "id">,
-    unpaid: Omit<W, "id">,
+    unpaid: Omit<W, "id"> | (() => Promise<void>),
     data?: D,
   ): Promise<ApprovalOutcome> {
     try {
@@ -4925,6 +4934,12 @@ export class SchedulingService {
       return "approved";
     } catch (error) {
       if (!(error instanceof IllegalTransitionError)) throw error;
+      // #1775 C-1 — a refusal instead of the awaiting-payment edge; it throws
+      // a typed error for an unpaid row, else the original miss stands.
+      if (typeof unpaid === "function") {
+        await unpaid();
+        throw error;
+      }
     }
     await transition({
       where: { id: eventId, ...unpaid } as W,
@@ -4967,12 +4982,28 @@ export class SchedulingService {
           UNPAID_CONSULTATION,
         );
 
+      // #1775 C-1 — a plan is paid at purchase: an unpaid one is refused,
+      // never parked in APPROVED_PENDING_PAYMENT.
       case "subscription":
         return this.approveByMoney(
           eventId,
           (args) => transitionSubscriptionRequest(tx, args),
           SETTLED_SUBSCRIPTION,
-          UNPAID_SUBSCRIPTION,
+          async () => {
+            const unpaid = await tx.subscription.count({
+              where: {
+                id: eventId,
+                status: { in: ALLOCATION_APPROVABLE_FROM },
+                ...UNPAID_SUBSCRIPTION,
+              },
+            });
+            if (unpaid > 0) {
+              throw new BookingRuleError(
+                "SUBSCRIPTION_UNPAID",
+                "This plan is paid at purchase — the request has no successful payment.",
+              );
+            }
+          },
           {
             // FIX: Only set schedulingPeriod if not already configured
             // This prevents overwriting the user's scheduling period with the first allocated slot

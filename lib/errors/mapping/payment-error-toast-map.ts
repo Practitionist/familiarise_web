@@ -203,6 +203,11 @@ const ERROR_TOAST_MAP: Record<ErrorType, ToastMessage> = {
     title: "Something Went Wrong",
     description: null, // Use the server's specific message
   },
+  // #1775 / #1780 — each refusal's thrown sentence says what to do next.
+  [ErrorTypes.BOOKING_RULE]: {
+    title: "Not Available For This Booking",
+    description: null,
+  },
   // Contended checkout locks (literal codes from the route, not ErrorTypes
   // values until registered above): someone else is mid-checkout, so the fix
   // is waiting — never a second payment. Your card was not charged.

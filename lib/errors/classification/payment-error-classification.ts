@@ -76,6 +76,8 @@ export const ErrorTypes = {
   // Literal-equality rule as WALLET_FROZEN: the checkout modal hands this
   // string straight to the toast map as `code` when verify answers non-2xx.
   VERIFICATION_FAILED: "VERIFICATION_FAILED",
+  // #1775 / #1780 — the booking-money refusals (lib/booking/booking-rule-error.ts).
+  BOOKING_RULE: "BOOKING_RULE_ERROR",
 
   // Infrastructure failures (unexpected — ops/dev needs to investigate)
   PAYMENT_CONFIG: "PAYMENT_CONFIG_ERROR",
@@ -458,6 +460,36 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
     httpStatus: 400,
     userMessage:
       "This discount code is for a different currency and cannot be applied to this plan.",
+  },
+  // #1775 / #1780 — BookingRuleError codes; the thrown sentence is the copy.
+  ...(
+    [
+      "SUBSCRIPTION_UNPAID",
+      "TRIAL_UNPAID",
+      "PAYMENT_ALREADY_EXISTS",
+      "ALREADY_PAID",
+      "REFUND_WINDOW_CLOSED",
+      "SESSION_NOT_CANCELLABLE",
+      "MAKEUP_WINDOW_LAPSED",
+      "MAKEUP_EXISTS",
+      "MAKEUP_NOT_SKIPPABLE",
+      "EXIT_NOT_AVAILABLE",
+      "BACKUP_INTEREST_CAP",
+    ] as const
+  ).map((code) => ({
+    code,
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 409,
+  })),
+  {
+    code: "BACKUP_WINDOW_PAST",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 400,
+  },
+  {
+    code: "PAYMENT_LINK_FAILED",
+    errorType: ErrorTypes.BOOKING_RULE,
+    httpStatus: 502,
   },
 ] as const;
 

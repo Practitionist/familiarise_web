@@ -88,7 +88,7 @@ describe("handleAllocate (#1775 B-9)", () => {
     expect(mintAfterCommit).not.toHaveBeenCalled();
   });
 
-  it("a failed mint is recorded as a system error; the allocation still answers 200", async () => {
+  it("a failed mint is recorded and answered as a typed 502, never a 200 (#1775 C-1)", async () => {
     allocate.mockResolvedValue({
       success: true,
       outcome: "awaiting_payment",
@@ -99,7 +99,10 @@ describe("handleAllocate (#1775 B-9)", () => {
       error: new Error("gateway down"),
     });
     const res = await post();
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(502);
+    expect(await res.json()).toMatchObject({
+      errorCode: "PAYMENT_LINK_FAILED",
+    });
     expect(recordSystemError).toHaveBeenCalledWith(
       expect.objectContaining({ category: "PAYMENT" }),
     );
