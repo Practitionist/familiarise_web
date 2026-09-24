@@ -166,6 +166,8 @@ model User {
   publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
   verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
+  // #1778 — the held windows this user asked to hear about when they free.
+  windowBackupInterests         WindowBackupInterest[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -3102,6 +3104,9 @@ model ConsultantProfile {
   swiftBic                        String?
   ibanOrAccount                   String?
 
+  // #1778 — learners waiting on one of this consultant's held windows.
+  windowBackupInterests WindowBackupInterest[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -4342,6 +4347,41 @@ enum WaitlistSource {
   USE_CASE_PAGE
   EVENT_SOLD_OUT
   IMPORT
+}
+
+// #1778 — "Notify me if this time opens": a learner's interest in a 1:1 window
+// someone else holds. Notify-only: nothing is reserved; first to book wins.
+model WindowBackupInterest {
+  id String @id @default(cuid())
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  consultantProfileId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  windowStart DateTime         @db.Timestamptz
+  windowEnd   DateTime         @db.Timestamptz
+  planKind    AppointmentsType
+  planId      String?
+
+  status     BackupInterestStatus @default(WAITING)
+  createdAt  DateTime             @default(now()) @db.Timestamptz
+  notifiedAt DateTime?            @db.Timestamptz
+  bookedAt   DateTime?            @db.Timestamptz
+
+  @@unique([consultantProfileId, userId, windowStart])
+  @@index([consultantProfileId, windowStart, status])
+  @@index([userId, status])
+}
+
+// #1778 — WAITING until the window frees (NOTIFIED), the learner books it
+// (BOOKED), or it passes or is withdrawn (EXPIRED).
+enum BackupInterestStatus {
+  WAITING
+  NOTIFIED
+  BOOKED
+  EXPIRED
 }
 
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
