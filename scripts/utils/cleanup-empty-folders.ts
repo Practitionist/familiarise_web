@@ -15,7 +15,15 @@
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import type { FileObject } from "@supabase/storage-js";
+
+// Storage entry type derived from the supabase-js client surface (do NOT
+// reintroduce `@supabase/storage-js`: supabase-js does not re-export
+// FileObject, and the direct dep only risks version skew).
+type StorageFileApi = ReturnType<SupabaseClient["storage"]["from"]>;
+type StorageListResult = Awaited<ReturnType<StorageFileApi["list"]>>;
+type FileObject = NonNullable<
+  Extract<StorageListResult, { error: null }>["data"]
+>[number];
 import { withCronLock, CronLockHeldError } from "@/lib/cron/with-cron-lock";
 
 interface FolderItem {

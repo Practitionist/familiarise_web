@@ -208,7 +208,6 @@ const nextConfig = {
       "@radix-ui/react-icons",
       // Imported by components/notifications/NotificationInbox.tsx and not in
       // the default list.
-      "@novu/react",
       "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
