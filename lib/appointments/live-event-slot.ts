@@ -8,7 +8,7 @@
  */
 
 import type { Prisma, OccurrenceCompletionStatus } from "@prisma/client";
-import prisma from "@/lib/prisma";
+import prisma, { type Tx } from "@/lib/prisma";
 
 /** Mutable list — Prisma's `notIn` rejects `readonly` tuples from `as const`. */
 const DEAD_COMPLETION_STATUSES: OccurrenceCompletionStatus[] = [
@@ -27,16 +27,19 @@ export async function findLiveEventSlot(
     /** When set, only slots at/after this instant (next-session notice window). */
     startsAtGte?: Date;
   },
-): Promise<{ startsAt: Date } | null> {
+  // #1780 — a caller inside a transaction passes it: the global client would
+  // deadlock under PG_POOL_MAX=1.
+  db: Pick<Tx, "appointmentOccurrence"> = prisma,
+): Promise<{ startsAt: Date; movedAt: Date | null } | null> {
   const where: Prisma.AppointmentOccurrenceWhereInput = {
     appointment,
     deletedAt: null,
     completionStatus: { notIn: DEAD_COMPLETION_STATUSES },
     ...(opts.startsAtGte ? { startsAt: { gte: opts.startsAtGte } } : {}),
   };
-  return prisma.appointmentOccurrence.findFirst({
+  return db.appointmentOccurrence.findFirst({
     where,
     orderBy: { startsAt: opts.order },
-    select: { startsAt: true },
+    select: { startsAt: true, movedAt: true },
   });
 }

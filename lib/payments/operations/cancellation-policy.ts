@@ -236,6 +236,96 @@ export interface BookingRefundQuote {
  *     and the buyer loses the remainder they were owed.
  */
 /**
+ * Sessions per notice tier, keyed by basis points. Each scheduled session sits
+ * at its own tier; the never-scheduled remainder has infinite notice, and a
+ * start in `fullStarts` (a session the host moved, #1780) refunds at 100 %.
+ */
+function sessionsByTier(args: {
+  policy: CancellationPolicyTerms | null;
+  isConsultantInitiated: boolean;
+  nowMs: number;
+  starts: number[];
+  neverScheduled: number;
+  fullStarts?: ReadonlySet<number>;
+}): Map<number, number> {
+  const perBps = new Map<number, number>();
+  const bump = (pct: number, n: number) => {
+    const bps = Math.round(pct * 100);
+    perBps.set(bps, (perBps.get(bps) ?? 0) + n);
+  };
+  if (args.neverScheduled > 0) {
+    bump(
+      computeRefundPct(
+        args.policy,
+        Number.POSITIVE_INFINITY,
+        args.isConsultantInitiated,
+      ),
+      args.neverScheduled,
+    );
+  }
+  for (const startsAt of args.starts) {
+    const pct = args.fullStarts?.has(startsAt)
+      ? 100
+      : computeRefundPct(
+          args.policy,
+          (startsAt - args.nowMs) / 3_600_000,
+          args.isConsultantInitiated,
+        );
+    bump(pct, 1);
+  }
+  return perBps;
+}
+
+/**
+ * #1780 (D-4) — what leaving a class series mid-way refunds one seat: each
+ * remaining session it holds at its own notice tier, the never-scheduled rest
+ * at infinite notice, a host-moved next session at 100 %, less the units
+ * already refunded per session (make-up lapses and skips, `occ:*` keys). The
+ * floor is per tier over `unit`, so Σ refunds ≤ unit × undelivered sessions.
+ */
+export function quoteClassSeatRefund(input: {
+  policy: CancellationPolicyTerms | null;
+  isConsultantInitiated: boolean;
+  unitPaise: bigint;
+  remainingStartsMs: number[];
+  neverScheduled: number;
+  /** Starts (epoch ms) the host moved after this seat was bought. */
+  movedStartsMs?: number[];
+  alreadyRefundedPaise?: number;
+  refundablePaise: number;
+  nowMs?: number;
+}): { refundPaise: number; noticeHours: number; tierRefundPct: number } {
+  const nowMs = input.nowMs ?? Date.now();
+  const starts = [...input.remainingStartsMs].sort((a, b) => a - b);
+  const perBps = sessionsByTier({
+    policy: input.policy,
+    isConsultantInitiated: input.isConsultantInitiated,
+    nowMs,
+    starts,
+    neverScheduled: input.neverScheduled,
+    fullStarts: new Set(input.movedStartsMs ?? []),
+  });
+  let owed = BigInt(0);
+  perBps.forEach((n, bps) => {
+    owed += (input.unitPaise * BigInt(n) * BigInt(bps)) / BigInt(10_000);
+  });
+  const net = Number(owed) - (input.alreadyRefundedPaise ?? 0);
+  const noticeHours =
+    starts.length > 0
+      ? (starts[0] - nowMs) / 3_600_000
+      : Number.POSITIVE_INFINITY;
+  return {
+    refundPaise: Math.max(0, Math.min(net, input.refundablePaise)),
+    noticeHours,
+    tierRefundPct: computeRefundPct(
+      input.policy,
+      noticeHours,
+      input.isConsultantInitiated,
+    ),
+  };
+}
+
+/**
  * #1766 — the subscription arm: refund the UNUSED entitlement against the
  * plan, not against the sessions that happened to be allocated.
  *
@@ -268,32 +358,13 @@ function quoteUnusedSessions(
       ? (scheduled[0] - now) / 3_600_000
       : Number.POSITIVE_INFINITY;
 
-  // Sessions per tier, in basis points; the never-scheduled remainder has
-  // infinite notice, so it lands in whatever rung the ladder gives that.
-  const perBps = new Map<number, number>();
-  const bump = (pct: number, n: number) =>
-    perBps.set(
-      Math.round(pct * 100),
-      (perBps.get(Math.round(pct * 100)) ?? 0) + n,
-    );
-  if (neverScheduled > 0) {
-    bump(
-      computeRefundPct(
-        input.policy,
-        Number.POSITIVE_INFINITY,
-        input.isConsultantInitiated,
-      ),
-      neverScheduled,
-    );
-  }
-  for (const startsAt of scheduled) {
-    const pct = computeRefundPct(
-      input.policy,
-      (startsAt - now) / 3_600_000,
-      input.isConsultantInitiated,
-    );
-    bump(pct, 1);
-  }
+  const perBps = sessionsByTier({
+    policy: input.policy,
+    isConsultantInitiated: input.isConsultantInitiated,
+    nowMs: now,
+    starts: scheduled,
+    neverScheduled,
+  });
 
   const gross = BigInt(input.grossPaise);
   const den = BigInt(total) * BigInt(10_000);
