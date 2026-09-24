@@ -1,4 +1,4 @@
-#!/usr/bin/env ts-node
+#!/usr/bin/env tsx
 
 import { execSync } from "child_process";
 import chalk from "chalk";
@@ -256,7 +256,7 @@ function showHelp(): void {
   console.log(`
 ${chalk.cyan.bold("Dependabot Branch Cleaner")}
 
-Usage: ts-node scripts/delete-dependabot-prs.ts [options]
+Usage: npx tsx scripts/utils/delete-dependabot-prs.ts [options]
 
 Options:
   -n, --dry-run     Show what would be deleted without making changes
