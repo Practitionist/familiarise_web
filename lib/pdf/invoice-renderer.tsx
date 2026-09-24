@@ -49,6 +49,7 @@ import {
   type StatutorySupplier,
   type StatutoryBuyer,
 } from "./statutory-document-frame";
+import { CURRENCY_LOCALE_MAP } from "@/utils/formatting";
 
 // The Devanagari face used by the consumer documents is registered once in
 // ./statutory-document-frame. Re-exported here because that is where callers
@@ -59,19 +60,14 @@ export { BODY_FONT } from "./statutory-document-frame";
 // Shared formatting helpers
 // ============================================================================
 
-/** Locale-aware Intl formatter used by the org document. Picks an
- * en-IN / en-US / en-GB locale by currency to keep digit grouping
- * idiomatic for the receiving finance team. */
+/** Locale-aware Intl formatter used by the org document. Resolved through the
+ * shared CURRENCY_LOCALE_MAP so every display currency (EUR → de-DE, GBP →
+ * en-GB, JPY → ja-JP, …) groups idiomatically; previously only INR/USD/GBP
+ * had a locale and everything else fell back to en-US, making non-USD
+ * conversions look wrong on the formal document. */
 function formatMoneyIntl(paise: number, currency: Currency): string {
   const major = paise / 100;
-  const locale =
-    currency === "INR"
-      ? "en-IN"
-      : currency === "USD"
-        ? "en-US"
-        : currency === "GBP"
-          ? "en-GB"
-          : "en-US";
+  const locale = CURRENCY_LOCALE_MAP[currency] ?? "en-US";
   return new Intl.NumberFormat(locale, {
     style: "currency",
     currency,

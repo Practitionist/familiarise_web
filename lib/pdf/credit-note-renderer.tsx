@@ -34,6 +34,7 @@ import {
   type StatutorySupplier,
   type StatutoryBuyer,
 } from "./statutory-document-frame";
+import { CURRENCY_LOCALE_MAP } from "@/utils/formatting";
 
 export type CreditNotePdfData = {
   creditNoteNumber: string;
@@ -63,7 +64,10 @@ export type CreditNotePdfData = {
 };
 
 function formatMoney(paise: number, currency: Currency): string {
-  return new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+  // Same shared locale map as the invoice renderer: previously
+  // `INR ? en-IN : en-US` flattened every non-INR currency (including EUR/GBP)
+  // onto US grouping.
+  return new Intl.NumberFormat(CURRENCY_LOCALE_MAP[currency] ?? "en-US", {
     style: "currency",
     currency,
     minimumFractionDigits: 2,

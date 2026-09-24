@@ -136,12 +136,18 @@ export function useCurrency() {
       const locale =
         CURRENCY_LOCALE_MAP[displayCurrency.toUpperCase()] ||
         (typeof navigator !== "undefined" ? navigator.language : "en-IN");
+      // ISO 4217: JPY is zero-decimal (no subunits), everything else we offer
+      // carries two fraction digits. Hardcoding 0 here rounded every estimate
+      // to whole units ("$59" instead of "$59.38", "€46" instead of "€45.83"),
+      // which is why non-USD conversions looked broken next to the 2-decimal
+      // INR truth in FxEstimateNote and the confirmation email.
+      const fractionDigits = displayCurrency.toUpperCase() === "JPY" ? 0 : 2;
       try {
         return new Intl.NumberFormat(locale, {
           style: "currency",
           currency: displayCurrency,
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
+          minimumFractionDigits: fractionDigits,
+          maximumFractionDigits: fractionDigits,
         }).format(converted);
       } catch (error) {
         // Intl accepts any well-formed three-letter code, so a merely unknown
