@@ -63,6 +63,12 @@ publish" is the editor flow.
 
 `TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. Since #1775 a paid trial is paid while it is still `PENDING`: the request mints the order, capture sets `paymentId` without moving the status, and acceptance moves `PENDING → SCHEDULED` with `paymentId` not null repeated in the CAS WHERE. `AWAITING_PAYMENT` remains for trials accepted before payment under the old flow. A paid trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
 
+## Class sessions the host cancels (#1780 row 4)
+
+A class session is one `AppointmentOccurrence` row, and since #1780 the host may cancel just one of them. `POST /api/appointments/[id]/occurrences/[occurrenceId]/cancel` moves a future `SCHEDULED` session to `CANCELLED` through `transitionOccurrenceCompletion` (`fromIn: [SCHEDULED]`, reason `HOST_CANCELLED_SESSION`) and stamps `hostCancelledAt`, but never `deletedAt`, so the session stays countable. The host then has 14 days: a make-up is a new occurrence with the same ordinal that must be held by the fourteenth day, and the partial unique on live ordinals makes a second make-up impossible. If no make-up exists when the 14 days are up, the `settle-cancelled-sessions` sweep refunds every seat that held the session one unit under the key `occ:<occurrence>:pay:<payment>` and stamps `seatsSettledAt`; a learner who cannot attend a make-up may take the same unit back earlier under the same key, so the two paths never both refund it.
+
+Every host-cancelled session counts as a miss, made up or not. Misses are host cancellations only for now; no-shows and outage voiding are deferred to #1569. At three misses, or a quarter of the series, a learner holding a seat may leave with every undelivered session refunded at 100 %, through `DELETE /api/participants/class/[classId]?mode=exit`, which recomputes the ledger inside its transaction and refuses with `EXIT_NOT_AVAILABLE` without the right. The first time a class reaches that threshold one `class-reliability:<classId>` `SystemEvent` is written for ops. Delivered sessions are never clawed back.
+
 ## Reschedule requests
 
 `RescheduleRequestStatus` via `transitionRescheduleRequest`:

@@ -273,13 +273,16 @@ This job was retired on 2026-09-19 (#1732, #1589 P-P1-01). It cancelled `APPROVE
 
 `netlify/functions/cron-tick.mts` (ADR 27) is a Netlify scheduled function that runs every five minutes and POSTs a fixed list of `/api/cleanup/*` targets, because ADR 22 measured GitHub Actions delivering a sub-hourly `cron:` schedule roughly once every hundred minutes instead of on its declared cadence. As of 2026-09-19 (#1583 E-P0-04, #1589 P-P0-01 and N-P1-03, #1591 J1-P1-05, #1599 C-P1-06) it carries five booking targets, each due on every third tick — a 15-minute cadence — through the ticker's `TARGET_EVERY_MINUTES` map:
 
-| Target directory (`app/api/cleanup/<name>`) | Job                               | Cadence on the ticker | Per-tick timeout |
-| ------------------------------------------- | --------------------------------- | --------------------- | ---------------- |
-| `expire-unpaid-trials`                      | Expire unpaid trials              | Every 15 minutes      | 6s (default)     |
-| `reschedule-proposals`                      | Expire reschedule proposals       | Every 15 minutes      | 6s (default)     |
-| `appointment-reminders`                     | Send appointment reminders        | Every 15 minutes      | 20s              |
-| `tentative-occurrences`                     | Cleanup tentative slots           | Every 15 minutes      | 6s (default)     |
-| `expire-stale-requests`                     | Expire stale requests (section e) | Every 15 minutes      | 20s              |
+| Target directory (`app/api/cleanup/<name>`) | Job                                     | Cadence on the ticker | Per-tick timeout |
+| ------------------------------------------- | --------------------------------------- | --------------------- | ---------------- |
+| `expire-unpaid-trials`                      | Expire unpaid trials                    | Every 15 minutes      | 6s (default)     |
+| `reschedule-proposals`                      | Expire reschedule proposals             | Every 15 minutes      | 6s (default)     |
+| `appointment-reminders`                     | Send appointment reminders              | Every 15 minutes      | 20s              |
+| `tentative-occurrences`                     | Cleanup tentative slots                 | Every 15 minutes      | 6s (default)     |
+| `expire-stale-requests`                     | Expire stale requests (section e)       | Every 15 minutes      | 20s              |
+| `settle-cancelled-sessions`                 | Settle cancelled class sessions (#1780) | Every 15 minutes      | 20s              |
+
+Since #1780 the ticker also drives `settle-cancelled-sessions` every 15 minutes with a batch of ten sessions on the 20-second tier, because it makes a gateway refund per seat; its hourly Actions run at :44 is the unbounded backstop, and it is a financial job that holds a fail-closed lock. `expire-unpaid-trials` now refunds too (a paid trial nobody answered within 48 hours), so it moved to a fail-closed lock and joined `FINANCIAL_JOB_NAMES`.
 
 `appointment-reminders` and `expire-stale-requests` get the 20-second tier because their per-row cost does not fit the 6-second default on a cold instance: the reminder job stages an outbox row per matching booking, and the stale-request sweep routes SUCCEEDED payments through the refund front door. Both twins already wrap their core in `withCronLock` and answer 409 on overlap with a concurrent GitHub Actions run, so the ticker's tick and the hourly Actions run can never double-execute the same cohort — the loser's 409 is counted as `lockHeld`, not `failed`. None of the five reads a `limit` query parameter, so none of them gets an entry in the ticker's `TARGET_LIMITS` map; each twin bounds its own cohort. The hourly GitHub Actions schedules in the table above stay as the unbounded backstop for all five, exactly as they do for the ten pre-existing ticker targets (webhook sweeps, refund reconciliation, earnings sync).
 
