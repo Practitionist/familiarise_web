@@ -82,3 +82,23 @@ it("flag off: no Customer and no customer_id on the order", async () => {
   expect(rzp.ordersCreate.mock.calls[0][0]).not.toHaveProperty("customer_id");
   expect(order).not.toHaveProperty("customerId");
 });
+
+it("a Customer timeout degrades to an order without customer_id", async () => {
+  flags.ENABLE_SAVED_CARDS = true;
+  jest.useFakeTimers();
+  rzp.customersCreate.mockReturnValue(new Promise(() => {}));
+  const pending = savedCardCustomerId("u1");
+  await jest.advanceTimersByTimeAsync(8_000);
+  const customerId = await pending;
+  jest.useRealTimers();
+
+  await createRazorpayOrder({
+    amount: 50000,
+    currency: "INR",
+    metadata: {},
+    paymentGateway: "RAZORPAY",
+    customerId,
+  });
+  expect(customerId).toBeUndefined();
+  expect(rzp.ordersCreate.mock.calls[0][0]).not.toHaveProperty("customer_id");
+});

@@ -463,7 +463,7 @@ export async function scrubUser(
  * buyer's saved-card tokens, then deactivate every RazorpayX fund account and
  * contact. A failure never aborts the scrub; it becomes a system event and a
  * `vendorFailures` entry. The Customer column is cleared only once its tokens
- * are gone, so the reference survives for a manual retry.
+ * are gone and its PII is overwritten, so the reference survives for a retry.
  */
 async function offboardPaymentVendors(
   prisma: Db,
@@ -495,12 +495,17 @@ async function offboardPaymentVendors(
 
   const customerId = input.razorpayCustomerId;
   if (customerId) {
-    const deleted = await attempt(`razorpay_tokens:${customerId}`, async () => {
-      const { deleteRazorpayCustomerTokens } =
-        await import("@/lib/payments/core/razorpay");
-      await deleteRazorpayCustomerTokens(customerId);
-    });
-    if (deleted) {
+    const razorpay = await import("@/lib/payments/core/razorpay");
+    const deleted = await attempt(`razorpay_tokens:${customerId}`, () =>
+      razorpay.deleteRazorpayCustomerTokens(customerId),
+    );
+    // Owner decision 2026-09-25 — the Customer cannot be deleted, so its PII is overwritten.
+    const overwritten =
+      deleted &&
+      (await attempt(`razorpay_customer_pii:${customerId}`, () =>
+        razorpay.eraseRazorpayCustomerPii(customerId, input.userId),
+      ));
+    if (overwritten) {
       await attempt("razorpay_customer_column", () =>
         prisma.user.update({
           where: { id: input.userId },

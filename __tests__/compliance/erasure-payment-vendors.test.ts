@@ -15,8 +15,11 @@ const vendor = {
   deactivateFundAccount: jest.fn(async () => ({})),
   deactivateContact: jest.fn(async () => ({})),
 };
+const erasePii = jest.fn(async (_customerId: string, _userId: string) => {});
 jest.mock("../../lib/payments/core/razorpay", () => ({
   deleteRazorpayCustomerTokens: (id: string) => vendor.deleteTokens(id),
+  eraseRazorpayCustomerPii: (id: string, userId: string) =>
+    erasePii(id, userId),
 }));
 jest.mock("../../lib/payments/payouts/razorpay-payouts", () => ({
   getRazorpayPayoutsService: () => vendor,
@@ -63,6 +66,13 @@ it("off-boards the payment vendors and keeps only references", async () => {
   const result = await scrubUser(db as never, "u1");
 
   expect(vendor.deleteTokens).toHaveBeenCalledWith("cust_1");
+  expect(erasePii).toHaveBeenCalledWith("cust_1", "u1");
+  expect(erasePii.mock.invocationCallOrder[0]).toBeGreaterThan(
+    vendor.deleteTokens.mock.invocationCallOrder[0],
+  );
+  expect(erasePii.mock.invocationCallOrder[0]).toBeLessThan(
+    userUpdate.mock.invocationCallOrder[0],
+  );
   expect(vendor.deactivateFundAccount).toHaveBeenCalledWith("fa_1");
   expect(vendor.deactivateContact).toHaveBeenCalledWith("cont_1");
   expect(userUpdate).toHaveBeenCalledWith({

@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
 import Razorpay from "razorpay";
+import { createHash } from "node:crypto";
 import {
   PaymentIntentParams,
   PaymentIntent,
@@ -334,6 +335,33 @@ export async function deleteRazorpayCustomerTokens(
     );
   }
   return tokens.items.length;
+}
+
+/**
+ * Owner decision 2026-09-25 (#1771 row 5) — Razorpay Customers cannot be
+ * deleted, so erasure overwrites the name and email with placeholders. The
+ * contact is left as it is: the Edit Customer API documents no way to clear it
+ * and rejects a contact shorter than eight digits.
+ */
+export async function eraseRazorpayCustomerPii(
+  customerId: string,
+  userId: string,
+): Promise<void> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - cannot erase the customer's details",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const hash = createHash("sha256").update(userId).digest("hex").slice(0, 16);
+  await withRazorpaySdkTimeout("customers.edit", () =>
+    razorpayClient.customers.edit(customerId, {
+      name: "Erased user",
+      email: `erased+${hash}@familiarisenow.com`,
+    }),
+  );
 }
 
 /**
