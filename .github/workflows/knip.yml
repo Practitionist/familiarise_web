@@ -40,8 +40,13 @@ jobs:
           node-version: "22"
           cache: "npm"
 
+      # --ignore-scripts (Sonar S6505): this is a read-only analysis job —
+      # nothing here needs lifecycle scripts, and skipping them shrinks the
+      # supply-chain surface (a compromised script could otherwise read the
+      # job token). The build/test jobs keep plain `npm ci` (postinstall
+      # generates the Prisma client they need).
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Restore Knip cache
         uses: actions/cache@v4
