@@ -64,3 +64,7 @@ The host can now cancel one session of a class. It stays countable because only 
 ### Group F — backup interest in a held window
 
 A learner who loses a 1:1 window to someone else can now ask to be told if it frees. The interest is notify-only: nothing is reserved, and every release path stages the notices inside its own transaction, so the outbox relays deliver them after the commit and the first to book wins. The consultee Home lists the times a learner is waiting on, with a Withdraw on each. The spec also asked for the prompt on the consultee's request page when the asked-for window is held by someone else; no read tells that page that another learner holds the window, so the prompt is offered at the refusal only, and the page prompt is left for a follow-up.
+
+### Fold-ins — #1429 and #1746
+
+Three fixes rode along. The allocate page's read now answers null for a request that is missing, belongs to another consultant, or fails to read, so the page shows its own not-found page instead of crashing (FAMILIARISE_WEB-4X), and the availability editor no longer refuses a whole save because an unchanged window has since ended. The rejection refund is computed in integer basis points, and a cancelled group event now tells every attendee, including free and credit seats, in the words of the rail their seat was funded by. An approval whose pay order already exists, or whose request is already paid, answers a typed 409 instead of a 502 that invited a retry.
