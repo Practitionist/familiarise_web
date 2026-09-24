@@ -216,6 +216,22 @@ export default [
           message:
             "Bare getSession() serves the cookie cache (stale role/ban up to ~5 min). Use getSession(true) for force-fresh reads, requireApiAuth()/requireBackofficeSurface() in routes, or the explicit getCachedSession() for hot cosmetic reads. See #1807.",
         },
+        {
+          // getSession(false) / getSession(undefined) are the same cached
+          // read spelled explicitly — they bypass the zero-arg selector.
+          selector:
+            "CallExpression[callee.name='getSession'][arguments.length=1][arguments.0.value=false]",
+          message:
+            "getSession(false) is the cookie-cached read: use the explicit getCachedSession() so the choice is greppable, or getSession(true). See #1807.",
+        },
+        {
+          // Identifier-only: a type gate is required because esquery matches
+          // a missing `name` attribute against the string 'undefined'.
+          selector:
+            "CallExpression[callee.name='getSession'][arguments.length=1][arguments.0.type='Identifier'][arguments.0.name='undefined']",
+          message:
+            "getSession(undefined) is the cookie-cached read: use the explicit getCachedSession() so the choice is greppable, or getSession(true). See #1807.",
+        },
       ],
     },
   },

@@ -142,6 +142,29 @@ describe("parseJsonRequest", () => {
     });
     expect(error?.status).toBe(400);
   });
+
+  it("error body carries the message, issues, and extras", async () => {
+    const { error } = await parseJsonRequest(schema, {
+      json: async () => ({ consultantProfileIds: [] }),
+    });
+    expect(error?.status).toBe(400);
+    const body = await error?.json();
+    expect(body).not.toHaveProperty("success");
+    expect(typeof body?.error).toBe("string");
+    expect(Array.isArray(body?.issues)).toBe(true);
+  });
+
+  it("extras flow into the error body", async () => {
+    const { error } = await parseJsonRequest(
+      schema,
+      { json: async () => ({}) },
+      "Bad",
+      { success: false },
+    );
+    const body = await error?.json();
+    expect(body).toMatchObject({ error: "Bad", success: false });
+    expect(Array.isArray(body?.issues)).toBe(true);
+  });
 });
 
 describe("userIdQuerySchema", () => {

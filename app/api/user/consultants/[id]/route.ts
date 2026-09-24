@@ -278,9 +278,17 @@ export async function GET(
       // defense-in-depth over the select allowlist. (#946)
       { data: consultant ? consultantPublicApiSchema.parse(consultant) : null },
       {
-        headers: {
-          "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300",
-        },
+        headers: isPrivilegedAccess
+          ? // Owner/admin payloads vary by session: never shared-cache them,
+            // and tell caches the response depends on the cookie.
+            {
+              "Cache-Control": "private, no-store",
+              Vary: "Cookie",
+            }
+          : {
+              "Cache-Control":
+                "public, s-maxage=60, stale-while-revalidate=300",
+            },
       },
     );
   } catch (error) {
