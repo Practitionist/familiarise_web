@@ -399,6 +399,7 @@ const WORKFLOW_TIERS: Record<string, Tier> = {
   "ci.yaml": "infra",
   "claude.yml": "infra",
   "claude-code-review.yml": "infra",
+  "knip.yml": "infra",
   "race-condition-tests.yml": "infra",
 };
 

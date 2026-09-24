@@ -13,11 +13,11 @@ function BrandIcon({
   viewBox,
   d,
   className,
-}: {
+}: Readonly<{
   viewBox: string;
   d: string;
   className?: string;
-}) {
+}>) {
   return (
     <svg viewBox={viewBox} className={className} fill="currentColor" aria-hidden="true">
       <path d={d} />
