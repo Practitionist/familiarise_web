@@ -59,6 +59,7 @@ export default async function TrialCheckoutPage({
       select: {
         id: true,
         status: true,
+        paymentId: true,
         paymentDueAt: true,
         pendingPaymentUrl: true,
         subscriptionPlanId: true,
@@ -142,8 +143,11 @@ export default async function TrialCheckoutPage({
     paymentId: chargedPayment?.id,
     checkoutUrl: trial.pendingPaymentUrl,
   });
+  // #1775 C-7 — a paid trial is charged at request: PENDING and uncaptured.
+  const chargedAtRequest =
+    trial.status === "PENDING" && trial.paymentId === null;
   const isPayable =
-    trial.status === "AWAITING_PAYMENT" &&
+    (trial.status === "AWAITING_PAYMENT" || chargedAtRequest) &&
     Boolean(trial.pendingPaymentUrl) &&
     payHref !== null &&
     (!trial.paymentDueAt || trial.paymentDueAt > new Date());
@@ -201,7 +205,15 @@ export default async function TrialCheckoutPage({
           {isPayable ? (
             <>
               <TrialPayButton href={payHref!} />
-              {trial.paymentDueAt && (
+              {chargedAtRequest && (
+                <p className="text-center text-xs text-muted-foreground">
+                  Refunded in full if{" "}
+                  {trial.subscriptionPlan.consultantProfile?.user?.name ??
+                    "your expert"}{" "}
+                  can&apos;t take it.
+                </p>
+              )}
+              {!chargedAtRequest && trial.paymentDueAt && (
                 <p className="text-center text-xs text-muted-foreground">
                   Your slot is held until{" "}
                   <ViewerLocalTime value={trial.paymentDueAt.toISOString()} />.
@@ -214,8 +226,9 @@ export default async function TrialCheckoutPage({
               <div className="flex gap-3 rounded-xl border border-border bg-muted/50 p-4">
                 <AlertCircle className="h-5 w-5 shrink-0 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  {trial.status === "SCHEDULED"
-                    ? "This trial is already paid for and confirmed."
+                  {trial.status === "SCHEDULED" ||
+                  (trial.status === "PENDING" && trial.paymentId)
+                    ? "This trial is already paid for."
                     : "This trial is no longer awaiting payment — it may have been cancelled, or the payment window may have closed. You can request a new trial with this expert."}
                 </p>
               </div>

@@ -22,10 +22,13 @@ async function readPayable(
   if (kind === "trial") {
     const row = await prisma.trial.findUnique({
       where: { id },
-      select: { status: true, pendingPaymentUrl: true },
+      select: { status: true, paymentId: true, pendingPaymentUrl: true },
     });
+    // #1775 C-7 — a paid trial is also payable while PENDING and uncaptured.
     return {
-      payable: row?.status === TrialStatus.AWAITING_PAYMENT,
+      payable:
+        row?.status === TrialStatus.AWAITING_PAYMENT ||
+        (row?.status === TrialStatus.PENDING && row.paymentId === null),
       url: row?.pendingPaymentUrl ?? null,
     };
   }

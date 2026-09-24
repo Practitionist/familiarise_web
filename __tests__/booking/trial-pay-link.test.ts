@@ -90,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("persistTrialPayLink", () => {
-  it("writes only onto an AWAITING_PAYMENT trial with no link", async () => {
+  it("writes only onto a payable, uncaptured trial with no link (#1775 C-7)", async () => {
     await expect(
       persistTrialPayLink({
         trialId: "trial-1",
@@ -104,7 +104,8 @@ describe("persistTrialPayLink", () => {
     expect(db.trial.updateMany).toHaveBeenCalledWith({
       where: {
         id: "trial-1",
-        status: "AWAITING_PAYMENT",
+        status: { in: ["PENDING", "AWAITING_PAYMENT"] },
+        paymentId: null,
         pendingPaymentUrl: null,
       },
       data: { pendingPaymentUrl: "/checkout/pay/pay_1" },

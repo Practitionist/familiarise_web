@@ -43,10 +43,12 @@ export async function persistTrialPayLink(args: {
   const link =
     payLinkHref({ paymentId: args.paymentId, checkoutUrl: args.checkoutUrl }) ??
     args.checkoutUrl;
+  // #1775 C-7 — a paid trial is payable from request (PENDING, uncaptured).
   const res = await prisma.trial.updateMany({
     where: {
       id: args.trialId,
-      status: TrialStatus.AWAITING_PAYMENT,
+      status: { in: TRIAL_PAYABLE_STATUSES },
+      paymentId: null,
       pendingPaymentUrl: null,
     },
     data: { pendingPaymentUrl: link },
@@ -60,6 +62,12 @@ export async function persistTrialPayLink(args: {
   });
   return outcome.url;
 }
+
+/** #1775 C-7 — a paid trial is payable while PENDING (charged at request) or AWAITING_PAYMENT. */
+export const TRIAL_PAYABLE_STATUSES: TrialStatus[] = [
+  TrialStatus.PENDING,
+  TrialStatus.AWAITING_PAYMENT,
+];
 
 export interface TrialPayLinkSubject {
   id: string;
@@ -83,7 +91,7 @@ export function needsTrialPayLinkRemint(
   now = new Date(),
 ): boolean {
   return (
-    trial.status === TrialStatus.AWAITING_PAYMENT &&
+    TRIAL_PAYABLE_STATUSES.includes(trial.status) &&
     trial.pendingPaymentUrl === null &&
     trial.paymentDueAt !== null &&
     trial.paymentDueAt > now
@@ -104,8 +112,9 @@ export async function remintTrialPayLink(
   trial: TrialPayLinkSubject,
 ): Promise<string | null> {
   if (!needsTrialPayLinkRemint(trial)) return trial.pendingPaymentUrl;
+  // #1775 C-7 — a request-time placeholder has no session yet.
   const slot = trial.appointment?.occurrences[0];
-  if (!trial.appointment || !slot) return null;
+  if (!trial.appointment) return null;
   const appointmentId = trial.appointment.id;
 
   try {
@@ -152,8 +161,8 @@ export async function remintTrialPayLink(
             appointmentId,
             planId: trial.subscriptionPlanId,
             paymentGateway: PaymentGateway.RAZORPAY,
-            startsAt: slot.startsAt.toISOString(),
-            endsAt: slot.endsAt.toISOString(),
+            startsAt: slot?.startsAt.toISOString(),
+            endsAt: slot?.endsAt.toISOString(),
           });
 
       return persistTrialPayLink({

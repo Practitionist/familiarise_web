@@ -133,6 +133,13 @@ export function TrialBookingModal({
         throw new Error(errorData.error || "Failed to submit trial request");
       }
 
+      // #1775 C-7 — a paid trial is paid now: straight to its checkout page.
+      const created: { checkoutUrl?: string | null } = await response.json();
+      if (created.checkoutUrl) {
+        router.push(created.checkoutUrl);
+        return;
+      }
+
       setIsSuccess(true);
       toast({
         title: "Trial Requested!",
@@ -262,8 +269,8 @@ export function TrialBookingModal({
             </p>
           </div>
 
-          {/* Info — say when money changes hands. Nothing is charged at
-              request time either way; a paid trial bills on acceptance. */}
+          {/* Info — say when money changes hands (#1775 C-7): a paid trial
+              is charged with the request and refunded if it is not taken. */}
           <div className="bg-muted rounded-lg p-4 text-sm text-muted-foreground">
             <p>
               After submitting, the consultant will review your request and
@@ -271,9 +278,10 @@ export function TrialBookingModal({
             </p>
             {isPaidTrial && (
               <p className="mt-2">
-                You won&apos;t be charged now — we send a payment link for{" "}
-                <strong className="text-foreground">{priceLabel}</strong> after
-                the consultant accepts, and your slot is held until you pay it.
+                You pay{" "}
+                <strong className="text-foreground">{priceLabel}</strong> with
+                the request. Refunded in full if {consultantName} can&apos;t
+                take it.
               </p>
             )}
           </div>
