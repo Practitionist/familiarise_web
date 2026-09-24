@@ -724,12 +724,34 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               }),
             );
 
-            if (scheduled.count === 0) {
+            // #1775 C-8 — a trial charged at request: capture stamps it paid
+            // and it stays PENDING for the consultant to accept (or refund).
+            const paidAtRequest =
+              scheduled.count === 0
+                ? await tx.trial.updateMany({
+                    where: {
+                      id: metadata.trialId,
+                      status: TrialStatus.PENDING,
+                      paymentId: null,
+                    },
+                    data: {
+                      paymentId: payment.id,
+                      pendingPaymentUrl: null,
+                      paymentDueAt: null,
+                    },
+                  })
+                : { count: 0 };
+
+            if (scheduled.count === 0 && paidAtRequest.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
-                select: { status: true },
+                select: { status: true, paymentId: true },
               });
-              if (trial?.status !== TrialStatus.SCHEDULED) {
+              const alreadyOurs =
+                trial?.status === TrialStatus.SCHEDULED ||
+                (trial?.status === TrialStatus.PENDING &&
+                  trial.paymentId === payment.id);
+              if (!alreadyOurs) {
                 await tx.payment.update({
                   where: { id: payment.id },
                   data: {

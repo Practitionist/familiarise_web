@@ -398,3 +398,31 @@ describe("capture clock", () => {
     expect(replay).not.toContain("capturedAt");
   });
 });
+
+// #1775 C-8 — a trial charged at request stays PENDING at capture and is
+// stamped paid; a trial the platform already closed is refunded instead.
+describe("paid-at-request trial capture", () => {
+  const handlers = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/payments/webhooks/handlers.ts`, "utf8");
+  const arm = handlers
+    .split("if (metadata.trialId) {")[1]
+    .split("const confirmResult = await confirmExistingAppointment(")[0];
+
+  it("stamps paymentId on a PENDING, uncaptured trial without moving its status", () => {
+    const stamp = arm
+      .split("const paidAtRequest =")[1]
+      .split(": { count: 0 }")[0];
+    expect(stamp).toContain("status: TrialStatus.PENDING");
+    expect(stamp).toContain("paymentId: null");
+    expect(stamp.split("data:")[1]).not.toContain("status:");
+  });
+
+  it("answers captured_after_release when neither CAS matched (a CANCELLED trial)", () => {
+    const miss = arm.split(
+      "if (scheduled.count === 0 && paidAtRequest.count === 0) {",
+    )[1];
+    expect(miss).toContain("if (!alreadyOurs) {");
+    expect(miss).toContain('outcome: "captured_after_release"');
+  });
+});
