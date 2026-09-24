@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     // Auth check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

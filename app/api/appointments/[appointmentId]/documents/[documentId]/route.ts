@@ -20,7 +20,7 @@ export async function GET(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -141,7 +141,7 @@ export async function PATCH(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -374,7 +374,7 @@ export async function DELETE(
   }: { params: Promise<{ appointmentId: string; documentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {

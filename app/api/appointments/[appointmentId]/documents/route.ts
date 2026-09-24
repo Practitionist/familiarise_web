@@ -25,7 +25,7 @@ export async function GET(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -305,7 +305,7 @@ export async function POST(
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {

@@ -200,4 +200,23 @@ export default [
       ],
     },
   },
+
+  // Session freshness (#1807): a bare getSession() in server code reads the
+  // ~5-minute cookie cache, honouring demotions, bans, revocations and
+  // DPDP-erasures late. PII/finance/role-gated reads must be force-fresh.
+  // Remaining bare calls outside these globs are cosmetic reads pending the
+  // Phase-2 bulk pass — they are grandfathered here, not approved.
+  {
+    files: ["app/api/**/*.ts", "lib/**/*.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "CallExpression[callee.name='getSession'][arguments.length=0]",
+          message:
+            "Bare getSession() serves the cookie cache (stale role/ban up to ~5 min). Use getSession(true) for force-fresh reads, requireApiAuth()/requireBackofficeSurface() in routes, or the explicit getCachedSession() for hot cosmetic reads. See #1807.",
+        },
+      ],
+    },
+  },
 ];

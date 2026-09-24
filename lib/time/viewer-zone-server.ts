@@ -10,7 +10,7 @@ import { describeViewerZone, type ViewerZone } from "./viewer-zone";
 export async function getViewerZone(
   fallbackZone?: string | null,
 ): Promise<ViewerZone> {
-  const session = await getSession();
+  const session = await getSession(true);
   return describeViewerZone({
     userTimezone: session?.user?.timezone ?? null,
     fallbackZone,

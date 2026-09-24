@@ -16,7 +16,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { isOccupiedByLiveAppointment } from "@/utils/scheduling-engine/ScheduleValidationService";
-import { getSession } from "@/lib/auth-server";
+import { getCachedSession, getSession } from "@/lib/auth-server";
 import {
   buildOverlapMetaIndex,
   overlapMetaCandidatesFor,
@@ -128,7 +128,7 @@ export async function GET(
     // a demotion or a revoked membership takes effect on the next poll.
     let session: Awaited<ReturnType<typeof getSession>> = null;
     if (includeAppointmentDetailsRequested) session = await getSession(true);
-    else if (requestedConsulteeUserId) session = await getSession();
+    else if (requestedConsulteeUserId) session = await getCachedSession();
     // Ownership is a fact about the database, not about the session.
     //
     // The session field is a snapshot from when the session was minted, so a

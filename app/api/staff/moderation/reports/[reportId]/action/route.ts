@@ -49,6 +49,7 @@ type ModerationActionInput = {
 function validateActionRequest(
   actionType: unknown,
   suspensionDays: unknown,
+  notes: unknown,
 ): NextResponse | null {
   if (
     !actionType ||
@@ -64,6 +65,17 @@ function validateActionRequest(
   ) {
     return NextResponse.json(
       { error: "suspensionDays must be an integer between 1 and 365" },
+      { status: 400 },
+    );
+  }
+  // Moderator notes persist on the action row — cap the free text so one
+  // pasted log dump cannot bloat the row unbounded.
+  if (
+    notes !== undefined &&
+    (typeof notes !== "string" || notes.length > 5000)
+  ) {
+    return NextResponse.json(
+      { error: "notes must be a string of at most 5000 characters" },
       { status: 400 },
     );
   }
@@ -180,7 +192,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const validationError = validateActionRequest(actionType, suspensionDays);
+    const validationError = validateActionRequest(actionType, suspensionDays, notes);
     if (validationError) return validationError;
 
     // Check report exists

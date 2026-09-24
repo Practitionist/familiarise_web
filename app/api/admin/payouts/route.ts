@@ -22,6 +22,10 @@ import {
   requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
+import {
+  adminPayoutBatchSchema,
+  adminPayoutsQuerySchema,
+} from "@/schemas/payouts";
 
 /**
  * GET /api/admin/payouts
@@ -33,13 +37,26 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const result = await getOperatorPayouts({
-      status: searchParams.get("status") as PayoutStatus | null,
+    const parsedQuery = adminPayoutsQuerySchema.safeParse({
+      status: searchParams.get("status"),
       search: searchParams.get("search"),
       // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
       orgId: searchParams.get("orgId"),
-      limit: parseInt(searchParams.get("limit") || "50"),
-      offset: parseInt(searchParams.get("offset") || "0"),
+      limit: searchParams.get("limit") ?? undefined,
+      offset: searchParams.get("offset") ?? undefined,
+    });
+    if (!parsedQuery.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", issues: parsedQuery.error.issues },
+        { status: 400 },
+      );
+    }
+    const result = await getOperatorPayouts({
+      status: parsedQuery.data.status as PayoutStatus | null,
+      search: parsedQuery.data.search,
+      orgId: parsedQuery.data.orgId,
+      limit: parsedQuery.data.limit,
+      offset: parsedQuery.data.offset,
     });
 
     return NextResponse.json(result);
@@ -66,7 +83,14 @@ export async function POST(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const body = await req.json();
-    const { consultantProfileIds } = body;
+    const parsed = adminPayoutBatchSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid batch request", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const { consultantProfileIds } = parsed.data;
 
     // Create payout batch
     const batchId = await createPayoutBatch(consultantProfileIds);

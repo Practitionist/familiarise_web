@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     const rl = await applyRateLimit(searchLimiter, getClientIp(req));
     if (rl) return rl;
 
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

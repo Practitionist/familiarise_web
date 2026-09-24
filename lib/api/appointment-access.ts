@@ -63,7 +63,7 @@ export async function authorizeAppointment(
   appointmentId: string,
   orgParty = false,
 ): Promise<CodedAuthz | PartyAuthz | ParticipantAuthz> {
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) return { code: "UNAUTHORIZED", status: 401 };
   const detail = await readAppointmentDetail(appointmentId);
   if (!detail) return { code: "NOT_FOUND", status: 404 };

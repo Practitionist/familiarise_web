@@ -154,7 +154,7 @@ export async function GET(
     }
 
     // Check if user is authenticated (for own profile access)
-    const session = await getSession();
+    const session = await getSession(true);
 
     // First, get basic consultant info to check access
     const basicConsultant = await prisma.consultantProfile.findUnique({
@@ -297,7 +297,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -659,7 +659,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

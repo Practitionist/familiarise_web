@@ -30,7 +30,7 @@ type RouteParams = { params: Promise<{ recordingId: string }> };
 
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

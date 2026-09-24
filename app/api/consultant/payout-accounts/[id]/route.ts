@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
+import { payoutAccountPatchSchema } from "@/schemas/payouts";
 import {
   getRazorpayPayoutsService,
   isRazorpayPayoutsConfigured,
@@ -84,13 +85,20 @@ async function handleReverify(account: PayoutAccountRecord) {
  */
 export async function PATCH(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { id } = await params;
-    const body = await req.json();
+    const patch = payoutAccountPatchSchema.safeParse(await req.json());
+    if (!patch.success) {
+      return NextResponse.json(
+        { error: "Invalid request body", issues: patch.error.issues },
+        { status: 400 },
+      );
+    }
+    const body = patch.data;
 
     // Get consultant profile
     const consultantProfile = await prisma.consultantProfile.findUnique({
@@ -167,7 +175,7 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(req: NextRequest, { params }: RouteParams) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

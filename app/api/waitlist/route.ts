@@ -34,7 +34,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Link the row to the account when one is signed in — but never require
     // a session; the footer form is public.
-    const session = await getSession().catch(() => null);
+    const session = await getSession(true).catch(() => null);
 
     const result = await subscribe({
       ...parsed.data,

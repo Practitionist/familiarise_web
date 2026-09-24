@@ -17,7 +17,7 @@ import {
  */
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(

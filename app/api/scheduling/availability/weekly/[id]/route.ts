@@ -214,7 +214,7 @@ export async function PUT(
     const { id } = await params;
 
     // Auth check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -359,7 +359,7 @@ export async function PATCH(
     const { id } = await params;
 
     // Auth check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -497,7 +497,7 @@ export async function DELETE(
     const { id } = await params;
 
     // Auth check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

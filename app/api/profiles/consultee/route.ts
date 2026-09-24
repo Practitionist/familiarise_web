@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as Sentry from "@sentry/nextjs";
 import prisma from "@/lib/prisma";
+import { userIdQuerySchema } from "@/schemas/user";
 
 /**
  * GET /api/profiles/consultee
@@ -16,6 +17,13 @@ export async function GET(request: NextRequest) {
     if (!userId) {
       return NextResponse.json(
         { error: "userId is required" },
+        { status: 400 },
+      );
+    }
+
+    if (!userIdQuerySchema.safeParse({ userId }).success) {
+      return NextResponse.json(
+        { error: "Invalid userId" },
         { status: 400 },
       );
     }

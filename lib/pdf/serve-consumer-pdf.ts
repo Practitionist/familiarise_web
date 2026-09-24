@@ -60,7 +60,7 @@ export interface ServeConsumerPdfArgs<TDoc extends ConsumerPdfDocument> {
 export async function serveConsumerPdf<TDoc extends ConsumerPdfDocument>(
   args: ServeConsumerPdfArgs<TDoc>,
 ): Promise<Response> {
-  const session = await getSession();
+  const session = await getSession(true);
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
