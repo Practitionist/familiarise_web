@@ -1,31 +1,17 @@
 import { Suspense } from "react";
 
 import { HeroSection } from "@/components/home/HeroSection";
-import { TrustedBySection } from "@/components/home/TrustedBySection";
 import { FeaturesSection } from "@/components/home/FeaturesSection";
 import { CategoriesSection } from "@/components/home/CategoriesSection";
-import { BenefitsSection } from "@/components/home/BenefitsSection";
-import { SuccessStoriesSection } from "@/components/home/SuccessStoriesSection";
 import { FeaturedExpertsSection } from "@/components/home/FeaturedExpertsSection";
-import { PlatformFeaturesSection } from "@/components/home/PlatformFeaturesSection";
 import { TestimonialsSection } from "@/components/home/TestimonialsSection";
-import { UpcomingEventsSection } from "@/components/home/UpcomingEventsSection";
-import { TrustBadgesSection } from "@/components/home/TrustBadgesSection";
 import { HowItWorksSection } from "@/components/home/HowItWorksSection";
-import { BecomeExpertSection } from "@/components/home/BecomeExpertSection";
-import { EnterpriseSection } from "@/components/home/EnterpriseSection";
+import { NextStepSection } from "@/components/home/NextStepSection";
 import { FAQSection } from "@/components/home/FAQSection";
-import { SatisfiedTestimonial } from "@/app/explore/experts/components/SatisfiedTestimonial";
-import {
-  getHomeExperts,
-  getHomeReviews,
-  getHomeImages,
-  getHomeStats,
-} from "@/lib/data/home";
+import { getHomeExperts, getHomeReviews, getHomeStats } from "@/lib/data/home";
 import { buildExpertHeroStats } from "@/lib/data/public-stats";
 import { withBuildTimeRetry } from "@/lib/data/fail-open";
 import {
-  BenefitsSkeleton,
   FeaturedExpertsSkeleton,
   TestimonialsSkeleton,
 } from "@/components/home/HomeSectionSkeletons";
@@ -65,14 +51,9 @@ export const revalidate = 3600;
 // revalidation keeps serving it. The exposed window is a regeneration with no
 // cached copy — i.e. straight after a revalidatePath purge from a write site.
 // (FAMILIARISE_WEB-A)
-async function BenefitsLoader() {
-  const images = await withBuildTimeRetry(getHomeImages);
-  return <BenefitsSection images={images} />;
-}
-
 async function FeaturedExpertsLoader() {
   const experts = await withBuildTimeRetry(getHomeExperts);
-  // Hide the section rather than render an empty marquee under its headers when
+  // Hide the section rather than render an empty grid under its headers when
   // there's nothing to show — whether a transient timeout degraded it or the
   // platform genuinely has no featured experts yet. (#934 review.)
   if (experts.length === 0) return null;
@@ -81,13 +62,11 @@ async function FeaturedExpertsLoader() {
 
 async function ReviewsLoader() {
   const reviews = await withBuildTimeRetry(getHomeReviews);
-  if (reviews.length === 0) return null;
-  return (
-    <>
-      <TestimonialsSection reviews={reviews} isLoading={false} />
-      <UpcomingEventsSection reviews={reviews} />
-    </>
+  const writtenReviews = reviews.filter((review) =>
+    review.reviewDescription?.trim(),
   );
+  if (writtenReviews.length === 0) return null;
+  return <TestimonialsSection reviews={writtenReviews} isLoading={false} />;
 }
 
 // #1490 — the hero and the category cards render real figures now, so the page
@@ -101,57 +80,28 @@ export default async function Home() {
   const stats = await withBuildTimeRetry(getHomeStats);
 
   return (
-    <main className="flex-1 w-full overflow-hidden">
-      {/* Hero - Black with animated orbs */}
+    <main className="w-full flex-1 overflow-hidden bg-background">
       <HeroSection stats={buildExpertHeroStats(stats)} />
 
-      {/* Trusted By / Logo Cloud - Dark */}
-      <TrustedBySection />
-
-      {/* Our Offerings - Dark charcoal with dot pattern */}
+      {/* A direct front door into the four live public catalogues. */}
       <FeaturesSection />
 
-      {/* Browse by Category - Light gradient */}
-      <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
-
-      {/* Why Familiarise / Benefits - Light silver gradient */}
-      <Suspense fallback={<BenefitsSkeleton />}>
-        <BenefitsLoader />
-      </Suspense>
-
-      {/* Success Stories - Dark gradient */}
-      <SuccessStoriesSection />
-
-      {/* Featured Experts Marquee - White with dot pattern */}
+      {/* Real inventory, styled like the expert explore directory. */}
       <Suspense fallback={<FeaturedExpertsSkeleton />}>
         <FeaturedExpertsLoader />
       </Suspense>
 
-      {/* Platform Features - Light with diagonal stripes */}
-      <PlatformFeaturesSection />
+      <CategoriesSection consultantsByDomain={stats.consultantsByDomain} />
 
-      {/* Testimonials Marquee + Upcoming Events - Dark */}
+      <HowItWorksSection />
+
+      {/* Published reviews only; no fabricated success stories or events. */}
       <Suspense fallback={<TestimonialsSkeleton />}>
         <ReviewsLoader />
       </Suspense>
 
-      {/* Trust & Security Badges - Dark strip */}
-      <TrustBadgesSection />
+      <NextStepSection />
 
-      {/* How It Works - Light with circles */}
-      <HowItWorksSection />
-
-      {/* For teams & organisations - Dark. Sits next to the expert CTA so the
-          two "which side are you on?" paths are adjacent at the page's end. */}
-      <EnterpriseSection />
-
-      {/* Become an Expert CTA - Light mesh gradient */}
-      <BecomeExpertSection />
-
-      {/* Explore Testimonials - Dark */}
-      <SatisfiedTestimonial />
-
-      {/* FAQ - Clean white */}
       <FAQSection />
     </main>
   );
