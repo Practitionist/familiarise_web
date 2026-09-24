@@ -274,15 +274,14 @@ const nextConfig = {
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg.
   //
-  // `@react-pdf/renderer` is also in Next's own built-in external list, so
-  // listing it here changes nothing — it is external either way, and that is
-  // what forces lib/pdf to resolve its JSX runtime past the bundler (#1468).
+  // NOTE: `@react-pdf/renderer` is intentionally NOT listed here — it is
+  // already in Next's own built-in external list, so listing it was a no-op
+  // (lib/pdf keeps resolving its JSX runtime past the bundler, #1468).
   serverExternalPackages: [
     "pg",
     "@prisma/adapter-pg",
     "pg-pool",
     "pg-connection-string",
-    "@react-pdf/renderer",
     "razorpay",
     "stripe",
     "resend",
