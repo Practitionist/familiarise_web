@@ -29,6 +29,8 @@ import {
 import { isPrivileged, requireApiAuth } from "@/lib/auth-helpers";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import {
+  isFreeCreditIntent,
+  isInternalFundedIntent,
   refundBookingPayment,
   type FundingRail,
 } from "@/lib/payments/operations/booking-refund";
@@ -146,6 +148,76 @@ async function refundLeftPending(err: unknown): Promise<boolean> {
     .catch(() => null);
   return row?.status === "PENDING";
 }
+
+type AttendeesByRail = {
+  all: string[];
+  gateway: string[];
+  credits: string[];
+  internal: string[];
+  free: string[];
+};
+
+/**
+ * #1780 R-3 — every attendee of a group event, sorted by how their seat was
+ * funded: a paid seat by its payment's rail, a seat with no payment as free.
+ * Read off the seats as well as the payments, so a free seat is not skipped.
+ */
+async function eventAttendeesByRail(
+  appointmentId: string,
+): Promise<AttendeesByRail> {
+  const [payments, seats] = await Promise.all([
+    prisma.payment.findMany({
+      where: { appointmentId, paymentStatus: "SUCCEEDED", deletedAt: null },
+      select: { userId: true, paymentIntent: true },
+    }),
+    prisma.appointmentParticipant.findMany({
+      where: { appointmentId, role: "CONSULTEE" },
+      select: { userId: true },
+    }),
+  ]);
+  const out: AttendeesByRail = {
+    all: [],
+    gateway: [],
+    credits: [],
+    internal: [],
+    free: [],
+  };
+  const paid = new Set<string>();
+  for (const p of payments) {
+    paid.add(p.userId);
+    if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
+    else if (isInternalFundedIntent(p.paymentIntent))
+      out.internal.push(p.userId);
+    else out.gateway.push(p.userId);
+  }
+  for (const seat of seats) {
+    if (!paid.has(seat.userId)) out.free.push(seat.userId);
+  }
+  out.all = Array.from(new Set([...paid, ...out.free]));
+  return out;
+}
+
+/** One email per rail; a class series refunds only the sessions not yet held. */
+function attendeeEmailGroups(a: AttendeesByRail, isClass: boolean) {
+  const cash = isClass
+    ? "The sessions not yet held are being refunded to you."
+    : "Your payment for this event is being refunded in full.";
+  return [
+    { userIds: uniq(a.gateway), refundText: cash },
+    {
+      userIds: uniq(a.credits),
+      refundText: "Your credits have been restored.",
+    },
+    {
+      userIds: uniq(a.internal),
+      refundText:
+        "The amount has been returned to the sponsoring organisation's balance.",
+    },
+    { userIds: uniq(a.free), refundText: undefined },
+  ].filter((g) => g.userIds.length > 0);
+}
+
+const uniq = (ids: string[]) => Array.from(new Set(ids));
 
 export async function POST(
   request: NextRequest,
@@ -775,24 +847,12 @@ export async function POST(
     // #1003 — every paid attendee of a cancelled group event has to hear about
     // it too. They have no 1:1 counterpart on the booking, so they are read off
     // the payments, exactly as the moderation bulk-cancel does.
-    let attendeeUserIds: string[] = [];
-    if (appointment.class || appointment.webinar) {
-      const eventFilter = appointment.class
-        ? { classId: appointment.class.id }
-        : { webinarId: appointment.webinar!.id };
-      const attendeePayments = await prisma.payment.findMany({
-        where: {
-          appointment: eventFilter,
-          paymentStatus: "SUCCEEDED",
-          amount: { gt: 0 },
-          deletedAt: null,
-        },
-        select: { userId: true },
-      });
-      attendeeUserIds = Array.from(
-        new Set(attendeePayments.map((p) => p.userId)),
-      );
-    }
+    // #1780 R-3 — free and credit seats are told too, each with its rail's words.
+    const attendees =
+      appointment.class || appointment.webinar
+        ? await eventAttendeesByRail(appointmentId)
+        : null;
+    const attendeeUserIds = attendees ? attendees.all : [];
 
     // #1580 C-P1-5 — the event's accepted collaborators hear about it too.
     let collaboratorIds: string[] = [];
@@ -862,13 +922,44 @@ export async function POST(
               ? "The amount has been returned to the sponsoring organisation's balance."
               : // The amount is in paise, so the currency is INR by construction.
                 refundOnItsWay(refund.amountRefundedPaise, "INR")
-          : eventRefund && eventRefund.refundsIssued > 0
-            ? "Your payment for this event is being refunded in full."
-            : undefined;
+          : undefined;
+      const emailArgs = {
+        appointmentId,
+        startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
+        cancelledBy:
+          notificationMeta.cancelledBy === notificationMeta.consultantUserId
+            ? notificationMeta.consultantName || "The consultant"
+            : notificationMeta.cancelledBy === consulteeUserId
+              ? notificationMeta.consulteeName || "The consultee"
+              : "Familiarise",
+        reason: validatedData.reason || undefined,
+        dashboardUrl: notificationHref(
+          appointment.organizationId,
+          "appointments",
+        ),
+      };
+      // #1780 R-3 — each attendee rail gets its own refund sentence; a free
+      // seat gets the notice with no money line.
+      if (attendees && eventRefund) {
+        for (const group of attendeeEmailGroups(
+          attendees,
+          !!appointment.class,
+        )) {
+          await sendAppointmentCancelledEmail(
+            {
+              ...emailArgs,
+              userIds: group.userIds,
+              refundText: group.refundText,
+              refundUserIds: group.refundText ? group.userIds : [],
+            },
+            EMAIL_BUDGET_MS.REQUEST,
+          );
+        }
+      }
       await sendAppointmentCancelledEmail(
         {
           appointmentId,
-          userIds,
+          userIds: userIds.filter((id) => !attendeeUserIds.includes(id)),
           startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
           cancelledBy:
             notificationMeta.cancelledBy === notificationMeta.consultantUserId
@@ -880,7 +971,7 @@ export async function POST(
           refundText,
           refundUserIds: refund
             ? [consulteeUserId].filter((id): id is string => !!id)
-            : attendeeUserIds,
+            : [],
           dashboardUrl: notificationHref(
             appointment.organizationId,
             "appointments",
