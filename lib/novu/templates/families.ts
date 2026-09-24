@@ -147,6 +147,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "trial-session-scheduled": "trial",
   "trial-session-completed": "trial",
   "trial-session-cancelled": "trial",
+  "trial-refunded": "trial",
 
   "support-ticket-created": "support-ticket",
   "support-ticket-activity": "support-ticket",

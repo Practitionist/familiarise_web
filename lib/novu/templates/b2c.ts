@@ -327,6 +327,19 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       redirect: "dashboardUrl",
     },
   },
+  {
+    // #1775 C-12 — staged with the decline or the 48 h no-answer sweep.
+    workflowId: W.TRIAL_REFUNDED,
+    name: "Trial refunded",
+    description:
+      "The learner, when a paid trial is declined or not answered within 48 h.",
+    category: "trials",
+    inApp: {
+      subject: "Trial refunded in full",
+      body: "{{payload.consultantName}} couldn't take your {{payload.planTitle}} trial, so it is refunded in full.",
+      redirect: "dashboardUrl",
+    },
+  },
 
   // ── Support ─────────────────────────────────────────────────────────────
   {

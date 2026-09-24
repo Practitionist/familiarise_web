@@ -22,7 +22,7 @@
  * Schedule: Hourly
  */
 
-import { TrialStatus } from "@prisma/client";
+import { Prisma, TrialStatus } from "@prisma/client";
 
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { transitionTrial } from "@/lib/booking/transitions";
@@ -30,11 +30,15 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { softCancelTrialAppointment } from "@/lib/trials/cancellation";
 import { notifyTrialCancelled } from "@/lib/novu/service";
 import { reportSentryError } from "@/lib/observability/report";
+import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
 import prisma from "../../lib/prisma";
 
 export interface ExpireUnpaidTrialsResult {
   success: boolean;
   trialsExpired: number;
+  /** #1775 C-12 — paid trials the consultant never answered, refunded in full. */
+  trialsUnansweredRefunded: number;
   errors: string[];
   timestamp: string;
 }
@@ -43,10 +47,9 @@ export interface ExpireUnpaidTrialsResult {
  * Expire unpaid trial sessions.
  */
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
-// mutual exclusion; fail-open: the updateMany is idempotent, lock is
-// belt-and-braces.
+// mutual exclusion. #1775 C-12 — fail-closed: arm (ii) refunds money.
 export async function expireUnpaidTrials(): Promise<ExpireUnpaidTrialsResult> {
-  return withCronLock("expire-unpaid-trials", { failMode: "open" }, () =>
+  return withCronLock("expire-unpaid-trials", { failMode: "closed" }, () =>
     expireUnpaidTrialsUnlocked(),
   );
 }
@@ -96,13 +99,11 @@ async function expireOneTrial(trial: LapsedTrial, now: Date): Promise<boolean> {
       transitionTrial(tx, {
         where: { id: trial.id },
         to: TrialStatus.CANCELLED,
-        fromIn: [TrialStatus.AWAITING_PAYMENT],
-        // Repeat the cohort's stale-time predicate inside the CAS: a
-        // pay-link re-minted between the read and the write moves the
-        // deadline out from under the sweep and must not be cancelled.
-        whereAnd: {
-          OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
-        },
+        fromIn: [TrialStatus.AWAITING_PAYMENT, TrialStatus.PENDING],
+        // Repeat the cohort's predicate inside the CAS: a pay-link re-minted
+        // (deadline moved) or a capture (paymentId set) since the read must
+        // match zero rows. #1775 C-12 — no money moves in this arm.
+        whereAnd: unpaidLapsed(now),
         data: {
           // The link is dead once cancelled; leaving it would let a stale
           // dashboard row send someone to a checkout for a released slot.
@@ -190,9 +191,101 @@ async function repairUntombstonedCancelledTrials(): Promise<number> {
   return repaired;
 }
 
+/**
+ * #1775 C-12 (i) — an unpaid trial past its pay window: AWAITING_PAYMENT (the
+ * legacy accept-then-pay shape, including a never-minted null deadline) or a
+ * paid trial still PENDING and uncaptured. A free PENDING trial has no
+ * deadline and never matches.
+ */
+function unpaidLapsed(now: Date): Prisma.TrialWhereInput {
+  return {
+    paymentId: null,
+    OR: [
+      { status: TrialStatus.PENDING, paymentDueAt: { lt: now } },
+      {
+        status: TrialStatus.AWAITING_PAYMENT,
+        OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
+      },
+    ],
+  };
+}
+
+/** #1775 C-12 (ii) — the consultant has 48 h to answer a paid trial. */
+export const TRIAL_ANSWER_HOURS = 48;
+
+type UnansweredTrial = LapsedTrial & {
+  paymentId: string | null;
+  consultantProfile: { user: { id: string } };
+};
+
+/**
+ * #1775 C-12 (ii) — a paid trial (PENDING, captured) the consultant never
+ * answered within 48 h of the request ends CANCELLED (TRIAL_UNANSWERED; the
+ * enum has no EXPIRED) and is refunded in full after the commit.
+ */
+async function expireUnansweredPaidTrials(now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - TRIAL_ANSWER_HOURS * 60 * 60 * 1000);
+  const unanswered: Prisma.TrialWhereInput = {
+    paymentId: { not: null },
+    requestedAt: { lt: cutoff },
+  };
+  const rows: UnansweredTrial[] = await prisma.trial.findMany({
+    where: { status: TrialStatus.PENDING, ...unanswered },
+    orderBy: { requestedAt: "asc" },
+    take: 500,
+    select: {
+      ...EXPIRY_SELECT,
+      paymentId: true,
+      consultantProfile: { select: { user: { select: { id: true } } } },
+    },
+  });
+  let refunded = 0;
+  for (const trial of rows) {
+    try {
+      await prisma.$transaction(async (tx) => {
+        await transitionTrial(tx, {
+          where: { id: trial.id },
+          to: TrialStatus.CANCELLED,
+          fromIn: [TrialStatus.PENDING],
+          whereAnd: unanswered,
+          reason: "TRIAL_UNANSWERED",
+        });
+        await stageTrialRefundedBell(tx, {
+          id: trial.id,
+          consulteeUserId: trial.consulteeProfile.user.id,
+          planTitle: trial.subscriptionPlan.title,
+          consultantName: trial.subscriptionPlan.consultantProfile.user.name,
+        });
+      });
+    } catch (error) {
+      if (error instanceof IllegalTransitionError) continue;
+      throw error;
+    }
+    if (trial.appointmentId) {
+      await tombstoneHeldCall(trial.id, trial.appointmentId);
+    }
+    try {
+      await refundBookingPayment({
+        paymentId: trial.paymentId!,
+        reason: "trial unanswered within 48 h — automatic full refund",
+        initiatedByUserId: null,
+      });
+      refunded += 1;
+    } catch (error) {
+      reportSentryError(error, {
+        subsystem: "trials",
+        op: "expire-unanswered-paid-trials-refund",
+        extra: { trialId: trial.id, paymentId: trial.paymentId },
+      });
+    }
+  }
+  return refunded;
+}
+
 async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
   const errors: string[] = [];
   let trialsExpired = 0;
+  let trialsUnansweredRefunded = 0;
   const now = new Date();
 
   console.log("🧹 Starting unpaid trial expiry...");
@@ -213,14 +306,10 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
     let batchesRun = 0;
     for (;;) {
       if (batchesRun >= MAX_BATCHES_PER_RUN) break;
+      // A null paymentDueAt on AWAITING_PAYMENT means the pay-link was never
+      // minted after acceptance; holding a slot nobody can pay for is the worst case.
       const stale = await prisma.trial.findMany({
-        where: {
-          status: TrialStatus.AWAITING_PAYMENT,
-          // A null paymentDueAt means the pay-link was never minted — the gateway
-          // call failed after acceptance. Sweep those too: holding a slot for a
-          // trial nobody can pay for is the worst case of all.
-          OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
-        },
+        where: unpaidLapsed(now),
         orderBy: { id: "asc" },
         take: BATCH_SIZE,
         select: EXPIRY_SELECT,
@@ -239,6 +328,11 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
 
     const repaired = await repairUntombstonedCancelledTrials();
     if (repaired > 0) console.log(`   Held calls re-tombstoned: ${repaired}`);
+
+    trialsUnansweredRefunded = await expireUnansweredPaidTrials(now);
+    console.log(
+      `   Unanswered paid trials refunded: ${trialsUnansweredRefunded}`,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     errors.push(message);
@@ -248,6 +342,7 @@ async function expireUnpaidTrialsUnlocked(): Promise<ExpireUnpaidTrialsResult> {
   return {
     success: errors.length === 0,
     trialsExpired,
+    trialsUnansweredRefunded,
     errors,
     timestamp: now.toISOString(),
   };

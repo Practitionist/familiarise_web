@@ -47,6 +47,8 @@ export const NOVU_WORKFLOWS = {
   TRIAL_SESSION_SCHEDULED: "trial-session-scheduled",
   TRIAL_SESSION_COMPLETED: "trial-session-completed",
   TRIAL_SESSION_CANCELLED: "trial-session-cancelled",
+  // #1775 C-12 — a paid trial declined or unanswered, refunded in full.
+  TRIAL_REFUNDED: "trial-refunded",
 
   // Subscriptions
   SUBSCRIPTION_STARTED: "subscription-started",

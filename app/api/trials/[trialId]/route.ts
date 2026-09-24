@@ -8,6 +8,7 @@ import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import prisma, { type Tx } from "@/lib/prisma";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
+import { stageTrialRefundedBell } from "@/lib/trials/refund-bell";
 import {
   needsTrialPayLinkRemint,
   remintTrialPayLink,
@@ -870,6 +871,16 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         await transitionTrial(tx, {
           where: { id: trialId },
           to: nextStatus as TrialStatus,
+        });
+      }
+      // #1775 C-12 — a declined paid trial is refunded in full; the learner
+      // hears it from the same transaction that records the decline.
+      if (nextStatus === TrialStatus.REJECTED && existingTrial.paymentId) {
+        await stageTrialRefundedBell(tx, {
+          id: trialId,
+          consulteeUserId: existingTrial.consulteeProfile.user.id,
+          planTitle: existingTrial.subscriptionPlan.title,
+          consultantName: existingTrial.consultantProfile.user.name,
         });
       }
       // #1775 C-9 — delivery starts the paid trial's earnings hold.
