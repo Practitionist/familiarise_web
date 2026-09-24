@@ -688,6 +688,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               paymentUrl = await persistTrialPayLink({
                 trialId,
                 paymentIntentId: intent.paymentIntentId,
+                paymentId: intent.paymentId,
                 checkoutUrl: intent.checkoutUrl,
               });
             } catch (error) {

@@ -18,6 +18,7 @@ import prisma from "@/lib/prisma";
 import { reportSentryError } from "@/lib/observability/report";
 import { reconcileOrphanedPayLink } from "@/lib/booking/pay-link-persist";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { payLinkHref } from "@/lib/payments/pay-link-href";
 import {
   AppointmentBusyError,
   BookingLockUnavailableError,
@@ -35,22 +36,27 @@ import {
 export async function persistTrialPayLink(args: {
   trialId: string;
   paymentIntentId: string;
+  paymentId: string;
   checkoutUrl: string;
 }): Promise<string | null> {
+  // #1775 P-1 — a Razorpay "link" is the order id; store our pay page instead.
+  const link =
+    payLinkHref({ paymentId: args.paymentId, checkoutUrl: args.checkoutUrl }) ??
+    args.checkoutUrl;
   const res = await prisma.trial.updateMany({
     where: {
       id: args.trialId,
       status: TrialStatus.AWAITING_PAYMENT,
       pendingPaymentUrl: null,
     },
-    data: { pendingPaymentUrl: args.checkoutUrl },
+    data: { pendingPaymentUrl: link },
   });
-  if (res.count === 1) return args.checkoutUrl;
+  if (res.count === 1) return link;
   const outcome = await reconcileOrphanedPayLink({
     kind: "trial",
     id: args.trialId,
     paymentIntentId: args.paymentIntentId,
-    checkoutUrl: args.checkoutUrl,
+    checkoutUrl: link,
   });
   return outcome.url;
 }
@@ -136,6 +142,7 @@ export async function remintTrialPayLink(
       const intent = live
         ? {
             paymentIntentId: live.paymentIntent,
+            paymentId: live.id,
             checkoutUrl: live.paymentIntent,
           }
         : await createApprovalPaymentIntent({
@@ -152,6 +159,7 @@ export async function remintTrialPayLink(
       return persistTrialPayLink({
         trialId: trial.id,
         paymentIntentId: intent.paymentIntentId,
+        paymentId: intent.paymentId,
         checkoutUrl: intent.checkoutUrl,
       });
     });

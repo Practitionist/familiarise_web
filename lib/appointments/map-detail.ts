@@ -21,6 +21,7 @@ import {
 import { occurrencesOfAppointment } from "./occurrences";
 import { normalizeStatus } from "./status";
 import { trialMeta } from "./trial-labels";
+import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import {
   sortOccurrences,
   toDate,
@@ -210,6 +211,10 @@ export function mapAppointmentDetail(
       : null,
     organizationId: appointment.organizationId ?? null,
     pendingPaymentUrl: facts.pendingPaymentUrl,
+    pendingPaymentId:
+      appointment.consultation || appointment.subscription
+        ? payablePaymentId(appointment.payment)
+        : null,
     collaborators: facts.collaborators,
     collaboratorRole: null,
     raw: {

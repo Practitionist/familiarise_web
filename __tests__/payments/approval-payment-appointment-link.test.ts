@@ -86,6 +86,8 @@ jest.mock("../../lib/prisma", () => ({
       // count is what the test steers to model a capture landing first.
       updateMany: jest.fn(async () => ({ count: state.remintCasCount })),
       findUnique: jest.fn(async () => state.remintFreshRow),
+      // #1775 P-1 — the trial arm reads through the appointment first; none here.
+      findFirst: jest.fn(async () => null),
     },
     paymentLeg: { updateMany: jest.fn(async () => ({ count: 1 })) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) =>

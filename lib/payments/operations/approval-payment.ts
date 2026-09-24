@@ -75,6 +75,8 @@ export interface CreateApprovalPaymentParams {
 
 export interface ApprovalPaymentResult {
   paymentIntentId: string;
+  /** The Payment row the order belongs to; the pay page is keyed by it (#1775 P-1). */
+  paymentId: string;
   checkoutUrl: string;
   /** What the buyer is charged: list price plus GST (#1583 C-P0-01). */
   amount: number;
@@ -214,6 +216,7 @@ export async function createApprovalPaymentIntent(
       consultationId: params.consultationId,
       subscriptionId: params.subscriptionId,
       trialId: params.trialId,
+      appointmentId: params.appointmentId,
     });
 
     // #1319 review — set when the row found above is dead and must be re-minted
@@ -260,6 +263,7 @@ export async function createApprovalPaymentIntent(
         // client_secret IS the order id (#1165 pins approval mints to RAZORPAY).
         return {
           paymentIntentId: existingPayment.paymentIntent,
+          paymentId: existingPayment.id,
           checkoutUrl: existingPayment.paymentIntent,
           amount: existingPayment.amount,
           currency: existingPayment.currency,
@@ -343,6 +347,7 @@ export async function createApprovalPaymentIntent(
         const fresh = await prisma.payment.findUnique({
           where: { id: remintIntoPaymentId },
           select: {
+            id: true,
             paymentStatus: true,
             paymentIntent: true,
             amount: true,
@@ -359,6 +364,7 @@ export async function createApprovalPaymentIntent(
           // Another mint replaced the order first; its link is the live one.
           return {
             paymentIntentId: fresh.paymentIntent,
+            paymentId: fresh.id,
             checkoutUrl: fresh.paymentIntent,
             amount: fresh.amount,
             currency: fresh.currency,
@@ -369,6 +375,7 @@ export async function createApprovalPaymentIntent(
 
       return {
         paymentIntentId: paymentResponse.id,
+        paymentId: remintIntoPaymentId,
         checkoutUrl: paymentResponse.client_secret,
         amount,
         currency,
@@ -376,8 +383,9 @@ export async function createApprovalPaymentIntent(
     }
 
     // Store payment record in database
+    let createdPaymentId: string;
     try {
-      await prisma.payment.create({
+      const created = await prisma.payment.create({
         data: {
           // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
           // stays the list price, which is what earnings read as the base.
@@ -415,7 +423,9 @@ export async function createApprovalPaymentIntent(
             },
           },
         },
+        select: { id: true },
       });
+      createdPaymentId = created.id;
     } catch (err) {
       // Only the [userId, appointmentId] pair is the double-accept race; any
       // other unique is a real fault and keeps its Prisma error.
@@ -444,6 +454,7 @@ export async function createApprovalPaymentIntent(
 
     return {
       paymentIntentId: paymentResponse.id,
+      paymentId: createdPaymentId,
       checkoutUrl: paymentResponse.client_secret,
       amount,
       currency,
@@ -748,10 +759,25 @@ function isDeadApprovalIntent(
  * it can only ever match once callers thread appointmentId, because it walks
  * payments hanging off the appointment (#1181).
  */
+const EXISTING_PAYMENT_SELECT = {
+  id: true,
+  paymentStatus: true,
+  paymentIntent: true,
+  amount: true,
+  originalAmount: true,
+  taxAmount: true,
+  isInternational: true,
+  buyerCountry: true,
+  currency: true,
+  expiresAt: true,
+} as const;
+
 export async function findExistingLivePayment(params: {
   consultationId?: string;
   subscriptionId?: string;
   trialId?: string;
+  /** The appointment the mint anchors to; the trial arm resolves through it. */
+  appointmentId?: string;
 }): Promise<ExistingApprovalPayment | null> {
   const REUSABLE_STATUSES: PaymentStatus[] = [
     PaymentStatus.SUCCEEDED,
@@ -759,31 +785,30 @@ export async function findExistingLivePayment(params: {
     PaymentStatus.EXPIRED,
   ];
   if (params.trialId) {
-    // A trial owns its Payment directly (Trial.paymentId), so unlike the
-    // consultation/subscription arms there is no appointment to walk through —
-    // the appointment doesn't exist until the trial is paid and scheduled.
+    // #1775 P-1 — the placeholder appointment exists from request time (C-7),
+    // so the live row is found through it; Trial.paymentId (set at capture) is the fallback.
     const trial = await prisma.trial.findUnique({
       where: { id: params.trialId },
       select: {
         status: true,
-        payment: {
-          select: {
-            id: true,
-            paymentStatus: true,
-            paymentIntent: true,
-            amount: true,
-            originalAmount: true,
-            taxAmount: true,
-            isInternational: true,
-            buyerCountry: true,
-            currency: true,
-            expiresAt: true,
-          },
-        },
+        paymentId: true,
+        appointmentId: true,
+        payment: { select: EXISTING_PAYMENT_SELECT },
       },
     });
-
-    const payment = trial?.payment;
+    const appointmentId = params.appointmentId ?? trial?.appointmentId;
+    const viaAppointment = appointmentId
+      ? await prisma.payment.findFirst({
+          where: {
+            appointmentId,
+            deletedAt: null,
+            paymentStatus: { in: REUSABLE_STATUSES },
+          },
+          orderBy: { createdAt: "desc" },
+          select: EXISTING_PAYMENT_SELECT,
+        })
+      : null;
+    const payment = viaAppointment ?? trial?.payment;
 
     // Same status filter as the consultation/subscription arms below: a FAILED
     // gateway order is a rejection the buyer must retry from scratch, so it is
@@ -791,10 +816,11 @@ export async function findExistingLivePayment(params: {
     if (!payment || !REUSABLE_STATUSES.includes(payment.paymentStatus)) {
       return null;
     }
-    return {
-      ...payment,
-      requestIsPayable: trial?.status === TrialStatus.AWAITING_PAYMENT,
-    };
+    // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
+    const requestIsPayable =
+      trial?.status === TrialStatus.AWAITING_PAYMENT ||
+      (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
+    return { ...payment, requestIsPayable };
   }
 
   if (params.consultationId) {

@@ -95,17 +95,19 @@ describe("persistTrialPayLink", () => {
       persistTrialPayLink({
         trialId: "trial-1",
         paymentIntentId: "order_1",
+        paymentId: "pay_1",
         checkoutUrl: "order_1",
       }),
-    ).resolves.toBe("order_1");
+    ).resolves.toBe("/checkout/pay/pay_1");
 
+    // #1775 P-1 — the stored link is our pay page, never the bare order id.
     expect(db.trial.updateMany).toHaveBeenCalledWith({
       where: {
         id: "trial-1",
         status: "AWAITING_PAYMENT",
         pendingPaymentUrl: null,
       },
-      data: { pendingPaymentUrl: "order_1" },
+      data: { pendingPaymentUrl: "/checkout/pay/pay_1" },
     });
     expect(db.payment.updateMany).not.toHaveBeenCalled();
   });
@@ -121,6 +123,7 @@ describe("persistTrialPayLink", () => {
       persistTrialPayLink({
         trialId: "trial-1",
         paymentIntentId: "order_1",
+        paymentId: "pay_1",
         checkoutUrl: "order_1",
       }),
     ).resolves.toBeNull();
@@ -146,16 +149,17 @@ describe("persistTrialPayLink", () => {
     db.trial.updateMany.mockResolvedValueOnce({ count: 0 });
     db.trial.findUnique.mockResolvedValueOnce({
       status: "AWAITING_PAYMENT",
-      pendingPaymentUrl: "order_1",
+      pendingPaymentUrl: "/checkout/pay/pay_1",
     });
 
     await expect(
       persistTrialPayLink({
         trialId: "trial-1",
         paymentIntentId: "order_1",
+        paymentId: "pay_1",
         checkoutUrl: "order_1",
       }),
-    ).resolves.toBe("order_1");
+    ).resolves.toBe("/checkout/pay/pay_1");
 
     expect(db.payment.updateMany).not.toHaveBeenCalled();
     expect(reportSentryMessage).not.toHaveBeenCalled();
@@ -170,7 +174,7 @@ describe("remintTrialPayLink", () => {
     });
 
     await expect(remintTrialPayLink(awaitingTrial())).resolves.toBe(
-      "order_live",
+      "/checkout/pay/pay-1",
     );
 
     expect(createApprovalPaymentIntent).not.toHaveBeenCalled();
@@ -180,7 +184,9 @@ describe("remintTrialPayLink", () => {
       }),
     );
     expect(db.trial.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { pendingPaymentUrl: "order_live" } }),
+      expect.objectContaining({
+        data: { pendingPaymentUrl: "/checkout/pay/pay-1" },
+      }),
     );
   });
 
@@ -202,11 +208,12 @@ describe("remintTrialPayLink", () => {
   it("mints a new intent only when no live one exists", async () => {
     createApprovalPaymentIntent.mockResolvedValueOnce({
       paymentIntentId: "order_new",
+      paymentId: "pay_new",
       checkoutUrl: "order_new",
     });
 
     await expect(remintTrialPayLink(awaitingTrial())).resolves.toBe(
-      "order_new",
+      "/checkout/pay/pay_new",
     );
 
     expect(createApprovalPaymentIntent).toHaveBeenCalledWith(
@@ -224,11 +231,12 @@ describe("remintTrialPayLink", () => {
     db.payment.findFirst.mockResolvedValueOnce(null);
     createApprovalPaymentIntent.mockResolvedValueOnce({
       paymentIntentId: "order_fresh",
+      paymentId: "pay_fresh",
       checkoutUrl: "order_fresh",
     });
 
     await expect(remintTrialPayLink(awaitingTrial())).resolves.toBe(
-      "order_fresh",
+      "/checkout/pay/pay_fresh",
     );
 
     expect(db.payment.findFirst).toHaveBeenCalledWith(

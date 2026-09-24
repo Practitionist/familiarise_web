@@ -32,6 +32,7 @@ import { OUTCOME_UNKNOWN_MESSAGE } from "@/lib/fetch-helpers";
 import type { LapsedPayLink } from "@/lib/dashboard/lapsed-pay-links";
 import { deriveBookingPresentation } from "@/lib/dashboard/money-state";
 import { LapsedPayLinkRow } from "./LapsedPayLinkRow";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 
 interface PendingPayment {
   id: string;
@@ -490,7 +491,17 @@ export function PendingPaymentsWidget({
                           {payLabel}
                         </Link>
                       </Button>
-                    ) : /^https?:\/\//.test(payment.paymentUrl ?? "") ? (
+                    ) : payment.paymentUrl &&
+                      !isExternalPayHref(payment.paymentUrl) ? (
+                      // #1775 P-1 — our pay page opens the existing order.
+                      <Button
+                        asChild
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+                      >
+                        <Link href={payment.paymentUrl}>{payLabel}</Link>
+                      </Button>
+                    ) : isExternalPayHref(payment.paymentUrl ?? "") ? (
                       <Button
                         asChild
                         size="sm"

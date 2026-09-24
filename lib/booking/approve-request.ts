@@ -300,6 +300,7 @@ export async function mintApprovalPaymentAfterCommit(args: {
       currency: paymentResult.currency,
       paymentUrl,
       expiresAt: new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS),
+      paymentId: paymentResult.paymentId,
     });
     console.log(`📧 Payment link email sent for ${args.kind} ${row.id}`);
   } catch (emailError) {

@@ -37,7 +37,8 @@ import {
   type BookingStateKind,
 } from "@/lib/dashboard/money-state";
 import type { AppointmentVM } from "@/lib/appointments/view-model";
-import { trialCheckoutHref } from "@/lib/appointments/trial-checkout-href";
+import { bookingPayHref } from "@/lib/appointments/trial-checkout-href";
+import { isExternalPayHref } from "@/lib/payments/pay-link-href";
 import type { TAppointmentDetail } from "@/lib/data/appointment-detail";
 import {
   paymentStatusBadge,
@@ -508,20 +509,16 @@ export function AppointmentDetailClient({
     : undefined;
   const hasConfirmedSessions = vm.occurrences.some((s) => !s.isTentative);
   const hasTentativeSessions = vm.occurrences.some((s) => s.isTentative);
-  // #1429 F2 — a trial's Pay Now lands on our branded trial checkout, which
-  // names the amount and the hold deadline; only a non-trial booking falls
-  // through to the raw gateway link. #1428 added a second Pay Now here without
-  // the branch, so both entry points now ask the one shared helper.
-  const trialHref = trialCheckoutHref(vm);
+  // #1429 F2 / #1775 P-1 — both Pay Now entry points ask the one shared
+  // helper: the trial's branded page or our pay page (SPA push), else a hosted link.
+  const payHref = bookingPayHref(vm);
   const openPendingPayment = () => {
-    if (trialHref) {
-      // Internal checkout page — SPA navigation (was full reload).
-      router.push(trialHref);
+    if (!payHref) return;
+    if (isExternalPayHref(payHref)) {
+      window.open(payHref, "_blank", "noopener,noreferrer");
       return;
     }
-    if (vm.pendingPaymentUrl && /^https?:\/\//.test(vm.pendingPaymentUrl)) {
-      window.open(vm.pendingPaymentUrl, "_blank", "noopener,noreferrer");
-    }
+    router.push(payHref);
   };
 
   return (
@@ -704,7 +701,7 @@ export function AppointmentDetailClient({
           names={names}
           heldCount={heldCount}
           pending={pendingRow}
-          onPay={openPendingPayment}
+          onPay={payHref ? openPendingPayment : undefined}
           requestAgainHref={
             vm.consultantProfileId
               ? `/explore/experts/${vm.consultantProfileId}`
