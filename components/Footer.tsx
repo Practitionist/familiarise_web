@@ -4,14 +4,66 @@ import React, { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  FaFacebook,
-  FaInstagram,
-  FaYoutube,
-  FaLinkedin,
-  FaXTwitter,
-} from "react-icons/fa6";
 import { ArrowUpRight, MessageSquare } from "lucide-react";
+
+// Brand glyphs as inline SVGs — lucide deprecated brand icons, so the footer
+// owns these five paths (Font Awesome 6 brand geometry) instead of pulling
+// in `react-icons` for a single file.
+function BrandIcon({
+  viewBox,
+  d,
+  className,
+}: {
+  viewBox: string;
+  d: string;
+  className?: string;
+}) {
+  return (
+    <svg viewBox={viewBox} className={className} fill="currentColor" aria-hidden="true">
+      <path d={d} />
+    </svg>
+  );
+}
+
+const XIcon = ({ className }: { className?: string }) => (
+  <BrandIcon
+    viewBox="0 0 512 512"
+    d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"
+    className={className}
+  />
+);
+
+const LinkedInIcon = ({ className }: { className?: string }) => (
+  <BrandIcon
+    viewBox="0 0 448 512"
+    d="M416 32H31.9C14.3 32 0 46.5 0 64.3v383.4C0 465.5 14.3 480 31.9 480H416c17.6 0 32-14.5 32-32.3V64.3c0-17.8-14.4-32.3-32-32.3zM135.4 416H69V202.2h66.5V416zm-33.2-243c-21.3 0-38.5-17.3-38.5-38.5S80.9 96 102.2 96c21.2 0 38.5 17.3 38.5 38.5 0 21.3-17.2 38.5-38.5 38.5zm282.1 243h-66.4V312c0-24.8-.5-56.7-34.5-56.7-34.6 0-39.9 27-39.9 54.9V416h-66.4V202.2h63.7v29.2h.9c8.9-16.8 30.6-34.5 62.9-34.5 67.2 0 79.7 44.3 79.7 101.9V416z"
+    className={className}
+  />
+);
+
+const InstagramIcon = ({ className }: { className?: string }) => (
+  <BrandIcon
+    viewBox="0 0 448 512"
+    d="M224.1 141c-63.6 0-114.9 51.3-114.9 114.9s51.3 114.9 114.9 114.9S339 319.5 339 255.9 287.7 141 224.1 141zm0 189.6c-41.1 0-74.7-33.5-74.7-74.7s33.5-74.7 74.7-74.7 74.7 33.5 74.7 74.7-33.6 74.7-74.7 74.7zm146.4-194.3c0 14.9-12 26.8-26.8 26.8-14.9 0-26.8-12-26.8-26.8s12-26.8 26.8-26.8 26.8 12 26.8 26.8zm76.1 27.2c-1.7-35.9-9.9-67.7-36.2-93.9-26.2-26.2-58-34.4-93.9-36.2-37-2.1-147.9-2.1-184.9 0-35.8 1.7-67.6 9.9-93.9 36.1s-34.4 58-36.2 93.9c-2.1 37-2.1 147.9 0 184.9 1.7 35.9 9.9 67.7 36.2 93.9s58 34.4 93.9 36.2c37 2.1 147.9 2.1 184.9 0 35.9-1.7 67.7-9.9 93.9-36.2 26.2-26.2 34.4-58 36.2-93.9 2.1-37 2.1-147.8 0-184.8zM398.8 388c-7.8 19.6-22.9 34.7-42.6 42.6-29.5 11.7-99.5 9-132.1 9s-102.7 2.6-132.1-9c-19.6-7.8-34.7-22.9-42.6-42.6-11.7-29.5-9-99.5-9-132.1s-2.6-102.7 9-132.1c7.8-19.6 22.9-34.7 42.6-42.6 29.5-11.7 99.5-9 132.1-9s102.7-2.6 132.1 9c19.6 7.8 34.7 22.9 42.6 42.6 11.7 29.5 9 99.5 9 132.1s2.7 102.7-9 132.1z"
+    className={className}
+  />
+);
+
+const YoutubeIcon = ({ className }: { className?: string }) => (
+  <BrandIcon
+    viewBox="0 0 576 512"
+    d="M549.655 124.083c-6.281-23.65-24.787-42.276-48.284-48.597C458.781 64 288 64 288 64S117.22 64 74.629 75.486c-23.497 6.322-42.003 24.947-48.284 48.597-11.412 42.867-11.412 132.305-11.412 132.305s0 89.438 11.412 132.305c6.281 23.65 24.787 41.5 48.284 47.821C117.22 448 288 448 288 448s170.78 0 213.371-11.486c23.497-6.321 42.003-24.171 48.284-47.821 11.412-42.867 11.412-132.305 11.412-132.305s0-89.438-11.412-132.305zm-317.51 213.508V175.185l142.739 81.205-142.739 81.201z"
+    className={className}
+  />
+);
+
+const FacebookIcon = ({ className }: { className?: string }) => (
+  <BrandIcon
+    viewBox="0 0 512 512"
+    d="M512 256C512 114.6 397.4 0 256 0S0 114.6 0 256C0 376 82.7 476.8 191.1 496V322.2h-58.7V256h58.7v-51.3c0-57.9 34.5-89.9 87.2-89.9 25.3 0 51.7 4.5 51.7 4.5v56.8h-29.1c-28.7 0-37.6 17.8-37.6 36v43.2h64l-10.2 66.2h-53.8V496C429.3 476.8 512 376 512 256z"
+    className={className}
+  />
+);
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -101,27 +153,27 @@ const EXPERTISE_LINKS: FooterLink[] = [
 
 const SOCIAL_LINKS = [
   {
-    icon: FaXTwitter,
+    icon: XIcon,
     href: "https://twitter.com/familiarise",
     label: "X",
   },
   {
-    icon: FaLinkedin,
+    icon: LinkedInIcon,
     href: "https://linkedin.com/company/familiarise",
     label: "LinkedIn",
   },
   {
-    icon: FaInstagram,
+    icon: InstagramIcon,
     href: "https://instagram.com/familiarise",
     label: "Instagram",
   },
   {
-    icon: FaYoutube,
+    icon: YoutubeIcon,
     href: "https://youtube.com/familiarise",
     label: "YouTube",
   },
   {
-    icon: FaFacebook,
+    icon: FacebookIcon,
     href: "https://facebook.com/familiarise",
     label: "Facebook",
   },
