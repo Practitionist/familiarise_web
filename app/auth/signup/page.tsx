@@ -11,7 +11,7 @@ import {
   sendVerificationEmail,
   getSession,
 } from "@/lib/auth-client";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { setPendingReferral } from "@/lib/pending-referral";
 import { ReferralCodeField } from "./ReferralCodeField";
 import { FieldError, invalidProps } from "@/components/ui/field-error";

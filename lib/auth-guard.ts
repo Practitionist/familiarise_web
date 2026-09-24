@@ -9,7 +9,7 @@ import {
 import prisma from "@/lib/prisma";
 import { ensureOrgWorkspaceProfile } from "@/lib/profiles/ensure-org-workspace-profile";
 import { canAddConsultantIdentity } from "@/utils/onboarding-shared";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import {
   hasBackofficePermission,
   type BackofficeSurface,

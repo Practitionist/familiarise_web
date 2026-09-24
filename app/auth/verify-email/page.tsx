@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { humanizeAuthError } from "@/lib/labels/auth-errors";
 import { sendVerificationEmail, useSession, getSession } from "@/lib/auth-client";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";

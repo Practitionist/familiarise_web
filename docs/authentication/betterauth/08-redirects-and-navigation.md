@@ -60,7 +60,7 @@ destination:
 
 ### Rule 4 — Callback URLs go through `safeSameOriginPath()`
 
-`lib/safe-callback-url.ts` is the only acceptable validator for
+`lib/navigation/safe-path.ts` is the only acceptable validator for
 user-controlled redirect targets in auth flows.
 
 A naive prefix check (`startsWith("/") && !startsWith("//")`) is **not**

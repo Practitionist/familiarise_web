@@ -39,7 +39,7 @@ import {
   getPendingReferral,
   clearPendingReferral,
 } from "@/lib/pending-referral";
-import { safeSameOriginPath } from "@/lib/safe-callback-url";
+import { safeSameOriginPath } from "@/lib/navigation/safe-path";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
