@@ -81,7 +81,12 @@ import {
   type StagedRecipientEmail,
 } from "@/lib/email/send-to-recipients";
 import { applyReversal, postPayoutClawback } from "./reversal-engine";
-import { RefundValidationError, refundPayment } from "./refund";
+import {
+  findDedupedRefund,
+  isDedupeKeyConflict,
+  RefundValidationError,
+  refundPayment,
+} from "./refund";
 
 /**
  * #1589 N-P0-01 — the payer's notice for a refund that never touches the
@@ -183,6 +188,8 @@ export async function refundBookingPayment(input: {
   amountPaise?: number;
   reason: string;
   initiatedByUserId?: string | null;
+  /** #1780 — one refund per key on every rail; a repeat returns the first. */
+  dedupeKey?: string;
 }): Promise<BookingRefundResult> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
@@ -206,7 +213,7 @@ export async function refundBookingPayment(input: {
         "INVALID_AMOUNT",
       );
     }
-    return refundFreeCreditPayment(input);
+    return withDedupe(input, "CREDITS", () => refundFreeCreditPayment(input));
   }
 
   if (!isInternalFundedIntent(payment.paymentIntent)) {
@@ -221,7 +228,40 @@ export async function refundBookingPayment(input: {
     };
   }
 
-  return refundInternalFundedPayment(input);
+  return withDedupe(input, "INTERNAL", () =>
+    refundInternalFundedPayment(input),
+  );
+}
+
+/**
+ * #1780 — the in-ledger rails honour the same key as the gateway rail: a key
+ * already spent answers with its refund, and a lost unique race is that answer.
+ */
+async function withDedupe(
+  input: { dedupeKey?: string },
+  rail: FundingRail,
+  run: () => Promise<BookingRefundResult>,
+): Promise<BookingRefundResult> {
+  if (!input.dedupeKey) return run();
+  const answered = async () => {
+    const prior = await findDedupedRefund(input.dedupeKey);
+    return prior
+      ? {
+          refundId: prior.refundId,
+          amountRefundedPaise: prior.amountRefundedPaise,
+          rail,
+        }
+      : null;
+  };
+  const prior = await answered();
+  if (prior) return prior;
+  try {
+    return await run();
+  } catch (err) {
+    const winner = isDedupeKeyConflict(err) ? await answered() : null;
+    if (winner) return winner;
+    throw err;
+  }
 }
 
 /**
@@ -241,6 +281,7 @@ async function refundFreeCreditPayment(input: {
   paymentId: string;
   reason: string;
   initiatedByUserId?: string | null;
+  dedupeKey?: string;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -293,6 +334,7 @@ async function refundFreeCreditPayment(input: {
             reason: input.reason,
             status: RefundStatus.SUCCEEDED,
             refundId: `credits_${globalThis.crypto.randomUUID()}`,
+            dedupeKey: input.dedupeKey ?? null,
             paymentGateway: payment.paymentGateway,
             metadata: {
               initiatedByUserId: input.initiatedByUserId ?? null,
@@ -644,6 +686,7 @@ async function refundInternalFundedPayment(input: {
   amountPaise?: number;
   reason: string;
   initiatedByUserId?: string | null;
+  dedupeKey?: string;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -720,6 +763,7 @@ async function refundInternalFundedPayment(input: {
             status: RefundStatus.PENDING,
             // No gateway ever mints an id for these, so the row owns its own.
             refundId: `internal_${globalThis.crypto.randomUUID()}`,
+            dedupeKey: input.dedupeKey ?? null,
             paymentGateway: payment.paymentGateway,
             exchangeRateAtRefund: payment.exchangeRateAtCheckout,
             displayCurrency: payment.displayCurrencyAtCheckout,

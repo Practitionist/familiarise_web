@@ -98,6 +98,12 @@ export type RefundInput = {
   /** For audit; staff/admin/customer userId. Optional — gateway-driven
    *  cascades pass null since there's no human actor. */
   initiatedByUserId?: string | null;
+  /**
+   * #1780 — one refund per logical key (`occ:<occ>:pay:<pay>`,
+   * `seat-leave:<participant>`, `series-cancel:<pay>`): a repeat call returns
+   * the first refund instead of moving money twice. Refund.dedupeKey is unique.
+   */
+  dedupeKey?: string;
 };
 
 export type RefundResult = {
@@ -117,6 +123,49 @@ export type RefundResult = {
    * #1014 review: never surface "" as a gateway id). */
   gatewayRefundId?: string;
 };
+
+/**
+ * #1780 — the refund already recorded under `dedupeKey`, as a no-op result.
+ * A FAILED or CANCELLED row moved no money, so its key is released for the retry.
+ */
+export async function findDedupedRefund(
+  dedupeKey: string | undefined,
+): Promise<RefundResult | null> {
+  if (!dedupeKey) return null;
+  const row = await prisma.refund.findUnique({
+    where: { dedupeKey },
+    select: { id: true, amountPaise: true, status: true },
+  });
+  if (!row) return null;
+  if (
+    row.status === RefundStatus.FAILED ||
+    row.status === RefundStatus.CANCELLED
+  ) {
+    await prisma.refund.updateMany({
+      where: { id: row.id, status: row.status },
+      data: { dedupeKey: null },
+    });
+    return null;
+  }
+  return {
+    refundId: row.id,
+    amountRefundedPaise: Number(row.amountPaise),
+    legsReversed: 0,
+    consultantEarningsReversed: 0,
+    organizationEarningsReversed: 0,
+    clawbackInitiated: false,
+    status: row.status === RefundStatus.SUCCEEDED ? "SUCCEEDED" : "PENDING",
+  };
+}
+
+/** A unique violation on Refund.dedupeKey (P2002). */
+export function isDedupeKeyConflict(err: unknown): boolean {
+  return (
+    err instanceof Prisma.PrismaClientKnownRequestError &&
+    err.code === "P2002" &&
+    String(err.meta?.target ?? "").includes("dedupeKey")
+  );
+}
 
 export class RefundValidationError extends Error {
   constructor(
@@ -196,6 +245,10 @@ export function isModelledRefundRefusal(err: unknown): boolean {
  * `applyRefundCascade` directly — it takes the existing refundId.
  */
 export async function refundPayment(input: RefundInput): Promise<RefundResult> {
+  // #1780 — a key already spent answers with its refund, before any balance check.
+  const deduped = await findDedupedRefund(input.dedupeKey);
+  if (deduped) return deduped;
+
   // Read payment outside the tx for early validation (cheap read; the
   // Serializable tx re-reads + locks for the actual mutation).
   const payment = await prisma.payment.findUnique({
@@ -330,93 +383,106 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
   // outcome, not an anomaly. Unwrapped, that surfaced to the caller as a raw
   // Prisma error instead of being retried into the correct answer (either a
   // successful reservation or a typed AMOUNT_EXCEEDS_REFUNDABLE rejection).
-  const reserved = await withSerializableRetry(() =>
-    prisma.$transaction(
-      async (tx) => {
-        // Re-derive `refundable` inside the Serializable tx — defends
-        // against two refunds racing through the outer read. Must mirror the
-        // outer computation EXACTLY (refunds + lost chargebacks): the outer
-        // read also nets disputes, and a chargeback can commit between the
-        // outer read and here. Reading the dispute table inside this
-        // Serializable tx makes SSI abort the loser when a lost-chargeback tx
-        // (also Serializable, see handleDisputeUpdated) interleaves — closing
-        // the refund×chargeback double-reversal the netting was added to fix.
-        const refundsLocked = await tx.refund.findMany({
-          where: {
-            paymentId: input.paymentId,
-            status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
-          },
-          select: { amountPaise: true },
-        });
-        const refundedNow = refundsLocked.reduce(
-          (a, r) => a + r.amountPaise,
-          0,
-        );
-        const chargedBackNow = await tx.dispute.aggregate({
-          where: {
-            paymentId: input.paymentId,
-            status: { in: ["LOST", "CHARGE_REFUNDED"] },
-          },
-          _sum: { amountPaise: true },
-        });
-        const remainingNow =
-          payment.amount -
-          refundedNow -
-          sumPaise(chargedBackNow._sum.amountPaise);
-        if (requested > remainingNow) {
-          const err = new RefundValidationError(
-            `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
-            "AMOUNT_EXCEEDS_REFUNDABLE",
+  const reserveRefund = () =>
+    withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // Re-derive `refundable` inside the Serializable tx — defends
+          // against two refunds racing through the outer read. Must mirror the
+          // outer computation EXACTLY (refunds + lost chargebacks): the outer
+          // read also nets disputes, and a chargeback can commit between the
+          // outer read and here. Reading the dispute table inside this
+          // Serializable tx makes SSI abort the loser when a lost-chargeback tx
+          // (also Serializable, see handleDisputeUpdated) interleaves — closing
+          // the refund×chargeback double-reversal the netting was added to fix.
+          const refundsLocked = await tx.refund.findMany({
+            where: {
+              paymentId: input.paymentId,
+              status: { in: [RefundStatus.SUCCEEDED, RefundStatus.PENDING] },
+            },
+            select: { amountPaise: true },
+          });
+          const refundedNow = refundsLocked.reduce(
+            (a, r) => a + r.amountPaise,
+            0,
           );
-          reportModelledRefundOutcome(err);
-          throw err;
-        }
+          const chargedBackNow = await tx.dispute.aggregate({
+            where: {
+              paymentId: input.paymentId,
+              status: { in: ["LOST", "CHARGE_REFUNDED"] },
+            },
+            _sum: { amountPaise: true },
+          });
+          const remainingNow =
+            payment.amount -
+            refundedNow -
+            sumPaise(chargedBackNow._sum.amountPaise);
+          if (requested > remainingNow) {
+            const err = new RefundValidationError(
+              `Race-loss: refund amount ${requested} exceeds refundable ${remainingNow} on payment ${input.paymentId}`,
+              "AMOUNT_EXCEEDS_REFUNDABLE",
+            );
+            reportModelledRefundOutcome(err);
+            throw err;
+          }
 
-        // #1008 — re-check for a live dispute inside the Serializable tx. Reading
-        // the dispute table here makes SSI abort the loser when a dispute-status
-        // change (handleDisputeUpdated, also Serializable) interleaves between the
-        // outer read and this reservation.
-        const liveDisputeNow = await tx.dispute.findFirst({
-          where: {
-            paymentId: input.paymentId,
-            status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
-          },
-          select: { id: true },
-        });
-        if (liveDisputeNow) {
-          const err = new RefundValidationError(
-            `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
-            "REFUND_BLOCKED_BY_DISPUTE",
-          );
-          reportModelledRefundOutcome(err);
-          throw err;
-        }
+          // #1008 — re-check for a live dispute inside the Serializable tx. Reading
+          // the dispute table here makes SSI abort the loser when a dispute-status
+          // change (handleDisputeUpdated, also Serializable) interleaves between the
+          // outer read and this reservation.
+          const liveDisputeNow = await tx.dispute.findFirst({
+            where: {
+              paymentId: input.paymentId,
+              status: { notIn: DISPUTE_INACTIVE_FOR_GATING },
+            },
+            select: { id: true },
+          });
+          if (liveDisputeNow) {
+            const err = new RefundValidationError(
+              `Payment ${input.paymentId} has an open dispute; resolve it before refunding`,
+              "REFUND_BLOCKED_BY_DISPUTE",
+            );
+            reportModelledRefundOutcome(err);
+            throw err;
+          }
 
-        return tx.refund.create({
-          data: {
-            paymentId: input.paymentId,
-            amountPaise: requested,
-            currency: payment.currency,
-            reason: input.reason,
-            status: RefundStatus.PENDING,
-            refundId: `pending_${globalThis.crypto.randomUUID()}`,
-            paymentGateway: payment.paymentGateway,
-            exchangeRateAtRefund: payment.exchangeRateAtCheckout,
-            displayCurrency: payment.displayCurrencyAtCheckout,
-            metadata: {
-              initiatedByUserId: input.initiatedByUserId ?? null,
-              source: "app",
-            } as Prisma.InputJsonValue,
-          },
-        });
-      },
-      {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 10_000,
-        timeout: 15_000,
-      },
-    ),
-  );
+          return tx.refund.create({
+            data: {
+              paymentId: input.paymentId,
+              amountPaise: requested,
+              currency: payment.currency,
+              reason: input.reason,
+              status: RefundStatus.PENDING,
+              refundId: `pending_${globalThis.crypto.randomUUID()}`,
+              dedupeKey: input.dedupeKey ?? null,
+              paymentGateway: payment.paymentGateway,
+              exchangeRateAtRefund: payment.exchangeRateAtCheckout,
+              displayCurrency: payment.displayCurrencyAtCheckout,
+              metadata: {
+                initiatedByUserId: input.initiatedByUserId ?? null,
+                source: "app",
+              } as Prisma.InputJsonValue,
+            },
+          });
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      ),
+    );
+  let reserved: Awaited<ReturnType<typeof reserveRefund>>;
+  try {
+    reserved = await reserveRefund();
+  } catch (err) {
+    // #1780 — a concurrent call with the same key won the unique; it is the refund.
+    const winner = isDedupeKeyConflict(err)
+      ? await findDedupedRefund(input.dedupeKey)
+      : null;
+    if (winner) return winner;
+    throw err;
+  }
 
   // The raise notice: ops (ADMIN/STAFF) learn a refund was raised, before the
   // gateway outcome is known (SUCCEEDED → processed, FAILED → failed follow).

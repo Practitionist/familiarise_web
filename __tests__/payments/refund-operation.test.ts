@@ -115,6 +115,11 @@ function txStub() {
       }),
     },
     refund: {
+      // #1780 — the dedupe lookup reads Refund by its unique key.
+      findUnique: jest.fn(
+        async ({ where }: { where: { dedupeKey?: string } }) =>
+          state.refunds.find((r) => r.dedupeKey === where.dedupeKey) ?? null,
+      ),
       findMany: jest.fn(async ({ where, select }: any) => {
         const rows = state.refunds.filter((r) => {
           if (where.paymentId && r.paymentId !== where.paymentId) return false;
@@ -668,6 +673,27 @@ describe("refundPayment — full single-leg WALLET refund", () => {
     expect(details.amountPaise).toBe(10000);
     expect(details.balanceAfterPaise).toBe(60000);
     expect(details.initiatedByUserId).toBe("user-admin");
+  });
+});
+
+describe("refundPayment — dedupeKey (#1780)", () => {
+  it("a second call with the same key creates nothing and returns the first refund", async () => {
+    seedSinglePartyWalletPayment({});
+    const call = () =>
+      refundPayment({
+        paymentId: "pay-1",
+        amountPaise: 2000,
+        reason: "session not made up",
+        dedupeKey: "occ:occ-5:pay:pay-1",
+      });
+
+    const first = await call();
+    const second = await call();
+
+    expect(tx.refund.create).toHaveBeenCalledTimes(1);
+    expect(second.refundId).toBe(first.refundId);
+    expect(second.amountRefundedPaise).toBe(2000);
+    expect(state.refunds).toHaveLength(1);
   });
 });
 
