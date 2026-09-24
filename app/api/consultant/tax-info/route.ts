@@ -7,6 +7,7 @@ import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-server";
+import { requireOwnConsultantProfile } from "@/lib/api/consultant-profile";
 import { z } from "zod";
 import { encryptPAN } from "@/lib/payments/tax/pan-crypto";
 import { isValidUdyamNumber } from "@/lib/compliance/msme";
@@ -77,7 +78,7 @@ async function applyMsmeDeclaration(
 
 export async function GET() {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -127,22 +128,9 @@ export async function GET() {
  */
 export async function PUT(req: NextRequest) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const consultantProfile = await prisma.consultantProfile.findUnique({
-      where: { userId: session.user.id },
-      select: { id: true },
-    });
-
-    if (!consultantProfile) {
-      return NextResponse.json(
-        { error: "Consultant profile not found" },
-        { status: 404 },
-      );
-    }
+    const { profileId: consultantProfileId, error: authError } =
+      await requireOwnConsultantProfile();
+    if (authError) return authError;
 
     const body = await req.json();
     const validated = updateTaxInfoSchema.parse(body);
@@ -167,9 +155,9 @@ export async function PUT(req: NextRequest) {
     const panFields = buildPanFields(validated.panNumber);
 
     const taxInfo = await prisma.consultantTaxInfo.upsert({
-      where: { consultantProfileId: consultantProfile.id },
+      where: { consultantProfileId: consultantProfileId },
       create: {
-        consultantProfileId: consultantProfile.id,
+        consultantProfileId: consultantProfileId,
         panEncrypted: panFields?.panEncrypted ?? null,
         panLast4: panFields?.panLast4 ?? null,
         gstin: validated.gstin,
@@ -201,13 +189,13 @@ export async function PUT(req: NextRequest) {
 
     // MSME declaration rides the same PUT (#1230): these live on the
     // ConsultantProfile row itself, not the TaxInfo satellite.
-    await applyMsmeDeclaration(consultantProfile.id, validated);
+    await applyMsmeDeclaration(consultantProfileId, validated);
 
     // Echo the PERSISTED declaration, not the request body (CR #1234): a
     // taxEntityType-only PUT previously answered null for MSME fields that
     // were in fact set, and the agreement flag was never returned.
     const profileAfter = await prisma.consultantProfile.findUnique({
-      where: { id: consultantProfile.id },
+      where: { id: consultantProfileId },
       select: {
         msmeStatus: true,
         udyamNumber: true,

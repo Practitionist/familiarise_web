@@ -103,7 +103,7 @@ const PatchClassWithPlanBodySchema =
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -432,7 +432,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

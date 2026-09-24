@@ -16,7 +16,7 @@ const MEMBERSHIPS_ROUTE = "user.org-memberships";
 
 export async function GET() {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return supportError({ status: 401, code: "UNAUTHORIZED" });
     }

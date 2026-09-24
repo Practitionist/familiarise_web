@@ -8,7 +8,7 @@ import { getSession } from "@/lib/auth-server";
 import { assertBodySize } from "@/lib/validation/limits";
 export async function GET() {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to access your feedback" },
@@ -40,7 +40,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "You must be logged in to submit feedback" },

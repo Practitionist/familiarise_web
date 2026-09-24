@@ -15,13 +15,17 @@ import {
   classifyError,
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
-import { PayoutStatus } from "@prisma/client";
 import { createPayoutBatch } from "@/lib/payments/payouts";
 import {
   requireAdminAuth,
   requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
+import { parseRequestBody, parseJsonRequest } from "@/lib/api/parse";
+import {
+  adminPayoutBatchSchema,
+  adminPayoutsQuerySchema,
+} from "@/schemas/payouts";
 
 /**
  * GET /api/admin/payouts
@@ -33,13 +37,25 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
+    const { data: query, error: queryError } = parseRequestBody(
+      adminPayoutsQuerySchema,
+      {
+        status: searchParams.get("status"),
+        search: searchParams.get("search"),
+        // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
+        orgId: searchParams.get("orgId"),
+        limit: searchParams.get("limit") ?? undefined,
+        offset: searchParams.get("offset") ?? undefined,
+      },
+      "Invalid query parameters",
+    );
+    if (queryError) return queryError;
     const result = await getOperatorPayouts({
-      status: searchParams.get("status") as PayoutStatus | null,
-      search: searchParams.get("search"),
-      // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
-      orgId: searchParams.get("orgId"),
-      limit: parseInt(searchParams.get("limit") || "50"),
-      offset: parseInt(searchParams.get("offset") || "0"),
+      status: query.status ?? null,
+      search: query.search,
+      orgId: query.orgId,
+      limit: query.limit,
+      offset: query.offset,
     });
 
     return NextResponse.json(result);
@@ -65,8 +81,12 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const body = await req.json();
-    const { consultantProfileIds } = body;
+    const { data, error } = await parseJsonRequest(
+      adminPayoutBatchSchema,
+      req,
+    );
+    if (error) return error;
+    const { consultantProfileIds } = data;
 
     // Create payout batch
     const batchId = await createPayoutBatch(consultantProfileIds);
