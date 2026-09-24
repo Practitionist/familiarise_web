@@ -40,6 +40,7 @@ import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { stampTranchesOnCancel } from "@/lib/booking/subscription-cycle";
 import {
+  classSeriesLedgers,
   refundWholeEventPayments,
   type WholeEventRefundSummary,
 } from "@/lib/payments/operations/event-refunds";
@@ -401,6 +402,12 @@ export async function POST(
     // cancel racing the capture webhook resolves to exactly one winner.
     // The set lives in lib/booking/transitions.ts so the map is canonical (#836).
 
+    // #1780 D-5 — each class seat's ledger, read before the transaction below
+    // tombstones the sessions: the series refunds only what was not delivered.
+    const seriesLedgers = appointment.class
+      ? await classSeriesLedgers(appointment.class.id)
+      : null;
+
     // Transaction for critical database operations only (with increased timeout)
     // #1319 — serialize lifecycle mutations per appointment (lock order:
     // appointment first, before any consultee/slot key a future change adds).
@@ -742,6 +749,7 @@ export async function POST(
         eventId,
         `whole-event ${eventKind} cancellation (${validatedData.reason ?? "cancelled"})`,
         session.user.id,
+        { ledgers: seriesLedgers ?? undefined },
       );
     }
 

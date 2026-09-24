@@ -8,6 +8,8 @@ import {
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
 import { quoteSeatLeave } from "@/lib/booking/seat-leave";
+import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
+import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
 import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -186,15 +188,25 @@ async function quoteWholeEventRefund(
       paymentStatus: "SUCCEEDED",
       deletedAt: null,
     },
-    select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
   });
+  // #1780 D-5 — a class series pays back only what each seat was not delivered.
+  const ledgers = kind === "class" ? await classSeriesLedgers(eventId) : null;
+  const owed = (seat: (typeof seats)[number]) => {
+    const balance = refundableBalancePaise(Number(seat.amount), seat);
+    const ledger = ledgers?.get(seat.id);
+    return ledger
+      ? Math.min(balance, Number(seriesCancelRefundPaise(ledger, seat.amount)))
+      : balance;
+  };
 
   return {
-    estimatedRefundPaise: seats.reduce(
-      (total, seat) =>
-        total + refundableBalancePaise(Number(seat.amount), seat),
-      0,
-    ),
+    estimatedRefundPaise: seats.reduce((total, seat) => total + owed(seat), 0),
     /** Paid seats — the attendees who are owed something, not the roster. */
     attendeeCount: seats.length,
     // Settlement is INR-only by design, so the seats of one event share a

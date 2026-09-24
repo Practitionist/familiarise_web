@@ -515,6 +515,7 @@ import {
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
 import prisma from "@/lib/prisma";
+import { prorate } from "@/lib/payments/utils/money";
 
 const tx: any = prisma; // the stub IS the tx in our setup
 
@@ -694,6 +695,23 @@ describe("refundPayment — dedupeKey (#1780)", () => {
     expect(second.refundId).toBe(first.refundId);
     expect(second.amountRefundedPaise).toBe(2000);
     expect(state.refunds).toHaveLength(1);
+  });
+});
+
+describe("refundPayment — class series cancel (#1780 D-5)", () => {
+  it("5 of 8 undelivered claws back 5/8 of the share and leaves the earning live", async () => {
+    seedSinglePartyWalletPayment({});
+
+    await refundPayment({
+      paymentId: "pay-1",
+      amountPaise: 6250,
+      reason: "series cancelled",
+      dedupeKey: "series-cancel:pay-1",
+    });
+
+    const ce = state.consultantEarnings.get("ce-1");
+    expect(ce?.refundedShareAmount).toBe(prorate(8000, 5, 8));
+    expect(ce?.status).not.toBe("REFUNDED");
   });
 });
 

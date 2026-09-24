@@ -76,6 +76,8 @@ jest.mock("../../lib/novu", () => ({
 // #776 §C — whole-event (class/webinar) cancel refunds are exercised in their
 // own suite; here the cancel route just needs a benign summary back.
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  // #1780 D-5 — the per-seat ledgers read before the cancel transaction.
+  classSeriesLedgers: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,
