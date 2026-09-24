@@ -158,11 +158,11 @@ describe("nextPayoutCopy and the tile sums", () => {
       "Payouts begin at launch — your balance is safe with us",
     );
     expect(nextPayoutCopy(NOW, true)).toBe(
-      "Paid every Monday · next: Mon 21 Sep",
+      "Paid every Monday, or get paid now once a day · next: Mon 21 Sep",
     );
     // A Monday after 20:00 UTC rolls to the following week.
     expect(nextPayoutCopy(new Date("2026-09-21T20:00:01Z"), true)).toBe(
-      "Paid every Monday · next: Mon 28 Sep",
+      "Paid every Monday, or get paid now once a day · next: Mon 28 Sep",
     );
   });
 

@@ -43,6 +43,7 @@ import type {
   ConsultantEarningsPayload,
 } from "@/lib/data/consultant-earnings-analytics";
 import { PayoutWalkSheet } from "./PayoutWalkSheet";
+import { GetPaidNowSheet } from "./GetPaidNowSheet";
 
 /**
  * #1675 / #1527 W2 PR-Y — the Earnings summary: three tiles (Available ·
@@ -112,9 +113,12 @@ export function EarningsBuckets({
   now: nowProp,
   isStale = false,
   initialSegment = "AVAILABLE",
+  isOwnDashboard = false,
 }: Readonly<{
   consultantId: string;
   data: EarningsResponse;
+  /** The instant-payout routes act on the viewer's own profile (#1771 row 6). */
+  isOwnDashboard?: boolean;
   /** Injected by the pin; otherwise the clock is read once per mount. */
   now?: Date;
   isStale?: boolean;
@@ -227,14 +231,20 @@ export function EarningsBuckets({
       )}
 
       <DashboardGrid columns={3}>
-        <StatCard
-          title={BUCKET_LABEL.AVAILABLE}
-          value={inr(sums.available)}
-          icon={CheckCircle}
-          variant="success"
-          subtitle={nextPayoutCopy(now, live)}
-          tooltip="Cleared earnings, less anything refunded, waiting for the next payout run."
-        />
+        <div className="flex flex-col gap-2">
+          <StatCard
+            title={BUCKET_LABEL.AVAILABLE}
+            value={inr(sums.available)}
+            icon={CheckCircle}
+            variant="success"
+            subtitle={nextPayoutCopy(now, live)}
+            tooltip="Cleared earnings, less anything refunded, waiting for the next payout run."
+          />
+          {/* #1771 row 6 — hidden for other viewers, while payouts are off, or at zero. */}
+          {isOwnDashboard && live && sums.available > 0 && (
+            <GetPaidNowSheet consultantId={consultantId} />
+          )}
+        </div>
         <StatCard
           title={BUCKET_LABEL.PENDING}
           value={inr(sums.pending)}

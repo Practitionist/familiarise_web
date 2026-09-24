@@ -5725,6 +5725,7 @@ model ConsultantPayout {
   status              PayoutStatus   @default(PENDING)
   method              PayoutMethod
   batchId             String?
+  kind                String? // #1771 row 6 — 'INSTANT'; null = the Monday batch
 
   // TDS (Tax Deducted at Source) — Section 194J
   tdsDeducted       BigInt  @default(0) // TDS amount deducted from this payout, in paise

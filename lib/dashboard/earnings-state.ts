@@ -296,7 +296,8 @@ export function nextPayoutCopy(now: Date, livePayoutsEnabled: boolean): string {
     return "Payouts begin at launch — your balance is safe with us";
   }
   // The batch is a Monday event in UTC; formatted in UTC so the day word holds.
-  return `Paid every Monday · next: ${formatInTimeZone(nextPayoutBatchAt(now), "UTC", "EEE d MMM")}`;
+  // #1771 row 6 — the free instant payout sits beside it, once a day.
+  return `Paid every Monday, or get paid now once a day · next: ${formatInTimeZone(nextPayoutBatchAt(now), "UTC", "EEE d MMM")}`;
 }
 
 /**
