@@ -6,6 +6,7 @@ import {
 } from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import {
   needsTrialPayLinkRemint,
   persistTrialPayLink,
@@ -944,6 +945,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           where: { id: trialId },
           to: nextStatus as TrialStatus,
         });
+      }
+      // #1775 C-9 — delivery starts the paid trial's earnings hold.
+      if (nextStatus === TrialStatus.COMPLETED) {
+        await stampTrialEarningsHold(
+          tx,
+          existingTrial.paymentId,
+          updateData.completedAt as Date,
+        );
       }
       return tx.trial.update({
         where: { id: trialId },

@@ -57,6 +57,7 @@ import {
   classifyConsultantAttendance,
   isPastNoShowHandoff,
 } from "@/lib/booking/attendance";
+import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
 // Only complete appointments that ended at least 1 hour ago
@@ -604,10 +605,15 @@ async function completeTrials(): Promise<{
 
       // CAS (#1319): a trial cancelled or converted since the read stays put.
       try {
-        await transitionTrial(prisma, {
-          where: { id: trial.id },
-          to: TrialStatus.COMPLETED,
-          data: { completedAt: new Date() },
+        const completedAt = new Date();
+        await prisma.$transaction(async (tx) => {
+          await transitionTrial(tx, {
+            where: { id: trial.id },
+            to: TrialStatus.COMPLETED,
+            data: { completedAt },
+          });
+          // #1775 C-9 — delivery starts the paid trial's earnings hold.
+          await stampTrialEarningsHold(tx, trial.paymentId, completedAt);
         });
       } catch (error) {
         if (!(error instanceof IllegalTransitionError)) throw error;
