@@ -69,6 +69,10 @@ A class session is one `AppointmentOccurrence` row, and since #1780 the host may
 
 Every host-cancelled session counts as a miss, made up or not. Misses are host cancellations only for now; no-shows and outage voiding are deferred to #1569. At three misses, or a quarter of the series, a learner holding a seat may leave with every undelivered session refunded at 100 %, through `DELETE /api/participants/class/[classId]?mode=exit`, which recomputes the ledger inside its transaction and refuses with `EXIT_NOT_AVAILABLE` without the right. The first time a class reaches that threshold one `class-reliability:<classId>` `SystemEvent` is written for ops. Delivered sessions are never clawed back.
 
+## Backup interest in a held window (#1778)
+
+`WindowBackupInterest.status` has four states. A row starts `WAITING` when a learner asks to hear about a held window. It moves to `NOTIFIED` when a release path frees an overlapping window (the CAS carries `status: WAITING`), to `BOOKED` when the same learner's capture confirms an overlapping booking (from `WAITING` or `NOTIFIED`), and to `EXPIRED` when the learner withdraws it or the stale-request sweep finds its window has passed. `BOOKED` and `EXPIRED` are terminal; re-registering the same window revives the row to `WAITING`.
+
 ## Reschedule requests
 
 `RescheduleRequestStatus` via `transitionRescheduleRequest`:
