@@ -11,6 +11,7 @@ import {
   type SubscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import { isSponsoredPayment } from "./payment-display";
+import { seriesLedgerFrom } from "@/lib/booking/class-series";
 import {
   requestHoldDeadline,
   type BookingPresentationInput,
@@ -206,6 +207,33 @@ export function toPresentationInput(
     plan: planOf(a),
     names: args.names,
     entitlement: entitlementSummary(detailEntitlement(a)),
+    series: classSeriesSummary(a),
+  };
+}
+
+/** #1780 E-5 — a class's misses and exit right, from the detail's sessions. */
+function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
+  const N = a.class?.classPlan?.totalSessions;
+  if (!a.class || !N) return null;
+  const ledger = seriesLedgerFrom({
+    N,
+    occurrences: a.occurrences
+      .filter((o) => !o.deletedAt && !o.isTentative)
+      .map((o) => ({
+        ordinal: o.ordinal,
+        startsAt: new Date(o.startsAt),
+        endsAt: new Date(o.endsAt),
+        completionStatus: o.completionStatus,
+        movedAt: o.movedAt ? new Date(o.movedAt) : null,
+        hostCancelledAt: o.hostCancelledAt ? new Date(o.hostCancelledAt) : null,
+      })),
+    now: new Date(),
+  });
+  return {
+    misses: ledger.misses,
+    N,
+    exitRight: ledger.exitRight,
+    undelivered: ledger.remaining + ledger.neverScheduled,
   };
 }
 

@@ -64,6 +64,8 @@ export type NextActionKind =
   | "REMIND_OR_WITHDRAW"
   /** #1775 C-5 — a paid plan waiting for cycle 1, or for its next cycle. */
   | "ALLOCATE"
+  /** #1780 row 6 — the host's misses give the learner a full-refund exit. */
+  | "EXIT_SERIES"
   | "PAY"
   | "REQUEST_AGAIN"
   | "JOIN"
@@ -165,6 +167,13 @@ export interface BookingPresentationInput {
   names: { payer: string; consultant: string };
   /** #1775 C-5 — a subscription's entitlement summary (lib/booking/entitlement). */
   entitlement?: { remaining: number; nextBatch: number } | null;
+  /** #1780 E-5 — a class seat's series ledger summary. */
+  series?: {
+    misses: number;
+    N: number;
+    exitRight: boolean;
+    undelivered: number;
+  } | null;
 }
 
 export interface BookingPresentation {
@@ -680,6 +689,16 @@ function deriveNext(
     }
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
+    if (
+      booking === "CONFIRMED" &&
+      normalizeStatus(input.appointmentType) === "CLASS" &&
+      input.series?.exitRight
+    ) {
+      return {
+        kind: "EXIT_SERIES",
+        label: `Leave the series with a full refund of the remaining ${input.series.undelivered} sessions`,
+      };
+    }
     if (booking === "COMPLETED")
       return { kind: "RATE", label: "Rate this session" };
   }

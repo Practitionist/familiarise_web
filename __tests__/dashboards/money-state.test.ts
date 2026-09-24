@@ -434,3 +434,32 @@ describe("ALLOCATE (#1775 C-5)", () => {
     });
   });
 });
+
+// #1780 E-5 — a confirmed class seat whose host missed three sessions (or a
+// quarter) is offered a full-refund exit; below the threshold it is not.
+describe("EXIT_SERIES (#1780 E-5)", () => {
+  const classSeat = (misses: number, N: number) =>
+    base({
+      appointmentType: "CLASS",
+      request: { status: "SCHEDULED", kind: "CLASS" },
+      occurrences: confirmed,
+      payments: paid,
+      holdExpiresAt: null,
+      series: {
+        misses,
+        N,
+        exitRight: misses >= 3 || 4 * misses >= N,
+        undelivered: 6,
+      },
+    });
+  it.each([
+    [3, 12, "EXIT_SERIES"],
+    [2, 12, "NONE"],
+    [2, 8, "EXIT_SERIES"],
+  ])("%i misses of %i → %s", (misses, N, kind) => {
+    expect(
+      deriveBookingPresentation(classSeat(misses, N), "CONSULTEE", { now: NOW })
+        .nextAction.kind,
+    ).toBe(kind);
+  });
+});

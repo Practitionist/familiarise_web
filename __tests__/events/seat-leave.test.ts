@@ -112,3 +112,40 @@ it("a re-plan with unchanged times is not a move; a changed one is", () => {
   expect(isHostMove({ ...prior }, moves)).toBe(false);
   expect(isHostMove({ ...prior, startsAt: inHours(42) }, moves)).toBe(true);
 });
+
+it("refuses a class exit without the exit right (#1780 E-5)", async () => {
+  const mocked = jest.requireMock("../../lib/prisma") as {
+    default: { $transaction: jest.Mock };
+  };
+  mocked.default.$transaction.mockImplementationOnce(
+    async (fn: (t: unknown) => unknown) =>
+      fn({
+        appointmentParticipant: {
+          findFirst: async () => ({
+            id: "part-1",
+            appointmentId: "apt-1",
+            createdAt: joinedAt,
+            refundWindowHours: null,
+          }),
+          updateMany: release,
+        },
+        appointment: {
+          findUnique: async () => ({
+            class: { classPlan: { totalSessions: 12 } },
+          }),
+        },
+        appointmentOccurrence: { findMany: async () => [] },
+      }),
+  );
+  await expect(
+    leaveEventSeat({
+      kind: "class",
+      eventId: "cls-1",
+      userId: "u-1",
+      actorUserId: "u-1",
+      isSelfLeave: true,
+      exit: true,
+    }),
+  ).rejects.toMatchObject({ code: "EXIT_NOT_AVAILABLE" });
+  expect(release).not.toHaveBeenCalled();
+});

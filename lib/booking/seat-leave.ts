@@ -34,7 +34,7 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import { BookingRuleError } from "./booking-rule-error";
-import { seatLedger, type SeatLedger } from "./class-series";
+import { seatLedger, seriesLedger, type SeatLedger } from "./class-series";
 import { liveParticipant, releaseParticipant } from "./participants";
 
 export type EventKind = "class" | "webinar";
@@ -207,6 +207,51 @@ export async function planSelfLeave(
   };
 }
 
+/**
+ * #1780 E-5 — the exit right: with three host misses (or a quarter of the
+ * series) the learner leaves with every undelivered session refunded, no
+ * ladder, less any session already refunded on its own. Refused otherwise.
+ */
+async function planSeriesExit(
+  tx: Tx,
+  classId: string,
+  userId: string,
+  seat: Seat,
+  now = new Date(),
+): Promise<SeatRefundPlan> {
+  const series = await seriesLedger(tx, seat.appointmentId, now);
+  if (!series.exitRight) {
+    throw new BookingRuleError(
+      "EXIT_NOT_AVAILABLE",
+      "This class has not missed enough sessions for a full-refund exit.",
+    );
+  }
+  const payment = await seatPayment(tx, "class", classId, userId);
+  if (!payment) return { mode: "full" };
+  const joinedAt =
+    payment.createdAt > seat.createdAt ? payment.createdAt : seat.createdAt;
+  const ledger = await seatLedger(
+    tx,
+    { appointmentId: seat.appointmentId, createdAt: joinedAt },
+    payment.amount,
+    now,
+  );
+  const quote = quoteClassSeatRefund({
+    policy: termsFromPolicyRow(payment.appointment?.cancellationPolicy),
+    isConsultantInitiated: true,
+    unitPaise: ledger.unitPaise,
+    remainingStartsMs: ledger.remaining.map((r) => r.startsAt.getTime()),
+    neverScheduled: ledger.neverScheduled,
+    alreadyRefundedPaise: await occurrenceRefundsPaise(tx, payment.id),
+    refundablePaise: refundableBalancePaise(Number(payment.amount), payment),
+    nowMs: now.getTime(),
+  });
+  return {
+    amountPaise: quote.refundPaise,
+    sessions: ledger.remaining.length + ledger.neverScheduled,
+  };
+}
+
 export type SeatLeaveQuote =
   | { seated: false }
   | {
@@ -284,8 +329,8 @@ export async function leaveEventSeat(args: {
   userId: string;
   actorUserId: string;
   isSelfLeave: boolean;
-  /** Overrides the self-leave rule (the class exit right, E-5). */
-  plan?: (tx: Tx, seat: Seat) => Promise<SeatRefundPlan>;
+  /** The class exit right (E-5): a full refund of the undelivered sessions. */
+  exit?: boolean;
 }) {
   const filter = eventFilter(args.kind, args.eventId);
   const released = await withSerializableRetry(() =>
@@ -302,8 +347,9 @@ export async function leaveEventSeat(args: {
         });
         if (!seat) return null;
         let plan: SeatRefundPlan = { mode: "full" };
-        if (args.plan) plan = await args.plan(tx, seat);
-        else if (args.isSelfLeave) {
+        if (args.exit) {
+          plan = await planSeriesExit(tx, args.eventId, args.userId, seat);
+        } else if (args.isSelfLeave) {
           plan = await planSelfLeave(
             tx,
             args.kind,
@@ -338,7 +384,7 @@ export async function leaveEventSeat(args: {
     ...("mode" in released.plan
       ? { mode: released.plan.mode }
       : { amountPaise: released.plan.amountPaise }),
-    dedupeKey: `seat-leave:${released.seat.id}`,
+    dedupeKey: `${args.exit ? "seat-exit" : "seat-leave"}:${released.seat.id}`,
   });
   return { refund };
 }

@@ -203,6 +203,8 @@ export async function DELETE(
         userId,
         actorUserId: session.user.id,
         isSelfLeave,
+        // #1780 E-5 — `?mode=exit`: the learner's own full-refund exit right.
+        exit: isSelfLeave && searchParams.get("mode") === "exit",
       });
     } catch (error) {
       if (error instanceof BookingRuleError) return bookingRuleResponse(error);

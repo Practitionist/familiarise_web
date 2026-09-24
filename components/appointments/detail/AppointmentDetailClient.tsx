@@ -702,6 +702,17 @@ export function AppointmentDetailClient({
           heldCount={heldCount}
           pending={pendingRow}
           onPay={payHref ? openPendingPayment : undefined}
+          onExitSeries={
+            role === "consultee" && detail.appointment.class && viewerId
+              ? () =>
+                  exitClassSeries(detail.appointment.class!.id, viewerId).then(
+                    () =>
+                      queryClient.invalidateQueries({
+                        queryKey: ["appointment-detail", appointmentId],
+                      }),
+                  )
+              : undefined
+          }
           requestAgainHref={
             vm.consultantProfileId
               ? `/explore/experts/${vm.consultantProfileId}`
@@ -1104,4 +1115,16 @@ export function AppointmentDetailClient({
       />
     </DashboardErrorBoundary>
   );
+}
+
+/** #1780 E-5 — the class exit right: a full refund of the remaining sessions. */
+async function exitClassSeries(classId: string, userId: string) {
+  const res = await fetch(
+    `/api/participants/class/${classId}?userId=${encodeURIComponent(userId)}&mode=exit`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? "Could not leave the class");
+  }
 }
