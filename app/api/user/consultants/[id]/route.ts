@@ -1,3 +1,4 @@
+import { dropUnchangedPastWindows } from "@/lib/scheduling/past-windows";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
@@ -457,11 +458,20 @@ export async function PUT(
         ...weeklyRowLocalColumns(row, rowTimezone, utcOffsetMinutes),
       }));
     } else {
-      const customSlotData = (availabilityWindowsCustom ?? []).map((slot) => ({
-        consultantProfileId: id,
-        startsAt: new Date(slot.startsAt),
-        endsAt: new Date(slot.endsAt),
-      }));
+      // #1780 R-2 — an unchanged window that has already ended is dropped,
+      // not refused as PAST; a new past window still is.
+      const existingCustom = await prisma.availabilityWindowCustom.findMany({
+        where: { consultantProfileId: id },
+        select: { startsAt: true, endsAt: true },
+      });
+      const customSlotData = dropUnchangedPastWindows(
+        (availabilityWindowsCustom ?? []).map((slot) => ({
+          consultantProfileId: id,
+          startsAt: new Date(slot.startsAt),
+          endsAt: new Date(slot.endsAt),
+        })),
+        existingCustom,
+      );
       const refusal = validateCustomWindows(customSlotData);
       if (refusal) {
         return NextResponse.json(
