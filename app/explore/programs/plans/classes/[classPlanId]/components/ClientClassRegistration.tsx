@@ -19,6 +19,7 @@ import { isUserEnrolled } from "@/lib/payments/utils/participants";
 import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
 import { getClassCapacity } from "@/lib/events/capacity";
+import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
@@ -200,6 +201,10 @@ export function ClientClassRegistration({
             ? `Class starts on ${formatInTimeZone(new Date(startDate), userTimeZone, "MMMM d, yyyy 'at' h:mm a zzz")}`
             : "Start date to be announced"}
         </p>
+        <FreeCancellationLine
+          startsAt={startDate}
+          windowHours={plan.refundWindowHours}
+        />
       </CardContent>
       <CardFooter>
         <Button

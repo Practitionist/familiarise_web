@@ -40,6 +40,18 @@ interface CancelRefundPreview {
   attendeeCount?: number | null;
 }
 
+/** #1780 — `GET …/cancel/preview?scope=seat`: leaving the viewer's own seat. */
+type SeatLeavePreview =
+  | { seated: false }
+  | {
+      seated: true;
+      refused: boolean;
+      message: string | null;
+      estimatedRefundPaise: number;
+      remainingSessions: number | null;
+      currency: string;
+    };
+
 interface CancelConfirmationDialogProps {
   isOpen: boolean;
   onConfirm: () => void;
@@ -108,6 +120,57 @@ export function CancelConfirmationDialog({
     gcTime: 0,
     retry: false,
   });
+
+  // #1780 D-6 — leaving a seat quotes the seat under the same rule the
+  // DELETE runs: refused inside the window, else what comes back.
+  const seatPreviewEnabled = isOpen && !!appointmentId && isLeave;
+  const { data: seatPreview, isLoading: isSeatPreviewLoading } =
+    useQuery<SeatLeavePreview>({
+      queryKey: ["seat-leave-preview", appointmentId],
+      queryFn: async () => {
+        const response = await fetch(
+          `/api/appointments/${appointmentId}/cancel/preview?scope=seat`,
+          { signal: AbortSignal.timeout(8_000) },
+        );
+        if (!response.ok) throw new Error("Could not estimate the refund");
+        return response.json();
+      },
+      enabled: seatPreviewEnabled,
+      staleTime: 0,
+      gcTime: 0,
+      retry: false,
+    });
+  const seatRefused = !!seatPreview?.seated && seatPreview.refused;
+
+  const renderLeaveLine = () => {
+    if (seatPreview?.seated && seatPreview.refused) {
+      return (
+        <p className="text-red-600 text-sm font-medium">
+          {seatPreview.message}
+        </p>
+      );
+    }
+    if (seatPreview?.seated) {
+      const amount = formatCurrencyAmount(
+        seatPreview.estimatedRefundPaise,
+        seatPreview.currency,
+      );
+      const sessions = seatPreview.remainingSessions;
+      return (
+        <p className="text-muted-foreground text-sm">
+          Leaving now refunds{" "}
+          <strong className="text-foreground">{amount}</strong>
+          {sessions ? ` for the ${sessions} remaining sessions.` : "."}
+        </p>
+      );
+    }
+    return (
+      <p className="text-muted-foreground text-sm">
+        You will be removed from this event. If you paid for a seat, a refund is
+        issued under the event&apos;s cancellation policy.
+      </p>
+    );
+  };
 
   // Flattened from a nested ternary — Sonar flags nested ternaries in JSX;
   // the three outcomes are easier to skim as sequential assignments.
@@ -204,10 +267,7 @@ export function CancelConfirmationDialog({
                 <strong>{consultant}</strong>?
               </p>
               {isLeave ? (
-                <p className="text-muted-foreground text-sm">
-                  You will be removed from this event. If you paid for a seat, a
-                  refund is issued under the event&apos;s cancellation policy.
-                </p>
+                renderLeaveLine()
               ) : isPendingPayment ? (
                 <p className="text-muted-foreground">
                   You haven&apos;t been charged — this releases the approved
@@ -235,7 +295,12 @@ export function CancelConfirmationDialog({
           </AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
-            disabled={isLoading || isPreviewLoading}
+            disabled={
+              isLoading ||
+              isPreviewLoading ||
+              isSeatPreviewLoading ||
+              seatRefused
+            }
             className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
           >
             {isLoading ? (

@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -757,6 +758,12 @@ export default function ClassCheckoutPage({
                 <div>Total</div>
                 <div>{formatPrice(pricing.total)}</div>
               </div>
+              {/* #1780 D-6 — the host's free-cancellation window. */}
+              <FreeCancellationLine
+                startsAt={nextClassSession?.startsAt}
+                windowHours={planDetails?.refundWindowHours}
+                className="text-xs text-muted-foreground"
+              />
               <FxEstimateNote
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
