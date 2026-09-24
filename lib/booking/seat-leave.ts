@@ -39,8 +39,10 @@ import { liveParticipant, releaseParticipant } from "./participants";
 
 export type EventKind = "class" | "webinar";
 
-/** What the refund after the commit should do. */
-export type SeatRefundPlan = { mode: "full" } | { amountPaise: number };
+/** What the refund after the commit should do; `sessions` is what a class seat gives up. */
+export type SeatRefundPlan = ({ mode: "full" } | { amountPaise: number }) & {
+  sessions?: number;
+};
 
 type Seat = {
   id: string;
@@ -194,13 +196,81 @@ export async function planSelfLeave(
     payment.amount,
     now,
   );
+  const sessions = ledger.remaining.length + ledger.neverScheduled;
   if (ledger.deliveredHeld === 0) {
     assertOutsideWindow(ledger.remaining[0], joinedAt, windowHours, now);
-    return { mode: "full" };
+    return { mode: "full", sessions };
   }
   return {
     amountPaise: await classSeatQuote(tx, ledger, payment, joinedAt, now),
+    sessions,
   };
+}
+
+export type SeatLeaveQuote =
+  | { seated: false }
+  | {
+      seated: true;
+      /** The window refuses this leave now (REFUND_WINDOW_CLOSED). */
+      refused: boolean;
+      message: string | null;
+      estimatedRefundPaise: number;
+      /** Class sessions the seat gives up; null for a webinar. */
+      remainingSessions: number | null;
+      currency: string;
+    };
+
+/**
+ * #1780 D-4/D-6 — what leaving this seat right now pays back, for the preview
+ * route and the class detail line. The same rule as the DELETE, read-only.
+ */
+export async function quoteSeatLeave(
+  kind: EventKind,
+  eventId: string,
+  userId: string,
+): Promise<SeatLeaveQuote> {
+  return prisma.$transaction(async (tx) => {
+    const seat = await tx.appointmentParticipant.findFirst({
+      where: {
+        appointment: eventFilter(kind, eventId),
+        ...liveParticipant(userId),
+      },
+      select: {
+        id: true,
+        appointmentId: true,
+        createdAt: true,
+        refundWindowHours: true,
+      },
+    });
+    if (!seat) return { seated: false } as const;
+    const payment = await seatPayment(tx, kind, eventId, userId);
+    const balance = payment
+      ? refundableBalancePaise(Number(payment.amount), payment)
+      : 0;
+    const base = {
+      seated: true as const,
+      currency: "INR",
+      remainingSessions: null as number | null,
+    };
+    try {
+      const plan = await planSelfLeave(tx, kind, eventId, userId, seat);
+      return {
+        ...base,
+        refused: false,
+        message: null,
+        estimatedRefundPaise: "mode" in plan ? balance : plan.amountPaise,
+        remainingSessions: plan.sessions ?? null,
+      };
+    } catch (error) {
+      if (!(error instanceof BookingRuleError)) throw error;
+      return {
+        ...base,
+        refused: true,
+        message: error.message,
+        estimatedRefundPaise: 0,
+      };
+    }
+  });
 }
 
 /**

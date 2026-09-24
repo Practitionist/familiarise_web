@@ -7,6 +7,7 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { quoteSeatLeave } from "@/lib/booking/seat-leave";
 import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -16,6 +17,9 @@ import {
 import prisma from "@/lib/prisma";
 
 /** Every Appointment field the quote reads. */
+// A money read: never cached (repo rule for edited money GETs).
+const NO_STORE = { headers: { "Cache-Control": "no-store" } };
+
 async function loadPreviewAppointment(appointmentId: string) {
   return prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -305,7 +309,7 @@ async function quoteIndividualBooking(
  * charge drift.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
@@ -360,24 +364,40 @@ export async function GET(
       eventId = appointment.classId;
     }
 
+    // #1780 D-4 — `?scope=seat`: what the viewer leaving their own seat pays
+    // back (the class quote or the window rule), not the whole-event cancel.
+    if (
+      eventKind &&
+      eventId &&
+      new URL(request.url).searchParams.get("scope") === "seat"
+    ) {
+      return NextResponse.json(
+        await quoteSeatLeave(eventKind, eventId, session.user.id),
+        NO_STORE,
+      );
+    }
+
     if (eventKind && eventId) {
       const quote = await quoteWholeEventRefund(eventKind, eventId);
-      return NextResponse.json({
-        refundPct: 100,
-        estimatedRefundPaise: quote.estimatedRefundPaise,
-        currency: quote.currency,
-        // The whole-event rail never consults the clock, so no notice window is
-        // computed for it.
-        hoursUntilNextSession: null,
-        prorated: false,
-        // Seats fund through several rails at once (card, org wallet, credits),
-        // so no single funding sentence is true of the aggregate. Null rather
-        // than a rail: the whole-event copy stands on its own and naming one
-        // rail here would be a claim about seats it does not cover.
-        fundingRail: null,
-        wholeEvent: true,
-        attendeeCount: quote.attendeeCount,
-      });
+      return NextResponse.json(
+        {
+          refundPct: 100,
+          estimatedRefundPaise: quote.estimatedRefundPaise,
+          currency: quote.currency,
+          // The whole-event rail never consults the clock, so no notice window is
+          // computed for it.
+          hoursUntilNextSession: null,
+          prorated: false,
+          // Seats fund through several rails at once (card, org wallet, credits),
+          // so no single funding sentence is true of the aggregate. Null rather
+          // than a rail: the whole-event copy stands on its own and naming one
+          // rail here would be a claim about seats it does not cover.
+          fundingRail: null,
+          wholeEvent: true,
+          attendeeCount: quote.attendeeCount,
+        },
+        NO_STORE,
+      );
     }
 
     return NextResponse.json(
@@ -387,6 +407,7 @@ export async function GET(
         roles,
         isPrivilegedUser,
       ),
+      NO_STORE,
     );
   } catch (error) {
     Sentry.captureException(
