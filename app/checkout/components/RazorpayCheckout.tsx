@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import {
   busyRetryToast,
   checkoutNeedsGateway,
@@ -200,13 +201,13 @@ export default function RazorpayCheckout({
         return;
       }
 
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+      const options = buildCheckoutOptions({
+        keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: data.paymentIntent.amount,
         currency: data.paymentIntent.currency,
         name: "Familiarise",
         description: description || "Service Payment",
-        order_id: data.paymentIntent.id,
+        orderId: data.paymentIntent.id,
         handler: async function (response: RazorpayPaymentResponse) {
           // H2 FIX: Verify Razorpay signature server-side before signaling success
           try {
@@ -242,29 +243,26 @@ export default function RazorpayCheckout({
           }
           onPaymentSuccess(response);
         },
-        ...(userName || userEmail || userPhone
-          ? {
-              prefill: {
+        prefill:
+          userName || userEmail || userPhone
+            ? {
                 ...(userName && { name: userName }),
                 ...(userEmail && { email: userEmail }),
                 ...(userPhone && { contact: userPhone }),
-              },
-            }
-          : {}),
+              }
+            : undefined,
         theme: {
           color: "#2563EB", // Familiarise brand blue
         },
-        modal: {
-          ondismiss: () => {
-            setIsProcessing(false);
-            toast({
-              title: "Payment not completed",
-              description:
-                "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
-            });
-          },
+        onDismiss: () => {
+          setIsProcessing(false);
+          toast({
+            title: "Payment not completed",
+            description:
+              "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
+          });
         },
-      };
+      });
 
       const rzp = new window.Razorpay(options);
       rzp.on("payment.failed", function (response: RazorpayFailedResponse) {
