@@ -399,7 +399,7 @@ erDiagram
     OrganizationPayoutAccount {
         string  id                       PK
         string  organizationId           UK
-        string  accountNumberEncrypted   "AES-GCM"
+        string  accountNumberEncrypted   "empty, dropped at #1729"
         string  razorpayFundAccountId
         PayoutAccountStatus status
     }
