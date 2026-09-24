@@ -77,6 +77,7 @@ import { CountdownBadge } from "../CountdownBadge";
 import { KIND_LABEL } from "../AppointmentRow";
 import { RowPrimaryAction } from "../RowPrimaryAction";
 import { SessionTimeline } from "../SessionTimeline";
+import { ClassSessionControls } from "./ClassSessionControls";
 import { RescheduleProposalCard } from "./RescheduleProposalCard";
 import { SupportThreadSheet } from "@/components/support/SupportThreadSheet";
 import { AppointmentSupportStatusCard } from "@/components/support/AppointmentSupportStatusCard";
@@ -868,6 +869,21 @@ export function AppointmentDetailClient({
               </Section>
             )}
 
+            {/* #1780 row 4 — cancel one session, make it up, or skip the make-up. */}
+            {vm.kind === "CLASS" && detail.appointment.class && (
+              <ClassSessionControls
+                appointmentId={appointmentId}
+                sessions={detail.appointment.occurrences}
+                role={role}
+                unitLabel={classUnitLabel(detail.appointment.class.classPlan)}
+                onChanged={() => {
+                  void queryClient.invalidateQueries({
+                    queryKey: ["appointment-detail", appointmentId],
+                  });
+                }}
+              />
+            )}
+
             {role === "consultant" && (
               <Section title="Participants">
                 {participants.length === 0 ? (
@@ -1114,6 +1130,24 @@ export function AppointmentDetailClient({
         seedCategory={help.seed}
       />
     </DashboardErrorBoundary>
+  );
+}
+
+/** #1780 — one session's share of a class seat, for the confirm copy. */
+function classUnitLabel(
+  plan:
+    | {
+        price: number | bigint | string;
+        priceCurrency: string;
+        totalSessions: number;
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!plan || plan.totalSessions <= 0) return null;
+  return formatCurrencyAmount(
+    Math.floor(Number(plan.price) / plan.totalSessions),
+    plan.priceCurrency,
   );
 }
 
