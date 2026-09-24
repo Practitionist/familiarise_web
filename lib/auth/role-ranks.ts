@@ -54,19 +54,15 @@ export function isAtLeastRole(actual: MemberRole, minimum: MemberRole): boolean 
  * reserved for MANAGER and up, where "and up" means MAINTAINER + OWNER
  * but NOT BILLING_ADMIN.
  *
- * Two flavours:
- *
- *   canSeeOperatorSurface(role) → governance/people pages (Members,
- *      Invitations, Learners, Experts, Audit, Settings, etc.). True
- *      for OWNER / MAINTAINER / MANAGER / SUPPORT; **false for
- *      BILLING_ADMIN** because that role is finance-only.
+ * Single flavour (the governance/people-pages helper was dead code with
+ * zero callers and has been removed):
  *
  *   canSeeFinanceSurface(role) → invoices, POs, payouts, rate cards,
  *      wallet, webhooks, data exports. True for OWNER, MAINTAINER,
  *      BILLING_ADMIN, MANAGER (read-only). MANAGER is included for
  *      visibility — the route gates still refuse mutations.
  *
- * Why these are not implicit-cast `isAtLeastRole` calls: rank order is
+ * Why this is not an implicit-cast `isAtLeastRole` call: rank order is
  * a partial order on capability, not navigation. Sidebar logic needs
  * the explicit disjunction so any future role insertion doesn't
  * accidentally widen the wrong surface.
@@ -75,23 +71,12 @@ export function isAtLeastRole(actual: MemberRole, minimum: MemberRole): boolean 
 // string array would widen to `string[]`, which can't be passed to
 // `Set<MemberRole>` without losing the narrow type. Annotating the
 // array (rather than the Set) keeps the source readable.
-const OPERATOR_ROLES: ReadonlySet<MemberRole> = new Set<MemberRole>([
-  "OWNER",
-  "MAINTAINER",
-  "MANAGER",
-  "SUPPORT",
-]);
-
 const FINANCE_ROLES: ReadonlySet<MemberRole> = new Set<MemberRole>([
   "OWNER",
   "MAINTAINER",
   "BILLING_ADMIN",
   "MANAGER",
 ]);
-
-export function canSeeOperatorSurface(role: MemberRole): boolean {
-  return OPERATOR_ROLES.has(role);
-}
 
 export function canSeeFinanceSurface(role: MemberRole): boolean {
   return FINANCE_ROLES.has(role);

@@ -42,6 +42,7 @@ import { cn } from "@/utils/tailwind";
 import { useState } from "react";
 
 import { KIND_LABEL, NEXT_CYCLE_BADGE, nextCycleLine } from "./labels";
+import { FREE_TRIAL_LABEL } from "@/lib/appointments/trial-labels";
 import { requestCountLine } from "./request-count-line";
 
 /** What one row can do; the inbox owns the handlers. */
@@ -201,12 +202,13 @@ export function moneyLine(
 ): string {
   if (moneyState.detail) return moneyState.detail;
   if (moneyState.state === "FREE") {
-    return row.kind === "trial" ? "Free trial" : moneyState.line;
+    return row.kind === "trial" ? FREE_TRIAL_LABEL : moneyState.line;
   }
   if (moneyState.state === "NOT_DUE" && row.amountPaise !== null) {
     return `${formatCurrencyAmount(row.amountPaise, row.currency)} · ${moneyState.line}`;
   }
-  if (row.kind === "trial" && row.amountPaise === null) return "Free trial";
+  if (row.kind === "trial" && row.amountPaise === null)
+    return FREE_TRIAL_LABEL;
   return moneyState.line;
 }
 

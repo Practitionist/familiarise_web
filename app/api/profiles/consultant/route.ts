@@ -5,6 +5,7 @@ import {
   consultantPublicScalars,
   consultantPublicApiSchema,
 } from "@/lib/data/consultant-public";
+import { userIdQuerySchema } from "@/schemas/user";
 
 /**
  * GET /api/profiles/consultant
@@ -17,16 +18,14 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const userId = searchParams.get("userId");
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "userId is required" },
-        { status: 400 },
-      );
+    const parsedUserId = userIdQuerySchema.safeParse({ userId });
+    if (!parsedUserId.success) {
+      return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
     }
 
     const consultantProfile = await prisma.consultantProfile.findFirst({
       // Public endpoint — gate to verified, non-deleted profiles (#946)
-      where: { userId, verificationStatus: "VERIFIED", deletedAt: null },
+      where: { userId: parsedUserId.data.userId, verificationStatus: "VERIFIED", deletedAt: null },
       select: {
         ...consultantPublicScalars,
         user: {

@@ -1,4 +1,4 @@
-import { useTimezone } from "@/app/explore/experts/[consultantId]/hooks/useTimezone";
+import { useTimezone } from "@/hooks/useTimezone";
 import { scrollToFirstErrorSoon } from "@/lib/forms/scroll-to-first-error";
 import { FieldError } from "@/components/ui/field-error";
 import { TrashIcon } from "@/assets/icons";

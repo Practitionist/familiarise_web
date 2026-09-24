@@ -28,7 +28,7 @@ export async function canViewPlanDetail(
   const resolvedSession =
     session !== undefined
       ? session
-      : await getSession().catch((error) => {
+      : await getSession(true).catch((error) => {
           reportSentryError(error, { subsystem: "plans", expected: true });
           return null;
         });

@@ -1,7 +1,16 @@
 import "server-only";
 import * as Sentry from "@sentry/nextjs";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FileObject, SearchOptions } from "@supabase/storage-js"; // Import FileObject type
+
+// Storage wire types derived from the supabase-js client surface (do NOT
+// reintroduce `@supabase/storage-js`: supabase-js does not re-export
+// FileObject/SearchOptions, and the direct dep only risks version skew).
+type StorageFileApi = ReturnType<SupabaseClient["storage"]["from"]>;
+type StorageListResult = Awaited<ReturnType<StorageFileApi["list"]>>;
+type StorageFileObject = NonNullable<
+  Extract<StorageListResult, { error: null }>["data"]
+>[number];
+type StorageSearchOptions = NonNullable<Parameters<StorageFileApi["list"]>[1]>;
 
 // Define types for image transformation and the enhanced file object
 interface TransformOptions {
@@ -12,7 +21,7 @@ interface TransformOptions {
   // format is not a direct option here; Supabase handles it via accept headers or URL extension
 }
 
-export interface SupabaseImageFile extends FileObject {
+export interface SupabaseImageFile extends StorageFileObject {
   url: string; // Original public URL
   transformedUrl: string; // Transformed URL (will be same as url if no transformOptions)
 }
@@ -59,8 +68,11 @@ import {
 // ---------------------------------------------------------------------------
 
 // List files in a folder (thin wrapper; default opts == omit).
-const listAssets = (bucket: string, folder: string, opts?: SearchOptions) =>
-  supabase.storage.from(bucket).list(folder, opts);
+const listAssets = (
+  bucket: string,
+  folder: string,
+  opts?: StorageSearchOptions,
+) => supabase.storage.from(bucket).list(folder, opts);
 
 // Public CDN URL for an object, optionally transformed.
 const getPublicAssetUrl = (

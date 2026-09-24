@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSession } from "@/lib/auth-server";
+import type { Session } from "@/lib/auth";
 import * as Sentry from "@sentry/nextjs";
 // ============================================================================
 // Validation Schemas
@@ -43,33 +44,47 @@ const submitEvidenceSchema = z.object({
 // GET /api/payments/disputes - List Disputes
 // ============================================================================
 
-export async function GET(req: NextRequest) {
-  try {
-    // Authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+// Shared disputes.manage gate for GET + POST (were 26 identical lines in
+// each handler). Neither handler needs the db user row past the gate.
+async function requireDisputesManager(): Promise<
+  { session: Session; error?: never } | { session?: never; error: NextResponse }
+> {
+  // Authentication
+  const session = await getSession(true);
+  if (!session?.user) {
+    return {
+      error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }),
+    };
+  }
 
-    // Admin/Staff check
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
+  // Admin/Staff check
+  const user = await prisma.user.findUnique({
+    where: { id: session.user.id },
+  });
 
-    // Submitting evidence pushes an irreversible decision to the payment
-    // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
-    // that staff hold. The dashboard already told staff this
-    // ("As a staff member… you cannot submit evidence") and hid the button;
-    // the route contradicted its own UI and accepted the call anyway.
-    if (
-      !user?.role ||
-      !hasBackofficePermission(user.role, "disputes.manage")
-    ) {
-      return NextResponse.json(
+  // Submitting evidence pushes an irreversible decision to the payment
+  // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
+  // that staff hold. The dashboard already told staff this
+  // ("As a staff member… you cannot submit evidence") and hid the button;
+  // the route contradicted its own UI and accepted the call anyway.
+  if (
+    !user?.role ||
+    !hasBackofficePermission(user.role, "disputes.manage")
+  ) {
+    return {
+      error: NextResponse.json(
         { error: "Forbidden - Admin access required" },
         { status: 403 },
-      );
-    }
+      ),
+    };
+  }
+  return { session };
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const { error: authError } = await requireDisputesManager();
+    if (authError) return authError;
 
     // Parse query params
     const searchParams = req.nextUrl.searchParams;
@@ -152,31 +167,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    // Authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    // Admin/Staff check
-    const user = await prisma.user.findUnique({
-      where: { id: session.user.id },
-    });
-
-    // Submitting evidence pushes an irreversible decision to the payment
-    // gateway, so it is `disputes.manage` (ADMIN) — not the `disputes.read`
-    // that staff hold. The dashboard already told staff this
-    // ("As a staff member… you cannot submit evidence") and hid the button;
-    // the route contradicted its own UI and accepted the call anyway.
-    if (
-      !user?.role ||
-      !hasBackofficePermission(user.role, "disputes.manage")
-    ) {
-      return NextResponse.json(
-        { error: "Forbidden - Admin access required" },
-        { status: 403 },
-      );
-    }
+    const { session, error: authError } = await requireDisputesManager();
+    if (authError) return authError;
 
     // #677/PM-36 — evidence submission is an irreversible gateway push.
     const limited = await applyRateLimit(

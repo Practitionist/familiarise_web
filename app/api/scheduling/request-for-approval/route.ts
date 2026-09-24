@@ -36,7 +36,7 @@ import { getSession } from "@/lib/auth-server";
 import * as Sentry from "@sentry/nextjs";
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
 
     if (!session?.user?.id) {
       return NextResponse.json(

@@ -10,7 +10,7 @@
  *
  * Usage:
  * - npm run scripts:test-race-fix
- * - npx ts-node scripts/test-race-condition-fix.ts
+ * - npx tsx tests/typescript/test-race-condition-fix.ts
  */
 
 import {

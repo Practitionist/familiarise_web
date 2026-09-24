@@ -29,7 +29,7 @@ import { ExpertPricing } from "./components/ExpertPricing";
 import { ProfileHeader } from "./components/ProfileHeader";
 import { ReviewsSection } from "./components/ReviewsSection";
 import { ProfileReviewComposer } from "@/components/reviews/ProfileReviewComposer";
-import { useTimezone } from "./hooks/useTimezone";
+import { useTimezone } from "@/hooks/useTimezone";
 import {
   useAvailabilityMonth,
   useAvailabilityWindow,

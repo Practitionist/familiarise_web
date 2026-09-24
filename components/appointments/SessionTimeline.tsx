@@ -12,6 +12,7 @@ import {
   meetingClosedAt,
 } from "@/lib/appointments/occurrences";
 import type { OccurrenceVM } from "@/lib/appointments/view-model";
+import { TRIAL_STATUS_BADGE } from "@/lib/labels/session-labels";
 import { CountdownBadge } from "./CountdownBadge";
 import { HeldSlotBadge } from "./HeldSlotBadge";
 
@@ -285,7 +286,7 @@ export function SessionTimeline({
               </button>
             ) : (
               <span className="text-[10px] font-medium uppercase text-muted-foreground/70">
-                Awaiting payment
+                {TRIAL_STATUS_BADGE.AWAITING_PAYMENT.label}
               </span>
             )}
           </div>

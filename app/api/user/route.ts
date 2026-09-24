@@ -6,7 +6,7 @@ import { UserRole } from "@prisma/client";
 import { getSession } from "@/lib/auth-server";
 export async function GET(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session || session.user.role !== "ADMIN") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

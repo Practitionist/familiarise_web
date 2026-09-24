@@ -194,7 +194,7 @@ export async function handleGetMaterials(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -256,7 +256,7 @@ export async function handleUploadMaterial(
   config: PlanMaterialsConfig,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -374,7 +374,7 @@ export async function handleDeleteMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {
@@ -439,7 +439,7 @@ export async function handleUpdateMaterial(
   materialId: string,
 ): Promise<NextResponse> {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         {

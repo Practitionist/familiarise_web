@@ -28,7 +28,7 @@ const BulkReviewSchema = z.object({
 
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required", code: "UNAUTHORIZED" },

@@ -18,7 +18,7 @@ import {
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { addMonthsSafely } from "@/utils/dateUtils";
+import { addMonths } from "date-fns";
 import { findOrCreateTopics, transformNestedPlanTopics } from "@/lib/topics";
 import { checkConsultantVerification } from "@/lib/verification";
 import { countWebinarParticipants } from "@/lib/payments/utils/participants";
@@ -103,7 +103,7 @@ const PatchClassWithPlanBodySchema =
 export async function POST(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },
@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
       end = new Date(start);
       // Ensure durationInMonths is valid before using
       if (typeof durationInMonths === "number" && durationInMonths > 0) {
-        end = addMonthsSafely(start, durationInMonths);
+        end = addMonths(start, durationInMonths);
       } else {
         // Handle invalid durationInMonths if necessary, maybe throw error or default
         console.warn("Invalid durationInMonths provided:", durationInMonths);
@@ -432,7 +432,7 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     // Authentication check
-    const session = await getSession();
+    const session = await getSession(true);
     if (!session?.user?.id) {
       return NextResponse.json(
         { error: "Authentication required" },

@@ -5,8 +5,11 @@ import {
 } from "@tanstack/react-query";
 import AdminHomePageClient from "./AdminHomePageClient";
 import { getAdminStats } from "@/lib/data/admin-stats";
+import { requireBackofficePage } from "@/lib/auth-guard";
 
 export default async function AdminHomePage() {
+  // Page-level back-office gate (C5): sidebar hiding is not access control.
+  await requireBackofficePage("users.read");
   const queryClient = new QueryClient();
 
   // #890 — SSR prefetch the admin stats so the client useQuery hydrates

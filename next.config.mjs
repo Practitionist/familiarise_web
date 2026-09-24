@@ -205,10 +205,8 @@ const nextConfig = {
       "framer-motion",
       "@stream-io/video-react-sdk",
       "stream-chat-react",
-      "@radix-ui/react-icons",
       // Imported by components/notifications/NotificationInbox.tsx and not in
       // the default list.
-      "@novu/react",
       "@novu/nextjs",
     ],
     // Next 15 defaults page segments to 0, which refetches RSC on every nav; this lets the client router cache hold payloads ~30s between navs.
@@ -275,15 +273,14 @@ const nextConfig = {
   // Prevent pg (node-postgres) and related packages from being bundled into client-side code
   // These are server-only dependencies used by @prisma/adapter-pg.
   //
-  // `@react-pdf/renderer` is also in Next's own built-in external list, so
-  // listing it here changes nothing — it is external either way, and that is
-  // what forces lib/pdf to resolve its JSX runtime past the bundler (#1468).
+  // NOTE: `@react-pdf/renderer` is intentionally NOT listed here — it is
+  // already in Next's own built-in external list, so listing it was a no-op
+  // (lib/pdf keeps resolving its JSX runtime past the bundler, #1468).
   serverExternalPackages: [
     "pg",
     "@prisma/adapter-pg",
     "pg-pool",
     "pg-connection-string",
-    "@react-pdf/renderer",
     "razorpay",
     "stripe",
     "resend",

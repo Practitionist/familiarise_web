@@ -4,12 +4,13 @@ import * as Sentry from "@sentry/nextjs";
 import React from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
-import { ChevronLeftIcon, ChevronRightIcon } from "@radix-ui/react-icons";
 import {
   MessageSquare,
   CalendarRange,
   Video,
   GraduationCap,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/utils/tailwind";
 import {
@@ -389,7 +390,7 @@ export function EventCarousel({
             disabled={currentPage === 1}
             className="h-8 w-8 sm:h-9 sm:w-9"
           >
-            <ChevronLeftIcon className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4" />
           </Button>
           <span className="text-xs sm:text-sm text-zinc-600">
             Page {currentPage} of {totalPages}
@@ -401,7 +402,7 @@ export function EventCarousel({
             disabled={currentPage === totalPages}
             className="h-8 w-8 sm:h-9 sm:w-9"
           >
-            <ChevronRightIcon className="h-4 w-4" />
+            <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
       )}
