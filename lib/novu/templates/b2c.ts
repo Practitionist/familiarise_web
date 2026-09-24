@@ -99,6 +99,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    // #1778 — notify-only: nothing is reserved, first to book wins.
+    workflowId: W.WINDOW_OPENED,
+    name: "Window opened",
+    description: "A learner who asked to hear when a held 1:1 time frees up.",
+    category: "appointments",
+    inApp: {
+      subject: "A time you wanted just opened",
+      body: "{{payload.windowText}} with {{payload.consultantName}} is free again — first to book gets it.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
     description:

@@ -21,6 +21,7 @@ import AppointmentRescheduledEmail, {
 import AppointmentReminderEmail from "@/emails/booking/AppointmentReminderEmail";
 import NewBookingRequestEmail from "@/emails/booking/NewBookingRequestEmail";
 import TrialScheduledEmail from "@/emails/booking/TrialScheduledEmail";
+import WindowOpenedEmail from "@/emails/booking/WindowOpenedEmail";
 import { SENDERS } from "../config";
 import { loadEmailRecipients, type EmailRecipient } from "../preferences";
 import {
@@ -493,4 +494,45 @@ export function sendTrialScheduledEmail(
     [args.consulteeUserId, args.consultantUserId],
     budgetMs,
   );
+}
+
+// ── Window opened (#1778) ───────────────────────────────────────────────────
+
+export const WINDOW_OPENED_EMAIL_TYPE = "WINDOW_OPENED";
+
+/**
+ * #1778 — a held window a learner asked about has freed. Staged through `tx`
+ * with the bell; the caller runs `attemptStaged()` after the commit.
+ */
+export async function stageWindowOpenedEmail(
+  tx: Tx,
+  args: {
+    interestId: string;
+    userId: string;
+    consultantName: string;
+    windowStart: Date;
+    bookUrl: string;
+  },
+): Promise<StagedRecipientEmail[]> {
+  const recipients = await loadEmailRecipients(
+    [args.userId],
+    "appointments",
+    tx,
+  );
+  return stageToRecipients({
+    tx,
+    recipients,
+    emailType: WINDOW_OPENED_EMAIL_TYPE,
+    from: SENDERS.notifications,
+    entityRef: `window-opened:${args.interestId}`,
+    subject: () => `A time with ${args.consultantName} just opened`,
+    render: (r) =>
+      React.createElement(WindowOpenedEmail, {
+        recipientName: greet(r),
+        consultantName: args.consultantName,
+        windowText: whenText(args.windowStart, r.zone),
+        bookUrl: absolute(args.bookUrl),
+        unsubscribeUrl: r.unsubscribeUrl,
+      }),
+  });
 }

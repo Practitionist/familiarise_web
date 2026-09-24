@@ -22,6 +22,8 @@ export const NOVU_WORKFLOWS = {
   CLASS_MAKEUP_SCHEDULED: "class-makeup-scheduled",
   CLASS_SESSION_REFUNDED: "class-session-refunded",
   CLASS_EXIT_AVAILABLE: "class-exit-available",
+  // #1778 — a held 1:1 window a learner asked about has freed.
+  WINDOW_OPENED: "window-opened",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
   APPOINTMENT_COMPLETED: "appointment-completed",
