@@ -22,6 +22,7 @@ import {
   AppointmentStatus,
   PaymentStatus,
   OccurrenceCompletionStatus,
+  Prisma,
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -88,6 +89,67 @@ const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 const MAX_REQUESTS_PER_RUN = 500;
 // Slot rows released per run by the stale-RESCHEDULED pass; the next run continues.
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
+
+/**
+ * #1775 C-3 — a paid plan's consultant has 48 h from the capture to allocate
+ * cycle 1, or the buyer is refunded in full. Pre-`capturedAt` rows use createdAt.
+ */
+export const PAID_UNALLOCATED_HOURS = 48;
+
+// A full-subscription reschedule re-enters PENDING, and its open proposal must
+// resolve through the reschedule machine, not be swept out from under it.
+// Rides the CAS WHERE as well as the cohort read (#1554: one wrapper or none).
+// Built per call: the status list is read at run time, not at import.
+function noLiveProposal() {
+  return {
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          rescheduleRequests: {
+            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+          },
+        },
+      },
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+// Zero live confirmed sessions on the booking; re-stated in every CAS WHERE so
+// a session allocated between the read and the write leaves the cohort (#1423).
+const NO_LIVE_SESSION = {
+  NOT: {
+    appointment: {
+      occurrences: { some: { isTentative: false, deletedAt: null } },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
+/** A SUCCEEDED payment on the wrapper, captured before `cutoff` (#1775 C-3). */
+function paidCapturedBefore(cutoff: Date): Prisma.SubscriptionWhereInput {
+  return {
+    appointment: {
+      payment: {
+        some: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          deletedAt: null,
+          OR: [
+            { capturedAt: { lt: cutoff } },
+            { capturedAt: null, createdAt: { lt: cutoff } },
+          ],
+        },
+      },
+    },
+  };
+}
+
+const HAS_SUCCEEDED_PAYMENT = {
+  appointment: {
+    payment: {
+      some: { paymentStatus: PaymentStatus.SUCCEEDED, deletedAt: null },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
 
 export interface ExpireStaleRequestsResult {
   success: boolean;
@@ -317,32 +379,15 @@ async function expirePendingSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Same live-proposal exclusion as consultations: a full-subscription
-  // reschedule re-enters PENDING, and its open proposal must resolve through
-  // the reschedule machine (accept/decline/withdraw/expire), not be swept out
-  // from under it. Hoisted because the condition has to hold at WRITE time,
-  // so it rides the CAS WHERE below as well as the cohort read.
-  // #1554 — one wrapper (or none yet): no open reschedule hangs off it.
-  const NO_LIVE_PROPOSAL = {
-    OR: [
-      { appointment: null },
-      {
-        appointment: {
-          rescheduleRequests: {
-            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-          },
-        },
-      },
-    ],
-  };
-
   try {
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
-        ...NO_LIVE_PROPOSAL,
+        ...noLiveProposal(),
+        // #1775 C-3 — a paid PENDING plan belongs to the 48 h arm.
+        NOT: HAS_SUCCEEDED_PAYMENT,
       },
       include: {
         requestedBy: {
@@ -399,7 +444,8 @@ async function expirePendingSubscriptions(): Promise<{
             where: {
               id: subscription.id,
               requestedAt: { lt: expirationDate },
-              ...NO_LIVE_PROPOSAL,
+              ...noLiveProposal(),
+              NOT: HAS_SUCCEEDED_PAYMENT,
             },
             to: AppointmentStatus.EXPIRED,
             // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
@@ -581,19 +627,6 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Zero live confirmed sessions anywhere on the booking. Hoisted so the CAS
-  // WHERE below re-states it: a session allocated between the read and the
-  // write must take its subscription out of this cohort (#1423).
-  const NO_LIVE_SESSION = {
-    NOT: {
-      appointment: {
-        occurrences: {
-          some: { isTentative: false, deletedAt: null },
-        },
-      },
-    },
-  };
-
   try {
     const stale = await prisma.subscription.findMany({
       where: {
@@ -676,6 +709,70 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     };
   } catch (error) {
     const msg = `Failed to expire APPROVED-unallocated subscriptions: ${error}`;
+    console.error(`❌ ${msg}`);
+    errors.push(msg);
+    return { expired: 0, issued: 0, failures: 0, errors };
+  }
+}
+
+/**
+ * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
+ * ago) with no live session and no live proposal expires with reason
+ * UNALLOCATED_48H and is refunded in full through the front door. Failure
+ * matrix: allocation first → the cohort CAS matches 0 rows; sweep first → the
+ * allocation's PENDING→APPROVED CAS rolls back (409 to the consultant).
+ */
+async function expireUnallocatedPaidSubscriptions(): Promise<{
+  expired: number;
+  issued: number;
+  failures: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
+  const cohort = {
+    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
+  } satisfies Prisma.SubscriptionWhereInput;
+  try {
+    const stale = await prisma.subscription.findMany({
+      where: { status: AppointmentStatus.PENDING, ...cohort },
+      select: {
+        ...EXPIRY_NOTICE_SELECT,
+        subscriptionPlan: EXPIRY_NOTICE_PLAN_SELECT,
+      },
+      orderBy: { requestedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
+    });
+    warnIfCapped("subscription", stale.length);
+
+    const expiredIds: string[] = [];
+    for (const subscription of stale) {
+      try {
+        await prisma.$transaction((tx) =>
+          transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id, ...cohort },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.PENDING],
+            actorUserId: null,
+            reason: "UNALLOCATED_48H",
+          }),
+        );
+        expiredIds.push(subscription.id);
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+      }
+    }
+
+    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    errors.push(...refunds.failureMsgs);
+    return {
+      expired: expiredIds.length,
+      issued: refunds.issued,
+      failures: refunds.failures,
+      errors,
+    };
+  } catch (error) {
+    const msg = `Failed to expire unallocated paid subscriptions: ${error}`;
     console.error(`❌ ${msg}`);
     errors.push(msg);
     return { expired: 0, issued: 0, failures: 0, errors };
@@ -1085,6 +1182,10 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
   allErrors.push(...approvedUnallocated.errors);
 
+  // #1775 C-3 — paid plans the consultant never allocated within 48 h.
+  const paidUnallocated = await expireUnallocatedPaidSubscriptions();
+  allErrors.push(...paidUnallocated.errors);
+
   // #1703 — nudge the consultant before that 30-day refund ever fires.
   const nudges = await nudgeUnscheduledSubscriptions();
   allErrors.push(...nudges.errors);
@@ -1121,9 +1222,12 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   console.log(
     `   APPROVED-unallocated expired: ${approvedUnallocated.expired}`,
   );
+  console.log(
+    `   Paid plans unallocated >${PAID_UNALLOCATED_HOURS}h expired: ${paidUnallocated.expired}`,
+  );
   console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
   console.log(
-    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures}`,
+    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
   );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
@@ -1140,18 +1244,22 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
     // unconditionally and its `count` was reported as the whole total, so the
     // summary never matched what the run actually expired.
     subscriptionsExpired:
-      subscriptionResult.expired + approvedUnallocated.expired,
+      subscriptionResult.expired +
+      approvedUnallocated.expired +
+      paidUnallocated.expired,
     subscriptionNudgesSent: nudges.nudged,
     paymentPendingExpired: totalPaymentPending,
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:
       consultationResult.issued +
       subscriptionResult.issued +
-      approvedUnallocated.issued,
+      approvedUnallocated.issued +
+      paidUnallocated.issued,
     refundFailures:
       consultationResult.failures +
       subscriptionResult.failures +
-      approvedUnallocated.failures,
+      approvedUnallocated.failures +
+      paidUnallocated.failures,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };
