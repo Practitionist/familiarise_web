@@ -7,6 +7,9 @@
  * options they always did.
  */
 
+/** #1780 row 1 — the smallest total the "pay in instalments" line is shown for (₹3,000). */
+export const EMI_MIN_PAISE = 300000;
+
 export interface RazorpayCheckoutResponse {
   razorpay_payment_id: string;
   razorpay_order_id: string;

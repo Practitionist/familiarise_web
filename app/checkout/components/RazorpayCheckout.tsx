@@ -7,6 +7,7 @@ import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
 import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import { useCheckoutFlags } from "./CheckoutFlags";
 import {
   busyRetryToast,
   checkoutNeedsGateway,
@@ -104,6 +105,7 @@ export default function RazorpayCheckout({
   onBeforeCheckout,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
+  const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
   // #828 — stable per-mount; the server dedupes retries on this key.
   // useState's lazy initializer runs once, unlike a useRef(arg) expression
@@ -210,6 +212,8 @@ export default function RazorpayCheckout({
         orderId: data.paymentIntent.id,
         // #1771 row 1 — the server echoes a Customer only while saved cards are on.
         customerId: data.paymentIntent.customerId,
+        // #1780 row 1 — ENABLE_CHECKOUT_EMI off hides Razorpay's EMI block.
+        hideEmi: !emiEnabled,
         handler: async function (response: RazorpayPaymentResponse) {
           // H2 FIX: Verify Razorpay signature server-side before signaling success
           try {

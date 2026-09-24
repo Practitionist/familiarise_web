@@ -200,3 +200,15 @@ export const ENABLE_DUNNING_SUSPEND =
  * Checkout sheet carries a `customer_id`.
  */
 export const ENABLE_SAVED_CARDS = process.env.ENABLE_SAVED_CARDS === "true";
+
+/**
+ * Bank EMI at checkout (#1780 row 1). EMI is enabled account-wide by Razorpay,
+ * and the merchant receives the full amount while the buyer's bank carries the
+ * instalments, so `Payment.amount` is unchanged either way.
+ *
+ * When OFF (the default), the four plan checkouts hide Razorpay's EMI block.
+ * When ON, the block shows and the order summary adds "or pay in instalments
+ * with your bank" under a total of at least `EMI_MIN_PAISE`. Server-only: the
+ * checkout layout passes it to the client through `CheckoutFlagsProvider`.
+ */
+export const ENABLE_CHECKOUT_EMI = process.env.ENABLE_CHECKOUT_EMI === "true";
