@@ -2878,6 +2878,11 @@ export async function handleWebinarCheckout(
       [{ userId, role: "CONSULTEE" }],
       { status: _skipPayment ? "CONFIRMED" : "HELD" },
     );
+    // #1780 row 2 — the seat keeps the refund window it was sold under.
+    await tx.appointmentParticipant.updateMany({
+      where: { appointmentId: appointment.id, userId },
+      data: { refundWindowHours: plan.refundWindowHours },
+    });
   }
 
   return { appointment, plan, amount: plan.price };
@@ -2975,6 +2980,11 @@ export async function handleClassCheckout(
   // the seat is one participant row on the wrapper (#1554), never new rows.
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
+  });
+  // #1780 row 2 — the seat keeps the refund window it was sold under.
+  await tx.appointmentParticipant.updateMany({
+    where: { appointmentId: wrapper.id, userId },
+    data: { refundWindowHours: plan.refundWindowHours },
   });
 
   return {

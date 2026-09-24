@@ -54,6 +54,22 @@ export const PLATFORM_DEFAULT_TERMS: CancellationPolicyTerms = {
   consultantInitiatedPct: 100,
 };
 
+/**
+ * #1780 row 2 — a webinar or class seat cancelled at least this many hours
+ * before the start refunds in full; inside it the seat is refused. The host
+ * sets 24–168 h on the plan; null means this default.
+ */
+export const EVENT_REFUND_WINDOW_HOURS_DEFAULT = 24;
+export const EVENT_REFUND_WINDOW_HOURS_MAX = 168;
+
+/** The seat's own snapshot, else the plan's value, else the default. */
+export function eventRefundWindowHours(
+  seatSnapshot: number | null | undefined,
+  planValue: number | null | undefined,
+): number {
+  return seatSnapshot ?? planValue ?? EVENT_REFUND_WINDOW_HOURS_DEFAULT;
+}
+
 /** A version may not carry more rungs than this — see `validateTierLadder`. */
 export const MAX_POLICY_TIERS = 6;
 
