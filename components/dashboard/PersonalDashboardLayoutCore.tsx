@@ -53,7 +53,7 @@ export interface PersonalDashboardExtras {
 export interface PersonalDashboardExtrasCtx<P> {
   profile: P | null | undefined;
   userDetails: PersonalDashboardUser | null | undefined;
-  userId: string | null;
+  userId: string | null | undefined;
   routeParam: string;
   basePath: string;
   pathname: string;
