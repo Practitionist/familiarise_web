@@ -1,0 +1,47 @@
+# Knip drift guard — REPORT-ONLY (warn phase, #1808).
+#
+# Runs Knip in non-blocking mode so unused files/exports/dependencies are
+# visible as PR annotations without failing the build. Work the report
+# top-down (files → exports → dependencies) and re-run after each deletion.
+# Graduation path: remove `continue-on-error` + `--no-exit-code` and enforce
+# `--max-issues 0` with an allowlist once the baseline is triaged.
+
+name: Knip (report-only)
+
+on:
+  pull_request:
+    branches: [dev, staging, prod, "feat/**"]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  knip:
+    name: Knip drift report
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Restore Knip cache
+        uses: actions/cache@v4
+        with:
+          path: ./node_modules/.cache/knip
+          key: knip-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            knip-${{ runner.os }}-
+
+      - name: Knip report (non-blocking)
+        id: knip
+        continue-on-error: true
+        run: npm run knip -- --reporter github-actions

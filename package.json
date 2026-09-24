@@ -35,6 +35,7 @@
     "format:write": "prettier --write .",
     "lint": "eslint .",
     "lint:fix": "eslint --fix .",
+    "knip": "npx --yes knip@5 --no-exit-code",
     "postinstall": "prisma generate",
     "scripts:analyze": "npm run build:analyze && ts-node -P tsconfig.scripts.json scripts/analyze-bundle.ts",
     "scripts:cleanup-empty-folders": "npx tsx scripts/utils/cleanup-empty-folders.ts",
