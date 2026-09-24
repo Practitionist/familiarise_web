@@ -8,6 +8,10 @@
 
 name: Knip (report-only)
 
+concurrency:
+  group: knip-${{ github.ref }}
+  cancel-in-progress: true
+
 # Read-only drift report: no writes, so least-privilege token + no persisted
 # credentials for dependency lifecycle scripts to read.
 permissions:
