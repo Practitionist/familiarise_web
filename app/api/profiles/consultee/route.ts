@@ -14,22 +14,13 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const userId = searchParams.get("userId");
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: "userId is required" },
-        { status: 400 },
-      );
-    }
-
-    if (!userIdQuerySchema.safeParse({ userId }).success) {
-      return NextResponse.json(
-        { error: "Invalid userId" },
-        { status: 400 },
-      );
+    const parsedUserId = userIdQuerySchema.safeParse({ userId });
+    if (!parsedUserId.success) {
+      return NextResponse.json({ error: "Invalid userId" }, { status: 400 });
     }
 
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
-      where: { userId },
+      where: { userId: parsedUserId.data.userId },
       include: {
         user: {
           select: {

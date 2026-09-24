@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
+import { parseRequestBody } from "@/lib/api/parse";
 import { payoutAccountPatchSchema } from "@/schemas/payouts";
 import {
   getRazorpayPayoutsService,
@@ -91,14 +92,11 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
-    const patch = payoutAccountPatchSchema.safeParse(await req.json());
-    if (!patch.success) {
-      return NextResponse.json(
-        { error: "Invalid request body", issues: patch.error.issues },
-        { status: 400 },
-      );
-    }
-    const body = patch.data;
+    const { data: body, error } = parseRequestBody(
+      payoutAccountPatchSchema,
+      await req.json(),
+    );
+    if (error) return error;
 
     // Get consultant profile
     const consultantProfile = await prisma.consultantProfile.findUnique({

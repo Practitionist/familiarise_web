@@ -22,6 +22,7 @@ import {
   requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
+import { parseRequestBody } from "@/lib/api/parse";
 import {
   adminPayoutBatchSchema,
   adminPayoutsQuerySchema,
@@ -37,26 +38,25 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(req.url);
-    const parsedQuery = adminPayoutsQuerySchema.safeParse({
-      status: searchParams.get("status"),
-      search: searchParams.get("search"),
-      // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
-      orgId: searchParams.get("orgId"),
-      limit: searchParams.get("limit") ?? undefined,
-      offset: searchParams.get("offset") ?? undefined,
-    });
-    if (!parsedQuery.success) {
-      return NextResponse.json(
-        { error: "Invalid query parameters", issues: parsedQuery.error.issues },
-        { status: 400 },
-      );
-    }
+    const { data: query, error: queryError } = parseRequestBody(
+      adminPayoutsQuerySchema,
+      {
+        status: searchParams.get("status"),
+        search: searchParams.get("search"),
+        // #674 comment 7 — org-scope filter via earnings.payment.organizationId.
+        orgId: searchParams.get("orgId"),
+        limit: searchParams.get("limit") ?? undefined,
+        offset: searchParams.get("offset") ?? undefined,
+      },
+      "Invalid query parameters",
+    );
+    if (queryError) return queryError;
     const result = await getOperatorPayouts({
-      status: parsedQuery.data.status as PayoutStatus | null,
-      search: parsedQuery.data.search,
-      orgId: parsedQuery.data.orgId,
-      limit: parsedQuery.data.limit,
-      offset: parsedQuery.data.offset,
+      status: query.status as PayoutStatus | null,
+      search: query.search,
+      orgId: query.orgId,
+      limit: query.limit,
+      offset: query.offset,
     });
 
     return NextResponse.json(result);
@@ -82,15 +82,12 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const body = await req.json();
-    const parsed = adminPayoutBatchSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Invalid batch request", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
-    const { consultantProfileIds } = parsed.data;
+    const { data, error } = parseRequestBody(
+      adminPayoutBatchSchema,
+      await req.json(),
+    );
+    if (error) return error;
+    const { consultantProfileIds } = data;
 
     // Create payout batch
     const batchId = await createPayoutBatch(consultantProfileIds);

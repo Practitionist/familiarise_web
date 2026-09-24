@@ -8,6 +8,7 @@ import {
   createChannel,
 } from "@/actions/stream/chat/channel.action";
 import { getSession } from "@/lib/auth-server";
+import { parseRequestBody } from "@/lib/api/parse";
 import { channelCreateSchema } from "@/schemas/stream-channels";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -21,13 +22,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const parsed = channelCreateSchema.safeParse(await req.json());
-    if (!parsed.success) {
-      return NextResponse.json(
-        { success: false, error: "Invalid request body", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
+    // The route's error contract carries success:false — preserved here.
+    const { data, error } = parseRequestBody(
+      channelCreateSchema,
+      await req.json(),
+      "Invalid request body",
+      { success: false },
+    );
+    if (error) return error;
     const {
       channelType,
       eventId,
@@ -35,7 +37,7 @@ export async function POST(req: NextRequest) {
       channelName,
       members,
       createdById,
-    } = parsed.data;
+    } = data;
 
     // Validate required fields
     if (!channelType || !createdById) {
