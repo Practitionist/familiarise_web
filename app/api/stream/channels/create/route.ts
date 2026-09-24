@@ -8,7 +8,7 @@ import {
   createChannel,
 } from "@/actions/stream/chat/channel.action";
 import { getSession } from "@/lib/auth-server";
-import { parseRequestBody } from "@/lib/api/parse";
+import { parseJsonRequest } from "@/lib/api/parse";
 import { channelCreateSchema } from "@/schemas/stream-channels";
 import { streamLogger } from "@/lib/stream-logger";
 
@@ -23,9 +23,9 @@ export async function POST(req: NextRequest) {
     }
 
     // The route's error contract carries success:false — preserved here.
-    const { data, error } = parseRequestBody(
+    const { data, error } = await parseJsonRequest(
       channelCreateSchema,
-      await req.json(),
+      req,
       "Invalid request body",
       { success: false },
     );

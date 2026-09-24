@@ -125,7 +125,8 @@ export async function GET(
     // parameter is present and the route stays anonymous.
     // #1697 item 4 — the busy/free shape reads the session cookie-cached (one
     // poll a minute per calendar); the privileged detail shape reads fresh so
-    // a demotion or a revoked membership takes effect on the next poll.
+    // a demotion or a revoked membership takes effect on the next poll. The
+    // cross-user gate below re-reads the role fresh regardless (#1807).
     let session: Awaited<ReturnType<typeof getSession>> = null;
     if (includeAppointmentDetailsRequested) session = await getSession(true);
     else if (requestedConsulteeUserId) session = await getCachedSession();
@@ -206,10 +207,19 @@ export async function GET(
       // does allow an org to see, and allocation is wrong without it: the grid
       // would paint cells green that validation then rejects.
       const isSelf = session?.user?.id === requestedConsulteeUserId;
+      // Role gates must read fresh even on the cached path: the cached
+      // session can lag a demotion or ban by ~5 min (#1807), and this branch
+      // authorizes a cross-user oracle. The extra read runs only here — self
+      // polls and the public path never reach it, so #1697's poll budget
+      // is unchanged.
+      const gateRole =
+        !isSelf && !isOwningConsultant
+          ? (await getSession(true))?.user?.role
+          : session?.user?.role;
       if (
         !isSelf &&
         !isOwningConsultant &&
-        !isPrivileged(session?.user?.role) &&
+        !isPrivileged(gateRole) &&
         !(await isOrgAdmin())
       ) {
         return NextResponse.json(

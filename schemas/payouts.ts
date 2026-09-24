@@ -1,5 +1,6 @@
 // schemas/payouts.ts
 import { z } from "zod";
+import { PayoutStatus } from "@prisma/client";
 
 /** POST /api/admin/payouts — batch creation moves real money, so the id
  *  list is closed-shape: a non-empty array of id strings, capped so one
@@ -13,7 +14,9 @@ export type AdminPayoutBatchInput = z.infer<typeof adminPayoutBatchSchema>;
 /** GET /api/admin/payouts — filter/pagination bounds. `limit`/`offset` were
  *  raw parseInt (NaN-able); status/search/orgId are bounded passthroughs. */
 export const adminPayoutsQuerySchema = z.object({
-  status: z.string().max(64).nullish(),
+  // Closed enum: an unknown status previously fell through to Prisma and
+  // surfaced as a 500 instead of a 400.
+  status: z.nativeEnum(PayoutStatus).nullish(),
   search: z.string().max(200).nullish(),
   orgId: z.string().max(128).nullish(),
   limit: z.coerce.number().int().min(1).max(200).default(50),

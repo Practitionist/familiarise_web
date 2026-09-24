@@ -15,14 +15,13 @@ import {
   classifyError,
   logClassifiedError,
 } from "@/lib/errors/classification/payment-error-classification";
-import { PayoutStatus } from "@prisma/client";
 import { createPayoutBatch } from "@/lib/payments/payouts";
 import {
   requireAdminAuth,
   requireBackofficeSurface,
 } from "@/lib/auth-helpers";
 import { getOperatorPayouts } from "@/lib/api/operators";
-import { parseRequestBody } from "@/lib/api/parse";
+import { parseRequestBody, parseJsonRequest } from "@/lib/api/parse";
 import {
   adminPayoutBatchSchema,
   adminPayoutsQuerySchema,
@@ -52,7 +51,7 @@ export async function GET(req: NextRequest) {
     );
     if (queryError) return queryError;
     const result = await getOperatorPayouts({
-      status: query.status as PayoutStatus | null,
+      status: query.status ?? null,
       search: query.search,
       orgId: query.orgId,
       limit: query.limit,
@@ -82,9 +81,9 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminAuth();
     if (auth.error) return auth.error;
 
-    const { data, error } = parseRequestBody(
+    const { data, error } = await parseJsonRequest(
       adminPayoutBatchSchema,
-      await req.json(),
+      req,
     );
     if (error) return error;
     const { consultantProfileIds } = data;

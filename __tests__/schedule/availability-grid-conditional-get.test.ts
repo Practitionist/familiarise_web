@@ -159,8 +159,10 @@ describe("availability grid conditional GET", () => {
     });
     // The busy/free shape takes the explicit cached-read API, never the
     // force-fresh one — the contract, now greppable as getCachedSession.
+    // The cross-user gate still re-reads the role fresh (#1807), so the
+    // last getSession call carries `true`.
     expect(getCachedSession).toHaveBeenCalled();
-    expect(getSession).toHaveBeenCalledTimes(1);
+    expect(getSession).toHaveBeenLastCalledWith(true);
   });
 
   it("refuses a window wider than 32 days with WINDOW_TOO_WIDE (supersedes #1577; 32 since #1785)", async () => {

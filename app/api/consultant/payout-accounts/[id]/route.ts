@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 
 import { getSession } from "@/lib/auth-server";
-import { parseRequestBody } from "@/lib/api/parse";
+import { parseJsonRequest } from "@/lib/api/parse";
 import { payoutAccountPatchSchema } from "@/schemas/payouts";
 import {
   getRazorpayPayoutsService,
@@ -92,9 +92,9 @@ export async function PATCH(req: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
-    const { data: body, error } = parseRequestBody(
+    const { data: body, error } = await parseJsonRequest(
       payoutAccountPatchSchema,
-      await req.json(),
+      req,
     );
     if (error) return error;
 

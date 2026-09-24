@@ -6,8 +6,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { ModerationActionType } from "@prisma/client";
+import { z } from "zod";
 
 import { requirePrivilegedAuth } from "@/lib/auth-helpers";
+import { parseJsonRequest } from "@/lib/api/parse";
 import { hasBackofficePermission } from "@/lib/auth/backoffice-permissions";
 import type { UserRole } from "@prisma/client";
 import {
@@ -44,43 +46,15 @@ type ModerationActionInput = {
   suspensionDays?: number;
 };
 
-// Returns a 400 response when the action-type / suspensionDays payload is
-// invalid, or null when the request is well-formed.
-function validateActionRequest(
-  actionType: unknown,
-  suspensionDays: unknown,
-  notes: unknown,
-): NextResponse | null {
-  if (
-    !actionType ||
-    !VALID_ACTIONS.includes(actionType as ModerationActionType)
-  ) {
-    return NextResponse.json({ error: "Invalid action type" }, { status: 400 });
-  }
-  if (
-    actionType === "USER_SUSPENDED" &&
-    (!Number.isInteger(suspensionDays) ||
-      (suspensionDays as number) < 1 ||
-      (suspensionDays as number) > 365)
-  ) {
-    return NextResponse.json(
-      { error: "suspensionDays must be an integer between 1 and 365" },
-      { status: 400 },
-    );
-  }
-  // Moderator notes persist on the action row — cap the free text so one
-  // pasted log dump cannot bloat the row unbounded.
-  if (
-    notes !== undefined &&
-    (typeof notes !== "string" || notes.length > 5000)
-  ) {
-    return NextResponse.json(
-      { error: "notes must be a string of at most 5000 characters" },
-      { status: 400 },
-    );
-  }
-  return null;
-}
+// Action payload, validated before auth-gated side-effects. `notes` persists
+// on the action row — capped so one pasted log dump cannot bloat it.
+const moderationActionPayloadSchema = z.object({
+  actionType: z.enum(
+    VALID_ACTIONS as [ModerationActionType, ...ModerationActionType[]],
+  ),
+  notes: z.string().max(5000).optional(),
+  suspensionDays: z.number().int().min(1).max(365).optional(),
+});
 
 // Account-state side-effects commit atomically with the action row — the report
 // can never read ACTION_TAKEN while the target kept access.
@@ -166,7 +140,11 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     const session = auth.session;
 
     const { reportId } = await params;
-    const body = await req.json();
+    const { data: body, error: bodyError } = await parseJsonRequest(
+      moderationActionPayloadSchema,
+      req,
+    );
+    if (bodyError) return bodyError;
     const { actionType, notes, suspensionDays } = body;
 
     // Moderation is staff's remit (`moderation.manage`), but banning and
@@ -192,8 +170,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const validationError = validateActionRequest(actionType, suspensionDays, notes);
-    if (validationError) return validationError;
+    // NOTE: suspensionDays stays optional — the side-effect layer defaults a
+    // missing duration to 7 days. The schema only bounds it when present.
 
     // Check report exists
     const report = await prisma.moderationReport.findUnique({

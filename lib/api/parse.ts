@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 
 /**
@@ -24,4 +24,32 @@ export function parseRequestBody<S extends z.ZodTypeAny>(
     };
   }
   return { data: parsed.data };
+}
+
+/**
+ * Parse a JSON request body: malformed JSON 400s here instead of falling
+ * through to the route's 500 catch, then the schema validates shape.
+ * Prefer this over `parseRequestBody(schema, await req.json())` — a client
+ * sending truncated JSON is a 400, not a server error.
+ */
+export async function parseJsonRequest<S extends z.ZodTypeAny>(
+  schema: S,
+  req: Pick<NextRequest, "json">,
+  message = "Invalid request body",
+  errorExtra?: Record<string, unknown>,
+): Promise<
+  { data: z.infer<S>; error?: never } | { data?: never; error: NextResponse }
+> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return {
+      error: NextResponse.json(
+        { error: "Malformed JSON body" },
+        { status: 400 },
+      ),
+    };
+  }
+  return parseRequestBody(schema, body, message, errorExtra);
 }

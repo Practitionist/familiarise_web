@@ -14,6 +14,7 @@ import {
 } from "../../schemas/payouts";
 import { channelCreateSchema } from "../../schemas/stream-channels";
 import { userIdQuerySchema } from "../../schemas/user";
+import { parseJsonRequest, parseRequestBody } from "../../lib/api/parse";
 
 describe("adminPayoutBatchSchema", () => {
   it("accepts a non-empty id list", () => {
@@ -47,6 +48,7 @@ describe("adminPayoutsQuerySchema", () => {
     ["zero limit", { limit: "0" }],
     ["huge limit", { limit: "10000" }],
     ["negative offset", { offset: "-5" }],
+    ["unknown status", { status: "MINTED" }],
   ])("rejects %s", (_label, query) => {
     expect(adminPayoutsQuerySchema.safeParse(query).success).toBe(false);
   });
@@ -103,6 +105,42 @@ describe("channelCreateSchema", () => {
     ["blank channel type", { ...BASE, channelType: "" }],
   ])("rejects %s", (_label, body) => {
     expect(channelCreateSchema.safeParse(body).success).toBe(false);
+  });
+});
+
+describe("parseJsonRequest", () => {
+  const schema = adminPayoutBatchSchema;
+
+  it("400s malformed JSON instead of throwing to the 500 catch", async () => {
+    const req = {
+      json: async () => {
+        throw new SyntaxError("Unexpected end of JSON input");
+      },
+    };
+    const { data, error } = await parseJsonRequest(schema, req);
+    expect(data).toBeUndefined();
+    expect(error?.status).toBe(400);
+  });
+
+  it("400s shape violations with issues attached", async () => {
+    const req = { json: async () => ({ consultantProfileIds: [] }) };
+    const { data, error } = await parseJsonRequest(schema, req);
+    expect(data).toBeUndefined();
+    expect(error?.status).toBe(400);
+  });
+
+  it("passes valid bodies through untouched", async () => {
+    const req = { json: async () => ({ consultantProfileIds: ["cp_1"] }) };
+    const { data, error } = await parseJsonRequest(schema, req);
+    expect(error).toBeUndefined();
+    expect(data).toEqual({ consultantProfileIds: ["cp_1"] });
+  });
+
+  it("parseRequestBody preserves caller error extras", () => {
+    const { error } = parseRequestBody(schema, {}, "Bad", {
+      success: false,
+    });
+    expect(error?.status).toBe(400);
   });
 });
 
