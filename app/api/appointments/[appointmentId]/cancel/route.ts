@@ -133,6 +133,18 @@ async function declineOpenReschedules(
   }
 }
 
+/**
+ * #1775 P-3 (#1639 item 2) — a gateway throw leaves the reserved Refund row
+ * PENDING for the reconcile cron, so the money is in flight, not failed.
+ */
+async function refundLeftPending(err: unknown): Promise<boolean> {
+  if (!(err instanceof RefundGatewayError)) return false;
+  const row = await prisma.refund
+    .findUnique({ where: { id: err.refundRowId }, select: { status: true } })
+    .catch(() => null);
+  return row?.status === "PENDING";
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -538,7 +550,12 @@ export async function POST(
        * already exhausted" and "the gateway refused" — and the client was left
        * inferring failure from a positive `refundPct`, which is a guess.
        */
-      status: "REFUNDED" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
+      status:
+        | "REFUNDED"
+        | "PENDING"
+        | "FAILED"
+        | "NOTHING_REFUNDABLE"
+        | "POLICY_ZERO";
       /** #1006 — set when the refund needs a human, not a formula. */
       requiresManualReview?: boolean;
       /**
@@ -637,12 +654,14 @@ export async function POST(
                 tierRefundPct: quote.tierRefundPct,
               },
             }).catch(() => {});
-            refund = {
-              amountRefundedPaise: 0,
-              refundPct: 100,
-              status: "FAILED",
-              requiresManualReview: true,
-            };
+            refund = (await refundLeftPending(freeErr))
+              ? { amountRefundedPaise: 0, refundPct: 100, status: "PENDING" }
+              : {
+                  amountRefundedPaise: 0,
+                  refundPct: 100,
+                  status: "FAILED",
+                  requiresManualReview: true,
+                };
           }
         } else if (refundAmount > 0) {
           try {
@@ -685,7 +704,13 @@ export async function POST(
                 refundablePaise: paidPayment.refundablePaise,
               },
             }).catch(() => {});
-            refund = { amountRefundedPaise: 0, refundPct, status: "FAILED" };
+            refund = {
+              amountRefundedPaise: 0,
+              refundPct,
+              status: (await refundLeftPending(refundErr))
+                ? "PENDING"
+                : "FAILED",
+            };
           }
         } else {
           // Two different facts, and the buyer is owed different words for
