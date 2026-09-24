@@ -116,17 +116,171 @@ const looksLikeRecordId = (segment: string) =>
     segment,
   );
 
+interface Crumb {
+  label: string;
+  href?: string;
+}
+
+/** Text out of an untyped membership payload: strings/numbers pass through,
+ *  everything else is empty (never "[object Object]"). */
+function toText(value: unknown): string {
+  return typeof value === "string" || typeof value === "number"
+    ? String(value)
+    : "";
+}
+
+interface SegmentCrumbCtx {
+  seg: string;
+  acc: string;
+  overrideLabel: string | null;
+  onOfferings: boolean;
+  offeringsConfig:
+    | { typeSegments: ReadonlySet<string>; listingHref: string }
+    | undefined;
+  offeringsListingHref: string;
+  pageLabels: Record<string, string>;
+  pathlessSegments: ReadonlySet<string> | undefined;
+  paramValues: ReadonlySet<string>;
+}
+
+function resolveSegmentCrumb(ctx: Readonly<SegmentCrumbCtx>): Crumb | null {
+  const {
+    seg,
+    acc,
+    overrideLabel,
+    onOfferings,
+    offeringsConfig,
+    offeringsListingHref,
+    pageLabels,
+    pathlessSegments,
+    paramValues,
+  } = ctx;
+  if (looksLikeRecordId(seg)) {
+    // The label goes HERE, in the id's own position — that segment IS the
+    // record, so its human name belongs where the id was.
+    if (overrideLabel) return { label: overrideLabel, href: acc };
+    return null;
+  }
+  if (
+    offeringsConfig &&
+    (seg === "offerings" ||
+      (onOfferings && offeringsConfig.typeSegments.has(seg)))
+  ) {
+    // Offerings have no list route of their own — the Event Planner is where
+    // those rows live. Point both the "Offerings" crumb and the type crumb
+    // there so the trail is clickable without prefetching a 404.
+    return {
+      label: pageLabels[seg] ?? seg,
+      href: offeringsListingHref,
+    };
+  }
+  const navigable = pathlessSegments
+    ? !pathlessSegments.has(seg) && !paramValues.has(seg)
+    : true;
+  return {
+    label: pageLabels[seg] ?? seg,
+    ...(navigable ? { href: acc } : {}),
+  };
+}
+
+function delinkTerminalCrumb(
+  crumbs: readonly Crumb[],
+  pathname: string,
+): Crumb[] {
+  return crumbs.map((crumb, index) => {
+    const isLast = index === crumbs.length - 1;
+    // Keep a link when the visible crumb is still a parent of the URL
+    // (happens when the last segment was an opaque id we stripped).
+    if (isLast && crumb.href && pathname === crumb.href) {
+      return { label: crumb.label };
+    }
+    return crumb;
+  });
+}
+
+interface BreadcrumbsInput {
+  pathname: string;
+  basePath: string;
+  overrideLabel: string | null;
+  pageLabels: Record<string, string>;
+  pathlessSegments: ReadonlySet<string> | undefined;
+  offeringsConfig:
+    | { typeSegments: ReadonlySet<string>; listingHref: string }
+    | undefined;
+}
+
+// Full breadcrumb trail — every URL segment after the route id becomes a
+// crumb; opaque record ids are dropped (or replaced with an override label
+// such as the appointment title). Parent crumbs keep an href so users can
+// click back, but only when the accumulated path is a route the app can
+// actually serve.
+function useDashboardBreadcrumbs(
+  input: Readonly<BreadcrumbsInput>,
+): Crumb[] {
+  const {
+    pathname,
+    basePath,
+    overrideLabel,
+    pageLabels,
+    pathlessSegments,
+    offeringsConfig,
+  } = input;
+  const routeParams = useParams();
+  return useMemo(() => {
+    // Every value the current route bound to a dynamic param. Such a segment
+    // is never a URL of its own, so its crumb must not be a link.
+    const paramValues = new Set<string>();
+    for (const value of Object.values(routeParams ?? {})) {
+      for (const part of Array.isArray(value) ? value : [value]) {
+        if (part) paramValues.add(part);
+      }
+    }
+    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
+    const onOfferings = !!offeringsConfig && parts[0] === "offerings";
+    const offeringsListingHref = offeringsConfig
+      ? `${basePath}/${offeringsConfig.listingHref}`
+      : basePath;
+
+    const crumbs: Crumb[] = [];
+    let acc = basePath;
+    for (const seg of parts) {
+      acc = `${acc}/${seg}`;
+      const crumb = resolveSegmentCrumb({
+        seg,
+        acc,
+        overrideLabel,
+        onOfferings,
+        offeringsConfig,
+        offeringsListingHref,
+        pageLabels,
+        pathlessSegments,
+        paramValues,
+      });
+      if (crumb) crumbs.push(crumb);
+    }
+    return delinkTerminalCrumb(crumbs, pathname);
+  }, [
+    pathname,
+    basePath,
+    overrideLabel,
+    pageLabels,
+    pathlessSegments,
+    offeringsConfig,
+    routeParams,
+  ]);
+}
+
 function AccessCard({
   Icon,
   title,
   tone = "amber",
   children,
-}: {
+}: Readonly<{
   Icon: LucideIcon;
   title: string;
   tone?: "amber" | "red";
   children: React.ReactNode;
-}) {
+}>) {
   return (
     <div className="flex items-center justify-center min-h-svh bg-zinc-100">
       <motion.div
@@ -150,7 +304,7 @@ function AccessCard({
   );
 }
 
-function DefaultError({ message }: { message: string }) {
+function DefaultError({ message }: Readonly<{ message: string }>) {
   return (
     <AccessCard Icon={Lock} title="Something went wrong" tone="red">
       <p className="text-zinc-600">{message || "Failed to load dashboard"}</p>
@@ -194,9 +348,8 @@ export function PersonalDashboardLayoutCore<P>({
   useExtras = noExtras,
   wrapShell = identityWrap,
   children,
-}: PersonalDashboardCoreProps<P>) {
+}: Readonly<PersonalDashboardCoreProps<P>>) {
   const pathname = usePathname();
-  const routeParams = useParams();
   const { data: session, isPending: isSessionLoading } = useSession();
   const router = useRouter();
 
@@ -310,88 +463,21 @@ export function PersonalDashboardLayoutCore<P>({
       ?.organizationMemberships;
     if (!Array.isArray(raw)) return [];
     return raw.map((m: Record<string, unknown>) => ({
-      organizationId: String(m.organizationId ?? ""),
-      organizationName: String(m.organizationName ?? ""),
+      organizationId: toText(m.organizationId),
+      organizationName: toText(m.organizationName),
     }));
   }, [session?.user]);
 
   const { overrideLabel } = useBreadcrumbOverride();
 
-  // Every value the current route bound to a dynamic param. Such a segment is
-  // never a URL of its own, so its crumb must not be a link.
-  const paramValues = useMemo(() => {
-    const values = new Set<string>();
-    for (const value of Object.values(routeParams ?? {})) {
-      for (const part of Array.isArray(value) ? value : [value]) {
-        if (part) values.add(part);
-      }
-    }
-    return values;
-  }, [routeParams]);
-
-  // Full breadcrumb trail — every URL segment after the route id becomes a
-  // crumb; opaque record ids are dropped (or replaced with an override label
-  // such as the appointment title). Parent crumbs keep an href so users can
-  // click back, but only when the accumulated path is a route the app can
-  // actually serve.
-  const breadcrumbs = useMemo(() => {
-    const parts = pathname.replace(basePath, "").split("/").filter(Boolean);
-    const onOfferings = !!offeringsConfig && parts[0] === "offerings";
-    const offeringsListingHref = offeringsConfig
-      ? `${basePath}/${offeringsConfig.listingHref}`
-      : basePath;
-
-    const crumbs: { label: string; href?: string }[] = [];
-    let acc = basePath;
-
-    for (const seg of parts) {
-      acc = `${acc}/${seg}`;
-      if (looksLikeRecordId(seg)) {
-        // The label goes HERE, in the id's own position — that segment IS the
-        // record, so its human name belongs where the id was.
-        if (overrideLabel) crumbs.push({ label: overrideLabel, href: acc });
-        continue;
-      }
-
-      if (
-        offeringsConfig &&
-        (seg === "offerings" ||
-          (onOfferings && offeringsConfig.typeSegments.has(seg)))
-      ) {
-        crumbs.push({
-          label: pageLabels[seg] ?? seg,
-          href: offeringsListingHref,
-        });
-        continue;
-      }
-
-      const navigable = pathlessSegments
-        ? !pathlessSegments.has(seg) && !paramValues.has(seg)
-        : true;
-      crumbs.push({
-        label: pageLabels[seg] ?? seg,
-        ...(navigable ? { href: acc } : {}),
-      });
-    }
-
-    return crumbs.map((crumb, index) => {
-      const isLast = index === crumbs.length - 1;
-      // Keep a link when the visible crumb is still a parent of the URL
-      // (happens when the last segment was an opaque id we stripped).
-      if (isLast && crumb.href && pathname === crumb.href) {
-        return { label: crumb.label };
-      }
-      return crumb;
-    });
-  }, [
+  const breadcrumbs = useDashboardBreadcrumbs({
     pathname,
     basePath,
     overrideLabel,
-    paramValues,
     pageLabels,
     pathlessSegments,
     offeringsConfig,
-  ]);
+  });
 
   const streamUserId = profileStreamUserId
     ? profileStreamUserId(profileData)

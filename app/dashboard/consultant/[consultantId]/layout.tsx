@@ -347,7 +347,7 @@ interface ConsultantDetails {
     name?: string | null;
     image?: string | null;
   } | null;
-  verificationStatus?: VerificationStatus | string;
+  verificationStatus?: VerificationStatus;
 }
 
 async function fetchConsultantUser(
@@ -373,9 +373,7 @@ function useConsultantExtras({
   basePath,
   pathname,
 }: PersonalDashboardExtrasCtx<ConsultantDetails>): PersonalDashboardExtras {
-  const verificationStatus = (profile?.verificationStatus ?? undefined) as
-    | VerificationStatus
-    | undefined;
+  const verificationStatus = profile?.verificationStatus ?? undefined;
   const isOwnDashboard = userDetails?.consultantProfileId === routeParam;
   const { data: verification } = useVerificationStatus(
     userId,

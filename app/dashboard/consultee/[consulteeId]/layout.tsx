@@ -19,7 +19,10 @@ import {
 
 import type { CollapsibleSidebarGroup } from "@/components/dashboard/CollapsibleSidebar";
 import { BreadcrumbOverrideProvider } from "@/components/dashboard/breadcrumb-override";
-import { PersonalDashboardLayoutCore } from "@/components/dashboard/PersonalDashboardLayoutCore";
+import {
+  PersonalDashboardLayoutCore,
+  type PersonalDashboardUser,
+} from "@/components/dashboard/PersonalDashboardLayoutCore";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import { UserProvider } from "./UserContext";
 
@@ -99,6 +102,17 @@ const PAGE_LABELS: Record<string, string> = {
 
 const PREFETCH_SUFFIXES = ["home"];
 
+// Module-level so it is not a nested component definition: the shell must
+// not remount the provider subtree on every layout render.
+// Boundary cast: the core's structural user carries the Prisma User payload
+// at runtime; UserProvider types it as Prisma User.
+function wrapConsulteeShell(
+  shell: React.ReactNode,
+  user: PersonalDashboardUser,
+) {
+  return <UserProvider userDetails={user as User}>{shell}</UserProvider>;
+}
+
 interface PageProps {
   children: React.ReactNode;
   params: Promise<{ consulteeId: string }>;
@@ -145,11 +159,7 @@ function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
       prefetchSuffixes={PREFETCH_SUFFIXES}
       requireUserDetails
       includeUserError
-      wrapShell={(shell, user) => (
-        // Boundary cast: the core's structural user carries the Prisma User
-        // payload at runtime; UserProvider types it as Prisma User.
-        <UserProvider userDetails={user as User}>{shell}</UserProvider>
-      )}
+      wrapShell={wrapConsulteeShell}
     >
       {children}
     </PersonalDashboardLayoutCore>

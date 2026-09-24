@@ -70,7 +70,7 @@ export function BackofficeShell({
   userImage,
   children,
   showTds = false,
-}: BackofficeShellProps) {
+}: Readonly<BackofficeShellProps>) {
   const copy = TREE_COPY[tree];
   const groups = useMemo(
     () => buildBackofficeNav(tree, tree === "admin" ? { showTds } : {}),
