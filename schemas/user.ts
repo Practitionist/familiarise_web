@@ -442,3 +442,16 @@ export const FullUserSchema = z.object({
 });
 
 // #endregion
+
+// #region Query schemas
+
+/** ?userId= lookup shape shared by the public profile endpoints. Presence is
+ *  still checked in-route (its 400 message is pinned); this bounds the value.
+ *  NOTE: these endpoints are unauthenticated by design for marketplace
+ *  profiles — whether the consultee endpoint should stay that way is a
+ *  product decision, not something a shape schema can answer. */
+export const userIdQuerySchema = z.object({
+  userId: z.string().min(1).max(128),
+});
+
+// #endregion
