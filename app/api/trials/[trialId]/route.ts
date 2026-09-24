@@ -1,29 +1,23 @@
-import * as Sentry from "@sentry/nextjs";
 import { applyRateLimit, eventMutationLimiter } from "@/lib/rate-limit";
 import {
   liveParticipant,
   recordParticipants,
+  setParticipantStatus,
 } from "@/lib/booking/participants";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import prisma, { type Tx } from "@/lib/prisma";
-import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import {
   needsTrialPayLinkRemint,
-  persistTrialPayLink,
   remintTrialPayLink,
 } from "@/lib/trials/pay-link";
-import { computeTrialPaymentDueAt } from "@/lib/trials/eligibility";
 import {
   refundCancelledTrial,
   softCancelTrialAppointment,
   type TrialRefundOutcome,
 } from "@/lib/trials/cancellation";
-import {
-  TrialStatus,
-  AppointmentsType,
-  PaymentGateway,
-  Prisma,
-} from "@prisma/client";
+import { TrialStatus, AppointmentsType, Prisma } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
 import {
   logTrialCompleted,
@@ -416,17 +410,27 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       updateData.status = status;
 
-      // A paid trial cannot go straight to SCHEDULED: the consultant accepting
-      // only issues the pay-link. The slot is still held (the appointment is
-      // created below) so nobody else can take it while the learner pays, and
-      // the expiry job releases it if they never do.
+      // #1775 C-10 — a paid trial is charged at request, so the consultant
+      // accepts only a trial whose payment has been captured.
       const trialPriceInPaise = Number(
         existingTrial.subscriptionPlan.trialPriceInPaise ?? 0,
       );
-      const requiresPayment =
+      if (
         status === TrialStatus.SCHEDULED &&
         existingTrial.status === TrialStatus.PENDING &&
-        trialPriceInPaise > 0;
+        trialPriceInPaise > 0 &&
+        existingTrial.paymentId === null
+      ) {
+        return bookingRuleResponse(
+          new BookingRuleError(
+            "TRIAL_UNPAID",
+            "This trial has not been paid yet — it can be accepted once the learner's payment is confirmed.",
+          ),
+        );
+      }
+      // The paid trial's placeholder from request time gets the session.
+      const placeholderId =
+        trialPriceInPaise > 0 ? existingTrial.appointmentId : null;
 
       // Handle scheduling with distributed locking
       if (status === TrialStatus.SCHEDULED) {
@@ -527,47 +531,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               throw new TrialSlotUnavailableError();
             }
 
-            // Create an appointment for the trial
-            const appointment = await tx.appointment.create({
-              data: {
-                appointmentType: AppointmentsType.TRIAL,
-                occurrences: {
-                  create: {
-                    ordinal: 1,
-                    startsAt: startTime,
-                    endsAt: endTime,
-                    isTentative: false,
-                    // #1093 §1 — without this the slot falls outside the
-                    // occurrence_no_confirmed_overlap exclusion constraint's WHERE
-                    // clause and the DB accepts a trial on top of a confirmed
-                    // consultation for the same consultant.
-                    consultantProfileId: existingTrial.consultantProfileId,
-                  },
-                },
-              },
-              include: {
-                occurrences: true,
-              },
-            });
-            // #1319 A9 — a paid trial holds its seat until capture confirms it.
-            await recordParticipants(
-              tx,
-              appointment.id,
-              [
-                {
-                  userId: existingTrial.consulteeProfile.user.id,
-                  role: "CONSULTEE",
-                },
-                {
-                  userId: existingTrial.consultantProfile.user.id,
-                  role: "CONSULTANT",
-                },
-              ],
-              {
-                organizationId: existingTrial.organizationId ?? null,
-                status: requiresPayment ? "HELD" : "CONFIRMED",
-              },
-            );
+            // #1093 §1 — consultantProfileId keeps the session inside the
+            // occurrence_no_confirmed_overlap exclusion constraint's WHERE.
+            const trialSession = {
+              ordinal: 1,
+              startsAt: startTime,
+              endsAt: endTime,
+              isTentative: false,
+              consultantProfileId: existingTrial.consultantProfileId,
+            };
+            const appointment = placeholderId
+              ? await acceptPaidTrial(tx, placeholderId, trialSession)
+              : await createFreeTrialAppointment(
+                  tx,
+                  existingTrial,
+                  trialSession,
+                );
 
             // Update trial with appointment link and the resulting status —
             // AWAITING_PAYMENT for a paid trial, SCHEDULED for a free one.
@@ -582,16 +561,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             try {
               await transitionTrial(tx, {
                 where: { id: trialId },
-                to: requiresPayment
-                  ? TrialStatus.AWAITING_PAYMENT
-                  : TrialStatus.SCHEDULED,
+                to: TrialStatus.SCHEDULED,
                 fromIn: [existingTrial.status],
-                data: {
-                  appointmentId: appointment.id,
-                  paymentDueAt: requiresPayment
-                    ? computeTrialPaymentDueAt(new Date(), startTime)
-                    : null,
-                },
+                data: { appointmentId: appointment.id, paymentDueAt: null },
+                // #1775 C-10 — the capture must still be there at write time.
+                ...(placeholderId
+                  ? { whereAnd: { paymentId: { not: null } } }
+                  : {}),
               });
             } catch (error) {
               // Narrowed from-state means a zero-row CAS is specifically "the
@@ -659,63 +635,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             startTime,
           );
 
-          // 5. Paid trial: mint the pay-link now that the slot is held.
-          //
-          // Deliberately AFTER the transaction — createApprovalPaymentIntent
-          // takes its own distributed lock and calls the gateway, so running it
-          // inside would hold a DB transaction open across a network round trip.
-          // If it throws, the trial stays AWAITING_PAYMENT with no link; the
-          // consultee sees nothing payable and the expiry job releases the slot,
-          // which is the safe direction to fail.
-          let paymentUrl: string | null = null;
-          const trialCheckoutPath = `/checkout/plans/trial/${trialId}`;
-          if (requiresPayment) {
-            try {
-              const intent = await createApprovalPaymentIntent({
-                userId: existingTrial.consulteeProfile.user.id,
-                appointmentType: "TRIAL",
-                trialId,
-                // The appointment already exists — link it so the webhook
-                // confirms it instead of creating a second one.
-                appointmentId: result.appointmentId ?? undefined,
-                planId: existingTrial.subscriptionPlanId,
-                paymentGateway: PaymentGateway.RAZORPAY,
-                startsAt: startTime.toISOString(),
-                endsAt: endTime.toISOString(),
-              });
-              // #1583 A-P0-06 — a CAS, not a bare update: a mint landing after
-              // the expiry sweep cancelled the trial must not re-arm the link,
-              // and a link that did not land is never mailed (null = not payable).
-              paymentUrl = await persistTrialPayLink({
-                trialId,
-                paymentIntentId: intent.paymentIntentId,
-                paymentId: intent.paymentId,
-                checkoutUrl: intent.checkoutUrl,
-              });
-            } catch (error) {
-              Sentry.captureException(
-                error instanceof Error ? error : new Error(String(error)),
-                { tags: { subsystem: "trials" }, extra: { trialId } },
-              );
-              console.error("[Trials] pay-link generation failed:", error);
-            }
-          }
-
-          // Notify the consultee — "pay to confirm" for a paid trial, plain
-          // confirmation for a free one. Sending "your trial is scheduled" for
-          // something still awaiting payment would be a lie.
+          // #1775 C-10 — accepting never mints: a paid trial was paid at request.
           await notifyTrialScheduled(existingTrial.consulteeProfile.user.id, {
             consultantName:
               existingTrial.consultantProfile.user.name || "Consultant",
             consulteeName: existingTrial.consulteeProfile.user.name || "User",
             planTitle: existingTrial.subscriptionPlan.title,
             dateTime: startTime.toISOString(),
-            status: requiresPayment
-              ? TrialStatus.AWAITING_PAYMENT
-              : TrialStatus.SCHEDULED,
-            // #1591 J4-P1-02 — the consultee lands on our branded trial
-            // checkout, never the raw gateway link (trialCheckoutHref parity).
-            dashboardUrl: paymentUrl ? trialCheckoutPath : "/dashboard",
+            status: TrialStatus.SCHEDULED,
+            dashboardUrl: "/dashboard",
           });
 
           // #1653 — the email twin, to both parties: the consultee's CTA is
@@ -730,11 +658,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
                 existingTrial.consultantProfile.user.name || "Consultant",
               planTitle: existingTrial.subscriptionPlan.title,
               startsAt: startTime,
-              awaitingPayment: requiresPayment,
+              awaitingPayment: false,
               dashboardUrl: `${getAppUrl()}/dashboard`,
-              paymentUrl: paymentUrl
-                ? `${getAppUrl()}${trialCheckoutPath}`
-                : null,
+              paymentUrl: null,
             },
             EMAIL_BUDGET_MS.REQUEST,
           );
@@ -1188,4 +1114,64 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       { status: 500 },
     );
   }
+}
+
+type TrialSession = {
+  ordinal: number;
+  startsAt: Date;
+  endsAt: Date;
+  isTentative: boolean;
+  consultantProfileId: string;
+};
+
+/**
+ * #1775 C-10 — a paid trial accepted: its session goes on the request-time
+ * placeholder, and the seats capture confirmed stay (or become) CONFIRMED.
+ */
+async function acceptPaidTrial(
+  tx: Tx,
+  appointmentId: string,
+  session: TrialSession,
+) {
+  await tx.appointmentOccurrence.create({
+    data: { appointmentId, ...session },
+  });
+  await setParticipantStatus(
+    tx,
+    { appointmentId, status: "HELD" },
+    "CONFIRMED",
+  );
+  return tx.appointment.findUniqueOrThrow({
+    where: { id: appointmentId },
+    include: { occurrences: true },
+  });
+}
+
+/** A free trial: the appointment and its session are created on accept. */
+async function createFreeTrialAppointment(
+  tx: Tx,
+  trial: {
+    organizationId: string | null;
+    consulteeProfile: { user: { id: string } };
+    consultantProfile: { user: { id: string } };
+  },
+  session: TrialSession,
+) {
+  const appointment = await tx.appointment.create({
+    data: {
+      appointmentType: AppointmentsType.TRIAL,
+      occurrences: { create: session },
+    },
+    include: { occurrences: true },
+  });
+  await recordParticipants(
+    tx,
+    appointment.id,
+    [
+      { userId: trial.consulteeProfile.user.id, role: "CONSULTEE" },
+      { userId: trial.consultantProfile.user.id, role: "CONSULTANT" },
+    ],
+    { organizationId: trial.organizationId ?? null, status: "CONFIRMED" },
+  );
+  return appointment;
 }

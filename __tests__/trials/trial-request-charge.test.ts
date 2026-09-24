@@ -116,3 +116,25 @@ it("a free trial creates neither", async () => {
   expect(appointmentCreate).not.toHaveBeenCalled();
   expect(createIntent).not.toHaveBeenCalled();
 });
+
+// #1775 C-10 — accept requires the capture; a paid trial's session goes on
+// the request-time placeholder and nothing is minted on accept.
+describe("trial accept", () => {
+  const route = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/app/api/trials/[trialId]/route.ts`, "utf8");
+
+  it("refuses an unpaid paid trial with TRIAL_UNPAID", () => {
+    const guard = route.split('"TRIAL_UNPAID"')[0].slice(-400);
+    expect(guard).toContain("trialPriceInPaise > 0");
+    expect(guard).toContain("existingTrial.paymentId === null");
+  });
+
+  it("places the session on the existing appointment and never mints", () => {
+    const accept = route.split("async function acceptPaidTrial(")[1];
+    expect(accept).toContain("tx.appointmentOccurrence.create({");
+    expect(accept).toContain("data: { appointmentId, ...session }");
+    expect(route).toContain("whereAnd: { paymentId: { not: null } }");
+    expect(route).not.toContain("createApprovalPaymentIntent");
+  });
+});

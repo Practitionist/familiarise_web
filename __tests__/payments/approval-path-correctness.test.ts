@@ -27,7 +27,8 @@ const consultationsRoute = read(
 const subscriptionsRoute = read(
   "app/api/bookings/subscriptions/[subscriptionId]/route.ts",
 );
-const trialsRoute = read("app/api/trials/[trialId]/route.ts");
+// #1775 C-7 — a paid trial mints at request, not on accept.
+const trialRequestRoute = read("app/api/trials/route.ts");
 const approvalPayment = read("lib/payments/operations/approval-payment.ts");
 const requestForApproval = read(
   "app/api/scheduling/request-for-approval/route.ts",
@@ -102,7 +103,7 @@ describe("no gateway call inside the approval transaction", () => {
 
 describe("#1165 — approval gateway unified on RAZORPAY", () => {
   it("no approval mint site mints on STRIPE", () => {
-    for (const src of [approveRequest, trialsRoute]) {
+    for (const src of [approveRequest, trialRequestRoute]) {
       expect(src).not.toContain("PaymentGateway.STRIPE");
       expect(src).toContain("PaymentGateway.RAZORPAY");
     }
