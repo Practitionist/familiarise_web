@@ -393,7 +393,8 @@ export interface UnscheduledSubscriptionNudgeEmailArgs {
   consultantUserId: string;
   consulteeName: string;
   planTitle: string;
-  nudgeDays: number;
+  /** #1775 C-4 — hours since the plan's capture (12, 24 or 36). */
+  nudgeHours: number;
   timingsUrl: string;
 }
 
@@ -403,9 +404,9 @@ export const SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE =
   "SUBSCRIPTION_UNSCHEDULED_NUDGE";
 export function unscheduledNudgeEntityRef(
   subscriptionId: string,
-  nudgeDays: number,
+  nudgeHours: number,
 ): string {
-  return `subscription:${subscriptionId}:day${nudgeDays}`;
+  return `subscription:${subscriptionId}:h${nudgeHours}`;
 }
 
 export function sendUnscheduledSubscriptionNudgeEmail(
@@ -416,7 +417,10 @@ export function sendUnscheduledSubscriptionNudgeEmail(
     {
       emailType: SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
       category: "appointments",
-      entityRef: unscheduledNudgeEntityRef(args.subscriptionId, args.nudgeDays),
+      entityRef: unscheduledNudgeEntityRef(
+        args.subscriptionId,
+        args.nudgeHours,
+      ),
       subject: () =>
         `${args.consulteeName}'s subscription is waiting for session times`,
       render: (r) =>
@@ -427,7 +431,7 @@ export function sendUnscheduledSubscriptionNudgeEmail(
           appointmentType: "subscription",
           reviewUrl: absolute(args.timingsUrl),
           unsubscribeUrl: r.unsubscribeUrl,
-          nudgeDays: args.nudgeDays,
+          nudgeHours: args.nudgeHours,
         }),
     },
     [args.consultantUserId],

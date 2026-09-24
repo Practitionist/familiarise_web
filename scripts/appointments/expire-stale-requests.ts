@@ -780,19 +780,19 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
 }
 
 /**
- * #1703 — the nudge stages, in days since the subscription became APPROVED
- * (its `updatedAt`, the same clock the 30-day refund above reads). A row
- * gets the latest stage it has reached and nothing earlier, so a sweep that
- * missed day 3 sends day 7 once, not both.
+ * #1775 C-4 — the nudge stages, in hours since the plan's capture
+ * (`capturedAt ?? createdAt`), inside the 48 h allocate-or-refund window. A
+ * row gets the latest stage it has reached and nothing earlier, so a sweep
+ * that missed hour 12 sends hour 24 once, not both.
  */
-export const SUBSCRIPTION_NUDGE_DAYS = [3, 7, 14] as const;
-export type SubscriptionNudgeDay = (typeof SUBSCRIPTION_NUDGE_DAYS)[number];
+export const SUBSCRIPTION_NUDGE_HOURS = [12, 24, 36] as const;
+export type SubscriptionNudgeStage = (typeof SUBSCRIPTION_NUDGE_HOURS)[number];
 
-export function nudgeStageFor(ageMs: number): SubscriptionNudgeDay | null {
-  const days = ageMs / (24 * 60 * 60 * 1000);
-  let stage: SubscriptionNudgeDay | null = null;
-  for (const day of SUBSCRIPTION_NUDGE_DAYS) {
-    if (days >= day) stage = day;
+export function nudgeStageFor(ageMs: number): SubscriptionNudgeStage | null {
+  const hours = ageMs / (60 * 60 * 1000);
+  let stage: SubscriptionNudgeStage | null = null;
+  for (const hour of SUBSCRIPTION_NUDGE_HOURS) {
+    if (hours >= hour) stage = hour;
   }
   return stage;
 }
@@ -800,9 +800,9 @@ export function nudgeStageFor(ageMs: number): SubscriptionNudgeDay | null {
 /** The outbox key for one subscription's stage; the guard and the trigger share it. */
 export function subscriptionNudgeDedupeKey(
   subscriptionId: string,
-  stage: SubscriptionNudgeDay,
+  stage: SubscriptionNudgeStage,
 ): string {
-  return `subscription-unscheduled:${subscriptionId}:day${stage}`;
+  return `subscription-unscheduled:${subscriptionId}:h${stage}`;
 }
 
 /**
@@ -818,27 +818,23 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
 }> {
   const errors: string[] = [];
   const firstStageCutoff = new Date(
-    Date.now() - SUBSCRIPTION_NUDGE_DAYS[0] * 24 * 60 * 60 * 1000,
+    Date.now() - SUBSCRIPTION_NUDGE_HOURS[0] * 60 * 60 * 1000,
   );
-  const NO_LIVE_SESSION = {
-    NOT: {
-      appointment: {
-        occurrences: { some: { isTentative: false, deletedAt: null } },
-      },
-    },
-  };
 
   try {
     const waiting = await prisma.subscription.findMany({
+      // #1775 C-4 — the 48 h arm's cohort: a paid plan still waiting for cycle 1.
       where: {
-        status: AppointmentStatus.APPROVED,
+        status: AppointmentStatus.PENDING,
         deletedAt: null,
-        updatedAt: { lt: firstStageCutoff },
-        ...NO_LIVE_SESSION,
+        AND: [
+          NO_LIVE_SESSION,
+          noLiveProposal(),
+          paidCapturedBefore(firstStageCutoff),
+        ],
       },
       select: {
         id: true,
-        updatedAt: true,
         requestedBy: { select: { user: { select: { name: true } } } },
         subscriptionPlan: {
           select: {
@@ -848,14 +844,31 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
             },
           },
         },
-        appointment: { select: { id: true, organizationId: true } },
+        appointment: {
+          select: {
+            id: true,
+            organizationId: true,
+            payment: {
+              where: {
+                paymentStatus: PaymentStatus.SUCCEEDED,
+                deletedAt: null,
+              },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { capturedAt: true, createdAt: true },
+            },
+          },
+        },
       },
-      orderBy: { updatedAt: "asc" },
+      orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
     });
 
     const candidates = waiting.flatMap((sub) => {
-      const stage = nudgeStageFor(Date.now() - sub.updatedAt.getTime());
+      const paid = sub.appointment?.payment[0];
+      if (!paid) return [];
+      const capturedAt = paid.capturedAt ?? paid.createdAt;
+      const stage = nudgeStageFor(Date.now() - capturedAt.getTime());
       if (!stage || !sub.appointment) return [];
       const consultantUserId = sub.subscriptionPlan.consultantProfile.user.id;
       const dedupeKey = subscriptionNudgeDedupeKey(sub.id, stage);
@@ -930,7 +943,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
               planTitle,
               appointmentType: "SUBSCRIPTION",
               dashboardUrl: timingsUrl,
-              nudgeDay: stage,
+              nudgeHours: stage,
             },
             dedupeKey,
           );
@@ -942,7 +955,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
               consultantUserId,
               consulteeName,
               planTitle,
-              nudgeDays: stage,
+              nudgeHours: stage,
               timingsUrl,
             },
             EMAIL_BUDGET_MS.JOB,
@@ -955,7 +968,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
         }
         nudged += 1;
       } catch (error) {
-        const msg = `Nudge failed for subscription ${sub.id} (day ${stage}): ${error}`;
+        const msg = `Nudge failed for subscription ${sub.id} (hour ${stage}): ${error}`;
         console.error(`❌ ${msg}`);
         errors.push(msg);
       }
