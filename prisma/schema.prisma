@@ -50,6 +50,7 @@ model User {
   Payment                 Payment[]
   // #1365 — B2C tax invoices issued to this buyer.
   consumerInvoices        ConsumerInvoice[]
+  razorpayCustomerId      String?                 @unique // #1771 row 1
 
   // Relations
   consultantProfile     ConsultantProfile?

@@ -117,6 +117,7 @@ import {
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -734,6 +735,7 @@ export class PaymentIntentManager {
     };
     paymentGateway: PaymentGateway;
     isMockPayment?: boolean;
+    customerId?: string;
   }) {
     try {
       // Imported at call time so the checkout bundle does not evaluate the
@@ -3626,6 +3628,12 @@ export async function handleCheckout(
           }),
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
+          // #1771 row 1 — undefined unless ENABLE_SAVED_CARDS; org funding never reaches here.
+          customerId: await savedCardCustomerId(
+            userId,
+            validatedData.paymentGateway,
+            isMockPayment,
+          ),
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);

@@ -60,6 +60,8 @@ export function RecordingBuyButton({
         name: "Familiarise Recordings",
         description: body.data.description ?? "Recording purchase",
         orderId: body.data.orderId,
+        // #1771 row 1 — present only when saved cards are on; Razorpay shows the consent.
+        customerId: body.data.customerId,
         prefill: {},
         theme: { color: "#6366f1" },
         onDismiss: () => {

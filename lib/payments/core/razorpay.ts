@@ -11,6 +11,8 @@ import {
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
+import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -161,6 +163,7 @@ export async function createRazorpayOrder({
   amount,
   currency,
   metadata,
+  customerId,
 }: PaymentIntentParams): Promise<PaymentIntent> {
   // #1396 — first statement in the function, ahead of the client lookup, so a
   // non-INR currency cannot reach the SDK even on a misconfigured instance.
@@ -205,6 +208,8 @@ export async function createRazorpayOrder({
             // PM-11 — Date.now() collides for two orders in the same ms; the uuid
             // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
             receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+            // #1771 row 1 — only personal checkouts with saved cards on pass one.
+            ...(customerId ? { customer_id: customerId } : {}),
           }),
         ),
     );
@@ -215,6 +220,7 @@ export async function createRazorpayOrder({
       amount: Number(order.amount), // already in smallest currency unit
       currency: order.currency,
       status: order.status,
+      ...(customerId ? { customerId } : {}),
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
@@ -225,6 +231,80 @@ export async function createRazorpayOrder({
     });
     throw handleRazorpayError(error);
   }
+}
+
+// ============================================================================
+// Customers (saved cards, #1771 row 1)
+// ============================================================================
+
+/**
+ * Returns the buyer's Razorpay Customer id, creating the Customer once.
+ *
+ * `fail_existing: 0` makes Razorpay return the existing Customer for the same
+ * email and contact, so a lost column write re-links instead of duplicating.
+ * Prisma is imported lazily so this module's load graph stays gateway-only.
+ */
+export async function ensureRazorpayCustomer(userId: string): Promise<string> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const readCustomerId = async () =>
+    (
+      await prisma.user.findUnique({
+        where: { id: userId },
+        select: { razorpayCustomerId: true },
+      })
+    )?.razorpayCustomerId ?? null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { razorpayCustomerId: true, name: true, email: true, phone: true },
+  });
+  if (!user) {
+    throw new PaymentError(
+      "Cannot create a Razorpay customer for an unknown user",
+      "USER_NOT_FOUND",
+      "RAZORPAY",
+    );
+  }
+  if (user.razorpayCustomerId) return user.razorpayCustomerId;
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const contact = normalizeRazorpayContact(user.phone);
+  const name = user.name.trim().slice(0, 50);
+  const customer = await withRazorpaySdkTimeout("customers.create", () =>
+    razorpayClient.customers.create({
+      ...(name.length >= 3 ? { name } : {}),
+      email: user.email,
+      ...(contact ? { contact } : {}),
+      fail_existing: 0,
+    }),
+  );
+
+  try {
+    // CAS on the null column: a concurrent caller got the same Customer back.
+    await prisma.user.updateMany({
+      where: { id: userId, razorpayCustomerId: null },
+      data: { razorpayCustomerId: customer.id },
+    });
+  } catch (error) {
+    // P2002 — another row already holds this Customer; never share its cards.
+    if (!isUniqueViolation(error)) throw error;
+  }
+  const stored = await readCustomerId();
+  if (!stored) {
+    throw new PaymentError(
+      "This Razorpay customer is already linked to another account",
+      "RAZORPAY_CUSTOMER_CONFLICT",
+      "RAZORPAY",
+    );
+  }
+  return stored;
 }
 
 /**

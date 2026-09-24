@@ -208,6 +208,8 @@ export default function RazorpayCheckout({
         name: "Familiarise",
         description: description || "Service Payment",
         orderId: data.paymentIntent.id,
+        // #1771 row 1 — the server echoes a Customer only while saved cards are on.
+        customerId: data.paymentIntent.customerId,
         handler: async function (response: RazorpayPaymentResponse) {
           // H2 FIX: Verify Razorpay signature server-side before signaling success
           try {

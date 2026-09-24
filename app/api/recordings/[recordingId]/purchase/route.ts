@@ -15,6 +15,7 @@ import {
   cancelRazorpayOrder,
   createRazorpayOrder,
 } from "@/lib/payments/core/razorpay";
+import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   isDiscoverablePlanPlan,
   loadOwnedListingRecording,
@@ -86,6 +87,8 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
 
     const buyerId = session.user.id;
     const amountPaise = loaded.listPricePaise;
+    // #1771 row 1 — resolved before the lock so a slow Customer call holds nothing.
+    const customerId = await savedCardCustomerId(buyerId);
     // #1584 P2-P0-02 — read → mint → create under one lock, and the PENDING
     // re-read happens INSIDE it so a second caller resumes, never re-mints.
     const outcome = await lockRecordingPurchase(
@@ -121,6 +124,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
             recordingId,
             userId: buyerId,
           },
+          customerId,
         });
 
         try {
@@ -149,6 +153,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
           orderId: order.id,
           amount: order.amount,
           currency: order.currency,
+          ...(order.customerId ? { customerId: order.customerId } : {}),
         };
       },
     );
