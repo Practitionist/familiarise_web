@@ -57,7 +57,7 @@ interface ConsultationPricingToggleProps {
   setSelectedDate: (date: Date | null) => void;
   currentDate: Date;
   setCurrentDate: (date: Date) => void;
-  renderCalendar: () => JSX.Element[];
+  renderCalendar: (durationInHours: number) => JSX.Element[];
   slotTimings: TIntervalTiming[];
   selectedSlot: TIntervalTiming | null;
   setSelectedSlot: (slot: TIntervalTiming | null) => void;
@@ -304,7 +304,13 @@ export default function ConsultationPricingToggle({
   const handleBookNowClick = () => {
     const today = new Date();
     setSelectedDate(today);
+    setSelectedSlot(null);
     setCurrentDate(new Date(today.getFullYear(), today.getMonth(), 1));
+  };
+
+  const handlePlanChange = (planId: string) => {
+    setActiveConsultationOption(planId);
+    setSelectedSlot(null);
   };
 
   if (consultationOptions.length === 0) {
@@ -334,7 +340,7 @@ export default function ConsultationPricingToggle({
   return (
     <Tabs
       value={activeConsultationOption}
-      onValueChange={setActiveConsultationOption}
+      onValueChange={handlePlanChange}
       className="w-full space-y-5"
     >
       {/* Segmented pill duration toggle */}
@@ -442,20 +448,28 @@ export default function ConsultationPricingToggle({
                       consultation
                     </DialogDescription>
                   </DialogHeader>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 lg:gap-10 p-6 lg:p-8">
+                  <div className="grid grid-cols-1 gap-8 p-4 sm:p-6 md:grid-cols-2 lg:gap-10 lg:p-8">
                     {/* Calendar Section */}
                     <div>
                       <h3 className="text-lg font-semibold mb-5 flex items-center text-white">
                         <CalendarIcon className="mr-2 h-5 w-5 text-zinc-400" />{" "}
                         Select a Date
                       </h3>
-                      <div className="bg-zinc-800/60 p-5 lg:p-6 rounded-xl border border-zinc-700/50">
+                      <div className="rounded-xl border border-zinc-700/50 bg-zinc-800/60 p-4 sm:p-5 lg:p-6">
                         <div className="flex justify-between items-center mb-5">
-                          <span className="font-semibold text-white text-lg">
-                            {currentDate.toLocaleString("default", {
-                              month: "long",
-                              year: "numeric",
-                            })}
+                          <span className="font-semibold text-white text-base sm:text-lg">
+                            <span className="sm:hidden">
+                              {currentDate.toLocaleString("default", {
+                                month: "short",
+                                year: "numeric",
+                              })}
+                            </span>
+                            <span className="hidden sm:inline">
+                              {currentDate.toLocaleString("default", {
+                                month: "long",
+                                year: "numeric",
+                              })}
+                            </span>
                           </span>
                           <div className="flex items-center gap-1">
                             {/* #1785 L-4 — back to the current month and today's date. */}
@@ -463,7 +477,7 @@ export default function ConsultationPricingToggle({
                               type="button"
                               variant="ghost"
                               size="sm"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 px-3"
+                              className="h-8 rounded-lg border border-zinc-600 bg-zinc-800/30 px-2 text-zinc-200 hover:border-zinc-400 hover:bg-zinc-700/50 hover:text-white sm:h-9 sm:px-3"
                               onClick={handleBookNowClick}
                             >
                               Today
@@ -473,7 +487,7 @@ export default function ConsultationPricingToggle({
                               variant="ghost"
                               size="default"
                               aria-label="Previous month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              className="h-8 w-8 text-lg text-zinc-400 hover:bg-zinc-700/50 hover:text-white sm:h-9 sm:w-9"
                               onClick={() =>
                                 setCurrentDate(
                                   new Date(
@@ -491,7 +505,7 @@ export default function ConsultationPricingToggle({
                               variant="ghost"
                               size="default"
                               aria-label="Next month"
-                              className="text-zinc-400 hover:text-white hover:bg-zinc-700/50 h-9 w-9 text-lg"
+                              className="h-8 w-8 text-lg text-zinc-400 hover:bg-zinc-700/50 hover:text-white sm:h-9 sm:w-9"
                               onClick={() =>
                                 setCurrentDate(
                                   new Date(
@@ -515,9 +529,32 @@ export default function ConsultationPricingToggle({
                           <div>Sa</div>
                           <div>Su</div>
                         </div>
-                        <div className="grid grid-cols-7 gap-2">
-                          {renderCalendar()}
+                        <div className="grid grid-cols-7 gap-1 sm:gap-2">
+                          {renderCalendar(selectedDuration)}
                         </div>
+                        {(consultantDetails.bookingMode !== "REQUEST" ||
+                          consultantDetails.acceptingRequests !== false) && (
+                          <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-zinc-700/50 pt-3 text-xs text-zinc-400">
+                            {consultantDetails.bookingMode !== "REQUEST" && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="h-2 w-2 rounded-full bg-emerald-400"
+                                />
+                                Book now
+                              </span>
+                            )}
+                            {consultantDetails.acceptingRequests !== false && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span
+                                  aria-hidden="true"
+                                  className="h-2 w-2 rounded-full bg-amber-400"
+                                />
+                                Request approval
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -575,6 +612,9 @@ export default function ConsultationPricingToggle({
                           onSelect={setSelectedSlot}
                           bookingMode={
                             consultantDetails.bookingMode ?? "INSTANT"
+                          }
+                          acceptingRequests={
+                            consultantDetails.acceptingRequests !== false
                           }
                         />
                       </div>

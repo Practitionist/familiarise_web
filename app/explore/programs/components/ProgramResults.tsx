@@ -1,7 +1,6 @@
 "use client";
 
 import { memo, type RefObject } from "react";
-import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import type { Program } from "@/lib/explore/programs";
 import ProgramCard from "./ProgramCard";
@@ -17,12 +16,7 @@ interface ProgramResultsProps {
 
 function EmptyState() {
   return (
-    <motion.div
-      className="text-center py-16"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.3 }}
-    >
+    <div className="rounded-2xl border border-dashed border-border bg-muted/35 py-16 text-center">
       <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
         <Search className="w-10 h-10 text-muted-foreground/70" />
       </div>
@@ -32,7 +26,7 @@ function EmptyState() {
       <p className="text-muted-foreground max-w-md mx-auto">
         Try adjusting your filters or search terms to discover more programs
       </p>
-    </motion.div>
+    </div>
   );
 }
 
@@ -52,36 +46,26 @@ function ProgramResultsImpl({
     <>
       {viewMode === "grid" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="grid" viewerOrgs={viewerOrgs} />
-            </motion.div>
+          {programs.map((item) => (
+            <div key={item.id}>
+              <ProgramCard
+                program={item}
+                variant="grid"
+                viewerOrgs={viewerOrgs}
+              />
+            </div>
           ))}
         </div>
       ) : (
         <div className="space-y-4">
-          {programs.map((item, index) => (
-            <motion.div
-              key={item.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
-              <ProgramCard program={item} variant="list" viewerOrgs={viewerOrgs} />
-            </motion.div>
+          {programs.map((item) => (
+            <div key={item.id}>
+              <ProgramCard
+                program={item}
+                variant="list"
+                viewerOrgs={viewerOrgs}
+              />
+            </div>
           ))}
         </div>
       )}

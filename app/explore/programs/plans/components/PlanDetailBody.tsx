@@ -37,8 +37,8 @@ export interface PlanDetailBodyProps {
 
 function SectionCard({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <Card className="border-border shadow-sm">
-      <CardContent className="p-6 md:p-8">{children}</CardContent>
+    <Card className="rounded-2xl border-border shadow-sm">
+      <CardContent className="p-6 md:p-8 lg:p-10">{children}</CardContent>
     </Card>
   );
 }
@@ -67,10 +67,10 @@ export function PlanDetailBody({
     <>
       {description && (
         <SectionCard>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
+          <h2 className="mb-4 text-fluid-xl font-semibold tracking-tight text-foreground">
             {aboutHeading}
           </h2>
-          <p className="text-muted-foreground whitespace-pre-line leading-relaxed">
+          <p className="max-w-prose whitespace-pre-line leading-7 text-muted-foreground">
             {description}
           </p>
         </SectionCard>
@@ -87,7 +87,7 @@ export function PlanDetailBody({
 
       {(learningOutcomes?.length ?? 0) > 0 && (
         <SectionCard>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
+          <h2 className="mb-4 text-fluid-xl font-semibold tracking-tight text-foreground">
             What you&apos;ll learn
           </h2>
           <ul className="grid md:grid-cols-2 gap-3">
@@ -112,7 +112,7 @@ export function PlanDetailBody({
 
       {hasPrerequisites && (
         <SectionCard>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
+          <h2 className="mb-4 text-fluid-xl font-semibold tracking-tight text-foreground">
             Prerequisites
           </h2>
           <p className="text-muted-foreground whitespace-pre-line">
@@ -123,7 +123,7 @@ export function PlanDetailBody({
 
       {hasMaterials && (
         <SectionCard>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
+          <h2 className="mb-4 text-fluid-xl font-semibold tracking-tight text-foreground">
             Materials provided
           </h2>
           <p className="text-muted-foreground whitespace-pre-line">
@@ -140,7 +140,7 @@ export function PlanDetailBody({
 
       {(topics?.length ?? 0) > 0 && (
         <SectionCard>
-          <h2 className="text-xl font-semibold text-foreground mb-4">
+          <h2 className="mb-4 text-fluid-xl font-semibold tracking-tight text-foreground">
             Topics covered
           </h2>
           <div className="flex flex-wrap gap-2">

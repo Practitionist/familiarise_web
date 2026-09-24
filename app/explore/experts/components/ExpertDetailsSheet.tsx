@@ -105,6 +105,10 @@ export default function ExpertDetailsSheet({
       <SheetContent
         side="right"
         className="flex w-full flex-col overflow-hidden p-0 sm:max-w-lg lg:max-w-xl"
+        style={{
+          top: "calc(var(--maintenance-banner-height, 0px) + var(--header-height, 5rem))",
+          height: "auto",
+        }}
       >
         {consultant && (
           <>

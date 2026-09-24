@@ -1,5 +1,9 @@
 import { isSameDay, startOfDay } from "date-fns";
+import type { BookingMode } from "@prisma/client";
 import { MINIMUM_BOOKING_LEAD_TIME_MS } from "@/lib/payments/constants";
+import { consultationCtaFor } from "@/lib/booking/booking-mode";
+import type { TIntervalTiming } from "@/types/slots";
+import { breakDownSlotsPreservingStatus } from "@/utils/scheduling-engine/intervals";
 
 /** The part of a grid slot the day mark needs. */
 export interface DayMarkSlot {
@@ -48,4 +52,57 @@ export function dayState(
 /** A cell the consultee can select: not past, and not known to be empty. */
 export function isSelectableDay(state: DayState): boolean {
   return state !== "past" && state !== "none" && state !== "today+none";
+}
+
+export type DayBookingKind = "instant" | "request" | null;
+
+/** Match the date's mark and booking path to the duration windows in the picker. */
+export function durationDayMark(
+  date: Date,
+  now: Date,
+  daySlots: (TIntervalTiming & { isAllocated: boolean })[] | null,
+  durationInHours: number,
+  timezone: string,
+  bookingMode: BookingMode,
+  acceptingRequests: boolean,
+): { state: DayState; kind: DayBookingKind } {
+  if (!isSameDay(date, now) && startOfDay(date) < startOfDay(now)) {
+    return { state: "past", kind: null };
+  }
+  if (daySlots === null) {
+    return { state: dayState(date, now, null), kind: null };
+  }
+
+  const windows = breakDownSlotsPreservingStatus(
+    daySlots,
+    durationInHours,
+    timezone,
+  );
+  const cutoff = now.getTime() + MINIMUM_BOOKING_LEAD_TIME_MS;
+  const actionableWindows = windows.filter((slot) => {
+    if (
+      slot.bookingStatus === "fully-booked" ||
+      new Date(slot.startsAt).getTime() < cutoff
+    ) {
+      return false;
+    }
+    return (
+      acceptingRequests ||
+      consultationCtaFor(bookingMode, slot.isAllocated).action === "checkout"
+    );
+  });
+
+  const hasInstantWindow = actionableWindows.some(
+    (slot) =>
+      consultationCtaFor(bookingMode, slot.isAllocated).action === "checkout",
+  );
+
+  return {
+    state: dayState(date, now, actionableWindows),
+    kind: hasInstantWindow
+      ? "instant"
+      : actionableWindows.length > 0
+        ? "request"
+        : null,
+  };
 }

@@ -1,14 +1,10 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { Search } from "lucide-react";
 import { memo, type RefObject } from "react";
 import type { IConsultantCardData } from "@/types/consultant";
 import { ConsultantCard } from "./ConsultantCard";
-import {
-  groupConsultantsByDomain,
-  type IExpertsMetaData,
-} from "../utils";
+import { groupConsultantsByDomain, type IExpertsMetaData } from "../utils";
 
 interface ExpertResultsProps {
   consultants: IConsultantCardData[];
@@ -24,12 +20,7 @@ interface ExpertResultsProps {
 
 function EmptyState() {
   return (
-    <motion.div
-      className="text-center py-16"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.3 }}
-    >
+    <div className="rounded-2xl border border-dashed border-border bg-muted/35 py-16 text-center">
       <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-muted flex items-center justify-center">
         <Search className="w-10 h-10 text-muted-foreground/70" />
       </div>
@@ -37,10 +28,9 @@ function EmptyState() {
         No experts found
       </h3>
       <p className="text-muted-foreground max-w-md mx-auto">
-        Try adjusting your filters or search terms to discover more amazing
-        mentors
+        Try adjusting your filters or search terms to discover more experts.
       </p>
-    </motion.div>
+    </div>
   );
 }
 
@@ -68,10 +58,7 @@ function ExpertResultsImpl({
     return (
       <div className="mt-8 min-h-[400px] space-y-6">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div
-            key={i}
-            className="h-36 animate-pulse rounded-xl bg-muted"
-          />
+          <div key={i} className="h-36 animate-pulse rounded-xl bg-muted" />
         ))}
       </div>
     );
@@ -94,14 +81,7 @@ function ExpertResultsImpl({
             if (domainConsultants.length === 0) return null;
 
             return (
-              <motion.div
-                key={domain.id}
-                className="mb-12"
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ duration: 0.5 }}
-              >
+              <div key={domain.id} className="mb-12">
                 <div className="flex items-center gap-3 mb-6">
                   <div className="w-1 h-8 bg-gradient-to-b from-foreground to-muted-foreground/70 rounded-full" />
                   <h3 className="text-2xl font-bold text-foreground">
@@ -122,29 +102,20 @@ function ExpertResultsImpl({
                     />
                   ))}
                 </div>
-              </motion.div>
+              </div>
             );
           })}
         </>
       ) : (
         <div className="space-y-6">
-          {consultants.map((consultant, index) => (
-            <motion.div
-              key={consultant.id}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{
-                duration: 0.4,
-                delay: Math.min(index * 0.05, 0.6),
-              }}
-            >
+          {consultants.map((consultant) => (
+            <div key={consultant.id}>
               <ConsultantCard
                 consultant={consultant}
                 metadata={metadata}
                 onSelect={onSelect}
               />
-            </motion.div>
+            </div>
           ))}
         </div>
       )}
@@ -157,10 +128,7 @@ function ExpertResultsImpl({
       {isLoadingMore && (
         <div className="space-y-4 py-6">
           {[1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-28 animate-pulse rounded-xl bg-muted"
-            />
+            <div key={i} className="h-28 animate-pulse rounded-xl bg-muted" />
           ))}
         </div>
       )}

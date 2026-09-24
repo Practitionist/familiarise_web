@@ -7,14 +7,7 @@ import { planLevelLabel } from "@/lib/labels/plan-labels";
 import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import {
-  Calendar,
-  Clock,
-  Users,
-  GraduationCap,
-  ArrowLeft,
-} from "lucide-react";
+import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
 import { formatInTimeZone } from "date-fns-tz";
 import {
   buildSessionsFromAppointment,
@@ -24,6 +17,7 @@ import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
+import { MobileBookingBar } from "@/app/explore/components/MobileBookingBar";
 import type { TClassPlanDetailsData } from "../types";
 
 const getBadgeVariant = (
@@ -46,9 +40,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
   }, []);
 
   return (
-    <main className="min-h-screen bg-muted">
+    <main className="explore-detail min-h-screen">
       {/* Hero Banner */}
-      <div className="relative h-[350px] md:h-[400px] w-full overflow-hidden">
+      <div className="relative h-[330px] w-full overflow-hidden md:h-[390px]">
         <Image
           src={generateProgramImageUrl(plan.id, 1200, 400, plan.imageUrl)}
           alt="Class cover"
@@ -56,11 +50,11 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
           className="object-cover"
           priority
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/75 to-zinc-950/15" />
 
         {/* Back Navigation */}
         <div className="absolute top-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 py-6">
+          <div className="explore-detail-shell py-6">
             <Link
               href="/explore/programs"
               className="inline-flex items-center gap-2 text-sm text-white/80 hover:text-white transition-colors"
@@ -73,9 +67,9 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
         {/* Title Overlay */}
         <div className="absolute bottom-0 left-0 right-0 z-10">
-          <div className="max-w-[1600px] mx-auto px-4 md:px-8 lg:px-12 pb-8">
+          <div className="explore-detail-shell pb-8">
             <Badge className="bg-background text-foreground mb-4">Class</Badge>
-            <h1 className="text-fluid-4xl tracking-tight font-bold text-white mb-2">
+            <h1 className="max-w-4xl text-fluid-4xl font-semibold tracking-tight text-white mb-3">
               {plan.title}
             </h1>
             <div className="flex items-center gap-4 text-white/80">
@@ -90,15 +84,10 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
       </div>
 
       {/* Content */}
-      <div className="w-full max-w-[92%] xl:max-w-[88%] 2xl:max-w-[1600px] mx-auto py-8 md:py-12">
+      <div className="explore-detail-shell py-8 md:py-12">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
           {/* Main Content */}
-          <motion.div
-            className="lg:col-span-2 space-y-8"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-          >
+          <div className="space-y-8 lg:col-span-2">
             {/* Features Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <FeatureItem
@@ -141,7 +130,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
             />
 
             {/* Schedule */}
-            <Card className="border-border shadow-sm">
+            <Card className="rounded-2xl border-border shadow-sm">
               <CardContent className="p-6 md:p-8">
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
@@ -239,18 +228,22 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 )}
               </CardContent>
             </Card>
-          </motion.div>
+          </div>
 
           {/* Sidebar */}
-          <motion.div
-            className="lg:col-span-1"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-          >
-            <div className="sticky top-24 space-y-6">
+          <div className="lg:col-span-1">
+            <div className="flex flex-col gap-6 lg:sticky lg:top-[calc(var(--maintenance-banner-height,0px)+var(--header-height,5rem)+1rem)]">
+              {/* Registration Card */}
+              <div id="class-booking" className="explore-booking-target">
+                <ClientClassRegistration
+                  plan={plan}
+                  maxParticipants={plan.maxParticipants ?? undefined}
+                  consultantUserId={plan.consultantProfile?.user?.id}
+                />
+              </div>
+
               {/* Instructor Card */}
-              <Card className="border-border shadow-sm">
+              <Card className="rounded-2xl border-border shadow-sm">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-lg">Your Instructor</CardTitle>
                 </CardHeader>
@@ -292,7 +285,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
 
               {/* Collaborators */}
               {plan.collaborators && plan.collaborators.length > 0 && (
-                <Card className="border-border shadow-sm">
+                <Card className="rounded-2xl border-border shadow-sm">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-lg flex items-center gap-2">
                       <Users className="w-4 h-4" />
@@ -333,17 +326,15 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                   </CardContent>
                 </Card>
               )}
-
-              {/* Registration Card */}
-              <ClientClassRegistration
-                plan={plan}
-                maxParticipants={plan.maxParticipants ?? undefined}
-                consultantUserId={plan.consultantProfile?.user?.id}
-              />
             </div>
-          </motion.div>
+          </div>
         </div>
       </div>
+      <MobileBookingBar
+        targetId="class-booking"
+        context="Class registration"
+        label={formatPrice(plan.price)}
+      />
     </main>
   );
 }

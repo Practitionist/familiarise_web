@@ -34,28 +34,32 @@ function StaticTopRowsImpl({
   return (
     <>
       {/* Trending Experts Row */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Trending Experts"
-          icon={<Flame className="w-5 h-5 text-white" />}
-          onSeeAllClick={() => onSeeAllSort("trending")}
-        />
-        <ExpertRow
-          experts={trendingExperts}
-          badge="trending"
-          isLoading={false}
-        />
-      </div>
+      {trendingExperts.length > 0 && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="Trending Experts"
+            icon={<Flame className="w-5 h-5 text-white" />}
+            onSeeAllClick={() => onSeeAllSort("trending")}
+          />
+          <ExpertRow
+            experts={trendingExperts}
+            badge="trending"
+            isLoading={false}
+          />
+        </div>
+      )}
 
       {/* Newly Joined Row */}
-      <div className="mb-14">
-        <SectionHeader
-          title="Newly Joined"
-          icon={<Clock className="w-5 h-5 text-white" />}
-          onSeeAllClick={() => onSeeAllSort("newest")}
-        />
-        <ExpertRow experts={newestExperts} badge="new" isLoading={false} />
-      </div>
+      {newestExperts.length > 0 && (
+        <div className="explore-section mb-14">
+          <SectionHeader
+            title="Newly Joined"
+            icon={<Clock className="w-5 h-5 text-white" />}
+            onSeeAllClick={() => onSeeAllSort("newest")}
+          />
+          <ExpertRow experts={newestExperts} badge="new" isLoading={false} />
+        </div>
+      )}
 
       {/* Browse by Domain. The nav's "Browse by domain" item deep-links to
           #domains; scroll-mt clears the fixed navbar so the heading isn't
@@ -63,7 +67,7 @@ function StaticTopRowsImpl({
       {metadata?.consultantMetadata?.consultantsByDomain && (
         <div
           id="domains"
-          className="mb-14 scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
+          className="explore-section mb-14 scroll-mt-[calc(var(--header-height,5rem)+1rem)]"
         >
           <SectionHeader
             title="Browse by Domain"
