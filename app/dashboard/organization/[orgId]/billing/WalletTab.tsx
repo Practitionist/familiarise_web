@@ -343,7 +343,7 @@ export function WalletTab({
     mutationFn: async () => {
       const trimmed = minBalanceMajor.trim();
       const parsed =
-        trimmed === "" ? null : Math.round(parseFloat(trimmed) * 100);
+        trimmed === "" ? null : Math.round(Number.parseFloat(trimmed) * 100);
       // Toggle off (or a cleared field) clears the floor; toggle on needs a
       // valid amount so the cron has a threshold to compare against.
       if (

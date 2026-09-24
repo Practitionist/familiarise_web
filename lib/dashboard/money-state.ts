@@ -741,16 +741,29 @@ const GATEWAY_REFUND_ID = /^(rfnd_|re_)/;
  * paid) or failed, with the arrival time of the rail it goes back to. The row
  * records CARD for every gateway charge, so card and UPI are both named.
  */
+const REFUND_ETA_CARD_OR_UPI = "cards take 5–7 working days, UPI 1–3";
+const REFUND_ETA: Partial<Record<string, string>> = {
+  CREDITS: "back as credits instantly",
+  ORG: "back to the organisation",
+};
+
+function completedRefundLabel(
+  partial: boolean,
+  funding: string,
+  amountPaise: Parameters<typeof money>[0],
+  currency: Parameters<typeof money>[1],
+): string {
+  if (!partial) return "Refunded";
+  // Locked 2026-09-13: a sponsored member paid nothing, so no amount.
+  if (funding === "ORG") return "Refunded (partial)";
+  return `Refunded ${money(amountPaise, currency)} (partial)`;
+}
+
 function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
   const paid = input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
   if (!paid) return [];
   const funding = paymentFunding(paid);
-  const eta =
-    funding === "CREDITS"
-      ? "back as credits instantly"
-      : funding === "ORG"
-        ? "back to the organisation"
-        : "cards take 5–7 working days, UPI 1–3";
+  const eta = REFUND_ETA[funding] ?? REFUND_ETA_CARD_OR_UPI;
   return input.refunds.map((r): TimelineEvent => {
     const at = toDateOrNull(r.createdAt);
     const status = normalizeStatus(r.status);
@@ -768,12 +781,12 @@ function refundTimeline(input: BookingPresentationInput): TimelineEvent[] {
       return {
         at,
         actor: "",
-        // Locked 2026-09-13: a sponsored member paid nothing, so no amount.
-        label: !partial
-          ? "Refunded"
-          : funding === "ORG"
-            ? "Refunded (partial)"
-            : `Refunded ${money(r.amountPaise, paid.currency)} (partial)`,
+        label: completedRefundLabel(
+          partial,
+          funding,
+          r.amountPaise,
+          paid.currency,
+        ),
         done: true,
         kind: "refund-completed",
       };
