@@ -190,6 +190,11 @@ export async function refundBookingPayment(input: {
   initiatedByUserId?: string | null;
   /** #1780 — one refund per key on every rail; a repeat returns the first. */
   dedupeKey?: string;
+  /**
+   * #1780 row 4 — a per-session refund (a missed class session) leaves the
+   * seat live; every other refund marks the funded seat REFUNDED.
+   */
+  keepSeat?: boolean;
 }): Promise<BookingRefundResult> {
   // #781 §B — soft-deleted financial rows are retired; never refund them.
   const payment = await prisma.payment.findUnique({
@@ -220,7 +225,7 @@ export async function refundBookingPayment(input: {
     const r = await refundPayment(input);
     // #1319 A9 — the seat this payment funded is refunded (best-effort, after
     // the gateway refund committed; the participant table is shadow-only).
-    await markParticipantsRefunded(input.paymentId);
+    if (!input.keepSeat) await markParticipantsRefunded(input.paymentId);
     return {
       refundId: r.refundId,
       amountRefundedPaise: r.amountRefundedPaise,
@@ -687,6 +692,7 @@ async function refundInternalFundedPayment(input: {
   reason: string;
   initiatedByUserId?: string | null;
   dedupeKey?: string;
+  keepSeat?: boolean;
 }): Promise<BookingRefundResult> {
   const payment = await prisma.payment.findUnique({
     where: { id: input.paymentId, deletedAt: null },
@@ -797,7 +803,9 @@ async function refundInternalFundedPayment(input: {
           payment.amount,
         );
 
-        await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        if (!input.keepSeat) {
+          await setParticipantStatus(tx, { paymentId: payment.id }, "REFUNDED");
+        }
         notice = await stageRefundNotice(tx, payment, requested);
         return {
           refundId: refundRow.id,

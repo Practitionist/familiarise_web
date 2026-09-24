@@ -50,6 +50,54 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
       redirect: "dashboardUrl",
     },
   },
+  // #1780 row 4 — the class make-up machine; staged in the writer's transaction.
+  {
+    workflowId: W.CLASS_SESSION_CANCELLED,
+    name: "Class session cancelled",
+    description: "Seat holders, when the host cancels one session of a class.",
+    category: "appointments",
+    inApp: {
+      subject: "A class session was cancelled",
+      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} was cancelled — {{payload.consultantName}} has until {{payload.makeUpBy}} to schedule a make-up, or that session is refunded automatically.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_MAKEUP_SCHEDULED,
+    name: "Class make-up scheduled",
+    description:
+      "Seat holders, when the host schedules a cancelled session's make-up.",
+    category: "appointments",
+    inApp: {
+      subject: "Make-up session scheduled",
+      body: "The make-up session of {{payload.planTitle}} is on {{payload.dateTime}}.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_SESSION_REFUNDED,
+    name: "Class session refunded",
+    description:
+      "A seat holder, when a cancelled session was not made up in time.",
+    category: "appointments",
+    inApp: {
+      subject: "Session refunded",
+      body: "A cancelled session of {{payload.planTitle}} was not made up, so {{payload.amount}} is on its way back to you.",
+      redirect: "dashboardUrl",
+    },
+  },
+  {
+    workflowId: W.CLASS_EXIT_AVAILABLE,
+    name: "Class exit available",
+    description:
+      "A seat holder, when the host's cancellations give them the right to leave with a full refund of the remaining sessions.",
+    category: "appointments",
+    inApp: {
+      subject: "You can leave with a full refund",
+      body: "{{payload.planTitle}} has had {{payload.misses}} cancelled sessions. You may leave the series with a full refund of the sessions still to come.",
+      redirect: "dashboardUrl",
+    },
+  },
   {
     workflowId: W.APPOINTMENT_RESCHEDULED,
     name: "Appointment rescheduled",
