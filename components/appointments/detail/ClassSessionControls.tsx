@@ -101,7 +101,8 @@ function ConfirmButton({
 
 /**
  * #1780 row 4 — the per-session controls of a class. The host cancels one
- * future session and schedules its make-up within 14 days (E-6).
+ * future session and schedules its make-up within 14 days (E-6); a seat
+ * holder who cannot make a make-up takes that session back (E-3b).
  */
 export function ClassSessionControls({
   appointmentId,
@@ -145,13 +146,43 @@ export function ClassSessionControls({
     onSuccess: done("Make-up scheduled"),
     onError: failed,
   });
+  const skip = useMutation({
+    mutationFn: (id: string) => post(`${base}/${id}/skip-make-up`),
+    onSuccess: done("Session refunded"),
+    onError: failed,
+  });
 
   const now = Date.now();
   const open = pairs(sessions, now);
   const when = (d: Date | string) =>
     formatForViewer(toDate(d), viewer, "EEE d MMM, h:mm a");
 
-  if (role === "consultee") return null;
+  if (role === "consultee") {
+    const skippable = open.filter((p) => p.makeUp);
+    if (skippable.length === 0) return null;
+    return (
+      <div className="space-y-2">
+        {skippable.map(({ source, makeUp: row }) => (
+          <div
+            key={source.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm"
+          >
+            <span>
+              Make-up for the {when(source.startsAt)} session is on{" "}
+              {row && when(row.startsAt)}.
+            </span>
+            <ConfirmButton
+              label="Can't make it — refund this session"
+              title="Refund this session?"
+              body={`This session${unitLabel ? ` (${unitLabel})` : ""} comes back to you instead of the make-up. You keep your seat for the rest of the series.`}
+              disabled={skip.isPending}
+              onConfirm={() => skip.mutate(source.id)}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   const upcoming = sessions.filter(
     (s) =>

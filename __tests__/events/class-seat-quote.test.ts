@@ -93,3 +93,20 @@ it("three seats leaving at different times each get their own quote", () => {
   expect(seats.map((s) => s.heldCount)).toEqual([8, 7, 5]);
   expect(seats.map(quote)).toEqual([50_000, 57_140, 80_000]);
 });
+
+it("a session the seat already took back (skip, occ:*) leaves the exit quote (#1780 E-3b)", () => {
+  const ledger = ledgerFor(at(-24 * 60), 30);
+  const exit = (alreadyRefundedPaise: number) =>
+    quoteClassSeatRefund({
+      policy,
+      isConsultantInitiated: true,
+      unitPaise: ledger.unitPaise,
+      remainingStartsMs: ledger.remaining.map((r) => r.startsAt.getTime()),
+      neverScheduled: ledger.neverScheduled,
+      alreadyRefundedPaise,
+      refundablePaise: 80_000,
+      nowMs: NOW.getTime(),
+    }).refundPaise;
+  expect(exit(0)).toBe(50_000);
+  expect(exit(10_000)).toBe(40_000);
+});
