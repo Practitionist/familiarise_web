@@ -377,3 +377,24 @@ describe("GET /api/checkout/verify?sync=true is budgeted and time-boxed", () => 
     expect((await res.json()).retryAfter).toBeUndefined();
   });
 });
+
+// #1775 C-2 — the 48 h allocate-or-refund clock is stamped by the single
+// writer's confirm CAS, and a replayed webhook (the SUCCEEDED short-circuit)
+// never restamps it.
+describe("capture clock", () => {
+  const handlers = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/payments/webhooks/handlers.ts`, "utf8");
+
+  it("the confirm CAS stamps capturedAt; the replay short-circuit does not", () => {
+    const confirm = handlers
+      .split("const confirmed = recoverable")[1]
+      .split("if (confirmed.count === 0)")[0];
+    expect(confirm).toContain("paymentStatus: PaymentStatus.PENDING");
+    expect(confirm).toContain("capturedAt: new Date()");
+    const replay = handlers
+      .split("const recoverable =")[1]
+      .split("return null; // Signal: already processed")[0];
+    expect(replay).not.toContain("capturedAt");
+  });
+});

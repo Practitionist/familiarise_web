@@ -423,6 +423,7 @@ export async function handlePaymentSuccess(
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
+                capturedAt: new Date(), // #1775 C-2
                 description: `Auto-refund pending: capture landed on a ${payment.paymentStatus} payment whose hold was already released. Booking NOT confirmed.`,
               },
             });
@@ -634,6 +635,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 data: {
                   paymentStatus: PaymentStatus.SUCCEEDED,
                   ...capturedGatewayId,
+                  // #1775 C-2 — the allocate-or-refund clock; the SUCCEEDED
+                  // short-circuit above never reaches here, so a replay keeps it.
+                  capturedAt: new Date(),
                 },
               });
           if (confirmed.count === 0) {
@@ -839,6 +843,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // refunds immediately below; re-stamp it so that refund's webhook can
         // match the row.
         ...capturedGatewayId,
+        capturedAt: new Date(), // #1775 C-2
         description:
           "Refund pending: legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap) — booking NOT confirmed.",
       },

@@ -5308,6 +5308,7 @@ model Payment {
   // Hard delete remains possible only while no money row references this.
   deletedAt            DateTime?      @db.Timestamptz
   expiresAt            DateTime?      @db.Timestamptz // For tracking payment intent expiration
+  capturedAt           DateTime?      @db.Timestamptz // #1775 — capture time; the 48 h allocate-or-refund clock (null → createdAt)
   isMockPayment        Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
