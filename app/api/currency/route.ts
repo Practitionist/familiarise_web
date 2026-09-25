@@ -30,6 +30,18 @@ function symbolFor(code: string): string {
 // and gives no cross-instance hit rate at all.
 const CACHE_CONTROL = "public, s-maxage=3600, stale-while-revalidate=86400";
 
+// The CDN cache key must include `to`: Netlify's default key for this route
+// varies only on Next.js internals (`__nextDataReq`, `rsc`, …), so one cached
+// currency body was served for every `?to=` value (observed live: identical
+// JPY, then USD bodies for USD/EUR/INR/GBP/JPY). The switcher trusts
+// `data.currency`, so it displayed whatever got cached first instead of the
+// selected currency. Varying on `to` keeps one entry per currency while the
+// `s-maxage` above keeps protecting the provider quota.
+const CACHE_HEADERS = {
+  "Cache-Control": CACHE_CONTROL,
+  "Netlify-Vary": "query=to",
+};
+
 // #1414 — `to` arrives from localStorage by way of useCurrency, so it is
 // attacker-controlled. The provider answers with roughly 160 codes, and reading
 // `rates[to]` straight off that object returned a real rate for currencies the
@@ -61,7 +73,7 @@ export async function GET(request: NextRequest) {
     if (to === "INR") {
       return NextResponse.json(
         { rate: 1, currency: "INR", symbol: symbolFor("INR") },
-        { headers: { "Cache-Control": CACHE_CONTROL } },
+        { headers: CACHE_HEADERS },
       );
     }
 
@@ -84,7 +96,7 @@ export async function GET(request: NextRequest) {
         currency: to,
         symbol: symbolFor(to),
       },
-      { headers: { "Cache-Control": CACHE_CONTROL } },
+      { headers: CACHE_HEADERS },
     );
   } catch (error) {
     Sentry.captureException(
