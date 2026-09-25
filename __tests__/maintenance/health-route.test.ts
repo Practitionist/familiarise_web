@@ -26,7 +26,9 @@ jest.mock("../../lib/prisma", () => ({
 jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: { get: jest.fn() },
-  isMockRedis: () => true,
+  isMockRedis: jest.fn(() => true),
+  checkRedisHealth: jest.fn(async () => true),
+  getLastRedisHealthErrorClass: jest.fn(() => null),
 }));
 
 jest.mock("../../lib/maintenance", () => ({
@@ -52,9 +54,18 @@ import * as Sentry from "@sentry/nextjs";
 
 import { GET } from "../../app/api/health/route";
 import prisma from "@/lib/prisma";
+import {
+  isMockRedis,
+  checkRedisHealth,
+  getLastRedisHealthErrorClass,
+} from "@/lib/redis";
 
 const findFirst = prisma.user.findFirst as unknown as jest.Mock;
 const warn = Sentry.logger.warn as jest.Mock;
+const mockIsMockRedis = isMockRedis as jest.Mock;
+const mockCheckRedisHealth = checkRedisHealth as jest.Mock;
+const mockGetLastRedisHealthErrorClass =
+  getLastRedisHealthErrorClass as jest.Mock;
 
 const request = () => new Request("https://x.test/api/health");
 
@@ -71,6 +82,9 @@ function blockLoopSoon(ms: number): void {
 beforeEach(() => {
   jest.clearAllMocks();
   findFirst.mockResolvedValue({ id: "u1" });
+  mockIsMockRedis.mockReturnValue(true);
+  mockCheckRedisHealth.mockResolvedValue(true);
+  mockGetLastRedisHealthErrorClass.mockReturnValue(null);
 });
 
 describe("GET /api/health", () => {
@@ -135,6 +149,46 @@ describe("GET /api/health", () => {
       message: "connection refused",
       timedOut: false,
       retried: false,
+    });
+  });
+
+  // #1822 Q-7 — a Redis quota failure (`UpstashError: ERR max requests limit
+  // exceeded`) used to be invisible in this body; it must degrade the
+  // overall status and name the error class, with no message/secret leak.
+  describe("redis probe (#1822 Q-7)", () => {
+    it("reports ok and leaves status alone when Redis is healthy", async () => {
+      mockIsMockRedis.mockReturnValue(false);
+      mockCheckRedisHealth.mockResolvedValue(true);
+
+      const body = await (await GET(request())).json();
+
+      expect(body.redis).toEqual({ status: "ok" });
+      expect(body.status).toBe("healthy");
+    });
+
+    it("reports degraded with the error class, and degrades the overall status, on a Redis failure", async () => {
+      mockIsMockRedis.mockReturnValue(false);
+      mockCheckRedisHealth.mockResolvedValue(false);
+      mockGetLastRedisHealthErrorClass.mockReturnValue("UpstashError");
+
+      const res = await GET(request());
+      const body = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(body.status).toBe("degraded");
+      expect(body.redis).toEqual({
+        status: "degraded",
+        errorClass: "UpstashError",
+      });
+    });
+
+    it("reports ok without probing Redis at all on mock Redis (no quota cost)", async () => {
+      mockIsMockRedis.mockReturnValue(true);
+
+      const body = await (await GET(request())).json();
+
+      expect(body.redis).toEqual({ status: "ok" });
+      expect(mockCheckRedisHealth).not.toHaveBeenCalled();
     });
   });
 });

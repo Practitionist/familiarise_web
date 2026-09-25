@@ -315,6 +315,10 @@ export async function withCircuitBreaker<T>(
 const HEALTH_CACHE_MS = 2_000;
 let healthCachedAt = 0;
 let healthCachedValue = false;
+// #1822 Q-7 — constructor name only (e.g. "UpstashError"), never the message,
+// which can carry request/account details; /api/health surfaces this as
+// `redis.errorClass`. Reset to null on the next healthy probe.
+let lastHealthErrorClass: string | null = null;
 
 export async function checkRedisHealth(force = false): Promise<boolean> {
   const now = Date.now();
@@ -324,11 +328,19 @@ export async function checkRedisHealth(force = false): Promise<boolean> {
   try {
     const result = await redis.ping();
     healthCachedValue = result === "PONG";
-  } catch {
+    if (healthCachedValue) lastHealthErrorClass = null;
+  } catch (err) {
     healthCachedValue = false;
+    lastHealthErrorClass =
+      err instanceof Error ? err.constructor.name : "UnknownError";
   }
   healthCachedAt = now;
   return healthCachedValue;
+}
+
+/** Constructor name of the last `checkRedisHealth()` failure, or null when healthy. #1822 */
+export function getLastRedisHealthErrorClass(): string | null {
+  return lastHealthErrorClass;
 }
 
 /**
