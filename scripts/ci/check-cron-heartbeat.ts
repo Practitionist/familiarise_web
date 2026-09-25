@@ -193,9 +193,14 @@ async function writeFleetHeartbeat(): Promise<void> {
  */
 const UPSTASH_USAGE_WARN_PCT = 70;
 const UPSTASH_USAGE_CRITICAL_PCT = 90;
-// Upstash's free-tier Redis monthly command cap; override via env if the
-// plan changes (e.g. after the pay-as-you-go upgrade this issue also asks for).
-const DEFAULT_MONTHLY_COMMAND_CAP = 500_000;
+const UPSTASH_STATS_TIMEOUT_MS = 15_000;
+
+// Plan cap (free tier: 500000) or, on pay-as-you-go, the monthly budget. No
+// default: a free-tier number would mis-alarm a pay-as-you-go database. #1822
+function monthlyCommandCap(): number | null {
+  const cap = Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP);
+  return Number.isFinite(cap) && cap > 0 ? cap : null;
+}
 
 async function checkUpstashUsage(): Promise<void> {
   const apiKey = process.env.UPSTASH_MANAGEMENT_API_KEY;
@@ -235,7 +240,10 @@ async function reportUpstashUsage(
   const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
   const res = await fetch(
     `https://api.upstash.com/v2/redis/stats/${databaseId}`,
-    { headers: { Authorization: `Basic ${auth}` } },
+    {
+      headers: { Authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(UPSTASH_STATS_TIMEOUT_MS),
+    },
   );
   if (!res.ok) {
     throw new Error(
@@ -246,11 +254,15 @@ async function reportUpstashUsage(
   const used = stats.total_monthly_requests;
   // A renamed/missing field must not read as 0% usage.
   if (typeof used !== "number" || !Number.isFinite(used)) {
-    throw new Error("Upstash stats API returned no total_monthly_requests");
+    throw new TypeError("Upstash stats API returned no total_monthly_requests");
   }
-  const cap =
-    Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP) ||
-    DEFAULT_MONTHLY_COMMAND_CAP;
+  const cap = monthlyCommandCap();
+  if (cap === null) {
+    console.log(
+      `check-cron-heartbeat: Upstash usage ${used} commands this month; UPSTASH_MONTHLY_COMMAND_CAP unset — alarm skipped`,
+    );
+    return;
+  }
   const pct = (used / cap) * 100;
   console.log(
     `check-cron-heartbeat: Upstash usage ${used}/${cap} commands this month (${pct.toFixed(1)}%)`,

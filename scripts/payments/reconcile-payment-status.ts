@@ -649,15 +649,21 @@ async function reconcilePaymentStatusUnlocked(
   // per 24h per distinct id set, tracked via a SystemEvent correlationId.
   if (unresolvableCount > 0) {
     const correlationId = unresolvableCorrelationId(unresolvable);
-    const alreadyReportedToday = await prisma.systemEvent.findFirst({
-      where: {
-        correlationId,
-        createdAt: {
-          gte: new Date(Date.now() - UNRESOLVABLE_REPORT_WINDOW_MS),
+    // A failed dedupe lookup must not fail completed work: report anyway.
+    const alreadyReportedToday = await prisma.systemEvent
+      .findFirst({
+        where: {
+          correlationId,
+          createdAt: {
+            gte: new Date(Date.now() - UNRESOLVABLE_REPORT_WINDOW_MS),
+          },
         },
-      },
-      select: { id: true },
-    });
+        select: { id: true },
+      })
+      .catch((err: unknown) => {
+        console.warn("[reconcile-payment-status] dedupe lookup failed:", err);
+        return null;
+      });
 
     if (!alreadyReportedToday) {
       await recordSystemEvent({

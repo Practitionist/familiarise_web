@@ -5,7 +5,7 @@ import { measureEventLoopStall, probeWithStallRetry } from "@/lib/health/probe";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
-import redis, { isMockRedis } from "@/lib/redis";
+import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 type BetterStackHealth = {
   configured: boolean;
@@ -94,10 +94,16 @@ type CronHeartbeat = {
 
 type RedisStatus = {
   status: "ok" | "degraded";
-  /** Constructor name only (e.g. "UpstashError") — never the message, which
-   * can carry request/account details. #1822 Q-7. */
-  errorClass?: string;
+  /** Generic code only: the route is public, so no vendor class or message. #1822 */
+  reason?: "QUOTA_EXCEEDED" | "UNAVAILABLE" | "CIRCUIT_OPEN";
 };
+
+function redisOk(): RedisStatus {
+  // The breaker is in-memory: an open one fails locks fast even if this GET succeeded.
+  return isRedisCircuitOpen()
+    ? { status: "degraded", reason: "CIRCUIT_OPEN" }
+    : { status: "ok" };
+}
 
 // #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
 // failure (`UpstashError: ERR max requests limit exceeded`) costs no extra command.
@@ -105,11 +111,10 @@ async function checkCronHeartbeat(): Promise<{
   cron: CronHeartbeat;
   redis: RedisStatus;
 }> {
-  const ok: RedisStatus = { status: "ok" };
   if (isMockRedis()) {
     return {
       cron: { configured: false, lastRunAt: null, stale: null },
-      redis: ok,
+      redis: { status: "ok" },
     };
   }
   try {
@@ -117,7 +122,7 @@ async function checkCronHeartbeat(): Promise<{
     if (!lastRunAt) {
       return {
         cron: { configured: true, lastRunAt: null, stale: null },
-        redis: ok,
+        redis: redisOk(),
       };
     }
     const age = Date.now() - Date.parse(lastRunAt);
@@ -127,7 +132,7 @@ async function checkCronHeartbeat(): Promise<{
         lastRunAt,
         stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
       },
-      redis: ok,
+      redis: redisOk(),
     };
   } catch (err) {
     Sentry.logger.warn("Cron heartbeat probe failed", {
@@ -143,7 +148,9 @@ async function checkCronHeartbeat(): Promise<{
       },
       redis: {
         status: "degraded",
-        errorClass: err instanceof Error ? err.name || "Error" : "UnknownError",
+        reason: /max requests limit/i.test(String(err))
+          ? "QUOTA_EXCEEDED"
+          : "UNAVAILABLE",
       },
     };
   }

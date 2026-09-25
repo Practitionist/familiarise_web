@@ -27,6 +27,7 @@ jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: { get: jest.fn() },
   isMockRedis: jest.fn(() => true),
+  isRedisCircuitOpen: jest.fn(() => false),
 }));
 
 jest.mock("../../lib/maintenance", () => ({
@@ -172,7 +173,7 @@ describe("GET /api/health", () => {
       expect(body.status).toBe("degraded");
       expect(body.redis).toEqual({
         status: "degraded",
-        errorClass: "UpstashError",
+        reason: "QUOTA_EXCEEDED",
       });
     });
 

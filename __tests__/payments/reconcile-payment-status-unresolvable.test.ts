@@ -190,6 +190,38 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     );
   });
 
+  // #1822 — replay: run 1's lookup fails (still reports, still 207); run 2
+  // finds run 1's recorded correlationId and stays quiet.
+  it("reports despite a failed lookup, then suppresses the replay", async () => {
+    mockRetrieve.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), {
+        code: "resource_missing",
+        statusCode: 404,
+      }),
+    );
+    const recorded = new Set<string>();
+    recordSystemEvent.mockImplementation(
+      async (e: { correlationId: string }) => {
+        recorded.add(e.correlationId);
+      },
+    );
+    (prisma.systemEvent.findFirst as unknown as jest.Mock)
+      .mockRejectedValueOnce(new Error("system_events unavailable"))
+      .mockImplementationOnce(
+        async (q: { where: { correlationId: string } }) =>
+          recorded.has(q.where.correlationId) ? { id: "e1" } : null,
+      );
+
+    expect((await POST(request())).status).toBe(207);
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([pendingStripeRow])
+      .mockResolvedValueOnce([]);
+    expect((await POST(request())).status).toBe(207);
+
+    expect(recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a gateway that cannot be reached as a run failure — 500", async () => {
     mockRetrieve.mockRejectedValue(new Error("ECONNRESET"));
 
