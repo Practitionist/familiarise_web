@@ -16,8 +16,15 @@
 
 const mockGet = jest.fn();
 
-jest.mock("@upstash/redis", () => ({
-  Redis: jest.fn().mockImplementation(() => ({ get: mockGet })),
+// #1822 Q-5 — readMaintenancePhase now reads through the shared node client
+// in lib/redis.ts instead of minting its own `new Redis(...)` per call.
+jest.mock("../../lib/redis", () => ({
+  __esModule: true,
+  // A closure, not a direct reference: `jest.mock` factories run at require
+  // time, which (via import hoisting) is before the `const mockGet = jest.fn()`
+  // below has executed. Wrapping the call defers dereferencing `mockGet` until
+  // `.get()` is actually invoked, by which point it is initialised.
+  default: { get: (...args: unknown[]) => mockGet(...args) },
 }));
 jest.mock("@sentry/nextjs", () => ({
   captureException: jest.fn(),
@@ -32,6 +39,7 @@ import {
   assertNotInMaintenance,
   MaintenanceActiveError,
   FINANCIAL_JOB_NAMES,
+  resetMaintenancePhaseCacheForTesting,
 } from "../../lib/maintenance-cron";
 
 const FINANCIAL_JOB = "process-payouts";
@@ -40,6 +48,10 @@ const PLAIN_JOB = "cleanup-auth-tokens";
 describe("assertNotInMaintenance", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // #1822 Q-5 — the phase is now cached for up to 60s at module scope;
+    // without a reset, a later test would silently reuse an earlier test's
+    // cached phase instead of calling the mock.
+    resetMaintenancePhaseCacheForTesting();
     process.env.UPSTASH_REDIS_REST_URL = "https://redis.test";
     process.env.UPSTASH_REDIS_REST_TOKEN = "token";
   });
@@ -96,13 +108,24 @@ describe("assertNotInMaintenance", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("fails open when Redis is not configured at all", async () => {
-    delete process.env.UPSTASH_REDIS_REST_URL;
-    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  // #1822 Q-5 — the env-var presence check used to live in this module and
+  // skip the read entirely when unset; that responsibility now lives in
+  // lib/redis.ts's own module-level guard (it throws at import instead), so
+  // this only re-pins that a null/no-record phase still fails open.
+  it("fails open when the shared client has no phase recorded", async () => {
+    mockGet.mockResolvedValue(null);
 
     await expect(
       assertNotInMaintenance(FINANCIAL_JOB),
     ).resolves.toBeUndefined();
-    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  it("shares one Redis read across two jobs within the 60s phase cache window", async () => {
+    mockGet.mockResolvedValue("OFF");
+
+    await assertNotInMaintenance(FINANCIAL_JOB);
+    await assertNotInMaintenance(PLAIN_JOB);
+
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,6 +7,7 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
   LONG_JOB_TTL_MS,
+  resetCronHealthCacheForTesting,
 } from "../../lib/cron/with-cron-lock";
 import redis, {
   acquireLock,
@@ -58,6 +59,10 @@ const trail = (
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // #1822 Q-5 — the pre-acquire health check is now cached for 30s at
+  // module scope; without a reset, a later test would silently reuse an
+  // earlier test's cached health value instead of calling the mock.
+  resetCronHealthCacheForTesting();
   mockIsMock.mockReturnValue(false);
   mockHealth.mockResolvedValue(true);
   mockAcquire.mockResolvedValue("token-1");
@@ -191,6 +196,23 @@ describe("withCronLock", () => {
       withCronLock("dunning", { failMode: "closed" }, async () => null),
     ).rejects.toBeInstanceOf(CronLockUnavailableError);
     expect(mockAcquire).not.toHaveBeenCalled();
+  });
+
+  // #1822 Q-5 — the pre-acquire health gate is cached per-module for 30s so a
+  // tick's many fail-closed targets share one PING instead of each paying
+  // their own.
+  it("shares one Redis health probe across two fail-closed targets within the cache window", async () => {
+    await withCronLock("dunning", { failMode: "closed" }, async () => "a");
+    await withCronLock(
+      "cascade-refund-earnings",
+      { failMode: "closed" },
+      async () => "b",
+    );
+
+    // Both runs succeed with a healthy lock, so neither hits the post-null
+    // re-probe — every mockHealth call here is the pre-acquire gate, and the
+    // second target's call is served from the cron-scoped cache.
+    expect(mockHealth).toHaveBeenCalledTimes(1);
   });
 
   it("fail-open: runs unlocked on mock Redis with a warning", async () => {

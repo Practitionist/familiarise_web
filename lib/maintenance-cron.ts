@@ -19,9 +19,9 @@
  *   await assertNotInMaintenance("cleanup-abandoned-payments"); // throws 503
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { Redis } from "@upstash/redis";
+import redis from "@/lib/redis";
 import { flushJobSentry } from "@/lib/observability/job-sentry";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 // Financial jobs that must NOT run even in DEGRADED mode.
 // These jobs call external APIs to create/cancel financial objects,
@@ -118,40 +118,64 @@ export class MaintenanceActiveError extends Error {
   }
 }
 
+// #1822 Q-5 — a tick's many target invocations each used to mint a fresh
+// `new Redis({url, token})` and pay its own GET. Cache the phase for the life
+// of the process (capped at 60s) so they share one Redis command; a stale
+// positive can only delay a maintenance transition being honoured by up to
+// that window, which the fail-open design already tolerates.
+const PHASE_CACHE_MS = 60_000;
+let phaseCachedAt = 0;
+let phaseCachedValue: string | null = null;
+let phaseCacheHasValue = false;
+
 /**
  * Read `maintenance:phase` from Redis. Returns null when the phase cannot be
  * established — no Redis configured, or the probe failed — which every caller
  * treats as "proceed", matching the fail-open design of the rest of the system.
  */
 async function readMaintenancePhase(jobName: string): Promise<string | null> {
-  const url = process.env.UPSTASH_REDIS_REST_URL;
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-  if (!url || !token) {
-    console.warn(
-      `[${jobName}] UPSTASH_REDIS env vars not set — skipping maintenance check, proceeding`,
-    );
-    return null;
+  const now = Date.now();
+  if (phaseCacheHasValue && now - phaseCachedAt < PHASE_CACHE_MS) {
+    return phaseCachedValue;
   }
 
   try {
-    // Intentionally creates a fresh client per invocation — cron jobs run
-    // infrequently and this avoids holding a persistent connection.
-    const redis = new Redis({ url, token });
-    return await redis.get<string>("maintenance:phase");
+    // Shared node client (#1822 Q-5) — cron jobs used to mint a fresh client
+    // per invocation; that's the same GET, paid again for no reason.
+    const phase = await redis.get<string>("maintenance:phase");
+    phaseCachedValue = phase;
+    phaseCacheHasValue = true;
+    phaseCachedAt = now;
+    return phase;
   } catch (error) {
-    // Fail-open: if Redis is unreachable, proceed with the job
+    // Fail-open: if Redis is unreachable, proceed with the job. Cache the
+    // fail-open null too, so a sustained outage doesn't retry Redis on every
+    // job in the fleet within the same window.
     console.warn(
       `[${jobName}] Could not check maintenance state (Redis error: ${
         error instanceof Error ? error.message : String(error)
       }) — proceeding`,
     );
-    Sentry.captureException(
+    phaseCachedValue = null;
+    phaseCacheHasValue = true;
+    phaseCachedAt = now;
+    // #1822 Q-1 — this used to be an unconditional captureException, which is
+    // what turned one Upstash outage into ~2,650 Sentry events in ~25h (every
+    // fail-open AND fail-closed job hits this path on every invocation).
+    captureThrottled(
+      "maintenance-cron:readMaintenancePhase",
       error instanceof Error ? error : new Error(String(error)),
-      { tags: { subsystem: "maintenance" } },
+      { subsystem: "maintenance", expected: false },
     );
     return null;
   }
+}
+
+/** Test-only: clears the phase cache between cases (#1822). */
+export function resetMaintenancePhaseCacheForTesting(): void {
+  phaseCachedAt = 0;
+  phaseCachedValue = null;
+  phaseCacheHasValue = false;
 }
 
 /**
