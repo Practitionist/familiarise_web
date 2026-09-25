@@ -154,6 +154,7 @@ model User {
   erasureRequestsProcessed      ErasureRequest[]              @relation("ErasureRequestProcessor")
   // Disputes this admin owns (#269).
   disputesAssigned              Dispute[]                     @relation("DisputeAssignee")
+  opsActions                    OpsActionLog[]
   // A8 — documents this consultant reviewed (back-relation for the FK-ified
   // AppointmentDocument.reviewedById; named to avoid the implicit-relation guess).
   documentsReviewed             AppointmentDocument[]         @relation("DocumentReviewer")
@@ -3449,6 +3450,28 @@ enum SystemEventSeverity {
   INFO
   WARN
   ERROR
+}
+
+/// #1771 K-1 — one row per back-office money/support door, written in the
+/// door's own transaction (or right after a gateway call, `after.status`).
+model OpsActionLog {
+  id            String   @id @default(uuid())
+  actorUserId   String?
+  actor         User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorRole     String // ADMIN | STAFF
+  surface       String // a BackofficeSurface key
+  action        String
+  targetKind    String
+  targetId      String
+  reason        String   @db.Text
+  before        Json?
+  after         Json?
+  correlationId String?
+  createdAt     DateTime @default(now()) @db.Timestamptz
+
+  @@index([targetKind, targetId])
+  @@index([actorUserId, createdAt])
+  @@map("ops_action_logs")
 }
 
 //////////////////////////////////////////////////// PROFESSIONAL BACKGROUND MODELS ////////////////////////////////////////////////////
