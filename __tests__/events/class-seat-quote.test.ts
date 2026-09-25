@@ -80,6 +80,22 @@ it("a mid-series joiner who bought after 4 of 8 started holds 4", () => {
   expect(joiner.unitPaise).toBe(BigInt(10_000));
 });
 
+it("#1819 — a seat's stored sessionsPurchased fixes its unit over the derivation", () => {
+  // The derivation counts sessions after joinedAt (5 here); the seat paid for 4.
+  const seat = (sessionsPurchased: number | null) =>
+    seatLedgerFrom({
+      N: 8,
+      amountPaise: 40_000,
+      joinedAt: at(-24 * 8),
+      occurrences: series(4, 30),
+      now: NOW,
+      sessionsPurchased,
+    });
+  expect(seat(null).heldCount).toBe(5);
+  expect(seat(4).heldCount).toBe(4);
+  expect(seat(4).unitPaise).toBe(BigInt(10_000));
+});
+
 it("three seats leaving at different times each get their own quote", () => {
   const seats = [at(-24 * 60), at(-24 * 16), at(-1)].map((joinedAt) =>
     seatLedgerFrom({

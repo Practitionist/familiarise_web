@@ -283,7 +283,7 @@ async function settleOne(
         userId: payment.userId,
         status: { in: ["CONFIRMED", "ATTENDED"] },
       },
-      select: { createdAt: true },
+      select: { createdAt: true, sessionsPurchased: true },
     });
     const joinedAt =
       seat && seat.createdAt > payment.createdAt
@@ -291,7 +291,12 @@ async function settleOne(
         : payment.createdAt;
     // Only a seat that held this session is owed for it.
     if (!seat || session.startsAt <= joinedAt) continue;
-    const refunded = await refundSeatForSession(session, payment, joinedAt);
+    const refunded = await refundSeatForSession(
+      session,
+      payment,
+      joinedAt,
+      seat.sessionsPurchased,
+    );
     if (refunded === null) pending += 1;
     else if (refunded) result.refunded += 1;
   }
@@ -329,6 +334,7 @@ async function refundSeatForSession(
   session: CancelledSession,
   payment: SeatPayment,
   joinedAt: Date,
+  sessionsPurchased: number | null,
 ): Promise<boolean | null> {
   const dedupeKey = occurrenceRefundKey(session.id, payment.id);
   // A seat that skipped the make-up (E-3b) or a prior tick already carries it.
@@ -339,7 +345,11 @@ async function refundSeatForSession(
         (
           await seatLedger(
             prisma,
-            { appointmentId: session.appointmentId, createdAt: joinedAt },
+            {
+              appointmentId: session.appointmentId,
+              createdAt: joinedAt,
+              sessionsPurchased,
+            },
             payment.amount,
           )
         ).unitPaise,
