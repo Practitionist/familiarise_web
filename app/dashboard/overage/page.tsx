@@ -8,6 +8,7 @@ import { ArrowLeft } from "lucide-react";
 import { z } from "zod";
 
 import { loadScript } from "@/app/checkout/plans/utils";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -87,7 +88,10 @@ export default function OveragePage() {
   // Novu deep-link nicety: scroll the targeted charge into view once loaded.
   useEffect(() => {
     if (highlightId && highlightRef.current) {
-      highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+      highlightRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
     }
   }, [highlightId, charges]);
 
@@ -105,20 +109,22 @@ export default function OveragePage() {
       }
 
       return new Promise<boolean>((resolve) => {
-        const rzp = new window.Razorpay({
-          // keyId can be null when RAZORPAY_KEY_ID is unset; Razorpay's type
-          // wants string | undefined, so coerce.
-          key: order.keyId ?? undefined,
-          amount: order.amount,
-          currency: order.currency,
-          order_id: order.orderId,
-          name: "Familiarise",
-          description: "Program overage charge",
-          handler: () => {
-            resolve(true);
-          },
-          theme: { color: "#2563EB" },
-        });
+        const rzp = new window.Razorpay(
+          buildCheckoutOptions({
+            // keyId can be null when RAZORPAY_KEY_ID is unset; Razorpay's type
+            // wants string | undefined, so coerce.
+            keyId: order.keyId ?? undefined,
+            amount: order.amount,
+            currency: order.currency,
+            orderId: order.orderId,
+            name: "Familiarise",
+            description: "Program overage charge",
+            handler: () => {
+              resolve(true);
+            },
+            theme: { color: "#2563EB" },
+          }),
+        );
         rzp.on("payment.failed", () => {
           toast({
             title: "Payment failed",

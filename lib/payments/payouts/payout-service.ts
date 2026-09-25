@@ -3,18 +3,26 @@
  * Provider-agnostic payout orchestration with admin approval workflow
  */
 
+import * as Sentry from "@sentry/nextjs";
 import {
   reportSentryError,
   reportSentryMessage,
 } from "@/lib/observability/report";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import prisma from "@/lib/prisma";
 import {
   PayoutStatus,
   PayoutMethod,
   PaymentGateway,
   EarningStatus,
+  type Prisma,
 } from "@prisma/client";
-import { PAYOUT_CONSTANTS } from "./constants";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
+import { Refusal } from "@/lib/errors/refusal";
+import {
+  INSTANT_PAYOUT_AUTO_APPROVE_PAISE,
+  PAYOUT_CONSTANTS,
+} from "./constants";
 import {
   payoutEligibilityReason,
   type PayoutEligibilityReason,
@@ -54,10 +62,7 @@ import {
   TDS_THRESHOLD_PAISE,
 } from "@/lib/payments/tax/tds-service";
 import { computeTdsForPayout } from "@/lib/compliance/tds";
-import {
-  notifyPayoutFailed,
-  notifyPayoutProcessed,
-} from "@/lib/novu/service";
+import { notifyPayoutFailed, notifyPayoutProcessed } from "@/lib/novu/service";
 import { getAppUrl } from "@/lib/url";
 import { sumPaise } from "@/lib/payments/utils/money";
 
@@ -297,138 +302,13 @@ export async function createPayoutBatch(
     // recorded always matches the earnings actually linked. The groupBy
     // above gives us candidates; the transaction re-queries the exact
     // earnings, sums them, creates the payout, and links — atomically.
-    for (const consultant of eligibleConsultants) {
-      const { consultantProfileId } = consultant;
-
-      // Get consultant's default payout account
-      const account = await prisma.payoutAccount.findFirst({
-        where: {
-          consultantProfileId,
-          isDefault: true,
-          isVerified: true,
-        },
-      });
-
-      if (!account) {
-        console.warn(
-          `No verified payout account for consultant ${consultantProfileId}`,
-        );
-        continue;
-      }
-
-      // Refuse a schema-only gateway HERE rather than at disbursement. The
-      // provider dispatch in processSinglePayout does throw on an unsupported
-      // value, but by then the payout row exists and its earnings have been
-      // claimed into BATCHED — so the consultant's money would sit in a status
-      // that only a completed payout can leave, waiting on a gateway that will
-      // never exist. Skipping at selection leaves the earnings READY for the
-      // next batch, which is the recoverable state.
-      if (isPostMvpGatewayStub(account.provider)) {
-        console.warn(
-          `Skipping consultant ${consultantProfileId}: payout account is on ` +
-            `"${account.provider}", which has no implementation (post-MVP stub).`,
-        );
-        continue;
-      }
-
-      // Determine payout method based on account type
-      let method: PayoutMethod;
-      switch (account.accountType) {
-        case "UPI":
-          method = PayoutMethod.UPI;
-          break;
-        case "STRIPE_CONNECT":
-          method = PayoutMethod.STRIPE_TRANSFER;
-          break;
-        default:
-          method = PayoutMethod.BANK_TRANSFER;
-      }
-
-      // MSME 43B(h): the consultant is the supplier on the SELF path, so the
-      // settlement deadline derives from their own status/agreement (not a
-      // buyer org's). #776 — mirrors org-payout-service.
-      const msmeProfile = await prisma.consultantProfile.findUnique({
-        where: { id: consultantProfileId },
-        select: { msmeStatus: true, writtenAgreementWithFamiliarise: true },
-      });
-
-      await prisma.$transaction(async (tx) => {
-        // Re-query exact READY earnings inside the transaction
-        const readyEarnings = await tx.consultantEarnings.findMany({
-          where: {
-            consultantProfileId,
-            status: EarningStatus.READY,
-            payoutId: null,
-          },
-          select: {
-            id: true,
-            consultantSharePaise: true,
-            refundedShareAmount: true,
-          },
-        });
-
-        if (readyEarnings.length === 0) return;
-
-        // FIX #617: Subtract refundedShareAmount so partially refunded earnings
-        // are paid at the correct (reduced) amount, not the original full share.
-        const amount = readyEarnings.reduce(
-          (sum, e) =>
-            sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
-          0,
-        );
-
-        if (amount < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) return;
-
-        const shouldAutoApprove =
-          amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD;
-
-        // Create payout with the exact amount
-        const payout = await tx.consultantPayout.create({
-          data: {
-            consultantProfileId,
-            provider: account.provider,
-            amount,
-            currency: "INR",
-            status: shouldAutoApprove
-              ? PayoutStatus.APPROVED
-              : PayoutStatus.PENDING,
-            method,
-            batchId,
-            idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
-            approvedAt: shouldAutoApprove ? new Date() : undefined,
-            approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
-            mustPayByDate: computeMsmePaymentDeadline({
-              invoiceDate: new Date(),
-              counterpartyMsmeStatus: msmeProfile?.msmeStatus ?? "NONE",
-              writtenAgreement:
-                msmeProfile?.writtenAgreementWithFamiliarise ?? false,
-            }),
-          },
-        });
-
-        // Link the exact earnings we summed, with guards against concurrent state changes.
-        // #837 E-03/E-04 — mark BATCHED (not left READY): the earning is now in a
-        // batch and must NOT be re-picked by the next batch. Cash hasn't moved yet;
-        // the PAID flip happens only at COMPLETED in handlePayoutWebhook. The CAS
-        // re-asserts the pre-batch state (READY + payoutId null).
-        const linkResult = await tx.consultantEarnings.updateMany({
-          where: {
-            id: { in: readyEarnings.map((e) => e.id) },
-            status: EarningStatus.READY,
-            payoutId: null,
-          },
-          data: {
-            payoutId: payout.id,
-            status: EarningStatus.BATCHED,
-          },
-        });
-
-        // If not all targeted earnings were linked, some changed state concurrently
-        if (linkResult.count !== readyEarnings.length) {
-          throw new Error(
-            `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
-          );
-        }
+    for (const { consultantProfileId } of eligibleConsultants) {
+      await mintConsultantPayout({
+        consultantProfileId,
+        batchId,
+        idempotencyKey: `payout_${consultantProfileId}_${batchId}`,
+        autoApprove: (amount) =>
+          amount < PAYOUT_CONSTANTS.AUTO_APPROVE_THRESHOLD,
       });
     }
 
@@ -436,6 +316,157 @@ export async function createPayoutBatch(
   } finally {
     await releaseLock(PAYOUT_BATCH_LOCK_KEY, lockToken);
   }
+}
+
+interface ConsultantPayoutDraft {
+  consultantProfileId: string;
+  batchId: string;
+  idempotencyKey: string;
+  kind?: "INSTANT";
+  autoApprove: (amountPaise: number) => boolean;
+}
+
+/**
+ * One consultant's payout: the READY earnings summed, the payout row created
+ * and the earnings claimed READY → BATCHED, atomically (FIX #568). Shared by the
+ * Monday batch and the instant payout (#1771 row 6); callers hold the batch lock.
+ */
+async function mintConsultantPayout(
+  draft: ConsultantPayoutDraft,
+): Promise<{ id: string; amount: number; status: PayoutStatus } | null> {
+  const { consultantProfileId, batchId } = draft;
+
+  // Get consultant's default payout account
+  const account = await prisma.payoutAccount.findFirst({
+    where: {
+      consultantProfileId,
+      isDefault: true,
+      isVerified: true,
+    },
+  });
+
+  if (!account) {
+    console.warn(
+      `No verified payout account for consultant ${consultantProfileId}`,
+    );
+    return null;
+  }
+
+  // Refuse a schema-only gateway HERE rather than at disbursement. The
+  // provider dispatch in processSinglePayout does throw on an unsupported
+  // value, but by then the payout row exists and its earnings have been
+  // claimed into BATCHED — so the consultant's money would sit in a status
+  // that only a completed payout can leave, waiting on a gateway that will
+  // never exist. Skipping at selection leaves the earnings READY for the
+  // next batch, which is the recoverable state.
+  if (isPostMvpGatewayStub(account.provider)) {
+    console.warn(
+      `Skipping consultant ${consultantProfileId}: payout account is on ` +
+        `"${account.provider}", which has no implementation (post-MVP stub).`,
+    );
+    return null;
+  }
+
+  // Determine payout method based on account type
+  let method: PayoutMethod;
+  switch (account.accountType) {
+    case "UPI":
+      method = PayoutMethod.UPI;
+      break;
+    case "STRIPE_CONNECT":
+      method = PayoutMethod.STRIPE_TRANSFER;
+      break;
+    default:
+      method = PayoutMethod.BANK_TRANSFER;
+  }
+
+  // MSME 43B(h): the consultant is the supplier on the SELF path, so the
+  // settlement deadline derives from their own status/agreement (not a
+  // buyer org's). #776 — mirrors org-payout-service.
+  const msmeProfile = await prisma.consultantProfile.findUnique({
+    where: { id: consultantProfileId },
+    select: { msmeStatus: true, writtenAgreementWithFamiliarise: true },
+  });
+
+  return prisma.$transaction(async (tx) => {
+    // Re-query exact READY earnings inside the transaction
+    const readyEarnings = await tx.consultantEarnings.findMany({
+      where: {
+        consultantProfileId,
+        status: EarningStatus.READY,
+        payoutId: null,
+      },
+      select: {
+        id: true,
+        consultantSharePaise: true,
+        refundedShareAmount: true,
+      },
+    });
+
+    if (readyEarnings.length === 0) return null;
+
+    // FIX #617: Subtract refundedShareAmount so partially refunded earnings
+    // are paid at the correct (reduced) amount, not the original full share.
+    const amount = readyEarnings.reduce(
+      (sum, e) =>
+        sum + Math.max(e.consultantSharePaise - e.refundedShareAmount, 0),
+      0,
+    );
+
+    if (amount < PAYOUT_CONSTANTS.MINIMUM_PAYOUT_AMOUNT) return null;
+
+    const shouldAutoApprove = draft.autoApprove(amount);
+
+    // Create payout with the exact amount
+    const payout = await tx.consultantPayout.create({
+      data: {
+        consultantProfileId,
+        provider: account.provider,
+        amount,
+        currency: "INR",
+        status: shouldAutoApprove
+          ? PayoutStatus.APPROVED
+          : PayoutStatus.PENDING,
+        method,
+        batchId,
+        idempotencyKey: draft.idempotencyKey,
+        kind: draft.kind ?? null,
+        approvedAt: shouldAutoApprove ? new Date() : undefined,
+        approvedBy: shouldAutoApprove ? "SYSTEM_AUTO_APPROVE" : undefined,
+        mustPayByDate: computeMsmePaymentDeadline({
+          invoiceDate: new Date(),
+          counterpartyMsmeStatus: msmeProfile?.msmeStatus ?? "NONE",
+          writtenAgreement:
+            msmeProfile?.writtenAgreementWithFamiliarise ?? false,
+        }),
+      },
+    });
+
+    // Link the exact earnings we summed, with guards against concurrent state changes.
+    // #837 E-03/E-04 — mark BATCHED (not left READY): the earning is now in a
+    // batch and must NOT be re-picked by the next batch. Cash hasn't moved yet;
+    // the PAID flip happens only at COMPLETED in handlePayoutWebhook. The CAS
+    // re-asserts the pre-batch state (READY + payoutId null).
+    const linkResult = await tx.consultantEarnings.updateMany({
+      where: {
+        id: { in: readyEarnings.map((e) => e.id) },
+        status: EarningStatus.READY,
+        payoutId: null,
+      },
+      data: {
+        payoutId: payout.id,
+        status: EarningStatus.BATCHED,
+      },
+    });
+
+    // If not all targeted earnings were linked, some changed state concurrently
+    if (linkResult.count !== readyEarnings.length) {
+      throw new Error(
+        `Payout linking race: expected ${readyEarnings.length} earnings, linked ${linkResult.count} for consultant ${consultantProfileId}. Rolling back.`,
+      );
+    }
+    return { id: payout.id, amount, status: payout.status };
+  });
 }
 
 /**
@@ -569,6 +600,15 @@ const PAYOUT_PROCESS_LOCK_KEY = "lock:payout_processing";
 // exists to prevent were back. Aligned with LONG_JOB_TTL_MS.
 const PAYOUT_PROCESS_LOCK_TTL = 35 * 60_000;
 
+const APPROVED_PAYOUT_INCLUDE = {
+  consultantProfile: {
+    include: {
+      payoutAccounts: { where: { isDefault: true, isVerified: true } },
+      user: true,
+    },
+  },
+} satisfies Prisma.ConsultantPayoutInclude;
+
 export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   // ADR 13's Redis degradation policy: for a money job, a HELD lock is a clean
   // skip (the holder is doing the work) but an UNREACHABLE Redis must fail
@@ -621,16 +661,7 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
         status: PayoutStatus.APPROVED,
         retryCount: { lt: PAYOUT_CONSTANTS.MAX_RETRY_ATTEMPTS },
       },
-      include: {
-        consultantProfile: {
-          include: {
-            payoutAccounts: {
-              where: { isDefault: true, isVerified: true },
-            },
-            user: true,
-          },
-        },
-      },
+      include: APPROVED_PAYOUT_INCLUDE,
     });
 
     // #863 — hold the whole batch if RazorpayX can't cover it (a no-op unless
@@ -654,6 +685,260 @@ export async function processApprovedPayouts(): Promise<PayoutResult[]> {
   } finally {
     await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
   }
+}
+
+// ============================================
+// Instant payout (#1771 row 6)
+// ============================================
+
+export type InstantPayoutErrorCode =
+  | "PAYOUTS_DISABLED"
+  | "PAYOUT_NOT_ELIGIBLE"
+  | "NOTHING_AVAILABLE"
+  | "PAYOUT_BUSY"
+  | "INSTANT_ALREADY_TODAY";
+
+/** A modelled refusal with its HTTP status, so the route never answers 500. */
+export class InstantPayoutError extends Refusal {
+  constructor(
+    code: InstantPayoutErrorCode,
+    userMessage: string,
+    httpStatus: number,
+    readonly reason: PayoutEligibilityReason | null = null,
+  ) {
+    super({ code, userMessage, httpStatus, context: { reason } });
+    this.name = "InstantPayoutError";
+  }
+}
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** `instant_<profile>_<YYYYMMDD>` on the IST calendar day: the once-a-day key. */
+export function instantPayoutIdempotencyKey(
+  consultantProfileId: string,
+  now: Date = new Date(),
+): string {
+  const istDay = new Date(now.getTime() + IST_OFFSET_MS)
+    .toISOString()
+    .slice(0, 10)
+    .replaceAll("-", "");
+  return `instant_${consultantProfileId}_${istDay}`;
+}
+
+/** The next IST midnight, when another instant payout becomes possible. */
+export function nextIstMidnight(now: Date = new Date()): Date {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  return new Date(
+    Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1) -
+      IST_OFFSET_MS,
+  );
+}
+
+export interface InstantPayoutOutcome {
+  payoutId: string;
+  amountPaise: number;
+  /** True above the auto-approve cap: the payout waits in the admin queue. */
+  awaitingApproval: boolean;
+  /** The disbursement attempt; null when a processing run holds the lock. */
+  processed: PayoutResult | null;
+}
+
+/**
+ * Pays an expert's READY earnings now, free and at most once per IST day.
+ *
+ * The platform absorbs the RazorpayX fee, so there is no fee or GST line. The
+ * payout is minted under the Monday batch's own lock with the same CAS claim,
+ * so a READY row can join only one of the two; a second call the same day hits
+ * the unique idempotency key. At or below the cap it is approved and sent at
+ * once through `processPayoutById`; above it, it joins the approval queue.
+ */
+export async function createInstantPayout(
+  consultantProfileId: string,
+  now: Date = new Date(),
+): Promise<InstantPayoutOutcome> {
+  if (!ENABLE_LIVE_PAYOUTS) {
+    throw new InstantPayoutError(
+      "PAYOUTS_DISABLED",
+      "Payouts are not switched on yet.",
+      503,
+    );
+  }
+  const eligibility = await checkPayoutEligibility(consultantProfileId);
+  if (eligibility.readyAmount <= 0) {
+    throw new InstantPayoutError(
+      "NOTHING_AVAILABLE",
+      "There is nothing available to pay out right now.",
+      409,
+    );
+  }
+  if (eligibility.reason) {
+    throw new InstantPayoutError(
+      "PAYOUT_NOT_ELIGIBLE",
+      "This account cannot receive a payout yet.",
+      409,
+      eligibility.reason,
+    );
+  }
+
+  if (isMockRedis() || !(await checkRedisHealth())) {
+    throw new CronLockUnavailableError("create-payout-batch");
+  }
+  const lockToken = await acquireLock(
+    PAYOUT_BATCH_LOCK_KEY,
+    PAYOUT_BATCH_LOCK_TTL,
+  );
+  if (!lockToken) {
+    throw new InstantPayoutError(
+      "PAYOUT_BUSY",
+      "A payout run is in progress — try again in a few minutes",
+      409,
+    );
+  }
+
+  let minted: Awaited<ReturnType<typeof mintConsultantPayout>>;
+  try {
+    minted = await mintConsultantPayout({
+      consultantProfileId,
+      batchId: `instant_${Date.now()}_${randomUUID().slice(0, 8)}`,
+      idempotencyKey: instantPayoutIdempotencyKey(consultantProfileId, now),
+      kind: "INSTANT",
+      autoApprove: (amount) => amount <= INSTANT_PAYOUT_AUTO_APPROVE_PAISE,
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new InstantPayoutError(
+        "INSTANT_ALREADY_TODAY",
+        "You have already used today's instant payout. The next one opens at midnight IST.",
+        409,
+      );
+    }
+    throw error;
+  } finally {
+    await releaseLock(PAYOUT_BATCH_LOCK_KEY, lockToken);
+  }
+  if (!minted) {
+    throw new InstantPayoutError(
+      "NOTHING_AVAILABLE",
+      "There is nothing available to pay out right now.",
+      409,
+    );
+  }
+
+  const awaitingApproval = minted.status !== PayoutStatus.APPROVED;
+  let processed: PayoutResult | null = null;
+  if (!awaitingApproval) {
+    // The payout is committed APPROVED; a failed attempt here leaves it for the next processing run.
+    processed = await processPayoutById(minted.id).catch((error: unknown) => {
+      reportSentryError(error, { subsystem: "payments", level: "warning" });
+      return null;
+    });
+  }
+  return {
+    payoutId: minted.id,
+    amountPaise: minted.amount,
+    awaitingApproval,
+    processed,
+  };
+}
+
+/**
+ * Disburses ONE approved payout: the `processSinglePayout` core under the
+ * processing lock, so TDS reads the FY running total serially (#1771 row 6).
+ * Returns null when a processing run holds the lock; that run or the next
+ * one picks the payout up, because it stays APPROVED.
+ */
+export async function processPayoutById(
+  payoutId: string,
+): Promise<PayoutResult | null> {
+  if (isMockRedis() || !(await checkRedisHealth())) {
+    throw new CronLockUnavailableError("process-payouts");
+  }
+  if (!ENABLE_LIVE_PAYOUTS) return null;
+  const lockToken = await acquireLock(
+    PAYOUT_PROCESS_LOCK_KEY,
+    PAYOUT_PROCESS_LOCK_TTL,
+  );
+  if (!lockToken) return null;
+
+  try {
+    const payout = await prisma.consultantPayout.findFirst({
+      where: { id: payoutId, status: PayoutStatus.APPROVED },
+      include: APPROVED_PAYOUT_INCLUDE,
+    });
+    if (!payout) return null;
+    const preflight = await assertPayoutBalance(payout.amount);
+    if (!preflight.ok) {
+      console.warn(
+        `[Payouts] Holding payout ${payoutId} — ${preflight.reason}`,
+      );
+      return {
+        payoutId,
+        success: false,
+        skipped: true,
+        error: preflight.reason,
+      };
+    }
+    return await processSinglePayout(payout);
+  } finally {
+    await releaseLock(PAYOUT_PROCESS_LOCK_KEY, lockToken);
+  }
+}
+
+export interface InstantPayoutPreview {
+  readyPaise: number;
+  tdsEstimatePaise: number;
+  netPaise: number;
+  label: string;
+  /** Null when an instant payout is possible today; else the next IST midnight. */
+  nextAllowedAt: Date | null;
+  reason: PayoutEligibilityReason | null;
+}
+
+/**
+ * What "Get paid now" would send. The TDS figure is an estimate on the READY
+ * total at the 194-O rate; the per-payout path fixes the final amount.
+ */
+export async function previewInstantPayout(
+  consultantProfileId: string,
+  now: Date = new Date(),
+): Promise<InstantPayoutPreview> {
+  const [eligibility, usedToday, taxInfo] = await Promise.all([
+    checkPayoutEligibility(consultantProfileId),
+    prisma.consultantPayout.findUnique({
+      where: {
+        idempotencyKey: instantPayoutIdempotencyKey(consultantProfileId, now),
+      },
+      select: { id: true },
+    }),
+    prisma.consultantTaxInfo.findUnique({
+      where: { consultantProfileId },
+      select: { panEncrypted: true },
+    }),
+  ]);
+  const readyPaise = Math.max(eligibility.readyAmount, 0);
+  const tdsEstimatePaise =
+    readyPaise > 0
+      ? computeTdsForPayout({
+          grossAmountPaise: readyPaise,
+          consultant: {
+            panNumber: null,
+            panOnFile: !!taxInfo?.panEncrypted,
+            residencyStatus: "RESIDENT",
+            tdsSection: null,
+            tdsRateBps: null,
+            tdsLowerRateCert: null,
+            providerCountry: null,
+          },
+        }).tdsAmountPaise
+      : 0;
+  return {
+    readyPaise,
+    tdsEstimatePaise,
+    netPaise: readyPaise - tdsEstimatePaise,
+    label: "Free · once a day",
+    nextAllowedAt: usedToday ? nextIstMidnight(now) : null,
+    reason: eligibility.reason,
+  };
 }
 
 /**
@@ -1163,6 +1448,31 @@ async function processStripePayout(
  * Without this, the payout status, earnings status, and consultant stats
  * could get out of sync if any individual DB call fails mid-way.
  */
+/**
+ * R-5 — a payout status the mapping does not know. The caller keeps the row's
+ * current status and returns; this leaves a Sentry breadcrumb and a WARN
+ * system event so a new gateway status is noticed instead of silently mapped.
+ */
+export async function reportUnknownPayoutStatus(input: {
+  provider: PaymentGateway;
+  providerPayoutId: string;
+  status: string;
+  eventType?: string;
+}): Promise<void> {
+  Sentry.addBreadcrumb({
+    category: "payouts",
+    level: "warning",
+    message: `Unknown ${input.provider} payout status "${input.status}"`,
+    data: input,
+  });
+  await recordSystemEvent({
+    category: "PAYOUT",
+    severity: "WARN",
+    message: `Unknown ${input.provider} payout status "${input.status}" for ${input.providerPayoutId}; status left unchanged`,
+    context: input,
+  });
+}
+
 export async function handlePayoutWebhook(
   _provider: PaymentGateway,
   providerPayoutId: string,
@@ -1198,8 +1508,17 @@ export async function handlePayoutWebhook(
     case "PROCESSING":
       payoutStatus = PayoutStatus.PROCESSING;
       break;
-    default:
+    case "PENDING":
       payoutStatus = PayoutStatus.PENDING;
+      break;
+    default:
+      // R-5 — an unknown status keeps the row as it is; it never downgrades to PENDING.
+      await reportUnknownPayoutStatus({
+        provider: _provider,
+        providerPayoutId,
+        status: String(status),
+      });
+      return;
   }
 
   await prisma.$transaction(async (tx) => {

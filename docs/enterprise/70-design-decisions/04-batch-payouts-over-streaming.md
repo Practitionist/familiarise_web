@@ -106,3 +106,9 @@ satisfied with per-transaction deduction plus a separate periodic true-up
 — at which point streaming's latency advantage might outweigh its
 reconciliation and tax cost. Until then the period boundary is forced by
 how TDS is reckoned, and batching is the natural shape.
+
+## Amendment (2026-09-25): a free instant payout beside the batch
+
+The batch stays the default, and a consultant can now also be paid once per IST day on demand (#1771 row 6). The instant payout does not reintroduce streaming: it is a single-consultant batch, minted under the Monday batch's own lock through the same per-consultant internals, with TDS computed once on its sum through the per-payout path and serialised by the processing lock. The period boundary this ADR relies on for TDS therefore still holds, because the withholding is reckoned per payout against the financial-year running total in both cases.
+
+On 2026-09-20 the owner decided that the RazorpayX transfer fee for an instant payout would be passed through to the consultant, with the fee and its GST shown as lines on the payout. On 2026-09-25 that was reversed: the instant payout is free, and the platform absorbs the fee. The pricing evidence behind the reversal is that RazorpayX charges roughly ₹1.5 to ₹7 per payout by mode and amount after the first 250 payouts each month (the figures the decision cites; the public pricing page now defers exact per-payout fees to the dashboard), so a once-a-day cap bounds the cost at about thirty payouts per consultant per month, which is small beside the platform fee on the earnings being paid out. Dropping the passthrough also removes the fee and GST columns, the fee-invoice line and the refund edge cases they would have needed. Revisit this if instant payouts become a material share of the monthly RazorpayX bill.

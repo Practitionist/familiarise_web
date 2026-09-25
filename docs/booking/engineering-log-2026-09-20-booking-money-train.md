@@ -16,6 +16,7 @@ An `APPROVED_PENDING_PAYMENT` row had no consultant action: the pay order either
 - **B-7, the seed.** The first `QA_ACCOUNTS_PER_ROLE` users of each role, the `SeedPass123!` logins, get `timezone: "Asia/Kolkata"`; the random population keeps faker's spread.
 
 Docs touched: `docs/booking/06-booking-lifecycle.md` (the Remind and Withdraw paragraph plus the self-approval refusal) and `docs/booking/18-state-machines.md` (the consultant-initiated `APPROVED_PENDING_PAYMENT → EXPIRED` edge and the shared lapse body).
+
 # Engineering log — 2026-09-20 — the booking-money train
 
 **Date:** 2026-09-20 · **Issues:** #1775, #1704, #1705, #1766, #1639 · **Scope:** the consultant Requests inbox on the booking-presentation layer, the remind and withdraw lifecycle, and the money words every booking surface shares. Each PR of the train appends its own dated section below.
@@ -37,3 +38,21 @@ There was no `trials/page.tsx` to turn into a redirect: `TrialsTab` was mounted 
 ### Verification
 
 The read pin (`__tests__/dashboards/requests-inbox.test.ts`) runs the fixture of four rows through the read, the route and Home's dashboard read over one where-aware prisma mock; the render pin (`requests-inbox.test.tsx`) renders the rows into their buckets and asserts no status enum reaches the DOM. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and `jest __tests__/dashboards __tests__/booking-algorithm` were green before the push.
+
+## PR-2 — money accounts (2026-09-25)
+
+### What changed
+
+Every Razorpay Checkout sheet now builds its options through `buildCheckoutOptions` (`lib/payments/client/checkout-options.ts`), so the saved-card and EMI options are opt-in and the three organisation sheets are unchanged. Behind `ENABLE_SAVED_CARDS`, the four plan checkouts and the recording purchase mint their order against the buyer's Razorpay Customer (`User.razorpayCustomerId`, created once by `ensureRazorpayCustomer` with `fail_existing: 0`) and open Checkout with `customer_id` and `remember_customer`, so Razorpay shows its own RBI consent box. `ENABLE_CHECKOUT_EMI` hides the EMI block while it is off and adds the instalment line under totals of ₹3,000 or more while it is on.
+
+Erasure now deletes the buyer's saved-card tokens and deactivates the consultant's RazorpayX fund accounts and contacts after the scrub commits, nulls the masked bank fields inside it, and keeps the RazorpayX ids with the payout and TDS rows under the Rule 6F(5) and CGST section 36 retention clocks. The organisation payout-account PUT no longer stores the account number, and `account-crypto.ts` is gone; the column drop is staged for the #1729 reset.
+
+The free instant payout (`createInstantPayout`, `processPayoutById`, `POST /api/consultant/payouts/instant` and its preview) pays READY earnings once per IST day under the Monday batch's lock, auto-approves at or below ₹25,000 and queues larger amounts for approval. The buyer's dispute line and the held earning's line read plainly, and the appointment timeline shows each refund as requested, processing, completed or failed with the rail's arrival time. An unknown payout status from either gateway now keeps the payout as it is instead of downgrading it to PENDING.
+
+### Findings that contradicted the spec
+
+The four plan pages are client components with no server parent, so the saved-card Customer id reaches Checkout on the checkout and purchase responses rather than as a server prop, and the EMI flag reaches the pages through a provider in the checkout layout. `OrganizationPayoutAccount.accountNumberEncrypted` is NOT NULL, so the PUT writes an empty string rather than null until the #1729 reset drops the column. The Payment row records CARD for every gateway charge, so the refund copy names both the card and the UPI arrival times rather than choosing one. `handlePayoutWebhook`'s switch default also caught the legitimate PENDING value, so PENDING became an explicit case before the default could stop writing.
+
+### Verification
+
+Each item carries its pin: the options builder, the Customer's idempotency and the flag-off order, the EMI hide block, the erasure vendor calls, the reference-only PUT, the four instant-payout cases (flag off, the approval cap, twice in one day, and an interleaving with the Monday batch where only the count check stands), the four refund steps, and the unknown payout status. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and the scoped jest suites were green before the branch was handed back.

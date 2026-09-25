@@ -56,7 +56,8 @@ const consulteeProfileSelect = {
 } as const;
 
 // A mutable array: Prisma's `in` rejects the readonly tuple `as const` makes.
-const LIVE_REFUND_STATUSES: RefundStatus[] = ["PENDING", "SUCCEEDED"];
+// #1780 — FAILED rides along for the refund timeline; the money sums read status explicitly.
+const LIVE_REFUND_STATUSES: RefundStatus[] = ["PENDING", "SUCCEEDED", "FAILED"];
 
 /**
  * What a payer may read of their own row: the amount line, the rail it rode,
@@ -83,7 +84,12 @@ const paymentDisplaySelect = {
   // PENDING one rides along so the money line can say "on its way" (#1675).
   refunds: {
     where: { deletedAt: null, status: { in: LIVE_REFUND_STATUSES } },
-    select: { amountPaise: true, status: true },
+    select: {
+      amountPaise: true,
+      status: true,
+      refundId: true,
+      createdAt: true,
+    },
   },
   disputes: { select: { status: true } },
 } as const;

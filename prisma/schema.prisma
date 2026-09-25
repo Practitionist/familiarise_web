@@ -50,6 +50,7 @@ model User {
   Payment                 Payment[]
   // #1365 — B2C tax invoices issued to this buyer.
   consumerInvoices        ConsumerInvoice[]
+  razorpayCustomerId      String?                 @unique // #1771 row 1
 
   // Relations
   consultantProfile     ConsultantProfile?
@@ -5724,6 +5725,7 @@ model ConsultantPayout {
   status              PayoutStatus   @default(PENDING)
   method              PayoutMethod
   batchId             String?
+  kind                String? // #1771 row 6 — 'INSTANT'; null = the Monday batch
 
   // TDS (Tax Deducted at Source) — Section 194J
   tdsDeducted       BigInt  @default(0) // TDS amount deducted from this payout, in paise
