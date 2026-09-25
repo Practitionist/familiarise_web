@@ -475,6 +475,9 @@ export const BUSINESS_ERROR_CODES: ReadonlyArray<{
       "MAKEUP_NOT_SKIPPABLE",
       "EXIT_NOT_AVAILABLE",
       "BACKUP_INTEREST_CAP",
+      // #1819 — class batch enrolment closed, or re-priced mid-checkout.
+      "ENROLMENT_CLOSED",
+      "CLASS_PRICE_CHANGED",
     ] as const
   ).map((code) => ({
     code,

@@ -105,7 +105,14 @@ function occurrence(
 }
 
 /** A four-session class where session 2 has been released for rescheduling. */
-function txWith(occurrences: ReturnType<typeof occurrence>[]) {
+function txWith(
+  occurrences: ReturnType<typeof occurrence>[],
+  plan: {
+    price?: number;
+    totalSessions?: number;
+    lateJoinUntilSession?: number | null;
+  } = {},
+) {
   const createMany = jest.fn().mockResolvedValue({ count: 1 });
   const tx = {
     class: {
@@ -114,6 +121,8 @@ function txWith(occurrences: ReturnType<typeof occurrence>[]) {
         classPlan: {
           price: 100_000,
           totalSessions: 4,
+          lateJoinUntilSession: null,
+          ...plan,
           consultantProfile: { userId: "consultant-user" },
         },
         appointment: { id: "appt-class", occurrences, participants: [] },
@@ -164,4 +173,52 @@ it("still refuses a class that is genuinely short of sessions", async () => {
       false,
     ),
   ).rejects.toThrow(/not fully scheduled yet \(3 of 4 sessions\)/);
+});
+
+describe("#1819 — late join", () => {
+  // Eight weekly sessions; the first `started` have already begun.
+  const eight = (started: number) =>
+    Array.from({ length: 8 }, (_, i) => ({
+      ...occurrence(`s${i + 1}`, future(7 * (i + 1 - started))),
+      ordinal: i + 1,
+    }));
+  const buy = (tx: Tx, quoted: number | null = null) =>
+    handleClassCheckout(
+      tx,
+      { eventId: "class-1" } as unknown as CheckoutInput,
+      "buyer-1",
+      false,
+      quoted,
+    );
+  const stamped = (tx: Tx) =>
+    (tx.appointmentParticipant.updateMany as jest.Mock).mock.calls.at(-1)[0]
+      .data;
+
+  it("prices an on-time join in full and stamps every session", async () => {
+    const tx = txWith(eight(0), { price: 99_999, totalSessions: 8 });
+    expect((await buy(tx)).amount).toBe(99_999);
+    expect(stamped(tx).sessionsPurchased).toBe(8);
+  });
+
+  it("prices a join before session 5 of 8 at 4/8, floored in the buyer's favour", async () => {
+    const tx = txWith(eight(4), {
+      price: 99_999,
+      totalSessions: 8,
+      lateJoinUntilSession: 6,
+    });
+    expect((await buy(tx, 4)).amount).toBe(49_999);
+    expect(stamped(tx).sessionsPurchased).toBe(4);
+  });
+
+  it("closes enrolment once session 1 starts when the host set no cutoff", async () => {
+    const tx = txWith(eight(1), { totalSessions: 8 });
+    await expect(buy(tx)).rejects.toMatchObject({ code: "ENROLMENT_CLOSED" });
+  });
+
+  it("refuses a stale quote when a session started after it was priced", async () => {
+    const tx = txWith(eight(4), { totalSessions: 8, lateJoinUntilSession: 6 });
+    await expect(buy(tx, 5)).rejects.toMatchObject({
+      code: "CLASS_PRICE_CHANGED",
+    });
+  });
 });
