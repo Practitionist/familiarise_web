@@ -506,18 +506,7 @@ export async function refundRemovedAttendeeSeat(args: {
     // have 400'd before we got here for self-leave).
     let hoursUntilStart = -1;
     if (!isOrganiserInitiated && args.mode === undefined) {
-      const now = new Date();
-      // Next upcoming session — not the earliest historical live row.
-      // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
-      // otherwise pin hoursUntilStart negative → permanent 0% refund.
-      const nextLive = await findLiveEventSlot(eventFilter, {
-        order: "asc",
-        startsAtGte: now,
-      });
-      if (nextLive) {
-        hoursUntilStart =
-          (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
-      }
+      hoursUntilStart = await hoursUntilNextLive(eventFilter);
     }
 
     const grossPaise = Number(payment.amount);
@@ -599,12 +588,8 @@ export async function refundRemovedAttendeeSeat(args: {
     // AMOUNT_EXCEEDS_REFUNDABLE is unreachable through the clamp above, but a
     // concurrent refund settling between the read and the write can still
     // produce it, and that race is the benign case too.
-    const benign =
-      err instanceof RefundValidationError &&
-      (err.code === "ALREADY_FULLY_REFUNDED" ||
-        err.code === "PAYMENT_NOT_SUCCEEDED" ||
-        err.code === "AMOUNT_EXCEEDS_REFUNDABLE");
-    if (benign) return { amountRefundedPaise: 0, refundPct: 0, rail: null };
+    if (isBenignSeatRefundError(err))
+      return { amountRefundedPaise: 0, refundPct: 0, rail: null };
 
     reportSentryError(err, {
       subsystem: "payments",
@@ -623,6 +608,32 @@ export async function refundRemovedAttendeeSeat(args: {
 }
 
 type SeatRefundArgs = Parameters<typeof refundRemovedAttendeeSeat>[0];
+
+/** Hours to the next live session from now, or -1 when none is upcoming. */
+async function hoursUntilNextLive(
+  eventFilter: Parameters<typeof findLiveEventSlot>[0],
+): Promise<number> {
+  const now = new Date();
+  // Next upcoming session — not the earliest historical live row.
+  // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
+  // otherwise pin hoursUntilStart negative → permanent 0% refund.
+  const nextLive = await findLiveEventSlot(eventFilter, {
+    order: "asc",
+    startsAtGte: now,
+  });
+  if (!nextLive) return -1;
+  return (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
+}
+
+/** The idempotent re-drive refusals a seat refund swallows without paging. */
+function isBenignSeatRefundError(err: unknown): boolean {
+  return (
+    err instanceof RefundValidationError &&
+    (err.code === "ALREADY_FULLY_REFUNDED" ||
+      err.code === "PAYMENT_NOT_SUCCEEDED" ||
+      err.code === "AMOUNT_EXCEEDS_REFUNDABLE")
+  );
+}
 
 /** The percentage a seat refund reports: the rule's answer, else the ladder. */
 function seatRefundPct(

@@ -27,9 +27,9 @@ export const metadata: Metadata = {
 
 export default async function PayExistingOrderPage({
   params,
-}: {
+}: Readonly<{
   params: Promise<{ paymentId: string }>;
-}) {
+}>) {
   const { paymentId } = await params;
   const session = await getSession(true);
   if (!session?.user?.id) notFound();

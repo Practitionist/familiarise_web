@@ -16,11 +16,11 @@ export function PayExistingOrder({
   order,
   doneHref,
   description,
-}: {
+}: Readonly<{
   order: ExistingRazorpayOrder;
   doneHref: string;
   description: string;
-}) {
+}>) {
   const router = useRouter();
   const { toast } = useToast();
   return (

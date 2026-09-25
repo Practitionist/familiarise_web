@@ -314,6 +314,39 @@ async function quoteIndividualBooking(
   };
 }
 
+// The group event a booking belongs to, webinar first; null for a 1:1 booking.
+function groupEventOf(
+  appointment: Pick<PreviewAppointment, "webinarId" | "classId">,
+): { kind: "class" | "webinar"; id: string } | null {
+  if (appointment.webinarId) {
+    return { kind: "webinar", id: appointment.webinarId };
+  }
+  if (appointment.classId) {
+    return { kind: "class", id: appointment.classId };
+  }
+  return null;
+}
+
+async function wholeEventPreview(kind: "class" | "webinar", eventId: string) {
+  const quote = await quoteWholeEventRefund(kind, eventId);
+  return {
+    refundPct: 100,
+    estimatedRefundPaise: quote.estimatedRefundPaise,
+    currency: quote.currency,
+    // The whole-event rail never consults the clock, so no notice window is
+    // computed for it.
+    hoursUntilNextSession: null,
+    prorated: false,
+    // Seats fund through several rails at once (card, org wallet, credits),
+    // so no single funding sentence is true of the aggregate. Null rather
+    // than a rail: the whole-event copy stands on its own and naming one
+    // rail here would be a claim about seats it does not cover.
+    fundingRail: null,
+    wholeEvent: true,
+    attendeeCount: quote.attendeeCount,
+  };
+}
+
 /**
  * What cancelling this booking right now would pay back — computed, never
  * written.
@@ -351,11 +384,7 @@ export async function GET(
     // #1780 D-4 — `?scope=seat`: what the viewer leaving their OWN seat pays
     // back. It reads only the caller's seat, so it precedes the whole-event
     // cancel authorization, which an attendee never passes.
-    const seatEvent = appointment.webinarId
-      ? { kind: "webinar" as const, id: appointment.webinarId }
-      : appointment.classId
-        ? { kind: "class" as const, id: appointment.classId }
-        : null;
+    const seatEvent = groupEventOf(appointment);
     if (
       seatEvent &&
       new URL(request.url).searchParams.get("scope") === "seat"
@@ -391,35 +420,10 @@ export async function GET(
 
     // Group events never reach the notice tiers or the viewer's own payment:
     // the POST route refunds the entire roster in full. Quote that instead.
-    let eventKind: "class" | "webinar" | null = null;
-    let eventId: string | null = null;
-    if (appointment.webinarId) {
-      eventKind = "webinar";
-      eventId = appointment.webinarId;
-    } else if (appointment.classId) {
-      eventKind = "class";
-      eventId = appointment.classId;
-    }
-
-    if (eventKind && eventId) {
-      const quote = await quoteWholeEventRefund(eventKind, eventId);
+    const groupEvent = groupEventOf(appointment);
+    if (groupEvent) {
       return NextResponse.json(
-        {
-          refundPct: 100,
-          estimatedRefundPaise: quote.estimatedRefundPaise,
-          currency: quote.currency,
-          // The whole-event rail never consults the clock, so no notice window is
-          // computed for it.
-          hoursUntilNextSession: null,
-          prorated: false,
-          // Seats fund through several rails at once (card, org wallet, credits),
-          // so no single funding sentence is true of the aggregate. Null rather
-          // than a rail: the whole-event copy stands on its own and naming one
-          // rail here would be a claim about seats it does not cover.
-          fundingRail: null,
-          wholeEvent: true,
-          attendeeCount: quote.attendeeCount,
-        },
+        await wholeEventPreview(groupEvent.kind, groupEvent.id),
         NO_STORE,
       );
     }

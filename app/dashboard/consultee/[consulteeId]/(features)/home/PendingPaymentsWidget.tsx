@@ -119,6 +119,60 @@ function rowPresentation(payment: PendingPayment) {
   );
 }
 
+/** The row's pay action: the trial checkout, our pay page, the gateway link, or a disabled button. */
+function PayNowButton({
+  payment,
+  payLabel,
+}: Readonly<{ payment: PendingPayment; payLabel: string }>) {
+  if (payment.type === "trial") {
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <Link href={`/checkout/plans/trial/${payment.id}`}>{payLabel}</Link>
+      </Button>
+    );
+  }
+  if (payment.paymentUrl && !isExternalPayHref(payment.paymentUrl)) {
+    // #1775 P-1 — our pay page opens the existing order.
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <Link href={payment.paymentUrl}>{payLabel}</Link>
+      </Button>
+    );
+  }
+  if (isExternalPayHref(payment.paymentUrl ?? "")) {
+    return (
+      <Button
+        asChild
+        size="sm"
+        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
+      >
+        <a href={payment.paymentUrl} target="_blank" rel="noopener noreferrer">
+          {payLabel}
+          <ExternalLink className="ml-1 h-3 w-3" />
+        </a>
+      </Button>
+    );
+  }
+  return (
+    <Button
+      size="sm"
+      disabled
+      className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
+    >
+      {payLabel}
+      <ExternalLink className="ml-1 h-3 w-3" />
+    </Button>
+  );
+}
+
 type PendingCancelTarget =
   | { kind: "gateway"; paymentId: string; title: string }
   | { kind: "approval"; appointmentId: string; title: string };
@@ -481,51 +535,7 @@ export function PendingPaymentsWidget({
                         before handing off to the gateway: a prefetching
                         Link. Everything else still opens the gateway link
                         directly in a new tab. */}
-                    {payment.type === "trial" ? (
-                      <Button
-                        asChild
-                        size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      >
-                        <Link href={`/checkout/plans/trial/${payment.id}`}>
-                          {payLabel}
-                        </Link>
-                      </Button>
-                    ) : payment.paymentUrl &&
-                      !isExternalPayHref(payment.paymentUrl) ? (
-                      // #1775 P-1 — our pay page opens the existing order.
-                      <Button
-                        asChild
-                        size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      >
-                        <Link href={payment.paymentUrl}>{payLabel}</Link>
-                      </Button>
-                    ) : isExternalPayHref(payment.paymentUrl ?? "") ? (
-                      <Button
-                        asChild
-                        size="sm"
-                        className="h-7 px-3 text-xs bg-amber-700 hover:bg-amber-800 text-white font-semibold"
-                      >
-                        <a
-                          href={payment.paymentUrl as string}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          {payLabel}
-                          <ExternalLink className="ml-1 h-3 w-3" />
-                        </a>
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        disabled
-                        className="h-7 px-3 text-xs bg-amber-700 text-white font-semibold"
-                      >
-                        {payLabel}
-                        <ExternalLink className="ml-1 h-3 w-3" />
-                      </Button>
-                    )}
+                    <PayNowButton payment={payment} payLabel={payLabel} />
                   </span>
                 )}
               </div>

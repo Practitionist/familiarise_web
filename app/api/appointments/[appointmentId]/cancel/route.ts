@@ -225,6 +225,25 @@ function attendeeEmailGroups(a: AttendeesByRail, isClass: boolean) {
 
 const uniq = (ids: string[]) => Array.from(new Set(ids));
 
+// The name the cancellation email gives the canceller; a platform/org actor reads "Familiarise".
+function cancellerName(
+  meta: {
+    cancelledBy: string;
+    consultantUserId?: string;
+    consultantName?: string;
+    consulteeName?: string;
+  },
+  consulteeUserId: string | undefined,
+): string {
+  if (meta.cancelledBy === meta.consultantUserId) {
+    return meta.consultantName || "The consultant";
+  }
+  if (meta.cancelledBy === consulteeUserId) {
+    return meta.consulteeName || "The consultee";
+  }
+  return "Familiarise";
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ appointmentId: string }> },
@@ -934,12 +953,7 @@ export async function POST(
       const emailArgs = {
         appointmentId,
         startsAt: appointment.occurrences?.[0]?.startsAt ?? null,
-        cancelledBy:
-          notificationMeta.cancelledBy === notificationMeta.consultantUserId
-            ? notificationMeta.consultantName || "The consultant"
-            : notificationMeta.cancelledBy === consulteeUserId
-              ? notificationMeta.consulteeName || "The consultee"
-              : "Familiarise",
+        cancelledBy: cancellerName(notificationMeta, consulteeUserId),
         reason: validatedData.reason || undefined,
         dashboardUrl: notificationHref(
           appointment.organizationId,

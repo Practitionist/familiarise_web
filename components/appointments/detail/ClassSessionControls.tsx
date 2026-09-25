@@ -20,15 +20,17 @@ import { useToast } from "@/hooks/use-toast";
 import { useViewerZone } from "@/lib/time/use-viewer-zone";
 import { formatForViewer } from "@/lib/time/viewer-zone";
 
+type NullableDate = Date | string | null;
+
 /** One class session as the detail read carries it (#1780 row 4). */
 export interface ClassSessionRow {
   id: string;
   ordinal: number;
   startsAt: Date | string;
   completionStatus: string | null;
-  hostCancelledAt?: Date | string | null;
-  seatsSettledAt?: Date | string | null;
-  deletedAt?: Date | string | null;
+  hostCancelledAt?: NullableDate;
+  seatsSettledAt?: NullableDate;
+  deletedAt?: NullableDate;
 }
 
 const MAKEUP_WINDOW_DAYS = 14;
@@ -158,6 +160,8 @@ export function ClassSessionControls({
   const open = pairs(sessions, now);
   const when = (d: Date | string) =>
     formatForViewer(toDate(d), viewer, "EEE d MMM, h:mm a");
+  const skipUnit = unitLabel ? ` (${unitLabel})` : "";
+  const refundUnit = unitLabel ? ` ${unitLabel}` : " one session";
 
   if (role === "consultee") {
     const skippable = open.filter((p) => p.makeUp);
@@ -176,7 +180,7 @@ export function ClassSessionControls({
             <ConfirmButton
               label="Can't make it — refund this session"
               title="Refund this session?"
-              body={`This session${unitLabel ? ` (${unitLabel})` : ""} comes back to you instead of the make-up. You keep your seat for the rest of the series.`}
+              body={`This session${skipUnit} comes back to you instead of the make-up. You keep your seat for the rest of the series.`}
               disabled={skip.isPending}
               onConfirm={() => skip.mutate(source.id)}
             />
@@ -203,7 +207,7 @@ export function ClassSessionControls({
           <ConfirmButton
             label="Cancel this session"
             title="Cancel this session?"
-            body={`Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${unitLabel ? ` ${unitLabel}` : " one session"}.`}
+            body={`Learners are told; you have ${MAKEUP_WINDOW_DAYS} days to schedule a make-up or each seat is refunded${refundUnit}.`}
             disabled={cancel.isPending}
             onConfirm={() => cancel.mutate(s.id)}
             variant="ghost"

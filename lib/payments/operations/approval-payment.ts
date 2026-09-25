@@ -786,6 +786,50 @@ const EXISTING_PAYMENT_SELECT = {
   expiresAt: true,
 } as const;
 
+/** The trial arm of findExistingLivePayment, lifted out to keep its complexity in bounds. */
+async function findExistingTrialPayment(
+  trialId: string,
+  anchorAppointmentId: string | undefined,
+  reusable: PaymentStatus[],
+): Promise<ExistingApprovalPayment | null> {
+  // #1775 P-1 — the placeholder appointment exists from request time (C-7),
+  // so the live row is found through it; Trial.paymentId (set at capture) is the fallback.
+  const trial = await prisma.trial.findUnique({
+    where: { id: trialId },
+    select: {
+      status: true,
+      paymentId: true,
+      appointmentId: true,
+      payment: { select: EXISTING_PAYMENT_SELECT },
+    },
+  });
+  const appointmentId = anchorAppointmentId ?? trial?.appointmentId;
+  const viaAppointment = appointmentId
+    ? await prisma.payment.findFirst({
+        where: {
+          appointmentId,
+          deletedAt: null,
+          paymentStatus: { in: reusable },
+        },
+        orderBy: { createdAt: "desc" },
+        select: EXISTING_PAYMENT_SELECT,
+      })
+    : null;
+  const payment = viaAppointment ?? trial?.payment;
+
+  // Same status filter as the consultation/subscription arms below: a FAILED
+  // gateway order is a rejection the buyer must retry from scratch, so it is
+  // not offered back to the mint at all.
+  if (!payment || !reusable.includes(payment.paymentStatus)) {
+    return null;
+  }
+  // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
+  const requestIsPayable =
+    trial?.status === TrialStatus.AWAITING_PAYMENT ||
+    (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
+  return { ...payment, requestIsPayable };
+}
+
 export async function findExistingLivePayment(params: {
   consultationId?: string;
   subscriptionId?: string;
@@ -799,42 +843,11 @@ export async function findExistingLivePayment(params: {
     PaymentStatus.EXPIRED,
   ];
   if (params.trialId) {
-    // #1775 P-1 — the placeholder appointment exists from request time (C-7),
-    // so the live row is found through it; Trial.paymentId (set at capture) is the fallback.
-    const trial = await prisma.trial.findUnique({
-      where: { id: params.trialId },
-      select: {
-        status: true,
-        paymentId: true,
-        appointmentId: true,
-        payment: { select: EXISTING_PAYMENT_SELECT },
-      },
-    });
-    const appointmentId = params.appointmentId ?? trial?.appointmentId;
-    const viaAppointment = appointmentId
-      ? await prisma.payment.findFirst({
-          where: {
-            appointmentId,
-            deletedAt: null,
-            paymentStatus: { in: REUSABLE_STATUSES },
-          },
-          orderBy: { createdAt: "desc" },
-          select: EXISTING_PAYMENT_SELECT,
-        })
-      : null;
-    const payment = viaAppointment ?? trial?.payment;
-
-    // Same status filter as the consultation/subscription arms below: a FAILED
-    // gateway order is a rejection the buyer must retry from scratch, so it is
-    // not offered back to the mint at all.
-    if (!payment || !REUSABLE_STATUSES.includes(payment.paymentStatus)) {
-      return null;
-    }
-    // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
-    const requestIsPayable =
-      trial?.status === TrialStatus.AWAITING_PAYMENT ||
-      (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
-    return { ...payment, requestIsPayable };
+    return findExistingTrialPayment(
+      params.trialId,
+      params.appointmentId,
+      REUSABLE_STATUSES,
+    );
   }
 
   if (params.consultationId) {

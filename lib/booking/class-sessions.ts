@@ -351,8 +351,9 @@ export async function skipClassMakeUp(args: {
       "This session has no upcoming make-up to skip, or you do not hold it.",
     );
   }
-  const joinedAt =
-    payment.createdAt > seat.createdAt ? payment.createdAt : seat.createdAt;
+  const joinedAt = new Date(
+    Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
+  );
   if (source.startsAt <= joinedAt) {
     throw new BookingRuleError(
       "MAKEUP_NOT_SKIPPABLE",

@@ -537,11 +537,7 @@ export async function PATCH(
             });
             // #1778 — a decline frees the held times: tell anyone waiting.
             if (status === AppointmentStatus.REJECTED) {
-              const held = await tx.appointment.findFirst({
-                where: { consultationId: consultationId, deletedAt: null },
-                select: { id: true },
-              });
-              if (held) await stageNoticesForAppointmentHolds(tx, held.id);
+              await stageDeclineHoldNotices(tx, consultationId);
             }
             const consultation = await tx.consultation.findUniqueOrThrow({
               where: { id: consultationId },
@@ -860,6 +856,18 @@ class PaidWithoutAppointmentError extends Error {
     );
     this.name = "PaidWithoutAppointmentError";
   }
+}
+
+// #1778 — lifted out of the approval transaction to keep its complexity in bounds.
+async function stageDeclineHoldNotices(
+  tx: Tx,
+  consultationId: string,
+): Promise<void> {
+  const held = await tx.appointment.findFirst({
+    where: { consultationId: consultationId, deletedAt: null },
+    select: { id: true },
+  });
+  if (held) await stageNoticesForAppointmentHolds(tx, held.id);
 }
 
 /**

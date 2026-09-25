@@ -4091,11 +4091,9 @@ export class SchedulingService {
     inheritedOrdinals: number[] = [],
     // #1780 decision 9 — a reschedule's replacements are moves; a re-plan's
     // row is a move only when its times differ from the freed row's.
-    moves: { isReschedule: boolean; freedWindows: FreedWindow[] } = {
-      isReschedule: false,
-      freedWindows: [],
-    },
+    moves?: { isReschedule: boolean; freedWindows: FreedWindow[] },
   ): Promise<any[]> {
+    const hostMoves = moves ?? { isReschedule: false, freedWindows: [] };
     const slotsPerCall = ScheduleCalculationService.getSlotsPerCall(
       config?.sessionDurationInHours || config?.durationInHours || 1,
     );
@@ -4211,7 +4209,9 @@ export class SchedulingService {
           consultantProfileId: consultantProfileRow.id,
         };
         const inherited = inheritedOrdinals[callIndex] !== undefined;
-        return inherited && isHostMove(row, moves) ? { ...row, movedAt } : row;
+        return inherited && isHostMove(row, hostMoves)
+          ? { ...row, movedAt }
+          : row;
       });
 
       const wrapper = wrapperId

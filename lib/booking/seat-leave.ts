@@ -178,8 +178,9 @@ export async function planSelfLeave(
   const payment = await seatPayment(tx, kind, eventId, userId);
   if (!payment) return { mode: "full" };
   // A re-bought seat reuses its row, so the later of the two is the purchase.
-  const joinedAt =
-    payment.createdAt > seat.createdAt ? payment.createdAt : seat.createdAt;
+  const joinedAt = new Date(
+    Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
+  );
   const ledger = await seatLedger(
     tx,
     { appointmentId: seat.appointmentId, createdAt: joinedAt },
@@ -218,8 +219,9 @@ async function planSeriesExit(
   }
   const payment = await seatPayment(tx, "class", classId, userId);
   if (!payment) return { mode: "full" };
-  const joinedAt =
-    payment.createdAt > seat.createdAt ? payment.createdAt : seat.createdAt;
+  const joinedAt = new Date(
+    Math.max(payment.createdAt.getTime(), seat.createdAt.getTime()),
+  );
   const ledger = await seatLedger(
     tx,
     { appointmentId: seat.appointmentId, createdAt: joinedAt },
