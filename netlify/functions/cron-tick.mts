@@ -96,9 +96,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
 // (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
 // batch size — is the burn lever. Targets with an Actions twin at equal or
 // better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10. Every-tick keeps only the two latency-sensitive money confirms
-// with no equal backstop (payment-status q30m Actions, orphaned-confirmations
-// q30m Actions but chat-access latency is customer-visible).
+// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
+// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,
@@ -113,6 +112,9 @@ const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "cascade-refund-earnings": 15,
   "reconcile-refunds": 15,
   "abandoned-payments": 15,
+  // #1822 Q-3 — see the block comment above; moved off every-tick.
+  "reconcile-payment-status": 15,
+  "reconcile-orphaned-confirmations": 15,
   // #1583 E-P0-04 — the five booking sweeps: ≈ +20 invocations/hour on top of
   // the #1686 budget; the hourly Actions runs stay the unbounded backstop.
   "expire-unpaid-trials": 15,

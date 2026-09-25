@@ -27,7 +27,7 @@
 import { Ratelimit } from "@upstash/ratelimit";
 import redis from "@/lib/redis-edge";
 import { NextResponse } from "next/server";
-import { reportSentryError } from "@/lib/observability/report";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 
 type RatelimitRedis = ConstructorParameters<typeof Ratelimit>[0]["redis"];
 
@@ -373,10 +373,6 @@ export function retryAfterSeconds(
   return Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000));
 }
 
-// Module scope, so the window is per function instance and resets with it.
-const REDIS_FAILURE_REPORT_INTERVAL_MS = 60_000;
-let lastRedisFailureReportAt = 0;
-
 export async function applyRateLimit(
   limiter: Ratelimit,
   identifier: string,
@@ -420,16 +416,14 @@ export async function applyRateLimit(
     // no information the first did not, and the volume both burns quota and
     // buries unrelated alerts. Per-instance rather than global on purpose: there
     // is no shared state to coordinate through when the shared state IS what is
-    // down. (#1125)
-    const now = Date.now();
-    if (now - lastRedisFailureReportAt > REDIS_FAILURE_REPORT_INTERVAL_MS) {
-      lastRedisFailureReportAt = now;
-      reportSentryError(error, {
-        subsystem: "rate-limit",
-        op: "applyRateLimit",
-        expected: false,
-      });
-    }
+    // down. (#1125; extracted to a shared helper under #1822 so
+    // lib/maintenance-cron.ts and lib/cron/cleanup-route.ts get the same
+    // throttle instead of re-implementing it.)
+    captureThrottled("rate-limit:applyRateLimit", error, {
+      subsystem: "rate-limit",
+      op: "applyRateLimit",
+      expected: false,
+    });
     return null;
   }
 }

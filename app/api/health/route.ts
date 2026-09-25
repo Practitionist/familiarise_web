@@ -5,7 +5,7 @@ import { measureEventLoopStall, probeWithStallRetry } from "@/lib/health/probe";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
-import redis, { isMockRedis } from "@/lib/redis";
+import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 type BetterStackHealth = {
   configured: boolean;
@@ -92,16 +92,55 @@ type CronHeartbeat = {
   probeError?: boolean;
 };
 
-async function checkCronHeartbeat(): Promise<CronHeartbeat> {
-  if (isMockRedis()) return { configured: false, lastRunAt: null, stale: null };
+type RedisStatus = {
+  status: "ok" | "degraded";
+  /** Generic code only: the route is public, so no vendor class or message. #1822 */
+  reason?:
+    | "QUOTA_EXCEEDED"
+    | "UNAVAILABLE"
+    | "CIRCUIT_OPEN"
+    | "MOCK_IN_PRODUCTION";
+};
+
+function redisOk(): RedisStatus {
+  // The breaker is in-memory: an open one fails locks fast even if this GET succeeded.
+  return isRedisCircuitOpen()
+    ? { status: "degraded", reason: "CIRCUIT_OPEN" }
+    : { status: "ok" };
+}
+
+// #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
+// failure (`UpstashError: ERR max requests limit exceeded`) costs no extra command.
+async function checkCronHeartbeat(): Promise<{
+  cron: CronHeartbeat;
+  redis: RedisStatus;
+}> {
+  if (isMockRedis()) {
+    return {
+      cron: { configured: false, lastRunAt: null, stale: null },
+      // In-memory locks on a production build are not real locks.
+      redis:
+        process.env.NODE_ENV === "production"
+          ? { status: "degraded", reason: "MOCK_IN_PRODUCTION" }
+          : { status: "ok" },
+    };
+  }
   try {
     const lastRunAt = await redis.get<string>("cron:heartbeat:last");
-    if (!lastRunAt) return { configured: true, lastRunAt: null, stale: null };
+    if (!lastRunAt) {
+      return {
+        cron: { configured: true, lastRunAt: null, stale: null },
+        redis: redisOk(),
+      };
+    }
     const age = Date.now() - Date.parse(lastRunAt);
     return {
-      configured: true,
-      lastRunAt,
-      stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
+      cron: {
+        configured: true,
+        lastRunAt,
+        stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
+      },
+      redis: redisOk(),
     };
   } catch (err) {
     Sentry.logger.warn("Cron heartbeat probe failed", {
@@ -109,10 +148,18 @@ async function checkCronHeartbeat(): Promise<CronHeartbeat> {
       extra: { message: err instanceof Error ? err.message : String(err) },
     });
     return {
-      configured: true,
-      lastRunAt: null,
-      stale: "unknown",
-      probeError: true,
+      cron: {
+        configured: true,
+        lastRunAt: null,
+        stale: "unknown",
+        probeError: true,
+      },
+      redis: {
+        status: "degraded",
+        reason: /max requests limit/i.test(String(err))
+          ? "QUOTA_EXCEEDED"
+          : "UNAVAILABLE",
+      },
     };
   }
 }
@@ -177,7 +224,7 @@ export async function GET(request: Request) {
     retried,
   } = await probeDatabase();
 
-  const [maintenanceState, stream, betterstack, cron] = await Promise.all([
+  const [maintenanceState, stream, betterstack, heartbeat] = await Promise.all([
     getMaintenanceState(),
     // #473 — the last unmet acceptance criterion on that issue. The breaker
     // existed but nothing surfaced its state, so a Stream outage was invisible
@@ -191,10 +238,17 @@ export async function GET(request: Request) {
         }),
     checkCronHeartbeat(),
   ]);
+  const { cron, redis: redisStatus } = heartbeat;
 
   // Stream being down degrades chat and video but leaves booking, payments and
   // every read path working, so it is reported without failing the check.
-  const status = database === "unreachable" ? "degraded" : "healthy";
+  // #1822 Q-7 — a Redis quota failure fails closed on every fail-closed cron
+  // job and disables every rate limiter, so it degrades the overall status
+  // too, not just the database.
+  const status =
+    database === "unreachable" || redisStatus.status === "degraded"
+      ? "degraded"
+      : "healthy";
 
   return NextResponse.json({
     status,
@@ -215,6 +269,7 @@ export async function GET(request: Request) {
     stream,
     betterstack,
     cron,
+    redis: redisStatus,
     timestamp: new Date().toISOString(),
   });
 }

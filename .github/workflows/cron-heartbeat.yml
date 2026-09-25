@@ -62,6 +62,15 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           UPSTASH_REDIS_REST_URL: ${{ secrets.UPSTASH_REDIS_REST_URL }}
           UPSTASH_REDIS_REST_TOKEN: ${{ secrets.UPSTASH_REDIS_REST_TOKEN }}
+          # #1822 Q-8 — optional Upstash usage alarm; unset in most
+          # environments, in which case the check skips silently.
+          UPSTASH_MANAGEMENT_API_KEY: ${{ secrets.UPSTASH_MANAGEMENT_API_KEY }}
+          UPSTASH_EMAIL: ${{ secrets.UPSTASH_EMAIL }}
+          UPSTASH_DATABASE_ID: ${{ secrets.UPSTASH_DATABASE_ID }}
+          # Monthly COMMAND count (e.g. 2000000), not dollars; unset = no alarm.
+          UPSTASH_MONTHLY_COMMAND_CAP: ${{ vars.UPSTASH_MONTHLY_COMMAND_CAP }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
+          NEXT_PUBLIC_SENTRY_ENVIRONMENT: production
         run: node_modules/.bin/tsx scripts/ci/check-cron-heartbeat.ts
 
       - name: Notify on failure

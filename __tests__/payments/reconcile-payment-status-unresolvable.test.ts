@@ -36,6 +36,12 @@ jest.mock("../../lib/prisma", () => ({
       findMany: jest.fn(),
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    // #1822 Q-4 — the unresolvable-row report is now deduped via a
+    // SystemEvent correlationId lookup before it fires.
+    systemEvent: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockResolvedValue({ id: "event-1" }),
+    },
     $disconnect: jest.fn(),
   },
 }));
@@ -44,6 +50,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
   LONG_JOB_TTL_MS: 1,
   CronLockHeldError: class CronLockHeldError extends Error {},
+  // #1822 Q-2 — cleanup-route.ts now checks `instanceof CronLockUnavailableError`
+  // too; without this export the check throws on `undefined`.
+  CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
 }));
 
@@ -141,6 +150,78 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     );
   });
 
+  // #1822 Q-4 — the same stuck row set used to re-mint a Sentry event on
+  // every tick until it resolved or aged into #1757's retire path; that is
+  // what turned a second-largest issue (1,147 events, same 4 rows) into a
+  // near-budget-sized cost. Reported at most once per 24h per distinct id set.
+  it("does not re-report the same unresolvable id set within 24h", async () => {
+    mockRetrieve.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), {
+        code: "resource_missing",
+        statusCode: 404,
+      }),
+    );
+    // `Once`, not a persistent override — the mock is a module-level
+    // singleton shared across every test in this file, and a persistent
+    // stub here would leak into later describe blocks that expect the
+    // default "nothing reported yet" behaviour.
+    (
+      prisma.systemEvent.findFirst as unknown as jest.Mock
+    ).mockResolvedValueOnce({
+      id: "already-reported",
+    });
+
+    const res = await POST(request());
+    const body = await res.json();
+
+    expect(res.status).toBe(207);
+    expect(body.unresolvableCount).toBe(1);
+    expect(recordSystemEvent).not.toHaveBeenCalled();
+    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          correlationId: expect.stringMatching(
+            /^reconcile-payment-status:unresolvable:[0-9a-f]{16}$/,
+          ),
+          createdAt: { gte: expect.any(Date) },
+        },
+      }),
+    );
+  });
+
+  // #1822 — replay: run 1's lookup fails (still reports, still 207); run 2
+  // finds run 1's recorded correlationId and stays quiet.
+  it("reports despite a failed lookup, then suppresses the replay", async () => {
+    mockRetrieve.mockRejectedValue(
+      Object.assign(new Error("No such payment_intent"), {
+        code: "resource_missing",
+        statusCode: 404,
+      }),
+    );
+    const recorded = new Set<string>();
+    recordSystemEvent.mockImplementation(
+      async (e: { correlationId: string }) => {
+        recorded.add(e.correlationId);
+      },
+    );
+    (prisma.systemEvent.findFirst as unknown as jest.Mock)
+      .mockRejectedValueOnce(new Error("system_events unavailable"))
+      .mockImplementationOnce(
+        async (q: { where: { correlationId: string } }) =>
+          recorded.has(q.where.correlationId) ? { id: "e1" } : null,
+      );
+
+    expect((await POST(request())).status).toBe(207);
+    (prisma.payment.findMany as jest.Mock)
+      .mockResolvedValueOnce([pendingStripeRow])
+      .mockResolvedValueOnce([]);
+    expect((await POST(request())).status).toBe(207);
+
+    expect(recordSystemEvent).toHaveBeenCalledTimes(1);
+    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps a gateway that cannot be reached as a run failure — 500", async () => {
     mockRetrieve.mockRejectedValue(new Error("ECONNRESET"));
 
@@ -210,11 +291,27 @@ describe("reconcile-payment-status — orphan PENDING rows are retired (#1757)",
     expect(retireOrphanPendingPayment).toHaveBeenCalledWith("pay-old");
     // The row is never written directly here — the helper owns the CAS.
     expect(prisma.payment.updateMany).not.toHaveBeenCalled();
-    expect(recordSystemEvent).toHaveBeenCalledTimes(1);
-    expect(recordSystemEvent.mock.calls[0][0]).toMatchObject({
-      category: "PAYMENT",
-      message: expect.stringContaining("PAYMENT_ORPHAN_RETIRED: pay-old"),
-    });
+    // #1822 Q-4 — the retire helper's own SystemEvent, plus a second one this
+    // run writes to dedupe the unresolvable-row report (see below).
+    expect(recordSystemEvent).toHaveBeenCalledTimes(2);
+    expect(recordSystemEvent.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          expect.objectContaining({
+            category: "PAYMENT",
+            message: expect.stringContaining("PAYMENT_ORPHAN_RETIRED: pay-old"),
+          }),
+        ],
+        [
+          expect.objectContaining({
+            category: "CRON",
+            correlationId: expect.stringContaining(
+              "reconcile-payment-status:unresolvable:",
+            ),
+          }),
+        ],
+      ]),
+    );
     // One Sentry message for the retired ids and one for the reported ids.
     const messages = mockCaptureMessage.mock.calls.map(([m]) => String(m));
     expect(messages).toEqual(

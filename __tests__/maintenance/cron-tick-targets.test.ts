@@ -90,11 +90,14 @@ describe("cron-tick targetRequest", () => {
   });
 });
 
-// #1686 — six sweeps run on the 15-minute slots only; the customer-visible
-// five stay on every tick (ADR 27 consequences, 2026-09-17).
-// #1792 — Upstash 500k cap: every-tick keeps only the two latency-sensitive
-// money confirms; the rest ride 10/15-minute slots (each has an Actions twin
-// at equal or better cadence, except the ticker-only Novu relay at 10).
+// #1686 — six sweeps run on the 15-minute slots only.
+// #1792 — Upstash 500k cap: every-tick was cut to only the two
+// latency-sensitive money confirms; the rest ride 10/15-minute slots (each
+// has an Actions twin at equal or better cadence, except the ticker-only Novu
+// relay at 10).
+// #1822 Q-3 — the cap was hit again with `reconcile-payment-status` and
+// `reconcile-orphaned-confirmations` still every-tick; both now ride the same
+// 15-minute slot as their siblings (each already has a 30-min Actions twin).
 describe("cron-tick dueTargets cadence", () => {
   const { dueTargets } = loadTicker();
   const at = (minute: number) => new Date(Date.UTC(2026, 8, 17, 10, minute));
@@ -113,6 +116,9 @@ describe("cron-tick dueTargets cadence", () => {
       "sweep-orphaned-topup-captures",
       "dispatch-outbound-webhooks",
       "retry-failed-emails",
+      // #1822 Q-3 — moved off every-tick.
+      "reconcile-payment-status",
+      "reconcile-orphaned-confirmations",
       // #1583 E-P0-04 — the five booking sweeps ride the 15-minute slots.
       "expire-unpaid-trials",
       "reschedule-proposals",
@@ -122,16 +128,6 @@ describe("cron-tick dueTargets cadence", () => {
     ]) {
       expect(off).not.toContain(name);
       expect(on).toContain(name);
-    }
-  });
-
-  it("keeps the customer-visible sweeps on every tick", () => {
-    const off = dueTargets(at(5));
-    for (const name of [
-      "reconcile-payment-status",
-      "reconcile-orphaned-confirmations",
-    ]) {
-      expect(off).toContain(name);
     }
   });
 
