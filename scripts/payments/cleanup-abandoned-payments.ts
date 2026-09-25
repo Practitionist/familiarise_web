@@ -660,6 +660,8 @@ async function expireRequestAndReleaseSlots(
   const now = new Date();
 
   if (confirmedSlots > 0) {
+    // #1778 — the released holds tell anyone waiting on those times.
+    await stageNoticesForAppointmentHolds(tx, appointment.id);
     // Only release the tentative slots; confirmed history stays.
     const released = await transitionOccurrenceCompletion(tx, {
       where: {

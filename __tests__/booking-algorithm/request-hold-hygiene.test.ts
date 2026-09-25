@@ -27,7 +27,12 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1775 C-3 — the 48 h arm's refund-retry cohort; none here.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
+    payment: { findMany: jest.fn().mockResolvedValue([]) },
     appointment: { findMany: jest.fn().mockResolvedValue([]) },
     // #1778 — the sweep's backup-interest expiry arm.
     windowBackupInterest: {

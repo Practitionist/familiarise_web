@@ -17,6 +17,7 @@ import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
 import {
   stageWindowOpenedEmail,
+  whenText,
   type StagedRecipientEmail,
 } from "@/lib/email/senders/booking";
 import { BookingRuleError } from "./booking-rule-error";
@@ -185,12 +186,20 @@ export async function stageBackupInterestNotices(
     if (claimed.count === 0) continue;
     const consultantName = row.consultantProfile.user.name ?? "your consultant";
     const href = bookHref(row);
+    const viewer = await tx.user.findUnique({
+      where: { id: row.userId },
+      select: { timezone: true },
+    });
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.WINDOW_OPENED,
       recipients: [row.userId],
       payload: {
         consultantName,
-        windowText: row.windowStart.toISOString(),
+        // In the learner's own zone, as the email renders it.
+        windowText: whenText(
+          row.windowStart,
+          viewer?.timezone ?? "Asia/Kolkata",
+        ),
         dashboardUrl: href,
       },
       dedupeKey: `window-opened:${row.id}`,

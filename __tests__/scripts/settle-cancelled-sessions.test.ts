@@ -52,6 +52,8 @@ jest.mock("../../lib/prisma", () => ({
           userId: `u-${id}`,
           createdAt: new Date("2026-08-01T00:00:00Z"),
         })),
+      // Nothing refunded yet: the whole seat is still refundable.
+      findUnique: async () => ({ refunds: [], disputes: [] }),
     },
     appointmentParticipant: {
       findFirst: async () => ({ createdAt: new Date("2026-08-01T00:00:00Z") }),

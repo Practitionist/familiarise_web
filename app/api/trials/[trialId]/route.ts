@@ -873,16 +873,6 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           to: nextStatus as TrialStatus,
         });
       }
-      // #1775 C-12 — a declined paid trial is refunded in full; the learner
-      // hears it from the same transaction that records the decline.
-      if (nextStatus === TrialStatus.REJECTED && existingTrial.paymentId) {
-        await stageTrialRefundedBell(tx, {
-          id: trialId,
-          consulteeUserId: existingTrial.consulteeProfile.user.id,
-          planTitle: existingTrial.subscriptionPlan.title,
-          consultantName: existingTrial.consultantProfile.user.name,
-        });
-      }
       // #1775 C-9 — delivery starts the paid trial's earnings hold.
       if (nextStatus === TrialStatus.COMPLETED) {
         await stampTrialEarningsHold(
@@ -958,6 +948,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         initiatedByUserId: session.user.id,
         isConsultantInitiated: deferredCancellation.isConsultantInitiated,
       });
+      // #1775 C-12 — a declined paid trial's learner hears "refunded" only
+      // once the money actually moved.
+      if (
+        updatedTrial.status === TrialStatus.REJECTED &&
+        refund &&
+        !refund.failed &&
+        refund.amountRefundedPaise > 0
+      ) {
+        await stageTrialRefundedBell(prisma, {
+          id: trialId,
+          consulteeUserId: existingTrial.consulteeProfile.user.id,
+          planTitle: existingTrial.subscriptionPlan.title,
+          consultantName: existingTrial.consultantProfile.user.name,
+        }).catch(() => undefined);
+      }
     }
 
     return NextResponse.json({

@@ -40,6 +40,9 @@ jest.mock("../../lib/prisma", () => {
     __esModule: true,
     default: {
       trial: { findMany: jest.fn() },
+      // #1775 C-12 — the retry cohort for a refund that failed after the CAS.
+      bookingStatusHistory: { findMany: jest.fn(async () => []) },
+      refund: { findMany: jest.fn(async () => []) },
       $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
       __tx: tx,
     },

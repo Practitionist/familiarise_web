@@ -201,7 +201,14 @@ async function quoteWholeEventRefund(
     const balance = refundableBalancePaise(Number(seat.amount), seat);
     const ledger = ledgers?.get(seat.id);
     return ledger
-      ? Math.min(balance, Number(seriesCancelRefundPaise(ledger, seat.amount)))
+      ? Math.max(
+          0,
+          Math.min(
+            balance,
+            Number(seriesCancelRefundPaise(ledger, seat.amount)) -
+              (ledger.occRefundedPaise ?? 0),
+          ),
+        )
       : balance;
   };
 
@@ -341,6 +348,24 @@ export async function GET(
       );
     }
 
+    // #1780 D-4 — `?scope=seat`: what the viewer leaving their OWN seat pays
+    // back. It reads only the caller's seat, so it precedes the whole-event
+    // cancel authorization, which an attendee never passes.
+    const seatEvent = appointment.webinarId
+      ? { kind: "webinar" as const, id: appointment.webinarId }
+      : appointment.classId
+        ? { kind: "class" as const, id: appointment.classId }
+        : null;
+    if (
+      seatEvent &&
+      new URL(request.url).searchParams.get("scope") === "seat"
+    ) {
+      return NextResponse.json(
+        await quoteSeatLeave(seatEvent.kind, seatEvent.id, session.user.id),
+        NO_STORE,
+      );
+    }
+
     // Authorization mirrors the POST route exactly. A preview that answers
     // where the cancel would 403 is a quote for an action the viewer cannot
     // take — worse than no quote. Trials are absent from both for the same
@@ -374,19 +399,6 @@ export async function GET(
     } else if (appointment.classId) {
       eventKind = "class";
       eventId = appointment.classId;
-    }
-
-    // #1780 D-4 — `?scope=seat`: what the viewer leaving their own seat pays
-    // back (the class quote or the window rule), not the whole-event cancel.
-    if (
-      eventKind &&
-      eventId &&
-      new URL(request.url).searchParams.get("scope") === "seat"
-    ) {
-      return NextResponse.json(
-        await quoteSeatLeave(eventKind, eventId, session.user.id),
-        NO_STORE,
-      );
     }
 
     if (eventKind && eventId) {

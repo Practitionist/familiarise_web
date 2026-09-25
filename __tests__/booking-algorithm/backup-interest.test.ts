@@ -11,6 +11,7 @@
 jest.mock("../../lib/novu/stage-bell", () => ({ stageBell: jest.fn() }));
 jest.mock("../../lib/email/senders/booking", () => ({
   stageWindowOpenedEmail: jest.fn(async () => []),
+  whenText: (d: Date) => d.toISOString(),
 }));
 
 type Row = {
@@ -84,7 +85,10 @@ jest.mock("../../lib/prisma", () => {
       return { count: hit.length };
     },
   };
-  const client = { windowBackupInterest: table };
+  const client = {
+    windowBackupInterest: table,
+    user: { findUnique: async () => ({ timezone: "Asia/Kolkata" }) },
+  };
   return {
     __esModule: true,
     default: {

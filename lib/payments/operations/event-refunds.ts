@@ -27,8 +27,9 @@ import {
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
   seatLedger,
+  occurrenceRefundsPaise,
   seriesCancelRefundPaise,
-  type SeatLedger,
+  type SeriesSeat,
 } from "@/lib/booking/class-series";
 
 /**
@@ -85,7 +86,7 @@ export async function refundWholeEventPayments(
    * sessions (classSeriesLedgers); each seat then refunds only what was not
    * delivered. Absent (a webinar, a moderation sweep) → every seat in full.
    */
-  opts: { ledgers?: ReadonlyMap<string, SeatLedger> } = {},
+  opts: { ledgers?: ReadonlyMap<string, SeriesSeat> } = {},
 ): Promise<WholeEventRefundSummary> {
   const summary: WholeEventRefundSummary = {
     refundsIssued: 0,
@@ -123,8 +124,10 @@ export async function refundWholeEventPayments(
   const ledgers = opts.ledgers ?? null;
   const seriesAmount = (p: (typeof payments)[number]) => {
     const ledger = ledgers?.get(p.id);
+    // Sessions already refunded one by one (occ:*) are not owed again.
     return ledger
-      ? Number(seriesCancelRefundPaise(ledger, p.amount))
+      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
+          (ledger.occRefundedPaise ?? 0)
       : undefined;
   };
 
@@ -359,7 +362,7 @@ async function gatewayBalance(paymentId: string, grossPaise: number) {
  */
 export async function classSeriesLedgers(
   classId: string,
-): Promise<Map<string, SeatLedger>> {
+): Promise<Map<string, SeriesSeat>> {
   const payments = await prisma.payment.findMany({
     where: {
       appointment: { classId },
@@ -381,19 +384,19 @@ export async function classSeriesLedgers(
     },
     select: { userId: true, createdAt: true },
   });
-  const ledgers = new Map<string, SeatLedger>();
+  const ledgers = new Map<string, SeriesSeat>();
   for (const p of payments) {
     if (!p.appointmentId) continue;
     const seatAt = seats.find((s) => s.userId === p.userId)?.createdAt;
     const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
-    ledgers.set(
-      p.id,
-      await seatLedger(
+    ledgers.set(p.id, {
+      ...(await seatLedger(
         prisma,
         { appointmentId: p.appointmentId, createdAt: joinedAt },
         p.amount,
-      ),
-    );
+      )),
+      occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),
+    });
   }
   return ledgers;
 }

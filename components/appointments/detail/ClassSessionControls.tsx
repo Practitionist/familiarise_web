@@ -1,6 +1,7 @@
 "use client";
 
 import { useMutation } from "@tanstack/react-query";
+import { fromZonedTime } from "date-fns-tz";
 import { useState } from "react";
 
 import {
@@ -141,7 +142,8 @@ export function ClassSessionControls({
   const makeUp = useMutation({
     mutationFn: (args: { id: string; startsAt: string }) =>
       post(`${base}/${args.id}/make-up`, {
-        startsAt: new Date(args.startsAt).toISOString(),
+        // The picker's wall-clock time is in the viewer's profile zone.
+        startsAt: fromZonedTime(args.startsAt, viewer.zone).toISOString(),
       }),
     onSuccess: done("Make-up scheduled"),
     onError: failed,

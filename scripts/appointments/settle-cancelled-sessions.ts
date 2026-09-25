@@ -18,6 +18,10 @@ import { OccurrenceCompletionStatus } from "@prisma/client";
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  REFUNDABLE_BALANCE_SELECT,
+  refundableBalancePaise,
+} from "@/lib/payments/refundable-balance";
 import { seatLedger } from "@/lib/booking/class-series";
 import {
   MAKEUP_WINDOW_DAYS,
@@ -197,11 +201,21 @@ async function refundSeatForSession(
     { appointmentId: session.appointmentId, createdAt: joinedAt },
     payment.amount,
   );
-  if (ledger.unitPaise <= BigInt(0)) return false;
+  // Never ask for more than the seat still has: an over-ask is refused and
+  // would retry forever.
+  const balance = await prisma.payment.findUnique({
+    where: { id: payment.id },
+    select: REFUNDABLE_BALANCE_SELECT,
+  });
+  const amountPaise = Math.min(
+    Number(ledger.unitPaise),
+    balance ? refundableBalancePaise(payment.amount, balance) : 0,
+  );
+  if (amountPaise <= 0) return false;
   try {
     const refund = await refundBookingPayment({
       paymentId: payment.id,
-      amountPaise: Number(ledger.unitPaise),
+      amountPaise,
       reason: "HOST_SESSION_NOT_MADE_UP",
       initiatedByUserId: null,
       dedupeKey,

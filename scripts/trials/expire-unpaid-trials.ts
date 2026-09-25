@@ -77,6 +77,11 @@ const EXPIRY_SELECT = {
   },
 } as const;
 
+const EXPIRY_SELECT_WITH_PAYMENT = {
+  ...EXPIRY_SELECT,
+  paymentId: true,
+} as const;
+
 type LapsedTrial = {
   id: string;
   appointmentId: string | null;
@@ -202,6 +207,15 @@ function unpaidLapsed(now: Date): Prisma.TrialWhereInput {
     paymentId: null,
     OR: [
       { status: TrialStatus.PENDING, paymentDueAt: { lt: now } },
+      // A paid trial requested before charge-at-request has no order and no
+      // deadline; accept now refuses it, so it lapses a day after the request.
+      {
+        status: TrialStatus.PENDING,
+        paymentDueAt: null,
+        appointmentId: null,
+        requestedAt: { lt: new Date(now.getTime() - 24 * 60 * 60 * 1000) },
+        subscriptionPlan: { trialPriceInPaise: { gt: 0 } },
+      },
       {
         status: TrialStatus.AWAITING_PAYMENT,
         OR: [{ paymentDueAt: { lt: now } }, { paymentDueAt: null }],
@@ -217,6 +231,92 @@ type UnansweredTrial = LapsedTrial & {
   paymentId: string | null;
   consultantProfile: { user: { id: string } };
 };
+
+/** The one refund an unanswered paid trial is owed, keyed so a retry is safe. */
+const unansweredRefundKey = (paymentId: string) =>
+  `trial-unanswered:${paymentId}`;
+
+/** Full refund, then the learner's bell; false when it must be retried. */
+async function refundUnansweredTrial(trial: {
+  id: string;
+  paymentId: string | null;
+  consulteeProfile: { user: { id: string } };
+  subscriptionPlan: {
+    title: string;
+    consultantProfile: { user: { name: string | null } };
+  };
+}): Promise<boolean> {
+  if (!trial.paymentId) return false;
+  try {
+    await refundBookingPayment({
+      paymentId: trial.paymentId,
+      reason: "trial unanswered within 48 h — automatic full refund",
+      initiatedByUserId: null,
+      dedupeKey: unansweredRefundKey(trial.paymentId),
+    });
+    await stageTrialRefundedBell(prisma, {
+      id: trial.id,
+      consulteeUserId: trial.consulteeProfile.user.id,
+      planTitle: trial.subscriptionPlan.title,
+      consultantName: trial.subscriptionPlan.consultantProfile.user.name,
+    });
+    return true;
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "expire-unanswered-paid-trials-refund",
+      extra: { trialId: trial.id, paymentId: trial.paymentId },
+    });
+    return false;
+  }
+}
+
+/**
+ * A refund that failed after the CAS left the trial CANCELLED with the money
+ * still captured. Trials cancelled TRIAL_UNANSWERED in the last 14 days whose
+ * keyed refund does not exist are retried; the key makes a repeat a no-op.
+ */
+async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
+  const since = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const cancelled = await prisma.bookingStatusHistory.findMany({
+    where: {
+      entity: "TRIAL",
+      reason: "TRIAL_UNANSWERED",
+      toStatus: TrialStatus.CANCELLED,
+      createdAt: { gte: since },
+    },
+    select: { entityId: true },
+    take: 200,
+  });
+  if (cancelled.length === 0) return 0;
+  const trials = await prisma.trial.findMany({
+    where: {
+      id: { in: cancelled.map((c) => c.entityId) },
+      status: TrialStatus.CANCELLED,
+      paymentId: { not: null },
+    },
+    select: EXPIRY_SELECT_WITH_PAYMENT,
+  });
+  const done = new Set(
+    (
+      await prisma.refund.findMany({
+        where: {
+          dedupeKey: {
+            in: trials.map((t) => unansweredRefundKey(t.paymentId ?? "")),
+          },
+        },
+        select: { dedupeKey: true },
+      })
+    ).map((r) => r.dedupeKey),
+  );
+  let retried = 0;
+  for (const trial of trials) {
+    if (!trial.paymentId || done.has(unansweredRefundKey(trial.paymentId)))
+      continue;
+    if (await refundUnansweredTrial(trial)) retried += 1;
+  }
+  return retried;
+}
 
 /**
  * #1775 C-12 (ii) — a paid trial (PENDING, captured) the consultant never
@@ -250,12 +350,6 @@ async function expireUnansweredPaidTrials(now: Date): Promise<number> {
           whereAnd: unanswered,
           reason: "TRIAL_UNANSWERED",
         });
-        await stageTrialRefundedBell(tx, {
-          id: trial.id,
-          consulteeUserId: trial.consulteeProfile.user.id,
-          planTitle: trial.subscriptionPlan.title,
-          consultantName: trial.subscriptionPlan.consultantProfile.user.name,
-        });
       });
     } catch (error) {
       if (error instanceof IllegalTransitionError) continue;
@@ -264,21 +358,9 @@ async function expireUnansweredPaidTrials(now: Date): Promise<number> {
     if (trial.appointmentId) {
       await tombstoneHeldCall(trial.id, trial.appointmentId);
     }
-    try {
-      await refundBookingPayment({
-        paymentId: trial.paymentId!,
-        reason: "trial unanswered within 48 h — automatic full refund",
-        initiatedByUserId: null,
-      });
-      refunded += 1;
-    } catch (error) {
-      reportSentryError(error, {
-        subsystem: "trials",
-        op: "expire-unanswered-paid-trials-refund",
-        extra: { trialId: trial.id, paymentId: trial.paymentId },
-      });
-    }
+    if (await refundUnansweredTrial(trial)) refunded += 1;
   }
+  refunded += await retryUnansweredTrialRefunds(now);
   return refunded;
 }
 

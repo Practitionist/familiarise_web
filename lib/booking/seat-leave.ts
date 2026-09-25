@@ -34,7 +34,12 @@ import {
 } from "@/lib/payments/refundable-balance";
 import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
 import { BookingRuleError } from "./booking-rule-error";
-import { seatLedger, seriesLedger, type SeatLedger } from "./class-series";
+import {
+  occurrenceRefundsPaise,
+  seatLedger,
+  seriesLedger,
+  type SeatLedger,
+} from "./class-series";
 import { liveParticipant, releaseParticipant } from "./participants";
 
 export type EventKind = "class" | "webinar";
@@ -114,27 +119,12 @@ function seatPayment(tx: Tx, kind: EventKind, eventId: string, userId: string) {
     select: {
       id: true,
       amount: true,
+      currency: true,
       createdAt: true,
       ...REFUNDABLE_BALANCE_SELECT,
       appointment: { select: { cancellationPolicy: POLICY_TERMS_INCLUDE } },
     },
   });
-}
-
-/** #1780 E-3b — units this payment already got back per session (`occ:*`). */
-export async function occurrenceRefundsPaise(
-  db: Pick<Tx, "refund">,
-  paymentId: string,
-): Promise<number> {
-  const rows = await db.refund.findMany({
-    where: {
-      paymentId,
-      status: { in: ["SUCCEEDED", "PENDING"] },
-      dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` },
-    },
-    select: { amountPaise: true },
-  });
-  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }
 
 /** The class quote for a seat under way (D-4), from its ledger. */
@@ -294,7 +284,7 @@ export async function quoteSeatLeave(
       : 0;
     const base = {
       seated: true as const,
-      currency: "INR",
+      currency: payment?.currency ?? "INR",
       remainingSessions: null as number | null,
     };
     try {

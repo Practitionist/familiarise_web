@@ -1192,6 +1192,11 @@ describe("Cancel Route Handler - POST", () => {
       // Duplicate seats must not produce duplicate notifications.
       { userId: "attendee-1", paymentIntent: "order_1" },
     ]);
+    // #1780 R-3 — the roster is the live seats; every payment here holds one.
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-1" },
+      { userId: "attendee-2" },
+    ]);
 
     const req = makeCancelRequest("apt-1", { reason: "OTHER" });
     await cancelHandler(req, makeParams("apt-1"));
@@ -1227,6 +1232,9 @@ describe("Cancel Route Handler - POST", () => {
     );
     (prisma.payment.findMany as jest.Mock).mockResolvedValue([
       { userId: "attendee-9", paymentIntent: "order_9" },
+    ]);
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-9" },
     ]);
 
     const req = makeCancelRequest("apt-1");

@@ -749,6 +749,70 @@ async function stageUnallocatedRefundBell(
   });
 }
 
+const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
+
+/** Plans expired UNALLOCATED_48H in the last 14 days (the retry cohort). */
+async function recentlyUnallocatedSubscriptionIds(): Promise<string[]> {
+  const rows = await prisma.bookingStatusHistory.findMany({
+    where: {
+      entity: "SUBSCRIPTION",
+      reason: "UNALLOCATED_48H",
+      toStatus: AppointmentStatus.EXPIRED,
+      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
+    },
+    select: { entityId: true },
+    take: MAX_REQUESTS_PER_RUN,
+  });
+  return rows?.map((r) => r.entityId) ?? [];
+}
+
+/**
+ * #1775 C-3 — the full refund of each expired plan's SUCCEEDED payment,
+ * keyed `sub-unalloc:<paymentId>`: a key already spent is skipped, so a retry
+ * never refunds twice. Failures are counted, never thrown.
+ */
+async function refundUnallocatedPlans(subscriptionIds: string[]) {
+  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
+  if (subscriptionIds.length === 0) return out;
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointment: { subscriptionId: { in: subscriptionIds } },
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  const spent = new Set(
+    (
+      await prisma.refund.findMany({
+        where: {
+          dedupeKey: { in: payments.map((p) => unallocatedRefundKey(p.id)) },
+          status: { notIn: ["FAILED", "CANCELLED"] },
+        },
+        select: { dedupeKey: true },
+      })
+    ).map((r) => r.dedupeKey),
+  );
+  for (const payment of payments) {
+    const dedupeKey = unallocatedRefundKey(payment.id);
+    if (spent.has(dedupeKey)) continue;
+    try {
+      await refundBookingPayment({
+        paymentId: payment.id,
+        reason:
+          "subscription not scheduled within 48 h — automatic full refund",
+        initiatedByUserId: null,
+        dedupeKey,
+      });
+      out.issued += 1;
+    } catch (err) {
+      out.failures += 1;
+      out.failureMsgs.push(`Refund failed for payment ${payment.id}: ${err}`);
+    }
+  }
+  return out;
+}
+
 /**
  * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
  * ago) with no live session and no live proposal expires with reason
@@ -806,7 +870,12 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
       }
     }
 
-    const refunds = await refundPaymentsForExpired("subscription", expiredIds);
+    // Keyed per payment, and retried from the history for a refund that
+    // failed after an earlier run's CAS (the row is EXPIRED by then).
+    const retry = await recentlyUnallocatedSubscriptionIds();
+    const refunds = await refundUnallocatedPlans([
+      ...new Set([...expiredIds, ...retry]),
+    ]);
     errors.push(...refunds.failureMsgs);
     return {
       expired: expiredIds.length,

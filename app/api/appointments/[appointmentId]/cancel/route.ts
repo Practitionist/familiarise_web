@@ -6,7 +6,10 @@ import {
   BookingLockUnavailableError,
   withAppointmentLock,
 } from "@/utils/appointmentlock";
-import { setParticipantStatus } from "@/lib/booking/participants";
+import {
+  liveParticipant,
+  setParticipantStatus,
+} from "@/lib/booking/participants";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import { NextRequest, NextResponse } from "next/server";
@@ -171,10 +174,11 @@ async function eventAttendeesByRail(
       select: { userId: true, paymentIntent: true },
     }),
     prisma.appointmentParticipant.findMany({
-      where: { appointmentId, role: "CONSULTEE" },
+      where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
       select: { userId: true },
     }),
   ]);
+  const seated = new Set(seats.map((s) => s.userId));
   const out: AttendeesByRail = {
     all: [],
     gateway: [],
@@ -184,6 +188,8 @@ async function eventAttendeesByRail(
   };
   const paid = new Set<string>();
   for (const p of payments) {
+    // A seat given back earlier was already told (and refunded) when it left.
+    if (!seated.has(p.userId)) continue;
     paid.add(p.userId);
     if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
     else if (isInternalFundedIntent(p.paymentIntent))
@@ -474,6 +480,13 @@ export async function POST(
     // re-evaluated under the row lock (B2/B16 — the #825 CAS doctrine), so a
     // cancel racing the capture webhook resolves to exactly one winner.
     // The set lives in lib/booking/transitions.ts so the map is canonical (#836).
+
+    // #1780 R-3 — the live roster, read before the cancel releases it: free
+    // and credit seats are told too, each with its rail's words.
+    const attendees =
+      appointment.class || appointment.webinar
+        ? await eventAttendeesByRail(appointmentId)
+        : null;
 
     // #1780 D-5 — each class seat's ledger, read before the transaction below
     // tombstones the sessions: the series refunds only what was not delivered.
@@ -847,11 +860,6 @@ export async function POST(
     // #1003 — every paid attendee of a cancelled group event has to hear about
     // it too. They have no 1:1 counterpart on the booking, so they are read off
     // the payments, exactly as the moderation bulk-cancel does.
-    // #1780 R-3 — free and credit seats are told too, each with its rail's words.
-    const attendees =
-      appointment.class || appointment.webinar
-        ? await eventAttendeesByRail(appointmentId)
-        : null;
     const attendeeUserIds = attendees ? attendees.all : [];
 
     // #1580 C-P1-5 — the event's accepted collaborators hear about it too.

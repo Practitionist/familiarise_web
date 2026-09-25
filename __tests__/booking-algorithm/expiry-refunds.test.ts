@@ -29,8 +29,14 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn().mockResolvedValue([]),
       updateManyAndReturn: jest.fn().mockResolvedValue([]),
     },
-    bookingStatusHistory: { create: jest.fn().mockResolvedValue({}) },
+    bookingStatusHistory: {
+      create: jest.fn().mockResolvedValue({}),
+      // #1775 C-3 — the retry cohort read; none by default.
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     appointment: { findMany: jest.fn() },
+    payment: { findMany: jest.fn().mockResolvedValue([]) },
+    refund: { findMany: jest.fn().mockResolvedValue([]) },
     // #1775 C-6 — an upsert keyed on transactionId, as the outbox is.
     notificationOutbox: {
       rows: new Map<string, unknown>(),
@@ -322,6 +328,9 @@ describe("paid plan unallocated for 48 h (#1775 C-3)", () => {
     (prisma.appointment.findMany as jest.Mock).mockResolvedValue([
       { id: "apt-1", payment: [{ id: "pay-1", paymentStatus: "SUCCEEDED" }] },
     ]);
+    (
+      prisma as unknown as { payment: { findMany: jest.Mock } }
+    ).payment.findMany.mockResolvedValue([{ id: "pay-1" }]);
     refundBookingPayment.mockResolvedValue({ status: "SUCCEEDED" });
   });
 

@@ -875,7 +875,9 @@ export function AppointmentDetailClient({
                 appointmentId={appointmentId}
                 sessions={detail.appointment.occurrences}
                 role={role}
-                unitLabel={classUnitLabel(detail.appointment.class.classPlan)}
+                // The seat's unit depends on when it was bought (#1780); no
+                // list-price guess — the copy says "one session" instead.
+                unitLabel={null}
                 onChanged={() => {
                   void queryClient.invalidateQueries({
                     queryKey: ["appointment-detail", appointmentId],
@@ -1130,24 +1132,6 @@ export function AppointmentDetailClient({
         seedCategory={help.seed}
       />
     </DashboardErrorBoundary>
-  );
-}
-
-/** #1780 — one session's share of a class seat, for the confirm copy. */
-function classUnitLabel(
-  plan:
-    | {
-        price: number | bigint | string;
-        priceCurrency: string;
-        totalSessions: number;
-      }
-    | null
-    | undefined,
-): string | null {
-  if (!plan || plan.totalSessions <= 0) return null;
-  return formatCurrencyAmount(
-    Math.floor(Number(plan.price) / plan.totalSessions),
-    plan.priceCurrency,
   );
 }
 

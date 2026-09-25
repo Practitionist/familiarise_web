@@ -83,6 +83,9 @@ export function seatLedgerFrom(args: {
   };
 }
 
+/** A seat's ledger plus what it already got back per session (D-5). */
+export type SeriesSeat = SeatLedger & { occRefundedPaise?: number };
+
 /** What a host cancelling the whole series refunds this seat (D-5). */
 export function seriesCancelRefundPaise(
   ledger: SeatLedger,
@@ -211,4 +214,20 @@ export async function seriesLedger(
     occurrences,
     now,
   });
+}
+
+/** #1780 E-3b — units this payment already got back per session (`occ:*`). */
+export async function occurrenceRefundsPaise(
+  db: Pick<Tx, "refund">,
+  paymentId: string,
+): Promise<number> {
+  const rows = await db.refund.findMany({
+    where: {
+      paymentId,
+      status: { in: ["SUCCEEDED", "PENDING"] },
+      dedupeKey: { startsWith: "occ:", endsWith: `:pay:${paymentId}` },
+    },
+    select: { amountPaise: true },
+  });
+  return rows.reduce((sum, r) => sum + Number(r.amountPaise), 0);
 }

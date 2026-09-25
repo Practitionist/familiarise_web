@@ -665,24 +665,29 @@ export async function refundPayment(input: RefundInput): Promise<RefundResult> {
         where: { id: winner.id },
         select: { metadata: true },
       });
-      await prisma.refund.update({
-        where: { id: winner.id },
-        data: {
-          metadata: {
-            ...(winnerFull.metadata &&
-            typeof winnerFull.metadata === "object" &&
-            !Array.isArray(winnerFull.metadata)
-              ? winnerFull.metadata
-              : {}),
-            ...(reserved.metadata &&
-            typeof reserved.metadata === "object" &&
-            !Array.isArray(reserved.metadata)
-              ? reserved.metadata
-              : {}),
-          } as Prisma.InputJsonValue,
-        },
-      });
-      await prisma.refund.delete({ where: { id: reserved.id } });
+      // #1780 — the placeholder goes first so the winner can take its
+      // dedupeKey (unique) in the same transaction; the key must survive.
+      await prisma.$transaction([
+        prisma.refund.delete({ where: { id: reserved.id } }),
+        prisma.refund.update({
+          where: { id: winner.id },
+          data: {
+            ...(reserved.dedupeKey ? { dedupeKey: reserved.dedupeKey } : {}),
+            metadata: {
+              ...(winnerFull.metadata &&
+              typeof winnerFull.metadata === "object" &&
+              !Array.isArray(winnerFull.metadata)
+                ? winnerFull.metadata
+                : {}),
+              ...(reserved.metadata &&
+              typeof reserved.metadata === "object" &&
+              !Array.isArray(reserved.metadata)
+                ? reserved.metadata
+                : {}),
+            } as Prisma.InputJsonValue,
+          },
+        }),
+      ]);
       boundRefundRowId = winner.id;
       reportSentryMessage(
         `Refund bind race adopted webhook row ${winner.id} for payment ${input.paymentId}`,

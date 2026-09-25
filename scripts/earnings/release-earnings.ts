@@ -77,6 +77,13 @@ const NO_OPEN_REFUND: Prisma.ConsultantEarningsWhereInput = {
   },
 };
 
+/** The same guard on the host-organisation arm (#1775 P-2). */
+const NO_OPEN_REFUND_ORG: Prisma.OrganizationEarningsWhereInput = {
+  payment: {
+    refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
+  },
+};
+
 // #476 — locked at the core so every entry (GH Actions / HTTP) shares one
 // mutual exclusion; fail-closed: money state must not double-run unlocked.
 export async function releaseEarningsFromHold(
@@ -177,6 +184,7 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               status: EarningStatus.PENDING,
               holdUntil: { lte: now },
+              ...NO_OPEN_REFUND_ORG,
             },
             select: {
               id: true,
@@ -194,6 +202,7 @@ async function releaseEarningsFromHoldUnlocked(
             where: {
               id: { in: rows.map((r) => r.id) },
               status: EarningStatus.PENDING,
+              ...NO_OPEN_REFUND_ORG,
             },
             data: {
               status: EarningStatus.READY,
