@@ -691,6 +691,54 @@ export async function reverseCreditsForPayment(
 }
 
 /**
+ * #1771 K-5 — give back at most `amountPaise` of the credit a payment used,
+ * oldest usage first, skipping lapsed credits (REF-2). The partial twin of
+ * `reverseCreditsForPayment` for a credit-funded class seat, whose Refund rows
+ * are ₹0 and so cannot drive the cumulative-refund ratio above.
+ */
+export async function restoreCreditsForPaymentUpTo(
+  paymentId: string,
+  tx: Tx,
+  amountPaise: number,
+): Promise<number> {
+  const usages = await tx.referralCreditUsage.findMany({
+    where: { paymentId },
+    orderBy: { createdAt: "asc" },
+    include: { credit: { select: { expiresAt: true } } },
+  });
+  const now = Date.now();
+  let left = amountPaise;
+  let restored = 0;
+  for (const usage of usages) {
+    if (left <= 0) break;
+    const expired =
+      usage.credit.expiresAt && usage.credit.expiresAt.getTime() < now;
+    if (usage.amount <= 0 || expired) continue;
+    const give = Math.min(left, usage.amount);
+    await tx.referralCredit.update({
+      where: { id: usage.creditId },
+      data: {
+        usedAmount: { decrement: give },
+        remainingAmount: { increment: give },
+        ...(give >= usage.amount && { usedAt: null }),
+      },
+    });
+    await (give >= usage.amount
+      ? tx.referralCreditUsage.delete({ where: { id: usage.id } })
+      : tx.referralCreditUsage.update({
+          where: { id: usage.id },
+          data: {
+            amount: { decrement: give },
+            restoredAmount: { increment: give },
+          },
+        }));
+    left -= give;
+    restored += give;
+  }
+  return restored;
+}
+
+/**
  * Sets a custom vanity code for a user's referral code.
  */
 export async function setCustomCode(

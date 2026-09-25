@@ -2,7 +2,10 @@ import { reportSentryError } from "@/lib/observability/report";
 import { Prisma } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { recordSystemError } from "@/lib/enterprise/system-events";
+import {
+  recordSystemError,
+  recordSystemEvent,
+} from "@/lib/enterprise/system-events";
 import {
   REFUNDABLE_BALANCE_SELECT,
   refundableBalancePaise,
@@ -151,6 +154,19 @@ export async function refundWholeEventPayments(
         paymentId: p.id,
         error:
           "partial credit restoration after delivered sessions needs a human",
+      });
+      // #1771 K-5 — a durable row the Refunds tab lists for the credit door.
+      await recordSystemEvent({
+        category: "BOOKING",
+        severity: "WARN",
+        message: `Credit seat ${p.id} needs a partial credit return (${ledger.deliveredHeld} sessions delivered)`,
+        context: {
+          paymentId: p.id,
+          eventId,
+          kind,
+          delivered: ledger.deliveredHeld,
+        },
+        correlationId: `partial-credit:${p.id}`,
       });
       continue;
     }

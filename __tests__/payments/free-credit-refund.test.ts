@@ -33,7 +33,11 @@ const mockPaymentFindUnique = jest.fn();
 const tx = {
   appointmentParticipant: {
     updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    findFirst: jest.fn(),
   },
+  referralCreditUsage: { findMany: jest.fn() },
+  appointment: { findUnique: jest.fn() },
+  appointmentOccurrence: { findMany: jest.fn() },
   refund: {
     findFirst: jest.fn(),
     create: jest.fn(),
@@ -71,6 +75,8 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => mockRefundPayment(...a),
+  findDedupedRefund: jest.fn().mockResolvedValue(null),
+  isDedupeKeyConflict: () => false,
   RefundValidationError: class RefundValidationError extends Error {
     constructor(
       message: string,
@@ -90,8 +96,13 @@ jest.mock("../../lib/payments/operations/reversal-engine", () => ({
   ).postPayoutClawback,
 }));
 
+const mockRestoreUpTo = jest.fn(
+  async (_p: string, _t: unknown, n: number) => n,
+);
 jest.mock("../../lib/referrals/service", () => ({
   reverseCreditsForPayment: (...a: unknown[]) => mockReverseCredits(...a),
+  restoreCreditsForPaymentUpTo: (...a: [string, unknown, number]) =>
+    mockRestoreUpTo(...a),
 }));
 
 // #1589 N-P0-01 — the credits rail now stages the payer's notice in the tx;
@@ -129,7 +140,10 @@ jest.mock("../../lib/payments/ledger/post", () => ({
   postLedgerTxn: (...a: unknown[]) => mockPostLedgerTxn(...a),
 }));
 
-import { refundBookingPayment } from "../../lib/payments/operations/booking-refund";
+import {
+  refundBookingPayment,
+  restoreClassSeatCredits,
+} from "../../lib/payments/operations/booking-refund";
 
 const PAYMENT_ID = "pay-free-1";
 
@@ -495,4 +509,58 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
     expect(sum(clawbackPosts[0][1].postings, "DEBIT")).toBe(20_000);
     expect(sum(clawbackPosts[0][1].postings, "CREDIT")).toBe(20_000);
   });
+});
+
+// #1771 K-5 — two of a four-session credit seat come back: two units of credit,
+// half the earning netted (not REFUNDED), the journal reversed at half, the seat kept.
+it("returns N sessions of a credit seat pro rata", async () => {
+  const start = (d: number) => new Date(Date.now() + d * 86_400_000);
+  mockPaymentFindUnique.mockResolvedValueOnce({
+    id: PAYMENT_ID,
+    userId: "user-1",
+    organizationId: null,
+    currency: "INR",
+    paymentStatus: "SUCCEEDED",
+    paymentGateway: "RAZORPAY",
+    paymentIntent: "free_1730000000_abc",
+    createdAt: start(-30),
+    appointmentId: "appt-1",
+    appointment: { classId: "cls-1" },
+  });
+  tx.referralCreditUsage.findMany.mockResolvedValue([
+    { amount: 118_000, originalAmount: 118_000 },
+  ]);
+  tx.appointmentParticipant.findFirst.mockResolvedValue(null);
+  tx.appointment.findUnique.mockResolvedValue({
+    class: { classPlan: { totalSessions: 4 } },
+  });
+  tx.appointmentOccurrence.findMany.mockResolvedValue(
+    [1, 2, 3, 4].map((o) => ({
+      ordinal: o,
+      startsAt: start(o),
+      endsAt: start(o + 0.04),
+      completionStatus: "SCHEDULED",
+      movedAt: null,
+      hostCancelledAt: null,
+    })),
+  );
+
+  const r = await restoreClassSeatCredits({
+    paymentId: PAYMENT_ID,
+    sessions: 2,
+    reason: "host missed two sessions",
+    initiatedByUserId: "admin-1",
+    dedupeKey: "ops:abc",
+  });
+
+  expect(r).toMatchObject({ rail: "CREDITS", restoredPaise: 59_000 });
+  expect(mockRestoreUpTo).toHaveBeenCalledWith(PAYMENT_ID, tx, 59_000);
+  expect(tx.consultantEarnings.update).toHaveBeenCalledWith({
+    where: { id: "ce-1" },
+    data: { refundedShareAmount: 40_000, status: "PENDING" },
+  });
+  const posting = mockPostLedgerTxn.mock.calls[0][1];
+  expect(sum(posting.postings, "CREDIT")).toBe(59_000);
+  expect(sum(posting.postings, "DEBIT")).toBe(59_000);
+  expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
 });

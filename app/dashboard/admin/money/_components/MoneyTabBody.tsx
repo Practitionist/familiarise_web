@@ -3,6 +3,7 @@ import { RefundsPage } from "@/components/dashboard/shared/RefundsPage";
 import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
 import { PayoutsBoard } from "@/app/dashboard/admin/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
+import { RefundDoorsPanel } from "./RefundsTab";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
@@ -20,17 +21,20 @@ export function MoneyTabBody({
       return <PaymentsPage basePath={treePath} />;
     case "refunds":
       return (
-        <RefundsPage
-          basePath={treePath}
-          apiEndpoint="/api/admin/refunds"
-          title="Refunds"
-          description={
-            isAdmin
-              ? "Manage and view all payment refunds"
-              : "View and track refund requests"
-          }
-          queryKeyPrefix={isAdmin ? "admin-refunds" : "staff-refunds"}
-        />
+        <>
+          {isAdmin && <RefundDoorsPanel />}
+          <RefundsPage
+            basePath={treePath}
+            apiEndpoint="/api/admin/refunds"
+            title="Refunds"
+            description={
+              isAdmin
+                ? "Manage and view all payment refunds"
+                : "View and track refund requests"
+            }
+            queryKeyPrefix={isAdmin ? "admin-refunds" : "staff-refunds"}
+          />
+        </>
       );
     case "payouts":
       return <PayoutsBoard />;
