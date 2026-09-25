@@ -21,6 +21,8 @@ import { getPayoutStats } from "@/lib/payments/payouts";
 
 export type OperatorPayoutFilters = {
   status?: PayoutStatus | null;
+  /** #1771 K-4 — 'INSTANT' narrows to above-cap instant payouts (PR-2). */
+  kind?: "INSTANT" | null;
   search?: string | null;
   limit?: number;
   offset?: number;
@@ -48,6 +50,7 @@ export type OperatorPayout = {
   method: PayoutMethod;
   provider: PaymentGateway;
   batchId: string | null;
+  kind: string | null;
   earningsCount: number;
   approvedAt: Date | null;
   approvedBy: string | null;
@@ -105,6 +108,9 @@ export async function getOperatorPayouts(
   if (status) {
     where.status = status;
   }
+  if (filters.kind) {
+    where.kind = filters.kind;
+  }
   if (search) {
     where.consultantProfile = {
       user: {
@@ -161,6 +167,7 @@ export async function getOperatorPayouts(
       method: p.method,
       provider: p.provider,
       batchId: p.batchId,
+      kind: p.kind,
       earningsCount: p.earnings.length,
       approvedAt: p.approvedAt,
       approvedBy: p.approvedBy,

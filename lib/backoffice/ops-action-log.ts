@@ -96,7 +96,9 @@ type GatewayDoor<B> = {
   run: (ctx: OpsDoorContext<B>) => Promise<OpsDoorResult>;
 };
 
-type RouteContext = { params: Promise<Record<string, string>> };
+// Next checks each route's second argument against that route's own params;
+// `never` is assignable to all of them, and the body reads them as strings.
+type RouteContext = { params: Promise<never> };
 
 /**
  * The route shell every console door shares: the surface gate, a Zod body
@@ -104,12 +106,13 @@ type RouteContext = { params: Promise<Record<string, string>> };
  */
 export function withOpsAction<S extends z.ZodRawShape>(
   surface: BackofficeSurface,
-  action: string,
+  /** A fixed name, or one read off the body (approve vs reject). */
+  actionOf: string | ((body: z.infer<z.ZodObject<S>>) => string),
   shape: S,
   door: TxDoor<z.infer<z.ZodObject<S>>> | GatewayDoor<z.infer<z.ZodObject<S>>>,
 ) {
   const schema = z.object(shape).extend({ reason: opsReasonSchema });
-  return async (req: NextRequest, route?: RouteContext) => {
+  return async (req: NextRequest, route: RouteContext) => {
     const auth = await requireBackofficeSurface(surface);
     if (auth.error) return auth.error;
     const parsed = schema.safeParse(await req.json().catch(() => ({})));
@@ -128,9 +131,10 @@ export function withOpsAction<S extends z.ZodRawShape>(
         userId: auth.session.user.id,
         role: String(auth.session.user.role ?? "UNKNOWN"),
       },
-      params: route ? await route.params : {},
+      params: ((await route.params) as Record<string, string>) ?? {},
       opsActionId: randomUUID(),
     };
+    const action = typeof actionOf === "string" ? actionOf : actionOf(ctx.body);
     const row = (r: OpsDoorResult, after?: Prisma.InputJsonValue) => ({
       id: ctx.opsActionId,
       actorUserId: ctx.actor.userId,

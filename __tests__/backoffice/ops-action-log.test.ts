@@ -47,6 +47,7 @@ const post = (body: unknown) =>
       method: "POST",
       body: JSON.stringify(body),
     }),
+    { params: Promise.resolve({} as never) },
   );
 
 beforeEach(() => create.mockClear());
