@@ -67,7 +67,7 @@ jobs:
           UPSTASH_MANAGEMENT_API_KEY: ${{ secrets.UPSTASH_MANAGEMENT_API_KEY }}
           UPSTASH_EMAIL: ${{ secrets.UPSTASH_EMAIL }}
           UPSTASH_DATABASE_ID: ${{ secrets.UPSTASH_DATABASE_ID }}
-          # Plan cap or pay-as-you-go budget; unset = usage logged, no alarm.
+          # Monthly COMMAND count (e.g. 2000000), not dollars; unset = no alarm.
           UPSTASH_MONTHLY_COMMAND_CAP: ${{ vars.UPSTASH_MONTHLY_COMMAND_CAP }}
           NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.NEXT_PUBLIC_SENTRY_DSN || secrets.SENTRY_DSN }}
           NEXT_PUBLIC_SENTRY_ENVIRONMENT: production

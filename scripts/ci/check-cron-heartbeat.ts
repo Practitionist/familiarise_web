@@ -195,8 +195,8 @@ const UPSTASH_USAGE_WARN_PCT = 70;
 const UPSTASH_USAGE_CRITICAL_PCT = 90;
 const UPSTASH_STATS_TIMEOUT_MS = 15_000;
 
-// Plan cap (free tier: 500000) or, on pay-as-you-go, the monthly budget. No
-// default: a free-tier number would mis-alarm a pay-as-you-go database. #1822
+// #1822 — a monthly COMMAND count (free 500000, PAYG e.g. 2000000), never
+// dollars; no default, since a free-tier number would mis-alarm PAYG.
 function monthlyCommandCap(): number | null {
   const cap = Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP);
   return Number.isFinite(cap) && cap > 0 ? cap : null;

@@ -95,7 +95,11 @@ type CronHeartbeat = {
 type RedisStatus = {
   status: "ok" | "degraded";
   /** Generic code only: the route is public, so no vendor class or message. #1822 */
-  reason?: "QUOTA_EXCEEDED" | "UNAVAILABLE" | "CIRCUIT_OPEN";
+  reason?:
+    | "QUOTA_EXCEEDED"
+    | "UNAVAILABLE"
+    | "CIRCUIT_OPEN"
+    | "MOCK_IN_PRODUCTION";
 };
 
 function redisOk(): RedisStatus {
@@ -114,7 +118,11 @@ async function checkCronHeartbeat(): Promise<{
   if (isMockRedis()) {
     return {
       cron: { configured: false, lastRunAt: null, stale: null },
-      redis: { status: "ok" },
+      // In-memory locks on a production build are not real locks.
+      redis:
+        process.env.NODE_ENV === "production"
+          ? { status: "degraded", reason: "MOCK_IN_PRODUCTION" }
+          : { status: "ok" },
     };
   }
   try {

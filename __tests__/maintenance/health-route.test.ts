@@ -53,7 +53,7 @@ import * as Sentry from "@sentry/nextjs";
 
 import { GET } from "../../app/api/health/route";
 import prisma from "@/lib/prisma";
-import redis, { isMockRedis } from "@/lib/redis";
+import redis, { isMockRedis, isRedisCircuitOpen } from "@/lib/redis";
 
 const findFirst = prisma.user.findFirst as unknown as jest.Mock;
 const warn = Sentry.logger.warn as jest.Mock;
@@ -175,6 +175,20 @@ describe("GET /api/health", () => {
         status: "degraded",
         reason: "QUOTA_EXCEEDED",
       });
+    });
+
+    it("reports degraded when the GET succeeds but the breaker is open", async () => {
+      mockIsMockRedis.mockReturnValue(false);
+      mockRedisGet.mockResolvedValueOnce(null);
+      (isRedisCircuitOpen as jest.Mock).mockReturnValueOnce(true);
+
+      const body = await (await GET(request())).json();
+
+      expect(body.redis).toEqual({
+        status: "degraded",
+        reason: "CIRCUIT_OPEN",
+      });
+      expect(body.status).toBe("degraded");
     });
 
     it("reports ok without probing Redis at all on mock Redis (no quota cost)", async () => {
