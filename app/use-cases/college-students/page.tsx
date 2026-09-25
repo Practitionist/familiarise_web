@@ -168,7 +168,10 @@ const data: UseCasePageData = {
     title: "You have three options. Here they are, without the spin.",
     intro:
       "Free advice and paid programs both work for some people. This is where each of them puts the risk, and where we put it.",
-    alternatives: ["Free advice online", "Cohort and pay-after-placement programs"],
+    alternatives: [
+      "Free advice online",
+      "Cohort and pay-after-placement programs",
+    ],
     ourLabel: "Familiarise",
     rows: [
       {
@@ -222,7 +225,10 @@ const data: UseCasePageData = {
     intro:
       "Every listing shows the expert's price, session length and reviews before you commit to anything.",
     links: [
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
       { label: "DSA", href: "/explore/experts?search=DSA" },
       { label: "System design", href: "/explore/experts?search=System+Design" },
       { label: "Data science", href: "/explore/experts?search=Data+Science" },
@@ -256,8 +262,11 @@ const data: UseCasePageData = {
       },
       {
         question: "What if the expert doesn't turn up?",
+        // #1569 B3: an expert no-show on a consultation is handled
+        // automatically (D4) — no manual review to wait on, no reschedule
+        // promise.
         answer:
-          "Report it from the booking itself. Our team reviews the session's attendance record and can arrange a full refund or a reschedule. We deliberately do not automate that decision, because a genuine connectivity failure and a no-show look identical to a script.",
+          "That's automatic, not something you need to prove: if your expert is absent for the session, it's refunded in full without a manual review. Report it from the booking if you'd like our team to take a look anyway.",
       },
       {
         question: "Can I send my resume before the call?",

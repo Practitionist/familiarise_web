@@ -324,8 +324,13 @@ export const FAQ_ITEMS = [
   },
   {
     question: "How does the payment and refund process work?",
+    // #1569 B3: "you can request a full refund" overstated an undefined
+    // "guarantee period" and implied a manual request everywhere; a session
+    // that doesn't happen because the host is absent is voided and refunded
+    // automatically (D1, D4), and cancellation refunds follow the terms
+    // shown on the booking.
     answer:
-      "We use secure payment processing. Payment is held in escrow until your session is completed. If you're not satisfied or your session doesn't happen, you can request a full refund within our guarantee period.",
+      "We use secure payment processing. Payment is held in escrow until your session is completed. Cancellation refunds follow the terms shown on your booking, and if your session doesn't happen because your expert doesn't join, it's refunded automatically — no request needed.",
   },
   {
     question: "Can I become an expert on the platform?",

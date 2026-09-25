@@ -129,7 +129,8 @@ const data: UseCasePageData = {
           "The senior people you want are precisely the ones with no spare time, and an unpaid request from a stranger sits at the bottom of every inbox. Paying for the time is not a lesser version of a real mentorship; it is the thing that makes the calendar entry exist at all.",
       },
       {
-        title: "Informal mentorships expire without anyone deciding to end them",
+        title:
+          "Informal mentorships expire without anyone deciding to end them",
         description:
           "No cadence, no written goal, and a slow drift into we-should-catch-up-sometime. Both sides feel vaguely guilty, and neither of them is the one who reschedules.",
       },
@@ -226,7 +227,10 @@ const data: UseCasePageData = {
         href: "/explore/experts?search=Personal+Development",
       },
       { label: "System design", href: "/explore/experts?search=System+Design" },
-      { label: "Interview prep", href: "/explore/experts?search=Interview+Prep" },
+      {
+        label: "Interview prep",
+        href: "/explore/experts?search=Interview+Prep",
+      },
     ],
   },
 
@@ -248,8 +252,11 @@ const data: UseCasePageData = {
       },
       {
         question: "What if my mentor stops showing up?",
+        // #1569 B3: a mentor no-show on a subscription session is voided
+        // automatically — make-up first, then an automatic refund (D4);
+        // no manual-review or reschedule promise.
         answer:
-          "Report it from the booking. Our team reviews the attendance record for that session and can arrange a full refund or a reschedule. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
+          "That session is voided automatically: we first offer a free make-up session within 14 days, and if it goes unused we refund that session's amount automatically. Any voided session still unused when your plan ends is refunded then, too. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
       },
       {
         question: "Can I change mentors?",

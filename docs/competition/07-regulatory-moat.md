@@ -260,16 +260,16 @@ A clear, published dispute resolution process is both a regulatory requirement a
 
 ### Refund Policy
 
-| Scenario                                      | Policy                                 | Timeline                   |
-| --------------------------------------------- | -------------------------------------- | -------------------------- |
-| Session cancelled by consultant (>24h before) | Full refund to consultee               | 3-5 business days          |
-| Session cancelled by consultant (<24h before) | Full refund + ₹100 credit to consultee | 3-5 business days          |
-| Session cancelled by consultee (>24h before)  | Full refund minus ₹50 processing fee   | 3-5 business days          |
-| Session cancelled by consultee (<24h before)  | 50% refund (consultant keeps 50%)      | 3-5 business days          |
-| No-show by consultant                         | Full refund + ₹200 credit              | Automatic, within 24 hours |
-| No-show by consultee                          | Consultant receives full payment       | N/A                        |
-| Technical failure (platform side)             | Full refund + free reschedule          | Automatic                  |
-| Dispute (quality/satisfaction)                | Case-by-case review by support team    | Resolution within 7 days   |
+| Scenario                                      | Policy                                                       | Timeline                   |
+| --------------------------------------------- | ------------------------------------------------------------ | -------------------------- |
+| Session cancelled by consultant (>24h before) | Full refund to consultee                                     | 3-5 business days          |
+| Session cancelled by consultant (<24h before) | Full refund + ₹100 credit to consultee                       | 3-5 business days          |
+| Session cancelled by consultee (>24h before)  | Full refund minus ₹50 processing fee                         | 3-5 business days          |
+| Session cancelled by consultee (<24h before)  | 50% refund (consultant keeps 50%)                            | 3-5 business days          |
+| No-show by consultant                         | Full refund + ₹200 credit                                    | Automatic, within 24 hours |
+| No-show by consultee                          | Consultant receives full payment                             | N/A                        |
+| Technical failure (platform side)             | Free make-up within 14 days, then automatic refund if unused | Automatic                  |
+| Dispute (quality/satisfaction)                | Case-by-case review by support team                          | Resolution within 7 days   |
 
 ### Dispute Resolution Process
 
