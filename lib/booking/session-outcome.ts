@@ -120,6 +120,19 @@ function mergeSide(
   return merged;
 }
 
+/** B4 — minutes one person was in the call inside [from, to], devices merged. */
+export function presentMinutes(
+  intervals: readonly PresenceInterval[],
+  from: Date,
+  to: Date,
+): number {
+  const ms = mergeSide(intervals, from.getTime(), to.getTime()).reduce(
+    (sum, s) => sum + (s.end - s.start),
+    0,
+  );
+  return Math.round(ms / MIN_MS);
+}
+
 const covers = (segments: Segment[], t: number) =>
   segments.some((s) => s.start <= t && t < s.end);
 
