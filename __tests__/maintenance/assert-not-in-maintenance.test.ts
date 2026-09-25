@@ -128,4 +128,20 @@ describe("assertNotInMaintenance", () => {
 
     expect(mockGet).toHaveBeenCalledTimes(1);
   });
+
+  // Owner decision (#1822): a failed read is cached 5s, not the 60s success window.
+  it("shares a failed read within 5s and re-reads Redis 6s later", async () => {
+    const now = jest.spyOn(Date, "now").mockReturnValue(1_000_000);
+    mockGet.mockRejectedValue(new Error("upstash unreachable"));
+
+    await assertNotInMaintenance(FINANCIAL_JOB);
+    now.mockReturnValue(1_004_000);
+    await assertNotInMaintenance(PLAIN_JOB);
+    expect(mockGet).toHaveBeenCalledTimes(1);
+
+    now.mockReturnValue(1_010_000);
+    await assertNotInMaintenance(FINANCIAL_JOB);
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    now.mockRestore();
+  });
 });

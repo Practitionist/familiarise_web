@@ -35,6 +35,9 @@ export function statusFor(
 /** Ceiling on an explicit `?limit=`; above this it is clamped, not rejected. */
 const LIMIT_CAP = 500;
 
+/** #1822 — owner decision: one lock-unavailable report per instance per 15 min. */
+const LOCK_UNAVAILABLE_REPORT_WINDOW_MS = 15 * 60 * 1000;
+
 /**
  * Thrown by {@link parseLimitParam} for a `?limit=` that is present but not a
  * positive integer, so `cleanupRoute` can answer 400 instead of the caller
@@ -154,16 +157,21 @@ export function cleanupRoute<T extends object>(opts: {
       if (error instanceof CronLockHeldError) {
         return NextResponse.json({ error: error.message }, { status: 409 });
       }
-      // #1822 Q-2 — expected during a Redis outage; throttled, or every
-      // fail-closed target reports on every tick.
+      // #1822 Q-2 — one Redis outage is one report: a key shared by every job,
+      // 15-min window per instance; the first job to hit it is tagged.
       if (error instanceof CronLockUnavailableError) {
-        captureThrottled(`cron:lock-unavailable:${job}`, error, {
-          subsystem: "cron",
-          op: "lock-unavailable",
-          expected: true,
-          level: "warning",
-          tags: { job },
-        });
+        captureThrottled(
+          "cron:lock-unavailable",
+          error,
+          {
+            subsystem: "cron",
+            op: "lock-unavailable",
+            expected: true,
+            level: "warning",
+            tags: { job },
+          },
+          LOCK_UNAVAILABLE_REPORT_WINDOW_MS,
+        );
         return NextResponse.json({ error: error.message }, { status: 503 });
       }
       if (error instanceof InvalidLimitError) {

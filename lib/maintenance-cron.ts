@@ -124,6 +124,10 @@ export class MaintenanceActiveError extends Error {
 // positive can only delay a maintenance transition being honoured by up to
 // that window, which the fail-open design already tolerates.
 const PHASE_CACHE_MS = 60_000;
+// Owner decision (#1822): a fail-open null is cached 5s only, so a blip can't
+// let DEGRADED-gated money jobs through for a full minute.
+const PHASE_FAILURE_CACHE_MS = 5_000;
+let phaseCacheTtlMs = PHASE_CACHE_MS;
 let phaseCachedAt = 0;
 let phaseCachedValue: string | null = null;
 let phaseCacheHasValue = false;
@@ -135,7 +139,7 @@ let phaseCacheHasValue = false;
  */
 async function readMaintenancePhase(jobName: string): Promise<string | null> {
   const now = Date.now();
-  if (phaseCacheHasValue && now - phaseCachedAt < PHASE_CACHE_MS) {
+  if (phaseCacheHasValue && now - phaseCachedAt < phaseCacheTtlMs) {
     return phaseCachedValue;
   }
 
@@ -146,11 +150,11 @@ async function readMaintenancePhase(jobName: string): Promise<string | null> {
     phaseCachedValue = phase;
     phaseCacheHasValue = true;
     phaseCachedAt = now;
+    phaseCacheTtlMs = PHASE_CACHE_MS;
     return phase;
   } catch (error) {
-    // Fail-open: if Redis is unreachable, proceed with the job. Cache the
-    // fail-open null too, so a sustained outage doesn't retry Redis on every
-    // job in the fleet within the same window.
+    // Fail-open: if Redis is unreachable, proceed with the job; the null is
+    // cached for the short failure window only.
     console.warn(
       `[${jobName}] Could not check maintenance state (Redis error: ${
         error instanceof Error ? error.message : String(error)
@@ -159,6 +163,7 @@ async function readMaintenancePhase(jobName: string): Promise<string | null> {
     phaseCachedValue = null;
     phaseCacheHasValue = true;
     phaseCachedAt = now;
+    phaseCacheTtlMs = PHASE_FAILURE_CACHE_MS;
     // #1822 Q-1 — this used to be an unconditional captureException, which is
     // what turned one Upstash outage into ~2,650 Sentry events in ~25h (every
     // fail-open AND fail-closed job hits this path on every invocation).
@@ -176,6 +181,7 @@ export function resetMaintenancePhaseCacheForTesting(): void {
   phaseCachedAt = 0;
   phaseCachedValue = null;
   phaseCacheHasValue = false;
+  phaseCacheTtlMs = PHASE_CACHE_MS;
 }
 
 /**
