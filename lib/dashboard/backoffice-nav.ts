@@ -1,6 +1,5 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  AlertTriangle,
   BadgeCheck,
   BarChart3,
   Building2,
@@ -15,12 +14,10 @@ import {
   Play,
   Receipt,
   RefreshCw,
-  RotateCcw,
   Shield,
   Star,
   Ticket,
   Users,
-  Wallet,
   Wrench,
   Target,
 } from "lucide-react";
@@ -152,22 +149,12 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
       label: "Money",
       items: [
         {
-          name: "Payments",
+          // #1771 K-2 — one hub: payments, refunds, payouts, disputes and the
+          // ops doors are tabs under /money, filtered per role by the hub.
+          name: "Money",
           icon: CreditCard,
-          path: "payments",
+          path: "money",
           surface: "payments.read",
-        },
-        {
-          name: "Refunds",
-          icon: RotateCcw,
-          path: "refunds",
-          surface: "refunds.read",
-        },
-        {
-          name: "Disputes",
-          icon: AlertTriangle,
-          path: "disputes",
-          surface: "disputes.read",
         },
         {
           name: "Invoices",
@@ -180,12 +167,6 @@ function groupSpecs({ showTds = false }: BackofficeNavOptions): NavGroupSpec[] {
           icon: RefreshCw,
           path: "subscriptions",
           surface: "subscriptions.read",
-        },
-        {
-          name: "Payouts",
-          icon: Wallet,
-          path: "payouts",
-          surface: "payouts.read",
         },
         {
           name: "Approval Payments",

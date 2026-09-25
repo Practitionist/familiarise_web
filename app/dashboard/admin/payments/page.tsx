@@ -1,9 +1,14 @@
-import { PaymentsPage } from "@/components/dashboard/shared/PaymentsPage";
-import { requireBackofficePage } from "@/lib/auth-guard";
+import { permanentRedirect } from "next/navigation";
 
-/** Payment list — shared with the staff tree. Refunds are their own route. */
-export default async function AdminPaymentsPage() {
-  // Page-level back-office gate (C5): sidebar hiding is not access control.
-  await requireBackofficePage("payments.read");
-  return <PaymentsPage basePath="/dashboard/admin" />;
+import { moneyHubHref } from "@/lib/backoffice/money-tabs";
+
+/** #1771 K-2 — payments moved into the Money hub; the old URL answers a 308. */
+export default async function AdminPaymentsRedirectPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  permanentRedirect(
+    moneyHubHref("/dashboard/admin", "payments", await searchParams),
+  );
 }
