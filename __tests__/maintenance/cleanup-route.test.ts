@@ -31,6 +31,9 @@ jest.mock("@sentry/nextjs", () => ({
  */
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   CronLockHeldError: class CronLockHeldError extends Error {},
+  // #1822 Q-2 — cleanup-route.ts now checks `instanceof CronLockUnavailableError`
+  // too; without this export the check throws on `undefined`.
+  CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   withCronLock: jest.fn(),
 }));
 
