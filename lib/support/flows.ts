@@ -42,7 +42,10 @@ const noShowFlowAttendee: FlowDefinition = {
       kind: "TERMINAL",
       // #1569 B1: a host no-show is handled automatically, not by a manual
       // reschedule promise — see the owner-decided void/remedy rules (D1, D4).
-      body: "If the host didn't join, this session is voided automatically. For a one-to-one consultation that means an automatic full refund. For subscriptions, classes and webinars, we first offer a free make-up session within 14 days and automatically refund the session if the make-up goes unused. You don't need to request anything, but if this doesn't match what happened, let us know and our team will take another look.",
+      // The absence has to clear the threshold with no collaborator or
+      // co-presenter covering the session; a brief drop doesn't void it, and
+      // CodeRabbit caught an earlier draft implying any absence did.
+      body: "If the host is absent for enough of the session, with no collaborator or co-presenter covering for them, it's voided automatically. For a one-to-one consultation that means an automatic full refund. For classes and webinars, we first offer a free make-up session within 14 days and automatically refund the session if the make-up goes unused. For a subscription, the session is returned to your plan's allowance and refunded automatically if it's still unused when your plan or billing cycle ends. You don't need to request anything, but if this doesn't match what happened, let us know and our team will take another look.",
       escalate: true,
       reason: "provider_no_show",
     },

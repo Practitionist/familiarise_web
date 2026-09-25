@@ -253,10 +253,11 @@ const data: UseCasePageData = {
       {
         question: "What if my mentor stops showing up?",
         // #1569 B3: a mentor no-show on a subscription session is voided
-        // automatically — make-up first, then an automatic refund (D4);
-        // no manual-review or reschedule promise.
+        // automatically and returned to the plan's allowance (D4), not
+        // routed through the class/webinar 14-day make-up — CodeRabbit
+        // flagged the earlier wording for conflating the two remedies.
         answer:
-          "That session is voided automatically: we first offer a free make-up session within 14 days, and if it goes unused we refund that session's amount automatically. Any voided session still unused when your plan ends is refunded then, too. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
+          "That session is voided automatically and returned to your plan's allowance so you can use it later. Any voided session still unused when your plan or billing cycle ends is refunded automatically. If the expert cancels a session outright, that session is refunded in full regardless of when they cancel.",
       },
       {
         question: "Can I change mentors?",

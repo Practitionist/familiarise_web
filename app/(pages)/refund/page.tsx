@@ -558,12 +558,15 @@ export default function RefundPolicyPage() {
               </h3>
               <p>
                 If our platform experiences technical difficulties that prevent
-                service delivery, the session is voided under the same rule
-                described in 3.5, and the same make-up-first remedy applies:
+                service delivery — regardless of whether the host joined — the
+                session is voided, and the same remedy by service type described
+                in 3.5 applies:
               </p>
               <ul>
-                {/* #1569 B2: "make-up first, then refund" (D4), reconciled
-                    with 3.5 — no rescheduling promise, no credit. */}
+                {/* #1569 B2: a platform-side outage voids the session on its
+                    own condition, not the host-absence rule in 3.5 — CodeRabbit
+                    caught the earlier wording implying otherwise. "Make-up
+                    first, then refund" (D4), no rescheduling promise, no credit. */}
                 <li>
                   We offer a free make-up session within 14 days first; if it
                   goes unused or you decline it, we refund that session
