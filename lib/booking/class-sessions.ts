@@ -27,6 +27,7 @@ import {
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { withAppointmentLock } from "@/utils/appointmentlock";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
 import { exitRightFor, seatLedger, seriesLedger } from "./class-series";
 
@@ -212,7 +213,17 @@ export async function scheduleClassMakeUp(
   hosted: HostedClass,
   sourceOccurrenceId: string,
   startsAt: Date,
+  /** #1771 K-6 — an operator may hold it past day 14, never without a reason. */
+  opts: { bypassWindow?: { opsActorUserId: string; reason: string } } = {},
 ) {
+  const bypass = opts.bypassWindow;
+  if (bypass && bypass.reason.trim().length < 5) {
+    throw new OpsRefusal(
+      "BYPASS_NEEDS_REASON",
+      "Holding a make-up past the 14-day window needs a reason.",
+      400,
+    );
+  }
   const appointmentId = hosted.appointment.id;
   return withAppointmentLock(appointmentId, () =>
     prisma.$transaction(async (tx) => {
@@ -237,7 +248,7 @@ export async function scheduleClassMakeUp(
         source.completionStatus !== OccurrenceCompletionStatus.CANCELLED ||
         !source.hostCancelledAt ||
         source.seatsSettledAt ||
-        startsAt.getTime() > deadline ||
+        (!bypass && startsAt.getTime() > deadline) ||
         startsAt <= now
       ) {
         throw new BookingRuleError(

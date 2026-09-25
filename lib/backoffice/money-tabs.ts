@@ -48,6 +48,13 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     description: "Chargebacks and their evidence deadlines.",
     surface: "disputes.read",
   },
+  {
+    key: "class-series",
+    label: "Class series",
+    description:
+      "The manual doors for class series: sessions, make-ups, seats.",
+    surface: "classSeries.support",
+  },
 ];
 
 export function moneyTabsFor(audience: UserRole): MoneyTab[] {

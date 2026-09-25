@@ -13,7 +13,7 @@
  * and app/api/cleanup/settle-cancelled-sessions/route.ts (the ticker twin).
  */
 
-import { OccurrenceCompletionStatus } from "@prisma/client";
+import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
@@ -79,41 +79,16 @@ async function settleUnlocked(
     timestamp: now.toISOString(),
   };
   const due = await prisma.appointmentOccurrence.findMany({
-    where: {
-      completionStatus: OccurrenceCompletionStatus.CANCELLED,
-      hostCancelledAt: {
-        lt: new Date(now.getTime() - MAKEUP_WINDOW_DAYS * DAY_MS),
-      },
-      seatsSettledAt: null,
-      deletedAt: null,
-      appointment: { classId: { not: null } },
-    },
+    where: dueWhere(now),
     orderBy: { hostCancelledAt: "asc" },
     take: limit,
-    select: {
-      id: true,
-      appointmentId: true,
-      ordinal: true,
-      startsAt: true,
-      appointment: {
-        select: {
-          class: { select: { classPlan: { select: { title: true } } } },
-        },
-      },
-    },
+    select: DUE_SELECT,
   });
   result.scanned = due.length;
 
   for (const session of due) {
     try {
-      const settled = await settleOne(session, result);
-      if (settled) {
-        const claimed = await prisma.appointmentOccurrence.updateMany({
-          where: { id: session.id, seatsSettledAt: null },
-          data: { seatsSettledAt: new Date() },
-        });
-        result.stamped += claimed.count;
-      }
+      await settleAndStamp(session, result);
     } catch (error) {
       result.errors += 1;
       reportSentryError(error, {
@@ -125,6 +100,76 @@ async function settleUnlocked(
   }
   result.success = result.errors === 0;
   return result;
+}
+
+/** The cohort: host-cancelled, the make-up window over, not yet settled. */
+function dueWhere(now: Date): Prisma.AppointmentOccurrenceWhereInput {
+  return {
+    completionStatus: OccurrenceCompletionStatus.CANCELLED,
+    hostCancelledAt: {
+      lt: new Date(now.getTime() - MAKEUP_WINDOW_DAYS * DAY_MS),
+    },
+    seatsSettledAt: null,
+    deletedAt: null,
+    appointment: { classId: { not: null } },
+  };
+}
+
+const DUE_SELECT = {
+  id: true,
+  appointmentId: true,
+  ordinal: true,
+  startsAt: true,
+  appointment: {
+    select: {
+      class: { select: { classPlan: { select: { title: true } } } },
+    },
+  },
+} as const;
+
+async function settleAndStamp(
+  session: CancelledSession,
+  result: SettleCancelledSessionsResult,
+): Promise<void> {
+  if (!(await settleOne(session, result))) return;
+  const claimed = await prisma.appointmentOccurrence.updateMany({
+    where: { id: session.id, seatsSettledAt: null },
+    data: { seatsSettledAt: new Date() },
+  });
+  result.stamped += claimed.count;
+}
+
+/**
+ * #1771 K-6 — the sweep for ONE session, from the ops console: the same
+ * cohort predicate, the same keys and the same lock as the scheduled run, so
+ * a session that is not due yet (or already settled) is scanned as zero.
+ */
+export async function settleCancelledSessionForOne(
+  occurrenceId: string,
+): Promise<SettleCancelledSessionsResult> {
+  return withCronLock(
+    "settle-cancelled-sessions",
+    { failMode: "closed" },
+    async () => {
+      const now = new Date();
+      const result: SettleCancelledSessionsResult = {
+        success: true,
+        scanned: 0,
+        stamped: 0,
+        refunded: 0,
+        errors: 0,
+        timestamp: now.toISOString(),
+      };
+      const session = await prisma.appointmentOccurrence.findFirst({
+        where: { id: occurrenceId, ...dueWhere(now) },
+        select: DUE_SELECT,
+      });
+      if (!session) return result;
+      result.scanned = 1;
+      await settleAndStamp(session, result);
+      return result;
+    },
+  );
 }
 
 /** True when the session is made up or every seat that held it is refunded. */

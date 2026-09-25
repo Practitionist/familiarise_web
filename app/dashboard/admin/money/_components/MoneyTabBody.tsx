@@ -4,6 +4,7 @@ import { DisputesPage } from "@/components/dashboard/shared/DisputesPage";
 import { PayoutsBoard } from "@/app/dashboard/admin/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
+import { ClassSeriesTab } from "./ClassSeriesTab";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
@@ -53,6 +54,8 @@ export function MoneyTabBody({
           }
         />
       );
+    case "class-series":
+      return <ClassSeriesTab isAdmin={isAdmin} />;
     default:
       return null;
   }

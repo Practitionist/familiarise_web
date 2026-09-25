@@ -67,6 +67,9 @@ export type BackofficeSurface =
   | "payouts.manage"
   | "approvalPayments.manage"
   | "tds.read"
+  // #1771 K-6 — the class-series doors: support moves vs money moves.
+  | "classSeries.support"
+  | "classSeries.money"
   // Platform — org lifecycle, comms, and system control.
   | "organizations.manage"
   | "announcements.manage"
@@ -131,6 +134,10 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "payouts.manage": ADMIN_ONLY,
   "approvalPayments.manage": ADMIN_ONLY,
   "tds.read": ADMIN_ONLY,
+  // #1780 — staff cancel a session for a host, grant or skip a make-up, and
+  // flag reliability; refunding a whole series or running a sweep is admin's.
+  "classSeries.support": OPERATORS,
+  "classSeries.money": ADMIN_ONLY,
 
   // Platform — org lifecycle and system control are admin's remit.
   // Announcements are platform-wide outbound comms, so admin-only too.
