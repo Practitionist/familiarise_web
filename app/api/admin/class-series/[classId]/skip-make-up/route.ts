@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { hostedForClass } from "@/lib/backoffice/class-doors";
+import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
 import { skipClassMakeUp } from "@/lib/booking/class-sessions";
 
 /**
@@ -19,6 +20,7 @@ export const POST = withOpsAction(
       id: body.occurrenceId,
     }),
     run: async ({ params, body, actor }) => {
+      await assertMoneyOpsBudget(actor.userId);
       const hosted = await hostedForClass(params.classId, actor.userId);
       const result = await skipClassMakeUp({
         appointmentId: hosted.appointment.id,

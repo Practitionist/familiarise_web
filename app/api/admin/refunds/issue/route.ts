@@ -17,6 +17,8 @@ export const POST = withOpsAction(
     body.tierOverridePct === undefined ? "refund.issue" : "refund.override",
   {
     paymentId: z.string().min(1),
+    /** One per dialog: a double-click or retry reuses the first refund. */
+    idempotencyKey: z.string().uuid().optional(),
     amountPaise: z.number().int().positive().optional(),
     tierOverridePct: z.number().min(0).max(100).optional(),
   },
@@ -50,7 +52,7 @@ export const POST = withOpsAction(
         amountPaise: override?.amountPaise ?? body.amountPaise,
         reason: `ops refund: ${body.reason}`,
         initiatedByUserId: actor.userId,
-        dedupeKey: `ops:${opsActionId}`,
+        dedupeKey: `ops:${body.idempotencyKey ?? opsActionId}`,
       });
       return {
         target: { kind: "Payment", id: body.paymentId },

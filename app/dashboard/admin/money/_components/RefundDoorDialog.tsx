@@ -48,6 +48,8 @@ export function RefundDoorDialog({
 }>) {
   const [paymentId, setPaymentId] = useState(presetPaymentId ?? "");
   const [value, setValue] = useState("");
+  // One key per opened dialog: a double-click reuses the first refund (#1771).
+  const [idempotencyKey] = useState(() => globalThis.crypto.randomUUID());
   const mutation = useOpsDoor({
     success: "Done — the refund is on its way",
     invalidate: [["admin-refunds"], ["money-refund-needs"], ["class-series"]],
@@ -94,7 +96,7 @@ export function RefundDoorDialog({
             door === "credits"
               ? "/api/admin/refunds/credits"
               : "/api/admin/refunds/issue",
-          body: { ...body(), reason },
+          body: { ...body(), idempotencyKey, reason },
         })
       }
     >

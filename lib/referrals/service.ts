@@ -723,15 +723,15 @@ export async function restoreCreditsForPaymentUpTo(
         ...(give >= usage.amount && { usedAt: null }),
       },
     });
-    await (give >= usage.amount
-      ? tx.referralCreditUsage.delete({ where: { id: usage.id } })
-      : tx.referralCreditUsage.update({
-          where: { id: usage.id },
-          data: {
-            amount: { decrement: give },
-            restoredAmount: { increment: give },
-          },
-        }));
+    // Kept at amount 0, never deleted: Σ originalAmount is the seat's value
+    // for every later partial return, so it must not shrink.
+    await tx.referralCreditUsage.update({
+      where: { id: usage.id },
+      data: {
+        amount: { decrement: give },
+        restoredAmount: { increment: give },
+      },
+    });
     left -= give;
     restored += give;
   }

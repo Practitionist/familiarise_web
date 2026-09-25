@@ -131,7 +131,8 @@ export function withOpsAction<S extends z.ZodRawShape>(
         userId: auth.session.user.id,
         role: String(auth.session.user.role ?? "UNKNOWN"),
       },
-      params: ((await route.params) as Record<string, string>) ?? {},
+      params:
+        ((await route?.params) as Record<string, string> | undefined) ?? {},
       opsActionId: randomUUID(),
     };
     const action = typeof actionOf === "string" ? actionOf : actionOf(ctx.body);

@@ -13,6 +13,8 @@ export const POST = withOpsAction(
   "refund.credits",
   {
     paymentId: z.string().min(1),
+    /** One per dialog: a double-click or retry reuses the first refund. */
+    idempotencyKey: z.string().uuid().optional(),
     sessions: z.number().int().min(1).max(500),
   },
   {
@@ -25,7 +27,7 @@ export const POST = withOpsAction(
         sessions: body.sessions,
         reason: `ops credit return: ${body.reason}`,
         initiatedByUserId: actor.userId,
-        dedupeKey: `ops:${opsActionId}`,
+        dedupeKey: `ops:${body.idempotencyKey ?? opsActionId}`,
       });
       return {
         target: { kind: "Payment", id: body.paymentId },

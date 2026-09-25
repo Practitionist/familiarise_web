@@ -149,7 +149,16 @@ export async function refundWholeEventPayments(
     // #1780 — the credits rail restores whole or not at all, so a seat that was
     // delivered part of the series is escalated rather than over-restored.
     const ledger = ledgers?.get(p.id);
-    if (ledger && ledger.deliveredHeld > 0) {
+    // An ops partial return (#1771 K-5) blocks the whole restoration too.
+    const partlyReturned = await prisma.refund.findFirst({
+      where: {
+        paymentId: p.id,
+        status: "SUCCEEDED",
+        dedupeKey: { startsWith: "ops:" },
+      },
+      select: { id: true },
+    });
+    if ((ledger && ledger.deliveredHeld > 0) || partlyReturned) {
       summary.failures.push({
         paymentId: p.id,
         error:
@@ -159,12 +168,13 @@ export async function refundWholeEventPayments(
       await recordSystemEvent({
         category: "BOOKING",
         severity: "WARN",
-        message: `Credit seat ${p.id} needs a partial credit return (${ledger.deliveredHeld} sessions delivered)`,
+        message: `Credit seat ${p.id} needs a partial credit return (${ledger?.deliveredHeld ?? 0} sessions delivered)`,
         context: {
           paymentId: p.id,
           eventId,
           kind,
-          delivered: ledger.deliveredHeld,
+          delivered: ledger?.deliveredHeld ?? 0,
+          partlyReturned: !!partlyReturned,
         },
         correlationId: `partial-credit:${p.id}`,
       });

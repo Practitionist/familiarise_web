@@ -323,7 +323,10 @@ export default function PendingPayoutsSection() {
       {/* Approve Dialog */}
       <AlertDialog
         open={dialogType === "approve"}
-        onOpenChange={() => setDialogType(null)}
+        onOpenChange={() => {
+          setDialogType(null);
+          setDecisionReason("");
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -364,7 +367,10 @@ export default function PendingPayoutsSection() {
       {/* Reject Dialog */}
       <AlertDialog
         open={dialogType === "reject"}
-        onOpenChange={() => setDialogType(null)}
+        onOpenChange={() => {
+          setDialogType(null);
+          setDecisionReason("");
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
