@@ -47,7 +47,9 @@ const OFF_STATE: MaintenanceState = {
 // Edge isolates share module scope within an instance lifetime.
 let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL_MS = 30_000; // 30 seconds
+// #1822 Q-6 — was 30s; the read fails open, so the only cost of a longer
+// window is slower enforcement of a newly-set maintenance phase.
+const CACHE_TTL_MS = 180_000; // 3 minutes
 
 // Per-request fail-open budget for the edge Upstash read. Document loads + /api/*
 // pay this (RSC/prefetch sub-navigations use getMaintenanceStateCachedOnly and
