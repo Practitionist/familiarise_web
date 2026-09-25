@@ -42,8 +42,18 @@ function lastRun(job: JobRow): string {
  * #1771 K-8 — run a reconcile job now, from the console, under its own cron
  * lock; the line under each job is its latest run.
  */
+type Batch = { processed: number; limit: number; full: boolean };
+
+/** What the last console run of a job did, in the operator's words. */
+function batchLine(batch: Batch): string {
+  return batch.full
+    ? `This run processed a full batch of ${batch.limit} — more may remain. Run again to continue.`
+    : `This run processed ${batch.processed} — nothing more was waiting.`;
+}
+
 export function ReconcileTab() {
   const [running, setRunning] = useState<JobRow | null>(null);
+  const [lastBatch, setLastBatch] = useState<Record<string, Batch>>({});
   const { data } = useQuery({
     queryKey: QUERY_KEY,
     queryFn: fetchJobs,
@@ -52,7 +62,12 @@ export function ReconcileTab() {
   const door = useOpsDoor({
     success: "Started",
     invalidate: [QUERY_KEY],
-    onDone: () => setRunning(null),
+    onDone: (data) => {
+      const job = typeof data.job === "string" ? data.job : null;
+      const batch = data.batch as Batch | null | undefined;
+      if (job && batch) setLastBatch((all) => ({ ...all, [job]: batch }));
+      setRunning(null);
+    },
   });
 
   return (
@@ -71,6 +86,11 @@ export function ReconcileTab() {
                 <p className="font-medium">{job.label}</p>
                 <p className="text-muted-foreground">{job.description}</p>
                 <p className="text-muted-foreground">{lastRun(job)}</p>
+                {lastBatch[job.key] && (
+                  <output className="block font-medium">
+                    {batchLine(lastBatch[job.key])}
+                  </output>
+                )}
               </div>
               <Button variant="outline" onClick={() => setRunning(job)}>
                 Run now

@@ -38,7 +38,7 @@ export async function callOpsDoor(
 export function useOpsDoor(opts: {
   success: string;
   invalidate: readonly (readonly unknown[])[];
-  onDone?: () => void;
+  onDone?: (data: Record<string, unknown>) => void;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -50,11 +50,11 @@ export function useOpsDoor(opts: {
       url: string;
       body: Record<string, unknown>;
     }) => callOpsDoor(url, body),
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast({ title: opts.success });
       for (const key of opts.invalidate)
         void queryClient.invalidateQueries({ queryKey: [...key] });
-      opts.onDone?.();
+      opts.onDone?.(data);
     },
     onError: (err: Error) =>
       toast({

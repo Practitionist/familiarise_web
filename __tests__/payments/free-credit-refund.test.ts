@@ -516,11 +516,11 @@ describe("free_ credit rail — org clawback + TDS reversal branches", () => {
   });
 });
 
-// #1771 K-5 — two of a four-session credit seat come back: two units of credit,
-// half the earning netted (not REFUNDED), the journal reversed at half, the seat kept.
-it("returns N sessions of a credit seat pro rata", async () => {
+// #1771 K-5 — a live seat gets back its two host-cancelled, unmade sessions pro
+// rata (half the earning, half the journal, seat kept); a future live one is refused.
+it("returns only missed, unmade sessions to a live credit seat", async () => {
   const start = (d: number) => new Date(Date.now() + d * 86_400_000);
-  mockPaymentFindUnique.mockResolvedValueOnce({
+  const seatPayment = {
     id: PAYMENT_ID,
     userId: "user-1",
     organizationId: null,
@@ -531,22 +531,30 @@ it("returns N sessions of a credit seat pro rata", async () => {
     createdAt: start(-30),
     appointmentId: "appt-1",
     appointment: { classId: "cls-1" },
-  });
+  };
+  mockPaymentFindUnique
+    .mockResolvedValueOnce(seatPayment)
+    .mockResolvedValueOnce(seatPayment);
   tx.referralCreditUsage.findMany.mockResolvedValue([
     { amount: 118_000, originalAmount: 118_000 },
   ]);
-  tx.appointmentParticipant.findFirst.mockResolvedValue(null);
+  tx.appointmentParticipant.findFirst.mockResolvedValue({
+    createdAt: start(-30),
+    status: "CONFIRMED",
+  });
   tx.appointment.findUnique.mockResolvedValue({
     class: { classPlan: { totalSessions: 4 } },
   });
   tx.appointmentOccurrence.findMany.mockResolvedValue(
     [1, 2, 3, 4].map((o) => ({
+      id: `occ-${o}`,
       ordinal: o,
       startsAt: start(o),
       endsAt: start(o + 0.04),
-      completionStatus: "SCHEDULED",
+      completionStatus: o <= 2 ? "CANCELLED" : "SCHEDULED",
       movedAt: null,
-      hostCancelledAt: null,
+      hostCancelledAt: o <= 2 ? start(-1) : null,
+      seatsSettledAt: null,
     })),
   );
 
@@ -568,6 +576,16 @@ it("returns N sessions of a credit seat pro rata", async () => {
   expect(sum(posting.postings, "CREDIT")).toBe(59_000);
   expect(sum(posting.postings, "DEBIT")).toBe(59_000);
   expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+
+  await expect(
+    restoreClassSeatCredits({
+      paymentId: PAYMENT_ID,
+      sessions: 3,
+      reason: "and one still ahead",
+      initiatedByUserId: "admin-1",
+      dedupeKey: "ops:def",
+    }),
+  ).rejects.toMatchObject({ code: "AMOUNT_EXCEEDS_REFUNDABLE" });
 });
 
 // #1771 PR round — a keyed replay answers the first return's amount and

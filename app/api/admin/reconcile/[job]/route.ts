@@ -39,10 +39,11 @@ export const POST = withOpsAction(
         );
       }
       const result = await RUNNERS[job]();
+      const batch = batchOutcome(job, result);
       return {
         target: { kind: "ReconcileJob", id: job },
-        after: { job },
-        response: { job, result },
+        after: { job, ...(batch ?? {}) },
+        response: { job, result, batch },
         status: job === "ledgers" ? 202 : 200,
       };
     },
@@ -63,6 +64,18 @@ const RUNNERS: Record<ReconcileJob, () => Promise<unknown>> = {
   earnings: () => syncPaymentEarnings({ limit: CONSOLE_BATCH }),
   ledgers: () => startLedgers(),
 };
+
+/**
+ * The jobs report no remaining count, so a batch that came back full says
+ * "run again"; the ledger run is one background run, so it has no batch.
+ */
+function batchOutcome(job: ReconcileJob, result: unknown) {
+  if (job === "ledgers") return null;
+  const processed = Number(
+    (result as { totalProcessed?: unknown } | null)?.totalProcessed ?? 0,
+  );
+  return { processed, limit: CONSOLE_BATCH, full: processed >= CONSOLE_BATCH };
+}
 
 async function startLedgers(): Promise<unknown> {
   const res = await startLedgerRun(

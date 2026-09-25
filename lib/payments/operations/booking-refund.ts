@@ -474,7 +474,7 @@ export async function restoreClassSeatCredits(input: {
           }
           const seat = await tx.appointmentParticipant.findFirst({
             where: { paymentId: payment.id },
-            select: { createdAt: true },
+            select: { createdAt: true, status: true },
           });
           const joinedAt =
             seat && seat.createdAt > payment.createdAt
@@ -485,9 +485,16 @@ export async function restoreClassSeatCredits(input: {
             { appointmentId, createdAt: joinedAt },
             creditValue,
           );
+          const seatLive =
+            !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
+          const eligible = seatLive
+            ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
+            : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
           assertReturnable(payment.id, ledger, input.sessions, {
             creditValue,
             stillUsed,
+            eligible,
+            seatLive,
           });
           const asked = Number(ledger.unitPaise) * input.sessions;
           const refundRow = await tx.refund.create({
@@ -570,15 +577,56 @@ async function restoredOn(refundId: string): Promise<number> {
   return typeof value === "number" ? value : 0;
 }
 
+const LIVE_SESSION = ["SCHEDULED", "COMPLETED", "UNVERIFIED"];
+
 /**
- * #1771 K-5 — an ops return is bounded by the seat's own ledger: at most the
- * undelivered sessions it held, less what earlier returns already gave back.
+ * #1771 owner decision — sessions a live seat may get credit back for: ones
+ * it held that the host cancelled, with no live make-up and not yet settled.
+ */
+async function missedUnmadeSessions(
+  tx: Tx,
+  appointmentId: string,
+  joinedAt: Date,
+): Promise<number> {
+  const rows = await tx.appointmentOccurrence.findMany({
+    where: { appointmentId, isTentative: false, deletedAt: null },
+    select: {
+      id: true,
+      ordinal: true,
+      startsAt: true,
+      completionStatus: true,
+      hostCancelledAt: true,
+      seatsSettledAt: true,
+    },
+  });
+  return rows.filter(
+    (o) =>
+      o.hostCancelledAt &&
+      !o.seatsSettledAt &&
+      o.startsAt > joinedAt &&
+      !rows.some(
+        (m) =>
+          m.id !== o.id &&
+          m.ordinal === o.ordinal &&
+          LIVE_SESSION.includes(m.completionStatus),
+      ),
+  ).length;
+}
+
+/**
+ * #1771 K-5 — an ops return is bounded: a live seat by its missed, unmade
+ * sessions; a released seat by every undelivered one. Less what came back.
  */
 function assertReturnable(
   paymentId: string,
-  ledger: { unitPaise: bigint; heldCount: number; deliveredHeld: number },
+  ledger: { unitPaise: bigint },
   sessions: number,
-  credit: { creditValue: number; stillUsed: number },
+  bound: {
+    creditValue: number;
+    stillUsed: number;
+    eligible: number;
+    seatLive: boolean;
+  },
 ): void {
   const unit = Number(ledger.unitPaise);
   if (unit <= 0) {
@@ -587,14 +635,15 @@ function assertReturnable(
       "NOTHING_TO_RETURN",
     );
   }
-  const alreadyReturned = credit.creditValue - credit.stillUsed;
-  const owed =
-    unit * Math.max(0, ledger.heldCount - ledger.deliveredHeld) -
-    alreadyReturned;
+  const alreadyReturned = bound.creditValue - bound.stillUsed;
+  const owed = unit * bound.eligible - alreadyReturned;
   if (unit * sessions > owed) {
     const max = Math.max(0, Math.floor(owed / unit));
+    const which = bound.seatLive
+      ? "host-cancelled sessions that were not made up"
+      : "undelivered sessions";
     throw new RefundValidationError(
-      `Payment ${paymentId} can get back at most ${max} more session${max === 1 ? "" : "s"} of credit`,
+      `While this seat is ${bound.seatLive ? "live" : "released"}, credit comes back only for ${which}: at most ${max} more`,
       "AMOUNT_EXCEEDS_REFUNDABLE",
     );
   }

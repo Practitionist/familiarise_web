@@ -29,7 +29,7 @@ const COPY: Record<
   credits: {
     title: "Return sessions of credits",
     description:
-      "For a class seat paid in credits: gives back this many sessions' worth. The seat stays.",
+      "For a class seat paid in credits. While the seat is live, only sessions the host cancelled and did not make up; once it is released, any undelivered session.",
     confirm: "Return credits",
   },
 };
