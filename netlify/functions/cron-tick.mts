@@ -92,14 +92,8 @@ const TARGET_LIMITS: Partial<Record<Target, number | null>> = {
 // (maintenance read + lock acquire + heartbeat) dominates, so cadence — not
 // batch size — is the burn lever. Targets with an Actions twin at equal or
 // better cadence ride the 15-minute slots; the ticker-only Novu relay rides
-// every 10.
-// #1822 Q-3 — the cap was hit AGAIN on 2026-09-25 (696k commands/month against
-// a 500k cap): `reconcile-payment-status` and `reconcile-orphaned-confirmations`
-// were the last two every-tick targets (288 invocations/day each, both
-// fail-closed, both already have a 30-min Actions twin), which the earlier
-// #1792 cut left alone as "the two latency-sensitive money confirms with no
-// equal backstop." Moving them onto the same 15-minute slot as their siblings
-// removes ≈83k commands/month; the Actions run stays the unbounded backstop.
+// every 10. #1822 Q-3 — the two reconcile confirms left every-tick too
+// (≈83k commands/month); their 30-min Actions twins stay the backstop.
 const TARGET_EVERY_MINUTES: Partial<Record<Target, number>> = {
   "sweep-stuck-webhook-events": 15,
   "sweep-orphaned-topup-captures": 15,

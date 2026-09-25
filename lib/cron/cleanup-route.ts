@@ -154,13 +154,8 @@ export function cleanupRoute<T extends object>(opts: {
       if (error instanceof CronLockHeldError) {
         return NextResponse.json({ error: error.message }, { status: 409 });
       }
-      // #1822 Q-2 — an expected, typed refusal (real Redis is unavailable
-      // for a fail-closed job), not an unknown exception. It still must be
-      // visible (a fail-closed target that can't run is a real gap), but
-      // every fail-closed target hits this on every tick during an outage,
-      // so it goes through the Q-1 throttle instead of an unthrottled
-      // reportSentryError — that's what turned one Upstash cap into ~1,300+
-      // Sentry events across the fail-closed targets alone.
+      // #1822 Q-2 — expected during a Redis outage; throttled, or every
+      // fail-closed target reports on every tick.
       if (error instanceof CronLockUnavailableError) {
         captureThrottled(`cron:lock-unavailable:${job}`, error, {
           subsystem: "cron",
