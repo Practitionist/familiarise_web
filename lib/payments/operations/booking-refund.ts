@@ -58,7 +58,11 @@ async function markParticipantsRefunded(paymentId: string): Promise<void> {
 
 import prisma, { type Tx } from "@/lib/prisma";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
-import { reverseCreditsForPayment } from "@/lib/referrals/service";
+import {
+  restoreCreditsForPaymentUpTo,
+  reverseCreditsForPayment,
+} from "@/lib/referrals/service";
+import { seatLedger } from "@/lib/booking/class-series";
 import { reverseBookingUtilization } from "@/lib/api/organizations/program-helpers";
 import { assertEarningStatusTransitionLegal } from "@/lib/payments/payouts/earning-status";
 import { recordTdsReversal } from "@/lib/payments/tax/tds-service";
@@ -391,6 +395,261 @@ async function refundFreeCreditPayment(input: {
 }
 
 /**
+ * #1771 K-5 — return N sessions of a credit-funded class seat. The credits
+ * rail restores whole or not at all, so an ops partial return is its own door:
+ * N × the seat's credit unit (capped at what is still consumed), a ₹0 Refund
+ * row under the caller's key, and the booking journal reversed pro rata. The
+ * seat stays live; a later whole restoration is refused (the row exists), so
+ * further returns come back through this door.
+ */
+export async function restoreClassSeatCredits(input: {
+  paymentId: string;
+  sessions: number;
+  reason: string;
+  initiatedByUserId: string | null;
+  dedupeKey: string;
+}): Promise<BookingRefundResult & { restoredPaise: number }> {
+  if (!Number.isInteger(input.sessions) || input.sessions < 1) {
+    throw new RefundValidationError(
+      "Return at least one whole session",
+      "INVALID_AMOUNT",
+    );
+  }
+  const payment = await prisma.payment.findUnique({
+    where: { id: input.paymentId, deletedAt: null },
+    select: {
+      id: true,
+      userId: true,
+      organizationId: true,
+      currency: true,
+      paymentStatus: true,
+      paymentGateway: true,
+      paymentIntent: true,
+      createdAt: true,
+      appointmentId: true,
+      appointment: { select: { classId: true } },
+    },
+  });
+  if (!payment?.appointmentId || !payment.appointment?.classId) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} is not a class seat`,
+      "NOT_A_CLASS_SEAT",
+    );
+  }
+  if (!isFreeCreditIntent(payment.paymentIntent)) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} is not credit-funded; refund an amount instead`,
+      "NOT_CREDIT_FUNDED",
+    );
+  }
+  if (payment.paymentStatus !== PaymentStatus.SUCCEEDED) {
+    throw new RefundValidationError(
+      `Payment ${input.paymentId} is not SUCCEEDED; cannot restore`,
+      "PAYMENT_NOT_SUCCEEDED",
+    );
+  }
+  const appointmentId = payment.appointmentId;
+  let restoredPaise = 0;
+  let notice: StagedRefundNotice | null = null;
+  let createdRefundId = null as string | null;
+  const result = await withDedupe(input, "CREDITS", () =>
+    withSerializableRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          // A retried attempt starts clean: nothing of a rolled-back one survives.
+          restoredPaise = 0;
+          notice = null;
+          createdRefundId = null;
+          const usages = await tx.referralCreditUsage.findMany({
+            where: { paymentId: payment.id },
+            select: { amount: true, originalAmount: true },
+          });
+          const creditValue = usages.reduce((s, u) => s + u.originalAmount, 0);
+          const stillUsed = usages.reduce((s, u) => s + u.amount, 0);
+          if (creditValue <= 0 || stillUsed <= 0) {
+            throw new RefundValidationError(
+              `Payment ${payment.id} has no credit left to return`,
+              "ALREADY_FULLY_REFUNDED",
+            );
+          }
+          const seat = await tx.appointmentParticipant.findFirst({
+            where: { paymentId: payment.id },
+            select: { createdAt: true, status: true },
+          });
+          const joinedAt =
+            seat && seat.createdAt > payment.createdAt
+              ? seat.createdAt
+              : payment.createdAt;
+          const ledger = await seatLedger(
+            tx,
+            { appointmentId, createdAt: joinedAt },
+            creditValue,
+          );
+          const seatLive =
+            !!seat && !["CANCELLED", "REFUNDED"].includes(seat.status);
+          const eligible = seatLive
+            ? await missedUnmadeSessions(tx, appointmentId, joinedAt)
+            : Math.max(0, ledger.heldCount - ledger.deliveredHeld);
+          assertReturnable(payment.id, ledger, input.sessions, {
+            creditValue,
+            stillUsed,
+            eligible,
+            seatLive,
+          });
+          const asked = Number(ledger.unitPaise) * input.sessions;
+          const refundRow = await tx.refund.create({
+            data: {
+              paymentId: payment.id,
+              amountPaise: 0,
+              currency: payment.currency,
+              reason: input.reason,
+              status: RefundStatus.SUCCEEDED,
+              refundId: `credits_${globalThis.crypto.randomUUID()}`,
+              dedupeKey: input.dedupeKey,
+              paymentGateway: payment.paymentGateway,
+              metadata: {
+                initiatedByUserId: input.initiatedByUserId,
+                source: "free-credit-partial",
+                sessions: input.sessions,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          restoredPaise = await restoreCreditsForPaymentUpTo(
+            payment.id,
+            tx,
+            Math.min(asked, stillUsed),
+          );
+          if (restoredPaise <= 0) {
+            throw new RefundValidationError(
+              `The credit behind payment ${payment.id} has expired`,
+              "CREDIT_EXPIRED",
+            );
+          }
+          // Kept on the row, so a keyed replay answers the real amount.
+          await tx.refund.update({
+            where: { id: refundRow.id },
+            data: {
+              metadata: {
+                initiatedByUserId: input.initiatedByUserId,
+                source: "free-credit-partial",
+                sessions: input.sessions,
+                restoredPaise,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          createdRefundId = refundRow.id;
+          await reverseFreeCreditSettlement(tx, {
+            paymentId: payment.id,
+            refundId: refundRow.id,
+            initiatedByUserId: input.initiatedByUserId,
+            share: { num: restoredPaise, den: creditValue },
+          });
+          notice = await stageRefundNotice(tx, payment, restoredPaise);
+          return {
+            refundId: refundRow.id,
+            amountRefundedPaise: 0,
+            rail: "CREDITS" as const,
+          };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 15_000,
+        },
+      ),
+    ),
+  );
+  if (result.refundId !== createdRefundId) {
+    // A replay (or a lost key race): the first attempt's row is the answer.
+    return { ...result, restoredPaise: await restoredOn(result.refundId) };
+  }
+  await attemptRefundNotice(notice);
+  return { ...result, restoredPaise };
+}
+
+async function restoredOn(refundId: string): Promise<number> {
+  const row = await prisma.refund.findUnique({
+    where: { id: refundId },
+    select: { metadata: true },
+  });
+  const value = (row?.metadata as { restoredPaise?: unknown } | null)
+    ?.restoredPaise;
+  return typeof value === "number" ? value : 0;
+}
+
+const LIVE_SESSION = new Set<string>(["SCHEDULED", "COMPLETED", "UNVERIFIED"]);
+
+/**
+ * #1771 owner decision — sessions a live seat may get credit back for: ones
+ * it held that the host cancelled, with no live make-up and not yet settled.
+ */
+async function missedUnmadeSessions(
+  tx: Tx,
+  appointmentId: string,
+  joinedAt: Date,
+): Promise<number> {
+  const rows = await tx.appointmentOccurrence.findMany({
+    where: { appointmentId, isTentative: false, deletedAt: null },
+    select: {
+      id: true,
+      ordinal: true,
+      startsAt: true,
+      completionStatus: true,
+      hostCancelledAt: true,
+      seatsSettledAt: true,
+    },
+  });
+  return rows.filter(
+    (o) =>
+      o.hostCancelledAt &&
+      !o.seatsSettledAt &&
+      o.startsAt > joinedAt &&
+      !rows.some(
+        (m) =>
+          m.id !== o.id &&
+          m.ordinal === o.ordinal &&
+          LIVE_SESSION.has(m.completionStatus),
+      ),
+  ).length;
+}
+
+/**
+ * #1771 K-5 — an ops return is bounded: a live seat by its missed, unmade
+ * sessions; a released seat by every undelivered one. Less what came back.
+ */
+function assertReturnable(
+  paymentId: string,
+  ledger: { unitPaise: bigint },
+  sessions: number,
+  bound: {
+    creditValue: number;
+    stillUsed: number;
+    eligible: number;
+    seatLive: boolean;
+  },
+): void {
+  const unit = Number(ledger.unitPaise);
+  if (unit <= 0) {
+    throw new RefundValidationError(
+      `Payment ${paymentId} holds no session to return`,
+      "NOTHING_TO_RETURN",
+    );
+  }
+  const alreadyReturned = bound.creditValue - bound.stillUsed;
+  const owed = unit * bound.eligible - alreadyReturned;
+  if (unit * sessions > owed) {
+    const max = Math.max(0, Math.floor(owed / unit));
+    const which = bound.seatLive
+      ? "host-cancelled sessions that were not made up"
+      : "undelivered sessions";
+    throw new RefundValidationError(
+      `While this seat is ${bound.seatLive ? "live" : "released"}, credit comes back only for ${which}: at most ${max} more`,
+      "AMOUNT_EXCEEDS_REFUNDABLE",
+    );
+  }
+}
+
+/**
  * In-ledger settlement of a fully-credit-funded cancellation (#1161).
  *
  * `applyRefundCascade` cannot serve this payment: its proportional machinery
@@ -422,8 +681,15 @@ async function reverseFreeCreditSettlement(
     paymentId: string;
     refundId: string;
     initiatedByUserId: string | null;
+    /** #1771 K-5 — reverse only num/den of the booking (a partial credit return). */
+    share?: { num: number; den: number };
   },
 ): Promise<void> {
+  const share = input.share;
+  const part = (paise: number) =>
+    share
+      ? Number((BigInt(paise) * BigInt(share.num)) / BigInt(share.den))
+      : paise;
   const payment = await tx.payment.findUniqueOrThrow({
     where: { id: input.paymentId },
     select: {
@@ -463,9 +729,10 @@ async function reverseFreeCreditSettlement(
   // Consultant earnings net in full — same cap + legal-transition guard as
   // cascade Step 6, with the identity proportion (a cancellation is total).
   for (const earnings of payment.earnings) {
+    const delta = part(earnings.consultantSharePaise);
     const newRefundedShare = Math.min(
       earnings.consultantSharePaise,
-      earnings.refundedShareAmount + earnings.consultantSharePaise,
+      earnings.refundedShareAmount + delta,
     );
     const fully = newRefundedShare >= earnings.consultantSharePaise;
     let nextStatus = earnings.status;
@@ -488,7 +755,7 @@ async function reverseFreeCreditSettlement(
         payoutId: earnings.payoutId,
         consultantProfileId: earnings.consultantProfileId,
         earningsId: earnings.id,
-        refundAmountPaise: earnings.consultantSharePaise,
+        refundAmountPaise: delta,
         paymentAmountPaise: earnings.consultantSharePaise,
         refundId: input.refundId,
       });
@@ -499,9 +766,10 @@ async function reverseFreeCreditSettlement(
   // sponsor; referral credits never fund org-sponsored checkouts). Mirrors
   // cascade Step 7 including the COMPLETED-payout clawback record.
   for (const orgEarn of payment.organizationEarnings) {
+    const orgDelta = part(orgEarn.orgSharePaise);
     const newRefunded = Math.min(
       orgEarn.orgSharePaise,
-      orgEarn.refundedAmountPaise + orgEarn.orgSharePaise,
+      orgEarn.refundedAmountPaise + orgDelta,
     );
     const fully = newRefunded >= orgEarn.orgSharePaise;
     let nextStatus = orgEarn.status;
@@ -521,12 +789,12 @@ async function reverseFreeCreditSettlement(
     if (
       orgEarn.orgPayoutId &&
       orgEarn.orgPayout?.status === "COMPLETED" &&
-      orgEarn.orgSharePaise > 0
+      orgDelta > 0
     ) {
       await tx.organizationPayout.update({
         where: { id: orgEarn.orgPayoutId },
         data: {
-          clawbackAmountPaise: { increment: orgEarn.orgSharePaise },
+          clawbackAmountPaise: { increment: orgDelta },
           clawbackInitiatedAt: orgEarn.orgPayout.clawbackInitiatedAt
             ? undefined
             : new Date(),
@@ -538,13 +806,13 @@ async function reverseFreeCreditSettlement(
           actorMembershipId: null,
           category: "PAYOUT",
           action: AUDIT_ACTIONS.PAYOUT.PAYOUT_CLAWBACK,
-          description: `Credit-funded cancellation clawback: ${orgEarn.orgSharePaise} paise from payout ${orgEarn.orgPayoutId}`,
+          description: `Credit-funded cancellation clawback: ${orgDelta} paise from payout ${orgEarn.orgPayoutId}`,
           details: {
             paymentId: input.paymentId,
             refundId: input.refundId,
             orgEarningsId: orgEarn.id,
             orgPayoutId: orgEarn.orgPayoutId,
-            amountPaise: orgEarn.orgSharePaise,
+            amountPaise: orgDelta,
             initiatedByUserId: input.initiatedByUserId,
           } as Prisma.InputJsonValue,
         },
@@ -553,7 +821,7 @@ async function reverseFreeCreditSettlement(
       await postPayoutClawback(tx, {
         refundId: input.refundId,
         payoutId: orgEarn.orgPayoutId,
-        amountPaise: orgEarn.orgSharePaise,
+        amountPaise: orgDelta,
         organizationId: orgEarn.organizationId,
       });
     }
@@ -562,12 +830,14 @@ async function reverseFreeCreditSettlement(
   // The counter-posting. Funding returns to PLATFORM_PROMO (the account the
   // REFERRAL_CREDIT legs were debited to); legacy pre-legs payments booked
   // their gross as DISCOUNT instead (#1003 shape).
-  const promoTotal = payment.legs.reduce(
-    (s, l) =>
-      l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
-        ? s + l.amountPaise
-        : s,
-    0,
+  const promoTotal = part(
+    payment.legs.reduce(
+      (s, l) =>
+        l.source === "REFERRAL_CREDIT" && l.amountPaise > 0
+          ? s + l.amountPaise
+          : s,
+      0,
+    ),
   );
   const credits: Posting[] = [];
   if (promoTotal > 0) {
@@ -577,7 +847,9 @@ async function reverseFreeCreditSettlement(
       amountPaise: promoTotal,
     });
   } else {
-    const discountBack = payment.originalAmount + (payment.taxAmount ?? 0);
+    const discountBack = part(
+      payment.originalAmount + (payment.taxAmount ?? 0),
+    );
     if (discountBack > 0) {
       credits.push({
         account: { kind: "DISCOUNT" },
@@ -589,14 +861,14 @@ async function reverseFreeCreditSettlement(
 
   const fundingTotal = credits.reduce((s, c) => s + c.amountPaise, 0);
   const consRev = payment.earnings.reduce(
-    (s, e) => s + e.consultantSharePaise,
+    (s, e) => s + part(e.consultantSharePaise),
     0,
   );
   const orgRev = payment.organizationEarnings.reduce(
-    (s, o) => s + o.orgSharePaise,
+    (s, o) => s + part(o.orgSharePaise),
     0,
   );
-  const gstRev = payment.taxAmount ?? 0;
+  const gstRev = part(payment.taxAmount ?? 0);
   // PLATFORM_FEE is the residual plug (cascade Step 9 convention): positive →
   // the platform gives back its fee slice; negative (discount gap between the
   // funding and the shares) → the fee credit absorbs the shortfall.
@@ -604,26 +876,28 @@ async function reverseFreeCreditSettlement(
 
   const debits: Posting[] = [];
   for (const earnings of payment.earnings) {
-    if (earnings.consultantSharePaise > 0) {
+    const delta = part(earnings.consultantSharePaise);
+    if (delta > 0) {
       debits.push({
         account: {
           kind: "CONSULTANT_PAYABLE",
           consultantProfileId: earnings.consultantProfileId,
         },
         direction: "DEBIT",
-        amountPaise: earnings.consultantSharePaise,
+        amountPaise: delta,
       });
     }
   }
   for (const orgEarn of payment.organizationEarnings) {
-    if (orgEarn.orgSharePaise > 0) {
+    const orgDelta = part(orgEarn.orgSharePaise);
+    if (orgDelta > 0) {
       debits.push({
         account: {
           kind: "ORG_PAYABLE",
           organizationId: orgEarn.organizationId,
         },
         direction: "DEBIT",
-        amountPaise: orgEarn.orgSharePaise,
+        amountPaise: orgDelta,
       });
     }
   }

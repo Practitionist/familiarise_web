@@ -25,6 +25,7 @@ import {
   Lock,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { RazorpayEvidenceForm } from "./RazorpayEvidenceForm";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import type { DisputeDetails } from "@/types/disputes";
 
@@ -69,6 +70,14 @@ const formatDate = (dateString: string) => {
     minute: "2-digit",
   });
 };
+
+/** #1771 K-7 — a Razorpay draft sits in `evidence` with no submission stamp. */
+const isRazorpayDraft = (d: {
+  evidence: unknown;
+  evidenceSubmittedAt?: string | null;
+}) =>
+  !d.evidenceSubmittedAt &&
+  (d.evidence as { action?: unknown } | null)?.action === "draft";
 
 const getDaysUntilDue = (dueBy: string | null) => {
   if (!dueBy) return null;
@@ -452,20 +461,33 @@ export function DisputeDetailPage({
         <CardContent>
           {dispute.evidence ? (
             <div className="space-y-4">
-              <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-                <AlertTitle>Evidence Submitted</AlertTitle>
-                <AlertDescription>
-                  {/* This block is already gated on `dispute.evidence`, so the
+              {isRazorpayDraft(dispute) ? (
+                <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
+                  <Clock className="h-4 w-4 text-amber-600" />
+                  <AlertTitle>
+                    Draft saved on Razorpay — not submitted
+                  </AlertTitle>
+                  <AlertDescription>
+                    The dispute is still open. Submit the evidence before the
+                    deadline or the chargeback is lost.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertTitle>Evidence Submitted</AlertTitle>
+                  <AlertDescription>
+                    {/* This block is already gated on `dispute.evidence`, so the
                       submission is a fact; only its timestamp can be missing,
                       and only for disputes recorded before the column existed.
                       Saying "submitted on N/A" made a known fact look like
                       missing data. */}
-                  {dispute.evidenceSubmittedAt
-                    ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
-                    : "Evidence was submitted. The submission time was not recorded for this dispute."}
-                </AlertDescription>
-              </Alert>
+                    {dispute.evidenceSubmittedAt
+                      ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
+                      : "Evidence was submitted. The submission time was not recorded for this dispute."}
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
                 <pre className="text-sm whitespace-pre-wrap overflow-auto">
                   {typeof dispute.evidence === "object"
@@ -488,134 +510,147 @@ export function DisputeDetailPage({
         </CardContent>
       </Card>
 
+      {/* #1771 K-7 — Razorpay evidence goes through its own form. */}
+      {showEvidenceForm &&
+        canSubmitEvidence &&
+        dispute.paymentGateway === "RAZORPAY" && (
+          <RazorpayEvidenceForm
+            disputeId={dispute.id}
+            dueBy={dispute.dueBy}
+            queryKey={[queryKeyPrefix, disputeId]}
+          />
+        )}
+
       {/* Evidence Submission Form (admin only) */}
-      {showEvidenceForm && canSubmitEvidence && (
-        <Card className="border-blue-200">
-          <CardHeader>
-            <CardTitle className="text-blue-600">Submit Evidence</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {showEvidenceForm &&
+        canSubmitEvidence &&
+        dispute.paymentGateway !== "RAZORPAY" && (
+          <Card className="border-blue-200">
+            <CardHeader>
+              <CardTitle className="text-blue-600">Submit Evidence</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="customerName">Customer Name</Label>
+                  <Textarea
+                    id="customerName"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="customerEmail">Customer Email</Label>
+                  <Textarea
+                    id="customerEmail"
+                    value={customerEmail}
+                    onChange={(e) => setCustomerEmail(e.target.value)}
+                    rows={2}
+                  />
+                </div>
+              </div>
+
               <div>
-                <Label htmlFor="customerName">Customer Name</Label>
+                <Label htmlFor="productDescription">
+                  Product/Service Description
+                </Label>
                 <Textarea
-                  id="customerName"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  rows={2}
+                  id="productDescription"
+                  value={productDescription}
+                  onChange={(e) => setProductDescription(e.target.value)}
+                  rows={3}
                 />
               </div>
+
               <div>
-                <Label htmlFor="customerEmail">Customer Email</Label>
+                <Label htmlFor="customerSignature">
+                  Customer Signature/Acknowledgment
+                </Label>
                 <Textarea
-                  id="customerEmail"
-                  value={customerEmail}
-                  onChange={(e) => setCustomerEmail(e.target.value)}
-                  rows={2}
+                  id="customerSignature"
+                  value={customerSignature}
+                  onChange={(e) => setCustomerSignature(e.target.value)}
+                  rows={3}
                 />
               </div>
-            </div>
 
-            <div>
-              <Label htmlFor="productDescription">
-                Product/Service Description
-              </Label>
-              <Textarea
-                id="productDescription"
-                value={productDescription}
-                onChange={(e) => setProductDescription(e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div>
+                <Label htmlFor="refundPolicy">Refund Policy</Label>
+                <Textarea
+                  id="refundPolicy"
+                  value={refundPolicy}
+                  onChange={(e) => setRefundPolicy(e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="customerSignature">
-                Customer Signature/Acknowledgment
-              </Label>
-              <Textarea
-                id="customerSignature"
-                value={customerSignature}
-                onChange={(e) => setCustomerSignature(e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div>
+                <Label htmlFor="refundPolicyDisclosure">
+                  Refund Policy Disclosure
+                </Label>
+                <Textarea
+                  id="refundPolicyDisclosure"
+                  value={refundPolicyDisclosure}
+                  onChange={(e) => setRefundPolicyDisclosure(e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="refundPolicy">Refund Policy</Label>
-              <Textarea
-                id="refundPolicy"
-                value={refundPolicy}
-                onChange={(e) => setRefundPolicy(e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div>
+                <Label htmlFor="cancellationPolicy">Cancellation Policy</Label>
+                <Textarea
+                  id="cancellationPolicy"
+                  value={cancellationPolicy}
+                  onChange={(e) => setCancellationPolicy(e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="refundPolicyDisclosure">
-                Refund Policy Disclosure
-              </Label>
-              <Textarea
-                id="refundPolicyDisclosure"
-                value={refundPolicyDisclosure}
-                onChange={(e) => setRefundPolicyDisclosure(e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div>
+                <Label htmlFor="cancellationRebuttal">
+                  Cancellation Rebuttal
+                </Label>
+                <Textarea
+                  id="cancellationRebuttal"
+                  value={cancellationRebuttal}
+                  onChange={(e) => setCancellationRebuttal(e.target.value)}
+                  rows={3}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="cancellationPolicy">Cancellation Policy</Label>
-              <Textarea
-                id="cancellationPolicy"
-                value={cancellationPolicy}
-                onChange={(e) => setCancellationPolicy(e.target.value)}
-                rows={3}
-              />
-            </div>
+              <div>
+                <Label htmlFor="additionalEvidence">
+                  Additional Evidence/Notes
+                </Label>
+                <Textarea
+                  id="additionalEvidence"
+                  value={additionalEvidence}
+                  onChange={(e) => setAdditionalEvidence(e.target.value)}
+                  rows={4}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="cancellationRebuttal">
-                Cancellation Rebuttal
-              </Label>
-              <Textarea
-                id="cancellationRebuttal"
-                value={cancellationRebuttal}
-                onChange={(e) => setCancellationRebuttal(e.target.value)}
-                rows={3}
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="additionalEvidence">
-                Additional Evidence/Notes
-              </Label>
-              <Textarea
-                id="additionalEvidence"
-                value={additionalEvidence}
-                onChange={(e) => setAdditionalEvidence(e.target.value)}
-                rows={4}
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={handleSubmitEvidence}
-                disabled={evidenceMutation.isPending}
-              >
-                {evidenceMutation.isPending
-                  ? "Submitting..."
-                  : "Submit Evidence"}
-              </Button>
-              <Button
-                onClick={() => setShowEvidenceForm(false)}
-                variant="outline"
-                disabled={evidenceMutation.isPending}
-              >
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleSubmitEvidence}
+                  disabled={evidenceMutation.isPending}
+                >
+                  {evidenceMutation.isPending
+                    ? "Submitting..."
+                    : "Submit Evidence"}
+                </Button>
+                <Button
+                  onClick={() => setShowEvidenceForm(false)}
+                  variant="outline"
+                  disabled={evidenceMutation.isPending}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
       {/* Gateway-specific Notes (admin only) */}
       {allowEvidenceSubmission && (
@@ -629,8 +664,9 @@ export function DisputeDetailPage({
               form.
             </p>
             <p>
-              • Razorpay disputes: Evidence submission is handled automatically
-              via webhooks. Contact Razorpay support for manual intervention.
+              • Razorpay disputes: upload the documents and save a draft or
+              submit it here; Razorpay only takes evidence while a dispute is
+              open.
             </p>
             <p>
               • Always respond before the due date to avoid automatic loss of

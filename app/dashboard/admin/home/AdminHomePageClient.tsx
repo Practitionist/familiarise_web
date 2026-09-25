@@ -174,7 +174,7 @@ export default function AdminHomePageClient() {
               <DataCard
                 title="Recent Payments"
                 icon={TrendingUp}
-                viewAllLink="/dashboard/admin/payments"
+                viewAllLink="/dashboard/admin/money/payments"
                 viewAllText="View all payments"
               >
                 {stats?.recentPayments && stats.recentPayments.length > 0 ? (
@@ -234,7 +234,7 @@ export default function AdminHomePageClient() {
               <DataCard
                 title="Recent Refunds"
                 icon={RefreshCw}
-                viewAllLink="/dashboard/admin/refunds"
+                viewAllLink="/dashboard/admin/money/refunds"
                 viewAllText="View all refunds"
               >
                 {stats?.recentRefunds && stats.recentRefunds.length > 0 ? (

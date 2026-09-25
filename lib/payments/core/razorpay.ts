@@ -752,20 +752,14 @@ export async function listRazorpayRefunds(
 }
 
 // ============================================================================
-// Dispute Operations (Webhook-only)
+// Dispute Operations
 // ============================================================================
 
 /**
- * Note: Razorpay does not have a direct API for managing disputes.
- * Disputes are handled through the Razorpay dashboard and webhook events.
- *
- * Webhook events to listen for:
- * - payment.dispute.created
- * - payment.dispute.won
- * - payment.dispute.lost
- * - payment.dispute.closed
- *
- * These events will be handled in the webhook route.
+ * #1771 K-7 — Razorpay disputes arrive by webhook (payment.dispute.created /
+ * won / lost / closed) and are contested through its API: evidence documents
+ * via POST /v1/documents and PATCH /v1/disputes/{id}/contest. Both calls live
+ * in lib/payments/core/razorpay-disputes.ts.
  */
 
 // ============================================================================

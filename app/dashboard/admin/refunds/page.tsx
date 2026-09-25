@@ -1,15 +1,14 @@
-"use client";
+import { permanentRedirect } from "next/navigation";
 
-import { RefundsPage } from "@/components/dashboard/shared/RefundsPage";
+import { moneyHubHref } from "@/lib/backoffice/money-tabs";
 
-export default function AdminRefundsPage() {
-  return (
-    <RefundsPage
-      basePath="/dashboard/admin"
-      apiEndpoint="/api/admin/refunds"
-      title="Refunds"
-      description="Manage and view all payment refunds"
-      queryKeyPrefix="admin-refunds"
-    />
+/** #1771 K-2 — refunds moved into the Money hub; the old URL answers a 308. */
+export default async function AdminRefundsRedirectPage({
+  searchParams,
+}: Readonly<{
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}>) {
+  permanentRedirect(
+    moneyHubHref("/dashboard/admin", "refunds", await searchParams),
   );
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { payoutMethodLabel } from "@/lib/labels/money-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -34,8 +35,13 @@ interface PayoutListResponse {
   };
 }
 
-async function fetchPendingPayouts(): Promise<PayoutListResponse> {
-  const response = await fetch("/api/admin/payouts?status=PENDING&limit=100");
+// #1771 K-4 — "instant" narrows to above-cap instant payouts awaiting approval.
+async function fetchPendingPayouts(
+  instantOnly: boolean,
+): Promise<PayoutListResponse> {
+  const response = await fetch(
+    `/api/admin/payouts?status=PENDING&limit=100${instantOnly ? "&kind=INSTANT" : ""}`,
+  );
   if (!response.ok) {
     throw new Error("Failed to fetch payouts");
   }
@@ -50,11 +56,14 @@ type PayoutActionResult = { success: boolean; message: string };
  * both mutations discard the value — the first `onSuccess: (data) => ...` to
  * read `data.amount` would have got undefined from a type promising a number.
  */
-async function approvePayout(id: string): Promise<PayoutActionResult> {
+async function approvePayout(
+  id: string,
+  reason: string,
+): Promise<PayoutActionResult> {
   const response = await fetch(`/api/admin/payouts/${id}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "approve" }),
+    body: JSON.stringify({ action: "approve", reason }),
   });
   if (!response.ok) {
     const error = await response.json();
@@ -82,24 +91,28 @@ async function rejectPayout(
 export default function PendingPayoutsSection() {
   const queryClient = useQueryClient();
   const [selectedPayout, setSelectedPayout] = useState<Payout | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
+  // #1771 K-4 — both decisions carry a reason into the audit log.
+  const [decisionReason, setDecisionReason] = useState("");
+  const [instantOnly, setInstantOnly] = useState(false);
   const [dialogType, setDialogType] = useState<"approve" | "reject" | null>(
     null,
   );
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["admin-payouts-pending"],
-    queryFn: fetchPendingPayouts,
+    queryKey: ["admin-payouts-pending", instantOnly],
+    queryFn: () => fetchPendingPayouts(instantOnly),
     staleTime: 30 * 1000,
   });
 
   const approveMutation = useMutation({
-    mutationFn: approvePayout,
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      approvePayout(id, reason),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-payouts-pending"] });
       queryClient.invalidateQueries({ queryKey: ["admin-payout-stats"] });
       setDialogType(null);
       setSelectedPayout(null);
+      setDecisionReason("");
     },
   });
 
@@ -111,9 +124,11 @@ export default function PendingPayoutsSection() {
       queryClient.invalidateQueries({ queryKey: ["admin-payout-stats"] });
       setDialogType(null);
       setSelectedPayout(null);
-      setRejectReason("");
+      setDecisionReason("");
     },
   });
+
+  const reasonReady = decisionReason.trim().length >= 5;
 
   const handleApprove = (payout: Payout) => {
     setSelectedPayout(payout);
@@ -126,14 +141,14 @@ export default function PendingPayoutsSection() {
   };
 
   const confirmApprove = () => {
-    if (selectedPayout) {
-      approveMutation.mutate(selectedPayout.id);
+    if (selectedPayout && reasonReady) {
+      approveMutation.mutate({ id: selectedPayout.id, reason: decisionReason });
     }
   };
 
   const confirmReject = () => {
-    if (selectedPayout && rejectReason.trim()) {
-      rejectMutation.mutate({ id: selectedPayout.id, reason: rejectReason });
+    if (selectedPayout && reasonReady) {
+      rejectMutation.mutate({ id: selectedPayout.id, reason: decisionReason });
     }
   };
 
@@ -169,7 +184,9 @@ export default function PendingPayoutsSection() {
       key: "method",
       header: "Method",
       cell: (payout) => (
-        <span className="text-sm text-muted-foreground">{payout.method}</span>
+        <span className="text-sm text-muted-foreground">
+          {payoutMethodLabel(payout.method)}
+        </span>
       ),
     },
     {
@@ -269,9 +286,19 @@ export default function PendingPayoutsSection() {
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">
-            Pending Payouts ({data?.payouts?.length || 0})
-          </CardTitle>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-lg">
+              Pending Payouts ({data?.payouts?.length || 0})
+            </CardTitle>
+            <Button
+              size="sm"
+              variant={instantOnly ? "default" : "outline"}
+              aria-pressed={instantOnly}
+              onClick={() => setInstantOnly((v) => !v)}
+            >
+              Instant, waiting for approval
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading || !data ? (
@@ -299,7 +326,10 @@ export default function PendingPayoutsSection() {
       {/* Approve Dialog */}
       <AlertDialog
         open={dialogType === "approve"}
-        onOpenChange={() => setDialogType(null)}
+        onOpenChange={() => {
+          setDialogType(null);
+          setDecisionReason("");
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -314,11 +344,18 @@ export default function PendingPayoutsSection() {
               to {selectedPayout?.consultantName}?
             </AlertDialogDescription>
           </AlertDialogHeader>
+          <div className="py-4">
+            <Input
+              placeholder="Reason for approving (kept in the audit log)"
+              value={decisionReason}
+              onChange={(e) => setDecisionReason(e.target.value)}
+            />
+          </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmApprove}
-              disabled={approveMutation.isPending}
+              disabled={approveMutation.isPending || !reasonReady}
               className="bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-700"
             >
               {approveMutation.isPending && (
@@ -333,7 +370,10 @@ export default function PendingPayoutsSection() {
       {/* Reject Dialog */}
       <AlertDialog
         open={dialogType === "reject"}
-        onOpenChange={() => setDialogType(null)}
+        onOpenChange={() => {
+          setDialogType(null);
+          setDecisionReason("");
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -346,15 +386,15 @@ export default function PendingPayoutsSection() {
           <div className="py-4">
             <Input
               placeholder="Reason for rejection..."
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
+              value={decisionReason}
+              onChange={(e) => setDecisionReason(e.target.value)}
             />
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmReject}
-              disabled={rejectMutation.isPending || !rejectReason.trim()}
+              disabled={rejectMutation.isPending || !reasonReady}
               className="bg-red-600 hover:bg-red-700 dark:bg-red-600 dark:hover:bg-red-700"
             >
               {rejectMutation.isPending && (

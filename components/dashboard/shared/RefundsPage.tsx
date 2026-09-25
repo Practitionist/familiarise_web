@@ -1,5 +1,6 @@
 "use client";
 
+import { gatewayLabel } from "@/lib/labels/money-labels";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 // `formatCurrencyAmount`, not the old major-unit formatter (deleted in #1396):
@@ -206,7 +207,7 @@ export function RefundsPage({
       key: "gateway",
       header: "Gateway",
       className: "text-sm text-muted-foreground",
-      cell: (refund) => refund.paymentGateway,
+      cell: (refund) => gatewayLabel(refund.paymentGateway),
     },
     {
       key: "status",

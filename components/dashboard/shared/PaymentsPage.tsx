@@ -1,5 +1,7 @@
 "use client";
 
+import { gatewayLabel } from "@/lib/labels/money-labels";
+import { paymentStatusBadge } from "@/lib/labels/session-labels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -143,7 +145,7 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
                   : "bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-400"
           }`}
         >
-          {payment.paymentStatus}
+          {paymentStatusBadge(payment.paymentStatus).label}
         </span>
       ),
     },
@@ -152,7 +154,7 @@ export function PaymentsPage({ basePath }: PaymentsPageProps) {
       header: "Gateway",
       cell: (payment) => (
         <span className="text-sm text-foreground">
-          {payment.paymentGateway}
+          {gatewayLabel(payment.paymentGateway)}
         </span>
       ),
     },

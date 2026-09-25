@@ -27,6 +27,7 @@ import {
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { withAppointmentLock } from "@/utils/appointmentlock";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { BookingRuleError } from "./booking-rule-error";
 import { exitRightFor, seatLedger, seriesLedger } from "./class-series";
 
@@ -91,20 +92,37 @@ export type HostedClass = Extract<
   { found: true }
 >;
 
-/** The reliability flag and the exit-right bells, once, when the right first trips. */
+/**
+ * #1771 — whether the reliability flag is due: never flagged, or the latest
+ * event is an ops clear and a host cancellation came after it. An active flag
+ * is never repeated. The caller has already checked the miss threshold.
+ */
+export function reliabilityFlagDue(
+  latest: { createdAt: Date; context: unknown } | null,
+  lastHostCancelAt: Date,
+): boolean {
+  if (!latest) return true;
+  const cleared =
+    (latest.context as { cleared?: unknown } | null)?.cleared === true;
+  return cleared && lastHostCancelAt > latest.createdAt;
+}
+
+/** The reliability flag when due, and the exit-right bells when the right first trips. */
 async function onExitRightTripped(
   tx: Tx,
   hosted: HostedClass,
   misses: number,
   N: number,
   seatUserIds: string[],
+  opts: { cancelledAt: Date; firstTrip: boolean },
 ): Promise<void> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
-  const flagged = await tx.systemEvent.findFirst({
+  const latest = await tx.systemEvent.findFirst({
     where: { correlationId },
-    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true, context: true },
   });
-  if (!flagged) {
+  if (reliabilityFlagDue(latest, opts.cancelledAt)) {
     await recordSystemError({
       organizationId: hosted.appointment.organizationId,
       category: "BOOKING",
@@ -119,6 +137,7 @@ async function onExitRightTripped(
       db: tx,
     });
   }
+  if (!opts.firstTrip) return;
   for (const userId of seatUserIds) {
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CLASS_EXIT_AVAILABLE,
@@ -187,13 +206,19 @@ export async function cancelClassSession(
         });
       }
       const ledger = await seriesLedger(tx, appointmentId, now);
-      if (ledger.exitRight && !exitRightFor(ledger.misses - 1, ledger.N)) {
+      // Past the threshold every miss re-checks the flag (an ops clear may
+      // precede it); the learners' bells go out only on the first trip.
+      if (ledger.exitRight) {
         await onExitRightTripped(
           tx,
           hosted,
           ledger.misses,
           ledger.N,
           seatUserIds,
+          {
+            cancelledAt: now,
+            firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+          },
         );
       }
       return {
@@ -212,7 +237,17 @@ export async function scheduleClassMakeUp(
   hosted: HostedClass,
   sourceOccurrenceId: string,
   startsAt: Date,
+  /** #1771 K-6 — an operator may hold it past day 14, never without a reason. */
+  opts: { bypassWindow?: { opsActorUserId: string; reason: string } } = {},
 ) {
+  const bypass = opts.bypassWindow;
+  if (bypass && bypass.reason.trim().length < 5) {
+    throw new OpsRefusal(
+      "BYPASS_NEEDS_REASON",
+      "Holding a make-up past the 14-day window needs a reason.",
+      400,
+    );
+  }
   const appointmentId = hosted.appointment.id;
   return withAppointmentLock(appointmentId, () =>
     prisma.$transaction(async (tx) => {
@@ -237,7 +272,7 @@ export async function scheduleClassMakeUp(
         source.completionStatus !== OccurrenceCompletionStatus.CANCELLED ||
         !source.hostCancelledAt ||
         source.seatsSettledAt ||
-        startsAt.getTime() > deadline ||
+        (!bypass && startsAt.getTime() > deadline) ||
         startsAt <= now
       ) {
         throw new BookingRuleError(
@@ -309,6 +344,8 @@ export async function skipClassMakeUp(args: {
   appointmentId: string;
   sourceOccurrenceId: string;
   userId: string;
+  /** #1771 — an ops door refunds on the learner's seat but names the operator. */
+  initiatedByUserId?: string;
 }) {
   const source = await prisma.appointmentOccurrence.findFirst({
     where: {
@@ -395,7 +432,7 @@ export async function skipClassMakeUp(args: {
       paymentId: payment.id,
       amountPaise: Number(ledger.unitPaise),
       reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
-      initiatedByUserId: args.userId,
+      initiatedByUserId: args.initiatedByUserId ?? args.userId,
       dedupeKey,
       keepSeat: true,
     });

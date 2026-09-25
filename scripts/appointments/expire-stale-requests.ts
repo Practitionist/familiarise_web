@@ -813,6 +813,104 @@ async function refundUnallocatedPlans(subscriptionIds: string[]) {
   return out;
 }
 
+/** #1775 C-3 — the 48 h cohort, re-stated in the CAS WHERE (#1423). */
+function unallocatedCohort() {
+  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
+  return {
+    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+const UNALLOCATED_SELECT = {
+  ...EXPIRY_NOTICE_SELECT,
+  subscriptionPlan: {
+    select: {
+      title: true,
+      consultantProfile: {
+        select: { id: true, user: { select: { id: true, name: true } } },
+      },
+    },
+  },
+} satisfies Prisma.SubscriptionSelect;
+
+/** The CAS and its bell for one plan; false when the plan left the cohort. */
+async function expireOneUnallocated(
+  subscription: Prisma.SubscriptionGetPayload<{
+    select: typeof UNALLOCATED_SELECT;
+  }>,
+  cohort: ReturnType<typeof unallocatedCohort>,
+): Promise<boolean> {
+  try {
+    await prisma.$transaction(async (tx) => {
+      await transitionSubscriptionRequest(tx, {
+        where: { id: subscription.id, ...cohort },
+        to: AppointmentStatus.EXPIRED,
+        fromIn: [AppointmentStatus.PENDING],
+        actorUserId: null,
+        reason: "UNALLOCATED_48H",
+      });
+      // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
+      await stageUnallocatedRefundBell(tx, subscription);
+    });
+    return true;
+  } catch (error) {
+    if (!(error instanceof IllegalTransitionError)) throw error;
+    return false;
+  }
+}
+
+/**
+ * #1771 K-6 — the 48 h arm for ONE plan, from the ops console: the same
+ * cohort CAS, bell and keyed refund, under the sweep's own lock. A plan that
+ * already expired UNALLOCATED_48H only retries its refund.
+ */
+export async function expireUnallocatedPaidSubscriptionForOne(
+  subscriptionId: string,
+): Promise<{
+  expired: boolean;
+  issued: number;
+  failures: number;
+  errors: string[];
+}> {
+  return withCronLock(
+    "expire-stale-requests",
+    { failMode: "closed" },
+    async () => {
+      const cohort = unallocatedCohort();
+      const row = await prisma.subscription.findFirst({
+        where: {
+          id: subscriptionId,
+          status: AppointmentStatus.PENDING,
+          ...cohort,
+        },
+        select: UNALLOCATED_SELECT,
+      });
+      const expired = row ? await expireOneUnallocated(row, cohort) : false;
+      const history = expired
+        ? null
+        : await prisma.bookingStatusHistory.findFirst({
+            where: {
+              entity: "SUBSCRIPTION",
+              entityId: subscriptionId,
+              reason: "UNALLOCATED_48H",
+              toStatus: AppointmentStatus.EXPIRED,
+            },
+            select: { id: true },
+          });
+      if (!expired && !history) {
+        return { expired: false, issued: 0, failures: 0, errors: [] };
+      }
+      const refunds = await refundUnallocatedPlans([subscriptionId]);
+      return {
+        expired,
+        issued: refunds.issued,
+        failures: refunds.failures,
+        errors: refunds.failureMsgs,
+      };
+    },
+  );
+}
+
 /**
  * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
  * ago) with no live session and no live proposal expires with reason
@@ -827,24 +925,11 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
   errors: string[];
 }> {
   const errors: string[] = [];
-  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
-  const cohort = {
-    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
-  } satisfies Prisma.SubscriptionWhereInput;
+  const cohort = unallocatedCohort();
   try {
     const stale = await prisma.subscription.findMany({
       where: { status: AppointmentStatus.PENDING, ...cohort },
-      select: {
-        ...EXPIRY_NOTICE_SELECT,
-        subscriptionPlan: {
-          select: {
-            title: true,
-            consultantProfile: {
-              select: { id: true, user: { select: { id: true, name: true } } },
-            },
-          },
-        },
-      },
+      select: UNALLOCATED_SELECT,
       orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
     });
@@ -852,21 +937,8 @@ async function expireUnallocatedPaidSubscriptions(): Promise<{
 
     const expiredIds: string[] = [];
     for (const subscription of stale) {
-      try {
-        await prisma.$transaction(async (tx) => {
-          await transitionSubscriptionRequest(tx, {
-            where: { id: subscription.id, ...cohort },
-            to: AppointmentStatus.EXPIRED,
-            fromIn: [AppointmentStatus.PENDING],
-            actorUserId: null,
-            reason: "UNALLOCATED_48H",
-          });
-          // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
-          await stageUnallocatedRefundBell(tx, subscription);
-        });
+      if (await expireOneUnallocated(subscription, cohort)) {
         expiredIds.push(subscription.id);
-      } catch (error) {
-        if (!(error instanceof IllegalTransitionError)) throw error;
       }
     }
 
