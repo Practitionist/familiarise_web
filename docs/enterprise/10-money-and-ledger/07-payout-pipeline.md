@@ -201,7 +201,7 @@ The reconciler's age window is `48h–30d`: it gives webhooks 48 hours to land b
 
 ## 6. `OrganizationPayoutAccount` and payment attribution
 
-`PUT /api/organizations/[orgId]/payout-account` (OWNER) creates or replaces the account row. `accountNumberEncrypted` is AES-GCM at rest, with only `accountNumberLast4` held in plaintext for display; the row also holds `razorpayContactId` and `razorpayFundAccountId`. Both `getOrgPayoutEligibility` and `createOrgPayoutBatch` refuse any account whose `OrgPayoutAccountStatus` is not `VERIFIED`, and `submitOrgPayoutToGateway` additionally refuses to submit when no `razorpayFundAccountId` is present.
+`PUT /api/organizations/[orgId]/payout-account` (OWNER) creates or replaces the account row. The full account number is forwarded to RazorpayX and never stored (#1771 row 7): `accountNumberEncrypted` is written empty until the #1729 reset drops the column, and only `accountNumberLast4` is kept for display; the row also holds `razorpayContactId` and `razorpayFundAccountId`. Both `getOrgPayoutEligibility` and `createOrgPayoutBatch` refuse any account whose `OrgPayoutAccountStatus` is not `VERIFIED`, and `submitOrgPayoutToGateway` additionally refuses to submit when no `razorpayFundAccountId` is present.
 
 `Payment.organizationId` is the **sponsoring** org; the **hosting** org is reached via `OrganizationEarnings.paymentId`. They coincide when a HYBRID org sponsors its own expert and are independent otherwise. Post-A3, one payment can carry multiple `OrganizationEarnings` rows (one per collaborating HOST org) — see [booking → earnings §4](05-booking-to-earnings.md).
 

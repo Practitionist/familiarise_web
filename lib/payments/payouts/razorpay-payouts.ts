@@ -468,6 +468,16 @@ export class RazorpayPayoutsService {
     });
   }
 
+  /**
+   * #1771 row 5 — off-boarding deactivates the contact; RazorpayX keeps the
+   * record under its own retention, and `updateContact` cannot send `active`.
+   */
+  async deactivateContact(contactId: string): Promise<Contact> {
+    return this.apiRequest<Contact>("PATCH", `/contacts/${contactId}`, {
+      active: false,
+    });
+  }
+
   // ============================================
   // Fund Accounts API
   // ============================================
@@ -505,6 +515,18 @@ export class RazorpayPayoutsService {
     return this.apiRequest<FundAccount>(
       "GET",
       `/fund_accounts/${fundAccountId}`,
+    );
+  }
+
+  /**
+   * #1771 row 5 — the only off-boarding step for bank data: the account number
+   * lives at RazorpayX, and deactivation stops any further payout to it.
+   */
+  async deactivateFundAccount(fundAccountId: string): Promise<FundAccount> {
+    return this.apiRequest<FundAccount>(
+      "PATCH",
+      `/fund_accounts/${fundAccountId}`,
+      { active: false },
     );
   }
 

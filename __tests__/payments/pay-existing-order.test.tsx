@@ -20,6 +20,9 @@ jest.mock("../../app/checkout/plans/utils", () => ({
 jest.mock("../../hooks/use-toast", () => ({
   useToast: () => ({ toast: jest.fn() }),
 }));
+jest.mock("../../lib/auth-client", () => ({
+  useSession: () => ({ data: null }),
+}));
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";

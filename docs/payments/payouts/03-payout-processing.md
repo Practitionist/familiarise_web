@@ -187,6 +187,26 @@ sequenceDiagram
 
 ---
 
+## Instant payout (#1771 row 6)
+
+An expert can be paid their READY earnings at once, free and at most once per IST calendar day, with the "Get paid now" button on the Available tile of the Earnings page. The platform absorbs the RazorpayX transfer fee, so an instant payout carries no fee and no GST line, and it pays only READY earnings, never PENDING or HELD ones.
+
+`createInstantPayout` in `payout-service.ts` answers every anticipated refusal as a typed `InstantPayoutError` (a `Refusal`), which the table below lists.
+
+| Code                    | Status | When                                                                               |
+| ----------------------- | ------ | ---------------------------------------------------------------------------------- |
+| `PAYOUTS_DISABLED`      | 503    | `ENABLE_LIVE_PAYOUTS` is off.                                                      |
+| `NOTHING_AVAILABLE`     | 409    | There are no READY earnings.                                                       |
+| `PAYOUT_NOT_ELIGIBLE`   | 409    | `checkPayoutEligibility` names a reason, which the response carries as `reason`.   |
+| `PAYOUT_BUSY`           | 409    | The Monday batch holds the batch lock ("A payout run is in progress — try again"). |
+| `INSTANT_ALREADY_TODAY` | 409    | Today's instant payout already exists.                                             |
+
+The instant payout takes the Monday batch's own Redis lock and mints through the same per-consultant internals (`mintConsultantPayout`), so the READY-to-BATCHED compare-and-set with its count check decides which of the two a READY row joins. Its idempotency key is `instant_<consultantProfileId>_<YYYYMMDD>` on the IST date, and the unique index on `ConsultantPayout.idempotencyKey` is what enforces once a day; the RazorpayX header is folded to 36 characters by `boundPayoutIdempotencyKey`. The row carries `kind: 'INSTANT'`, where a null `kind` means the Monday batch. A payout at or below `INSTANT_PAYOUT_AUTO_APPROVE_PAISE` (₹25,000 by default, overridable by environment) is approved and disbursed at once through `processPayoutById`, which runs the `processSinglePayout` core under the processing lock with `assertPayoutBalance` on that one amount, so the per-payout TDS path reads the financial-year running total serially. A larger payout is created PENDING and joins the admin approval queue, and the response says `awaitingApproval: true`. The mode is IMPS or UPI through `determinePayoutMode`.
+
+The routes are `POST /api/consultant/payouts/instant` and `GET /api/consultant/payouts/instant/preview`, both session-scoped to the expert's own profile and answered with `Cache-Control: no-store`; the POST is rate-limited by `moneyOpsLimiter` and refused in DEGRADED mode. The preview returns the READY total, a TDS estimate at the 194-O rate, the net amount, the label "Free · once a day" and `nextAllowedAt`, which is the next IST midnight once today's instant payout has been used.
+
+---
+
 ## Payout Processing
 
 The `process-payouts.ts` script runs **every Monday at 2:30 AM IST** (Monday 9:00 PM UTC).
@@ -317,6 +337,8 @@ sequenceDiagram
 
 > **Idempotency (Mar 2026):** `handlePayoutWebhook` now uses atomic `updateMany` with a `status: { notIn: [COMPLETED, CANCELLED] }` guard to prevent double-applying revenue on duplicate webhooks. If the payout has already reached a terminal state, the duplicate webhook is safely ignored.
 
+An unknown provider status never downgrades a payout (R-5). The RazorpayX and Stripe webhook mappers in `app/api/webhooks/utils.ts` and the switch in `handlePayoutWebhook` all keep the payout's current status when they meet a status they do not recognise, and `reportUnknownPayoutStatus` leaves a Sentry breadcrumb and a WARN `PAYOUT` system event so the new status is noticed.
+
 ### Webhook Events
 
 | Provider  | Event               | Our Action          |
@@ -356,6 +378,8 @@ const idempotencyKey = `payout_${payoutId}`;
 // RazorpayX: X-Payout-Idempotency header (lib/payments/payouts/razorpay-payouts.ts:328)
 // Stripe: Idempotency-Key header
 ```
+
+An instant payout's row key is `instant_<consultantProfileId>_<YYYYMMDD>` (IST), and the Monday batch's is `payout_<consultantProfileId>_<batchId>`; both are folded into RazorpayX's 36-character limit at the header.
 
 > **Note (#771 P1-6):** The key is intentionally deterministic (`payout_<id>`). Using `Date.now()` would generate a new key on every retry — defeating RazorpayX's duplicate-suppression for that `payoutId` and potentially double-disbursing.
 

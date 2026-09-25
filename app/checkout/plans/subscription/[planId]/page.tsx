@@ -24,6 +24,7 @@ import {
 import type { AppliedDiscount } from "@/types/checkout";
 import { OrgPayerSelector } from "@/app/checkout/components/OrgPayerSelector";
 import { FxEstimateNote } from "@/app/checkout/components/FxEstimateNote";
+import { EmiHint } from "@/app/checkout/components/CheckoutFlags";
 import {
   BillingStateSelect,
   useBillingState,
@@ -843,6 +844,10 @@ export default function SubscriptionCheckoutPage({
                 full.
               </p>
               <FxEstimateNote
+                totalPaise={pricing.total}
+                organizationId={selectedOrganizationId}
+              />
+              <EmiHint
                 totalPaise={pricing.total}
                 organizationId={selectedOrganizationId}
               />

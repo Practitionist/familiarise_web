@@ -186,3 +186,29 @@ export const ENABLE_BETTERSTACK_TELEMETRY =
  */
 export const ENABLE_DUNNING_SUSPEND =
   process.env.ENABLE_DUNNING_SUSPEND === "true";
+
+/**
+ * Saved cards at checkout (#1771 row 1). When ON, a personal Razorpay
+ * checkout (the four plan pages and the recording purchase) mints its order
+ * against the buyer's Razorpay Customer and opens Checkout with
+ * `customer_id` and `remember_customer`, so Razorpay shows its own RBI
+ * tokenisation consent box and stores the card token. Organisation wallet,
+ * invoice and overage checkouts never pass a customer.
+ *
+ * Keep it OFF until Razorpay has enabled tokenisation on the account, which
+ * they do on request. When OFF, no Customer is created and no order or
+ * Checkout sheet carries a `customer_id`.
+ */
+export const ENABLE_SAVED_CARDS = process.env.ENABLE_SAVED_CARDS === "true";
+
+/**
+ * Bank EMI at checkout (#1780 row 1). EMI is enabled account-wide by Razorpay,
+ * and the merchant receives the full amount while the buyer's bank carries the
+ * instalments, so `Payment.amount` is unchanged either way.
+ *
+ * When OFF (the default), the four plan checkouts hide Razorpay's EMI block.
+ * When ON, the block shows and the order summary adds "or pay in instalments
+ * with your bank" under a total of at least `EMI_MIN_PAISE`. Server-only: the
+ * checkout layout passes it to the client through `CheckoutFlagsProvider`.
+ */
+export const ENABLE_CHECKOUT_EMI = process.env.ENABLE_CHECKOUT_EMI === "true";

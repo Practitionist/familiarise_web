@@ -85,13 +85,13 @@ describe("deriveEarningPresentation — every EarningStatus lands in one bucket"
     expect(Object.values(EarningStatus)).toHaveLength(7);
   });
 
-  it("a dispute hold names the dispute; a null hold and a matured hold read honestly", () => {
-    expect(
-      deriveEarningPresentation(
-        earning("HELD", { preDisputeStatus: "READY" }),
-        LIVE,
-      ).line,
-    ).toMatch(/dispute/);
+  it("a dispute hold reads plainly and stays out of Available; a null hold and a matured hold read honestly", () => {
+    const held = deriveEarningPresentation(
+      earning("HELD", { preDisputeStatus: "READY" }),
+      LIVE,
+    );
+    expect(held.line).toBe("On hold — payment under review");
+    expect(held.bucket).toBe("PENDING");
     expect(
       deriveEarningPresentation(earning("PENDING", { holdUntil: null }), LIVE)
         .line,
@@ -158,11 +158,11 @@ describe("nextPayoutCopy and the tile sums", () => {
       "Payouts begin at launch — your balance is safe with us",
     );
     expect(nextPayoutCopy(NOW, true)).toBe(
-      "Paid every Monday · next: Mon 21 Sep",
+      "Paid every Monday, or get paid now once a day · next: Mon 21 Sep",
     );
     // A Monday after 20:00 UTC rolls to the following week.
     expect(nextPayoutCopy(new Date("2026-09-21T20:00:01Z"), true)).toBe(
-      "Paid every Monday · next: Mon 28 Sep",
+      "Paid every Monday, or get paid now once a day · next: Mon 28 Sep",
     );
   });
 

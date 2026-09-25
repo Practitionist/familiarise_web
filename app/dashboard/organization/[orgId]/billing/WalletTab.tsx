@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "@/app/checkout/plans/utils";
 import { useSession } from "@/lib/auth-client";
 import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
 import { DashboardGrid } from "@/components/dashboard/PageScaffold";
 import { StatCard } from "@/components/dashboard/StatCard";
 import { Button } from "@/components/ui/button";
@@ -113,14 +114,16 @@ const TOPUP_POLL_INTERVAL_MS = 1000;
 const TOPUP_POLL_MAX_ATTEMPTS = 20;
 
 type TopUpMutationResult =
-  | { result: TopUpInitiateResponse; outcome: "confirmed"; confirmed: TopUpStatus }
+  | {
+      result: TopUpInitiateResponse;
+      outcome: "confirmed";
+      confirmed: TopUpStatus;
+    }
   | { result: TopUpInitiateResponse; outcome: "pending"; confirmed: null }
   | { result: TopUpInitiateResponse; outcome: "not_paid"; confirmed: null };
 
 async function fetchWallet(orgId: string): Promise<WalletFetchResult> {
-  const res = await fetch(
-    `/api/organizations/${orgId}/billing-account/wallet`,
-  );
+  const res = await fetch(`/api/organizations/${orgId}/billing-account/wallet`);
   return walletFetchResultSchema.parse(await res.json());
 }
 
@@ -164,7 +167,9 @@ async function patchBalanceAlerts(
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const parsedError = apiErrorSchema.safeParse(await res.json().catch(() => null));
+    const parsedError = apiErrorSchema.safeParse(
+      await res.json().catch(() => null),
+    );
     throw new Error(
       parsedError.success
         ? (parsedError.data.error ?? "Failed to save balance alerts")
@@ -254,23 +259,25 @@ export function WalletTab({
         );
       }
       const paid = await new Promise<boolean>((resolve) => {
-        const rzp = new window.Razorpay({
-          key: result.keyId,
-          amount: result.amountPaise,
-          currency: result.currency,
-          name: "Familiarise",
-          description: "Wallet top-up",
-          order_id: result.razorpayOrderId,
-          prefill: {
-            ...(session?.user?.name ? { name: session.user.name } : {}),
-            ...(session?.user?.email ? { email: session.user.email } : {}),
-            contact,
-          },
-          handler: () => {
-            resolve(true);
-          },
-          theme: { color: "#2563EB" },
-        });
+        const rzp = new window.Razorpay(
+          buildCheckoutOptions({
+            keyId: result.keyId,
+            amount: result.amountPaise,
+            currency: result.currency,
+            name: "Familiarise",
+            description: "Wallet top-up",
+            orderId: result.razorpayOrderId,
+            prefill: {
+              ...(session?.user?.name ? { name: session.user.name } : {}),
+              ...(session?.user?.email ? { email: session.user.email } : {}),
+              contact,
+            },
+            handler: () => {
+              resolve(true);
+            },
+            theme: { color: "#2563EB" },
+          }),
+        );
         rzp.on("payment.failed", () => {
           toast({
             title: "Payment failed",
@@ -335,10 +342,14 @@ export function WalletTab({
   const alertsMutation = useMutation({
     mutationFn: async () => {
       const trimmed = minBalanceMajor.trim();
-      const parsed = trimmed === "" ? null : Math.round(parseFloat(trimmed) * 100);
+      const parsed =
+        trimmed === "" ? null : Math.round(Number.parseFloat(trimmed) * 100);
       // Toggle off (or a cleared field) clears the floor; toggle on needs a
       // valid amount so the cron has a threshold to compare against.
-      if (alertsEnabled && (parsed == null || parsed < 0 || Number.isNaN(parsed))) {
+      if (
+        alertsEnabled &&
+        (parsed == null || parsed < 0 || Number.isNaN(parsed))
+      ) {
         throw new Error("Set a valid minimum balance to enable alerts.");
       }
       await patchBalanceAlerts(orgId, {
@@ -419,7 +430,8 @@ export function WalletTab({
               {walletError.error}
               {walletError.currentFundingSource && (
                 <>
-                  {" "}Current funding source:{" "}
+                  {" "}
+                  Current funding source:{" "}
                   <code>{walletError.currentFundingSource}</code>. Wallets only
                   apply to <code>WALLET</code>-funded organizations.
                 </>
@@ -443,7 +455,9 @@ export function WalletTab({
       ) : (
         <>
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-foreground">Wallet balance</h3>
+            <h3 className="text-sm font-medium text-foreground">
+              Wallet balance
+            </h3>
             {can("billing.manage") && (
               <div className="flex flex-col items-end gap-1">
                 <Button
@@ -518,7 +532,9 @@ export function WalletTab({
                     step="100"
                     value={minBalanceMajor}
                     disabled={
-                      !canEditAlerts || !alertsEnabled || alertsMutation.isPending
+                      !canEditAlerts ||
+                      !alertsEnabled ||
+                      alertsMutation.isPending
                     }
                     onChange={(e) => setMinBalanceMajor(e.target.value)}
                   />
@@ -552,8 +568,8 @@ export function WalletTab({
                   <span className="font-medium text-foreground">
                     Automatic top-up — coming soon.
                   </span>{" "}
-                  Today we email finance to top up the wallet manually; auto-debit
-                  arrives with RBI-compliant payment mandates.
+                  Today we email finance to top up the wallet manually;
+                  auto-debit arrives with RBI-compliant payment mandates.
                 </div>
               </CardContent>
             </Card>

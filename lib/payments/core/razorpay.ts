@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/nextjs";
 import { reportSentryError } from "@/lib/observability/report";
 import Razorpay from "razorpay";
+import { createHash } from "node:crypto";
 import {
   PaymentIntentParams,
   PaymentIntent,
@@ -11,6 +12,8 @@ import {
 } from "./types";
 import { mapGatewayRefundStatus } from "@/lib/payments/refund-status";
 import { assertInrSettlement } from "@/lib/payments/validation/currency-guards";
+import { normalizeRazorpayContact } from "@/lib/payments/razorpay-prefill";
+import { isUniqueViolation } from "@/lib/db/pg-errors";
 
 // ============================================================================
 // Razorpay Client Initialization
@@ -112,16 +115,13 @@ const SDK_CALL_TIMEOUT_MS = 30_000;
 export function withRazorpaySdkTimeout<T>(
   op: string,
   call: () => Promise<T>,
+  timeoutMs: number = SDK_CALL_TIMEOUT_MS,
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
       () =>
-        reject(
-          new Error(
-            `Razorpay SDK ${op} timed out after ${SDK_CALL_TIMEOUT_MS}ms`,
-          ),
-        ),
-      SDK_CALL_TIMEOUT_MS,
+        reject(new Error(`Razorpay SDK ${op} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
     );
     try {
       call().then(
@@ -161,6 +161,7 @@ export async function createRazorpayOrder({
   amount,
   currency,
   metadata,
+  customerId,
 }: PaymentIntentParams): Promise<PaymentIntent> {
   // #1396 — first statement in the function, ahead of the client lookup, so a
   // non-INR currency cannot reach the SDK even on a misconfigured instance.
@@ -205,6 +206,8 @@ export async function createRazorpayOrder({
             // PM-11 — Date.now() collides for two orders in the same ms; the uuid
             // suffix keeps the receipt unique so Razorpay doesn't reject the dupe.
             receipt: `receipt_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`,
+            // #1771 row 1 — only personal checkouts with saved cards on pass one.
+            ...(customerId ? { customer_id: customerId } : {}),
           }),
         ),
     );
@@ -215,6 +218,7 @@ export async function createRazorpayOrder({
       amount: Number(order.amount), // already in smallest currency unit
       currency: order.currency,
       status: order.status,
+      ...(customerId ? { customerId } : {}),
     };
   } catch (error) {
     console.error("Razorpay order creation failed:", error);
@@ -225,6 +229,139 @@ export async function createRazorpayOrder({
     });
     throw handleRazorpayError(error);
   }
+}
+
+// ============================================================================
+// Customers (saved cards, #1771 row 1)
+// ============================================================================
+
+const CUSTOMER_CREATE_TIMEOUT_MS = 8_000;
+
+/**
+ * Returns the buyer's Razorpay Customer id, creating the Customer once.
+ *
+ * `fail_existing: 0` makes Razorpay return the existing Customer for the same
+ * email and contact, so a lost column write re-links instead of duplicating.
+ * Prisma is imported lazily so this module's load graph stays gateway-only.
+ */
+export async function ensureRazorpayCustomer(userId: string): Promise<string> {
+  const { default: prisma } = await import("@/lib/prisma");
+  const readCustomerId = async () =>
+    (
+      await prisma.user.findUnique({
+        where: { id: userId },
+        select: { razorpayCustomerId: true },
+      })
+    )?.razorpayCustomerId ?? null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { razorpayCustomerId: true, name: true, email: true, phone: true },
+  });
+  if (!user) {
+    throw new PaymentError(
+      "Cannot create a Razorpay customer for an unknown user",
+      "USER_NOT_FOUND",
+      "RAZORPAY",
+    );
+  }
+  if (user.razorpayCustomerId) return user.razorpayCustomerId;
+
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - check RAZORPAY_KEY_ID and RAZORPAY_SECRET environment variables",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const contact = normalizeRazorpayContact(user.phone);
+  const name = user.name.trim().slice(0, 50);
+  // Checkout calls this under its slot lock, so a slow Customer API must give up early.
+  const customer = await withRazorpaySdkTimeout(
+    "customers.create",
+    () =>
+      razorpayClient.customers.create({
+        ...(name.length >= 3 ? { name } : {}),
+        email: user.email,
+        ...(contact ? { contact } : {}),
+        fail_existing: 0,
+      }),
+    CUSTOMER_CREATE_TIMEOUT_MS,
+  );
+
+  try {
+    // CAS on the null column: a concurrent caller got the same Customer back.
+    await prisma.user.updateMany({
+      where: { id: userId, razorpayCustomerId: null },
+      data: { razorpayCustomerId: customer.id },
+    });
+  } catch (error) {
+    // P2002 — another row already holds this Customer; never share its cards.
+    if (!isUniqueViolation(error)) throw error;
+  }
+  const stored = await readCustomerId();
+  if (!stored) {
+    throw new PaymentError(
+      "This Razorpay customer is already linked to another account",
+      "RAZORPAY_CUSTOMER_CONFLICT",
+      "RAZORPAY",
+    );
+  }
+  return stored;
+}
+
+/**
+ * #1771 row 5 — erasure deletes every saved-card token on the Customer and
+ * returns how many it removed. Throws a typed error when the client is absent.
+ */
+export async function deleteRazorpayCustomerTokens(
+  customerId: string,
+): Promise<number> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - cannot delete saved-card tokens",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const tokens = await withRazorpaySdkTimeout("customers.fetchTokens", () =>
+    razorpayClient.customers.fetchTokens(customerId),
+  );
+  for (const token of tokens.items) {
+    await withRazorpaySdkTimeout("customers.deleteToken", () =>
+      razorpayClient.customers.deleteToken(customerId, token.id),
+    );
+  }
+  return tokens.items.length;
+}
+
+/**
+ * Owner decision 2026-09-25 (#1771 row 5) — Razorpay Customers cannot be
+ * deleted, so erasure overwrites the name and email with placeholders. The
+ * contact is left as it is: the Edit Customer API documents no way to clear it
+ * and rejects a contact shorter than eight digits.
+ */
+export async function eraseRazorpayCustomerPii(
+  customerId: string,
+  userId: string,
+): Promise<void> {
+  const razorpayClient = getRazorpayClient();
+  if (!razorpayClient) {
+    throw new PaymentError(
+      "Razorpay client not initialized - cannot erase the customer's details",
+      "RAZORPAY_NOT_INITIALIZED",
+      "RAZORPAY",
+    );
+  }
+  const hash = createHash("sha256").update(userId).digest("hex").slice(0, 16);
+  await withRazorpaySdkTimeout("customers.edit", () =>
+    razorpayClient.customers.edit(customerId, {
+      name: "Erased user",
+      email: `erased+${hash}@familiarisenow.com`,
+    }),
+  );
 }
 
 /**

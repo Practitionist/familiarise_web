@@ -6,6 +6,8 @@ import { useToast } from "@/hooks/use-toast";
 import { loadScript } from "../plans/utils";
 import { CheckoutInput } from "@/schemas/checkout";
 import { useState } from "react";
+import { buildCheckoutOptions } from "@/lib/payments/client/checkout-options";
+import { useCheckoutFlags } from "./CheckoutFlags";
 import {
   busyRetryToast,
   checkoutNeedsGateway,
@@ -109,6 +111,7 @@ interface GatewayOrder {
   id: string;
   amount: number;
   currency: string;
+  customerId?: string;
 }
 
 export default function RazorpayCheckout({
@@ -124,6 +127,7 @@ export default function RazorpayCheckout({
   onBeforeCheckout,
 }: RazorpayCheckoutProps) {
   const { toast } = useToast();
+  const { emiEnabled } = useCheckoutFlags();
   const [isProcessing, setIsProcessing] = useState(false);
   // #828 — stable per-mount; the server dedupes retries on this key.
   // useState's lazy initializer runs once, unlike a useRef(arg) expression
@@ -214,6 +218,8 @@ export default function RazorpayCheckout({
       id: data.paymentIntent.id,
       amount: data.paymentIntent.amount,
       currency: data.paymentIntent.currency,
+      // #1771 row 1 — the server echoes a Customer only while saved cards are on.
+      customerId: data.paymentIntent.customerId,
     };
   };
 
@@ -254,13 +260,16 @@ export default function RazorpayCheckout({
       return false;
     }
 
-    const options = {
-      key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+    const options = buildCheckoutOptions({
+      keyId: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
       amount: order.amount,
       currency: order.currency,
       name: "Familiarise",
       description: description || "Service Payment",
-      order_id: order.id,
+      orderId: order.id,
+      customerId: order.customerId,
+      // #1780 row 1 — ENABLE_CHECKOUT_EMI off hides Razorpay's EMI block.
+      hideEmi: !emiEnabled,
       handler: async function (response: RazorpayPaymentResponse) {
         // H2 FIX: Verify Razorpay signature server-side before signaling success
         try {
@@ -296,29 +305,26 @@ export default function RazorpayCheckout({
         }
         onPaymentSuccess(response);
       },
-      ...(userName || userEmail || userPhone
-        ? {
-            prefill: {
+      prefill:
+        userName || userEmail || userPhone
+          ? {
               ...(userName && { name: userName }),
               ...(userEmail && { email: userEmail }),
               ...(userPhone && { contact: userPhone }),
-            },
-          }
-        : {}),
+            }
+          : undefined,
       theme: {
         color: "#2563EB", // Familiarise brand blue
       },
-      modal: {
-        ondismiss: () => {
-          setIsProcessing(false);
-          toast({
-            title: "Payment not completed",
-            description:
-              "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
-          });
-        },
+      onDismiss: () => {
+        setIsProcessing(false);
+        toast({
+          title: "Payment not completed",
+          description:
+            "You closed the payment window before finishing. Your booking is still held — you can retry whenever you're ready.",
+        });
       },
-    };
+    });
 
     const rzp = new window.Razorpay(options);
     rzp.on("payment.failed", function (response: RazorpayFailedResponse) {

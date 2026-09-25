@@ -118,6 +118,7 @@ import {
 import { checkConsent } from "@/lib/compliance/dpdp";
 import { PURPOSE_CODES } from "@/lib/compliance/purpose-codes";
 import { ENABLE_DUNNING_SUSPEND } from "@/lib/feature-flags";
+import { savedCardCustomerId } from "@/lib/payments/core/saved-card-customer";
 import {
   notifyOrgProgramExhausted,
   notifyOrgProgramCapNear,
@@ -737,6 +738,7 @@ export class PaymentIntentManager {
     };
     paymentGateway: PaymentGateway;
     isMockPayment?: boolean;
+    customerId?: string;
   }) {
     try {
       // Imported at call time so the checkout bundle does not evaluate the
@@ -3401,6 +3403,17 @@ export async function handleCheckout(
     // Get plan data for consultant ID (needed for lock acquisition)
     const planData = await getPlanDataForLock(validatedData);
 
+    // #1771 row 1 — before the slot lock, so a slow Customer API holds nothing; a
+    // failure or timeout yields undefined (no saved-card offer), never a failed checkout.
+    const savedCardCustomer =
+      amount > 0 && (!fundingSource || fundingSource === "PERSONAL")
+        ? await savedCardCustomerId(
+            userId,
+            validatedData.paymentGateway,
+            isMockPayment,
+          )
+        : undefined;
+
     // STEP 2: ACQUIRE DISTRIBUTED LOCK (prevents race conditions)
     // #898 follow-up — also serialize on the consultee so the SAME person can't
     // book two DIFFERENT consultants at overlapping times via concurrent direct
@@ -3639,6 +3652,7 @@ export async function handleCheckout(
           }),
           paymentGateway: validatedData.paymentGateway,
           isMockPayment,
+          customerId: savedCardCustomer,
         });
       } catch (paymentError) {
         console.error("Payment intent creation failed:", paymentError);

@@ -219,6 +219,7 @@ const WRITE_BLOCKED_IN_DEGRADED = [
   "/api/collaborations",
   "/api/payments/disputes", // Block dispute handling mutations
   "/api/admin/payouts", // Block admin payout mutations
+  "/api/consultant/payouts/instant", // #1771 row 6 — expert-initiated payout
   // #1598 P1-W02a — the admin refund front door, TDS filing marks and the
   // wallet unfreeze are money writes too; GETs still pass via READ_ONLY_METHODS.
   "/api/admin/refunds",

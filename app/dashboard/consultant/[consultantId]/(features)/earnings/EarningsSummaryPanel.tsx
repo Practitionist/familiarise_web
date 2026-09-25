@@ -92,6 +92,7 @@ export function EarningsSummaryPanel({
       consultantId={consultantId}
       data={data}
       isStale={isPlaceholderData}
+      isOwnDashboard={isOwnDashboard}
     />
   );
 }
