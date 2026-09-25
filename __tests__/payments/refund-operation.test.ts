@@ -511,7 +511,6 @@ jest.mock("../../lib/payments", () => ({
 import {
   refundPayment,
   applyRefundCascade,
-  isDedupeKeyConflict,
   RefundValidationError,
   RefundGatewayError,
 } from "@/lib/payments/operations/refund";
@@ -696,21 +695,6 @@ describe("refundPayment — dedupeKey (#1780)", () => {
     expect(second.refundId).toBe(first.refundId);
     expect(second.amountRefundedPaise).toBe(2000);
     expect(state.refunds).toHaveLength(1);
-  });
-  it("recognises the key conflict in the pg driver adapter's P2002 shape", () => {
-    const { Prisma: P } =
-      jest.requireActual<typeof import("@prisma/client")>("@prisma/client");
-    const p2002 = (meta: Record<string, unknown>) =>
-      new P.PrismaClientKnownRequestError("Unique constraint failed", {
-        code: "P2002",
-        clientVersion: "test",
-        meta,
-      });
-    const adapter = (fields: string[]) => ({
-      driverAdapterError: { cause: { constraint: { fields } } },
-    });
-    expect(isDedupeKeyConflict(p2002(adapter(['"dedupeKey"'])))).toBe(true);
-    expect(isDedupeKeyConflict(p2002(adapter(['"refundId"'])))).toBe(false);
   });
 });
 

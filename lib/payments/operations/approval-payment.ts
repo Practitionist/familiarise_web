@@ -25,7 +25,6 @@ import {
   Currency,
   PaymentGateway,
   PaymentStatus,
-  Prisma,
   TrialStatus,
 } from "@prisma/client";
 import {
@@ -33,6 +32,7 @@ import {
   unlockApproval,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 // ============================================================================
 // Type Definitions
@@ -443,11 +443,7 @@ export async function createApprovalPaymentIntent(
     } catch (err) {
       // Only the [userId, appointmentId] pair is the double-accept race; any
       // other unique is a real fault and keeps its Prisma error.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002" &&
-        String(err.meta?.target ?? "").includes("appointmentId")
-      ) {
+      if (isUniqueViolationOn(err, "appointmentId")) {
         // The gateway order above is already minted and payable; give a late
         // capture on it a row to refund against (#1695) before refusing. If
         // that row could not be written the conflict is not safe to answer as

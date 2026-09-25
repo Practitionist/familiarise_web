@@ -64,6 +64,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import {
   isUserEnrolled,
   isUserRegisteredForWebinar,
@@ -4488,10 +4489,10 @@ export async function handleCheckout(
       const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
       // #1583 C-P1-04 — the loser of two same-key checkouts; the route
       // replays the winner, so this is a modelled race and must not be rewrapped.
-      const isIdempotencyKeyCollision =
-        dbError instanceof Prisma.PrismaClientKnownRequestError &&
-        dbError.code === "P2002" &&
-        String(dbError.meta?.target ?? "").includes("clientIdempotencyKey");
+      const isIdempotencyKeyCollision = isUniqueViolationOn(
+        dbError,
+        "clientIdempotencyKey",
+      );
       const isModelledOutcome =
         isIdempotencyKeyCollision ||
         dbError instanceof WalletFrozenError ||
@@ -4647,10 +4648,7 @@ export async function handleCheckout(
       (error as { code?: unknown } | null)?.code,
     );
     // #1583 C-P1-04 — the same-key collision the inner catch let through.
-    const isKeyCollision =
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      String(error.meta?.target ?? "").includes("clientIdempotencyKey");
+    const isKeyCollision = isUniqueViolationOn(error, "clientIdempotencyKey");
     reportSentryError(error, {
       subsystem: "payments",
       expected:

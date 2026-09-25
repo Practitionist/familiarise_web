@@ -84,6 +84,7 @@ import {
   refundableBalancePaise,
 } from "@/lib/payments/refundable-balance";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
 
 // ============================================================================
@@ -158,29 +159,9 @@ export async function findDedupedRefund(
   };
 }
 
-type UniqueMeta = {
-  target?: unknown;
-  driverAdapterError?: {
-    cause?: { constraint?: { fields?: string[]; index?: string } };
-  };
-};
-
-/**
- * A unique violation on Refund.dedupeKey (P2002). Through the pg driver
- * adapter the columns ride `driverAdapterError`, not `target`.
- */
+/** A unique violation on Refund.dedupeKey, in either Prisma error shape. */
 export function isDedupeKeyConflict(err: unknown): boolean {
-  if (
-    !(err instanceof Prisma.PrismaClientKnownRequestError) ||
-    err.code !== "P2002"
-  ) {
-    return false;
-  }
-  const meta = err.meta as UniqueMeta | undefined;
-  const constraint = meta?.driverAdapterError?.cause?.constraint;
-  return String(
-    meta?.target ?? constraint?.fields ?? constraint?.index ?? "",
-  ).includes("dedupeKey");
+  return isUniqueViolationOn(err, "dedupeKey");
 }
 
 export class RefundValidationError extends Error {
