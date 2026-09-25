@@ -102,7 +102,11 @@ export default function RefundPolicyPage() {
                       <strong>Less than 12 hours before:</strong> No refund
                     </li>
                     <li>
-                      <strong>No-show:</strong> No refund
+                      {/* #1569 B2: learner no-show is forfeited (D7); see 3.5
+                          for the support link and recording that come with it. */}
+                      <strong>No-show:</strong> No refund. If you weren&apos;t
+                      able to join, use the support link on the appointment and
+                      our team can review it.
                     </li>
                   </ul>
                 </div>
@@ -111,10 +115,11 @@ export default function RefundPolicyPage() {
                     <strong>Cancellation by Consultant:</strong>
                   </p>
                   <ul>
-                    <li>Full refund (100%) regardless of timing</li>
                     <li>
-                      Platform may offer a bonus credit as compensation for
-                      inconvenience
+                      {/* #1569 B2: consultation host no-show — full refund,
+                          no free-reschedule promise (D4). */}
+                      Full refund (100%) regardless of timing, including a host
+                      no-show
                     </li>
                   </ul>
                 </div>
@@ -216,7 +221,11 @@ export default function RefundPolicyPage() {
                       refund
                     </li>
                     <li>
-                      <strong>No-show:</strong> No refund
+                      {/* #1569 B2: learner no-show is forfeited (D7); see 3.5
+                          for the support link and recording that come with it. */}
+                      <strong>No-show:</strong> No refund. If you weren&apos;t
+                      able to join, use the support link on the appointment and
+                      our team can review it.
                     </li>
                   </ul>
                 </div>
@@ -261,8 +270,71 @@ export default function RefundPolicyPage() {
                       pro-rated refund for unused portion
                     </li>
                     <li>
-                      If platform experiences prolonged downtime, pro-rated
-                      refund or credit may be issued
+                      If platform experiences prolonged downtime, a pro-rated
+                      refund may be issued
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <h3 className="text-xl font-semibold mt-4 mb-2">
+                3.5 Voided Sessions and Missed-Session Remedies
+              </h3>
+              {/* #1569 B2: the owner-decided void rule (D1) and remedy (D4,
+                  D6, D7), stated once here instead of the per-shape "flags
+                  it after ~2 hours, consultations only" language this section
+                  replaced. Credits are not offered; every remedy below is a
+                  cash refund. */}
+              <div className="space-y-3">
+                <div>
+                  <p>
+                    <strong>When a session is voided:</strong>
+                  </p>
+                  <ul>
+                    <li>
+                      A session is voided when the host is absent, with no
+                      collaborator or co-presenter present in their place, for
+                      at least 15 minutes of the booked time, or for half of it
+                      on sessions shorter than 30 minutes. A learner arriving
+                      late does not void a session.
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <p>
+                    <strong>Remedy by service type:</strong>
+                  </p>
+                  <ul>
+                    <li>
+                      One-on-one consultation: a host no-show or a session cut
+                      short by the host is cancelled with a full, automatic
+                      refund.
+                    </li>
+                    <li>
+                      Live classes and webinars: a voided session is offered as
+                      a free make-up within 14 days; if the make-up isn&apos;t
+                      taken, that session is refunded automatically.
+                    </li>
+                    <li>
+                      Subscription plans: a voided session returns to your
+                      plan&apos;s allowance so you can use it later. Any voided
+                      session still unused when your plan or billing cycle ends
+                      is refunded automatically.
+                    </li>
+                  </ul>
+                </div>
+                <div>
+                  <p>
+                    <strong>Learner no-show:</strong>
+                  </p>
+                  <ul>
+                    <li>
+                      A learner no-show is not refunded. You&apos;ll get a
+                      support link on the appointment if you couldn&apos;t get
+                      in, along with a link to the session recording when your
+                      plan records sessions and a recording exists. Our support
+                      team can review and correct the outcome if it was recorded
+                      incorrectly.
                     </li>
                   </ul>
                 </div>
@@ -284,6 +356,12 @@ export default function RefundPolicyPage() {
                 </li>
                 <li>
                   Consultant cancels or fails to attend the scheduled session
+                </li>
+                <li>
+                  {/* #1569 B2: reference the void rule instead of
+                      re-stating it (see 3.5). */}
+                  A session is voided under the rule in 3.5, and the make-up
+                  offered for it goes unused or is declined
                 </li>
                 <li>
                   Technical issues on our platform prevent service delivery
@@ -480,14 +558,24 @@ export default function RefundPolicyPage() {
               </h3>
               <p>
                 If our platform experiences technical difficulties that prevent
-                service delivery:
+                service delivery, the session is voided under the same rule
+                described in 3.5, and the same make-up-first remedy applies:
               </p>
               <ul>
-                <li>Full refund or free rescheduling option</li>
-                <li>Compensation credit for significant inconvenience</li>
+                {/* #1569 B2: "make-up first, then refund" (D4), reconciled
+                    with 3.5 — no rescheduling promise, no credit. */}
                 <li>
-                  Issue must be reported immediately and verified by our
-                  technical team
+                  We offer a free make-up session within 14 days first; if it
+                  goes unused or you decline it, we refund that session
+                  automatically
+                </li>
+                <li>
+                  For a one-on-one consultation that a platform issue cuts
+                  short, we refund it directly, without a make-up step
+                </li>
+                <li>
+                  Report the issue as soon as you can so our technical team can
+                  verify it
                 </li>
               </ul>
 
