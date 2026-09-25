@@ -203,8 +203,8 @@ export default function ClassCheckoutPage({
     }
   }, [checkoutPlanQuery.error]);
 
-  // #1819 — the batch named by ?eventId= (the batch card's button), else the
-  // first joinable one; its card carries the late-join price.
+  // #1819 — the batch named by ?eventId= (never silently another one), else
+  // the first joinable batch; its card carries the late-join price.
   const batch = useMemo(() => {
     const plan = planData?.data;
     if (!plan) return null;
@@ -212,11 +212,10 @@ export default function ClassCheckoutPage({
       hostUserId: plan.consultantProfile?.userId,
     });
     const wanted = validatedSearchParams?.eventId;
-    return (
-      cards.find((c) => c.classId === wanted && c.canEnrol) ??
-      cards.find((c) => c.canEnrol) ??
-      null
-    );
+    const pick = wanted
+      ? cards.find((c) => c.classId === wanted)
+      : cards.find((c) => c.canEnrol);
+    return pick?.canEnrol ? pick : null;
   }, [planData, validatedSearchParams?.eventId]);
   const availableClassId = batch?.classId ?? null;
   const batchPricePaise =
@@ -444,13 +443,17 @@ export default function ClassCheckoutPage({
         setStaleError(
           "No batch of this class is open for enrolment. Batches may be full, closed to late joiners, cancelled, or completed.",
         );
+      } else if (!batch) {
+        setStaleError(
+          "This batch is no longer open for enrolment. Please go back and choose another batch.",
+        );
       }
     };
 
     checkStaleness();
     const intervalId = setInterval(checkStaleness, 60_000);
     return () => clearInterval(intervalId);
-  }, [planData]);
+  }, [planData, batch]);
 
   if (isLoading) {
     return <CheckoutPlanSkeleton />;
