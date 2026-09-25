@@ -129,14 +129,9 @@ export async function handleSessionEnded(
     const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
-    await prisma.meeting.update({
-      where: { id: meeting.id },
-      data: {
-        endedAt,
-        endedReason: "session_timeout",
-        isRecording: false,
-      },
-    });
+    // CAS on the end we read: a concurrent call.ended must not be overwritten.
+    const stamped = await stampEnd(meeting, endedAt, "session_timeout");
+    if (!stamped) return;
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -233,14 +228,7 @@ export async function handleCallEnded(
     const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
     const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-    await prisma.meeting.update({
-      where: { id: meeting.id },
-      data: {
-        endedAt,
-        endedReason,
-        isRecording: false,
-      },
-    });
+    if (!(await stampEnd(meeting, endedAt, endedReason))) return;
 
     // Calculate session duration if we have a start reference
     const slotStartTime = meeting.occurrence.startsAt;
@@ -295,6 +283,27 @@ function presenceKey(
   userId: string,
 ): string {
   return participant.user_session_id || `${sessionId}:${userId}`;
+}
+
+/**
+ * Stamp the room's end, compare-and-set on the end this event read, so two end
+ * webhooks racing each other cannot overwrite a deliberate end. False when lost.
+ */
+async function stampEnd(
+  meeting: { id: string; endedAt: Date | null },
+  endedAt: Date,
+  endedReason: string,
+): Promise<boolean> {
+  const { count } = await prisma.meeting.updateMany({
+    where: { id: meeting.id, endedAt: meeting.endedAt },
+    data: { endedAt, endedReason, isRecording: false },
+  });
+  if (count === 0) {
+    streamLogger.info("End not stamped — the room's end changed concurrently", {
+      sessionId: meeting.id,
+    });
+  }
+  return count > 0;
 }
 
 /** #1607 — the last end wins; a replayed or older event never moves endedAt backwards. */

@@ -36,9 +36,7 @@ export function SessionAttendance({
     >
       <summary className="cursor-pointer">Who attended</summary>
       {query.isError && <p>Attendance could not be loaded.</p>}
-      {query.data && query.data.seats.length === 0 && (
-        <p>No learners hold this session.</p>
-      )}
+      {query.data?.seats.length === 0 && <p>No learners hold this session.</p>}
       <ul className="mt-1 space-y-0.5">
         {query.data?.seats.map((s) => (
           <li key={s.userId}>

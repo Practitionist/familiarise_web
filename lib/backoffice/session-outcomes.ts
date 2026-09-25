@@ -21,11 +21,11 @@ import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "./ops-refusal-error";
 
-const DECIDED: OccurrenceCompletionStatus[] = [
+const DECIDED = new Set<OccurrenceCompletionStatus>([
   "COMPLETED",
   "UNVERIFIED",
   "VOIDED",
-];
+]);
 
 /** A keyed refund for this occurrence that moved, or is moving, money. */
 async function voidRefundExists(tx: Tx, occurrenceId: string) {
@@ -74,7 +74,7 @@ export async function setSessionOutcome(
     occ.deletedAt ||
     occ.isTentative ||
     occ.endsAt > now ||
-    !DECIDED.includes(occ.completionStatus)
+    !DECIDED.has(occ.completionStatus)
   ) {
     throw new OpsRefusal(
       "SESSION_NOT_DECIDED",
@@ -119,6 +119,19 @@ export async function setSessionOutcome(
     });
     if (count === 0) {
       throw new OpsRefusal("SESSION_MOVED", "This session changed; reload.");
+    }
+    // A relabel moves no money, but a void newly blamed on the host feeds D6's flag.
+    const nowHostAttributed =
+      HOST_ATTRIBUTED_OUTCOMES.includes(args.outcome) &&
+      !(occ.outcome && HOST_ATTRIBUTED_OUTCOMES.includes(occ.outcome));
+    if (to === "VOIDED" && nowHostAttributed && occ.appointment.classId) {
+      await onClassSessionVoided(tx, {
+        appointmentId: occ.appointmentId,
+        occurrenceId: occ.id,
+        startsAt: occ.startsAt,
+        voidedAt: now,
+        hostAttributed: true,
+      });
     }
   } else {
     await transitionOccurrenceCompletion(tx, {

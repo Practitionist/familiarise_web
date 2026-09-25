@@ -37,6 +37,7 @@ import {
   isCompletedOccurrence,
   sessionsTotalOf,
 } from "@/lib/booking/entitlement";
+import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
 import { reportSentryError } from "@/lib/observability/report";
@@ -368,6 +369,22 @@ async function settleSubscriptionVoid(
   if (!sub || !["APPROVED", "SCHEDULED", "COMPLETED"].includes(sub.status)) {
     return true;
   }
+  // The owed set is only stable once every session is decided: a session still
+  // SCHEDULED or parked for ops could yet count as delivered. Retry next tick.
+  const undecided = await prisma.appointmentOccurrence.count({
+    where: {
+      appointmentId: session.appointmentId,
+      OR: [
+        {
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+          isTentative: false,
+          deletedAt: null,
+        },
+        AWAITING_HUMAN,
+      ],
+    },
+  });
+  if (undecided > 0) return false;
   const rows = await prisma.appointmentOccurrence.findMany({
     where: {
       appointmentId: session.appointmentId,

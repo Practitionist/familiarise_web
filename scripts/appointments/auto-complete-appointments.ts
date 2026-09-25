@@ -57,6 +57,7 @@ import {
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   readOutageWindows,
+  type SlotDecision,
 } from "@/lib/booking/session-outcome-sweep";
 import { reportSentryMessage } from "@/lib/observability/report";
 import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
@@ -704,6 +705,48 @@ async function completeTrials(): Promise<{
   return { completed, errors };
 }
 
+type SlotTally = {
+  completed: number;
+  unverified: number;
+  voided: number;
+  deferred: number;
+};
+
+/** Counts one decision; true when it moved the row. */
+function tallyDecision(tally: SlotTally, decision: SlotDecision): boolean {
+  if (decision.kind === "deferred") {
+    tally.deferred++;
+    return false;
+  }
+  if (!decision.moved) return false;
+  if (decision.to === OccurrenceCompletionStatus.COMPLETED) tally.completed++;
+  else if (decision.to === OccurrenceCompletionStatus.VOIDED) tally.voided++;
+  else tally.unverified++;
+  return true;
+}
+
+/**
+ * #1766 — per distinct subscription wrapper, in a fresh transaction: the
+ * consultee's cycle bell, deduped on the cycle so a re-run is quiet.
+ */
+async function settleCycleBells(wrappers: Set<string>): Promise<void> {
+  for (const appointmentId of wrappers) {
+    const staged = await prisma.$transaction((tx) =>
+      settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
+    );
+    for (const row of staged ?? []) {
+      // Best-effort after commit: the relay retries a failed attempt.
+      try {
+        await attemptTrigger(row);
+      } catch (error) {
+        console.error(
+          `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+}
+
 /**
  * #1569 D2 — the one writer of each past session's outcome. Runs BEFORE the
  * parent passes so they read decided rows: presence is classified by
@@ -723,7 +766,12 @@ async function completeIndividualSlots(): Promise<{
   const bufferTime = new Date(
     now.getTime() - COMPLETION_BUFFER_HOURS * 60 * 60 * 1000,
   );
-  const tally = { completed: 0, unverified: 0, voided: 0, deferred: 0 };
+  const tally: SlotTally = {
+    completed: 0,
+    unverified: 0,
+    voided: 0,
+    deferred: 0,
+  };
   let feedGaps = 0;
 
   try {
@@ -740,10 +788,12 @@ async function completeIndividualSlots(): Promise<{
       orderBy: { endsAt: "asc" },
       take: MAX_SLOT_OUTCOMES_PER_RUN,
     });
-    const outages = await readOutageWindows(
-      prisma,
-      cohort[0]?.startsAt ?? bufferTime,
+    // The cohort is ordered by end, so the earliest start is not cohort[0]'s.
+    const earliestStart = cohort.reduce<Date>(
+      (min, slot) => (slot.startsAt < min ? slot.startsAt : min),
+      bufferTime,
     );
+    const outages = await readOutageWindows(prisma, earliestStart);
     const wrappers = new Set<string>();
     for (const slot of cohort) {
       try {
@@ -752,17 +802,9 @@ async function completeIndividualSlots(): Promise<{
           outages,
           onFeedGap: () => feedGaps++,
         });
-        if (decision.kind === "deferred") {
-          tally.deferred++;
-          continue;
+        if (tallyDecision(tally, decision) && slot.appointment.subscriptionId) {
+          wrappers.add(slot.appointmentId);
         }
-        if (!decision.moved) continue;
-        if (decision.to === OccurrenceCompletionStatus.COMPLETED) {
-          tally.completed++;
-        } else if (decision.to === OccurrenceCompletionStatus.VOIDED) {
-          tally.voided++;
-        } else tally.unverified++;
-        if (slot.appointment.subscriptionId) wrappers.add(slot.appointmentId);
       } catch (error) {
         errors.push(
           `Failed to decide session ${slot.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -780,23 +822,7 @@ async function completeIndividualSlots(): Promise<{
         extra: { sessions: feedGaps },
       });
     }
-    // #1766 — per distinct subscription wrapper, in a fresh transaction:
-    // the consultee's cycle bell, deduped on the cycle so a re-run is quiet.
-    for (const appointmentId of wrappers) {
-      const staged = await prisma.$transaction((tx) =>
-        settleSubscriptionCycle(tx, { appointmentId, now: new Date() }),
-      );
-      for (const row of staged ?? []) {
-        // Best-effort after commit: the relay retries a failed attempt.
-        try {
-          await attemptTrigger(row);
-        } catch (error) {
-          console.error(
-            `   ⚠️ Cycle bell attempt failed for ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
-      }
-    }
+    await settleCycleBells(wrappers);
     console.log(
       `   Sessions: ${tally.completed} completed, ${tally.voided} voided, ${tally.unverified} unverified, ${tally.deferred} deferred`,
     );

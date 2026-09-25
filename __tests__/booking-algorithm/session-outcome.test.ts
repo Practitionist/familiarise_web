@@ -10,13 +10,18 @@ const seg = (userId: string, from: number, to: number) => ({
   joinedAt: at(from),
   leftAt: at(to),
 });
-const run = (booked: number, intervals: ReturnType<typeof seg>[]) =>
+const run = (
+  booked: number,
+  intervals: ReturnType<typeof seg>[],
+  meeting = { endedAt: at(booked), endedReason: "session_timeout" },
+  hostUserIds = ["host", "cohost"],
+) =>
   classifySessionOutcome({
     startsAt: at(0),
     endsAt: at(booked),
-    hostUserIds: ["host", "cohost"],
+    hostUserIds,
     intervals,
-    meeting: { endedAt: at(booked), endedReason: "call_ended" },
+    meeting,
     report: null,
     maintenanceWindows: [],
   });
@@ -74,6 +79,15 @@ describe("classifySessionOutcome (#1569 D1)", () => {
     ],
   ])("%s", (_name, booked, intervals, outcome) => {
     expect(run(booked, intervals).outcome).toBe(outcome);
+  });
+
+  it("a host's mid-session End for everyone is CUT_SHORT; no host side on record is INCONCLUSIVE", () => {
+    const together = [seg("host", 0, 30), seg("l", 0, 30)];
+    const hostEnded = { endedAt: at(30), endedReason: "call_ended" };
+    expect(run(60, together, hostEnded).outcome).toBe("CUT_SHORT");
+    expect(run(60, [seg("l", 0, 60)], undefined, []).outcome).toBe(
+      "INCONCLUSIVE",
+    );
   });
 
   it("parks INCONCLUSIVE when Stream saw more people than our rows", () => {
