@@ -99,6 +99,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.SESSION_NO_SHOW,
+    name: "Session missed by the learner",
+    description:
+      "The learner of a 1:1 session who never joined it (#1569 D7); the session counts as held.",
+    category: "appointments",
+    inApp: {
+      subject: "We didn't see you in your session",
+      body: "Your {{payload.dateTime}} session of {{payload.planTitle}} went ahead without you, so it counts as held. If you couldn't get in, tell support and we will look at the call record.{% if payload.recordingUrl %} The recording is in your recordings: {{payload.recordingUrl}}{% endif %}",
+      redirect: "supportUrl",
+    },
+  },
+  {
     // #1778 — notify-only: nothing is reserved, first to book wins.
     workflowId: W.WINDOW_OPENED,
     name: "Window opened",

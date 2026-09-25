@@ -14,7 +14,6 @@
 // client fails to initialize. See
 // docs/enterprise/50-operations/03-runbooks.md "Running cron jobs locally".
 import "dotenv/config";
-import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import prisma from "../../lib/prisma";
 import {
   getStreamVideoClient,
@@ -132,26 +131,15 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
         result.streamNotFound++;
       }
 
-      const completionStatus =
-        endedReason === "reconciled" ? "COMPLETED" : "UNVERIFIED";
-
-      const moved = await prisma.$transaction(async (tx) => {
-        await tx.meeting.update({
-          where: { id: session.id },
-          data: { endedAt, endedReason },
-        });
-        // CAS (#1319): never overwrite a CANCELLED slot; zero rows is a
-        // legitimate outcome for a reconciler and is reported below.
-        return transitionOccurrenceCompletion(tx, {
-          where: { id: session.appointmentOccurrenceId },
-          to: completionStatus,
-          data: { completedAt: endedAt },
-          allowZero: true,
-        });
+      // #1569 D2 — close the room only; the end + 1 h slot pass is the one
+      // writer of the occurrence's outcome and reads presence, not this guess.
+      await prisma.meeting.update({
+        where: { id: session.id },
+        data: { endedAt, endedReason },
       });
 
       result.details.push(
-        `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}${moved === 0 ? " (slot not completable, left as is)" : ""}`,
+        `Session ${session.id} (call: ${session.streamCallId}): ${endedReason}`,
       );
     } catch (error) {
       result.errors++;

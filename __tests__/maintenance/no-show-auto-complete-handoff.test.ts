@@ -52,12 +52,6 @@ jest.mock("../../lib/stream/call-presence", () => ({
   })),
 }));
 
-// The slot-level pass is not what these pins are about.
-jest.mock("../../lib/booking/slot-release", () => ({
-  __esModule: true,
-  transitionSlotsInChunks: jest.fn(async () => 0),
-}));
-
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   __esModule: true,
   withCronLock: (_key: string, _opts: unknown, fn: () => unknown) => fn(),
@@ -87,6 +81,7 @@ jest.mock("../../lib/prisma", () => {
       updateManyAndReturn: jest.fn(),
     },
     supportTicket: { findFirst: jest.fn() },
+    maintenanceWindow: { findMany: jest.fn(async () => []) },
     bookingStatusHistory: { create: jest.fn() },
     $disconnect: jest.fn(),
   };
@@ -115,8 +110,15 @@ function minutesAgo(minutes: number): Date {
   return new Date(Date.now() - minutes * 60 * 1000);
 }
 
-/** A past, paid consultation; `attendees` is who has a MeetingAttendance row. */
-function consultation(endedMinutesAgo: number, attendees: string[]) {
+/**
+ * A past, paid consultation; `attendees` is who has a MeetingAttendance row and
+ * `completionStatus` is what the #1569 slot pass decided for its session.
+ */
+function consultation(
+  endedMinutesAgo: number,
+  attendees: string[],
+  completionStatus = "SCHEDULED",
+) {
   return {
     id: "cons-1",
     status: "APPROVED",
@@ -139,6 +141,9 @@ function consultation(endedMinutesAgo: number, attendees: string[]) {
       occurrences: [
         {
           endsAt: minutesAgo(endedMinutesAgo),
+          completionStatus,
+          isTentative: false,
+          deletedAt: null,
           meeting: {
             streamCallId: "call-1",
             attendances: attendees.map((userId) => ({ userId })),
@@ -224,7 +229,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
 
   it("auto-complete still completes a consultation the consultant attended", async () => {
     db.consultation.findMany.mockResolvedValue([
-      consultation(90, [CONSULTEE, CONSULTANT]),
+      consultation(90, [CONSULTEE, CONSULTANT], "COMPLETED"),
     ]);
 
     const result = await autoCompleteAppointments();
@@ -242,7 +247,7 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
     // cancelled the booking (which removes it from this cohort) or decided not
     // to, and a booking neither job will claim must not exist.
     db.consultation.findMany.mockResolvedValue([
-      consultation(NO_SHOW_HANDOFF_MINUTES + 10, [CONSULTEE]),
+      consultation(NO_SHOW_HANDOFF_MINUTES + 10, [CONSULTEE], "UNVERIFIED"),
     ]);
 
     const result = await autoCompleteAppointments();

@@ -5,13 +5,13 @@
  * Events handled:
  * - call.session_ended: When call session ends (last participant leaves + timeout)
  * - call.ended: When call is explicitly ended
+ *
+ * #1569 D2 — these stamp Meeting.endedAt only. The end + 1 h slot pass in
+ * auto-complete-appointments is the one writer of an occurrence's outcome.
  */
 
 import prisma from "@/lib/prisma";
 import { isDeliberateEnd } from "@/lib/appointments/occurrences";
-import { settleSubscriptionCycle } from "@/lib/booking/subscription-cycle";
-import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
-import { attemptTrigger, type StagedTrigger } from "@/lib/novu/outbox";
 import { streamLogger } from "@/lib/stream-logger";
 
 // Types for Stream webhook payloads
@@ -76,20 +76,6 @@ export interface StreamSessionParticipantLeftEvent {
  * - Set endedReason to "session_timeout"
  * - Log session duration
  */
-/** #1766 — post-commit, best-effort: the relay delivers what this misses. */
-async function attemptStaged(rows: StagedTrigger[]): Promise<void> {
-  for (const row of rows) {
-    try {
-      await attemptTrigger(row);
-    } catch (error) {
-      streamLogger.warn("Cycle bell attempt failed; relay will retry", {
-        outboxId: row.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-}
-
 export async function handleSessionEnded(
   event: StreamSessionEndedEvent,
 ): Promise<void> {
@@ -137,57 +123,20 @@ export async function handleSessionEnded(
     }
 
     // #1270 — Stream fires this `inactivity_timeout_seconds` after the LAST
-    // participant leaves, which on the live call type is 900 seconds. An empty
-    // room is not a finished session: one party stepping out for coffee at
-    // 09:56 of a 10:00-11:00 booking produced this event, and marking the slot
-    // COMPLETED then made it review-eligible and handed it to
-    // auto-complete-appointments — for a session that had not started.
-    //
-    // The session row still records that Stream's session ended, because it
-    // did; `endedReason` distinguishes it from a host closing the room, and
-    // `isDeliberateEnd` is what the join gates read. The SLOT only completes
-    // once its booked time is actually over.
+    // participant leaves, so an empty room is not a finished session; the
+    // `endedReason` distinguishes it from a host closing the room, and
+    // `isDeliberateEnd` is what the join gates read.
     const slotEndsAt = meeting.occurrence.endsAt;
     const bookedTimeIsOver = !slotEndsAt || endedAt >= new Date(slotEndsAt);
 
-    const staged = await prisma.$transaction(async (tx) => {
-      await tx.meeting.update({
-        where: { id: meeting.id },
-        data: {
-          endedAt,
-          endedReason: "session_timeout",
-          isRecording: false,
-        },
-      });
-      if (!bookedTimeIsOver) return [];
-      // CAS (#1319): a late webhook must not resurrect a CANCELLED slot as
-      // COMPLETED. Zero rows is expected here, so log rather than throw; the
-      // session row above still records the truth about the call.
-      const moved = await transitionOccurrenceCompletion(tx, {
-        where: { id: meeting.appointmentOccurrenceId },
-        to: "COMPLETED",
-        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
-        fromIn: ["SCHEDULED"],
-        data: { completedAt: endedAt },
-        allowZero: true,
-      });
-      if (moved === 0) {
-        streamLogger.info(
-          "Slot not completable — already cancelled or completed",
-          {
-            sessionId: meeting.id,
-            streamCallId,
-          },
-        );
-        return [];
-      }
-      // #1766 — staged in the same tx; attempted after commit below.
-      return settleSubscriptionCycle(tx, {
-        appointmentId: meeting.occurrence.appointmentId,
-        now: endedAt,
-      });
+    await prisma.meeting.update({
+      where: { id: meeting.id },
+      data: {
+        endedAt,
+        endedReason: "session_timeout",
+        isRecording: false,
+      },
     });
-    await attemptStaged(staged);
 
     if (!bookedTimeIsOver) {
       streamLogger.info(
@@ -284,43 +233,14 @@ export async function handleCallEnded(
     const endedBeforeStart = !!slotStartsAt && endedAt < new Date(slotStartsAt);
     const endedReason = endedBeforeStart ? "ended_early" : "call_ended";
 
-    // Update meeting session and mark slot as completed atomically
-    const staged = await prisma.$transaction(async (tx) => {
-      await tx.meeting.update({
-        where: { id: meeting.id },
-        data: {
-          endedAt,
-          endedReason,
-          isRecording: false,
-        },
-      });
-      if (endedBeforeStart) return [];
-      // CAS (#1319) — see the session_timeout arm above.
-      const moved = await transitionOccurrenceCompletion(tx, {
-        where: { id: meeting.appointmentOccurrenceId },
-        to: "COMPLETED",
-        // Never lift UNVERIFIED: the maintenance drain parked it for a human.
-        fromIn: ["SCHEDULED"],
-        data: { completedAt: endedAt },
-        allowZero: true,
-      });
-      if (moved === 0) {
-        streamLogger.info(
-          "Slot not completable — already cancelled or completed",
-          {
-            sessionId: meeting.id,
-            streamCallId,
-          },
-        );
-        return [];
-      }
-      // #1766 — see the session_timeout arm above.
-      return settleSubscriptionCycle(tx, {
-        appointmentId: meeting.occurrence.appointmentId,
-        now: endedAt,
-      });
+    await prisma.meeting.update({
+      where: { id: meeting.id },
+      data: {
+        endedAt,
+        endedReason,
+        isRecording: false,
+      },
     });
-    await attemptStaged(staged);
 
     // Calculate session duration if we have a start reference
     const slotStartTime = meeting.occurrence.startsAt;

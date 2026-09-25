@@ -5,25 +5,24 @@
 /**
  * #1607 — three rules for `Meeting.endedAt`:
  *  - a `call.ended` before the booked start is `ended_early`, and the slot stays SCHEDULED
+ *  - #1569 D2 — an end webhook never completes the slot; the end + 1 h sweep decides
  *  - the last end wins; an older or replayed event never moves `endedAt` backwards
  *  - a participant joining clears a non-deliberate end, never a deliberate one
  */
 jest.mock("../../lib/prisma", () => {
-  const tx = {
-    meeting: { update: jest.fn().mockResolvedValue({}) },
-    // #1766 — the cycle bell reads the wrapper after a completion; a
-    // consultation wrapper (no subscription) stages nothing.
-    appointment: { findUnique: jest.fn().mockResolvedValue(null) },
-  };
-  const client = {
+  const client: Record<string, unknown> = {
     meeting: {
       findUnique: jest.fn(),
+      update: jest.fn().mockResolvedValue({}),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     meetingAttendance: { upsert: jest.fn().mockResolvedValue({}) },
-    $transaction: jest.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-    __tx: tx,
+    meetingPresence: {
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
   };
+  client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
 jest.mock("../../lib/booking/transitions", () => ({
@@ -47,9 +46,8 @@ import {
 } from "../../lib/stream/session-handlers";
 
 const db = prisma as unknown as {
-  meeting: { findUnique: jest.Mock; updateMany: jest.Mock };
+  meeting: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
   meetingAttendance: { upsert: jest.Mock };
-  __tx: { meeting: { update: jest.Mock } };
 };
 const mockTransition = transitionOccurrenceCompletion as jest.Mock;
 
@@ -78,7 +76,7 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T09:48:00.000Z",
     });
 
-    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "ended_early" }),
       }),
@@ -86,7 +84,7 @@ describe("call.ended before the booked start (#1607)", () => {
     expect(mockTransition).not.toHaveBeenCalled();
   });
 
-  it("still completes the slot for a deliberate end inside the window", async () => {
+  it("stamps call_ended inside the window but leaves completion to the sweep (#1569)", async () => {
     db.meeting.findUnique.mockResolvedValue(session(null));
 
     await handleCallEnded({
@@ -95,15 +93,12 @@ describe("call.ended before the booked start (#1607)", () => {
       created_at: "2026-09-13T10:30:00.000Z",
     });
 
-    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ endedReason: "call_ended" }),
       }),
     );
-    expect(mockTransition).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ to: "COMPLETED", fromIn: ["SCHEDULED"] }),
-    );
+    expect(mockTransition).not.toHaveBeenCalled();
   });
 });
 
@@ -119,7 +114,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T11:02:00.000Z",
     });
 
-    expect(db.__tx.meeting.update).toHaveBeenCalledWith(
+    expect(db.meeting.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           endedAt: new Date("2026-09-13T11:02:00.000Z"),
@@ -139,7 +134,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:30:00.400Z",
     });
 
-    expect(db.__tx.meeting.update).not.toHaveBeenCalled();
+    expect(db.meeting.update).not.toHaveBeenCalled();
   });
 
   it("ignores an older end once a later one is recorded", async () => {
@@ -153,7 +148,7 @@ describe("the last end wins (#1607)", () => {
       created_at: "2026-09-13T10:00:30.000Z",
     });
 
-    expect(db.__tx.meeting.update).not.toHaveBeenCalled();
+    expect(db.meeting.update).not.toHaveBeenCalled();
     expect(mockTransition).not.toHaveBeenCalled();
   });
 });
