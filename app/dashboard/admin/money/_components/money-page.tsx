@@ -15,8 +15,13 @@ export async function renderMoneyTab(args: {
 }) {
   const tab = findMoneyTab(args.tab);
   if (!tab) notFound();
-  await requireBackofficePage(tab.surface);
+  const session = await requireBackofficePage(tab.surface);
   return (
-    <MoneyTabBody tabKey={tab.key} tree={args.tree} treePath={args.treePath} />
+    <MoneyTabBody
+      tabKey={tab.key}
+      tree={args.tree}
+      treePath={args.treePath}
+      viewer={{ userId: session.user.id, role: String(session.user.role) }}
+    />
   );
 }

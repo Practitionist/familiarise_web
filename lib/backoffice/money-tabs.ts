@@ -61,6 +61,12 @@ export const MONEY_TABS: readonly MoneyTab[] = [
       "The manual doors for class series: sessions, make-ups, seats.",
     surface: "classSeries.support",
   },
+  {
+    key: "audit",
+    label: "Audit",
+    description: "Every console action: who, what, on which row, and why.",
+    surface: "opsLog.read",
+  },
 ];
 
 export function moneyTabsFor(audience: UserRole): MoneyTab[] {

@@ -6,17 +6,25 @@ import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ClassSeriesTab } from "./ClassSeriesTab";
 import { ReconcileTab } from "./ReconcileTab";
+import { AuditTab } from "./AuditTab";
+import { readOpsLog } from "@/lib/backoffice/ops-log-read";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
  * served the old URL, so the hub moves the pages without rewriting them.
  * `treePath` keeps each page's own detail links inside its tree.
  */
-export function MoneyTabBody({
+export async function MoneyTabBody({
   tabKey,
   tree,
   treePath,
-}: Readonly<{ tabKey: string; tree: "admin" | "staff"; treePath: string }>) {
+  viewer,
+}: Readonly<{
+  tabKey: string;
+  tree: "admin" | "staff";
+  treePath: string;
+  viewer: { userId: string; role: string };
+}>) {
   const isAdmin = tree === "admin";
   switch (tabKey) {
     case "payments":
@@ -59,6 +67,14 @@ export function MoneyTabBody({
       return <ClassSeriesTab isAdmin={isAdmin} />;
     case "reconcile":
       return <ReconcileTab />;
+    case "audit":
+      // #1771 K-9 — RSC-seeded: the first page ships with the HTML.
+      return (
+        <AuditTab
+          initial={await readOpsLog({ viewer, filters: {}, page: 1 })}
+          viewerIsAdmin={viewer.role === "ADMIN"}
+        />
+      );
     default:
       return null;
   }
