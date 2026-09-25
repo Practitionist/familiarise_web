@@ -3,7 +3,10 @@ import { ZodError } from "zod";
 
 import { BookingRuleError } from "@/lib/booking/booking-rule-error";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
-import { CronLockHeldError } from "@/lib/cron/cron-lock-errors";
+import {
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "@/lib/cron/cron-lock-errors";
 import { RefundValidationError } from "@/lib/payments/operations/refund";
 import { IllegalEarningStatusTransitionError } from "@/lib/payments/payouts/earning-status";
 import { OpsRefusal } from "./ops-refusal-error";
@@ -27,6 +30,13 @@ export function refusalResponse(err: unknown): NextResponse | null {
     return body("ILLEGAL_EARNING_TRANSITION", err.message, 409);
   if (err instanceof CronLockHeldError)
     return body("ALREADY_RUNNING", "This job is already running.", 409);
+  // #1822 Q-2 — no lock is possible (Redis down): an expected refusal, not a fault.
+  if (err instanceof CronLockUnavailableError)
+    return body(
+      "LOCK_UNAVAILABLE",
+      "The job lock is unavailable right now — try again shortly.",
+      503,
+    );
   if (err instanceof ZodError)
     return body(
       "INVALID_BODY",
