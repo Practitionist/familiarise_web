@@ -96,6 +96,7 @@ import {
   NO_SHOW_GRACE_MINUTES,
   NO_SHOW_HANDOFF_MINUTES,
   classifyConsultantAttendance,
+  isPastNoShowHandoff,
 } from "../../lib/booking/attendance";
 
 const CONSULTANT = "user-consultant";
@@ -140,12 +141,20 @@ function consultation(
       ],
       occurrences: [
         {
+          startsAt: minutesAgo(endedMinutesAgo + 60),
           endsAt: minutesAgo(endedMinutesAgo),
           completionStatus,
           isTentative: false,
           deletedAt: null,
+          presences: attendees.map((userId) => ({
+            userId,
+            joinedAt: minutesAgo(endedMinutesAgo + 60),
+            leftAt: minutesAgo(endedMinutesAgo),
+          })),
           meeting: {
             streamCallId: "call-1",
+            endedAt: minutesAgo(endedMinutesAgo),
+            endedReason: "call_ended",
             attendances: attendees.map((userId) => ({ userId })),
           },
         },
@@ -292,6 +301,13 @@ describe("#1504 the two hourly jobs partition past consultations", () => {
 
     expect(result.subscriptionsCompleted).toBe(0);
     expect(db.subscription.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("pauses the handoff clock while maintenance holds the detector (#1746 B)", () => {
+    const ended = minutesAgo(NO_SHOW_HANDOFF_MINUTES + 30);
+    const degraded = [{ startsAt: minutesAgo(200), endsAt: minutesAgo(100) }];
+    expect(isPastNoShowHandoff(ended)).toBe(true);
+    expect(isPastNoShowHandoff(ended, new Date(), degraded)).toBe(false);
   });
 
   it("hands over only after the hourly detector has seen the booking past its grace window", () => {

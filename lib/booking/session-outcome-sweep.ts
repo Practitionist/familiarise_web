@@ -125,7 +125,7 @@ export async function decideSlotOutcome(
   if (verdict.outcome === "HOST_ABSENT" && slot.appointment.consultationId) {
     // D5 — the detector cancels and refunds a consultation host no-show; one it
     // declined parks UNVERIFIED for ops after the handoff instead of voiding.
-    if (!isPastNoShowHandoff(slot.endsAt, ctx.now)) {
+    if (!isPastNoShowHandoff(slot.endsAt, ctx.now, ctx.outages)) {
       return { kind: "deferred", reason: "no-show-detector" };
     }
     to = OccurrenceCompletionStatus.UNVERIFIED;
