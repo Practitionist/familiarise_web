@@ -59,6 +59,10 @@ SCHEDULED]` — which bookings may open a reschedule.
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
 publish" is the editor flow.
 
+## Class batch enrolment (#1819)
+
+A class batch's enrolment state is derived, not stored, by `classEnrolmentFrom` in `lib/booking/class-enrolment.ts`. The derivation counts the sessions that have started (a live row whose start has passed, excluding cancelled rows and rows released for rescheduling), and `remaining` is the plan's `totalSessions` minus that count. The batch is open while `remaining` is above zero and the next session's ordinal (`totalSessions − remaining + 1`) is at most the host's cutoff, `lateJoinUntilSession`, which defaults to 1. Otherwise the batch is closed, and a batch with no live sessions at all is unscheduled. Checkout evaluates this twice, once when it prices the order and again inside the booking transaction, and a change in `remaining` between the two refuses with the typed 409 `CLASS_PRICE_CHANGED` so the buyer re-checks out at the new price.
+
 ## Trials
 
 `TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. Since #1775 a paid trial is paid while it is still `PENDING`: the request mints the order, capture sets `paymentId` without moving the status, and acceptance moves `PENDING → SCHEDULED` with `paymentId` not null repeated in the CAS WHERE. `AWAITING_PAYMENT` remains for trials accepted before payment under the old flow. A paid trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
