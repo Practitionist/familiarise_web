@@ -12,6 +12,8 @@ interface NeedsHuman {
   message: string;
   createdAt: string;
   paymentId: string | null;
+  /** #1834 — a credit seat gets the credit door; a held paid seat the refund door. */
+  kind?: "credit" | "held-paid-seat";
 }
 
 async function fetchNeeds(): Promise<{ items: NeedsHuman[] }> {
@@ -61,9 +63,7 @@ export function RefundDoorsPanel() {
         </div>
         {items.length > 0 && (
           <div className="space-y-2">
-            <p className="text-sm font-medium">
-              Credit seats waiting for a partial return
-            </p>
+            <p className="text-sm font-medium">Seats waiting for a human</p>
             <ul className="divide-y divide-border rounded-md border">
               {items.map((item) => (
                 <li
@@ -77,12 +77,17 @@ export function RefundDoorsPanel() {
                       variant="outline"
                       onClick={() =>
                         setOpen({
-                          door: "credits",
+                          door:
+                            item.kind === "held-paid-seat"
+                              ? "issue"
+                              : "credits",
                           paymentId: item.paymentId ?? undefined,
                         })
                       }
                     >
-                      Return credits
+                      {item.kind === "held-paid-seat"
+                        ? "Issue refund"
+                        : "Return credits"}
                     </Button>
                   )}
                 </li>

@@ -40,6 +40,8 @@ const state = {
   madeUp: null as { id: string } | null,
   due: [CLASS_SESSION] as unknown[],
   wrapperRows: [] as unknown[],
+  seatStatus: undefined as string | undefined,
+  events: [] as { correlationId: string; context: unknown }[],
 };
 const stamp = jest.fn(async () => ({ count: 1 }));
 jest.mock("../../lib/prisma", () => ({
@@ -65,7 +67,21 @@ jest.mock("../../lib/prisma", () => ({
       findUnique: async () => ({ refunds: [], disputes: [] }),
     },
     appointmentParticipant: {
-      findFirst: async () => ({ createdAt: new Date("2026-08-01T00:00:00Z") }),
+      findFirst: async () => ({
+        id: "seat-1",
+        status: state.seatStatus,
+        createdAt: new Date("2026-08-01T00:00:00Z"),
+      }),
+    },
+    systemEvent: {
+      findFirst: async ({ where }: { where: { correlationId: string } }) =>
+        state.events.find((e) => e.correlationId === where.correlationId) ??
+        null,
+      create: async ({
+        data,
+      }: {
+        data: { correlationId: string; context: unknown };
+      }) => state.events.push(data),
     },
     refund: {
       // pay-a skipped the make-up already: its key is spent.
@@ -83,6 +99,26 @@ beforeEach(() => {
   jest.clearAllMocks();
   state.madeUp = null;
   state.due = [CLASS_SESSION];
+  state.seatStatus = undefined;
+  state.events = [];
+});
+
+it("#1834 — a paid seat still HELD goes to the ops queue once, never refunded", async () => {
+  state.seatStatus = "HELD";
+  await settleCancelledSessions();
+  await settleCancelledSessions();
+  expect(refundBookingPayment).not.toHaveBeenCalled();
+  // pay-a and pay-b each escalate once across both runs.
+  expect(state.events.map((e) => e.correlationId)).toEqual([
+    "held-paid-seat:occ-5:pay-a",
+    "held-paid-seat:occ-5:pay-b",
+  ]);
+  expect(state.events[1].context).toMatchObject({
+    occurrenceId: "occ-5",
+    paymentId: "pay-b",
+    participantId: "seat-1",
+    unitPaise: 10_000,
+  });
 });
 
 it("refunds only the seat whose key is not spent, then stamps the session", async () => {

@@ -40,6 +40,7 @@ import {
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageTrigger } from "@/lib/novu/outbox";
 import { reportSentryError } from "@/lib/observability/report";
+import { recordSystemEvent } from "@/lib/enterprise/system-events";
 import { formatCurrencyAmount } from "@/utils/formatting";
 
 export interface SettleCancelledSessionsResult {
@@ -281,9 +282,14 @@ async function settleOne(
       where: {
         appointmentId: session.appointmentId,
         userId: payment.userId,
-        status: { in: ["CONFIRMED", "ATTENDED"] },
+        status: { in: ["HELD", "CONFIRMED", "ATTENDED"] },
       },
-      select: { createdAt: true, sessionsPurchased: true },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        sessionsPurchased: true,
+      },
     });
     const joinedAt =
       seat && seat.createdAt > payment.createdAt
@@ -291,6 +297,19 @@ async function settleOne(
         : payment.createdAt;
     // Only a seat that held this session is owed for it.
     if (!seat || session.startsAt <= joinedAt) continue;
+    if (seat.status === "HELD") {
+      // #1834 owner decision — a paid seat still HELD is a human's call, never
+      // skipped silently nor auto-refunded; the session settles for the rest.
+      await escalateHeldPaidSeat(session, payment, seat.id, {
+        unitPaise: await seatUnitPaise(
+          session,
+          payment,
+          joinedAt,
+          seat.sessionsPurchased,
+        ),
+      });
+      continue;
+    }
     const refunded = await refundSeatForSession(
       session,
       payment,
@@ -329,18 +348,14 @@ async function capToBalance(payment: SeatPayment, unitPaise: number) {
   return Math.min(unitPaise, left);
 }
 
-/** One seat's unit for one missed session; null when it must be retried. */
-async function refundSeatForSession(
+/** #1569 D4 — a class seat gets one unit; a webinar or consultation is one session. */
+async function seatUnitPaise(
   session: CancelledSession,
   payment: SeatPayment,
   joinedAt: Date,
   sessionsPurchased: number | null,
-): Promise<boolean | null> {
-  const dedupeKey = occurrenceRefundKey(session.id, payment.id);
-  // A seat that skipped the make-up (E-3b) or a prior tick already carries it.
-  if (await alreadySpent(dedupeKey)) return false;
-  // #1569 D4 — a class seat gets one unit; a webinar or consultation is one session.
-  const unitPaise = session.appointment.class
+): Promise<number> {
+  return session.appointment.class
     ? Number(
         (
           await seatLedger(
@@ -355,6 +370,53 @@ async function refundSeatForSession(
         ).unitPaise,
       )
     : payment.amount;
+}
+
+/** #1834 — one needs-human row per held paid seat and session, deduped by key. */
+async function escalateHeldPaidSeat(
+  session: CancelledSession,
+  payment: SeatPayment,
+  participantId: string,
+  extra: { unitPaise: number },
+): Promise<void> {
+  const correlationId = `held-paid-seat:${session.id}:${payment.id}`;
+  const seen = await prisma.systemEvent.findFirst({
+    where: { correlationId },
+    select: { id: true },
+  });
+  if (seen) return;
+  await recordSystemEvent({
+    category: "BOOKING",
+    severity: "WARN",
+    message: `Paid seat still held for a missed session; payment ${payment.id} needs a human refund decision`,
+    context: {
+      occurrenceId: session.id,
+      paymentId: payment.id,
+      participantId,
+      unitPaise: extra.unitPaise,
+    },
+    correlationId,
+    // A lost row would settle the session with nobody told; fail and retry.
+    strict: true,
+  });
+}
+
+/** One seat's unit for one missed session; null when it must be retried. */
+async function refundSeatForSession(
+  session: CancelledSession,
+  payment: SeatPayment,
+  joinedAt: Date,
+  sessionsPurchased: number | null,
+): Promise<boolean | null> {
+  const dedupeKey = occurrenceRefundKey(session.id, payment.id);
+  // A seat that skipped the make-up (E-3b) or a prior tick already carries it.
+  if (await alreadySpent(dedupeKey)) return false;
+  const unitPaise = await seatUnitPaise(
+    session,
+    payment,
+    joinedAt,
+    sessionsPurchased,
+  );
   const amountPaise = await capToBalance(payment, unitPaise);
   if (amountPaise <= 0) return false;
   const voided = session.completionStatus === OccurrenceCompletionStatus.VOIDED;
