@@ -33,6 +33,7 @@ jest.mock("../../lib/email", () => ({
   deliver: (...a: unknown[]) => deliver(...a),
   EMAIL_BUDGET_MS: { REQUEST: 5_000 },
   SENDERS: { payments: "payments@test" },
+  emailPayUrl: (_paymentId: string, url: string) => url,
   // The sweep's automatic type, as the real module defines it; the pin below
   // asserts the manual type differs from it.
   PAYMENT_LINK_REMINDER_EMAIL_TYPE: "PAYMENT_LINK_REMINDER",

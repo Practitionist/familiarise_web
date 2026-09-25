@@ -204,6 +204,7 @@ export function ClientClassRegistration({
         <FreeCancellationLine
           startsAt={startDate}
           windowHours={plan.refundWindowHours}
+          kind="class"
         />
       </CardContent>
       <CardFooter>

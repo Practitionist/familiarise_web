@@ -304,6 +304,8 @@ async function retryUnansweredTrialRefunds(now: Date): Promise<number> {
           dedupeKey: {
             in: trials.map((t) => unansweredRefundKey(t.paymentId ?? "")),
           },
+          // A FAILED/CANCELLED row moved no money; its key is free to retry.
+          status: { notIn: ["FAILED", "CANCELLED"] },
         },
         select: { dedupeKey: true },
       })

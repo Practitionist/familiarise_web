@@ -158,6 +158,8 @@ type AttendeesByRail = {
   credits: string[];
   internal: string[];
   free: string[];
+  /** Payment id → payer, so a failed seat refund can be told apart. */
+  payerOf: Map<string, string>;
 };
 
 /**
@@ -171,7 +173,7 @@ async function eventAttendeesByRail(
   const [payments, seats] = await Promise.all([
     prisma.payment.findMany({
       where: { appointmentId, paymentStatus: "SUCCEEDED", deletedAt: null },
-      select: { userId: true, paymentIntent: true },
+      select: { id: true, userId: true, paymentIntent: true },
     }),
     prisma.appointmentParticipant.findMany({
       where: { appointmentId, role: "CONSULTEE", ...liveParticipant() },
@@ -185,12 +187,14 @@ async function eventAttendeesByRail(
     credits: [],
     internal: [],
     free: [],
+    payerOf: new Map(),
   };
   const paid = new Set<string>();
   for (const p of payments) {
     // A seat given back earlier was already told (and refunded) when it left.
     if (!seated.has(p.userId)) continue;
     paid.add(p.userId);
+    out.payerOf.set(p.id, p.userId);
     if (isFreeCreditIntent(p.paymentIntent)) out.credits.push(p.userId);
     else if (isInternalFundedIntent(p.paymentIntent))
       out.internal.push(p.userId);
@@ -203,21 +207,36 @@ async function eventAttendeesByRail(
   return out;
 }
 
-/** One email per rail; a class series refunds only the sessions not yet held. */
-function attendeeEmailGroups(a: AttendeesByRail, isClass: boolean) {
+/**
+ * One email per rail; a class series refunds only the sessions not yet held.
+ * A payer whose seat refund failed gets a neutral line, never a money claim.
+ */
+function attendeeEmailGroups(
+  a: AttendeesByRail,
+  isClass: boolean,
+  failedPaymentIds: readonly string[],
+) {
+  const failed = new Set(
+    failedPaymentIds.flatMap((id) => a.payerOf.get(id) ?? []),
+  );
+  const ok = (ids: string[]) => uniq(ids).filter((id) => !failed.has(id));
   const cash = isClass
     ? "The sessions not yet held are being refunded to you."
     : "Your payment for this event is being refunded in full.";
   return [
-    { userIds: uniq(a.gateway), refundText: cash },
+    { userIds: ok(a.gateway), refundText: cash },
     {
-      userIds: uniq(a.credits),
+      userIds: ok(a.credits),
       refundText: "Your credits have been restored.",
     },
     {
-      userIds: uniq(a.internal),
+      userIds: ok(a.internal),
       refundText:
         "The amount has been returned to the sponsoring organisation's balance.",
+    },
+    {
+      userIds: Array.from(failed),
+      refundText: "Your refund is being processed.",
     },
     { userIds: uniq(a.free), refundText: undefined },
   ].filter((g) => g.userIds.length > 0);
@@ -966,6 +985,7 @@ export async function POST(
         for (const group of attendeeEmailGroups(
           attendees,
           !!appointment.class,
+          eventRefund.failures.map((f) => f.paymentId),
         )) {
           await sendAppointmentCancelledEmail(
             {

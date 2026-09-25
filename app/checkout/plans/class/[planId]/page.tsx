@@ -472,8 +472,11 @@ export default function ClassCheckoutPage({
   const consultantDetails = planDetails?.consultantProfile;
   const userDetails = consultantDetails?.user;
 
-  const nextClassSession =
-    planDetails?.classes?.[0]?.appointments?.[0]?.occurrences?.[0];
+  // The class the checkout books (availableClassId), not whichever is listed first.
+  const nextClassSession = (
+    planDetails?.classes?.find((c) => c.id === availableClassId) ??
+    planDetails?.classes?.[0]
+  )?.appointments?.[0]?.occurrences?.[0];
 
   if (!planData || !planDetails || !consultantDetails || !userDetails) {
     return (
@@ -763,6 +766,7 @@ export default function ClassCheckoutPage({
               <FreeCancellationLine
                 startsAt={nextClassSession?.startsAt}
                 windowHours={planDetails?.refundWindowHours}
+                kind="class"
                 className="text-xs text-muted-foreground"
               />
               <FxEstimateNote

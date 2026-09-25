@@ -748,10 +748,13 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 where: { id: metadata.trialId },
                 select: { status: true, paymentId: true },
               });
+              // A replay of this capture; a trial bound to another payment is not ours.
               const alreadyOurs =
-                trial?.status === TrialStatus.SCHEDULED ||
-                (trial?.status === TrialStatus.PENDING &&
-                  trial.paymentId === payment.id);
+                trial?.paymentId === payment.id
+                  ? trial.status === TrialStatus.SCHEDULED ||
+                    trial.status === TrialStatus.PENDING
+                  : trial?.status === TrialStatus.SCHEDULED &&
+                    trial.paymentId === null;
               if (!alreadyOurs) {
                 await tx.payment.update({
                   where: { id: payment.id },

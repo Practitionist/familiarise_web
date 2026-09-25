@@ -413,13 +413,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
       // #1775 C-10 — a paid trial is charged at request, so the consultant
       // accepts only a trial whose payment has been captured.
-      const trialPriceInPaise = Number(
-        existingTrial.subscriptionPlan.trialPriceInPaise ?? 0,
-      );
+      // The request-time placeholder marks it paid; the editable plan price
+      // is only the fallback for rows that predate C-7.
+      const hasPlaceholder =
+        existingTrial.status === TrialStatus.PENDING &&
+        existingTrial.appointmentId !== null;
+      const paidTrial =
+        hasPlaceholder ||
+        Number(existingTrial.subscriptionPlan.trialPriceInPaise ?? 0) > 0;
       if (
         status === TrialStatus.SCHEDULED &&
         existingTrial.status === TrialStatus.PENDING &&
-        trialPriceInPaise > 0 &&
+        paidTrial &&
         existingTrial.paymentId === null
       ) {
         return bookingRuleResponse(
@@ -430,8 +435,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         );
       }
       // The paid trial's placeholder from request time gets the session.
-      const placeholderId =
-        trialPriceInPaise > 0 ? existingTrial.appointmentId : null;
+      const placeholderId = paidTrial ? existingTrial.appointmentId : null;
 
       // Handle scheduling with distributed locking
       if (status === TrialStatus.SCHEDULED) {

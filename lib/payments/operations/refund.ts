@@ -158,13 +158,29 @@ export async function findDedupedRefund(
   };
 }
 
-/** A unique violation on Refund.dedupeKey (P2002). */
+type UniqueMeta = {
+  target?: unknown;
+  driverAdapterError?: {
+    cause?: { constraint?: { fields?: string[]; index?: string } };
+  };
+};
+
+/**
+ * A unique violation on Refund.dedupeKey (P2002). Through the pg driver
+ * adapter the columns ride `driverAdapterError`, not `target`.
+ */
 export function isDedupeKeyConflict(err: unknown): boolean {
-  return (
-    err instanceof Prisma.PrismaClientKnownRequestError &&
-    err.code === "P2002" &&
-    String(err.meta?.target ?? "").includes("dedupeKey")
-  );
+  if (
+    !(err instanceof Prisma.PrismaClientKnownRequestError) ||
+    err.code !== "P2002"
+  ) {
+    return false;
+  }
+  const meta = err.meta as UniqueMeta | undefined;
+  const constraint = meta?.driverAdapterError?.cause?.constraint;
+  return String(
+    meta?.target ?? constraint?.fields ?? constraint?.index ?? "",
+  ).includes("dedupeKey");
 }
 
 export class RefundValidationError extends Error {

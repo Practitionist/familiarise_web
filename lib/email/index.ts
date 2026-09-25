@@ -257,9 +257,8 @@ export async function sendAccountLinkedEmail(
 /** #1703 D2 — the reminder's `FailedEmail.emailType`; the sweep's once-guard reads it. */
 export const PAYMENT_LINK_REMINDER_EMAIL_TYPE = "PAYMENT_LINK_REMINDER";
 
-/** Payment link once a consultant approves a request. */
 /** #1775 P-1 — a Razorpay pay-link is an order id; mail our absolute pay page. */
-function emailPayUrl(
+export function emailPayUrl(
   paymentId: string | undefined,
   paymentUrl: string,
 ): string {
@@ -268,6 +267,7 @@ function emailPayUrl(
   return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
 }
 
+/** Payment link once a consultant approves a request. */
 export async function sendPaymentLinkEmail(
   {
     email,

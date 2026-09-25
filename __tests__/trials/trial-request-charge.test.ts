@@ -126,7 +126,8 @@ describe("trial accept", () => {
 
   it("refuses an unpaid paid trial with TRIAL_UNPAID", () => {
     const guard = route.split('"TRIAL_UNPAID"')[0].slice(-400);
-    expect(guard).toContain("trialPriceInPaise > 0");
+    expect(guard).toContain("paidTrial &&");
+    expect(route).toContain("existingTrial.appointmentId !== null;");
     expect(guard).toContain("existingTrial.paymentId === null");
   });
 

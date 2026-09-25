@@ -16,7 +16,14 @@ import prisma, { type Tx } from "@/lib/prisma";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { recordSystemError } from "@/lib/enterprise/system-events";
 import { recomputeEarningsHold } from "@/lib/payments/payouts/earnings-hold";
-import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
+import {
+  fundingRailForIntent,
+  refundBookingPayment,
+} from "@/lib/payments/operations/booking-refund";
+import {
+  findDedupedRefund,
+  RefundValidationError,
+} from "@/lib/payments/operations/refund";
 import { NOVU_WORKFLOWS } from "@/lib/novu/workflows";
 import { stageBell } from "@/lib/novu/stage-bell";
 import { withAppointmentLock } from "@/utils/appointmentlock";
@@ -331,18 +338,25 @@ export async function skipClassMakeUp(args: {
       userId: args.userId,
       ...SEATED,
     },
-    select: { createdAt: true },
+    select: { createdAt: true, paymentId: true },
   });
+  // The live seat's own order: an earlier purchase may be a left-and-refunded seat.
   const payment = seat
     ? await prisma.payment.findFirst({
         where: {
-          appointmentId: args.appointmentId,
-          userId: args.userId,
+          ...(seat.paymentId
+            ? { id: seat.paymentId }
+            : { appointmentId: args.appointmentId, userId: args.userId }),
           paymentStatus: "SUCCEEDED",
           deletedAt: null,
         },
-        orderBy: { createdAt: "asc" },
-        select: { id: true, amount: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          amount: true,
+          createdAt: true,
+          paymentIntent: true,
+        },
       })
     : null;
   if (!source || !makeUp || !seat || !payment) {
@@ -375,12 +389,47 @@ export async function skipClassMakeUp(args: {
     }).catch(() => {});
     return { refundId: null, amountRefundedPaise: 0, rail: "CREDITS" as const };
   }
-  return refundBookingPayment({
-    paymentId: payment.id,
-    amountPaise: Number(ledger.unitPaise),
-    reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
-    initiatedByUserId: args.userId,
-    dedupeKey: occurrenceRefundKey(args.sourceOccurrenceId, payment.id),
-    keepSeat: true,
-  });
+  const dedupeKey = occurrenceRefundKey(args.sourceOccurrenceId, payment.id);
+  try {
+    const refunded = await refundBookingPayment({
+      paymentId: payment.id,
+      amountPaise: Number(ledger.unitPaise),
+      reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
+      initiatedByUserId: args.userId,
+      dedupeKey,
+      keepSeat: true,
+    });
+    return { ...refunded, status: "SUCCEEDED" as const };
+  } catch (err) {
+    return skipRefundInFlight(err, dedupeKey, payment.paymentIntent);
+  }
+}
+
+/**
+ * #1780 E-3b (QA #1821 case 10) — a throw after the keyed Refund row was
+ * written (a gateway transport fault, a failed settle) leaves the money in
+ * flight for the reconcile cron; the retry answered that row, so the first
+ * call answers it too, and a modelled refusal is a 409 rather than a 500.
+ */
+async function skipRefundInFlight(
+  err: unknown,
+  dedupeKey: string,
+  paymentIntent: string,
+) {
+  const inFlight = await findDedupedRefund(dedupeKey).catch(() => null);
+  if (inFlight) {
+    return {
+      refundId: inFlight.refundId,
+      amountRefundedPaise: inFlight.amountRefundedPaise,
+      rail: fundingRailForIntent(paymentIntent),
+      status: inFlight.status,
+    };
+  }
+  if (err instanceof RefundValidationError) {
+    throw new BookingRuleError(
+      "MAKEUP_NOT_SKIPPABLE",
+      "This session can no longer be refunded.",
+    );
+  }
+  throw err;
 }

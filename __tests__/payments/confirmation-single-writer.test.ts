@@ -423,6 +423,8 @@ describe("paid-at-request trial capture", () => {
       "if (scheduled.count === 0 && paidAtRequest.count === 0) {",
     )[1];
     expect(miss).toContain("if (!alreadyOurs) {");
+    // A SCHEDULED trial already bound to another payment does not own this one.
+    expect(miss).toContain("trial.paymentId === null");
     expect(miss).toContain('outcome: "captured_after_release"');
   });
 });

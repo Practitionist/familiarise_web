@@ -48,8 +48,11 @@ async function post(url: string, body?: unknown) {
   return data;
 }
 
-/** The cancelled source of each ordinal, and the live make-up if one exists. */
-function pairs(sessions: ClassSessionRow[], now: number) {
+/**
+ * The cancelled source of each ordinal, and its live make-up if one exists —
+ * started or held too, so the host is not offered a second one.
+ */
+function pairs(sessions: ClassSessionRow[]) {
   return sessions
     .filter((s) => s.hostCancelledAt && !s.seatsSettledAt)
     .map((source) => ({
@@ -59,8 +62,8 @@ function pairs(sessions: ClassSessionRow[], now: number) {
           s.ordinal === source.ordinal &&
           s.id !== source.id &&
           !s.deletedAt &&
-          s.completionStatus === "SCHEDULED" &&
-          toDate(s.startsAt).getTime() > now,
+          s.completionStatus !== "CANCELLED" &&
+          s.completionStatus !== "RESCHEDULED",
       ),
     }));
 }
@@ -157,14 +160,17 @@ export function ClassSessionControls({
   });
 
   const now = Date.now();
-  const open = pairs(sessions, now);
+  const open = pairs(sessions);
   const when = (d: Date | string) =>
     formatForViewer(toDate(d), viewer, "EEE d MMM, h:mm a");
   const skipUnit = unitLabel ? ` (${unitLabel})` : "";
   const refundUnit = unitLabel ? ` ${unitLabel}` : " one session";
 
   if (role === "consultee") {
-    const skippable = open.filter((p) => p.makeUp);
+    // Skippable only while the make-up is still ahead (the server's rule).
+    const skippable = open.filter(
+      (p) => p.makeUp && toDate(p.makeUp.startsAt).getTime() > now,
+    );
     if (skippable.length === 0) return null;
     return (
       <div className="space-y-2">
