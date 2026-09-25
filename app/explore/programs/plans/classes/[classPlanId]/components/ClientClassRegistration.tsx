@@ -20,20 +20,26 @@ import { useCurrency } from "@/hooks/useCurrency";
 import { formatInTimeZone } from "date-fns-tz";
 import { getClassCapacity } from "@/lib/events/capacity";
 import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
+import type { BatchCard } from "@/lib/booking/batch-cards";
 
 type ClientClassRegistrationProps = {
   readonly plan: ClassPlanProgram;
   maxParticipants?: number;
   consultantUserId?: string;
+  /** #1819 — the batch this card sells: the first joinable one, else the first. */
+  batch?: BatchCard;
 };
 
 export function ClientClassRegistration({
   plan,
   maxParticipants,
   consultantUserId,
+  batch,
 }: ClientClassRegistrationProps) {
   const { id: classId, price, classes } = plan;
-  const startDate = classes?.[0]?.schedulingPeriodStartsAt;
+  const batchClass =
+    classes?.find((c) => c.id === batch?.classId) ?? classes?.[0];
+  const startDate = batch?.startsAt ?? batchClass?.schedulingPeriodStartsAt;
   const { data: session } = useSession();
   const router = useRouter();
   const { formatPrice } = useCurrency();
@@ -49,30 +55,52 @@ export function ClientClassRegistration({
   const isLoggedIn = hasMounted && !!session?.user;
   const userId = session?.user?.id;
 
-  // Check if user is already enrolled in this class (#1554: one wrapper)
-  const appointment = classes?.[0]?.appointment ?? null;
+  // Enrolled in any batch of this listing (#1554: one wrapper per batch).
+  const appointment = batchClass?.appointment ?? null;
   const isAlreadyEnrolled = userId
-    ? isUserEnrolled(appointment, userId)
+    ? (classes ?? []).some((c) => isUserEnrolled(c.appointment ?? null, userId))
     : false;
 
   // Capacity comes from the class instance when it sets one, else the plan.
   const capacity = getClassCapacity({
     classInstance: {
-      maxParticipants: classes?.[0]?.maxParticipants ?? null,
+      maxParticipants: batchClass?.maxParticipants ?? null,
       appointment,
     },
     plan: { maxParticipants: maxParticipants ?? plan.maxParticipants ?? 100 },
     excludeUserIds: consultantUserId ? [consultantUserId] : [],
   });
   const isFull = capacity.isFull;
+  // #1819 — a batch past its host's cutoff, or finished, is not for sale.
+  const isClosed = !!batch && !batch.canEnrol && !isFull;
+  const payPaise =
+    batch?.enrolment.state === "open" ? batch.enrolment.basePaise : price;
 
-  const checkoutUrl = `/checkout/plans/class/${classId}`;
+  const checkoutUrl = batch
+    ? `/checkout/plans/class/${classId}?eventId=${batch.classId}`
+    : `/checkout/plans/class/${classId}`;
   // Preserve the checkout destination as a RELATIVE callbackUrl (the sign-in
   // page drops absolute URLs) so a first-timer lands on checkout after auth +
   // onboarding.
   const signInHref = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
 
   const handleRegistration = () => {
+    if (isClosed && !isAlreadyEnrolled) {
+      return (
+        <Card>
+          <CardHeader>
+            <CardTitle>Class Registration</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Enrolment is closed for every batch of this class right now. Check
+              back when the instructor schedules the next batch.
+            </p>
+          </CardContent>
+        </Card>
+      );
+    }
+
     if (!isLoggedIn) {
       router.push(signInHref);
       return;
@@ -213,7 +241,7 @@ export function ClientClassRegistration({
           className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <Link href={checkoutUrl} prefetch>
-            Pay {formatPrice(price)} & Register Now
+            Pay {formatPrice(payPaise)} & Register Now
           </Link>
         </Button>
       </CardFooter>

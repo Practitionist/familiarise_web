@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PlanDetailBody } from "../../../components/PlanDetailBody";
 import { planLevelLabel } from "@/lib/labels/plan-labels";
@@ -8,31 +8,15 @@ import { Badge } from "@/components/ui/badge";
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import {
-  Calendar,
-  Clock,
-  Users,
-  GraduationCap,
-  ArrowLeft,
-} from "lucide-react";
-import { formatInTimeZone } from "date-fns-tz";
-import {
-  buildSessionsFromAppointment,
-  groupSessionsByWeek,
-} from "@/app/explore/programs/plans/schedule-utils";
+import { Calendar, Clock, Users, GraduationCap, ArrowLeft } from "lucide-react";
+import { deriveBatchCards } from "@/lib/booking/batch-cards";
+import { formatRole } from "@/components/collaborators/format";
+import { BatchSchedule } from "./BatchSchedule";
 import { ClientClassRegistration } from "./ClientClassRegistration";
 import { useCurrency } from "@/hooks/useCurrency";
 import { generateProgramImageUrl } from "@/lib/explore/programs";
 import { FeatureItem } from "@/app/explore/programs/plans/components/FeatureItem";
 import type { TClassPlanDetailsData } from "../types";
-
-const getBadgeVariant = (
-  currentStatus: string,
-): "outline" | "destructive" | "default" => {
-  if (currentStatus === "Completed") return "outline";
-  if (currentStatus === "Happening Now") return "destructive";
-  return "default";
-};
 
 interface ClassDetailsProps {
   readonly plan: TClassPlanDetailsData;
@@ -44,6 +28,16 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
   useEffect(() => {
     setUserTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
   }, []);
+  // #1819 — one derivation for the batch list and the registration card.
+  const hostUserId = plan.consultantProfile?.user?.id;
+  const cards = useMemo(
+    () =>
+      deriveBatchCards(plan, plan.classes, new Date(), {
+        timeZone: userTimeZone,
+        hostUserId,
+      }),
+    [plan, userTimeZone, hostUserId],
+  );
 
   return (
     <main className="min-h-screen bg-muted">
@@ -146,97 +140,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 <h2 className="text-xl font-semibold text-foreground mb-6">
                   Class Schedule
                 </h2>
-                {plan.classes && plan.classes.length > 0 ? (
-                  <div className="space-y-6">
-                    {plan.classes.map((classInstance, classIndex) => {
-                      const sessions = buildSessionsFromAppointment(
-                        classInstance.appointment,
-                      );
-                      const weeks = groupSessionsByWeek(sessions);
-
-                      return (
-                        <div
-                          key={classInstance.id}
-                          className="p-4 border border-border rounded-xl"
-                        >
-                          {plan.classes.length > 1 && (
-                            <h3 className="font-medium text-foreground mb-4">
-                              Batch {classIndex + 1}
-                            </h3>
-                          )}
-                          {sessions.length > 0 ? (
-                            <div className="space-y-4">
-                              {Array.from(weeks.entries()).map(
-                                ([weekNum, weekSessions]) => (
-                                  <div key={weekNum}>
-                                    <h4 className="text-xs font-medium text-muted-foreground/70 uppercase tracking-wider mb-2 px-1">
-                                      Week {weekNum}
-                                    </h4>
-                                    <div className="space-y-2">
-                                      {weekSessions.map((session) => (
-                                        <div
-                                          key={session.appointmentId}
-                                          className={`flex items-center justify-between p-3 rounded-lg ${
-                                            session.status === "Completed"
-                                              ? "bg-muted opacity-60"
-                                              : "bg-muted"
-                                          }`}
-                                        >
-                                          <div className="flex items-center gap-3">
-                                            <div className="w-7 h-7 rounded-full bg-border text-muted-foreground flex items-center justify-center text-xs font-semibold flex-shrink-0">
-                                              {session.sessionNumber}
-                                            </div>
-                                            <div className="text-sm">
-                                              <span className="font-medium text-foreground">
-                                                {formatInTimeZone(
-                                                  session.sessionStart,
-                                                  userTimeZone,
-                                                  "EEEE, MMMM d",
-                                                )}
-                                              </span>
-                                              <span className="text-muted-foreground ml-2">
-                                                {formatInTimeZone(
-                                                  session.sessionStart,
-                                                  userTimeZone,
-                                                  "h:mm a",
-                                                )}
-                                                {" – "}
-                                                {formatInTimeZone(
-                                                  session.sessionEnd,
-                                                  userTimeZone,
-                                                  "h:mm a zzz",
-                                                )}
-                                              </span>
-                                            </div>
-                                          </div>
-                                          <Badge
-                                            variant={getBadgeVariant(
-                                              session.status,
-                                            )}
-                                          >
-                                            {session.status}
-                                          </Badge>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                ),
-                              )}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">
-                              Schedule to be announced
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground">
-                    Class schedule to be announced.
-                  </p>
-                )}
+                <BatchSchedule plan={plan} cards={cards} zone={userTimeZone} />
               </CardContent>
             </Card>
           </motion.div>
@@ -325,7 +229,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                             {collab.consultantProfile.user.name}
                           </p>
                           <p className="text-xs text-muted-foreground">
-                            {collab.role.replace(/_/g, " ")}
+                            {formatRole(collab.role)}
                           </p>
                         </div>
                       </Link>
@@ -339,6 +243,7 @@ export function ClassDetails({ plan }: ClassDetailsProps) {
                 plan={plan}
                 maxParticipants={plan.maxParticipants ?? undefined}
                 consultantUserId={plan.consultantProfile?.user?.id}
+                batch={cards.find((c) => c.canEnrol) ?? cards[0]}
               />
             </div>
           </motion.div>

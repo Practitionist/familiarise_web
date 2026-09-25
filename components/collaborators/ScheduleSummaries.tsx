@@ -18,6 +18,14 @@ import type {
   WebinarPlanSchedule,
 } from "./types";
 import { formatDateTime, formatTime } from "./format";
+import { deriveBatchCards, type BatchCard } from "@/lib/booking/batch-cards";
+
+/** #1819 — the host's batches in the same order and words the explore page uses. */
+function batchCardsOf(plan: ClassPlanSchedule): BatchCard[] {
+  return deriveBatchCards(plan, plan.classes, new Date(), {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  });
+}
 
 export function WebinarScheduleSummary({
   plan,
@@ -141,20 +149,24 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
     );
   }
 
+  const lead = batchCardsOf(plan)[0];
   const activeClass =
-    plan.classes.find((c) => c.status === "IN_PROGRESS") ?? plan.classes[0];
-  const allSlots = activeClass.appointments.flatMap((a) => a.occurrences);
+    plan.classes.find((c) => c.id === lead?.classId) ?? plan.classes[0];
+  const allSlots = activeClass.appointment?.occurrences ?? [];
   const now = new Date();
   const upcomingOccurrences = allSlots.filter(
     (s) => new Date(s.startsAt) > now,
   );
   const nextSlot = upcomingOccurrences[0];
-  const totalEnrolled = activeClass.appointments[0]?._count.participants ?? 0;
+  const totalEnrolled = activeClass.appointment?._count.participants ?? 0;
 
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-1.5">
         <StatusBadge size="sm" {...eventStatusBadge(activeClass.status)} />
+        {lead && (
+          <span className="text-[11px] text-zinc-500">{lead.label}</span>
+        )}
         {plan.classes.length > 1 && (
           <span className="text-[11px] text-zinc-400">
             ({plan.classes.length} batches)
@@ -213,9 +225,11 @@ export function ClassScheduleSummary({ plan }: { plan: ClassPlanSchedule }) {
 }
 
 function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
-  const allSlots = cls.appointments.flatMap((a) =>
-    a.occurrences.map((slot) => ({ ...slot, enrolled: a._count.participants })),
-  );
+  const enrolled = cls.appointment?._count.participants ?? 0;
+  const allSlots = (cls.appointment?.occurrences ?? []).map((slot) => ({
+    ...slot,
+    enrolled,
+  }));
   if (allSlots.length === 0) {
     return (
       <p className="text-xs text-zinc-400 italic py-1">
@@ -276,19 +290,22 @@ function ClassSessionList({ cls }: { cls: ClassEventSchedule }) {
 function ClassEventCard({
   cls,
   plan,
+  card,
 }: {
   cls: ClassEventSchedule;
   plan: ClassPlanSchedule;
+  card: BatchCard | undefined;
 }) {
   const [sessionsExpanded, setSessionsExpanded] = useState(false);
-  const allSlots = cls.appointments.flatMap((a) => a.occurrences);
-  const totalEnrolled = cls.appointments[0]?._count.participants ?? 0;
+  const allSlots = cls.appointment?.occurrences ?? [];
+  const totalEnrolled = cls.appointment?._count.participants ?? 0;
 
   return (
     <div className="rounded-md border border-zinc-100 bg-zinc-50/50 px-3 py-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <StatusBadge size="sm" {...eventStatusBadge(cls.status)} />
+          {card && <span className="text-xs text-zinc-600">{card.label}</span>}
         </div>
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <Users className="w-3 h-3" />
@@ -340,10 +357,21 @@ function ClassEventCard({
 }
 
 export function ClassEventList({ plan }: { plan: ClassPlanSchedule }) {
+  const cards = batchCardsOf(plan);
+  const rank = new Map(cards.map((c, i) => [c.classId, i]));
+  const ordered = [...plan.classes].sort(
+    (a, b) =>
+      (rank.get(a.id) ?? cards.length) - (rank.get(b.id) ?? cards.length),
+  );
   return (
     <div className="space-y-2">
-      {plan.classes.map((cls) => (
-        <ClassEventCard key={cls.id} cls={cls} plan={plan} />
+      {ordered.map((cls) => (
+        <ClassEventCard
+          key={cls.id}
+          cls={cls}
+          plan={plan}
+          card={cards.find((c) => c.classId === cls.id)}
+        />
       ))}
     </div>
   );
