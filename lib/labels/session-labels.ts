@@ -236,6 +236,11 @@ export const SLOT_STATUS_BADGE: Record<
     label: "Rescheduled",
     className: "bg-blue-100 text-blue-900 border-blue-200",
   },
+  // #1569 — a held call that lost too much time; the learner is owed a make-up.
+  VOIDED: {
+    label: "Missed",
+    className: "bg-rose-100 text-rose-900 border-rose-200",
+  },
 };
 
 export const slotStatusBadge = (
