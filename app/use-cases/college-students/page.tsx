@@ -264,9 +264,11 @@ const data: UseCasePageData = {
         question: "What if the expert doesn't turn up?",
         // #1569 B3: an expert no-show on a consultation is handled
         // automatically (D4) — no manual review to wait on, no reschedule
-        // promise.
+        // promise. #1833 review: "absent for the session" read as requiring
+        // a total no-show; the void rule also covers a host who is absent
+        // long enough and then joins late (CodeRabbit).
         answer:
-          "That's automatic, not something you need to prove: if your expert is absent for the session, it's refunded in full without a manual review. Report it from the booking if you'd like our team to take a look anyway.",
+          "That's automatic, not something you need to prove: if your expert isn't there for enough of the session, it's voided and refunded in full without a manual review. Report it from the booking if you'd like our team to take a look anyway.",
       },
       {
         question: "Can I send my resume before the call?",

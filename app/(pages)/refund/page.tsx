@@ -306,9 +306,13 @@ export default function RefundPolicyPage() {
                   </p>
                   <ul>
                     <li>
+                      {/* #1833 review: tie the "full refund" promise to
+                          Section 6's fee deduction so the amount isn't
+                          ambiguous (CodeRabbit). */}
                       One-on-one consultation: a host no-show or a session cut
                       short by the host is cancelled with a full, automatic
-                      refund.
+                      refund — the same non-refundable-fee deduction in Section
+                      6 applies here as it does to every refund on this page.
                     </li>
                     <li>
                       Live classes and webinars: a voided session is offered as
@@ -563,18 +567,24 @@ export default function RefundPolicyPage() {
                 in 3.5 applies:
               </p>
               <ul>
-                {/* #1569 B2: a platform-side outage voids the session on its
-                    own condition, not the host-absence rule in 3.5 — CodeRabbit
-                    caught the earlier wording implying otherwise. "Make-up
-                    first, then refund" (D4), no rescheduling promise, no credit. */}
-                <li>
-                  We offer a free make-up session within 14 days first; if it
-                  goes unused or you decline it, we refund that session
-                  automatically
-                </li>
+                {/* #1833 review: the earlier bullet order read as a blanket
+                    make-up-first default that ignored the direct consultation
+                    refund and the subscription plan-allowance remedy —
+                    CodeRabbit caught the ambiguity. List the three service
+                    types explicitly instead of implying one default. */}
                 <li>
                   For a one-on-one consultation that a platform issue cuts
                   short, we refund it directly, without a make-up step
+                </li>
+                <li>
+                  For a class or webinar, we offer a free make-up session within
+                  14 days first; if it goes unused or you decline it, we refund
+                  that session automatically
+                </li>
+                <li>
+                  For a subscription, the session returns to your plan&apos;s
+                  allowance, and is refunded automatically if it&apos;s still
+                  unused when your plan or billing cycle ends
                 </li>
                 <li>
                   Report the issue as soon as you can so our technical team can

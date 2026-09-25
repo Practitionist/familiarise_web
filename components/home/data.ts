@@ -329,9 +329,11 @@ export const FAQ_ITEMS = [
     // that doesn't happen because the host is absent is voided and
     // remedied automatically (D1, D4), and cancellation refunds follow the
     // terms shown on the booking. CodeRabbit caught the first draft for not
-    // distinguishing the immediate-refund and make-up-first remedies.
+    // distinguishing the immediate-refund and make-up-first remedies, and
+    // the #1833 review round caught "doesn't join" reading as a total
+    // no-show rather than including a host absent long enough who joins late.
     answer:
-      "We use secure payment processing. Payment is held in escrow until your session is completed. Cancellation refunds follow the terms shown on your booking. If a consultation doesn't happen because your expert doesn't join, it's refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
+      "We use secure payment processing. Payment is held in escrow until your session is completed. Cancellation refunds follow the terms shown on your booking. If your expert isn't there for enough of a consultation, it's voided and refunded automatically — no request needed. Missed classes and webinars are offered a free make-up first, with an automatic refund if it goes unused.",
   },
   {
     question: "Can I become an expert on the platform?",
