@@ -24,6 +24,8 @@ import {
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant } from "./participants";
+import { NEEDS_HUMAN } from "./misses";
+import { captureThrottled } from "@/lib/observability/throttled-capture";
 import { onClassSessionVoided } from "./class-sessions";
 
 /** Ends after which Stream must have sent participant events (#1543 watchdog). */
@@ -156,7 +158,12 @@ export async function decideSlotOutcome(
       allowZero: true,
     });
     if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
-      await stageLearnerNoShowBells(tx, slot);
+      await stageNoShowBells(tx, slot, "one-to-one");
+    }
+    // Owner decision — a group seat absent from a held session hears only of its recording.
+    const isGroup = !!(slot.appointment.classId ?? slot.appointment.webinarId);
+    if (count > 0 && verdict.outcome === "HELD" && isGroup) {
+      await stageNoShowBells(tx, slot, "group");
     }
     // A void is a class miss: bells, and the exit right re-checked in this tx.
     if (count > 0 && to === "VOIDED" && slot.appointment.classId) {
@@ -177,15 +184,23 @@ const PLAN_BELL = { select: { title: true, recordingEnabled: true } } as const;
 
 /**
  * D7 — a 1:1 learner who never joined forfeits the session; one bell says so,
- * links "couldn't get in?" to support, and names the recording when there is one.
+ * links "couldn't get in?" to support, and names the recording when there is
+ * one. A group seat with no presence in a held session gets one bell only when
+ * a recording exists, and nothing otherwise. No money moves either way.
  */
-async function stageLearnerNoShowBells(tx: Tx, slot: OutcomeSlot) {
+async function stageNoShowBells(
+  tx: Tx,
+  slot: OutcomeSlot,
+  shape: "one-to-one" | "group",
+) {
   const row = await tx.appointment.findUnique({
     where: { id: slot.appointmentId },
     select: {
       consultation: { select: { consultationPlan: PLAN_BELL } },
       subscription: { select: { subscriptionPlan: PLAN_BELL } },
       trial: { select: { subscriptionPlan: PLAN_BELL } },
+      webinar: { select: { webinarPlan: PLAN_BELL } },
+      class: { select: { classPlan: PLAN_BELL } },
       participants: {
         where: { role: "CONSULTEE", ...liveParticipant() },
         select: {
@@ -195,11 +210,12 @@ async function stageLearnerNoShowBells(tx: Tx, slot: OutcomeSlot) {
       },
     },
   });
-  // Group shapes write nothing per seat (design §3.6); only 1:1 plans reach here.
   const plan =
-    row?.consultation?.consultationPlan ??
-    row?.subscription?.subscriptionPlan ??
-    row?.trial?.subscriptionPlan;
+    shape === "group"
+      ? (row?.class?.classPlan ?? row?.webinar?.webinarPlan)
+      : (row?.consultation?.consultationPlan ??
+        row?.subscription?.subscriptionPlan ??
+        row?.trial?.subscriptionPlan);
   if (!row || !plan) return;
   const recording = plan.recordingEnabled
     ? await tx.recording.findFirst({
@@ -210,22 +226,73 @@ async function stageLearnerNoShowBells(tx: Tx, slot: OutcomeSlot) {
         select: { id: true },
       })
     : null;
-  for (const seat of row.participants) {
+  if (shape === "group" && !recording) return;
+  const present = new Set(slot.presences.map((p) => p.userId));
+  const absent =
+    shape === "group"
+      ? row.participants.filter((seat) => !present.has(seat.userId))
+      : row.participants;
+  for (const seat of absent) {
     const profileId = seat.user.consulteeProfileId;
+    const recordingUrl = profileId
+      ? personalHref("consultee", profileId, "recordings")
+      : `${getAppUrl()}/dashboard`;
     await stageBell(tx, {
-      workflowId: NOVU_WORKFLOWS.SESSION_NO_SHOW,
+      workflowId:
+        shape === "group"
+          ? NOVU_WORKFLOWS.SESSION_MISSED_RECORDING
+          : NOVU_WORKFLOWS.SESSION_NO_SHOW,
       recipients: [seat.userId],
       payload: {
         planTitle: plan.title,
         // Same wording as the class-session bells (class-sessions.ts `when`).
         dateTime: format(slot.startsAt, "EEE d MMM yyyy, HH:mm 'UTC'"),
         supportUrl: `${getAppUrl()}/support`,
-        ...(recording &&
-          profileId && {
-            recordingUrl: personalHref("consultee", profileId, "recordings"),
-          }),
+        ...(recording && { recordingUrl }),
       },
       dedupeKey: `no-show:${slot.id}:${seat.userId}`,
     });
   }
+}
+
+/** Owner decision — a needs-human item older than this raises a Sentry warning. */
+export const NEEDS_HUMAN_ALERT_HOURS = 72;
+
+/**
+ * Warn once per 15 minutes while any session has waited in the ops
+ * needs-human queue for more than 72 hours; the hold on its money stays.
+ */
+export async function alertStaleNeedsHuman(
+  db: Pick<Tx, "appointmentOccurrence">,
+  now: Date,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - NEEDS_HUMAN_ALERT_HOURS * 3_600_000);
+  const stale = await db.appointmentOccurrence.count({
+    where: {
+      AND: [
+        NEEDS_HUMAN,
+        // Queued since the verdict, or since the call ended when none was written.
+        {
+          OR: [
+            { outcomeAt: { lt: cutoff } },
+            { outcomeAt: null, endsAt: { lt: cutoff } },
+          ],
+        },
+      ],
+    },
+  });
+  if (stale > 0) {
+    captureThrottled(
+      "needs-human-age",
+      new Error(`${stale} session(s) waited over 72 h for an ops decision`),
+      {
+        subsystem: "bookings",
+        op: "needs-human-age",
+        level: "warning",
+        extra: { stale },
+      },
+      15 * 60_000,
+    );
+  }
+  return stale;
 }

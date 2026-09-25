@@ -11,13 +11,35 @@ jest.mock("../../lib/booking/transitions", () => ({
 jest.mock("../../lib/stream/call-presence", () => ({
   getCallPresenceEvidence: jest.fn(async () => ({ unique: 2 })),
 }));
+const stageBell = jest.fn();
+jest.mock("../../lib/novu/stage-bell", () => ({
+  stageBell: (...a: unknown[]) => stageBell(...a),
+}));
+const captureThrottled = jest.fn();
+jest.mock("../../lib/observability/throttled-capture", () => ({
+  captureThrottled: (...a: unknown[]) => captureThrottled(...a),
+}));
+const recording = { current: null as { id: string } | null };
 jest.mock("../../lib/prisma", () => {
-  const client: Record<string, unknown> = {};
+  const client: Record<string, unknown> = {
+    // A class whose plan records, with one present and one absent seat.
+    appointment: {
+      findUnique: async () => ({
+        class: { classPlan: { title: "Python", recordingEnabled: true } },
+        participants: ["learner", "absent"].map((userId) => ({
+          userId,
+          user: { consulteeProfileId: `cp-${userId}` },
+        })),
+      }),
+    },
+    recording: { findFirst: async () => recording.current },
+  };
   client.$transaction = jest.fn((fn: (tx: unknown) => unknown) => fn(client));
   return { __esModule: true, default: client };
 });
 
 import {
+  alertStaleNeedsHuman,
   decideSlotOutcome,
   type OutcomeSlot,
 } from "../../lib/booking/session-outcome-sweep";
@@ -46,7 +68,7 @@ const slot = (hostLeaves: number): OutcomeSlot =>
     },
   }) as unknown as OutcomeSlot;
 
-beforeEach(() => transition.mockClear());
+beforeEach(() => jest.clearAllMocks());
 
 it.each([
   [60, "COMPLETED", { outcome: "HELD", completedAt: at(120) }],
@@ -70,3 +92,41 @@ it.each([
     );
   },
 );
+
+it.each([
+  [{ id: "rec-1" }, 1],
+  [null, 0],
+])(
+  "owner decision — a group seat absent from a HELD session: recording %p → %i bell",
+  async (rec, bells) => {
+    recording.current = rec;
+    const group = slot(60);
+    group.appointment = {
+      ...group.appointment,
+      subscriptionId: null,
+      classId: "cls-1",
+    } as OutcomeSlot["appointment"];
+    await decideSlotOutcome(group, { now: at(120), outages: [] });
+    // Only the absent seat, keyed like the 1:1 no-show bell.
+    expect(stageBell.mock.calls.map((c) => c[1])).toEqual(
+      Array.from({ length: bells }, () =>
+        expect.objectContaining({
+          workflowId: "session-missed-recording",
+          recipients: ["absent"],
+          dedupeKey: "no-show:occ-1:absent",
+        }),
+      ),
+    );
+  },
+);
+
+it("owner decision — a needs-human item older than 72 h raises one throttled warning", async () => {
+  const db = { appointmentOccurrence: { count: jest.fn(async () => 2) } };
+  await alertStaleNeedsHuman(db as never, at(0));
+  expect(captureThrottled).toHaveBeenCalledWith(
+    "needs-human-age",
+    expect.any(Error),
+    expect.objectContaining({ level: "warning", extra: { stale: 2 } }),
+    15 * 60_000,
+  );
+});

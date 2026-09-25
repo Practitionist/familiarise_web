@@ -16,7 +16,7 @@ import {
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
-import { AWAITING_HUMAN } from "@/lib/booking/misses";
+import { NEEDS_HUMAN } from "@/lib/booking/misses";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
 import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "./ops-refusal-error";
@@ -178,18 +178,7 @@ export async function overturnSessionOutcome(args: {
  */
 export async function readSessionsNeedingHuman(limit = 100) {
   return prisma.appointmentOccurrence.findMany({
-    where: {
-      deletedAt: null,
-      isTentative: false,
-      OR: [
-        AWAITING_HUMAN,
-        {
-          completionStatus: "VOIDED",
-          seatsSettledAt: null,
-          appointment: { trial: { paymentId: { not: null } } },
-        },
-      ],
-    },
+    where: NEEDS_HUMAN,
     orderBy: { endsAt: "desc" },
     take: limit,
     select: {

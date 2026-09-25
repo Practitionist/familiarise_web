@@ -79,6 +79,7 @@ jest.mock("../../lib/prisma", () => {
       findMany: jest.fn(),
       updateMany: jest.fn(),
       updateManyAndReturn: jest.fn(),
+      count: jest.fn(async () => 0),
     },
     supportTicket: { findFirst: jest.fn() },
     maintenanceWindow: { findMany: jest.fn(async () => []) },

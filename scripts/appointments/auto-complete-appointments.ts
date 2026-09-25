@@ -53,6 +53,7 @@ import {
   subscriptionEntitlement,
 } from "@/lib/booking/entitlement";
 import {
+  alertStaleNeedsHuman,
   decideSlotOutcome,
   OUTCOME_SLOT_SELECT,
   readOutageWindows,
@@ -768,6 +769,8 @@ async function completeIndividualSlots(): Promise<{
         );
       }
     }
+    // Owner decision — a needs-human item older than 72 h is warned about, throttled.
+    await alertStaleNeedsHuman(prisma, now);
     // #1543 — silence must not mean "fine": Stream saw people we recorded nobody for.
     if (feedGaps > 0) {
       reportSentryMessage("attendance feed gap", {

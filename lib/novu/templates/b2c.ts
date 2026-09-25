@@ -112,6 +112,18 @@ export const B2C_TEMPLATES: WorkflowTemplate[] = [
     },
   },
   {
+    workflowId: W.SESSION_MISSED_RECORDING,
+    name: "Group session missed, recording available",
+    description:
+      "A class or webinar seat holder who was not in a held session, sent only when that session was recorded.",
+    category: "appointments",
+    inApp: {
+      subject: "Sorry we missed you",
+      body: "Sorry we missed you in the {{payload.dateTime}} session of {{payload.planTitle}} — here's the recording.",
+      redirect: "recordingUrl",
+    },
+  },
+  {
     // #1778 — notify-only: nothing is reserved, first to book wins.
     workflowId: W.WINDOW_OPENED,
     name: "Window opened",

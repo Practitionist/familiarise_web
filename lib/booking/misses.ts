@@ -42,3 +42,17 @@ export const AWAITING_HUMAN = {
     { outcome: null, meeting: { endedReason: "maintenance" } },
   ],
 } satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** The ops needs-human list: the above, plus a paid trial that was voided (D4). */
+export const NEEDS_HUMAN = {
+  deletedAt: null,
+  isTentative: false,
+  OR: [
+    AWAITING_HUMAN,
+    {
+      completionStatus: "VOIDED",
+      seatsSettledAt: null,
+      appointment: { trial: { paymentId: { not: null } } },
+    },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;

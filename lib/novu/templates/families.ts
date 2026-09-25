@@ -116,6 +116,7 @@ export const EVENT_FAMILY: Record<Ids[keyof Ids], FamilyId> = {
   "class-session-refunded": "appointment",
   "class-exit-available": "appointment",
   "session-no-show": "appointment",
+  "session-missed-recording": "appointment",
   "window-opened": "appointment",
   "appointment-rescheduled": "appointment",
   "appointment-reminder": "appointment",
