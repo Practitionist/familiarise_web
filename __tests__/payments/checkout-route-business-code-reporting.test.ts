@@ -66,6 +66,7 @@ import { Prisma } from "@prisma/client";
 import { POST } from "../../app/api/checkout/route";
 import { getErrorToast } from "../../lib/errors/mapping/payment-error-toast-map";
 import { replayByIdempotencyKey } from "../../lib/payments/operations/checkout-replay";
+import { BookingRuleError } from "../../lib/booking/booking-rule-error";
 
 function checkoutRequest(body: Record<string, unknown> = {}) {
   return new NextRequest("https://x.test/api/checkout", {
@@ -140,6 +141,25 @@ describe("a business-coded refusal leaves POST /api/checkout as an answer", () =
     expect(getErrorToast("EVENT_FULL_ERROR").description).toContain(
       "join the waitlist",
     );
+  });
+
+  // #1834 — the class batch refusals keep BOOKING_RULE_ERROR and add their own code.
+  it("surfaces ENROLMENT_CLOSED as a machine-readable code on a 409", async () => {
+    handleCheckout.mockRejectedValue(
+      new BookingRuleError(
+        "ENROLMENT_CLOSED",
+        "Enrolment for this batch has closed.",
+      ),
+    );
+
+    const res = await POST(checkoutRequest());
+    const body = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({
+      errorType: "BOOKING_RULE_ERROR",
+      code: "ENROLMENT_CLOSED",
+    });
   });
 
   it("still captures an unrecognised failure at Sentry's default level", async () => {

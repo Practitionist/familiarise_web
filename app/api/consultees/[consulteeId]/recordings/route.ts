@@ -11,7 +11,7 @@ import { RecordingService } from "@/lib/stream/recording-service";
 import { getBestRecordingUrl } from "@/lib/stream/recording-storage";
 import {
   hiddenFromLateJoiner,
-  lateJoinRecordingFloors,
+  lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 
 import { getSession } from "@/lib/auth-server";
@@ -50,8 +50,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       { type: type || undefined },
     );
     // #1819 — a late joiner's seat hides the sessions before it (host toggle).
-    const floors = await lateJoinRecordingFloors(session.user.id);
-    const recordings = entitled.filter((r) => !hiddenFromLateJoiner(r, floors));
+    const lateJoin = await lateJoinRecordingAccess(session.user.id);
+    const recordings = entitled.filter(
+      (r) => !hiddenFromLateJoiner(r, lateJoin),
+    );
 
     // Format recordings for response (async — generates presigned URLs)
     const formattedRecordings = await Promise.all(

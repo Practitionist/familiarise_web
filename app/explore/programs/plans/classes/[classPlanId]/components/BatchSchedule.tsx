@@ -4,7 +4,6 @@ import Link from "next/link";
 import { formatInTimeZone } from "date-fns-tz";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { FreeCancellationLine } from "@/components/events/FreeCancellationLine";
 import { useCurrency } from "@/hooks/useCurrency";
 import { useSession } from "@/lib/auth-client";
 import { isUserEnrolled } from "@/lib/payments/utils/participants";
@@ -42,6 +41,11 @@ function enrolmentLine(
   return isLateJoin
     ? `Join now for ${price(basePaise)} · ${remaining} of ${N} sessions left`
     : `Join now for ${price(basePaise)} · all ${N} sessions`;
+}
+
+function seatsLine(card: BatchCard): string {
+  if (card.isFull) return "No seats left";
+  return card.seatsLeft === 1 ? "1 seat left" : `${card.seatsLeft} seats left`;
 }
 
 function SessionRow({
@@ -153,18 +157,18 @@ function BatchPanel({
             )}
           </p>
           {card.phase !== "completed" && (
-            <p className="text-sm text-muted-foreground">
-              {card.isFull
-                ? "No seats left"
-                : `${card.seatsLeft} ${card.seatsLeft === 1 ? "seat" : "seats"} left`}
-            </p>
+            <p className="text-sm text-muted-foreground">{seatsLine(card)}</p>
           )}
-          {card.phase === "upcoming" && (
-            <FreeCancellationLine
-              startsAt={card.startsAt}
-              windowHours={plan.refundWindowHours}
-              kind="class"
-            />
+          {card.freeCancellationUntil && (
+            <p className="text-sm text-muted-foreground">
+              Free cancellation until{" "}
+              {formatInTimeZone(
+                card.freeCancellationUntil,
+                zone,
+                "EEE d MMM, h:mm a zzz",
+              )}
+              .
+            </p>
           )}
         </div>
         {enrolled ? (

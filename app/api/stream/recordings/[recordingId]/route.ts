@@ -18,7 +18,7 @@ import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
   hiddenFromLateJoiner,
-  lateJoinRecordingFloors,
+  lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 import {
   auditOperatorRecordingAccess,
@@ -146,8 +146,8 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         hasAccess = payments.some(isPaymentEntitled);
         // #1819 — a late joiner's seat hides the sessions before it (host toggle).
         if (hasAccess && appointment?.class) {
-          const floors = await lateJoinRecordingFloors(session.user.id);
-          hasAccess = !hiddenFromLateJoiner(recording, floors);
+          const lateJoin = await lateJoinRecordingAccess(session.user.id);
+          hasAccess = !hiddenFromLateJoiner(recording, lateJoin);
         }
       }
 

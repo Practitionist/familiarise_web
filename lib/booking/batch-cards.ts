@@ -9,6 +9,7 @@ import {
   effectiveMaxParticipants,
   getClassCapacity,
 } from "@/lib/events/capacity";
+import { eventRefundWindowHours } from "@/lib/payments/operations/cancellation-policy";
 import {
   classEnrolmentFrom,
   type ClassEnrolment,
@@ -23,6 +24,8 @@ export interface BatchCardPlan {
   sessionsPerWeek: number;
   maxParticipants: number;
   lateJoinUntilSession?: number | null;
+  /** The listing's free-cancellation window; null means the 24-hour default. */
+  refundWindowHours?: number | null;
 }
 
 export interface BatchCardClass {
@@ -49,6 +52,8 @@ export interface BatchCard {
   seatsLeft: number;
   isFull: boolean;
   enrolment: ClassEnrolment;
+  /** A seat bought now cancels free until this instant (next session − window); null once past. */
+  freeCancellationUntil: Date | null;
   /** Open for enrolment, not full, and not a draft or cancelled batch. */
   canEnrol: boolean;
   /** For a card that cannot be joined: when the next joinable batch starts. */
@@ -146,6 +151,13 @@ export function deriveBatchCards(
         now,
       });
       const seats = seatsFor(cls, plan, opts.hostUserId ?? undefined);
+      const nextAhead = starts.find((d) => d > now);
+      const until = nextAhead
+        ? new Date(
+            nextAhead.getTime() -
+              eventRefundWindowHours(null, plan.refundWindowHours) * 3_600_000,
+          )
+        : null;
       return {
         classId: cls.id,
         phase,
@@ -158,6 +170,7 @@ export function deriveBatchCards(
           tz,
         ),
         ...seats,
+        freeCancellationUntil: until && until > now ? until : null,
         enrolment,
         canEnrol:
           enrolment.state === "open" &&

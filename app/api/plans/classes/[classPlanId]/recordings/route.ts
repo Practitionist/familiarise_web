@@ -13,7 +13,7 @@ import prisma from "@/lib/prisma";
 import { isPrivileged } from "@/lib/auth-helpers";
 import {
   hiddenFromLateJoiner,
-  lateJoinRecordingFloors,
+  lateJoinRecordingAccess,
 } from "@/lib/stream/late-join-recordings";
 
 import { getSession } from "@/lib/auth-server";
@@ -102,10 +102,13 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     // Get recordings for this class plan
     const all = await RecordingService.getClassPlanRecordings(classPlanId);
     // #1819 — a late joiner's seat hides the sessions before it (host toggle).
-    const floors = viaSeat
-      ? await lateJoinRecordingFloors(session.user.id)
-      : new Map<string, Date>();
-    const recordings = all.filter((r) => !hiddenFromLateJoiner(r, floors));
+    const lateJoin = viaSeat
+      ? await lateJoinRecordingAccess(session.user.id)
+      : {
+          floors: new Map<string, Date>(),
+          lateSeatBatches: new Map<string, Set<string>>(),
+        };
+    const recordings = all.filter((r) => !hiddenFromLateJoiner(r, lateJoin));
 
     // Map recordings to response format (async — presigned URLs)
     const formattedRecordings = await Promise.all(
