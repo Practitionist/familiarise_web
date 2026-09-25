@@ -24,6 +24,7 @@ import {
 import { SESSION_HOSTS_SELECT, sessionHostUserIds } from "./session-hosts";
 import { transitionOccurrenceCompletion } from "./transitions";
 import { liveParticipant } from "./participants";
+import { onClassSessionVoided } from "./class-sessions";
 
 /** Ends after which Stream must have sent participant events (#1543 watchdog). */
 const FEED_EXPECTED_REASONS = new Set(["call_ended", "session_timeout"]);
@@ -156,6 +157,16 @@ export async function decideSlotOutcome(
     });
     if (count > 0 && verdict.outcome === "LEARNER_ABSENT") {
       await stageLearnerNoShowBells(tx, slot);
+    }
+    // A void is a class miss: bells, and the exit right re-checked in this tx.
+    if (count > 0 && to === "VOIDED" && slot.appointment.classId) {
+      await onClassSessionVoided(tx, {
+        appointmentId: slot.appointmentId,
+        occurrenceId: slot.id,
+        startsAt: slot.startsAt,
+        voidedAt: ctx.now,
+        hostAttributed: verdict.hostAttributed,
+      });
     }
     return count > 0;
   });

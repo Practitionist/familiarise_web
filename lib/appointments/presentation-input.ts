@@ -226,6 +226,9 @@ function classSeriesSummary(a: Detail): BookingPresentationInput["series"] {
         completionStatus: o.completionStatus,
         movedAt: o.movedAt ? new Date(o.movedAt) : null,
         hostCancelledAt: o.hostCancelledAt ? new Date(o.hostCancelledAt) : null,
+        // #1569 — a voided session is a miss too.
+        voidedAt: o.voidedAt ? new Date(o.voidedAt) : null,
+        outcome: o.outcome,
       })),
     now: new Date(),
   });

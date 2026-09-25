@@ -12,13 +12,17 @@
  *     distinct ordinal, capped at N; zero falls back to N.
  *   - unit = floor(seat amount / heldCount), in BigInt; rounding favours the
  *     buyer on every series-level amount (amount − unit × delivered).
- *   - delivered = endsAt ≤ now and not CANCELLED/RESCHEDULED; remaining =
+ *   - delivered = endsAt ≤ now and not CANCELLED/RESCHEDULED/VOIDED; remaining =
  *     live SCHEDULED rows starting after now; neverScheduled is the rest.
  */
 
-import type { OccurrenceCompletionStatus } from "@prisma/client";
+import type {
+  OccurrenceCompletionStatus,
+  OccurrenceOutcome,
+} from "@prisma/client";
 
 import type { Tx } from "@/lib/prisma";
+import { HOST_ATTRIBUTED_OUTCOMES } from "./session-outcome";
 
 export interface LedgerOccurrence {
   ordinal: number;
@@ -28,7 +32,18 @@ export interface LedgerOccurrence {
   movedAt: Date | null;
   /** #1780 row 4 — a session the host cancelled; still counts toward N. */
   hostCancelledAt?: Date | null;
+  /** #1569 — a held session voided by the outcome sweep; a miss like a cancel. */
+  voidedAt?: Date | null;
+  outcome?: OccurrenceOutcome | null;
 }
+
+/** #1569 — host-cancelled or voided: owed a make-up or a refund, never delivered. */
+const isMissed = (o: LedgerOccurrence) => !!(o.hostCancelledAt ?? o.voidedAt);
+
+/** D6 — a miss the host answers for: every host cancel, and CUT_SHORT/HOST_ABSENT voids. */
+const isHostMiss = (o: LedgerOccurrence) =>
+  !!o.hostCancelledAt ||
+  (!!o.voidedAt && !!o.outcome && HOST_ATTRIBUTED_OUTCOMES.includes(o.outcome));
 
 export interface SeatLedger {
   N: number;
@@ -40,7 +55,11 @@ export interface SeatLedger {
   neverScheduled: number;
 }
 
-const DEAD = new Set<OccurrenceCompletionStatus>(["CANCELLED", "RESCHEDULED"]);
+const DEAD = new Set<OccurrenceCompletionStatus>([
+  "CANCELLED",
+  "RESCHEDULED",
+  "VOIDED",
+]);
 
 const isDelivered = (o: LedgerOccurrence, now: Date) =>
   o.endsAt <= now && !DEAD.has(o.completionStatus);
@@ -62,11 +81,11 @@ export function seatLedgerFrom(args: {
   const remaining = held
     .filter((o) => isLiveAhead(o, now))
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
-  // A host-cancelled session keeps its place in the seat's count (E-2): it
-  // is either made up or refunded one unit, so the unit must not move.
-  const hostCancelled = held.filter((o) => o.hostCancelledAt);
+  // A missed session (host-cancelled or voided) keeps its place in the seat's
+  // count (E-2): it is made up or refunded one unit, so the unit must not move.
+  const missed = held.filter(isMissed);
   const ordinals = new Set(
-    [...delivered, ...remaining, ...hostCancelled].map((o) => o.ordinal),
+    [...delivered, ...remaining, ...missed].map((o) => o.ordinal),
   );
   const heldCount = Math.min(N, ordinals.size) || N;
   const deliveredHeld = Math.min(delivered.length, heldCount);
@@ -103,6 +122,8 @@ const LEDGER_OCCURRENCE_SELECT = {
   completionStatus: true,
   movedAt: true,
   hostCancelledAt: true,
+  voidedAt: true,
+  outcome: true,
 } as const;
 
 /** Reads the seat's sessions and its plan size, on the caller's client. */
@@ -163,8 +184,10 @@ export interface SeriesLedger {
   delivered: number;
   remaining: number;
   neverScheduled: number;
-  /** Sessions the host cancelled, made up or not (misses = host cancellations). */
+  /** Sessions missed, made up or not: host cancellations and voids (#1569). */
   misses: number;
+  /** D6 — the misses the host answers for; these alone feed the reliability flag. */
+  hostMisses: number;
   /** The learner may leave with every undelivered session refunded (E-5). */
   exitRight: boolean;
 }
@@ -182,13 +205,14 @@ export function seriesLedgerFrom(args: {
   const { N, now } = args;
   const delivered = args.occurrences.filter((o) => isDelivered(o, now)).length;
   const remaining = args.occurrences.filter((o) => isLiveAhead(o, now)).length;
-  const misses = args.occurrences.filter((o) => o.hostCancelledAt).length;
+  const misses = args.occurrences.filter(isMissed).length;
   return {
     N,
     delivered,
     remaining,
     neverScheduled: Math.max(0, N - delivered - remaining),
     misses,
+    hostMisses: args.occurrences.filter(isHostMiss).length,
     exitRight: exitRightFor(misses, N),
   };
 }

@@ -212,11 +212,11 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
             ))}
           </Section>
 
-          <Section title="Sessions the host cancelled">
+          <Section title="Missed sessions (cancelled by the host or voided)">
             {v.cancelledSessions.map((o) => (
               <Row
                 key={o.id}
-                label={`#${o.ordinal} · was ${when(o.startsAt)} · ${
+                label={`#${o.ordinal} · ${o.voided ? "voided" : "cancelled"} · was ${when(o.startsAt)} · ${
                   o.makeUp ? `made up ${when(o.makeUp.startsAt)}` : "no make-up"
                 }${o.seatsSettledAt ? " · settled" : ""}`}
               >
