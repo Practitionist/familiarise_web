@@ -40,6 +40,7 @@ import type {
   ReferralStatus,
   RefundStatus,
   OccurrenceCompletionStatus,
+  OccurrenceOutcome,
   TrialStatus,
   WaitlistStatus,
   WebinarStatus,
@@ -241,6 +242,18 @@ export const SLOT_STATUS_BADGE: Record<
     label: "Missed",
     className: "bg-rose-100 text-rose-900 border-rose-200",
   },
+};
+
+/** #1569 — what the outcome sweep saw, in plain words for the ops console. */
+export const SESSION_OUTCOME_LABEL: Record<OccurrenceOutcome, string> = {
+  HELD: "Held",
+  CUT_SHORT: "Cut short by the host side",
+  PLATFORM_OUTAGE: "Lost to a platform outage",
+  HOST_ABSENT: "Host never joined",
+  LEARNER_ABSENT: "Learner never joined",
+  NOBODY_JOINED: "Nobody joined",
+  INCONCLUSIVE: "Needs a human decision",
+  OFFLINE: "No call on record",
 };
 
 export const slotStatusBadge = (
