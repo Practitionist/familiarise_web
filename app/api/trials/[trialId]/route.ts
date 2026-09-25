@@ -534,7 +534,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
             // #1093 §1 — consultantProfileId keeps the session inside the
             // occurrence_no_confirmed_overlap exclusion constraint's WHERE.
-            const trialSession = {
+            const trialOccurrence = {
               ordinal: 1,
               startsAt: startTime,
               endsAt: endTime,
@@ -542,11 +542,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               consultantProfileId: existingTrial.consultantProfileId,
             };
             const appointment = placeholderId
-              ? await acceptPaidTrial(tx, placeholderId, trialSession)
+              ? await acceptPaidTrial(tx, placeholderId, trialOccurrence)
               : await createFreeTrialAppointment(
                   tx,
                   existingTrial,
-                  trialSession,
+                  trialOccurrence,
                 );
 
             // Update trial with appointment link and the resulting status —
@@ -1132,7 +1132,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   }
 }
 
-type TrialSession = {
+type TrialOccurrenceInput = {
   ordinal: number;
   startsAt: Date;
   endsAt: Date;
@@ -1147,7 +1147,7 @@ type TrialSession = {
 async function acceptPaidTrial(
   tx: Tx,
   appointmentId: string,
-  session: TrialSession,
+  session: TrialOccurrenceInput,
 ) {
   await tx.appointmentOccurrence.create({
     data: { appointmentId, ...session },
@@ -1171,7 +1171,7 @@ async function createFreeTrialAppointment(
     consulteeProfile: { user: { id: string } };
     consultantProfile: { user: { id: string } };
   },
-  session: TrialSession,
+  session: TrialOccurrenceInput,
 ) {
   const appointment = await tx.appointment.create({
     data: {
