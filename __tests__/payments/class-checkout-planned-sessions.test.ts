@@ -128,6 +128,9 @@ function txWith(
         appointment: { id: "appt-class", occurrences, participants: [] },
       }),
     },
+    appointmentOccurrence: {
+      findMany: jest.fn().mockResolvedValue(occurrences),
+    },
     appointmentParticipant: {
       createMany,
       updateMany: jest.fn().mockResolvedValue({ count: 0 }),

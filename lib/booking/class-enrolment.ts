@@ -46,16 +46,29 @@ export function classEnrolmentFrom(args: {
   const live = args.sessions.filter((s) => !s.deletedAt);
   const N = args.N > 0 ? args.N : live.length;
   if (live.length === 0 || N === 0) return { state: "unscheduled", N };
+  const key = (s: EnrolmentSession) =>
+    s.ordinal ?? new Date(s.startsAt).getTime();
+  const isPast = (s: EnrolmentSession) =>
+    new Date(s.startsAt).getTime() <= args.now.getTime();
+  // A cancelled past session is gone for a new seat unless its make-up is ahead.
+  const madeUpAhead = new Set(
+    live
+      .filter(
+        (s) => !isPast(s) && !NOT_STARTED_STATUSES.has(s.completionStatus),
+      )
+      .map(key),
+  );
   // Remaining = N minus the sessions that have begun, so a session awaiting
   // its new time is still sold rather than silently closing enrolment.
   const started = new Set(
     live
       .filter(
         (s) =>
-          !NOT_STARTED_STATUSES.has(s.completionStatus) &&
-          new Date(s.startsAt).getTime() <= args.now.getTime(),
+          isPast(s) &&
+          (!NOT_STARTED_STATUSES.has(s.completionStatus) ||
+            (s.completionStatus === "CANCELLED" && !madeUpAhead.has(key(s)))),
       )
-      .map((s) => s.ordinal ?? new Date(s.startsAt).getTime()),
+      .map(key),
   );
   const remaining = Math.max(0, N - started.size);
   const nextOrdinal = N - remaining + 1;

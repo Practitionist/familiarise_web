@@ -85,28 +85,28 @@ export function ClientClassRegistration({
   const signInHref = `/auth/signin?callbackUrl=${encodeURIComponent(checkoutUrl)}`;
 
   const handleRegistration = () => {
-    if (isClosed && !isAlreadyEnrolled) {
-      return (
-        <Card>
-          <CardHeader>
-            <CardTitle>Class Registration</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Enrolment is closed for every batch of this class right now. Check
-              back when the instructor schedules the next batch.
-            </p>
-          </CardContent>
-        </Card>
-      );
-    }
-
     if (!isLoggedIn) {
       router.push(signInHref);
       return;
     }
     router.push(checkoutUrl);
   };
+
+  if (isClosed && !isAlreadyEnrolled) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Class Registration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            No batch of this class is open for enrolment right now. Check back
+            when the instructor opens seats or schedules the next batch.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!isLoggedIn) {
     // Determine button state for non-logged in users

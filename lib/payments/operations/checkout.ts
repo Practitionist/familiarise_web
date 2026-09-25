@@ -3020,14 +3020,17 @@ export async function handleClassCheckout(
     throw new Error("No class sessions found");
   }
 
-  // #1819 — re-derived at commit: a session that started since the quote
-  // re-prices the order, so the buyer never pays for a session already begun.
+  // #1819 — re-derived at commit over the quote's rows (cancelled ones too): a
+  // session that started since the quote re-prices the order.
   const enrolment = assertClassEnrolmentOpen(
     classEnrolmentFrom({
       pricePaise: plan.price,
       N: plan.totalSessions,
       lateJoinUntilSession: plan.lateJoinUntilSession,
-      sessions,
+      sessions: await tx.appointmentOccurrence.findMany({
+        where: { appointmentId: wrapper.id, deletedAt: null },
+        select: { ordinal: true, startsAt: true, completionStatus: true },
+      }),
       now: new Date(),
     }),
   );

@@ -16,7 +16,7 @@ Each item below was its own commit.
 
 ## Findings that contradicted the design
 
-The design counted `remaining` as the live, non-tentative sessions that start after now. A session released for rescheduling is stored as a tentative `RESCHEDULED` row, so that count would drop it and close enrolment before session 1 of a batch whose host is moving one session. The derivation therefore counts `remaining` as the plan's total minus the sessions that have started, which gives the same answer in every other case.
+The design counted `remaining` as the live, non-tentative sessions that start after now. A session released for rescheduling is stored as a tentative `RESCHEDULED` row, so that count would drop it and close enrolment before session 1 of a batch whose host is moving one session. The derivation therefore counts `remaining` as the plan's total minus the sessions that have started, which gives the same answer in every other case. A cancelled session in the past counts as started unless its make-up is still ahead, so a late joiner never pays for a session that will not run for them (a CodeRabbit finding).
 
 The host's class list (`components/collaborators/ScheduleSummaries.tsx`) still read the pre-#1554 `appointments` array while the API returns one `appointment`, so it could not render a class at all. Moving it onto `deriveBatchCards` fixed that shape as well.
 
