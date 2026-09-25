@@ -17,6 +17,13 @@ export const NOVU_WORKFLOWS = {
   // happens to the remainder.
   APPOINTMENT_PARTIALLY_SCHEDULED: "appointment-partially-scheduled",
   APPOINTMENT_CANCELLED: "appointment-cancelled",
+  // #1780 row 4 — one class session cancelled, made up, refunded; the exit right.
+  CLASS_SESSION_CANCELLED: "class-session-cancelled",
+  CLASS_MAKEUP_SCHEDULED: "class-makeup-scheduled",
+  CLASS_SESSION_REFUNDED: "class-session-refunded",
+  CLASS_EXIT_AVAILABLE: "class-exit-available",
+  // #1778 — a held 1:1 window a learner asked about has freed.
+  WINDOW_OPENED: "window-opened",
   APPOINTMENT_RESCHEDULED: "appointment-rescheduled",
   APPOINTMENT_REMINDER: "appointment-reminder",
   APPOINTMENT_COMPLETED: "appointment-completed",
@@ -47,11 +54,15 @@ export const NOVU_WORKFLOWS = {
   TRIAL_SESSION_SCHEDULED: "trial-session-scheduled",
   TRIAL_SESSION_COMPLETED: "trial-session-completed",
   TRIAL_SESSION_CANCELLED: "trial-session-cancelled",
+  // #1775 C-12 — a paid trial declined or unanswered, refunded in full.
+  TRIAL_REFUNDED: "trial-refunded",
 
   // Subscriptions
   SUBSCRIPTION_STARTED: "subscription-started",
   SUBSCRIPTION_CANCELLED: "subscription-cancelled",
   SUBSCRIPTION_RENEWED: "subscription-renewed",
+  // #1775 C-6 — a paid plan not scheduled within 48 h, refunded in full.
+  SUBSCRIPTION_UNALLOCATED_REFUNDED: "subscription-unallocated-refunded",
 
   // Consultant-specific
   NEW_BOOKING_REQUEST: "new-booking-request",
@@ -494,10 +505,10 @@ export type BookingRequestPayload = NotificationScope & {
   requestedDateTimeIso?: string;
   dashboardUrl: string;
   /**
-   * #1703 — set on the unscheduled-subscription nudge (3, 7 or 14): the same
-   * event, a different sentence, so no new workflow is spent on it.
+   * #1775 C-4 — set on the unscheduled-plan nudge (hours 12, 24 or 36): the
+   * same event, a different sentence, so no new workflow is spent on it.
    */
-  nudgeDay?: number;
+  nudgeHours?: number;
 };
 
 export type BookingRequestInput = Omit<

@@ -22,6 +22,7 @@ import {
   AppointmentStatus,
   PaymentStatus,
   OccurrenceCompletionStatus,
+  Prisma,
 } from "@prisma/client";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
@@ -47,6 +48,10 @@ import {
 import { notifyUnscheduledSubscriptionNudge } from "@/lib/novu/service";
 import { NOVU_WORKFLOWS, notificationScope } from "@/lib/novu/workflows";
 import { deriveTransactionId } from "@/lib/novu/outbox";
+import { stageBell } from "@/lib/novu/stage-bell";
+import { expireBackupInterest } from "@/lib/booking/backup-interest";
+import { notificationHref } from "@/lib/novu/resolve-href";
+import type { Tx } from "@/lib/prisma";
 import {
   EMAIL_BUDGET_MS,
   SUBSCRIPTION_UNSCHEDULED_NUDGE_EMAIL_TYPE,
@@ -88,6 +93,67 @@ const PAYMENT_PENDING_EXPIRATION_DAYS = 7;
 const MAX_REQUESTS_PER_RUN = 500;
 // Slot rows released per run by the stale-RESCHEDULED pass; the next run continues.
 const MAX_SLOT_RELEASES_PER_RUN = 2000;
+
+/**
+ * #1775 C-3 — a paid plan's consultant has 48 h from the capture to allocate
+ * cycle 1, or the buyer is refunded in full. Pre-`capturedAt` rows use createdAt.
+ */
+export const PAID_UNALLOCATED_HOURS = 48;
+
+// A full-subscription reschedule re-enters PENDING, and its open proposal must
+// resolve through the reschedule machine, not be swept out from under it.
+// Rides the CAS WHERE as well as the cohort read (#1554: one wrapper or none).
+// Built per call: the status list is read at run time, not at import.
+function noLiveProposal() {
+  return {
+    OR: [
+      { appointment: null },
+      {
+        appointment: {
+          rescheduleRequests: {
+            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
+          },
+        },
+      },
+    ],
+  } satisfies Prisma.SubscriptionWhereInput;
+}
+
+// Zero live confirmed sessions on the booking; re-stated in every CAS WHERE so
+// a session allocated between the read and the write leaves the cohort (#1423).
+const NO_LIVE_SESSION = {
+  NOT: {
+    appointment: {
+      occurrences: { some: { isTentative: false, deletedAt: null } },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
+
+/** A SUCCEEDED payment on the wrapper, captured before `cutoff` (#1775 C-3). */
+function paidCapturedBefore(cutoff: Date): Prisma.SubscriptionWhereInput {
+  return {
+    appointment: {
+      payment: {
+        some: {
+          paymentStatus: PaymentStatus.SUCCEEDED,
+          deletedAt: null,
+          OR: [
+            { capturedAt: { lt: cutoff } },
+            { capturedAt: null, createdAt: { lt: cutoff } },
+          ],
+        },
+      },
+    },
+  };
+}
+
+const HAS_SUCCEEDED_PAYMENT = {
+  appointment: {
+    payment: {
+      some: { paymentStatus: PaymentStatus.SUCCEEDED, deletedAt: null },
+    },
+  },
+} satisfies Prisma.SubscriptionWhereInput;
 
 export interface ExpireStaleRequestsResult {
   success: boolean;
@@ -317,32 +383,15 @@ async function expirePendingSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Same live-proposal exclusion as consultations: a full-subscription
-  // reschedule re-enters PENDING, and its open proposal must resolve through
-  // the reschedule machine (accept/decline/withdraw/expire), not be swept out
-  // from under it. Hoisted because the condition has to hold at WRITE time,
-  // so it rides the CAS WHERE below as well as the cohort read.
-  // #1554 — one wrapper (or none yet): no open reschedule hangs off it.
-  const NO_LIVE_PROPOSAL = {
-    OR: [
-      { appointment: null },
-      {
-        appointment: {
-          rescheduleRequests: {
-            none: { status: { in: [...RESCHEDULE_OPEN_STATUSES] } },
-          },
-        },
-      },
-    ],
-  };
-
   try {
     // Find stale PENDING subscriptions
     const staleSubscriptions = await prisma.subscription.findMany({
       where: {
         status: AppointmentStatus.PENDING,
         requestedAt: { lt: expirationDate },
-        ...NO_LIVE_PROPOSAL,
+        ...noLiveProposal(),
+        // #1775 C-3 — a paid PENDING plan belongs to the 48 h arm.
+        NOT: HAS_SUCCEEDED_PAYMENT,
       },
       include: {
         requestedBy: {
@@ -399,7 +448,8 @@ async function expirePendingSubscriptions(): Promise<{
             where: {
               id: subscription.id,
               requestedAt: { lt: expirationDate },
-              ...NO_LIVE_PROPOSAL,
+              ...noLiveProposal(),
+              NOT: HAS_SUCCEEDED_PAYMENT,
             },
             to: AppointmentStatus.EXPIRED,
             // Deliberate subset of REQUEST_ALLOWED_FROM.EXPIRED: this cohort
@@ -581,19 +631,6 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
     Date.now() - PENDING_EXPIRATION_DAYS * 24 * 60 * 60 * 1000,
   );
 
-  // Zero live confirmed sessions anywhere on the booking. Hoisted so the CAS
-  // WHERE below re-states it: a session allocated between the read and the
-  // write must take its subscription out of this cohort (#1423).
-  const NO_LIVE_SESSION = {
-    NOT: {
-      appointment: {
-        occurrences: {
-          some: { isTentative: false, deletedAt: null },
-        },
-      },
-    },
-  };
-
   try {
     const stale = await prisma.subscription.findMany({
       where: {
@@ -682,20 +719,192 @@ async function expireApprovedUnallocatedSubscriptions(): Promise<{
   }
 }
 
-/**
- * #1703 — the nudge stages, in days since the subscription became APPROVED
- * (its `updatedAt`, the same clock the 30-day refund above reads). A row
- * gets the latest stage it has reached and nothing earlier, so a sweep that
- * missed day 3 sends day 7 once, not both.
- */
-export const SUBSCRIPTION_NUDGE_DAYS = [3, 7, 14] as const;
-export type SubscriptionNudgeDay = (typeof SUBSCRIPTION_NUDGE_DAYS)[number];
+/** #1775 C-6 — both parties hear that the unscheduled plan is refunded in full. */
+async function stageUnallocatedRefundBell(
+  tx: Pick<Tx, "notificationOutbox">,
+  row: {
+    id: string;
+    requestedBy: { user: { id: string; name: string | null } } | null;
+    subscriptionPlan: {
+      title: string;
+      consultantProfile: { user: { id: string } };
+    };
+    appointment: { organizationId: string | null } | null;
+  },
+): Promise<void> {
+  const consulteeId = row.requestedBy?.user.id;
+  if (!consulteeId) return;
+  await stageBell(tx, {
+    workflowId: NOVU_WORKFLOWS.SUBSCRIPTION_UNALLOCATED_REFUNDED,
+    recipients: [consulteeId, row.subscriptionPlan.consultantProfile.user.id],
+    payload: {
+      planTitle: row.subscriptionPlan.title,
+      consulteeName: row.requestedBy?.user.name ?? "The buyer",
+      dashboardUrl: notificationHref(
+        row.appointment?.organizationId,
+        "appointments",
+      ),
+    },
+    dedupeKey: `sub-unalloc:${row.id}`,
+  });
+}
 
-export function nudgeStageFor(ageMs: number): SubscriptionNudgeDay | null {
-  const days = ageMs / (24 * 60 * 60 * 1000);
-  let stage: SubscriptionNudgeDay | null = null;
-  for (const day of SUBSCRIPTION_NUDGE_DAYS) {
-    if (days >= day) stage = day;
+const unallocatedRefundKey = (paymentId: string) => `sub-unalloc:${paymentId}`;
+
+/** Plans expired UNALLOCATED_48H in the last 14 days (the retry cohort). */
+async function recentlyUnallocatedSubscriptionIds(): Promise<string[]> {
+  const rows = await prisma.bookingStatusHistory.findMany({
+    where: {
+      entity: "SUBSCRIPTION",
+      reason: "UNALLOCATED_48H",
+      toStatus: AppointmentStatus.EXPIRED,
+      createdAt: { gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) },
+    },
+    select: { entityId: true },
+    take: MAX_REQUESTS_PER_RUN,
+  });
+  return rows?.map((r) => r.entityId) ?? [];
+}
+
+/**
+ * #1775 C-3 — the full refund of each expired plan's SUCCEEDED payment,
+ * keyed `sub-unalloc:<paymentId>`: a key already spent is skipped, so a retry
+ * never refunds twice. Failures are counted, never thrown.
+ */
+async function refundUnallocatedPlans(subscriptionIds: string[]) {
+  const out = { issued: 0, failures: 0, failureMsgs: [] as string[] };
+  if (subscriptionIds.length === 0) return out;
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointment: { subscriptionId: { in: subscriptionIds } },
+      paymentStatus: PaymentStatus.SUCCEEDED,
+      deletedAt: null,
+    },
+    select: { id: true },
+  });
+  const spent = new Set(
+    (
+      await prisma.refund.findMany({
+        where: {
+          dedupeKey: { in: payments.map((p) => unallocatedRefundKey(p.id)) },
+          status: { notIn: ["FAILED", "CANCELLED"] },
+        },
+        select: { dedupeKey: true },
+      })
+    ).map((r) => r.dedupeKey),
+  );
+  for (const payment of payments) {
+    const dedupeKey = unallocatedRefundKey(payment.id);
+    if (spent.has(dedupeKey)) continue;
+    try {
+      await refundBookingPayment({
+        paymentId: payment.id,
+        reason:
+          "subscription not scheduled within 48 h — automatic full refund",
+        initiatedByUserId: null,
+        dedupeKey,
+      });
+      out.issued += 1;
+    } catch (err) {
+      out.failures += 1;
+      out.failureMsgs.push(`Refund failed for payment ${payment.id}: ${err}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * #1775 C-3 — a paid plan (PENDING, SUCCEEDED payment captured more than 48 h
+ * ago) with no live session and no live proposal expires with reason
+ * UNALLOCATED_48H and is refunded in full through the front door. Failure
+ * matrix: allocation first → the cohort CAS matches 0 rows; sweep first → the
+ * allocation's PENDING→APPROVED CAS rolls back (409 to the consultant).
+ */
+async function expireUnallocatedPaidSubscriptions(): Promise<{
+  expired: number;
+  issued: number;
+  failures: number;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  const cutoff = new Date(Date.now() - PAID_UNALLOCATED_HOURS * 60 * 60 * 1000);
+  const cohort = {
+    AND: [NO_LIVE_SESSION, noLiveProposal(), paidCapturedBefore(cutoff)],
+  } satisfies Prisma.SubscriptionWhereInput;
+  try {
+    const stale = await prisma.subscription.findMany({
+      where: { status: AppointmentStatus.PENDING, ...cohort },
+      select: {
+        ...EXPIRY_NOTICE_SELECT,
+        subscriptionPlan: {
+          select: {
+            title: true,
+            consultantProfile: {
+              select: { id: true, user: { select: { id: true, name: true } } },
+            },
+          },
+        },
+      },
+      orderBy: { requestedAt: "asc" },
+      take: MAX_REQUESTS_PER_RUN,
+    });
+    warnIfCapped("subscription", stale.length);
+
+    const expiredIds: string[] = [];
+    for (const subscription of stale) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          await transitionSubscriptionRequest(tx, {
+            where: { id: subscription.id, ...cohort },
+            to: AppointmentStatus.EXPIRED,
+            fromIn: [AppointmentStatus.PENDING],
+            actorUserId: null,
+            reason: "UNALLOCATED_48H",
+          });
+          // #1775 C-6 — the bell rides the CAS: a lost race stages nothing.
+          await stageUnallocatedRefundBell(tx, subscription);
+        });
+        expiredIds.push(subscription.id);
+      } catch (error) {
+        if (!(error instanceof IllegalTransitionError)) throw error;
+      }
+    }
+
+    // Keyed per payment, and retried from the history for a refund that
+    // failed after an earlier run's CAS (the row is EXPIRED by then).
+    const retry = await recentlyUnallocatedSubscriptionIds();
+    const refunds = await refundUnallocatedPlans([
+      ...new Set([...expiredIds, ...retry]),
+    ]);
+    errors.push(...refunds.failureMsgs);
+    return {
+      expired: expiredIds.length,
+      issued: refunds.issued,
+      failures: refunds.failures,
+      errors,
+    };
+  } catch (error) {
+    const msg = `Failed to expire unallocated paid subscriptions: ${error}`;
+    console.error(`❌ ${msg}`);
+    errors.push(msg);
+    return { expired: 0, issued: 0, failures: 0, errors };
+  }
+}
+
+/**
+ * #1775 C-4 — the nudge stages, in hours since the plan's capture
+ * (`capturedAt ?? createdAt`), inside the 48 h allocate-or-refund window. A
+ * row gets the latest stage it has reached and nothing earlier, so a sweep
+ * that missed hour 12 sends hour 24 once, not both.
+ */
+export const SUBSCRIPTION_NUDGE_HOURS = [12, 24, 36] as const;
+export type SubscriptionNudgeStage = (typeof SUBSCRIPTION_NUDGE_HOURS)[number];
+
+export function nudgeStageFor(ageMs: number): SubscriptionNudgeStage | null {
+  const hours = ageMs / (60 * 60 * 1000);
+  let stage: SubscriptionNudgeStage | null = null;
+  for (const hour of SUBSCRIPTION_NUDGE_HOURS) {
+    if (hours >= hour) stage = hour;
   }
   return stage;
 }
@@ -703,9 +912,9 @@ export function nudgeStageFor(ageMs: number): SubscriptionNudgeDay | null {
 /** The outbox key for one subscription's stage; the guard and the trigger share it. */
 export function subscriptionNudgeDedupeKey(
   subscriptionId: string,
-  stage: SubscriptionNudgeDay,
+  stage: SubscriptionNudgeStage,
 ): string {
-  return `subscription-unscheduled:${subscriptionId}:day${stage}`;
+  return `subscription-unscheduled:${subscriptionId}:h${stage}`;
 }
 
 /**
@@ -721,27 +930,23 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
 }> {
   const errors: string[] = [];
   const firstStageCutoff = new Date(
-    Date.now() - SUBSCRIPTION_NUDGE_DAYS[0] * 24 * 60 * 60 * 1000,
+    Date.now() - SUBSCRIPTION_NUDGE_HOURS[0] * 60 * 60 * 1000,
   );
-  const NO_LIVE_SESSION = {
-    NOT: {
-      appointment: {
-        occurrences: { some: { isTentative: false, deletedAt: null } },
-      },
-    },
-  };
 
   try {
     const waiting = await prisma.subscription.findMany({
+      // #1775 C-4 — the 48 h arm's cohort: a paid plan still waiting for cycle 1.
       where: {
-        status: AppointmentStatus.APPROVED,
+        status: AppointmentStatus.PENDING,
         deletedAt: null,
-        updatedAt: { lt: firstStageCutoff },
-        ...NO_LIVE_SESSION,
+        AND: [
+          NO_LIVE_SESSION,
+          noLiveProposal(),
+          paidCapturedBefore(firstStageCutoff),
+        ],
       },
       select: {
         id: true,
-        updatedAt: true,
         requestedBy: { select: { user: { select: { name: true } } } },
         subscriptionPlan: {
           select: {
@@ -751,14 +956,31 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
             },
           },
         },
-        appointment: { select: { id: true, organizationId: true } },
+        appointment: {
+          select: {
+            id: true,
+            organizationId: true,
+            payment: {
+              where: {
+                paymentStatus: PaymentStatus.SUCCEEDED,
+                deletedAt: null,
+              },
+              orderBy: { createdAt: "asc" },
+              take: 1,
+              select: { capturedAt: true, createdAt: true },
+            },
+          },
+        },
       },
-      orderBy: { updatedAt: "asc" },
+      orderBy: { requestedAt: "asc" },
       take: MAX_REQUESTS_PER_RUN,
     });
 
     const candidates = waiting.flatMap((sub) => {
-      const stage = nudgeStageFor(Date.now() - sub.updatedAt.getTime());
+      const paid = sub.appointment?.payment[0];
+      if (!paid) return [];
+      const capturedAt = paid.capturedAt ?? paid.createdAt;
+      const stage = nudgeStageFor(Date.now() - capturedAt.getTime());
       if (!stage || !sub.appointment) return [];
       const consultantUserId = sub.subscriptionPlan.consultantProfile.user.id;
       const dedupeKey = subscriptionNudgeDedupeKey(sub.id, stage);
@@ -833,7 +1055,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
               planTitle,
               appointmentType: "SUBSCRIPTION",
               dashboardUrl: timingsUrl,
-              nudgeDay: stage,
+              nudgeHours: stage,
             },
             dedupeKey,
           );
@@ -845,7 +1067,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
               consultantUserId,
               consulteeName,
               planTitle,
-              nudgeDays: stage,
+              nudgeHours: stage,
               timingsUrl,
             },
             EMAIL_BUDGET_MS.JOB,
@@ -858,7 +1080,7 @@ async function nudgeUnscheduledSubscriptions(): Promise<{
         }
         nudged += 1;
       } catch (error) {
-        const msg = `Nudge failed for subscription ${sub.id} (day ${stage}): ${error}`;
+        const msg = `Nudge failed for subscription ${sub.id} (hour ${stage}): ${error}`;
         console.error(`❌ ${msg}`);
         errors.push(msg);
       }
@@ -1085,6 +1307,10 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   const approvedUnallocated = await expireApprovedUnallocatedSubscriptions();
   allErrors.push(...approvedUnallocated.errors);
 
+  // #1775 C-3 — paid plans the consultant never allocated within 48 h.
+  const paidUnallocated = await expireUnallocatedPaidSubscriptions();
+  allErrors.push(...paidUnallocated.errors);
+
   // #1703 — nudge the consultant before that 30-day refund ever fires.
   const nudges = await nudgeUnscheduledSubscriptions();
   allErrors.push(...nudges.errors);
@@ -1102,6 +1328,15 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   // Expire APPROVED_PENDING_PAYMENT requests
   const paymentPendingResult = await expirePaymentPendingRequests();
   allErrors.push(...paymentPendingResult.errors);
+
+  // #1778 — backup interest in a window that has passed can never be booked.
+  const backupInterestExpired = await expireBackupInterest()
+    .then((r) => r.count)
+    .catch((error: unknown) => {
+      allErrors.push(`Failed to expire backup interest: ${error}`);
+      return 0;
+    });
+  console.log(`   Backup interest expired: ${backupInterestExpired}`);
 
   const totalPaymentPending =
     paymentPendingResult.consultationsExpired +
@@ -1121,9 +1356,12 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
   console.log(
     `   APPROVED-unallocated expired: ${approvedUnallocated.expired}`,
   );
+  console.log(
+    `   Paid plans unallocated >${PAID_UNALLOCATED_HOURS}h expired: ${paidUnallocated.expired}`,
+  );
   console.log(`   Unscheduled-subscription nudges sent: ${nudges.nudged}`);
   console.log(
-    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures}`,
+    `   Refunds issued/failed: ${consultationResult.issued + subscriptionResult.issued + approvedUnallocated.issued + paidUnallocated.issued}/${consultationResult.failures + subscriptionResult.failures + approvedUnallocated.failures + paidUnallocated.failures}`,
   );
   console.log(`   Payment pending expired: ${totalPaymentPending}`);
 
@@ -1140,18 +1378,22 @@ async function expireStaleRequestsUnlocked(): Promise<ExpireStaleRequestsResult>
     // unconditionally and its `count` was reported as the whole total, so the
     // summary never matched what the run actually expired.
     subscriptionsExpired:
-      subscriptionResult.expired + approvedUnallocated.expired,
+      subscriptionResult.expired +
+      approvedUnallocated.expired +
+      paidUnallocated.expired,
     subscriptionNudgesSent: nudges.nudged,
     paymentPendingExpired: totalPaymentPending,
     consultationSlotsReleased: consultationResult.slotsReleased,
     refundsIssued:
       consultationResult.issued +
       subscriptionResult.issued +
-      approvedUnallocated.issued,
+      approvedUnallocated.issued +
+      paidUnallocated.issued,
     refundFailures:
       consultationResult.failures +
       subscriptionResult.failures +
-      approvedUnallocated.failures,
+      approvedUnallocated.failures +
+      paidUnallocated.failures,
     errors: allErrors,
     timestamp: new Date().toISOString(),
   };

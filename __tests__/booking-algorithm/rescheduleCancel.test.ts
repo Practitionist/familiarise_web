@@ -35,6 +35,8 @@ jest.mock("../../lib/prisma", () => ({
     // #1003 — group-event cancel reads the attendee roster off the payments so
     // it can notify them. Default to an empty event.
     payment: { findMany: jest.fn().mockResolvedValue([]) },
+    // #1780 R-3 — free seats are read off the participant rows as well.
+    appointmentParticipant: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
     // collaborators for the recipient list. Default to none.
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },
@@ -76,6 +78,8 @@ jest.mock("../../lib/novu", () => ({
 // #776 §C — whole-event (class/webinar) cancel refunds are exercised in their
 // own suite; here the cancel route just needs a benign summary back.
 jest.mock("../../lib/payments/operations/event-refunds", () => ({
+  // #1780 D-5 — the per-seat ledgers read before the cancel transaction.
+  classSeriesLedgers: jest.fn().mockResolvedValue(new Map()),
   refundWholeEventPayments: jest.fn().mockResolvedValue({
     refundsIssued: 0,
     refundedPaise: 0,
@@ -1011,7 +1015,9 @@ describe("Cancel Route Handler - POST", () => {
           // keeps a non-tombstoned row on the calendar of a dead booking.
           where: {
             appointmentId: "apt-1",
-            completionStatus: { in: ["SCHEDULED", "RESCHEDULED", "UNVERIFIED"] },
+            completionStatus: {
+              in: ["SCHEDULED", "RESCHEDULED", "UNVERIFIED"],
+            },
           },
           // The tombstone is the other half of the soft-cancel (#676 A10).
           data: { completionStatus: "CANCELLED", deletedAt: expect.any(Date) },
@@ -1181,10 +1187,15 @@ describe("Cancel Route Handler - POST", () => {
       }),
     );
     (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-1", paymentIntent: "order_1" },
+      { userId: "attendee-2", paymentIntent: "order_2" },
+      // Duplicate seats must not produce duplicate notifications.
+      { userId: "attendee-1", paymentIntent: "order_1" },
+    ]);
+    // #1780 R-3 — the roster is the live seats; every payment here holds one.
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([
       { userId: "attendee-1" },
       { userId: "attendee-2" },
-      // Duplicate seats must not produce duplicate notifications.
-      { userId: "attendee-1" },
     ]);
 
     const req = makeCancelRequest("apt-1", { reason: "OTHER" });
@@ -1220,6 +1231,9 @@ describe("Cancel Route Handler - POST", () => {
       }),
     );
     (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-9", paymentIntent: "order_9" },
+    ]);
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([
       { userId: "attendee-9" },
     ]);
 
@@ -1228,6 +1242,37 @@ describe("Cancel Route Handler - POST", () => {
 
     expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
       expect.arrayContaining(["consultant-1", "attendee-9"]),
+      expect.objectContaining({ appointmentType: "CLASS" }),
+    );
+  });
+
+  it("tells free and credit seats too, not only paid ones (#1780 R-3)", async () => {
+    (prisma.appointment.findUnique as jest.Mock).mockResolvedValue(
+      makeClassAppointment({
+        class: {
+          id: "cls-1",
+          status: "SCHEDULED",
+          classPlan: {
+            title: "Weekly Cohort",
+            consultantProfile: {
+              user: { id: "consultant-1", name: "Dr Who" },
+            },
+          },
+        },
+      }),
+    );
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-credit", paymentIntent: "free_1", amount: 0 },
+    ]);
+    (prisma.appointmentParticipant.findMany as jest.Mock).mockResolvedValue([
+      { userId: "attendee-credit" },
+      { userId: "attendee-free" },
+    ]);
+
+    await cancelHandler(makeCancelRequest("apt-1"), makeParams("apt-1"));
+
+    expect(notifyAppointmentCancelled).toHaveBeenCalledWith(
+      expect.arrayContaining(["attendee-credit", "attendee-free"]),
       expect.objectContaining({ appointmentType: "CLASS" }),
     );
   });

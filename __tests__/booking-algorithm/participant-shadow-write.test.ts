@@ -123,11 +123,8 @@ describe("every creation path records the participant edge (#1544 / #1554)", () 
       "lib/payments/webhooks/handlers.ts",
       /setParticipantStatus\(|participants: \{/,
     ],
-    [
-      "app/api/participants/webinar/[webinarId]/route.ts",
-      /releaseParticipant\(/,
-    ],
-    ["app/api/participants/class/[classId]/route.ts", /releaseParticipant\(/],
+    // #1780 — both participant DELETE routes release through the seat-leave service.
+    ["lib/booking/seat-leave.ts", /releaseParticipant\(/],
     ["lib/payments/operations/cancel-pending.ts", /releaseParticipant\(/],
     [
       "app/api/appointments/[appointmentId]/cancel/route.ts",

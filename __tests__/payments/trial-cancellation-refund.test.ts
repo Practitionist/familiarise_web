@@ -175,6 +175,28 @@ describe("refundCancelledTrial", () => {
     expect(result?.failed).toBeUndefined();
   });
 
+  it("refunds 100 % when the learner cancels a paid trial with no session yet (#1775 C-11)", async () => {
+    mockPaymentFindFirst.mockResolvedValue(paidTrial);
+    mockAppointmentFindUnique.mockResolvedValue({
+      cancellationPolicy: null,
+      occurrences: [],
+    });
+    mockRefundPayment.mockResolvedValue({ amountRefundedPaise: 100_000 });
+
+    const result = await refundCancelledTrial({
+      trialId: TRIAL_ID,
+      appointmentId: APPOINTMENT_ID,
+      paymentId: PAYMENT_ID,
+      initiatedByUserId: USER_ID,
+      isConsultantInitiated: false,
+    });
+
+    expect(result?.refundPct).toBe(100);
+    expect(mockRefundPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amountPaise: 100_000 }),
+    );
+  });
+
   it("mints no refund for a free trial", async () => {
     // No SUCCEEDED payment with amount > 0 exists for a free trial.
     mockPaymentFindFirst.mockResolvedValue(null);

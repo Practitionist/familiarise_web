@@ -1,6 +1,16 @@
 import prisma from "@/lib/prisma";
 import { blocksNewTrialRequest } from "@/lib/trials/eligibility";
-import { Prisma, TrialStatus } from "@prisma/client";
+import {
+  AppointmentsType,
+  PaymentGateway,
+  Prisma,
+  TrialStatus,
+} from "@prisma/client";
+import { APPROVAL_PAYMENT_EXPIRATION_MS } from "@/lib/payments/constants";
+import { createApprovalPaymentIntent } from "@/lib/payments/operations/approval-payment";
+import { recordParticipants } from "@/lib/booking/participants";
+import { persistTrialPayLink } from "@/lib/trials/pay-link";
+import { reportSentryError } from "@/lib/observability/report";
 import { NextRequest, NextResponse } from "next/server";
 import { logTrialRequested } from "@/lib/activity/log-activity";
 import { notifyTrialRequested } from "@/lib/novu";
@@ -338,9 +348,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Paid trials are wired: no money moves at request time. The consultant
-    // accepts first, which mints the pay-link and puts the trial in
-    // AWAITING_PAYMENT — so a declined request never needs a refund.
+    // #1775 C-7 — a paid trial is charged at request and refunded in full on
+    // decline or no answer; a free trial moves no money.
+    const isPaidTrial = Number(subscriptionPlan.trialPriceInPaise ?? 0) > 0;
     // Get consultee info for activity log
     const consulteeProfile = await prisma.consulteeProfile.findUnique({
       where: { id: consulteeProfileId },
@@ -397,44 +407,46 @@ export async function POST(request: NextRequest) {
     // same pair both pass the eligibility read and race into the insert — the
     // loser used to surface as a 500. It is the same "already requested"
     // answer the sequential path gives, so say so.
-    const trial = await prisma.trial
-      .create({
-        data: {
-          consulteeProfileId,
-          consultantProfileId,
-          subscriptionPlanId,
-          notes,
-          status: TrialStatus.PENDING,
-          organizationId: resolvedOrgId,
-        },
-        include: {
-          consulteeProfile: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
-              },
-            },
+    const trial = await prisma
+      .$transaction(async (tx) => {
+        // #1775 C-7 — a placeholder appointment (no sessions yet) anchors the
+        // pay order, so capture confirms THIS row; accept adds the session.
+        const placeholder = isPaidTrial
+          ? await tx.appointment.create({
+              data: { appointmentType: AppointmentsType.TRIAL },
+              select: { id: true },
+            })
+          : null;
+        const created = await tx.trial.create({
+          data: {
+            consulteeProfileId,
+            consultantProfileId,
+            subscriptionPlanId,
+            notes,
+            status: TrialStatus.PENDING,
+            organizationId: resolvedOrgId,
+            appointmentId: placeholder?.id ?? null,
+            paymentDueAt: placeholder
+              ? new Date(Date.now() + APPROVAL_PAYMENT_EXPIRATION_MS)
+              : null,
           },
-          consultantProfile: {
-            select: {
-              ...consultantPublicScalars,
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  image: true,
-                },
+          include: TRIAL_CREATED_INCLUDE,
+        });
+        if (placeholder) {
+          await recordParticipants(
+            tx,
+            placeholder.id,
+            [
+              { userId: consulteeProfile.user.id, role: "CONSULTEE" },
+              {
+                userId: subscriptionPlan.consultantProfile.user.id,
+                role: "CONSULTANT",
               },
-            },
-          },
-          subscriptionPlan: true,
-        },
+            ],
+            { organizationId: resolvedOrgId, status: "HELD" },
+          );
+        }
+        return created;
       })
       .catch((error: unknown) => {
         if (isUniqueViolation(error)) return null;
@@ -450,6 +462,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+
+    // #1775 C-7 — mint AFTER the commit (a gateway call never sits in a tx);
+    // a failed mint leaves the trial PENDING and the checkout page re-mints.
+    const checkoutUrl = trial.appointmentId
+      ? await mintTrialRequestOrder(trial.id, trial.appointmentId, {
+          userId: consulteeProfile.user.id,
+          planId: subscriptionPlanId,
+        })
+      : null;
 
     // Log the activity
     await logTrialRequested(
@@ -472,7 +493,7 @@ export async function POST(request: NextRequest) {
       dashboardUrl: "/dashboard/consultant/trials",
     });
 
-    return NextResponse.json({ data: trial }, { status: 201 });
+    return NextResponse.json({ data: trial, checkoutUrl }, { status: 201 });
   } catch (error) {
     console.error("Error creating trial session:", error);
     return NextResponse.json(
@@ -481,3 +502,69 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+/**
+ * #1775 C-7 — the paid trial's order, minted against its placeholder
+ * appointment and persisted as the pay page; the response hands the buyer
+ * the branded trial checkout. Never throws: a lost mint is re-minted there.
+ */
+async function mintTrialRequestOrder(
+  trialId: string,
+  appointmentId: string,
+  args: { userId: string; planId: string },
+): Promise<string> {
+  const checkoutPath = `/checkout/plans/trial/${trialId}`;
+  try {
+    const intent = await createApprovalPaymentIntent({
+      userId: args.userId,
+      appointmentType: "TRIAL",
+      trialId,
+      appointmentId,
+      planId: args.planId,
+      // #1165 — trial mints pin the KYC'd primary gateway.
+      paymentGateway: PaymentGateway.RAZORPAY,
+    });
+    await persistTrialPayLink({
+      trialId,
+      paymentIntentId: intent.paymentIntentId,
+      paymentId: intent.paymentId,
+      checkoutUrl: intent.checkoutUrl,
+    });
+  } catch (error) {
+    reportSentryError(error, {
+      subsystem: "trials",
+      op: "trial-request-mint",
+      extra: { trialId },
+    });
+  }
+  return checkoutPath;
+}
+
+const TRIAL_CREATED_INCLUDE = {
+  consulteeProfile: {
+    include: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+  },
+  consultantProfile: {
+    select: {
+      ...consultantPublicScalars,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          image: true,
+        },
+      },
+    },
+  },
+  subscriptionPlan: true,
+} satisfies Prisma.TrialInclude;

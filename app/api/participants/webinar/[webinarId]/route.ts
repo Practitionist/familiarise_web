@@ -1,20 +1,17 @@
 import * as Sentry from "@sentry/nextjs";
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import {
-  liveParticipant,
-  releaseParticipant,
-} from "@/lib/booking/participants";
+import { liveParticipant } from "@/lib/booking/participants";
 import { readSeatPayments } from "@/lib/data/seat-payments";
-import { withSerializableRetry } from "@/lib/db/serializable-retry";
 import {
   requireApiAuth,
   isPrivileged,
   forbiddenResponse,
 } from "@/lib/auth-helpers";
-import { refundRemovedAttendeeSeat } from "@/lib/payments/operations/event-refunds";
+import { leaveEventSeat } from "@/lib/booking/seat-leave";
+import { BookingRuleError } from "@/lib/booking/booking-rule-error";
+import { bookingRuleResponse } from "@/lib/booking/booking-rule-response";
 import { removeUserFromEventChannel } from "@/actions/stream/chat/event-channel.action";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
 import {
@@ -200,57 +197,27 @@ export async function DELETE(
       }
     }
 
-    // #1003 — nothing to remove means nothing to refund. The refund helper
-    // looks the payment up by user + event rather than by what was actually
-    // released, so a removal that released nothing still raised an ops page.
-    //
-    // The roster read used to sit OUTSIDE the write, which made that guard
-    // decorative under concurrency: a repeat click, a stale tab, or an
-    // organiser removing someone who is leaving at the same moment both read a
-    // non-empty roster and both went on to refund one paid seat twice.
-    // Re-reading inside a Serializable transaction makes the seat itself the
-    // arbiter — the loser is aborted on the row it also tried to write, and its
-    // retry sees the empty roster.
-    const removedSeats = await withSerializableRetry(() =>
-      prisma.$transaction(
-        async (tx) => {
-          // #1554 — the participant row IS the seat. The live-status CAS in the
-          // WHERE makes the loser of a concurrent removal match zero rows, so
-          // a `removed: false` answer never refunds a seat twice.
-          return releaseParticipant(tx, {
-            appointment: { webinarId },
-            userId,
-          });
-        },
-        {
-          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-          // One CAS statement now, but the house budget stays matched to the
-          // sibling handler so the two removals keep one contract.
-          maxWait: 10_000,
-          timeout: 15_000,
-        },
-      ),
-    );
-
-    // 200, not 404: DELETE is idempotent and "this person is off the roster"
-    // is the requested end state either way. A 404 made the second click read
-    // as a failure to the roster client, which throws on any non-ok response —
-    // so it showed "Failed to remove participant" and never invalidated the
-    // query, leaving the removed row on screen.
-    if (removedSeats === 0) {
-      return NextResponse.json({ removed: false, refund: null });
+    // #1780 — the leave rule (window, host move, class quote) runs inside the
+    // seat release's Serializable transaction; a refusal leaves the seat.
+    let left;
+    try {
+      left = await leaveEventSeat({
+        kind: "webinar",
+        eventId: webinarId,
+        userId,
+        actorUserId: session.user.id,
+        isSelfLeave,
+      });
+    } catch (error) {
+      if (error instanceof BookingRuleError) return bookingRuleResponse(error);
+      throw error;
     }
 
-    // #1003 — seat was paid; refund after roster commit (non-throwing).
-    // #1005 — must pass initiatedBy: self-leave used to inherit organiser-fault
-    // 100% because the helper defaulted isConsultantInitiated=true.
-    const refund = await refundRemovedAttendeeSeat({
-      kind: "webinar",
-      eventId: webinarId,
-      attendeeUserId: userId,
-      initiatedByUserId: session.user.id,
-      initiatedBy: isSelfLeave ? "attendee" : "organiser",
-    });
+    // 200, not 404: DELETE is idempotent and "off the roster" is the end state.
+    if (!left) {
+      return NextResponse.json({ removed: false, refund: null });
+    }
+    const { refund } = left;
 
     // #1169 PR 4 — a removed/refunded attendee must not keep reading the event
     // chat until the nightly expiry job notices. Non-throwing by contract.

@@ -3,6 +3,7 @@
  * Handles the complete checkout flow for all appointment types
  */
 
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import { scheduleAfter } from "@/lib/api/after-safe";
 import { reportSentryError } from "@/lib/observability/report";
 import {
@@ -63,6 +64,7 @@ import {
   buildOccupiedAppointmentFilter,
 } from "@/utils/scheduling-engine/occupancyPolicy";
 import { withSerializableRetry } from "@/lib/db/serializable-retry";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 import {
   isUserEnrolled,
   isUserRegisteredForWebinar,
@@ -606,6 +608,8 @@ async function releaseSupersededHolds(params: {
     for (const appointment of appointments) {
       if (appointment.webinarId || appointment.classId) continue;
 
+      // #1778 — the superseded hold frees its times: tell anyone waiting.
+      await stageNoticesForAppointmentHolds(tx, appointment.id);
       // Doctrine rule 2: a slot is freed by status, never by DELETE — the
       // buyer keeps the record of the attempt they abandoned.
       await transitionOccurrenceCompletion(tx, {
@@ -2880,6 +2884,11 @@ export async function handleWebinarCheckout(
       [{ userId, role: "CONSULTEE" }],
       { status: _skipPayment ? "CONFIRMED" : "HELD" },
     );
+    // #1780 row 2 — the seat keeps the refund window it was sold under.
+    await tx.appointmentParticipant.updateMany({
+      where: { appointmentId: appointment.id, userId },
+      data: { refundWindowHours: plan.refundWindowHours },
+    });
   }
 
   return { appointment, plan, amount: plan.price };
@@ -2977,6 +2986,11 @@ export async function handleClassCheckout(
   // the seat is one participant row on the wrapper (#1554), never new rows.
   await recordParticipants(tx, wrapper.id, [{ userId, role: "CONSULTEE" }], {
     status: _skipPayment ? "CONFIRMED" : "HELD",
+  });
+  // #1780 row 2 — the seat keeps the refund window it was sold under.
+  await tx.appointmentParticipant.updateMany({
+    where: { appointmentId: wrapper.id, userId },
+    data: { refundWindowHours: plan.refundWindowHours },
   });
 
   return {
@@ -4475,10 +4489,10 @@ export async function handleCheckout(
       const dbErrorCode = (dbError as { code?: unknown } | null)?.code;
       // #1583 C-P1-04 — the loser of two same-key checkouts; the route
       // replays the winner, so this is a modelled race and must not be rewrapped.
-      const isIdempotencyKeyCollision =
-        dbError instanceof Prisma.PrismaClientKnownRequestError &&
-        dbError.code === "P2002" &&
-        String(dbError.meta?.target ?? "").includes("clientIdempotencyKey");
+      const isIdempotencyKeyCollision = isUniqueViolationOn(
+        dbError,
+        "clientIdempotencyKey",
+      );
       const isModelledOutcome =
         isIdempotencyKeyCollision ||
         dbError instanceof WalletFrozenError ||
@@ -4634,10 +4648,7 @@ export async function handleCheckout(
       (error as { code?: unknown } | null)?.code,
     );
     // #1583 C-P1-04 — the same-key collision the inner catch let through.
-    const isKeyCollision =
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      String(error.meta?.target ?? "").includes("clientIdempotencyKey");
+    const isKeyCollision = isUniqueViolationOn(error, "clientIdempotencyKey");
     reportSentryError(error, {
       subsystem: "payments",
       expected:

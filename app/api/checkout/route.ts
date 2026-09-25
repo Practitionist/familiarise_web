@@ -26,6 +26,7 @@ import { Prisma } from "@prisma/client";
 import { replayByIdempotencyKey } from "@/lib/payments/operations/checkout-replay";
 import { routeGateway } from "@/lib/payments/gateway-router";
 import { resolveCheckoutTaxContext } from "@/lib/payments/tax/checkout-context";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 export async function POST(req: NextRequest) {
   // #828 — hoisted so the P2002 catch can replay without re-reading the
@@ -108,9 +109,7 @@ export async function POST(req: NextRequest) {
     // lookup; the loser's Payment.create dies on the unique key. Replay the
     // winner's response instead of surfacing a 500.
     if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2002" &&
-      String(error.meta?.target ?? "").includes("clientIdempotencyKey") &&
+      isUniqueViolationOn(error, "clientIdempotencyKey") &&
       replayUserId &&
       replayKey
     ) {

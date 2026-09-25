@@ -12,6 +12,7 @@ import { WaitlistConfirmEmail } from "@/emails/waitlist/WaitlistConfirmEmail";
 import { WaitlistWelcomeEmail } from "@/emails/waitlist/WaitlistWelcomeEmail";
 import { buildConfirmUrl, buildUnsubscribeUrl } from "@/lib/waitlist/tokens";
 import { getAppUrl } from "@/lib/url";
+import { payLinkHref } from "@/lib/payments/pay-link-href";
 import { EMAIL_BUDGET_MS, SENDERS, contactInboxAddress } from "./config";
 import {
   attempt,
@@ -256,6 +257,16 @@ export async function sendAccountLinkedEmail(
 /** #1703 D2 — the reminder's `FailedEmail.emailType`; the sweep's once-guard reads it. */
 export const PAYMENT_LINK_REMINDER_EMAIL_TYPE = "PAYMENT_LINK_REMINDER";
 
+/** #1775 P-1 — a Razorpay pay-link is an order id; mail our absolute pay page. */
+export function emailPayUrl(
+  paymentId: string | undefined,
+  paymentUrl: string,
+): string {
+  const href =
+    payLinkHref({ paymentId, checkoutUrl: paymentUrl }) ?? paymentUrl;
+  return href.startsWith("/") ? `${getAppUrl()}${href}` : href;
+}
+
 /** Payment link once a consultant approves a request. */
 export async function sendPaymentLinkEmail(
   {
@@ -292,7 +303,7 @@ export async function sendPaymentLinkEmail(
       appointmentType,
       amount,
       currency,
-      paymentUrl,
+      paymentUrl: emailPayUrl(paymentId, paymentUrl),
       expiresAt: expiresAt.toISOString(),
       reminder,
     }),

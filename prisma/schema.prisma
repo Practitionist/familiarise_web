@@ -167,6 +167,8 @@ model User {
   publishedCancellationPolicies CancellationPolicy[]          @relation("CancellationPolicyPublisher")
   // Verification documents this user uploaded (owner column, #1224).
   verificationDocumentsUploaded ProfileVerificationDocument[] @relation("VerificationDocumentUploader")
+  // #1778 — the held windows this user asked to hear about when they free.
+  windowBackupInterests         WindowBackupInterest[]
 
   @@index([consultantProfileId])
   @@index([consulteeProfileId])
@@ -3103,6 +3105,9 @@ model ConsultantProfile {
   swiftBic                        String?
   ibanOrAccount                   String?
 
+  // #1778 — learners waiting on one of this consultant's held windows.
+  windowBackupInterests WindowBackupInterest[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -3801,7 +3806,7 @@ model Subscription {
   requestedById      String
   requestedAt        DateTime            @default(now()) @db.Timestamptz
   requestNotes       String?
-  pendingPaymentUrl  String? // Payment link while awaiting payment (cleared after payment)
+  pendingPaymentUrl  String? // Legacy APPROVED_PENDING_PAYMENT link only; a plan is paid at purchase (#1775)
   bookingSource      BookingSource       @default(REQUEST_SUBMITTED)
   // Cancellation tracking
   cancellationReason CancellationReason?
@@ -3879,13 +3884,11 @@ model Trial {
   appointment   Appointment? @relation(fields: [appointmentId], references: [id])
   appointmentId String?      @unique
 
-  // Paid-trial pay-link (mirrors Consultation/Subscription). Column frozen
-  // now (schema gate); wiring needs createApprovalPaymentIntent to accept
-  // TRIAL — deliberate lib/payments change, tracked as a follow-up.
+  // #1775 — a paid trial's pay page, minted at request against its placeholder
+  // appointment; cleared at capture (paymentId set) or when the trial ends.
   pendingPaymentUrl String?
 
-  // Ledger truth once a paid trial settles (pendingPaymentUrl is only the
-  // checkout hand-off). Frozen with the wiring follow-up, same as above.
+  // Ledger truth once a paid trial's payment is captured; null means unpaid.
   payment   Payment? @relation("TrialPayment", fields: [paymentId], references: [id], onUpdate: Cascade, onDelete: SetNull)
   paymentId String?  @unique
 
@@ -3906,10 +3909,8 @@ model Trial {
   requestedAt DateTime  @default(now()) @db.Timestamptz
   completedAt DateTime? @db.Timestamptz
 
-  /// Deadline for a paid trial's pay-link, set when the consultant accepts.
-  /// 24h from acceptance, or the session start if that comes first — a slot
-  /// three hours out must not stay payable past the slot itself. The expiry
-  /// job cancels AWAITING_PAYMENT trials past this and frees the slot.
+  /// Deadline for a paid trial's pay link: request + the 24 h pay window (#1775).
+  /// The expiry job cancels a PENDING or AWAITING_PAYMENT trial still unpaid past it.
   paymentDueAt DateTime? @db.Timestamptz
 
   // #1319 A-series hygiene — soft-delete tombstone; mirrors Appointment.deletedAt.
@@ -3933,12 +3934,12 @@ model Trial {
 }
 
 enum TrialStatus {
-  PENDING // Requested, awaiting consultant action
-  AWAITING_PAYMENT // Consultant accepted a PAID trial; pay-link issued, unpaid
+  PENDING // Requested, awaiting consultant action; a paid trial is paid here (#1775)
+  AWAITING_PAYMENT // Legacy: accepted before payment; new paid trials pay at request
   SCHEDULED // Time slot confirmed
   COMPLETED // Trial call held
   CONVERTED // Consultee subscribed after trial
-  CANCELLED // Cancelled by consultee, or lapsed unpaid past paymentDueAt
+  CANCELLED // Cancelled by consultee, lapsed unpaid, or TRIAL_UNANSWERED after 48 h
   REJECTED // Declined by consultant
 }
 
@@ -4011,6 +4012,7 @@ model WebinarPlan {
   recordingStoragePolicy RecordingStoragePolicy @default(STREAM_ONLY)
   durationInHours        Float                  @default(1) // Duration in hours
   maxParticipants        Int                    @default(100)
+  refundWindowHours      Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
   language               String                 @default("English")
   level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
@@ -4136,6 +4138,7 @@ model ClassPlan {
   // Default mirrors WebinarPlan's usable floor (a 1-participant "class" is a
   // consultation); per-instance capacity lives on Class.maxParticipants.
   maxParticipants        Int                    @default(30)
+  refundWindowHours      Int? // #1780 row 2 — free-cancellation window before start, 24–168 h (null → 24)
   language               String                 @default("English")
   level                  PlanLevel              @default(BEGINNER)
   prerequisites          String?                @default("None")
@@ -4347,6 +4350,41 @@ enum WaitlistSource {
   IMPORT
 }
 
+// #1778 — "Notify me if this time opens": a learner's interest in a 1:1 window
+// someone else holds. Notify-only: nothing is reserved; first to book wins.
+model WindowBackupInterest {
+  id String @id @default(cuid())
+
+  consultantProfile   ConsultantProfile @relation(fields: [consultantProfileId], references: [id], onDelete: Cascade)
+  consultantProfileId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  windowStart DateTime         @db.Timestamptz
+  windowEnd   DateTime         @db.Timestamptz
+  planKind    AppointmentsType
+  planId      String?
+
+  status     BackupInterestStatus @default(WAITING)
+  createdAt  DateTime             @default(now()) @db.Timestamptz
+  notifiedAt DateTime?            @db.Timestamptz
+  bookedAt   DateTime?            @db.Timestamptz
+
+  @@unique([consultantProfileId, userId, windowStart])
+  @@index([consultantProfileId, windowStart, status])
+  @@index([userId, status])
+}
+
+// #1778 — WAITING until the window frees (NOTIFIED), the learner books it
+// (BOOKED), or it passes or is withdrawn (EXPIRED).
+enum BackupInterestStatus {
+  WAITING
+  NOTIFIED
+  BOOKED
+  EXPIRED
+}
+
 ////////////////////////////////////////////// APPOINTMENT ////////////////////////////////////////////////////
 
 // Generic Appointment Model
@@ -4474,6 +4512,9 @@ model AppointmentParticipant {
 
   organization   Organization? @relation("AppointmentParticipantByOrg", fields: [organizationId], references: [id], onDelete: SetNull)
   organizationId String?
+
+  // #1780 row 2 — the plan window snapshot at seat creation (null → plan → 24 h)
+  refundWindowHours Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -4949,7 +4990,10 @@ model AppointmentOccurrence {
   attendances MeetingAttendance[]
 
   // A10 — soft-delete tombstone (#676). Mirrors Appointment.deletedAt.
-  deletedAt DateTime? @db.Timestamptz
+  deletedAt       DateTime? @db.Timestamptz
+  movedAt         DateTime? @db.Timestamptz // #1780 decision 9 — stamped when the host moves this session; waives the leave window
+  hostCancelledAt DateTime? @db.Timestamptz // #1780 row 4 — the host cancelled this one session (a miss; no deletedAt)
+  seatsSettledAt  DateTime? @db.Timestamptz // #1780 row 4 — its make-up happened or every seat got its unit back
 
   createdAt DateTime @default(now()) @db.Timestamptz
   updatedAt DateTime @updatedAt @db.Timestamptz
@@ -5309,6 +5353,7 @@ model Payment {
   // Hard delete remains possible only while no money row references this.
   deletedAt            DateTime?      @db.Timestamptz
   expiresAt            DateTime?      @db.Timestamptz // For tracking payment intent expiration
+  capturedAt           DateTime?      @db.Timestamptz // #1775 — capture time; the 48 h allocate-or-refund clock (null → createdAt)
   isMockPayment        Boolean        @default(false) // For development: mock payments skip gateway calls
 
   // International payment tracking
@@ -5502,6 +5547,7 @@ model Refund {
   reason               String? // Reason for refund
   status               RefundStatus
   refundId             String         @unique // Gateway-specific refund ID (Stripe/Razorpay)
+  dedupeKey            String?        @unique // #1780 — one refund per (payment, occurrence|seat|series): a DB guarantee
   paymentGateway       PaymentGateway
   metadata             Json? // Additional gateway-specific metadata
   exchangeRateAtRefund Decimal?       @db.Decimal(18, 6) // #781 §C — exact INR→displayCurrency snapshot at refund time
