@@ -136,8 +136,8 @@ export const BACKOFFICE_PERMISSIONS: Record<
   "payouts.manage": ADMIN_ONLY,
   "approvalPayments.manage": ADMIN_ONLY,
   "tds.read": ADMIN_ONLY,
-  // #1780 — staff cancel a session for a host, grant or skip a make-up, and
-  // flag reliability; refunding a whole series or running a sweep is admin's.
+  // #1780 — staff cancel a session for a host, grant a make-up and flag
+  // reliability; anything that refunds (skip, series cancel, sweeps) is admin's.
   "classSeries.support": OPERATORS,
   "classSeries.money": ADMIN_ONLY,
   "opsLog.read": OPERATORS,

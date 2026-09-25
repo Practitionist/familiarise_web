@@ -41,8 +41,9 @@ async function getJson<T>(url: string): Promise<T> {
 
 /**
  * #1771 K-6 — the #1780 manual doors. Staff cancel a session for the host,
- * grant or skip a make-up, flag reliability and leave notes; admins also
- * cancel the whole series, run a sweep for one row, and refund one seat.
+ * grant a make-up, flag reliability and leave notes; admins also skip a
+ * make-up for a learner, cancel the whole series, run a sweep for one row,
+ * and refund one seat — every door that moves money.
  */
 export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
   const [query, setQuery] = useState("");
@@ -260,7 +261,7 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
                 label={`${s.name ?? s.userId} · ${s.status} · ${s.rail ?? "unpaid"} · ${s.delivered}/${s.held} delivered · ${formatCurrencyAmount(s.unitPaise, "INR")} a session`}
               >
                 {v.cancelledSessions
-                  .filter((o) => o.makeUp && !o.seatsSettledAt)
+                  .filter((o) => isAdmin && o.makeUp && !o.seatsSettledAt)
                   .map((o) => (
                     <Button
                       key={o.id}

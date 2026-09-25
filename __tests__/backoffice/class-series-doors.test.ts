@@ -4,7 +4,8 @@
 
 /**
  * #1771 K-6 — the class-series doors, one pin per group: a staff door writes
- * its audit row, staff are refused an admin door before anything runs, and a
+ * its audit row, staff are refused the money doors (series cancel, skip a
+ * make-up) before anything runs, and a
  * make-up past day 14 cannot be granted without a reason.
  */
 
@@ -49,6 +50,7 @@ jest.mock("../../lib/payments/payouts/earnings-hold", () => ({
 import { NextRequest } from "next/server";
 import { POST as note } from "../../app/api/admin/class-series/[classId]/note/route";
 import { POST as cancelSeries } from "../../app/api/admin/class-series/[classId]/cancel-series/route";
+import { POST as skipMakeUp } from "../../app/api/admin/class-series/[classId]/skip-make-up/route";
 import { scheduleClassMakeUp } from "../../lib/booking/class-sessions";
 
 const call = (door: typeof note, body: unknown): ReturnType<typeof note> =>
@@ -71,9 +73,15 @@ it("a staff door writes one audit row", async () => {
   });
 });
 
-it("refuses staff on an admin door before anything runs", async () => {
+it("refuses staff on the admin money doors before anything runs", async () => {
   const res = await call(cancelSeries, { reason: "host left the platform" });
   expect(res.status).toBe(403);
+  const skip = await call(skipMakeUp, {
+    occurrenceId: "occ_1",
+    userId: "u_1",
+    reason: "learner cannot make it",
+  });
+  expect(skip.status).toBe(403);
   expect(cancelAppointment).not.toHaveBeenCalled();
   expect(create).not.toHaveBeenCalled();
 });

@@ -41,7 +41,7 @@ const occurrences = (misses: number) =>
   }));
 const db = {
   misses: 3,
-  flagged: null as { id: string } | null,
+  flagged: null as Record<string, unknown> | null,
   occurrenceCreate: jest.fn(),
 };
 jest.mock("../../lib/prisma", () => {
@@ -76,6 +76,7 @@ jest.mock("../../lib/prisma", () => {
 
 import {
   cancelClassSession,
+  reliabilityFlagDue,
   scheduleClassMakeUp,
   type HostedClass,
 } from "@/lib/booking/class-sessions";
@@ -119,6 +120,23 @@ it("cancels without deletedAt, and the third miss flags the class exactly once",
   db.misses = 4;
   await cancelClassSession(hosted, "occ-4");
   expect(recordSystemError).toHaveBeenCalledTimes(1);
+});
+
+// #1771 — after an ops clear, a later host cancellation re-flags; none does not.
+it("re-flags after a clear only on a later host cancellation", async () => {
+  transition.mockResolvedValue(1);
+  const clearedAt = new Date(Date.now() - 3_600_000);
+  db.flagged = { createdAt: clearedAt, context: { cleared: true } };
+  db.misses = 4;
+  await cancelClassSession(hosted, "occ-4");
+  expect(recordSystemError).toHaveBeenCalledTimes(1);
+  const before = new Date(clearedAt.getTime() - 60_000);
+  expect(
+    reliabilityFlagDue(
+      { createdAt: clearedAt, context: { cleared: true } },
+      before,
+    ),
+  ).toBe(false);
 });
 
 it("makes up on the source ordinal; a second make-up and a late one are refused", async () => {

@@ -7,10 +7,11 @@ import { skipClassMakeUp } from "@/lib/booking/class-sessions";
 
 /**
  * #1771 K-6 — skip a make-up for one learner: that session comes back as one
- * unit under the same key the day-14 sweep uses, so never twice.
+ * unit under the same key the day-14 sweep uses, so never twice. It refunds,
+ * so it is an admin money door, not a staff support one.
  */
 export const POST = withOpsAction(
-  "classSeries.support",
+  "classSeries.money",
   "class.skip-make-up",
   { occurrenceId: z.string().min(1), userId: z.string().min(1) },
   {

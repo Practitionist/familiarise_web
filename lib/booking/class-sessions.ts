@@ -92,20 +92,37 @@ export type HostedClass = Extract<
   { found: true }
 >;
 
-/** The reliability flag and the exit-right bells, once, when the right first trips. */
+/**
+ * #1771 — whether the reliability flag is due: never flagged, or the latest
+ * event is an ops clear and a host cancellation came after it. An active flag
+ * is never repeated. The caller has already checked the miss threshold.
+ */
+export function reliabilityFlagDue(
+  latest: { createdAt: Date; context: unknown } | null,
+  lastHostCancelAt: Date,
+): boolean {
+  if (!latest) return true;
+  const cleared =
+    (latest.context as { cleared?: unknown } | null)?.cleared === true;
+  return cleared && lastHostCancelAt > latest.createdAt;
+}
+
+/** The reliability flag when due, and the exit-right bells when the right first trips. */
 async function onExitRightTripped(
   tx: Tx,
   hosted: HostedClass,
   misses: number,
   N: number,
   seatUserIds: string[],
+  opts: { cancelledAt: Date; firstTrip: boolean },
 ): Promise<void> {
   const correlationId = `class-reliability:${hosted.cls.id}`;
-  const flagged = await tx.systemEvent.findFirst({
+  const latest = await tx.systemEvent.findFirst({
     where: { correlationId },
-    select: { id: true },
+    orderBy: { createdAt: "desc" },
+    select: { createdAt: true, context: true },
   });
-  if (!flagged) {
+  if (reliabilityFlagDue(latest, opts.cancelledAt)) {
     await recordSystemError({
       organizationId: hosted.appointment.organizationId,
       category: "BOOKING",
@@ -120,6 +137,7 @@ async function onExitRightTripped(
       db: tx,
     });
   }
+  if (!opts.firstTrip) return;
   for (const userId of seatUserIds) {
     await stageBell(tx, {
       workflowId: NOVU_WORKFLOWS.CLASS_EXIT_AVAILABLE,
@@ -188,13 +206,19 @@ export async function cancelClassSession(
         });
       }
       const ledger = await seriesLedger(tx, appointmentId, now);
-      if (ledger.exitRight && !exitRightFor(ledger.misses - 1, ledger.N)) {
+      // Past the threshold every miss re-checks the flag (an ops clear may
+      // precede it); the learners' bells go out only on the first trip.
+      if (ledger.exitRight) {
         await onExitRightTripped(
           tx,
           hosted,
           ledger.misses,
           ledger.N,
           seatUserIds,
+          {
+            cancelledAt: now,
+            firstTrip: !exitRightFor(ledger.misses - 1, ledger.N),
+          },
         );
       }
       return {
