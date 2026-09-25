@@ -23,6 +23,7 @@ import {
   OccurrenceCompletionStatus,
   type Prisma,
 } from "@prisma/client";
+import { stageNoticesForAppointmentHolds } from "@/lib/booking/backup-interest";
 import type Stripe from "stripe";
 import { cancelRazorpayOrder } from "../../lib/payments/core/razorpay";
 import { reverseCreditsForPayment } from "@/lib/referrals/service";
@@ -646,14 +647,7 @@ async function releaseGroupSeats(
  * expiry and the credit restoration that ran ahead of it must roll back with it.
  */
 async function expireRequestAndReleaseSlots(
-  tx: Pick<
-    Tx,
-    | "appointmentOccurrence"
-    | "appointment"
-    | "consultation"
-    | "subscription"
-    | "bookingStatusHistory"
-  >,
+  tx: Tx,
   appointment: AbandonedAppointment,
 ): Promise<RequestExpiredNotice | null> {
   const kind = appointment.consultation ? "consultation" : "subscription";
@@ -666,6 +660,8 @@ async function expireRequestAndReleaseSlots(
   const now = new Date();
 
   if (confirmedSlots > 0) {
+    // #1778 — the released holds tell anyone waiting on those times.
+    await stageNoticesForAppointmentHolds(tx, appointment.id);
     // Only release the tentative slots; confirmed history stays.
     const released = await transitionOccurrenceCompletion(tx, {
       where: {
@@ -726,6 +722,8 @@ async function expireRequestAndReleaseSlots(
     });
   }
 
+  // #1778 — the dead hold's times free: tell anyone waiting (same tx).
+  await stageNoticesForAppointmentHolds(tx, appointment.id);
   await transitionOccurrenceCompletion(tx, {
     where: { appointmentId: appointment.id, deletedAt: null },
     to: OccurrenceCompletionStatus.CANCELLED,

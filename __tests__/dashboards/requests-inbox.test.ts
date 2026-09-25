@@ -52,6 +52,8 @@ import {
   CP,
   NOW,
   hoursAhead,
+  paidUnallocatedSubscription,
+  serve,
   serveInboxFixture,
 } from "../fixtures/requests-inbox";
 
@@ -72,6 +74,22 @@ const read = (args: Partial<Parameters<typeof readRequestsInbox>[0]> = {}) =>
   });
 
 describe("readRequestsInbox (A-1)", () => {
+  it("a paid, unplaced plan is due at capture + 48 h, not the request hold (#1775 C-5)", async () => {
+    const one = serve([paidUnallocatedSubscription]);
+    (prisma.subscription.findMany as jest.Mock).mockImplementation(
+      one.findMany,
+    );
+    (prisma.subscription.count as jest.Mock).mockImplementation(one.count);
+    const { rows } = await read({ type: "subscription" });
+    const row = rows.find((r) => r.id === "s-paid");
+    // The fixture payment was created 2 h before NOW and has no capturedAt.
+    expect(row?.deadline).toEqual(hoursAhead(46));
+    expect(
+      deriveBookingPresentation(row!.presentation, "CONSULTANT", { now: NOW })
+        .nextAction,
+    ).toMatchObject({ kind: "ALLOCATE", label: "Schedule cycle 1" });
+  });
+
   it("names every kind, derives each deadline and buckets the four rows", async () => {
     const consultations = await read({ type: "consultation" });
     const subscriptions = await read({ type: "subscription" });

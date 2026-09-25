@@ -86,6 +86,13 @@ const ATTENDEE_ID = "user-attendee";
 function runInteractiveTransaction(fn: unknown) {
   return (fn as (tx: unknown) => Promise<number>)({
     appointmentParticipant: {
+      // #1780 — the seat is read on the tx first (its id keys the refund).
+      findFirst: async () => ({
+        id: "part-1",
+        appointmentId: "apt-1",
+        createdAt: new Date(0),
+        refundWindowHours: null,
+      }),
       updateMany: (...a: unknown[]) => mockParticipantUpdateMany(...a),
     },
   });

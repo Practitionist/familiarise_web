@@ -23,6 +23,7 @@ import {
   occurrencesOfAppointment,
 } from "./occurrences";
 import { normalizeStatus } from "./status";
+import { payablePaymentId } from "@/lib/payments/pay-link-href";
 import { trialMeta } from "./trial-labels";
 import {
   toDate,
@@ -106,6 +107,7 @@ function mapConsultation(c: TConsultationWithPlan, now: Date): AppointmentVM {
     meta: null,
     organizationId: c.appointment?.organizationId ?? null,
     pendingPaymentUrl: c.pendingPaymentUrl ?? null,
+    pendingPaymentId: payablePaymentId(c.appointment?.payment),
     collaborators: [],
     collaboratorRole: null,
     raw: {
@@ -136,6 +138,7 @@ function mapSubscription(s: TSubscriptionWithPlan, now: Date): AppointmentVM {
     meta: null,
     organizationId: target?.organizationId ?? null,
     pendingPaymentUrl: s.pendingPaymentUrl ?? null,
+    pendingPaymentId: payablePaymentId(target?.payment),
     collaborators: [],
     collaboratorRole: null,
     raw: {

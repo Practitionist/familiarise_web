@@ -38,6 +38,8 @@ jest.mock("../../lib/prisma", () => ({
       findFirst: jest.fn().mockResolvedValue(null),
     },
     payment: { findMany: jest.fn().mockResolvedValue([]) },
+    // #1780 R-3 — free seats are read off the participant rows as well.
+    appointmentParticipant: { findMany: jest.fn().mockResolvedValue([]) },
     // #1580 C-P1-5 — group-event cancel and reschedule read the ACCEPTED
     // collaborators for the recipient list. Default to none.
     collaborator: { findMany: jest.fn().mockResolvedValue([]) },

@@ -55,6 +55,10 @@ export const FINANCIAL_JOB_NAMES = new Set([
   // in this job call refundPaymentsForExpired, another refund front-door
   // caller that must be held with the rest of the money jobs.
   "expire-stale-requests",
+  // #1775 C-12 — refunds a paid trial nobody answered within 48 h.
+  "expire-unpaid-trials",
+  // #1780 row 4 — refunds a cancelled class session not made up in 14 days.
+  "settle-cancelled-sessions",
   // Added by the wave-5 sweep: each of these either moves money directly or
   // mutates the org contract/program state the checkout sponsorship resolver
   // reads, so a partial deployment can bill against a half-written entitlement.

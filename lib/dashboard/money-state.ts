@@ -63,6 +63,10 @@ export type NextActionKind =
   | "APPROVE_OR_DECLINE"
   /** #1775 — the consultant's actions on an unpaid approval. */
   | "REMIND_OR_WITHDRAW"
+  /** #1775 C-5 — a paid plan waiting for cycle 1, or for its next cycle. */
+  | "ALLOCATE"
+  /** #1780 row 6 — the host's misses give the learner a full-refund exit. */
+  | "EXIT_SERIES"
   | "PAY"
   | "REQUEST_AGAIN"
   | "JOIN"
@@ -124,6 +128,8 @@ export type PaymentInput = PaymentDisplayLike & {
   currency: string;
   createdAt: Date | string;
   expiresAt?: Date | string | null;
+  /** #1775 C-2 — the capture clock; a read without it falls back to createdAt. */
+  capturedAt?: Date | string | null;
 };
 
 export type RefundInput = {
@@ -171,6 +177,15 @@ export interface BookingPresentationInput {
     sessions: number;
   } | null;
   names: { payer: string; consultant: string };
+  /** #1775 C-5 — a subscription's entitlement summary (lib/booking/entitlement). */
+  entitlement?: { remaining: number; nextBatch: number } | null;
+  /** #1780 E-5 — a class seat's series ledger summary. */
+  series?: {
+    misses: number;
+    N: number;
+    exitRight: boolean;
+    undelivered: number;
+  } | null;
 }
 
 export interface BookingPresentation {
@@ -224,6 +239,40 @@ export function requestHoldDeadline(
 }
 
 const PRE_APPROVAL = new Set(["PENDING", "APPROVED_PENDING_PAYMENT"]);
+
+// #1775 C-3 — a paid plan's cycle 1 must be allocated within 48 h of capture.
+// Mirrored, not imported: expire-stale-requests.ts loads Prisma.
+const ALLOCATE_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** capturedAt (or createdAt) of the settled payment + 48 h; null when unpaid. */
+export function allocateDeadline(
+  payments: BookingPresentationInput["payments"],
+): Date | null {
+  const paid = payments.find((x) => x.paymentStatus === "SUCCEEDED");
+  if (!paid) return null;
+  const clock = toDate(paid.capturedAt ?? paid.createdAt);
+  return new Date(clock.getTime() + ALLOCATE_WINDOW_MS);
+}
+
+/** #1775 C-5 — the plan's paid cycle 1, or its next cycle, awaits the consultant. */
+function allocationWait(
+  input: BookingPresentationInput,
+  live: OccurrenceInput[],
+  paid: boolean,
+  now: Date,
+): "CYCLE_1" | "NEXT_CYCLE" | null {
+  if (normalizeStatus(input.appointmentType) !== "SUBSCRIPTION") return null;
+  const status = normalizeStatus(input.request?.status);
+  if (status === "PENDING" && paid && live.length === 0) return "CYCLE_1";
+  const upcoming = live.some((o) => occurrenceEnd(o) >= now.getTime());
+  if (
+    status === "APPROVED" &&
+    !upcoming &&
+    (input.entitlement?.remaining ?? 0) > 0
+  )
+    return "NEXT_CYCLE";
+  return null;
+}
 const CONFIRMED_FAMILY = new Set(["APPROVED", "SCHEDULED", "IN_PROGRESS"]);
 const COMPLETED_FAMILY = new Set(["COMPLETED", "CONVERTED"]);
 const OPEN_DISPUTES = new Set([
@@ -370,6 +419,20 @@ function deriveBooking(
   }
   if (COMPLETED_FAMILY.has(status))
     return { state: "COMPLETED", why: "Every session has been held." };
+  const wait = allocationWait(input, live, paid, now);
+  if (wait === "CYCLE_1") {
+    const by = allocateDeadline(input.payments);
+    return {
+      state: "AWAITING_ALLOCATION",
+      why: `Paid · ${c} has until ${by ? dayTime(by) : "48 h after payment"} to schedule cycle 1.`,
+    };
+  }
+  if (wait === "NEXT_CYCLE") {
+    return {
+      state: "AWAITING_ALLOCATION",
+      why: `Cycle done · schedule the next ${input.entitlement?.nextBatch ?? 0}.`,
+    };
+  }
   if (status === "DRAFT")
     return {
       state: "AWAITING_ALLOCATION",
@@ -584,6 +647,9 @@ function deriveMoney(
   );
 }
 
+const paidOf = (input: BookingPresentationInput) =>
+  input.payments.find((x) => x.paymentStatus === "SUCCEEDED");
+
 function deriveNext(
   input: BookingPresentationInput,
   booking: BookingStateKind,
@@ -611,6 +677,18 @@ function deriveNext(
     // row's expiresAt), the same one the consultee's PAY carries.
     if (booking === "AWAITING_PAYMENT")
       return { kind: "REMIND_OR_WITHDRAW", label: "Remind", deadline };
+    const wait = allocationWait(input, live, !!paidOf(input), now);
+    if (booking === "AWAITING_ALLOCATION" && wait === "CYCLE_1")
+      return {
+        kind: "ALLOCATE",
+        label: "Schedule cycle 1",
+        deadline: allocateDeadline(input.payments) ?? undefined,
+      };
+    if (booking === "AWAITING_ALLOCATION" && wait === "NEXT_CYCLE")
+      return {
+        kind: "ALLOCATE",
+        label: `Schedule the next ${input.entitlement?.nextBatch ?? 0}`,
+      };
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
     return none;
@@ -630,6 +708,16 @@ function deriveNext(
     }
     if (booking === "CONFIRMED" && joinable)
       return { kind: "JOIN", label: "Join" };
+    if (
+      booking === "CONFIRMED" &&
+      normalizeStatus(input.appointmentType) === "CLASS" &&
+      input.series?.exitRight
+    ) {
+      return {
+        kind: "EXIT_SERIES",
+        label: `Leave the series with a full refund of the remaining ${input.series.undelivered} sessions`,
+      };
+    }
     if (booking === "COMPLETED")
       return { kind: "RATE", label: "Rate this session" };
   }

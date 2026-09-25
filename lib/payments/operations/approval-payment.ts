@@ -25,7 +25,6 @@ import {
   Currency,
   PaymentGateway,
   PaymentStatus,
-  Prisma,
   TrialStatus,
 } from "@prisma/client";
 import {
@@ -33,6 +32,7 @@ import {
   unlockApproval,
   type ApprovalLock,
 } from "@/utils/appointmentlock";
+import { isUniqueViolationOn } from "@/lib/db/unique-violation";
 
 // ============================================================================
 // Type Definitions
@@ -75,6 +75,8 @@ export interface CreateApprovalPaymentParams {
 
 export interface ApprovalPaymentResult {
   paymentIntentId: string;
+  /** The Payment row the order belongs to; the pay page is keyed by it (#1775 P-1). */
+  paymentId: string;
   checkoutUrl: string;
   /** What the buyer is charged: list price plus GST (#1583 C-P0-01). */
   amount: number;
@@ -124,13 +126,27 @@ export class ApprovalWindowLapsedError extends Error {
  * carries a 409 like ApprovalLockLostError rather than surfacing as a 500.
  */
 export class ApprovalPaymentExistsError extends Error {
-  readonly code = "APPROVAL_PAYMENT_EXISTS";
+  // #1780 R-4 — the registered business code the routes answer with.
+  readonly code = "PAYMENT_ALREADY_EXISTS";
   readonly httpStatus = 409;
   constructor() {
     super(
       "A payment link for this request was just created by another action. Refresh to see it.",
     );
     this.name = "ApprovalPaymentExistsError";
+  }
+}
+
+/**
+ * #1780 R-4 — the request behind this mint is already paid. A typed 409 (was
+ * a bare Error the routes answered as a 502 "mint failed").
+ */
+export class ApprovalAlreadyPaidError extends Error {
+  readonly code = "ALREADY_PAID";
+  readonly httpStatus = 409;
+  constructor() {
+    super("This request has already been paid");
+    this.name = "ApprovalAlreadyPaidError";
   }
 }
 
@@ -214,6 +230,7 @@ export async function createApprovalPaymentIntent(
       consultationId: params.consultationId,
       subscriptionId: params.subscriptionId,
       trialId: params.trialId,
+      appointmentId: params.appointmentId,
     });
 
     // #1319 review — set when the row found above is dead and must be re-minted
@@ -222,7 +239,7 @@ export async function createApprovalPaymentIntent(
 
     if (existingPayment) {
       if (existingPayment.paymentStatus === PaymentStatus.SUCCEEDED) {
-        throw new Error("This request has already been paid");
+        throw new ApprovalAlreadyPaidError();
       }
 
       if (isDeadApprovalIntent(existingPayment, new Date())) {
@@ -260,6 +277,7 @@ export async function createApprovalPaymentIntent(
         // client_secret IS the order id (#1165 pins approval mints to RAZORPAY).
         return {
           paymentIntentId: existingPayment.paymentIntent,
+          paymentId: existingPayment.id,
           checkoutUrl: existingPayment.paymentIntent,
           amount: existingPayment.amount,
           currency: existingPayment.currency,
@@ -343,6 +361,7 @@ export async function createApprovalPaymentIntent(
         const fresh = await prisma.payment.findUnique({
           where: { id: remintIntoPaymentId },
           select: {
+            id: true,
             paymentStatus: true,
             paymentIntent: true,
             amount: true,
@@ -353,12 +372,13 @@ export async function createApprovalPaymentIntent(
           // The old order was captured; the routes answer this the same way
           // the pre-read does. Handing back a link would email a pay-link
           // for a paid order.
-          throw new Error("This request has already been paid");
+          throw new ApprovalAlreadyPaidError();
         }
         if (fresh?.paymentStatus === PaymentStatus.PENDING) {
           // Another mint replaced the order first; its link is the live one.
           return {
             paymentIntentId: fresh.paymentIntent,
+            paymentId: fresh.id,
             checkoutUrl: fresh.paymentIntent,
             amount: fresh.amount,
             currency: fresh.currency,
@@ -369,6 +389,7 @@ export async function createApprovalPaymentIntent(
 
       return {
         paymentIntentId: paymentResponse.id,
+        paymentId: remintIntoPaymentId,
         checkoutUrl: paymentResponse.client_secret,
         amount,
         currency,
@@ -376,8 +397,9 @@ export async function createApprovalPaymentIntent(
     }
 
     // Store payment record in database
+    let createdPaymentId: string;
     try {
-      await prisma.payment.create({
+      const created = await prisma.payment.create({
         data: {
           // #1583 C-P0-01 — `amount` carries GST like checkout; `originalAmount`
           // stays the list price, which is what earnings read as the base.
@@ -415,15 +437,13 @@ export async function createApprovalPaymentIntent(
             },
           },
         },
+        select: { id: true },
       });
+      createdPaymentId = created.id;
     } catch (err) {
       // Only the [userId, appointmentId] pair is the double-accept race; any
       // other unique is a real fault and keeps its Prisma error.
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === "P2002" &&
-        String(err.meta?.target ?? "").includes("appointmentId")
-      ) {
+      if (isUniqueViolationOn(err, "appointmentId")) {
         // The gateway order above is already minted and payable; give a late
         // capture on it a row to refund against (#1695) before refusing. If
         // that row could not be written the conflict is not safe to answer as
@@ -444,6 +464,7 @@ export async function createApprovalPaymentIntent(
 
     return {
       paymentIntentId: paymentResponse.id,
+      paymentId: createdPaymentId,
       checkoutUrl: paymentResponse.client_secret,
       amount,
       currency,
@@ -748,10 +769,69 @@ function isDeadApprovalIntent(
  * it can only ever match once callers thread appointmentId, because it walks
  * payments hanging off the appointment (#1181).
  */
+const EXISTING_PAYMENT_SELECT = {
+  id: true,
+  paymentStatus: true,
+  paymentIntent: true,
+  amount: true,
+  originalAmount: true,
+  taxAmount: true,
+  isInternational: true,
+  buyerCountry: true,
+  currency: true,
+  expiresAt: true,
+} as const;
+
+/** The trial arm of findExistingLivePayment, lifted out to keep its complexity in bounds. */
+async function findExistingTrialPayment(
+  trialId: string,
+  anchorAppointmentId: string | undefined,
+  reusable: PaymentStatus[],
+): Promise<ExistingApprovalPayment | null> {
+  // #1775 P-1 — the placeholder appointment exists from request time (C-7),
+  // so the live row is found through it; Trial.paymentId (set at capture) is the fallback.
+  const trial = await prisma.trial.findUnique({
+    where: { id: trialId },
+    select: {
+      status: true,
+      paymentId: true,
+      appointmentId: true,
+      payment: { select: EXISTING_PAYMENT_SELECT },
+    },
+  });
+  const appointmentId = anchorAppointmentId ?? trial?.appointmentId;
+  const viaAppointment = appointmentId
+    ? await prisma.payment.findFirst({
+        where: {
+          appointmentId,
+          deletedAt: null,
+          paymentStatus: { in: reusable },
+        },
+        orderBy: { createdAt: "desc" },
+        select: EXISTING_PAYMENT_SELECT,
+      })
+    : null;
+  const payment = viaAppointment ?? trial?.payment;
+
+  // Same status filter as the consultation/subscription arms below: a FAILED
+  // gateway order is a rejection the buyer must retry from scratch, so it is
+  // not offered back to the mint at all.
+  if (!payment || !reusable.includes(payment.paymentStatus)) {
+    return null;
+  }
+  // A paid-at-request trial is payable while PENDING and not yet captured (#1775 C-7).
+  const requestIsPayable =
+    trial?.status === TrialStatus.AWAITING_PAYMENT ||
+    (trial?.status === TrialStatus.PENDING && trial.paymentId === null);
+  return { ...payment, requestIsPayable };
+}
+
 export async function findExistingLivePayment(params: {
   consultationId?: string;
   subscriptionId?: string;
   trialId?: string;
+  /** The appointment the mint anchors to; the trial arm resolves through it. */
+  appointmentId?: string;
 }): Promise<ExistingApprovalPayment | null> {
   const REUSABLE_STATUSES: PaymentStatus[] = [
     PaymentStatus.SUCCEEDED,
@@ -759,42 +839,11 @@ export async function findExistingLivePayment(params: {
     PaymentStatus.EXPIRED,
   ];
   if (params.trialId) {
-    // A trial owns its Payment directly (Trial.paymentId), so unlike the
-    // consultation/subscription arms there is no appointment to walk through —
-    // the appointment doesn't exist until the trial is paid and scheduled.
-    const trial = await prisma.trial.findUnique({
-      where: { id: params.trialId },
-      select: {
-        status: true,
-        payment: {
-          select: {
-            id: true,
-            paymentStatus: true,
-            paymentIntent: true,
-            amount: true,
-            originalAmount: true,
-            taxAmount: true,
-            isInternational: true,
-            buyerCountry: true,
-            currency: true,
-            expiresAt: true,
-          },
-        },
-      },
-    });
-
-    const payment = trial?.payment;
-
-    // Same status filter as the consultation/subscription arms below: a FAILED
-    // gateway order is a rejection the buyer must retry from scratch, so it is
-    // not offered back to the mint at all.
-    if (!payment || !REUSABLE_STATUSES.includes(payment.paymentStatus)) {
-      return null;
-    }
-    return {
-      ...payment,
-      requestIsPayable: trial?.status === TrialStatus.AWAITING_PAYMENT,
-    };
+    return findExistingTrialPayment(
+      params.trialId,
+      params.appointmentId,
+      REUSABLE_STATUSES,
+    );
   }
 
   if (params.consultationId) {

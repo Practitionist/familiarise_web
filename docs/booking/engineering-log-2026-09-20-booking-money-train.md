@@ -39,6 +39,36 @@ There was no `trials/page.tsx` to turn into a redirect: `TrialsTab` was mounted 
 
 The read pin (`__tests__/dashboards/requests-inbox.test.ts`) runs the fixture of four rows through the read, the route and Home's dashboard read over one where-aware prisma mock; the render pin (`requests-inbox.test.tsx`) renders the rows into their buckets and asserts no status enum reaches the DOM. `tsc --noEmit` (cold), `eslint` and `prettier --check` on every touched file, and `jest __tests__/dashboards __tests__/booking-algorithm` were green before the push.
 
+## PR-1 — booking money rules (2026-09-25)
+
+PR-1 folds the old PR-C, PR-D, PR-E and PR-F specs into one branch, together with three live money defects found on `dev` and the #1746 and #1429 fold-ins. Each group below records what changed and why.
+
+### Group P — live money defects
+
+A Razorpay approval or trial "pay link" is the order id, and seven Pay surfaces refused anything that was not an https URL, so no approval could be paid (P-1). The fix is one pure helper, `payLinkHref`, that resolves an order id to a new pay page at `/checkout/pay/[paymentId]`, and an existing-order mode on `RazorpayCheckout` that opens the order without calling checkout. The earnings release sweep released rows whose payment still had a refund in flight (P-2); the cohort and the release CAS now both require that the payment has no PENDING refund. A cancel whose gateway call threw reported the refund as FAILED even though `refund.ts` keeps the row PENDING for reconcile (P-3); the route now reads the row and answers PENDING, which absorbs #1639 item 2.
+
+### Group C — plans are paid at purchase, paid trials are charged at request
+
+A plan can no longer be approved unpaid through either door: the detail PATCH and the allocate path both answer `409 SUBSCRIPTION_UNPAID`, and a failed consultation mint on the allocate path is now a typed answer rather than a 200. `Payment.capturedAt` is the 48-hour clock, stamped by the single writer's three confirmation CAS writes and never by a replay. A paid plan with no allocated session 48 hours after capture expires with reason `UNALLOCATED_48H` and is refunded in full, with the bell staged in the same transaction, and the consultant is nudged at 12, 24 and 36 hours. The presentation layer names the wait: the consultant's next action is `ALLOCATE`, "Schedule cycle 1" with a deadline, and "Schedule the next N" once a cycle is delivered.
+
+A paid trial is now charged when it is requested. The request creates a placeholder appointment and mints the order against it; capture stamps the trial paid while it stays `PENDING`; acceptance requires that payment and places the session on the placeholder. A decline, or 48 hours without an answer, refunds in full; a learner cancelling before a session exists is refunded in full because missing notice is infinite notice; and the trial's earning waits for completion before its hold starts. Neither capturedAt nor the charge-at-request flow backfills anything: rows written before the column exist fall back to `createdAt`.
+
+### Group D — the event refund window and the class-series ledger
+
+The host now sets a free-cancellation window of 24 to 168 hours on each webinar and class plan, and each seat snapshots it at purchase. A seat leave runs the rule inside the release transaction: inside the window it is refused and the seat stays, outside it the seat is refunded in full, and a session the host moved after the purchase waives the window. A class under way is quoted per session from the seat's own ledger, so a mid-series joiner is priced only on the sessions it bought, and a host cancelling a series refunds each seat only what it was not delivered. `Refund.dedupeKey` makes one refund per seat, session or series a database guarantee on every rail. Two readings were needed to make the spec's formulas correct: the join time is the later of the participant row and the seat's payment, because a re-bought seat reuses its row, and the internal CLASS_MULTI reversal splits the per-seat sum in proportion to balances, which is exact only when the seats hold the same sessions. The credits rail cannot restore part of a seat, so a credit seat owed a per-session amount is escalated to ops instead of over-restored.
+
+### Group E — one cancelled class session, its make-up, and the exit right
+
+The host can now cancel one session of a class. It stays countable because only `hostCancelledAt` is written, and it is made up on the same ordinal within 14 days or refunded one unit per seat by the new `settle-cancelled-sessions` sweep, which runs every 15 minutes on the ticker with an hourly Actions backstop. A learner who cannot make a make-up can take that session back at once under the same refund key the sweep uses, so a session can never be refunded twice. Every host cancellation is a miss, and three misses or a quarter of the series give the learner the right to leave with every undelivered session refunded. Two choices were made where the spec left room: a host-cancelled session keeps its place in a seat's count so the per-seat unit never moves while it waits for its make-up, and a make-up row is stamped `movedAt` because it moves a session on the buyer. The per-session class controls share one component, so the consultant half (E-6) and the learner half (E-3b) landed in consecutive commits.
+
+### Group F — backup interest in a held window
+
+A learner who loses a 1:1 window to someone else can now ask to be told if it frees. The interest is notify-only: nothing is reserved, and every release path stages the notices inside its own transaction, so the outbox relays deliver them after the commit and the first to book wins. The consultee Home lists the times a learner is waiting on, with a Withdraw on each. The spec also asked for the prompt on the consultee's request page when the asked-for window is held by someone else; no read tells that page that another learner holds the window, so the prompt is offered at the refusal only, and the page prompt is left for a follow-up.
+
+### Fold-ins — #1429 and #1746
+
+Three fixes rode along. The allocate page's read now answers null for a request that is missing, belongs to another consultant, or fails to read, so the page shows its own not-found page instead of crashing (FAMILIARISE_WEB-4X), and the availability editor no longer refuses a whole save because an unchanged window has since ended. The rejection refund is computed in integer basis points, and a cancelled group event now tells every attendee, including free and credit seats, in the words of the rail their seat was funded by. An approval whose pay order already exists, or whose request is already paid, answers a typed 409 instead of a 502 that invited a retry.
+
 ## PR-2 — money accounts (2026-09-25)
 
 ### What changed

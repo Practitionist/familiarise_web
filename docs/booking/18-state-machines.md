@@ -27,6 +27,8 @@ The table below is `REQUEST_ALLOWED_FROM` as of 2026-09-18 (#1703), row by targe
 
 The `APPROVED_PENDING_PAYMENT → EXPIRED` edge has three writers that share one body since #1775: the 24 h pay-link sweep, the 7-day fallback and the consultant-initiated Withdraw all go through `lapseApprovedRequest` in `lib/booking/lapse-approved-request.ts`, which writes the history row with reason `PAYMENT_LAPSED` or `WITHDRAWN_BY_CONSULTANT`, keeps the money predicate in the CAS WHERE, tombstones the open PENDING order and releases the tentative holds by status. Two rows deserve a note. `PENDING` is reachable only from `APPROVED_PENDING_PAYMENT` in the map; the reschedule route's consultation restore to `PENDING` passes its own `fromIn` and is listed in the raw-writer inventory below. `SCHEDULED` is declared for consultations and subscriptions and its edges are legal, but no writer ever transitions either request type to it: allocation re-stamps `APPROVED`, completion goes `APPROVED → COMPLETED`, and the only `SCHEDULED` writes in the codebase are on `AppointmentOccurrence.completionStatus`, `Webinar`/`Class` and `Trial`. Treat it as an unreachable state on these two entities until a writer appears.
 
+Since #1775 a subscription never enters `APPROVED_PENDING_PAYMENT` through a live writer: a plan is paid at purchase, so both the detail PATCH and the allocate path refuse an unpaid plan with `409 SUBSCRIPTION_UNPAID`, and the edge survives only for rows already in flight. A paid plan has one extra `PENDING → EXPIRED` writer, `expireUnallocatedPaidSubscriptions`, which fires 48 hours after the capture when no session has been allocated and records the history reason `UNALLOCATED_48H`; the 30-day `PENDING` arm skips paid rows so the two arms never share one.
+
 ### Subscription entitlement and fill-order cycles (#1766)
 
 A subscription's request status does not move between cycles. The row stays `APPROVED` from its first allocation until the last delivered session, and what advances is a derived counter, not a column. `Subscription.sessionsTotal` is snapshotted from the plan at purchase, exactly as `Payment.amount` is, so a consultant editing the plan afterwards never changes what a buyer paid for; a pre-#1766 row with a null snapshot resolves through `plan.totalSessions`. Everything else is computed by one pure helper, `subscriptionEntitlement` in `lib/booking/entitlement.ts`, from the wrapper's live occurrence rows: `completed` is the count of COMPLETED and UNVERIFIED rows, `scheduled` the count of non-tentative SCHEDULED rows, `held` their sum and `remaining` the entitlement minus `held`. There is no consumed counter and no per-surface arithmetic.
@@ -56,6 +58,20 @@ SCHEDULED]` — which bookings may open a reschedule.
 
 DRAFT keeps its status through allocation (B2/#1060): "add a session, then
 publish" is the editor flow.
+
+## Trials
+
+`TrialStatus`, guarded by `TRIAL_ALLOWED_FROM` through `transitionTrial`. Since #1775 a paid trial is paid while it is still `PENDING`: the request mints the order, capture sets `paymentId` without moving the status, and acceptance moves `PENDING → SCHEDULED` with `paymentId` not null repeated in the CAS WHERE. `AWAITING_PAYMENT` remains for trials accepted before payment under the old flow. A paid trial the consultant never answers moves `PENDING → CANCELLED` after 48 hours with the history reason `TRIAL_UNANSWERED` and is refunded in full; an unpaid trial past its pay window moves from `PENDING` or `AWAITING_PAYMENT` to `CANCELLED` with `paymentId` null repeated in the CAS WHERE, and no money moves.
+
+## Class sessions the host cancels (#1780 row 4)
+
+A class session is one `AppointmentOccurrence` row, and since #1780 the host may cancel just one of them. `POST /api/appointments/[id]/occurrences/[occurrenceId]/cancel` moves a future `SCHEDULED` session to `CANCELLED` through `transitionOccurrenceCompletion` (`fromIn: [SCHEDULED]`, reason `HOST_CANCELLED_SESSION`) and stamps `hostCancelledAt`, but never `deletedAt`, so the session stays countable. The host then has 14 days: a make-up is a new occurrence with the same ordinal that must be held by the fourteenth day, and the partial unique on live ordinals makes a second make-up impossible. If no make-up exists when the 14 days are up, the `settle-cancelled-sessions` sweep refunds every seat that held the session one unit under the key `occ:<occurrence>:pay:<payment>` and stamps `seatsSettledAt`; a learner who cannot attend a make-up may take the same unit back earlier under the same key, so the two paths never both refund it.
+
+Every host-cancelled session counts as a miss, made up or not. Misses are host cancellations only for now; no-shows and outage voiding are deferred to #1569. At three misses, or a quarter of the series, a learner holding a seat may leave with every undelivered session refunded at 100 %, through `DELETE /api/participants/class/[classId]?mode=exit`, which recomputes the ledger inside its transaction and refuses with `EXIT_NOT_AVAILABLE` without the right. The first time a class reaches that threshold one `class-reliability:<classId>` `SystemEvent` is written for ops. Delivered sessions are never clawed back.
+
+## Backup interest in a held window (#1778)
+
+`WindowBackupInterest.status` has four states. A row starts `WAITING` when a learner asks to hear about a held window. It moves to `NOTIFIED` when a release path frees an overlapping window (the CAS carries `status: WAITING`), to `BOOKED` when the same learner's capture confirms an overlapping booking (from `WAITING` or `NOTIFIED`), and to `EXPIRED` when the learner withdraws it or the stale-request sweep finds its window has passed. `BOOKED` and `EXPIRED` are terminal; re-registering the same window revives the row to `WAITING`.
 
 ## Reschedule requests
 

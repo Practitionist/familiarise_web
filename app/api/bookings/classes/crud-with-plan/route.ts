@@ -10,6 +10,7 @@ import {
   faqReplaceNested,
 } from "@/lib/api/plans/content";
 import { ClassPlanSchema, ClassContentSchema } from "@/schemas/plans";
+import { refundWindowHoursSchema } from "@/lib/booking/refund-window";
 import { ClassStatus, Prisma } from "@prisma/client";
 import {
   EVENT_PUBLISHABLE_FROM,
@@ -60,6 +61,8 @@ const PostClassWithPlanBodySchema = ClassPlanSchema.omit({
   classContents: true, // Omit to override with input schema
 }).extend({
   consultantProfileId: z.string().min(1, "Consultant profile ID is required"),
+  // #1780 row 2 — the plan's free-cancellation window (24–168 h).
+  refundWindowHours: refundWindowHoursSchema,
   // Topics as names - API will find or create them
   topics: z
     .array(z.string().min(1, "Topic name cannot be empty"))
@@ -149,6 +152,7 @@ export async function POST(request: NextRequest) {
       price,
       priceCurrency,
       maxParticipants,
+      refundWindowHours,
       language,
       level,
       prerequisites,
@@ -253,6 +257,7 @@ export async function POST(request: NextRequest) {
               price,
               priceCurrency,
               maxParticipants,
+              refundWindowHours,
               language,
               level,
               prerequisites,
@@ -490,6 +495,7 @@ export async function PATCH(request: NextRequest) {
       sessionsPerWeek,
       emailSupport,
       maxParticipants,
+      refundWindowHours,
       language,
       level,
       prerequisites,
@@ -657,6 +663,9 @@ export async function PATCH(request: NextRequest) {
           // caller is editing the plan itself rather than one of its classes.
           if (maxParticipants !== undefined && !classToUpdate)
             updateData.maxParticipants = maxParticipants;
+          // #1780 row 2 — the window lives on the plan; seats snapshot it.
+          if (refundWindowHours !== undefined)
+            updateData.refundWindowHours = refundWindowHours;
           if (language !== undefined) updateData.language = language;
           if (level !== undefined) updateData.level = level;
           if (prerequisites !== undefined)

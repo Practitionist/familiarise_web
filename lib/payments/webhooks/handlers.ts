@@ -13,6 +13,7 @@ import {
   recordParticipants,
   setParticipantStatus,
 } from "@/lib/booking/participants";
+import { markBackupInterestBooked } from "@/lib/booking/backup-interest";
 import prisma, { type Tx } from "@/lib/prisma";
 import { collaboratorUserIds } from "@/lib/collaborators/recipients";
 import {
@@ -423,6 +424,7 @@ export async function handlePaymentSuccess(
               data: {
                 paymentStatus: PaymentStatus.SUCCEEDED,
                 ...capturedGatewayId,
+                capturedAt: new Date(), // #1775 C-2
                 description: `Auto-refund pending: capture landed on a ${payment.paymentStatus} payment whose hold was already released. Booking NOT confirmed.`,
               },
             });
@@ -634,6 +636,9 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
                 data: {
                   paymentStatus: PaymentStatus.SUCCEEDED,
                   ...capturedGatewayId,
+                  // #1775 C-2 — the allocate-or-refund clock; the SUCCEEDED
+                  // short-circuit above never reaches here, so a replay keeps it.
+                  capturedAt: new Date(),
                 },
               });
           if (confirmed.count === 0) {
@@ -720,12 +725,37 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
               }),
             );
 
-            if (scheduled.count === 0) {
+            // #1775 C-8 — a trial charged at request: capture stamps it paid
+            // and it stays PENDING for the consultant to accept (or refund).
+            const paidAtRequest =
+              scheduled.count === 0
+                ? await tx.trial.updateMany({
+                    where: {
+                      id: metadata.trialId,
+                      status: TrialStatus.PENDING,
+                      paymentId: null,
+                    },
+                    data: {
+                      paymentId: payment.id,
+                      pendingPaymentUrl: null,
+                      paymentDueAt: null,
+                    },
+                  })
+                : { count: 0 };
+
+            if (scheduled.count === 0 && paidAtRequest.count === 0) {
               const trial = await tx.trial.findUnique({
                 where: { id: metadata.trialId },
-                select: { status: true },
+                select: { status: true, paymentId: true },
               });
-              if (trial?.status !== TrialStatus.SCHEDULED) {
+              // A replay of this capture; a trial bound to another payment is not ours.
+              const alreadyOurs =
+                trial?.paymentId === payment.id
+                  ? trial.status === TrialStatus.SCHEDULED ||
+                    trial.status === TrialStatus.PENDING
+                  : trial?.status === TrialStatus.SCHEDULED &&
+                    trial.paymentId === null;
+              if (!alreadyOurs) {
                 await tx.payment.update({
                   where: { id: payment.id },
                   data: {
@@ -839,6 +869,7 @@ ACTION REQUIRED: Customer was charged but appointment was NOT created!
         // refunds immediately below; re-stamp it so that refund's webhook can
         // match the row.
         ...capturedGatewayId,
+        capturedAt: new Date(), // #1775 C-2
         description:
           "Refund pending: legacy-shape capture overlapped a confirmed booking (occurrence_no_confirmed_overlap) — booking NOT confirmed.",
       },
@@ -2266,6 +2297,8 @@ export async function confirmExistingAppointment(
       { appointmentId, status: "HELD" },
       "CONFIRMED",
     );
+    // #1778 — the buyer's own backup interest in these times is fulfilled.
+    if (userId) await markBookedWindows(tx, appointmentId, userId);
   }
 
   // Update status for consultation and subscription
@@ -2295,6 +2328,30 @@ export async function confirmExistingAppointment(
   // the guard above correctly refused it.
 
   return { capturedAfterTerminal };
+}
+
+/** #1778 — every confirmed window of this booking marks the buyer's own interest BOOKED. */
+async function markBookedWindows(
+  tx: Tx,
+  appointmentId: string,
+  userId: string,
+) {
+  const windows = await tx.appointmentOccurrence.findMany({
+    where: {
+      appointmentId,
+      ...liveOccurrenceWhere,
+      consultantProfileId: { not: null },
+    },
+    select: { consultantProfileId: true, startsAt: true, endsAt: true },
+  });
+  for (const w of windows) {
+    if (!w.consultantProfileId) continue;
+    await markBackupInterestBooked(tx, userId, {
+      consultantProfileId: w.consultantProfileId,
+      windowStart: w.startsAt,
+      windowEnd: w.endsAt,
+    });
+  }
 }
 
 /**

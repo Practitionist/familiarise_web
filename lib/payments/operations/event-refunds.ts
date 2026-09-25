@@ -25,6 +25,12 @@ import {
   termsFromPolicyRow,
 } from "./cancellation-policy-store";
 import { findLiveEventSlot } from "@/lib/appointments/live-event-slot";
+import {
+  seatLedger,
+  occurrenceRefundsPaise,
+  seriesCancelRefundPaise,
+  type SeriesSeat,
+} from "@/lib/booking/class-series";
 
 /**
  * Whole-event refund (#776 §C) — the production front door for the reversal
@@ -75,6 +81,12 @@ export async function refundWholeEventPayments(
   eventId: string,
   reason: string,
   initiatedByUserId: string | null,
+  /**
+   * #1780 D-5 — per-seat class ledgers read BEFORE the cancel tombstoned the
+   * sessions (classSeriesLedgers); each seat then refunds only what was not
+   * delivered. Absent (a webinar, a moderation sweep) → every seat in full.
+   */
+  opts: { ledgers?: ReadonlyMap<string, SeriesSeat> } = {},
 ): Promise<WholeEventRefundSummary> {
   const summary: WholeEventRefundSummary = {
     refundsIssued: 0,
@@ -96,9 +108,28 @@ export async function refundWholeEventPayments(
       // soft-deleted seat would only surface as a false failure.
       deletedAt: null,
     },
-    select: { id: true, amount: true, paymentIntent: true },
+    select: {
+      id: true,
+      amount: true,
+      paymentIntent: true,
+      userId: true,
+      createdAt: true,
+      appointmentId: true,
+    },
   });
   if (payments.length === 0) return summary;
+
+  // #1780 D-5 — a class series refunds only what was not delivered: each seat
+  // gets amount − unit × delivered (its own ledger); a webinar refunds in full.
+  const ledgers = opts.ledgers ?? null;
+  const seriesAmount = (p: (typeof payments)[number]) => {
+    const ledger = ledgers?.get(p.id);
+    // Sessions already refunded one by one (occ:*) are not owed again.
+    return ledger
+      ? Number(seriesCancelRefundPaise(ledger, p.amount)) -
+          (ledger.occRefundedPaise ?? 0)
+      : undefined;
+  };
 
   const internal = payments.filter((p) =>
     isInternalFundedIntent(p.paymentIntent),
@@ -112,6 +143,17 @@ export async function refundWholeEventPayments(
 
   // Credit-funded seats — restoration through the front door (#1161).
   for (const p of credits) {
+    // #1780 — the credits rail restores whole or not at all, so a seat that was
+    // delivered part of the series is escalated rather than over-restored.
+    const ledger = ledgers?.get(p.id);
+    if (ledger && ledger.deliveredHeld > 0) {
+      summary.failures.push({
+        paymentId: p.id,
+        error:
+          "partial credit restoration after delivered sessions needs a human",
+      });
+      continue;
+    }
     try {
       const r = await refundBookingPayment({
         paymentId: p.id,
@@ -141,10 +183,24 @@ export async function refundWholeEventPayments(
   // handles any CHARGE_MEMBER overage credit-back internally).
   for (const p of gateway) {
     try {
+      const owed = seriesAmount(p);
+      if (owed !== undefined && owed <= 0) {
+        summary.skippedAlreadyRefunded += 1;
+        continue;
+      }
       const r = await refundPayment({
         paymentId: p.id,
         reason,
         initiatedByUserId,
+        ...(owed === undefined
+          ? {}
+          : {
+              amountPaise: Math.min(
+                owed,
+                await gatewayBalance(p.id, Number(p.amount)),
+              ),
+              dedupeKey: `series-cancel:${p.id}`,
+            }),
       });
       summary.refundsIssued += 1;
       summary.refundedPaise += r.amountRefundedPaise;
@@ -184,7 +240,17 @@ export async function refundWholeEventPayments(
               tx,
               internal.map((p) => p.id),
             );
-            internalTotal = balances.reduce((s, p) => s + p.refundablePaise, 0);
+            // #1780 D-5 — Σ per-seat undelivered amounts, each clamped to its balance.
+            internalTotal = balances.reduce((s, b) => {
+              const seat = internal.find((p) => p.id === b.id);
+              const owed = seat ? seriesAmount(seat) : undefined;
+              return (
+                s +
+                (owed === undefined
+                  ? b.refundablePaise
+                  : Math.max(0, Math.min(owed, b.refundablePaise)))
+              );
+            }, 0);
             // Seats with nothing left are skips, whether or not the rest of
             // the batch still has a balance.
             settledSeats = balances.filter(
@@ -280,6 +346,61 @@ export async function refundWholeEventPayments(
   return summary;
 }
 
+/** A gateway seat's refundable balance (gross less what already came back). */
+async function gatewayBalance(paymentId: string, grossPaise: number) {
+  const row = await prisma.payment.findUnique({
+    where: { id: paymentId },
+    select: REFUNDABLE_BALANCE_SELECT,
+  });
+  return row ? refundableBalancePaise(grossPaise, row) : 0;
+}
+
+/**
+ * #1780 D-5 — each paid class seat's ledger by payment id, joined at the later
+ * of its participant row and its payment (a re-bought seat reuses the row).
+ * The cancel route reads this BEFORE its transaction tombstones the sessions.
+ */
+export async function classSeriesLedgers(
+  classId: string,
+): Promise<Map<string, SeriesSeat>> {
+  const payments = await prisma.payment.findMany({
+    where: {
+      appointment: { classId },
+      paymentStatus: "SUCCEEDED",
+      deletedAt: null,
+    },
+    select: {
+      id: true,
+      amount: true,
+      userId: true,
+      createdAt: true,
+      appointmentId: true,
+    },
+  });
+  const seats = await prisma.appointmentParticipant.findMany({
+    where: {
+      appointment: { classId },
+      userId: { in: payments.map((p) => p.userId) },
+    },
+    select: { userId: true, createdAt: true },
+  });
+  const ledgers = new Map<string, SeriesSeat>();
+  for (const p of payments) {
+    if (!p.appointmentId) continue;
+    const seatAt = seats.find((s) => s.userId === p.userId)?.createdAt;
+    const joinedAt = seatAt && seatAt > p.createdAt ? seatAt : p.createdAt;
+    ledgers.set(p.id, {
+      ...(await seatLedger(
+        prisma,
+        { appointmentId: p.appointmentId, createdAt: joinedAt },
+        p.amount,
+      )),
+      occRefundedPaise: await occurrenceRefundsPaise(prisma, p.id),
+    });
+  }
+  return ledgers;
+}
+
 /**
  * Refund ONE attendee's seat when the organiser removes them from a live
  * class/webinar (#1003).
@@ -317,6 +438,14 @@ export async function refundRemovedAttendeeSeat(args: {
    * self-leave so notice-window tiers apply.
    */
   initiatedBy?: "organiser" | "attendee";
+  /**
+   * #1780 — the seat-leave rule's answer (lib/booking/seat-leave.ts): `full`
+   * refunds 100 % with no ladder; a class quote arrives as `amountPaise`.
+   */
+  mode?: "full";
+  amountPaise?: number;
+  /** #1780 — the seat's key; the payment id is appended (a re-bought seat is a new sale). */
+  dedupeKey?: string;
 }): Promise<{
   amountRefundedPaise: number;
   refundPct: number;
@@ -348,16 +477,14 @@ export async function refundRemovedAttendeeSeat(args: {
         userId: args.attendeeUserId,
         appointment: eventFilter,
         paymentStatus: "SUCCEEDED",
-        // #1161 residual — attendee-leave refunds are TIERED by notice, and
-        // partial restoration of a credit-funded (free_) seat is a product
-        // call not yet made; whole-event cancellation restores such seats in
-        // full via the credits bucket above.
-        amount: { gt: 0 },
+        // #1780 decision 11 — credit-funded (free_, amount 0) seats are in:
+        // they restore credits under the same rule (see creditSeatRefund).
         deletedAt: null,
       },
       select: {
         id: true,
         amount: true,
+        paymentIntent: true,
         currency: true,
         organizationId: true,
         ...REFUNDABLE_BALANCE_SELECT,
@@ -366,31 +493,29 @@ export async function refundRemovedAttendeeSeat(args: {
     });
     if (!payment) return null;
     organizationId = payment.organizationId;
+    const dedupeKey = args.dedupeKey
+      ? `${args.dedupeKey}:pay:${payment.id}`
+      : undefined;
+    if (isFreeCreditIntent(payment.paymentIntent)) {
+      return await creditSeatRefund(args, payment.id, dedupeKey);
+    }
 
     // Organiser branch ignores the clock inside computeRefundPct; skip the
     // slot lookup. Attendee branch needs a real hoursUntilStart — negative
     // means already started → 0% under the tiers (and the DELETE route should
     // have 400'd before we got here for self-leave).
     let hoursUntilStart = -1;
-    if (!isOrganiserInitiated) {
-      const now = new Date();
-      // Next upcoming session — not the earliest historical live row.
-      // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
-      // otherwise pin hoursUntilStart negative → permanent 0% refund.
-      const nextLive = await findLiveEventSlot(eventFilter, {
-        order: "asc",
-        startsAtGte: now,
-      });
-      if (nextLive) {
-        hoursUntilStart =
-          (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
-      }
+    if (!isOrganiserInitiated && args.mode === undefined) {
+      hoursUntilStart = await hoursUntilNextLive(eventFilter);
     }
 
-    const refundPct = computeRefundPct(
-      termsFromPolicyRow(payment.appointment?.cancellationPolicy),
-      hoursUntilStart,
-      isOrganiserInitiated,
+    const grossPaise = Number(payment.amount);
+    const refundPct = seatRefundPct(args, grossPaise, () =>
+      computeRefundPct(
+        termsFromPolicyRow(payment.appointment?.cancellationPolicy),
+        hoursUntilStart,
+        isOrganiserInitiated,
+      ),
     );
     // #1396 — `refundPct` may carry two decimals (a policy can say 12.5%), so
     // multiplying paise by the float first put a binary rounding error inside a
@@ -398,11 +523,12 @@ export async function refundRemovedAttendeeSeat(args: {
     // divide once, exactly as `computeBookingRefundQuote` in cancellation-policy
     // does; BigInt because the intermediate product leaves the safe-integer
     // range long before the amounts stop being real money.
-    const grossPaise = Number(payment.amount);
-    const policyRefundPaise = Number(
-      (BigInt(grossPaise) * BigInt(Math.round(refundPct * 100))) /
-        BigInt(10_000),
-    );
+    const policyRefundPaise =
+      args.amountPaise ??
+      Number(
+        (BigInt(grossPaise) * BigInt(Math.round(refundPct * 100))) /
+          BigInt(10_000),
+      );
     // Clamp to the remaining balance, exactly as the cancel route does. A seat
     // carrying an earlier partial refund would otherwise ask for more than is
     // left, `refundPayment` would reject the whole request, and the attendee
@@ -420,6 +546,7 @@ export async function refundRemovedAttendeeSeat(args: {
       amountPaise,
       reason: `removed from ${args.kind} ${args.eventId} by the ${actorLabel} (${refundPct}%)`,
       initiatedByUserId: args.initiatedByUserId,
+      dedupeKey,
     });
 
     // Only the gateway rail puts money back where this person can see it. On
@@ -461,12 +588,8 @@ export async function refundRemovedAttendeeSeat(args: {
     // AMOUNT_EXCEEDS_REFUNDABLE is unreachable through the clamp above, but a
     // concurrent refund settling between the read and the write can still
     // produce it, and that race is the benign case too.
-    const benign =
-      err instanceof RefundValidationError &&
-      (err.code === "ALREADY_FULLY_REFUNDED" ||
-        err.code === "PAYMENT_NOT_SUCCEEDED" ||
-        err.code === "AMOUNT_EXCEEDS_REFUNDABLE");
-    if (benign) return { amountRefundedPaise: 0, refundPct: 0, rail: null };
+    if (isBenignSeatRefundError(err))
+      return { amountRefundedPaise: 0, refundPct: 0, rail: null };
 
     reportSentryError(err, {
       subsystem: "payments",
@@ -482,4 +605,86 @@ export async function refundRemovedAttendeeSeat(args: {
     }).catch(() => {});
     return { amountRefundedPaise: 0, refundPct: 0, rail: null };
   }
+}
+
+type SeatRefundArgs = Parameters<typeof refundRemovedAttendeeSeat>[0];
+
+/** Hours to the next live session from now, or -1 when none is upcoming. */
+async function hoursUntilNextLive(
+  eventFilter: Parameters<typeof findLiveEventSlot>[0],
+): Promise<number> {
+  const now = new Date();
+  // Next upcoming session — not the earliest historical live row.
+  // Past class sessions stay SCHEDULED/COMPLETED/UNVERIFIED and would
+  // otherwise pin hoursUntilStart negative → permanent 0% refund.
+  const nextLive = await findLiveEventSlot(eventFilter, {
+    order: "asc",
+    startsAtGte: now,
+  });
+  if (!nextLive) return -1;
+  return (nextLive.startsAt.getTime() - now.getTime()) / (1000 * 60 * 60);
+}
+
+/** The idempotent re-drive refusals a seat refund swallows without paging. */
+function isBenignSeatRefundError(err: unknown): boolean {
+  return (
+    err instanceof RefundValidationError &&
+    (err.code === "ALREADY_FULLY_REFUNDED" ||
+      err.code === "PAYMENT_NOT_SUCCEEDED" ||
+      err.code === "AMOUNT_EXCEEDS_REFUNDABLE")
+  );
+}
+
+/** The percentage a seat refund reports: the rule's answer, else the ladder. */
+function seatRefundPct(
+  args: SeatRefundArgs,
+  grossPaise: number,
+  ladder: () => number,
+): number {
+  if (args.amountPaise !== undefined) {
+    return grossPaise > 0
+      ? Math.round((args.amountPaise * 10_000) / grossPaise) / 100
+      : 0;
+  }
+  return args.mode === "full" ? 100 : ladder();
+}
+
+/**
+ * #1780 decision 11 — a credit-funded seat returns credits, not cash. The
+ * credits rail restores whole or not at all (#1161), so a full answer (an
+ * organiser removal, a leave outside the window, a host move) restores it
+ * and a per-session answer is escalated to ops rather than over-restored.
+ */
+async function creditSeatRefund(
+  args: SeatRefundArgs,
+  paymentId: string,
+  dedupeKey: string | undefined,
+): Promise<{
+  amountRefundedPaise: number;
+  refundPct: number;
+  rail: FundingRail | null;
+}> {
+  const whole =
+    (args.initiatedBy ?? "organiser") === "organiser" || args.mode === "full";
+  if (!whole) {
+    await recordSystemError({
+      organizationId: null,
+      category: "PAYMENT",
+      summary: `Credit seat left ${args.kind} ${args.eventId} mid-series — per-session credit restoration needs a human`,
+      err: new Error("CREDIT_SEAT_PARTIAL_RESTORE"),
+      context: { ...args, paymentId },
+    }).catch(() => {});
+    return { amountRefundedPaise: 0, refundPct: 0, rail: null };
+  }
+  const r = await refundBookingPayment({
+    paymentId,
+    reason: `left ${args.kind} ${args.eventId} — credits restored in full`,
+    initiatedByUserId: args.initiatedByUserId,
+    dedupeKey,
+  });
+  return {
+    amountRefundedPaise: r.amountRefundedPaise,
+    refundPct: 100,
+    rail: r.rail,
+  };
 }

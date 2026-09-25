@@ -271,6 +271,11 @@ export async function replaceOccurrence(
     });
   }
   const [kept, ...surplus] = live;
+  // #1780 decision 9 — a real move of the kept row is stamped; the seat-leave
+  // rule waives the refund window for a session moved after the purchase.
+  const moved =
+    kept.startsAt.getTime() !== target.startsAt.getTime() ||
+    kept.endsAt.getTime() !== target.endsAt.getTime();
   await tx.appointmentOccurrence.update({
     where: { id: kept.id },
     data: {
@@ -278,6 +283,7 @@ export async function replaceOccurrence(
       endsAt: target.endsAt,
       isTentative: target.isTentative,
       consultantProfileId: target.consultantProfileId,
+      ...(moved ? { movedAt: new Date() } : {}),
     },
   });
   // Soft-retire, never delete: history and Stream children stay queryable.

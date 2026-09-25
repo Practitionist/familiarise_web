@@ -13,6 +13,7 @@ import {
   forbiddenResponse,
 } from "@/lib/auth-helpers";
 import { readLapsedPayLinks } from "@/lib/data/lapsed-pay-links";
+import { payLinkHref, payablePaymentId } from "@/lib/payments/pay-link-href";
 
 /**
  * GET /api/dashboard/consultee/[consulteeId]/pending-payments
@@ -65,7 +66,13 @@ export async function GET(
       orderBy: { createdAt: "desc" as const },
       take: 1,
       // #1703 D2 — the minted row's own deadline, when it exists.
-      select: { amount: true, currency: true, expiresAt: true },
+      select: {
+        id: true,
+        paymentStatus: true,
+        amount: true,
+        currency: true,
+        expiresAt: true,
+      },
     } as const;
 
     const planInclude = {
@@ -253,7 +260,12 @@ export async function GET(
             (frozen?.currency ??
               consultation.consultationPlan?.priceCurrency) ||
             "INR",
-          paymentUrl: consultation.pendingPaymentUrl || "",
+          // #1775 P-1 — an order id resolves to our pay page.
+          paymentUrl:
+            payLinkHref({
+              paymentId: payablePaymentId(consultation.appointment?.payment),
+              checkoutUrl: consultation.pendingPaymentUrl,
+            }) ?? "",
           approvedAt: consultation.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
@@ -284,7 +296,11 @@ export async function GET(
             (frozen?.currency ??
               subscription.subscriptionPlan?.priceCurrency) ||
             "INR",
-          paymentUrl: subscription.pendingPaymentUrl || "",
+          paymentUrl:
+            payLinkHref({
+              paymentId: payablePaymentId(subscription.appointment?.payment),
+              checkoutUrl: subscription.pendingPaymentUrl,
+            }) ?? "",
           approvedAt: subscription.updatedAt.toISOString(),
           expiresAt: expiresAt.toISOString(),
           isExpiringSoon,
@@ -387,11 +403,14 @@ export async function GET(
       );
     });
 
-    return NextResponse.json({
-      pendingPayments,
-      count: pendingPayments.length,
-      lapsedPayLinks,
-    });
+    return NextResponse.json(
+      {
+        pendingPayments,
+        count: pendingPayments.length,
+        lapsedPayLinks,
+      },
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch (error) {
     Sentry.captureException(
       error instanceof Error ? error : new Error(String(error)),

@@ -7,6 +7,9 @@ import {
   resolveBookingRefundContext,
 } from "@/lib/booking/cancellation-scope";
 import { isOrgAdminOfAppointment } from "@/lib/booking/org-actor";
+import { quoteSeatLeave } from "@/lib/booking/seat-leave";
+import { seriesCancelRefundPaise } from "@/lib/booking/class-series";
+import { classSeriesLedgers } from "@/lib/payments/operations/event-refunds";
 import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
 import {
@@ -16,6 +19,9 @@ import {
 import prisma from "@/lib/prisma";
 
 /** Every Appointment field the quote reads. */
+// A money read: never cached (repo rule for edited money GETs).
+const NO_STORE = { headers: { "Cache-Control": "no-store" } };
+
 async function loadPreviewAppointment(appointmentId: string) {
   return prisma.appointment.findUnique({
     where: { id: appointmentId },
@@ -182,15 +188,32 @@ async function quoteWholeEventRefund(
       paymentStatus: "SUCCEEDED",
       deletedAt: null,
     },
-    select: { amount: true, currency: true, ...REFUNDABLE_BALANCE_SELECT },
+    select: {
+      id: true,
+      amount: true,
+      currency: true,
+      ...REFUNDABLE_BALANCE_SELECT,
+    },
   });
+  // #1780 D-5 — a class series pays back only what each seat was not delivered.
+  const ledgers = kind === "class" ? await classSeriesLedgers(eventId) : null;
+  const owed = (seat: (typeof seats)[number]) => {
+    const balance = refundableBalancePaise(Number(seat.amount), seat);
+    const ledger = ledgers?.get(seat.id);
+    return ledger
+      ? Math.max(
+          0,
+          Math.min(
+            balance,
+            Number(seriesCancelRefundPaise(ledger, seat.amount)) -
+              (ledger.occRefundedPaise ?? 0),
+          ),
+        )
+      : balance;
+  };
 
   return {
-    estimatedRefundPaise: seats.reduce(
-      (total, seat) =>
-        total + refundableBalancePaise(Number(seat.amount), seat),
-      0,
-    ),
+    estimatedRefundPaise: seats.reduce((total, seat) => total + owed(seat), 0),
     /** Paid seats — the attendees who are owed something, not the roster. */
     attendeeCount: seats.length,
     // Settlement is INR-only by design, so the seats of one event share a
@@ -291,6 +314,39 @@ async function quoteIndividualBooking(
   };
 }
 
+// The group event a booking belongs to, webinar first; null for a 1:1 booking.
+function groupEventOf(
+  appointment: Pick<PreviewAppointment, "webinarId" | "classId">,
+): { kind: "class" | "webinar"; id: string } | null {
+  if (appointment.webinarId) {
+    return { kind: "webinar", id: appointment.webinarId };
+  }
+  if (appointment.classId) {
+    return { kind: "class", id: appointment.classId };
+  }
+  return null;
+}
+
+async function wholeEventPreview(kind: "class" | "webinar", eventId: string) {
+  const quote = await quoteWholeEventRefund(kind, eventId);
+  return {
+    refundPct: 100,
+    estimatedRefundPaise: quote.estimatedRefundPaise,
+    currency: quote.currency,
+    // The whole-event rail never consults the clock, so no notice window is
+    // computed for it.
+    hoursUntilNextSession: null,
+    prorated: false,
+    // Seats fund through several rails at once (card, org wallet, credits),
+    // so no single funding sentence is true of the aggregate. Null rather
+    // than a rail: the whole-event copy stands on its own and naming one
+    // rail here would be a claim about seats it does not cover.
+    fundingRail: null,
+    wholeEvent: true,
+    attendeeCount: quote.attendeeCount,
+  };
+}
+
 /**
  * What cancelling this booking right now would pay back — computed, never
  * written.
@@ -305,7 +361,7 @@ async function quoteIndividualBooking(
  * charge drift.
  */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ appointmentId: string }> },
 ) {
   try {
@@ -322,6 +378,20 @@ export async function GET(
       return NextResponse.json(
         { error: "Appointment not found" },
         { status: 404 },
+      );
+    }
+
+    // #1780 D-4 — `?scope=seat`: what the viewer leaving their OWN seat pays
+    // back. It reads only the caller's seat, so it precedes the whole-event
+    // cancel authorization, which an attendee never passes.
+    const seatEvent = groupEventOf(appointment);
+    if (
+      seatEvent &&
+      new URL(request.url).searchParams.get("scope") === "seat"
+    ) {
+      return NextResponse.json(
+        await quoteSeatLeave(seatEvent.kind, seatEvent.id, session.user.id),
+        NO_STORE,
       );
     }
 
@@ -350,34 +420,12 @@ export async function GET(
 
     // Group events never reach the notice tiers or the viewer's own payment:
     // the POST route refunds the entire roster in full. Quote that instead.
-    let eventKind: "class" | "webinar" | null = null;
-    let eventId: string | null = null;
-    if (appointment.webinarId) {
-      eventKind = "webinar";
-      eventId = appointment.webinarId;
-    } else if (appointment.classId) {
-      eventKind = "class";
-      eventId = appointment.classId;
-    }
-
-    if (eventKind && eventId) {
-      const quote = await quoteWholeEventRefund(eventKind, eventId);
-      return NextResponse.json({
-        refundPct: 100,
-        estimatedRefundPaise: quote.estimatedRefundPaise,
-        currency: quote.currency,
-        // The whole-event rail never consults the clock, so no notice window is
-        // computed for it.
-        hoursUntilNextSession: null,
-        prorated: false,
-        // Seats fund through several rails at once (card, org wallet, credits),
-        // so no single funding sentence is true of the aggregate. Null rather
-        // than a rail: the whole-event copy stands on its own and naming one
-        // rail here would be a claim about seats it does not cover.
-        fundingRail: null,
-        wholeEvent: true,
-        attendeeCount: quote.attendeeCount,
-      });
+    const groupEvent = groupEventOf(appointment);
+    if (groupEvent) {
+      return NextResponse.json(
+        await wholeEventPreview(groupEvent.kind, groupEvent.id),
+        NO_STORE,
+      );
     }
 
     return NextResponse.json(
@@ -387,6 +435,7 @@ export async function GET(
         roles,
         isPrivilegedUser,
       ),
+      NO_STORE,
     );
   } catch (error) {
     Sentry.captureException(

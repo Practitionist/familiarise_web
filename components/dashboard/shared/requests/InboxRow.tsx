@@ -115,7 +115,7 @@ export function rowActions(
   presentation: Pick<BookingPresentation, "bookingState" | "nextAction">,
 ): RowActions {
   const { bookingState, nextAction } = presentation;
-  if (row.kind === "next-cycle") {
+  if (row.kind === "next-cycle" || nextAction.kind === "ALLOCATE") {
     return { primary: { kind: "allocate-next" }, secondary: [] };
   }
   if (row.kind === "trial") {
@@ -207,8 +207,7 @@ export function moneyLine(
   if (moneyState.state === "NOT_DUE" && row.amountPaise !== null) {
     return `${formatCurrencyAmount(row.amountPaise, row.currency)} · ${moneyState.line}`;
   }
-  if (row.kind === "trial" && row.amountPaise === null)
-    return FREE_TRIAL_LABEL;
+  if (row.kind === "trial" && row.amountPaise === null) return FREE_TRIAL_LABEL;
   return moneyState.line;
 }
 
@@ -295,6 +294,13 @@ export function InboxRow({
   const isDesktop = useIsDesktop();
   const [sheetOpen, setSheetOpen] = useState(false);
 
+  // #1775 C-5 — "Schedule cycle 1" / "Schedule the next N" from the derivation.
+  const labelFor = (action: RowAction): string =>
+    action.kind === "allocate-next" &&
+    presentation.nextAction.kind === "ALLOCATE"
+      ? presentation.nextAction.label
+      : ACTION_LABEL[action.kind];
+
   const linkFor = (action: RowAction): string | null => {
     if (action.kind === "allocate-next") return row.hrefs.allocate;
     if (action.kind === "approve" && action.mode === "allocate") {
@@ -317,7 +323,7 @@ export function InboxRow({
     if (href) {
       return (
         <Button asChild size="sm" variant={variant} className={className}>
-          <Link href={href}>{ACTION_LABEL[action.kind]}</Link>
+          <Link href={href}>{labelFor(action)}</Link>
         </Button>
       );
     }
@@ -332,7 +338,7 @@ export function InboxRow({
           onAction(action);
         }}
       >
-        {ACTION_LABEL[action.kind]}
+        {labelFor(action)}
       </Button>
     );
   };

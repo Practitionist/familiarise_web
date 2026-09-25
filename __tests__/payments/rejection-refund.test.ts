@@ -328,3 +328,15 @@ describe("refundRejectedRequest", () => {
     expect(result?.failed).toBeUndefined();
   });
 });
+
+// #1780 R-3 — the rejection refund's amount is integer basis points in
+// BigInt, the same arithmetic as cancellation-policy, never float paise.
+it("computes the rejection amount in BigInt basis points", () => {
+  const src = jest
+    .requireActual<typeof import("fs")>("fs")
+    .readFileSync(`${process.cwd()}/lib/booking/rejection-refund.ts`, "utf8");
+  expect(src).toContain("BigInt(Math.round(refundPct * 100))");
+  expect(src).not.toContain(
+    "Math.floor((ctx.paidPayment.amountPaise * refundPct) / 100)",
+  );
+});

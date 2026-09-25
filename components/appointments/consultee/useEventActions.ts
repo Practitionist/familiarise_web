@@ -91,7 +91,12 @@ function rescheduleOutcomeToast(outcome: {
 type CancelRefund = {
   amountRefundedPaise: number;
   refundPct: number;
-  status?: "REFUNDED" | "FAILED" | "NOTHING_REFUNDABLE" | "POLICY_ZERO";
+  status?:
+    | "REFUNDED"
+    | "PENDING"
+    | "FAILED"
+    | "NOTHING_REFUNDABLE"
+    | "POLICY_ZERO";
   requiresManualReview?: boolean;
   /**
    * Which rail returned the money. The cancel route has answered this since
@@ -109,6 +114,9 @@ function describeRefund(refund: CancelRefund): string {
   // equally "the policy owes nothing", "the balance was already exhausted" and
   // "the gateway refused", and only one of those deserves an apology.
   switch (refund.status) {
+    // #1775 P-3 — the gateway call is unconfirmed; reconcile settles it.
+    case "PENDING":
+      return "Refund pending — we're confirming with the bank.";
     case "FAILED":
       return "We could not complete your refund automatically — our team has been alerted and will sort it out.";
     case "NOTHING_REFUNDABLE":

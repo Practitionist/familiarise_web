@@ -304,12 +304,17 @@ function hrefsFor(
 
 /** The last step every row takes: derive once, so bucket and words agree. */
 function finish(row: Omit<InboxRowInput, "bucket">, now: Date): InboxRowInput {
-  const { bookingState } = deriveBookingPresentation(
+  const { bookingState, nextAction } = deriveBookingPresentation(
     row.presentation,
     "CONSULTANT",
     { now },
   );
-  return { ...row, bucket: inboxBucketOf(row, bookingState.state, now) };
+  // #1775 C-5 — a paid plan's clock is capture + 48 h, not the request hold.
+  const timed =
+    nextAction.kind === "ALLOCATE" && nextAction.deadline
+      ? { ...row, deadline: nextAction.deadline }
+      : row;
+  return { ...timed, bucket: inboxBucketOf(timed, bookingState.state, now) };
 }
 
 function consultationRow(

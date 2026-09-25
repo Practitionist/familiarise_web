@@ -18,8 +18,8 @@ export interface NewBookingRequestEmailProps {
   respondByText?: string;
   reviewUrl: string;
   unsubscribeUrl?: string | null;
-  /** #1703 — set on the unscheduled-subscription nudge (3, 7 or 14 days). */
-  nudgeDays?: number;
+  /** #1775 C-4 — set on the unscheduled-plan nudge (12, 24 or 36 hours). */
+  nudgeHours?: number;
 }
 
 export default function NewBookingRequestEmail({
@@ -31,19 +31,18 @@ export default function NewBookingRequestEmail({
   respondByText,
   reviewUrl,
   unsubscribeUrl,
-  nudgeDays,
+  nudgeHours,
 }: NewBookingRequestEmailProps) {
-  if (nudgeDays) {
+  if (nudgeHours) {
     const title = `${consulteeName}'s ${appointmentType} is waiting for session times`;
     return (
       <EmailLayout preview={title} unsubscribeUrl={unsubscribeUrl}>
         <Text style={heading}>{title}</Text>
         <Text style={paragraph}>Hi {consultantName},</Text>
         <Text style={paragraph}>
-          {consulteeName} paid for <strong>{planTitle}</strong> {nudgeDays} days
-          ago and still has no session times. Set the times so the programme can
-          start; a subscription left unscheduled for 30 days is refunded in
-          full.
+          {consulteeName} paid for <strong>{planTitle}</strong> {nudgeHours}{" "}
+          hours ago and still has no session times. Schedule the first cycle
+          within 48 hours of payment, or the buyer is refunded in full.
         </Text>
         <Section style={buttonContainer}>
           <Button style={button} href={reviewUrl}>
