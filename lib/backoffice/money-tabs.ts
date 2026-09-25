@@ -37,6 +37,12 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "payouts.read",
   },
   {
+    key: "earnings",
+    label: "Earnings",
+    description: "Consultant earnings, with hold and release.",
+    surface: "payouts.read",
+  },
+  {
     key: "disputes",
     label: "Disputes",
     description: "Chargebacks and their evidence deadlines.",

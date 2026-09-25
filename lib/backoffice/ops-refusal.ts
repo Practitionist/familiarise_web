@@ -6,21 +6,9 @@ import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 import { CronLockHeldError } from "@/lib/cron/cron-lock-errors";
 import { RefundValidationError } from "@/lib/payments/operations/refund";
 import { IllegalEarningStatusTransitionError } from "@/lib/payments/payouts/earning-status";
+import { OpsRefusal } from "./ops-refusal-error";
 
-/**
- * #1771 K-1 — a refusal an ops door answers with its own code and copy: a
- * state the operator can act on, never a fault, so never a 500 or a Sentry page.
- */
-export class OpsRefusal extends Error {
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly httpStatus = 409,
-  ) {
-    super(message);
-    this.name = "OpsRefusal";
-  }
-}
+export { OpsRefusal };
 
 const body = (code: string, error: string, status: number) =>
   NextResponse.json({ error, code }, { status });
