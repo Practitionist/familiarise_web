@@ -5,6 +5,7 @@ import { PayoutsBoard } from "@/app/dashboard/admin/payouts/PayoutsBoard";
 import { EarningsTab } from "./EarningsTab";
 import { RefundDoorsPanel } from "./RefundsTab";
 import { ClassSeriesTab } from "./ClassSeriesTab";
+import { ReconcileTab } from "./ReconcileTab";
 
 /**
  * #1771 K-2 — one tab's body. Each mounts the page component that already
@@ -56,6 +57,8 @@ export function MoneyTabBody({
       );
     case "class-series":
       return <ClassSeriesTab isAdmin={isAdmin} />;
+    case "reconcile":
+      return <ReconcileTab />;
     default:
       return null;
   }

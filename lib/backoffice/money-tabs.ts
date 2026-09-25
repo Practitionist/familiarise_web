@@ -49,6 +49,12 @@ export const MONEY_TABS: readonly MoneyTab[] = [
     surface: "disputes.read",
   },
   {
+    key: "reconcile",
+    label: "Reconcile",
+    description: "Run the reconcile jobs now and see when each last ran.",
+    surface: "payouts.manage",
+  },
+  {
     key: "class-series",
     label: "Class series",
     description:
