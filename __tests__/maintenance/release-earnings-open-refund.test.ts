@@ -70,3 +70,19 @@ it("holds an earning while its payment has a PENDING refund, releases it once se
   const released = await releaseEarningsFromHold();
   expect(released.releasedCount).toBe(1);
 });
+
+it("#1569 D10 — the claim also keeps an earning whose booking owes a miss PENDING", async () => {
+  await releaseEarningsFromHold();
+  const claim = (prisma.consultantEarnings.updateMany as jest.Mock).mock
+    .calls[0][0];
+  expect(claim.where.payment.OR).toEqual([
+    { appointmentId: null },
+    {
+      appointment: {
+        occurrences: {
+          none: expect.objectContaining({ seatsSettledAt: null }),
+        },
+      },
+    },
+  ]);
+});

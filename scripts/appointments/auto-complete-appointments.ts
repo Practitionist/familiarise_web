@@ -58,7 +58,7 @@ import {
   readOutageWindows,
 } from "@/lib/booking/session-outcome-sweep";
 import { reportSentryMessage } from "@/lib/observability/report";
-import { UNSETTLED_MISS } from "@/lib/booking/class-sessions";
+import { UNSETTLED_MISS } from "@/lib/booking/misses";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
