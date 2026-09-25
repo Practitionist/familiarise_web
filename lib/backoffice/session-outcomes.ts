@@ -16,7 +16,9 @@ import {
   COMPLETION_FOR_OUTCOME,
   HOST_ATTRIBUTED_OUTCOMES,
 } from "@/lib/booking/session-outcome";
+import { AWAITING_HUMAN } from "@/lib/booking/misses";
 import { transitionOccurrenceCompletion } from "@/lib/booking/transitions";
+import { withAppointmentLock } from "@/utils/appointmentlock";
 import { OpsRefusal } from "./ops-refusal-error";
 
 const DECIDED: OccurrenceCompletionStatus[] = [
@@ -120,7 +122,13 @@ export async function setSessionOutcome(
     }
   } else {
     await transitionOccurrenceCompletion(tx, {
-      where: { id: occ.id, deletedAt: null, isTentative: false },
+      where: {
+        id: occ.id,
+        deletedAt: null,
+        isTentative: false,
+        // A settle stamp landing after the read must win over an un-void.
+        ...(occ.completionStatus === "VOIDED" && { seatsSettledAt: null }),
+      },
       to,
       fromIn: [occ.completionStatus],
       data,
@@ -143,6 +151,27 @@ export async function setSessionOutcome(
 }
 
 /**
+ * The door's entry: under the appointment lock the settle sweep holds, so an
+ * un-void and that session's refund cannot both win.
+ */
+export async function overturnSessionOutcome(args: {
+  occurrenceId: string;
+  outcome: OccurrenceOutcome;
+  actorUserId: string;
+}) {
+  const occ = await prisma.appointmentOccurrence.findUnique({
+    where: { id: args.occurrenceId },
+    select: { appointmentId: true },
+  });
+  if (!occ) {
+    throw new OpsRefusal("SESSION_NOT_FOUND", "No such session.", 404);
+  }
+  return withAppointmentLock(occ.appointmentId, () =>
+    prisma.$transaction((tx) => setSessionOutcome(tx, args)),
+  );
+}
+
+/**
  * Sessions only a human can decide: an INCONCLUSIVE verdict, a consultation
  * host no-show the detector declined, a call the maintenance drain cut, and a
  * paid trial that was voided (D4). None of them moves money on its own.
@@ -153,14 +182,7 @@ export async function readSessionsNeedingHuman(limit = 100) {
       deletedAt: null,
       isTentative: false,
       OR: [
-        {
-          completionStatus: "UNVERIFIED",
-          outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] },
-        },
-        {
-          completionStatus: "UNVERIFIED",
-          meeting: { endedReason: "maintenance" },
-        },
+        AWAITING_HUMAN,
         {
           completionStatus: "VOIDED",
           seatsSettledAt: null,

@@ -21,7 +21,7 @@
  * Schedule: Runs hourly via GitHub Actions
  */
 
-import { UNSETTLED_MISS } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { EarningStatus, Prisma, RefundStatus } from "@prisma/client";
 import prisma from "@/lib/prisma";
 import { sumPaise } from "@/lib/payments/utils/money";
@@ -74,14 +74,21 @@ export interface ReleaseEarningsOptions {
  */
 /**
  * #1569 D10 — NO_UNSETTLED_MISS rides the same payment filter: a booking owing
- * a make-up or a refund for a host-cancelled or voided session keeps its
- * earning PENDING, which turns a later clawback into a hold.
+ * a make-up or a refund for a host-cancelled or voided session, or holding a
+ * session parked for ops, keeps its earning PENDING (a hold, not a clawback).
  */
 const RELEASABLE_PAYMENT = {
   refunds: { none: { status: RefundStatus.PENDING, deletedAt: null } },
   OR: [
     { appointmentId: null },
-    { appointment: { occurrences: { none: UNSETTLED_MISS } } },
+    {
+      appointment: {
+        AND: [
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
+    },
   ],
 } satisfies Prisma.PaymentWhereInput;
 

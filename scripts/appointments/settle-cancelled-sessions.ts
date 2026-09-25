@@ -158,10 +158,17 @@ const DUE_SELECT = {
   completionStatus: true,
   appointment: {
     select: {
-      class: { select: { classPlan: { select: { title: true } } } },
-      webinar: { select: { webinarPlan: { select: { title: true } } } },
+      class: {
+        select: { status: true, classPlan: { select: { title: true } } },
+      },
+      webinar: {
+        select: { status: true, webinarPlan: { select: { title: true } } },
+      },
       consultation: {
-        select: { consultationPlan: { select: { title: true } } },
+        select: {
+          status: true,
+          consultationPlan: { select: { title: true } },
+        },
       },
       subscription: {
         select: {
@@ -238,6 +245,10 @@ async function settleOne(
   if (session.appointment.subscription) {
     return settleSubscriptionVoid(session, result);
   }
+  // #1569 — a cancelled parent refunded every undelivered session, this one
+  // included (seriesCancelRefundPaise); refunding it again would over-pay.
+  const { class: cls, webinar, consultation } = session.appointment;
+  if ((cls ?? webinar ?? consultation)?.status === "CANCELLED") return true;
   const madeUp = await prisma.appointmentOccurrence.findFirst({
     where: {
       appointmentId: session.appointmentId,
@@ -373,15 +384,14 @@ async function settleSubscriptionVoid(
   });
   const total = sessionsTotalOf(sub);
   const delivered = rows.filter(isCompletedOccurrence).length;
-  const unsettledVoids = rows.filter(
-    (o) => o.completionStatus === "VOIDED" && !o.seatsSettledAt,
-  );
-  // Sessions still unused: the plan's size less what was delivered, and the
-  // earliest voids are the ones the later sessions made up.
+  // Every void, settled or not, in startsAt order: a stable list, so the
+  // refundable set cannot shift with the order the sweep settles them in.
+  const voids = rows.filter((o) => o.completionStatus === "VOIDED");
+  // Sessions still unused are the plan's size less what was delivered; the
+  // earliest voids are the ones later sessions made up, the last `unused` are owed.
   const unused = Math.max(0, total - delivered);
-  const madeUp = Math.max(0, unsettledVoids.length - unused);
-  const position = unsettledVoids.findIndex((o) => o.id === session.id);
-  if (position < madeUp) return true;
+  const position = voids.findIndex((o) => o.id === session.id);
+  if (position < voids.length - unused) return true;
 
   const payments = await prisma.payment.findMany({
     where: {

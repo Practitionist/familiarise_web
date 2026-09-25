@@ -149,3 +149,39 @@ it("#1569 D4 — an unused subscription void is refunded at plan end, per sessio
     }),
   );
 });
+
+it("#1569 D4 — the refundable voids are the latest ones, whatever order the sweep takes them in", async () => {
+  const sub = {
+    status: "APPROVED",
+    sessionsTotal: 8,
+    subscriptionPlan: { title: "Mentoring", totalSessions: 8 },
+  };
+  const voided = (id: string) => ({
+    ...CLASS_SESSION,
+    id,
+    completionStatus: "VOIDED",
+    appointment: { subscription: sub },
+  });
+  // 6 delivered + 3 voids of 8: two sessions are owed, the earliest void was made up.
+  state.wrapperRows = [
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: `d${i}`,
+      completionStatus: "COMPLETED",
+      seatsSettledAt: null,
+    })),
+    ...["v1", "v2", "v3"].map((id) => ({
+      id,
+      completionStatus: "VOIDED",
+      seatsSettledAt: null,
+    })),
+  ];
+  state.due = [voided("v3"), voided("v1"), voided("v2")];
+  await settleCancelledSessions();
+  const keys = refundBookingPayment.mock.calls.map(
+    (c) => (c as unknown as [{ dedupeKey: string }])[0].dedupeKey,
+  );
+  expect(keys.filter((k) => k.endsWith(":pay:pay-b"))).toEqual([
+    "void-unused:v3:pay:pay-b",
+    "void-unused:v2:pay:pay-b",
+  ]);
+});

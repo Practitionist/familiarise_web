@@ -58,7 +58,7 @@ import {
   readOutageWindows,
 } from "@/lib/booking/session-outcome-sweep";
 import { reportSentryMessage } from "@/lib/observability/report";
-import { UNSETTLED_MISS } from "@/lib/booking/misses";
+import { AWAITING_HUMAN, UNSETTLED_MISS } from "@/lib/booking/misses";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
@@ -89,6 +89,7 @@ function endedAndSettled(
   return [
     { occurrences: allLiveOccurrencesEnded(bufferTime) },
     { occurrences: { none: UNSETTLED_MISS } },
+    { occurrences: { none: AWAITING_HUMAN } },
     {
       occurrences: {
         none: {
@@ -305,6 +306,7 @@ async function completeConsultations(): Promise<{
         AND: [
           { occurrences: allLiveOccurrencesEnded(bufferTime) },
           { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
         ],
       },
     },
@@ -439,7 +441,13 @@ async function completeSubscriptions(): Promise<{
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: UNSETTLED_MISS } },
+          { occurrences: { none: AWAITING_HUMAN } },
+        ],
+      },
     },
     include: {
       subscriptionPlan: {
@@ -582,8 +590,24 @@ async function completeTrials(): Promise<{
   const trialsToComplete = await prisma.trial.findMany({
     where: {
       status: TrialStatus.SCHEDULED,
-      appointment: { AND: endedAndSettled(bufferTime) },
-      // #1569 D4 — a paid trial that was voided waits for ops; a free one is a record only.
+      // #1569 D4 — a free trial's void is a record only, so the unsettled-miss
+      // check (which a void never leaves on a trial) is not applied here.
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: AWAITING_HUMAN } },
+          {
+            occurrences: {
+              none: {
+                completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+                isTentative: false,
+                deletedAt: null,
+              },
+            },
+          },
+        ],
+      },
+      // A paid trial that was voided waits for ops.
       OR: [
         { paymentId: null },
         {

@@ -27,6 +27,10 @@ The reconciler also completed sessions, which the design did not list. It now on
 
 The design said a make-up for a voided webinar or consultation is scheduled by the host, but the only make-up door is class-only. Those voids therefore wait 14 days and are then refunded by the settle sweep; the ADR records this as deferred.
 
+## CodeRabbit CLI round
+
+The review found two money defects, and both are fixed. First, the plan-end refund for subscription voids chose its owed set from the voids not yet stamped, so settling them in a different order could refund more sessions than were unused. The sweep now ranks every void by `startsAt`. Second, the overturn door could un-void a session while the settle sweep was refunding it, so it now runs under the same appointment lock, with `seatsSettledAt: null` in the CAS. Sessions awaiting a human decision now hold their booking's completion and earnings (`AWAITING_HUMAN`). A free trial with a voided session now completes. A miss on a cancelled parent is stamped without a second refund, because the whole-event cancel already paid for it.
+
 ## Verification
 
 The classifier table, the sweep's CAS shape, the presence writer's lost-join case, the maintenance pause of the handoff, the voided-session settle and the plan-end subscription refund, the attribution split, the earnings claim guard, the overturn refusal and the review arm each have one compact pin. The presence writer and the watchdog can only be proven on production after release, because Stream's event hook reaches production only.

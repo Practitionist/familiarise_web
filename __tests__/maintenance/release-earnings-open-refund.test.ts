@@ -79,9 +79,18 @@ it("#1569 D10 — the claim also keeps an earning whose booking owes a miss PEND
     { appointmentId: null },
     {
       appointment: {
-        occurrences: {
-          none: expect.objectContaining({ seatsSettledAt: null }),
-        },
+        AND: [
+          {
+            occurrences: {
+              none: expect.objectContaining({ seatsSettledAt: null }),
+            },
+          },
+          {
+            occurrences: {
+              none: expect.objectContaining({ completionStatus: "UNVERIFIED" }),
+            },
+          },
+        ],
       },
     },
   ]);

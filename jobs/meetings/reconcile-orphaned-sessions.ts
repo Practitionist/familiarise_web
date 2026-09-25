@@ -133,8 +133,9 @@ async function reconcileOrphanedSessionsUnlocked(): Promise<ReconciliationResult
 
       // #1569 D2 — close the room only; the end + 1 h slot pass is the one
       // writer of the occurrence's outcome and reads presence, not this guess.
-      await prisma.meeting.update({
-        where: { id: session.id },
+      // CAS on the open room: a webhook or the drain that closed it meanwhile wins.
+      await prisma.meeting.updateMany({
+        where: { id: session.id, endedAt: null },
         data: { endedAt, endedReason },
       });
 

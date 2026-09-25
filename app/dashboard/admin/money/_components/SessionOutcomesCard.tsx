@@ -69,7 +69,14 @@ export function SessionOutcomesCard() {
               {new Date(s.startsAt).toLocaleString()} · {whyParked(s)}
               {s.lostMinutes ? ` · ${s.lostMinutes} minutes lost` : ""}
             </span>
-            <Button size="sm" variant="outline" onClick={() => setTarget(s)}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setOutcome(s.outcome ?? "INCONCLUSIVE");
+                setTarget(s);
+              }}
+            >
               Set outcome
             </Button>
           </div>

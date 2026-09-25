@@ -28,3 +28,17 @@ export const missedAt = (o: {
   hostCancelledAt?: Date | null;
   voidedAt?: Date | null;
 }): Date | null => o.hostCancelledAt ?? o.voidedAt ?? null;
+
+/**
+ * A past session parked for a human (the ops needs-human list): the sweep could
+ * not judge it, the detector declined a host no-show, or maintenance cut it.
+ * Its booking neither completes nor releases earnings until ops decides.
+ */
+export const AWAITING_HUMAN = {
+  completionStatus: "UNVERIFIED",
+  deletedAt: null,
+  OR: [
+    { outcome: { in: ["INCONCLUSIVE", "HOST_ABSENT"] } },
+    { outcome: null, meeting: { endedReason: "maintenance" } },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
