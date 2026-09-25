@@ -40,8 +40,8 @@ export interface StreamCallEndedEvent {
 
 // STR-4 — per-participant join/leave. Stream's CallParticipantResponse nests
 // the Stream user id (== our app userId, see upsertUserToStream) under
-// `participant.user.id`. `user_session_id` is the per-tab/device session, used
-// only for logging — attendance is keyed on the app user, not the device.
+// `participant.user.id`. `user_session_id` is the per-tab/device session: it keys
+// the #1569 MeetingPresence interval, while attendance stays per app user.
 export interface StreamSessionParticipantJoinedEvent {
   call_cid: string;
   type: "call.session_participant_joined";
@@ -368,6 +368,15 @@ async function resolveMeeting(streamCallId: string) {
   });
 }
 
+/** #1569 — one device's stay; Stream always sends user_session_id, the fallback is per call session. */
+function presenceKey(
+  sessionId: string,
+  participant: { user_session_id?: string },
+  userId: string,
+): string {
+  return participant.user_session_id || `${sessionId}:${userId}`;
+}
+
 /** #1607 — the last end wins; a replayed or older event never moves endedAt backwards. */
 function supersedesRecordedEnd(recorded: Date | null, incoming: Date): boolean {
   return !recorded || incoming.getTime() > recorded.getTime();
@@ -423,23 +432,36 @@ export async function handleSessionParticipantJoined(
       });
     }
 
-    // Idempotent: a duplicate webhook for the same join must not inflate the
-    // count, so the unique [meetingId, userId] row is the dedup key.
-    // First join → create with firstJoinedAt; rejoin → bump joinCount only
-    // (firstJoinedAt is immutable so #471 reads the genuine first arrival).
-    await prisma.meetingAttendance.upsert({
-      where: {
-        meetingId_userId: { meetingId, userId },
-      },
-      create: {
-        meetingId,
-        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-        userId,
-        firstJoinedAt: joinedAt,
-      },
-      update: {
-        joinCount: { increment: 1 },
-      },
+    const userSessionId = presenceKey(event.session_id, participant, userId);
+    // #1569 — the (meetingId, userSessionId) unique makes a replay a no-op, and
+    // joinCount counts distinct device sessions, not deliveries (#1746).
+    await prisma.$transaction(async (tx) => {
+      const { count: newSessions } = await tx.meetingPresence.createMany({
+        data: [
+          {
+            meetingId,
+            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+            userId,
+            userSessionId,
+            joinedAt,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      // firstJoinedAt is immutable so #471 reads the genuine first arrival.
+      await tx.meetingAttendance.upsert({
+        where: {
+          meetingId_userId: { meetingId, userId },
+        },
+        create: {
+          meetingId,
+          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+          userId,
+          firstJoinedAt: joinedAt,
+        },
+        update:
+          newSessions > 0 ? { joinCount: { increment: newSessions } } : {},
+      });
     });
 
     streamLogger.info("Recorded participant join", {
@@ -489,23 +511,53 @@ export async function handleSessionParticipantLeft(
     const meetingId = meeting.id;
 
     const leftAt = new Date(created_at);
+    // #1569 — the leave carries its own duration, so a lost join is rebuilt from it.
+    const joinedAt = new Date(
+      leftAt.getTime() - Math.max(0, event.duration_seconds ?? 0) * 1000,
+    );
+    const userSessionId = presenceKey(event.session_id, participant, userId);
 
-    // upsert (not update) — a left arriving before/without a recorded join still
-    // creates the row, with firstJoinedAt defensively set to the leave time.
-    await prisma.meetingAttendance.upsert({
-      where: {
-        meetingId_userId: { meetingId, userId },
-      },
-      create: {
-        meetingId,
-        appointmentOccurrenceId: meeting.appointmentOccurrenceId,
-        userId,
-        firstJoinedAt: leftAt,
-        lastLeftAt: leftAt,
-      },
-      update: {
-        lastLeftAt: leftAt,
-      },
+    await prisma.$transaction(async (tx) => {
+      const { count: newSessions } = await tx.meetingPresence.createMany({
+        data: [
+          {
+            meetingId,
+            appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+            userId,
+            userSessionId,
+            joinedAt,
+            leftAt,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      // A replayed or older leave never moves leftAt backwards.
+      await tx.meetingPresence.updateMany({
+        where: {
+          meetingId,
+          userSessionId,
+          OR: [{ leftAt: null }, { leftAt: { lt: leftAt } }],
+        },
+        data: { leftAt },
+      });
+      // upsert (not update) — a leave arriving without a recorded join still
+      // creates the row, with firstJoinedAt rebuilt from the leave's duration.
+      await tx.meetingAttendance.upsert({
+        where: {
+          meetingId_userId: { meetingId, userId },
+        },
+        create: {
+          meetingId,
+          appointmentOccurrenceId: meeting.appointmentOccurrenceId,
+          userId,
+          firstJoinedAt: joinedAt,
+          lastLeftAt: leftAt,
+        },
+        update: {
+          lastLeftAt: leftAt,
+          ...(newSessions > 0 && { joinCount: { increment: newSessions } }),
+        },
+      });
     });
 
     streamLogger.info("Recorded participant leave", {
