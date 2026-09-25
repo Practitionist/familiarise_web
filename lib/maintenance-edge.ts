@@ -47,7 +47,11 @@ const OFF_STATE: MaintenanceState = {
 // Edge isolates share module scope within an instance lifetime.
 let cachedState: MaintenanceState | null = null;
 let cacheTimestamp = 0;
-const CACHE_TTL_MS = 30_000; // 30 seconds
+// #1822 Q-6 — was 30s; the read fails open, so the only cost of a longer
+// window is slower enforcement of a newly-set maintenance phase.
+const CACHE_TTL_MS = 180_000; // 3 minutes
+// A failed read keeps the old 30s window, so one blip can't unblock DEGRADED writes for 3 min.
+const FAILURE_CACHE_MS = 30_000;
 
 // Per-request fail-open budget for the edge Upstash read. Document loads + /api/*
 // pay this (RSC/prefetch sub-navigations use getMaintenanceStateCachedOnly and
@@ -72,7 +76,8 @@ async function redisGet(key: string): Promise<string | null> {
     signal: AbortSignal.timeout(REDIS_FETCH_TIMEOUT_MS),
   });
 
-  if (!res.ok) return null;
+  // Non-OK (e.g. quota exceeded) is a failed read, not an unset phase.
+  if (!res.ok) throw new Error(`Upstash GET ${res.status}`);
   const data = await res.json();
   return data.result ?? null;
 }
@@ -120,7 +125,7 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
   } catch {
     // Fail-open: cache OFF to avoid repeated failing calls
     cachedState = OFF_STATE;
-    cacheTimestamp = now;
+    cacheTimestamp = now - CACHE_TTL_MS + FAILURE_CACHE_MS;
     return OFF_STATE;
   }
 }
@@ -132,7 +137,7 @@ export async function getMaintenanceState(): Promise<MaintenanceState> {
  * getMaintenanceState() runs before the RSC response can stream, so a soft
  * navigation sits blank until it resolves (the gap before loading.tsx appears).
  * A full document load still does the live read, so a maintenance window is
- * always enforced within one document navigation / the 30s cache window.
+ * always enforced within one document navigation / the 3-min cache window.
  *
  * When the cache is stale we kick off a refresh (so the NEXT sub-navigation sees
  * fresh state) and return the last-known state rather than OFF — otherwise a

@@ -31,6 +31,9 @@ jest.mock("@sentry/nextjs", () => ({
  */
 jest.mock("../../lib/cron/with-cron-lock", () => ({
   CronLockHeldError: class CronLockHeldError extends Error {},
+  // #1822 Q-2 — cleanup-route.ts now checks `instanceof CronLockUnavailableError`
+  // too; without this export the check throws on `undefined`.
+  CronLockUnavailableError: class CronLockUnavailableError extends Error {},
   withCronLock: jest.fn(),
 }));
 
@@ -55,7 +58,11 @@ import {
   parseLimitParam,
   statusFor,
 } from "../../lib/cron/cleanup-route";
-import { CronLockHeldError } from "../../lib/cron/with-cron-lock";
+import {
+  CronLockHeldError,
+  CronLockUnavailableError,
+} from "../../lib/cron/with-cron-lock";
+import { resetThrottledCaptureForTesting } from "../../lib/observability/throttled-capture";
 import {
   assertNotInMaintenance,
   MaintenanceActiveError,
@@ -203,6 +210,22 @@ describe("cleanupRoute", () => {
     });
 
     expect((await POST(request())).status).toBe(409);
+  });
+
+  // #1822 owner decision — one shared key, 15-min window: two jobs, one capture.
+  it("reports lock-unavailable once across different jobs within 15 min", async () => {
+    resetThrottledCaptureForTesting();
+    const failing = (job: string) =>
+      cleanupRoute({
+        job,
+        run: async () => {
+          throw new CronLockUnavailableError(job);
+        },
+      }).POST;
+
+    expect((await failing("job-a")(request())).status).toBe(503);
+    expect((await failing("job-b")(request())).status).toBe(503);
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
   });
 
   it("answers 503 with the phase when maintenance is active", async () => {
