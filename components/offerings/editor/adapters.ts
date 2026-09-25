@@ -196,6 +196,8 @@ export const OFFERING_ADAPTERS: Record<OfferingType, OfferingAdapter> = {
       recordingStoragePolicy: "STREAM_ONLY",
       classContents: [],
       schedulingStartDate: null,
+      lateJoinUntilSession: null,
+      lateJoinersGetPastRecordings: false,
     },
     // A class's start date is authored on the plan form but persisted on the
     // Class row as `schedulingPeriodStartsAt`, so it is lifted into the form

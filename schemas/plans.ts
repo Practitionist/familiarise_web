@@ -155,7 +155,10 @@ export const PlanFaqSchema = z.object({
       meaningfulContentRefinement,
       "Question contains nonsensical text or gibberish",
     )
-    .refine(profanityFreeRefinement, "Question contains inappropriate language"),
+    .refine(
+      profanityFreeRefinement,
+      "Question contains inappropriate language",
+    ),
   answer: z
     .string()
     .min(1, "Answer is required")
@@ -478,6 +481,14 @@ export const ClassPlanSchema = BaseEventPlanSchema.extend({
   // no class ever sent a start date to the API.
   schedulingStartDate: z.date().optional().nullable(),
   endDate: z.date().optional().nullable(),
+  // #1819 — empty means "until session 1"; the route caps it at totalSessions.
+  lateJoinUntilSession: z
+    .number()
+    .int("Choose a whole session number")
+    .min(1, "Choose session 1 or later")
+    .nullable()
+    .optional(),
+  lateJoinersGetPastRecordings: z.boolean().default(false),
 });
 
 // Add ConsultantPlans schema
