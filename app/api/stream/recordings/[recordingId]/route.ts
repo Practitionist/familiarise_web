@@ -17,6 +17,10 @@ import prisma from "@/lib/prisma";
 import { streamLogger } from "@/lib/stream-logger";
 import { isPaymentEntitled } from "@/lib/payments/utils/refund-balance";
 import {
+  hiddenFromLateJoiner,
+  lateJoinRecordingFloors,
+} from "@/lib/stream/late-join-recordings";
+import {
   auditOperatorRecordingAccess,
   resolveOperatorRecordingAccess,
 } from "@/lib/stream/recording-operator-access";
@@ -140,6 +144,11 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         // #689 — a SUCCEEDED payment fully reversed by refunds is no longer an
         // entitlement; access needs at least one net-positive purchase for the plan.
         hasAccess = payments.some(isPaymentEntitled);
+        // #1819 — a late joiner's seat hides the sessions before it (host toggle).
+        if (hasAccess && appointment?.class) {
+          const floors = await lateJoinRecordingFloors(session.user.id);
+          hasAccess = !hiddenFromLateJoiner(recording, floors);
+        }
       }
 
       // #366 — standalone replay purchase (marketplace buyers hold no booking
@@ -238,8 +247,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     }
 
     // Get the best available URL (async — generates presigned URL for Supabase)
-    const playbackUrl =
-      await getBestRecordingUrl(recording);
+    const playbackUrl = await getBestRecordingUrl(recording);
 
     return NextResponse.json({
       recording: {
@@ -251,7 +259,10 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
       access: { level: "FULL" as const },
     });
   } catch (error) {
-    Sentry.captureException(error instanceof Error ? error : new Error(String(error)), { tags: { subsystem: "stream" } });
+    Sentry.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+      { tags: { subsystem: "stream" } },
+    );
     streamLogger.error("Error getting recording", error);
     return NextResponse.json(
       { error: "Failed to get recording" },
