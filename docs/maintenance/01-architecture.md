@@ -105,7 +105,7 @@ model MaintenanceWindow {
 
 ## Edge Read Strategy
 
-The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (edge isolates share module scope within an instance lifetime; raised from 30 seconds under #1822 Q-6, since the read fails open and the only cost of a longer window is slower enforcement of a newly-set phase) and exposes two readers:
+The middleware reads the maintenance state on every non-static request, so the read must never become a per-request Upstash round-trip. `lib/maintenance-edge.ts` keeps a 180-second in-memory cache (edge isolates share module scope within an instance lifetime; raised from 30 seconds under #1822 Q-6, since the read fails open and the only cost of a longer window is slower enforcement of a newly-set phase; a failed or non-OK read is cached for only 30 seconds, so one Upstash blip cannot lift a DEGRADED write-block for three minutes) and exposes two readers:
 
 | Reader                            | Used by                        | Behaviour                                                                                                |
 | --------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------- |

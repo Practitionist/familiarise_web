@@ -5,11 +5,7 @@ import { measureEventLoopStall, probeWithStallRetry } from "@/lib/health/probe";
 import { getMaintenanceState } from "@/lib/maintenance";
 import { getStreamStatus } from "@/lib/stream/health";
 import prisma from "@/lib/prisma";
-import redis, {
-  isMockRedis,
-  checkRedisHealth,
-  getLastRedisHealthErrorClass,
-} from "@/lib/redis";
+import redis, { isMockRedis } from "@/lib/redis";
 
 type BetterStackHealth = {
   configured: boolean;
@@ -103,32 +99,35 @@ type RedisStatus = {
   errorClass?: string;
 };
 
-// #1822 Q-7 — a quota-exceeded Redis (`UpstashError: ERR max requests limit
-// exceeded`) used to be invisible here: `checkCronHeartbeat`'s own catch below
-// reports it as a heartbeat probe failure, not as a Redis fact a monitor can
-// alert on directly. Reuses the shared 2s-cached `checkRedisHealth()` rather
-// than issuing its own probe, so a healthy instance pays no extra Redis
-// command on every health check.
-async function checkRedisStatus(): Promise<RedisStatus> {
-  if (isMockRedis()) return { status: "ok" };
-  const healthy = await checkRedisHealth();
-  if (healthy) return { status: "ok" };
-  return {
-    status: "degraded",
-    errorClass: getLastRedisHealthErrorClass() ?? "UnknownError",
-  };
-}
-
-async function checkCronHeartbeat(): Promise<CronHeartbeat> {
-  if (isMockRedis()) return { configured: false, lastRunAt: null, stale: null };
+// #1822 Q-7 — the heartbeat GET doubles as the Redis probe, so a quota
+// failure (`UpstashError: ERR max requests limit exceeded`) costs no extra command.
+async function checkCronHeartbeat(): Promise<{
+  cron: CronHeartbeat;
+  redis: RedisStatus;
+}> {
+  const ok: RedisStatus = { status: "ok" };
+  if (isMockRedis()) {
+    return {
+      cron: { configured: false, lastRunAt: null, stale: null },
+      redis: ok,
+    };
+  }
   try {
     const lastRunAt = await redis.get<string>("cron:heartbeat:last");
-    if (!lastRunAt) return { configured: true, lastRunAt: null, stale: null };
+    if (!lastRunAt) {
+      return {
+        cron: { configured: true, lastRunAt: null, stale: null },
+        redis: ok,
+      };
+    }
     const age = Date.now() - Date.parse(lastRunAt);
     return {
-      configured: true,
-      lastRunAt,
-      stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
+      cron: {
+        configured: true,
+        lastRunAt,
+        stale: Number.isFinite(age) ? age > CRON_HEARTBEAT_STALE_MS : null,
+      },
+      redis: ok,
     };
   } catch (err) {
     Sentry.logger.warn("Cron heartbeat probe failed", {
@@ -136,10 +135,16 @@ async function checkCronHeartbeat(): Promise<CronHeartbeat> {
       extra: { message: err instanceof Error ? err.message : String(err) },
     });
     return {
-      configured: true,
-      lastRunAt: null,
-      stale: "unknown",
-      probeError: true,
+      cron: {
+        configured: true,
+        lastRunAt: null,
+        stale: "unknown",
+        probeError: true,
+      },
+      redis: {
+        status: "degraded",
+        errorClass: err instanceof Error ? err.name || "Error" : "UnknownError",
+      },
     };
   }
 }
@@ -204,22 +209,21 @@ export async function GET(request: Request) {
     retried,
   } = await probeDatabase();
 
-  const [maintenanceState, stream, betterstack, cron, redisStatus] =
-    await Promise.all([
-      getMaintenanceState(),
-      // #473 — the last unmet acceptance criterion on that issue. The breaker
-      // existed but nothing surfaced its state, so a Stream outage was invisible
-      // until users reported it.
-      getStreamStatus(),
-      includeBetterStack
-        ? checkBetterStack()
-        : Promise.resolve({
-            configured: Boolean(process.env.BETTERSTACK_API_KEY),
-            reachable: null,
-          }),
-      checkCronHeartbeat(),
-      checkRedisStatus(),
-    ]);
+  const [maintenanceState, stream, betterstack, heartbeat] = await Promise.all([
+    getMaintenanceState(),
+    // #473 — the last unmet acceptance criterion on that issue. The breaker
+    // existed but nothing surfaced its state, so a Stream outage was invisible
+    // until users reported it.
+    getStreamStatus(),
+    includeBetterStack
+      ? checkBetterStack()
+      : Promise.resolve({
+          configured: Boolean(process.env.BETTERSTACK_API_KEY),
+          reachable: null,
+        }),
+    checkCronHeartbeat(),
+  ]);
+  const { cron, redis: redisStatus } = heartbeat;
 
   // Stream being down degrades chat and video but leaves booking, payments and
   // every read path working, so it is reported without failing the check.

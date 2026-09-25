@@ -27,8 +27,6 @@ jest.mock("../../lib/redis", () => ({
   __esModule: true,
   default: { get: jest.fn() },
   isMockRedis: jest.fn(() => true),
-  checkRedisHealth: jest.fn(async () => true),
-  getLastRedisHealthErrorClass: jest.fn(() => null),
 }));
 
 jest.mock("../../lib/maintenance", () => ({
@@ -54,18 +52,12 @@ import * as Sentry from "@sentry/nextjs";
 
 import { GET } from "../../app/api/health/route";
 import prisma from "@/lib/prisma";
-import {
-  isMockRedis,
-  checkRedisHealth,
-  getLastRedisHealthErrorClass,
-} from "@/lib/redis";
+import redis, { isMockRedis } from "@/lib/redis";
 
 const findFirst = prisma.user.findFirst as unknown as jest.Mock;
 const warn = Sentry.logger.warn as jest.Mock;
 const mockIsMockRedis = isMockRedis as jest.Mock;
-const mockCheckRedisHealth = checkRedisHealth as jest.Mock;
-const mockGetLastRedisHealthErrorClass =
-  getLastRedisHealthErrorClass as jest.Mock;
+const mockRedisGet = redis.get as jest.Mock;
 
 const request = () => new Request("https://x.test/api/health");
 
@@ -83,8 +75,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   findFirst.mockResolvedValue({ id: "u1" });
   mockIsMockRedis.mockReturnValue(true);
-  mockCheckRedisHealth.mockResolvedValue(true);
-  mockGetLastRedisHealthErrorClass.mockReturnValue(null);
+  mockRedisGet.mockReset();
 });
 
 describe("GET /api/health", () => {
@@ -158,7 +149,7 @@ describe("GET /api/health", () => {
   describe("redis probe (#1822 Q-7)", () => {
     it("reports ok and leaves status alone when Redis is healthy", async () => {
       mockIsMockRedis.mockReturnValue(false);
-      mockCheckRedisHealth.mockResolvedValue(true);
+      mockRedisGet.mockResolvedValueOnce(null);
 
       const body = await (await GET(request())).json();
 
@@ -168,8 +159,11 @@ describe("GET /api/health", () => {
 
     it("reports degraded with the error class, and degrades the overall status, on a Redis failure", async () => {
       mockIsMockRedis.mockReturnValue(false);
-      mockCheckRedisHealth.mockResolvedValue(false);
-      mockGetLastRedisHealthErrorClass.mockReturnValue("UpstashError");
+      mockRedisGet.mockRejectedValueOnce(
+        Object.assign(new Error("ERR max requests limit exceeded"), {
+          name: "UpstashError",
+        }),
+      );
 
       const res = await GET(request());
       const body = await res.json();
@@ -188,7 +182,7 @@ describe("GET /api/health", () => {
       const body = await (await GET(request())).json();
 
       expect(body.redis).toEqual({ status: "ok" });
-      expect(mockCheckRedisHealth).not.toHaveBeenCalled();
+      expect(mockRedisGet).not.toHaveBeenCalled();
     });
   });
 });

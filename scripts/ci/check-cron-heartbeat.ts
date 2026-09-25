@@ -212,43 +212,66 @@ async function checkUpstashUsage(): Promise<void> {
   // this script is otherwise uninstrumented, so the usage alarm brings its own
   // init+flush rather than depending on a capture silently going nowhere.
   await runJobWithSentry("upstash-usage-alarm", async () => {
-    const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
-    const res = await fetch(
-      `https://api.upstash.com/v2/redis/stats/${databaseId}`,
-      { headers: { Authorization: `Basic ${auth}` } },
-    );
-    if (!res.ok) {
-      throw new Error(
-        `Upstash stats API answered ${res.status} ${res.statusText}`,
-      );
-    }
-    const stats = (await res.json()) as { total_monthly_requests?: number };
-    const used = stats.total_monthly_requests ?? 0;
-    const cap =
-      Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP) ||
-      DEFAULT_MONTHLY_COMMAND_CAP;
-    const pct = (used / cap) * 100;
-    console.log(
-      `check-cron-heartbeat: Upstash usage ${used}/${cap} commands this month (${pct.toFixed(1)}%)`,
-    );
-
-    if (pct >= UPSTASH_USAGE_WARN_PCT) {
-      const critical = pct >= UPSTASH_USAGE_CRITICAL_PCT;
-      captureThrottled(
-        "upstash-usage-alarm",
-        new Error(
-          `Upstash monthly command usage at ${pct.toFixed(1)}% of cap (${used}/${cap})`,
-        ),
-        {
-          subsystem: "maintenance",
-          op: "upstash-usage-alarm",
-          expected: true,
-          level: critical ? "error" : "warning",
-          tags: { threshold: critical ? "90" : "70" },
-        },
-      );
+    try {
+      await reportUpstashUsage(email, apiKey, databaseId);
+    } catch (err) {
+      // Optional alarm: reported, never fails the heartbeat job.
+      console.warn("check-cron-heartbeat: Upstash usage alarm failed", err);
+      captureThrottled("upstash-usage-alarm:probe", err, {
+        subsystem: "maintenance",
+        op: "upstash-usage-alarm",
+        expected: true,
+        level: "warning",
+      });
     }
   });
+}
+
+async function reportUpstashUsage(
+  email: string,
+  apiKey: string,
+  databaseId: string,
+): Promise<void> {
+  const auth = Buffer.from(`${email}:${apiKey}`).toString("base64");
+  const res = await fetch(
+    `https://api.upstash.com/v2/redis/stats/${databaseId}`,
+    { headers: { Authorization: `Basic ${auth}` } },
+  );
+  if (!res.ok) {
+    throw new Error(
+      `Upstash stats API answered ${res.status} ${res.statusText}`,
+    );
+  }
+  const stats = (await res.json()) as { total_monthly_requests?: unknown };
+  const used = stats.total_monthly_requests;
+  // A renamed/missing field must not read as 0% usage.
+  if (typeof used !== "number" || !Number.isFinite(used)) {
+    throw new Error("Upstash stats API returned no total_monthly_requests");
+  }
+  const cap =
+    Number(process.env.UPSTASH_MONTHLY_COMMAND_CAP) ||
+    DEFAULT_MONTHLY_COMMAND_CAP;
+  const pct = (used / cap) * 100;
+  console.log(
+    `check-cron-heartbeat: Upstash usage ${used}/${cap} commands this month (${pct.toFixed(1)}%)`,
+  );
+
+  if (pct >= UPSTASH_USAGE_WARN_PCT) {
+    const critical = pct >= UPSTASH_USAGE_CRITICAL_PCT;
+    captureThrottled(
+      "upstash-usage-alarm",
+      new Error(
+        `Upstash monthly command usage at ${pct.toFixed(1)}% of cap (${used}/${cap})`,
+      ),
+      {
+        subsystem: "maintenance",
+        op: "upstash-usage-alarm",
+        expected: true,
+        level: critical ? "error" : "warning",
+        tags: { threshold: critical ? "90" : "70" },
+      },
+    );
+  }
 }
 
 void checkUpstashUsage();

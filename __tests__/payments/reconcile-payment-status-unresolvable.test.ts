@@ -178,6 +178,16 @@ describe("reconcile-payment-status — an unknown gateway id (#1708)", () => {
     expect(body.unresolvableCount).toBe(1);
     expect(recordSystemEvent).not.toHaveBeenCalled();
     expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(prisma.systemEvent.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          correlationId: expect.stringMatching(
+            /^reconcile-payment-status:unresolvable:[0-9a-f]{16}$/,
+          ),
+          createdAt: { gte: expect.any(Date) },
+        },
+      }),
+    );
   });
 
   it("keeps a gateway that cannot be reached as a run failure — 500", async () => {

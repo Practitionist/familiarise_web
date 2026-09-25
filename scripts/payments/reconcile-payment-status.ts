@@ -35,7 +35,8 @@ const UNRESOLVABLE_REPORT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 function unresolvableCorrelationId(ids: string[]): string {
   const hash = createHash("sha256")
-    .update([...ids].sort().join(","))
+    // Code-unit order, not localeCompare: a dedupe key must not vary by collation.
+    .update([...ids].sort((a, b) => Number(a > b) - Number(a < b)).join(","))
     .digest("hex")
     .slice(0, 16);
   return `reconcile-payment-status:unresolvable:${hash}`;
