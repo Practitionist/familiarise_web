@@ -24,7 +24,7 @@ export const POST = withOpsAction(
       const appointmentId = hosted.appointment.id;
       const res = await cancelAppointment(
         new NextRequest(
-          `http://internal/api/appointments/${appointmentId}/cancel`,
+          `https://internal.invalid/api/appointments/${appointmentId}/cancel`,
           {
             method: "POST",
             body: JSON.stringify({

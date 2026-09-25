@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { rupeesToPaise } from "@/lib/backoffice/rupees";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
 
@@ -48,8 +49,17 @@ export function RefundDoorDialog({
 }>) {
   const [paymentId, setPaymentId] = useState(presetPaymentId ?? "");
   const [value, setValue] = useState("");
-  // One key per opened dialog: a double-click reuses the first refund (#1771).
-  const [idempotencyKey] = useState(() => globalThis.crypto.randomUUID());
+  // One key per set of inputs: a double-click or a retry of the same refund
+  // reuses it, while a corrected payment or amount is a new refund.
+  const inputs = `${door}|${paymentId}|${value}`;
+  const [keyed, setKeyed] = useState(() => ({
+    inputs,
+    key: globalThis.crypto.randomUUID(),
+  }));
+  if (keyed.inputs !== inputs) {
+    setKeyed({ inputs, key: globalThis.crypto.randomUUID() });
+  }
+  const idempotencyKey = keyed.key;
   const mutation = useOpsDoor({
     success: "Done — the refund is on its way",
     invalidate: [["admin-refunds"], ["money-refund-needs"], ["class-series"]],
@@ -61,8 +71,9 @@ export function RefundDoorDialog({
   if (!door) return null;
   const copy = COPY[door];
   const num = Number(value);
+  const paise = rupeesToPaise(value);
   const valueOk = {
-    issue: value === "" || num > 0,
+    issue: value === "" || (paise ?? 0) > 0,
     override: value !== "" && num >= 0 && num <= 100,
     credits: Number.isInteger(num) && num >= 1,
   }[door];
@@ -71,7 +82,7 @@ export function RefundDoorDialog({
     if (door === "issue")
       return value === ""
         ? { paymentId: id }
-        : { paymentId: id, amountPaise: Math.round(num * 100) };
+        : { paymentId: id, amountPaise: paise };
     if (door === "override") return { paymentId: id, tierOverridePct: num };
     return { paymentId: id, sessions: Math.round(num) };
   };

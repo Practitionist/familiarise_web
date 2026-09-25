@@ -344,6 +344,8 @@ export async function skipClassMakeUp(args: {
   appointmentId: string;
   sourceOccurrenceId: string;
   userId: string;
+  /** #1771 — an ops door refunds on the learner's seat but names the operator. */
+  initiatedByUserId?: string;
 }) {
   const source = await prisma.appointmentOccurrence.findFirst({
     where: {
@@ -430,7 +432,7 @@ export async function skipClassMakeUp(args: {
       paymentId: payment.id,
       amountPaise: Number(ledger.unitPaise),
       reason: `class session ${args.sourceOccurrenceId} skipped — make-up not attended`,
-      initiatedByUserId: args.userId,
+      initiatedByUserId: args.initiatedByUserId ?? args.userId,
       dedupeKey,
       keepSeat: true,
     });

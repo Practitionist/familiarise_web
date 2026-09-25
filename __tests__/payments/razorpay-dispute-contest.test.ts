@@ -27,6 +27,13 @@ const fetchMock = jest.fn(
     ),
 );
 
+const realFetch = global.fetch;
+afterEach(() => {
+  global.fetch = realFetch;
+  delete process.env.RAZORPAY_KEY_ID;
+  delete process.env.RAZORPAY_SECRET;
+});
+
 beforeEach(() => {
   process.env.RAZORPAY_KEY_ID = "rzp_test_x";
   process.env.RAZORPAY_SECRET = "secret";

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { hostedForClass } from "@/lib/backoffice/class-doors";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
+import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { skipClassMakeUp } from "@/lib/booking/class-sessions";
 
 /**
@@ -27,7 +28,15 @@ export const POST = withOpsAction(
         appointmentId: hosted.appointment.id,
         sourceOccurrenceId: body.occurrenceId,
         userId: body.userId,
+        initiatedByUserId: actor.userId,
       });
+      if (result.rail === "CREDITS" && !result.refundId) {
+        // No money moved; the seat is queued for the credit door instead.
+        throw new OpsRefusal(
+          "CREDIT_SEAT_USE_CREDIT_DOOR",
+          "This seat was paid in credits — use Return credits on the Refunds tab.",
+        );
+      }
       return {
         target: { kind: "AppointmentOccurrence", id: body.occurrenceId },
         correlationId: `class:${params.classId}`,

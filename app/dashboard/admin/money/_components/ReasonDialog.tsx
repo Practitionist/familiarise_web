@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -42,15 +42,14 @@ export function ReasonDialog({
   children?: ReactNode;
 }>) {
   const [reason, setReason] = useState("");
+  // A parent closing the dialog (success, Cancel) must not leave this
+  // reason for the next door's audit row.
+  useEffect(() => {
+    if (!open) setReason("");
+  }, [open]);
   const ready = reason.trim().length >= MIN_REASON_LENGTH && canConfirm;
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) setReason("");
-        onOpenChange(next);
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

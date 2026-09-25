@@ -23,7 +23,7 @@ export async function GET() {
     take: 100,
     select: { id: true, message: true, context: true, createdAt: true },
   });
-  const items = events.map((e) => {
+  const listed = events.map((e) => {
     const ctx = (e.context ?? {}) as { paymentId?: unknown };
     return {
       id: e.id,
@@ -32,8 +32,46 @@ export async function GET() {
       paymentId: typeof ctx.paymentId === "string" ? ctx.paymentId : null,
     };
   });
+  const items = await dropSettled(listed);
   return NextResponse.json(
     { items },
     { headers: { "Cache-Control": "no-store" } },
   );
+}
+
+/**
+ * A seat leaves the queue once a credit return landed after its event, or once
+ * no credit is still consumed — so a second admin is never offered it again.
+ */
+async function dropSettled<
+  T extends { createdAt: Date; paymentId: string | null },
+>(items: T[]): Promise<T[]> {
+  const ids = [
+    ...new Set(items.flatMap((i) => (i.paymentId ? [i.paymentId] : []))),
+  ];
+  if (ids.length === 0) return items;
+  const [returns, usages] = await Promise.all([
+    prisma.refund.findMany({
+      where: { paymentId: { in: ids }, status: "SUCCEEDED" },
+      select: { paymentId: true, createdAt: true },
+    }),
+    prisma.referralCreditUsage.findMany({
+      where: { paymentId: { in: ids } },
+      select: { paymentId: true, amount: true },
+    }),
+  ]);
+  const stillUsed = new Map<string, number>();
+  for (const u of usages) {
+    stillUsed.set(
+      u.paymentId,
+      (stillUsed.get(u.paymentId) ?? 0) + Number(u.amount),
+    );
+  }
+  return items.filter((item) => {
+    if (!item.paymentId) return true;
+    const returnedSince = returns.some(
+      (r) => r.paymentId === item.paymentId && r.createdAt > item.createdAt,
+    );
+    return !returnedSince && (stillUsed.get(item.paymentId) ?? 0) > 0;
+  });
 }

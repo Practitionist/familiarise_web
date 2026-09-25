@@ -92,5 +92,6 @@ export function moneyHubHref(
     }
   }
   const qs = query.toString();
-  return `${treePath}/money/${tabKey}${qs ? `?${qs}` : ""}`;
+  const suffix = qs ? `?${qs}` : "";
+  return `${treePath}/money/${tabKey}${suffix}`;
 }

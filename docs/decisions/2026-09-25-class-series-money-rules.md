@@ -54,9 +54,13 @@ mid-series joiner who buys after four of eight sessions have already run
 counts four, not eight). The unit is computed once, in
 `lib/booking/class-series.ts`'s `seatLedger`, and every other rule that owes
 a seat money — the host-cancel sweep, skip-a-make-up, and a series-wide
-cancellation — reads the same number. Rounding always favours the buyer:
-the floor means a seat is never owed a fraction of a unit less than what an
-exact division would give it.
+cancellation — reads the same number. The rounding cuts both ways, and
+precisely so. Every per-session amount (the host-cancel sweep,
+skip-a-make-up, an operator's credit return) pays the floored unit, so each
+one can be up to one paisa less than an exact division, and that remainder
+stays with the platform. A series-wide cancellation instead refunds
+`amount − unit × delivered`, which hands the whole remainder back, so at the
+series level the buyer is never short.
 
 ### 4. A host moving a session waives that session's window
 

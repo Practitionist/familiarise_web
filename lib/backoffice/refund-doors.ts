@@ -7,6 +7,10 @@ import prisma from "@/lib/prisma";
 import { resolveBookingRefundContext } from "@/lib/booking/cancellation-scope";
 import { fundingRailForIntent } from "@/lib/payments/operations/booking-refund";
 import { quoteBookingRefund } from "@/lib/payments/operations/cancellation-policy";
+import {
+  findDedupedRefund,
+  RefundGatewayError,
+} from "@/lib/payments/operations/refund";
 import { OpsRefusal } from "./ops-refusal-error";
 
 /**
@@ -79,5 +83,28 @@ export async function ladderOverrideAmount(
   return {
     amountPaise: quote.refundPaise,
     proratedBasePaise: quote.proratedBasePaise,
+  };
+}
+
+/**
+ * A gateway refund whose call threw after its keyed row was reserved is in
+ * flight, not failed: the row stays PENDING for the reconcile cron (#779).
+ * The door answers that row, so the retry and the first call agree (QA #1824).
+ */
+export async function refundInFlightOr(err: unknown, dedupeKey: string) {
+  if (!(err instanceof RefundGatewayError)) throw err;
+  const row = await findDedupedRefund(dedupeKey).catch(() => null);
+  if (!row) {
+    throw new OpsRefusal(
+      "GATEWAY_REFUND_FAILED",
+      "The gateway refused the refund and nothing is pending — check the payment and try again.",
+      502,
+    );
+  }
+  return {
+    refundId: row.refundId,
+    amountRefundedPaise: row.amountRefundedPaise,
+    rail: "GATEWAY" as const,
+    status: row.status,
   };
 }

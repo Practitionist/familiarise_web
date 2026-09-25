@@ -15,6 +15,7 @@ import type {
   OpsLogPage,
   OpsLogRow,
 } from "@/lib/backoffice/ops-log-types";
+import { enumLabel } from "@/lib/labels/money-labels";
 
 const FILTERS: {
   key: keyof OpsLogFilters;
@@ -49,7 +50,7 @@ const columns: ResponsiveColumn<OpsLogRow>[] = [
     key: "actor",
     header: "Who",
     cell: (r) =>
-      `${r.actorName ?? r.actorUserId ?? "Deleted user"} (${r.actorRole})`,
+      `${r.actorName ?? r.actorUserId ?? "Deleted user"} (${enumLabel(r.actorRole)})`,
   },
   { key: "action", header: "Action", cell: (r) => r.action },
   {
@@ -70,11 +71,18 @@ export function AuditTab({
 }: Readonly<{ initial: OpsLogPage; viewerIsAdmin: boolean }>) {
   const [filters, setFilters] = useState<OpsLogFilters>({});
   const [page, setPage] = useState(1);
-  const pristine = page === 1 && Object.values(filters).every((v) => !v);
+  // Blank filters leave the key, so a cleared filter is the seeded key again.
+  const active = Object.fromEntries(
+    Object.entries(filters).filter(([, v]) => v?.trim()),
+  ) as OpsLogFilters;
+  const pristine = page === 1 && Object.keys(active).length === 0;
   const { data } = useQuery({
-    queryKey: ["money-audit", filters, page],
-    queryFn: () => fetchPage(filters, page),
+    queryKey: ["money-audit", active, page],
+    queryFn: () => fetchPage(active, page),
     initialData: pristine ? initial : undefined,
+    initialDataUpdatedAt: pristine
+      ? new Date(initial.fetchedAt).getTime()
+      : undefined,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });

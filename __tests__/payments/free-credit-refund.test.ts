@@ -29,6 +29,7 @@ const mockPostLedgerTxn = jest.fn();
 const mockAssertEarningTransition = jest.fn();
 const mockRecordTdsReversal = jest.fn();
 const mockPaymentFindUnique = jest.fn();
+const mockFindDeduped = jest.fn(async (..._a: unknown[]) => null as unknown);
 
 const tx = {
   appointmentParticipant: {
@@ -41,6 +42,7 @@ const tx = {
   refund: {
     findFirst: jest.fn(),
     create: jest.fn(),
+    update: jest.fn(),
   },
   payment: {
     findUniqueOrThrow: jest.fn(),
@@ -65,6 +67,9 @@ jest.mock("../../lib/prisma", () => ({
     payment: {
       findUnique: (...a: unknown[]) => mockPaymentFindUnique(...a),
     },
+    refund: {
+      findUnique: async () => ({ metadata: { restoredPaise: 59_000 } }),
+    },
     $transaction: (fn: (txClient: unknown) => unknown) => fn(tx),
   },
 }));
@@ -75,7 +80,7 @@ jest.mock("../../lib/db/serializable-retry", () => ({
 
 jest.mock("../../lib/payments/operations/refund", () => ({
   refundPayment: (...a: unknown[]) => mockRefundPayment(...a),
-  findDedupedRefund: jest.fn().mockResolvedValue(null),
+  findDedupedRefund: (...a: unknown[]) => mockFindDeduped(...a),
   isDedupeKeyConflict: () => false,
   RefundValidationError: class RefundValidationError extends Error {
     constructor(
@@ -563,4 +568,30 @@ it("returns N sessions of a credit seat pro rata", async () => {
   expect(sum(posting.postings, "CREDIT")).toBe(59_000);
   expect(sum(posting.postings, "DEBIT")).toBe(59_000);
   expect(tx.appointmentParticipant.updateMany).not.toHaveBeenCalled();
+});
+
+// #1771 PR round — a keyed replay answers the first return's amount and
+// restores nothing a second time.
+it("replays a credit return without restoring twice", async () => {
+  mockPaymentFindUnique.mockResolvedValueOnce({
+    id: PAYMENT_ID,
+    paymentStatus: "SUCCEEDED",
+    paymentIntent: "free_1730000000_abc",
+    appointmentId: "appt-1",
+    appointment: { classId: "cls-1" },
+  });
+  mockFindDeduped.mockResolvedValueOnce({
+    refundId: "refund-first",
+    amountRefundedPaise: 0,
+  });
+  const r = await restoreClassSeatCredits({
+    paymentId: PAYMENT_ID,
+    sessions: 2,
+    reason: "host missed two sessions",
+    initiatedByUserId: "admin-1",
+    dedupeKey: "ops:abc",
+  });
+  expect(r).toMatchObject({ refundId: "refund-first", restoredPaise: 59_000 });
+  expect(tx.refund.create).not.toHaveBeenCalled();
+  expect(mockRestoreUpTo).not.toHaveBeenCalled();
 });

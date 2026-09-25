@@ -1,7 +1,7 @@
 "use client";
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { earningStatusBadge } from "@/lib/labels/session-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { ReasonDialog } from "./ReasonDialog";
 import { useOpsDoor } from "./ops-door";
@@ -47,6 +48,54 @@ async function fetchEarnings(filters: Record<string, string>) {
   return (await res.json()) as { earnings: EarningRow[] };
 }
 
+const columns: ResponsiveColumn<EarningRow>[] = [
+  {
+    key: "consultant",
+    header: "Consultant",
+    primary: true,
+    cell: (r) => (
+      <div>
+        <p className="text-sm font-medium">{r.consultantProfile.user.name}</p>
+        <p className="text-xs text-muted-foreground">{r.paymentId}</p>
+      </div>
+    ),
+  },
+  {
+    key: "share",
+    header: "Share",
+    cell: (r) => formatCurrencyAmount(r.consultantSharePaise, "INR"),
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (r) => earningStatusBadge(r.status).label,
+  },
+  {
+    key: "hold",
+    header: "Hold until",
+    cell: (r) =>
+      r.holdUntil ? new Date(r.holdUntil).toLocaleString() : "Not set",
+  },
+];
+
+type Acting = { row: EarningRow; kind: "hold" | "release" };
+
+/** Row actions built outside render, so the table never remounts them. */
+function earningActions(onAct: (acting: Acting) => void) {
+  return function EarningAction(r: EarningRow) {
+    const kind = doorFor(r.status);
+    return kind ? (
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => onAct({ row: r, kind })}
+      >
+        {kind === "hold" ? "Hold" : "Release"}
+      </Button>
+    ) : null;
+  };
+}
+
 /**
  * #1771 K-3 — the Earnings tab: filter by status, consultant or payment, and
  * hold or release one row with a reason. Release answers READY only when the
@@ -54,12 +103,10 @@ async function fetchEarnings(filters: Record<string, string>) {
  */
 export function EarningsTab() {
   const [status, setStatus] = useState("all");
-  const [consultantProfileId, setConsultant] = useState("");
-  const [paymentId, setPayment] = useState("");
-  const [acting, setActing] = useState<{
-    row: EarningRow;
-    kind: "hold" | "release";
-  } | null>(null);
+  const [consultantProfileId, setConsultantProfileId] = useState("");
+  const [paymentId, setPaymentId] = useState("");
+  const [acting, setActing] = useState<Acting | null>(null);
+  const rowActions = useMemo(() => earningActions(setActing), []);
 
   const filters: Record<string, string> = {
     ...(status === "all" ? {} : { status }),
@@ -80,32 +127,6 @@ export function EarningsTab() {
     onDone: () => setActing(null),
   });
 
-  const columns: ResponsiveColumn<EarningRow>[] = [
-    {
-      key: "consultant",
-      header: "Consultant",
-      primary: true,
-      cell: (r) => (
-        <div>
-          <p className="text-sm font-medium">{r.consultantProfile.user.name}</p>
-          <p className="text-xs text-muted-foreground">{r.paymentId}</p>
-        </div>
-      ),
-    },
-    {
-      key: "share",
-      header: "Share",
-      cell: (r) => formatCurrencyAmount(r.consultantSharePaise, "INR"),
-    },
-    { key: "status", header: "Status", cell: (r) => r.status },
-    {
-      key: "hold",
-      header: "Hold until",
-      cell: (r) =>
-        r.holdUntil ? new Date(r.holdUntil).toLocaleString() : "Not set",
-    },
-  ];
-
   return (
     <Card className="m-4 md:m-6 lg:m-8">
       <CardHeader>
@@ -121,7 +142,7 @@ export function EarningsTab() {
               <SelectItem value="all">Every status</SelectItem>
               {STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {s}
+                  {earningStatusBadge(s).label}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -130,13 +151,13 @@ export function EarningsTab() {
             aria-label="Consultant profile id"
             placeholder="Consultant profile id"
             value={consultantProfileId}
-            onChange={(e) => setConsultant(e.target.value)}
+            onChange={(e) => setConsultantProfileId(e.target.value)}
           />
           <Input
             aria-label="Payment id"
             placeholder="Payment id"
             value={paymentId}
-            onChange={(e) => setPayment(e.target.value)}
+            onChange={(e) => setPaymentId(e.target.value)}
           />
         </div>
         {error ? (
@@ -146,18 +167,7 @@ export function EarningsTab() {
             columns={columns}
             rows={isLoading ? [] : (data?.earnings ?? [])}
             getRowId={(r) => r.id}
-            rowActions={(r) => {
-              const kind = doorFor(r.status);
-              return kind ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setActing({ row: r, kind })}
-                >
-                  {kind === "hold" ? "Hold" : "Release"}
-                </Button>
-              ) : null;
-            }}
+            rowActions={rowActions}
             empty={
               <p className="py-8 text-center text-sm text-muted-foreground">
                 {isLoading ? "Loading…" : "No earnings match these filters."}

@@ -430,7 +430,7 @@ export async function restoreClassSeatCredits(input: {
       appointment: { select: { classId: true } },
     },
   });
-  if (!payment || !payment.appointmentId || !payment.appointment?.classId) {
+  if (!payment?.appointmentId || !payment.appointment?.classId) {
     throw new RefundValidationError(
       `Payment ${input.paymentId} is not a class seat`,
       "NOT_A_CLASS_SEAT",
@@ -451,10 +451,15 @@ export async function restoreClassSeatCredits(input: {
   const appointmentId = payment.appointmentId;
   let restoredPaise = 0;
   let notice: StagedRefundNotice | null = null;
+  let createdRefundId = null as string | null;
   const result = await withDedupe(input, "CREDITS", () =>
     withSerializableRetry(() =>
       prisma.$transaction(
         async (tx) => {
+          // A retried attempt starts clean: nothing of a rolled-back one survives.
+          restoredPaise = 0;
+          notice = null;
+          createdRefundId = null;
           const usages = await tx.referralCreditUsage.findMany({
             where: { paymentId: payment.id },
             select: { amount: true, originalAmount: true },
@@ -480,6 +485,10 @@ export async function restoreClassSeatCredits(input: {
             { appointmentId, createdAt: joinedAt },
             creditValue,
           );
+          assertReturnable(payment.id, ledger, input.sessions, {
+            creditValue,
+            stillUsed,
+          });
           const asked = Number(ledger.unitPaise) * input.sessions;
           const refundRow = await tx.refund.create({
             data: {
@@ -509,6 +518,19 @@ export async function restoreClassSeatCredits(input: {
               "CREDIT_EXPIRED",
             );
           }
+          // Kept on the row, so a keyed replay answers the real amount.
+          await tx.refund.update({
+            where: { id: refundRow.id },
+            data: {
+              metadata: {
+                initiatedByUserId: input.initiatedByUserId,
+                source: "free-credit-partial",
+                sessions: input.sessions,
+                restoredPaise,
+              } as Prisma.InputJsonValue,
+            },
+          });
+          createdRefundId = refundRow.id;
           await reverseFreeCreditSettlement(tx, {
             paymentId: payment.id,
             refundId: refundRow.id,
@@ -530,8 +552,52 @@ export async function restoreClassSeatCredits(input: {
       ),
     ),
   );
+  if (result.refundId !== createdRefundId) {
+    // A replay (or a lost key race): the first attempt's row is the answer.
+    return { ...result, restoredPaise: await restoredOn(result.refundId) };
+  }
   await attemptRefundNotice(notice);
   return { ...result, restoredPaise };
+}
+
+async function restoredOn(refundId: string): Promise<number> {
+  const row = await prisma.refund.findUnique({
+    where: { id: refundId },
+    select: { metadata: true },
+  });
+  const value = (row?.metadata as { restoredPaise?: unknown } | null)
+    ?.restoredPaise;
+  return typeof value === "number" ? value : 0;
+}
+
+/**
+ * #1771 K-5 — an ops return is bounded by the seat's own ledger: at most the
+ * undelivered sessions it held, less what earlier returns already gave back.
+ */
+function assertReturnable(
+  paymentId: string,
+  ledger: { unitPaise: bigint; heldCount: number; deliveredHeld: number },
+  sessions: number,
+  credit: { creditValue: number; stillUsed: number },
+): void {
+  const unit = Number(ledger.unitPaise);
+  if (unit <= 0) {
+    throw new RefundValidationError(
+      `Payment ${paymentId} holds no session to return`,
+      "NOTHING_TO_RETURN",
+    );
+  }
+  const alreadyReturned = credit.creditValue - credit.stillUsed;
+  const owed =
+    unit * Math.max(0, ledger.heldCount - ledger.deliveredHeld) -
+    alreadyReturned;
+  if (unit * sessions > owed) {
+    const max = Math.max(0, Math.floor(owed / unit));
+    throw new RefundValidationError(
+      `Payment ${paymentId} can get back at most ${max} more session${max === 1 ? "" : "s"} of credit`,
+      "AMOUNT_EXCEEDS_REFUNDABLE",
+    );
+  }
 }
 
 /**

@@ -52,18 +52,6 @@ export async function readOpsLog(args: {
     total,
     page,
     pageSize: OPS_LOG_PAGE_SIZE,
-  };
-}
-
-/** The filters a query string carries, blanks dropped. */
-export function opsLogFiltersFrom(
-  get: (key: string) => string | null | undefined,
-): OpsLogFilters {
-  const pick = (k: string) => get(k)?.trim() || undefined;
-  return {
-    actorUserId: pick("actorUserId"),
-    surface: pick("surface"),
-    targetKind: pick("targetKind"),
-    targetId: pick("targetId"),
+    fetchedAt: new Date().toISOString(),
   };
 }

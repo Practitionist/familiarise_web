@@ -96,9 +96,9 @@ type GatewayDoor<B> = {
   run: (ctx: OpsDoorContext<B>) => Promise<OpsDoorResult>;
 };
 
-// Next checks each route's second argument against that route's own params;
-// `never` is assignable to all of them, and the body reads them as strings.
-type RouteContext = { params: Promise<never> };
+// Next's route validator passes { params: Promise<ParamMap[route]> }; a
+// Promise<unknown> accepts every route's params, read below as strings.
+type RouteContext = { params: Promise<unknown> };
 
 /**
  * The route shell every console door shares: the surface gate, a Zod body

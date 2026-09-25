@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { ClassSeriesView } from "@/lib/backoffice/class-series-types";
+import { enumLabel, fundingRailLabel } from "@/lib/labels/money-labels";
 import { formatCurrencyAmount } from "@/utils/formatting";
 import { RefundDoorDialog, type RefundDoor } from "./RefundDoorDialog";
 import { ReasonDialog } from "./ReasonDialog";
@@ -32,6 +33,12 @@ type Door = {
 };
 
 const when = (iso: string) => new Date(iso).toLocaleString();
+
+function seatLabel(s: ClassSeriesView["seats"][number]): string {
+  const rail = s.rail ? fundingRailLabel(s.rail) : "Unpaid";
+  const unit = formatCurrencyAmount(s.unitPaise, "INR");
+  return `${s.name ?? s.userId} · ${enumLabel(s.status)} · ${rail} · ${s.delivered}/${s.held} delivered · ${unit} a session`;
+}
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -97,7 +104,7 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
                   <span className="font-medium">{c.title}</span>
                   <span className="text-muted-foreground">
                     {" "}
-                    · {c.hostName ?? "Unknown host"} · {c.status}
+                    · {c.hostName ?? "Unknown host"} · {enumLabel(c.status)}
                   </span>
                 </button>
               </li>
@@ -256,10 +263,7 @@ export function ClassSeriesTab({ isAdmin }: Readonly<{ isAdmin: boolean }>) {
 
           <Section title="Seats">
             {v.seats.map((s) => (
-              <Row
-                key={s.userId}
-                label={`${s.name ?? s.userId} · ${s.status} · ${s.rail ?? "unpaid"} · ${s.delivered}/${s.held} delivered · ${formatCurrencyAmount(s.unitPaise, "INR")} a session`}
-              >
+              <Row key={s.userId} label={seatLabel(s)}>
                 {v.cancelledSessions
                   .filter((o) => isAdmin && o.makeUp && !o.seatsSettledAt)
                   .map((o) => (

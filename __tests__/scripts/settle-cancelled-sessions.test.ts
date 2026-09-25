@@ -21,6 +21,9 @@ jest.mock("../../lib/cron/with-cron-lock", () => ({
   withCronLock: (_k: string, _o: unknown, fn: () => unknown) => fn(),
 }));
 jest.mock("../../lib/novu/outbox", () => ({ stageTrigger: jest.fn() }));
+jest.mock("../../utils/appointmentlock", () => ({
+  withAppointmentLock: (_id: string, fn: () => unknown) => fn(),
+}));
 jest.mock("../../lib/booking/class-series", () => ({
   seatLedger: async () => ({ unitPaise: BigInt(10_000) }),
 }));

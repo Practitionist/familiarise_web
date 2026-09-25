@@ -149,34 +149,24 @@ export async function refundWholeEventPayments(
     // #1780 — the credits rail restores whole or not at all, so a seat that was
     // delivered part of the series is escalated rather than over-restored.
     const ledger = ledgers?.get(p.id);
-    // An ops partial return (#1771 K-5) blocks the whole restoration too.
-    const partlyReturned = await prisma.refund.findFirst({
-      where: {
-        paymentId: p.id,
-        status: "SUCCEEDED",
-        dedupeKey: { startsWith: "ops:" },
-      },
-      select: { id: true },
-    });
-    if ((ledger && ledger.deliveredHeld > 0) || partlyReturned) {
+    // The credits rail refuses once any restoration row exists (an ops
+    // partial return), so read the facts it reads, not a key prefix.
+    const state = await creditSeatState(p.id);
+    if (state.claimed && state.stillUsedPaise <= 0) {
+      summary.skippedAlreadyRefunded += 1;
+      continue;
+    }
+    if ((ledger && ledger.deliveredHeld > 0) || state.claimed) {
       summary.failures.push({
         paymentId: p.id,
         error:
           "partial credit restoration after delivered sessions needs a human",
       });
-      // #1771 K-5 — a durable row the Refunds tab lists for the credit door.
-      await recordSystemEvent({
-        category: "BOOKING",
-        severity: "WARN",
-        message: `Credit seat ${p.id} needs a partial credit return (${ledger?.deliveredHeld ?? 0} sessions delivered)`,
-        context: {
-          paymentId: p.id,
-          eventId,
-          kind,
-          delivered: ledger?.deliveredHeld ?? 0,
-          partlyReturned: !!partlyReturned,
-        },
-        correlationId: `partial-credit:${p.id}`,
+      await escalatePartialCredit(p.id, {
+        eventId,
+        kind,
+        delivered: ledger?.deliveredHeld ?? 0,
+        partlyReturned: state.claimed,
       });
       continue;
     }
@@ -681,6 +671,38 @@ function seatRefundPct(
  * organiser removal, a leave outside the window, a host move) restores it
  * and a per-session answer is escalated to ops rather than over-restored.
  */
+/** What the credits rail keys on: a restoration row, and credit still consumed. */
+async function creditSeatState(paymentId: string) {
+  const [claim, usages] = await Promise.all([
+    prisma.refund.findFirst({
+      where: { paymentId, status: { in: ["SUCCEEDED", "PENDING"] } },
+      select: { id: true },
+    }),
+    prisma.referralCreditUsage.findMany({
+      where: { paymentId },
+      select: { amount: true },
+    }),
+  ]);
+  return {
+    claimed: !!claim,
+    stillUsedPaise: usages.reduce((sum, u) => sum + Number(u.amount), 0),
+  };
+}
+
+/** #1771 K-5 — a durable row the Refunds tab lists for the credit door. */
+async function escalatePartialCredit(
+  paymentId: string,
+  context: Record<string, unknown>,
+): Promise<void> {
+  await recordSystemEvent({
+    category: "BOOKING",
+    severity: "WARN",
+    message: `Credit seat ${paymentId} needs a partial credit return`,
+    context: { paymentId, ...context },
+    correlationId: `partial-credit:${paymentId}`,
+  });
+}
+
 async function creditSeatRefund(
   args: SeatRefundArgs,
   paymentId: string,
@@ -692,6 +714,19 @@ async function creditSeatRefund(
 }> {
   const whole =
     (args.initiatedBy ?? "organiser") === "organiser" || args.mode === "full";
+  // After an ops partial return the rail would refuse as "already refunded"
+  // and the rest would be lost silently; queue it for the credit door instead.
+  const state = await creditSeatState(paymentId);
+  if (whole && state.claimed) {
+    if (state.stillUsedPaise > 0) {
+      await escalatePartialCredit(paymentId, {
+        eventId: args.eventId,
+        kind: args.kind,
+        partlyReturned: true,
+      });
+    }
+    return { amountRefundedPaise: 0, refundPct: 0, rail: "CREDITS" };
+  }
   if (!whole) {
     await recordSystemError({
       organizationId: null,

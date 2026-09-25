@@ -71,6 +71,14 @@ const formatDate = (dateString: string) => {
   });
 };
 
+/** #1771 K-7 — a Razorpay draft sits in `evidence` with no submission stamp. */
+const isRazorpayDraft = (d: {
+  evidence: unknown;
+  evidenceSubmittedAt?: string | null;
+}) =>
+  !d.evidenceSubmittedAt &&
+  (d.evidence as { action?: unknown } | null)?.action === "draft";
+
 const getDaysUntilDue = (dueBy: string | null) => {
   if (!dueBy) return null;
   const now = new Date();
@@ -453,20 +461,33 @@ export function DisputeDetailPage({
         <CardContent>
           {dispute.evidence ? (
             <div className="space-y-4">
-              <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200">
-                <CheckCircle className="h-4 w-4 text-green-600" />
-                <AlertTitle>Evidence Submitted</AlertTitle>
-                <AlertDescription>
-                  {/* This block is already gated on `dispute.evidence`, so the
+              {isRazorpayDraft(dispute) ? (
+                <Alert className="border-amber-200 bg-amber-50 dark:bg-amber-950/20">
+                  <Clock className="h-4 w-4 text-amber-600" />
+                  <AlertTitle>
+                    Draft saved on Razorpay — not submitted
+                  </AlertTitle>
+                  <AlertDescription>
+                    The dispute is still open. Submit the evidence before the
+                    deadline or the chargeback is lost.
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Alert className="bg-green-50 dark:bg-green-950/20 border-green-200">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertTitle>Evidence Submitted</AlertTitle>
+                  <AlertDescription>
+                    {/* This block is already gated on `dispute.evidence`, so the
                       submission is a fact; only its timestamp can be missing,
                       and only for disputes recorded before the column existed.
                       Saying "submitted on N/A" made a known fact look like
                       missing data. */}
-                  {dispute.evidenceSubmittedAt
-                    ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
-                    : "Evidence was submitted. The submission time was not recorded for this dispute."}
-                </AlertDescription>
-              </Alert>
+                    {dispute.evidenceSubmittedAt
+                      ? `Evidence was submitted on ${formatDate(dispute.evidenceSubmittedAt)}`
+                      : "Evidence was submitted. The submission time was not recorded for this dispute."}
+                  </AlertDescription>
+                </Alert>
+              )}
               <div className="p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900">
                 <pre className="text-sm whitespace-pre-wrap overflow-auto">
                   {typeof dispute.evidence === "object"

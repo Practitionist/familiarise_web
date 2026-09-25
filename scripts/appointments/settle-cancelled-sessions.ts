@@ -17,6 +17,7 @@ import { OccurrenceCompletionStatus, Prisma } from "@prisma/client";
 
 import prisma from "../../lib/prisma";
 import { withCronLock } from "@/lib/cron/with-cron-lock";
+import { withAppointmentLock } from "@/utils/appointmentlock";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 import {
   REFUNDABLE_BALANCE_SELECT,
@@ -127,16 +128,20 @@ const DUE_SELECT = {
   },
 } as const;
 
+// Under the appointment lock: a make-up scheduled past day 14 (the ops
+// bypass) and this refund cannot both win for one session (PR #1824).
 async function settleAndStamp(
   session: CancelledSession,
   result: SettleCancelledSessionsResult,
 ): Promise<void> {
-  if (!(await settleOne(session, result))) return;
-  const claimed = await prisma.appointmentOccurrence.updateMany({
-    where: { id: session.id, seatsSettledAt: null },
-    data: { seatsSettledAt: new Date() },
+  await withAppointmentLock(session.appointmentId, async () => {
+    if (!(await settleOne(session, result))) return;
+    const claimed = await prisma.appointmentOccurrence.updateMany({
+      where: { id: session.id, seatsSettledAt: null },
+      data: { seatsSettledAt: new Date() },
+    });
+    result.stamped += claimed.count;
   });
-  result.stamped += claimed.count;
 }
 
 /**

@@ -2,7 +2,10 @@ import { NextRequest } from "next/server";
 
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
-import { isReconcileJob } from "@/lib/backoffice/reconcile-jobs";
+import {
+  isReconcileJob,
+  type ReconcileJob,
+} from "@/lib/backoffice/reconcile-jobs";
 import { getMaintenanceState } from "@/lib/maintenance-edge";
 import { reconcilePendingRefunds } from "@/scripts/refunds/reconcile-pending-refunds";
 import { reconcilePaymentStatus } from "@/scripts/payments/reconcile-payment-status";
@@ -35,7 +38,7 @@ export const POST = withOpsAction(
           503,
         );
       }
-      const result = await runJob(job);
+      const result = await RUNNERS[job]();
       return {
         target: { kind: "ReconcileJob", id: job },
         after: { job },
@@ -46,22 +49,24 @@ export const POST = withOpsAction(
   },
 );
 
-async function runJob(job: string): Promise<unknown> {
-  switch (job) {
-    case "refunds":
-      return reconcilePendingRefunds();
-    case "payment-status":
-      return reconcilePaymentStatus();
-    case "earnings":
-      return syncPaymentEarnings();
-    default:
-      return startLedgers();
-  }
-}
+/**
+ * One bounded batch per click, so the run ends inside the request; the
+ * scheduled runs drain the rest (a background driver is needs-decision).
+ */
+const CONSOLE_BATCH = 25;
+
+// A Record over the union: a job added to RECONCILE_JOBS without a runner
+// here fails to compile instead of starting a ledger run.
+const RUNNERS: Record<ReconcileJob, () => Promise<unknown>> = {
+  refunds: () => reconcilePendingRefunds({ limit: CONSOLE_BATCH }),
+  "payment-status": () => reconcilePaymentStatus({ limit: CONSOLE_BATCH }),
+  earnings: () => syncPaymentEarnings({ limit: CONSOLE_BATCH }),
+  ledgers: () => startLedgers(),
+};
 
 async function startLedgers(): Promise<unknown> {
   const res = await startLedgerRun(
-    new NextRequest("http://internal/api/admin/reconcile-ledgers", {
+    new NextRequest("https://internal.invalid/api/admin/reconcile-ledgers", {
       method: "POST",
       body: "{}",
     }),

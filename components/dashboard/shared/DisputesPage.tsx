@@ -1,5 +1,6 @@
 "use client";
 
+import { gatewayLabel } from "@/lib/labels/money-labels";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
@@ -210,7 +211,7 @@ export function DisputesPage({
       key: "gateway",
       header: "Gateway",
       className: "text-sm text-muted-foreground",
-      cell: (dispute) => dispute.paymentGateway,
+      cell: (dispute) => gatewayLabel(dispute.paymentGateway),
     },
     {
       key: "status",

@@ -51,3 +51,10 @@ it("refuses to release while the payment has an open refund", async () => {
   ).rejects.toMatchObject({ code: "EARNING_HAS_OPEN_CLAIM" });
   expect(updateMany).not.toHaveBeenCalled();
 });
+
+it("answers 409 when a release loses its CAS race", async () => {
+  const { db: tx } = db([row("HELD")], 0);
+  await expect(
+    releaseHeldEarnings(tx, ["e1"], "dispute won, release it"),
+  ).rejects.toMatchObject({ code: "EARNING_CHANGED", httpStatus: 409 });
+});

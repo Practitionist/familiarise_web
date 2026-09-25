@@ -3,7 +3,10 @@ import { z } from "zod";
 import { withOpsAction } from "@/lib/backoffice/ops-action-log";
 import { OpsRefusal } from "@/lib/backoffice/ops-refusal-error";
 import { assertMoneyOpsBudget } from "@/lib/backoffice/money-limit";
-import { ladderOverrideAmount } from "@/lib/backoffice/refund-doors";
+import {
+  ladderOverrideAmount,
+  refundInFlightOr,
+} from "@/lib/backoffice/refund-doors";
 import { refundBookingPayment } from "@/lib/payments/operations/booking-refund";
 
 /**
@@ -47,13 +50,17 @@ export const POST = withOpsAction(
           "At that percentage nothing is owed on this booking.",
         );
       }
+      const amountPaise = override?.amountPaise ?? body.amountPaise;
+      const dedupeKey = `ops:${body.idempotencyKey ?? opsActionId}`;
       const result = await refundBookingPayment({
         paymentId: body.paymentId,
-        amountPaise: override?.amountPaise ?? body.amountPaise,
+        amountPaise,
         reason: `ops refund: ${body.reason}`,
         initiatedByUserId: actor.userId,
-        dedupeKey: `ops:${body.idempotencyKey ?? opsActionId}`,
-      });
+        dedupeKey,
+        // A partial ops refund is not a cancellation: the seat stays live.
+        keepSeat: amountPaise !== undefined,
+      }).catch((err: unknown) => refundInFlightOr(err, dedupeKey));
       return {
         target: { kind: "Payment", id: body.paymentId },
         before: { tierOverridePct: body.tierOverridePct ?? null },

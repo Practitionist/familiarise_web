@@ -106,6 +106,13 @@ export function PayoutsBoard() {
   );
 
   const hasAnyTrendData = chartData.some((d) => d.total > 0);
+  let trendBody = (
+    <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
+      Analytics coming soon
+    </div>
+  );
+  if (trendLoading) trendBody = <Skeleton className="h-[200px] w-full" />;
+  else if (hasAnyTrendData) trendBody = <PayoutsChart data={chartData} />;
 
   return (
     <div className="space-y-6">
@@ -119,17 +126,7 @@ export function PayoutsBoard() {
         <CardHeader>
           <CardTitle className="text-lg">Payouts - Last 7 Days</CardTitle>
         </CardHeader>
-        <CardContent>
-          {trendLoading ? (
-            <Skeleton className="h-[200px] w-full" />
-          ) : hasAnyTrendData ? (
-            <PayoutsChart data={chartData} />
-          ) : (
-            <div className="flex h-[200px] items-center justify-center text-sm text-muted-foreground">
-              Analytics coming soon
-            </div>
-          )}
-        </CardContent>
+        <CardContent>{trendBody}</CardContent>
       </Card>
 
       {/* Tabs */}

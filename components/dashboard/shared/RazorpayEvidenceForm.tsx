@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { rupeesToPaise } from "@/lib/backoffice/rupees";
 
 /** Razorpay's evidence lists, in its own field names (razorpay-disputes.ts). */
 const CATEGORIES = [
@@ -35,6 +36,8 @@ const EMPTY: Docs = {
   others: [],
 };
 const SUMMARY_MAX = 1000;
+
+const without = (list: Doc[], id: string) => list.filter((d) => d.id !== id);
 
 function useCountdown(dueBy: string | null): string | null {
   const [now, setNow] = useState(() => Date.now());
@@ -134,20 +137,25 @@ export function RazorpayEvidenceForm({
           disputeId,
           action,
           summary: summary.trim(),
-          ...(amount ? { amountPaise: Math.round(Number(amount) * 100) } : {}),
+          ...(amountPaise ? { amountPaise } : {}),
           evidence,
           reason: reason.trim(),
         }),
       });
       if (!res.ok) throw new Error(await readError(res, "Razorpay refused it"));
-      return action;
+      const json = (await res.json()) as { localStampFailed?: boolean };
+      return { action, localStampFailed: json.localStampFailed === true };
     },
-    onSuccess: (action) => {
+    onSuccess: ({ action, localStampFailed }) => {
       toast({
         title:
           action === "submit"
             ? "Evidence submitted"
             : "Draft saved on Razorpay",
+        // Razorpay has it; only our copy lags. Retrying would be refused.
+        description: localStampFailed
+          ? "Razorpay accepted it, but this page could not record it yet — do not resubmit; engineering has been alerted."
+          : undefined,
       });
       void queryClient.invalidateQueries({ queryKey: [...queryKey] });
     },
@@ -159,16 +167,22 @@ export function RazorpayEvidenceForm({
       }),
   });
 
-  const ready = summary.trim().length > 0 && reason.trim().length >= 5;
+  const removeDoc = (key: CategoryKey, id: string) =>
+    setDocs((all) => ({ ...all, [key]: without(all[key], id) }));
+  // Empty = contest the whole amount; anything else must be whole paise.
+  const amountPaise = amount.trim() === "" ? null : rupeesToPaise(amount);
+  const amountOk = amount.trim() === "" || (amountPaise ?? 0) > 0;
+  const ready =
+    summary.trim().length > 0 && reason.trim().length >= 5 && amountOk;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Respond on Razorpay</CardTitle>
         {countdown && (
-          <p className="text-sm text-muted-foreground" role="status">
+          <output className="block text-sm text-muted-foreground">
             {countdown}
-          </p>
+          </output>
         )}
       </CardHeader>
       <CardContent className="space-y-5">
@@ -193,8 +207,14 @@ export function RazorpayEvidenceForm({
             id="rzp-amount"
             inputMode="decimal"
             value={amount}
+            aria-invalid={!amountOk}
             onChange={(e) => setAmount(e.target.value)}
           />
+          {!amountOk && (
+            <p className="text-xs text-destructive">
+              Enter rupees with at most two decimals, like 1500 or 1500.50.
+            </p>
+          )}
         </div>
         {CATEGORIES.map((cat) => (
           <div key={cat.key} className="space-y-1.5">
@@ -229,12 +249,7 @@ export function RazorpayEvidenceForm({
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() =>
-                        setDocs((all) => ({
-                          ...all,
-                          [cat.key]: all[cat.key].filter((x) => x.id !== d.id),
-                        }))
-                      }
+                      onClick={() => removeDoc(cat.key, d.id)}
                     >
                       Remove
                     </Button>

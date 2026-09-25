@@ -59,7 +59,8 @@ function authHeader(): string {
       503,
     );
   }
-  return `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`;
+  const token = Buffer.from([keyId, keySecret].join(":")).toString("base64");
+  return `Basic ${token}`;
 }
 
 /** Every document id across the lists; `submit` needs at least one. */
@@ -86,15 +87,21 @@ async function send<T>(url: string, init: RequestInit): Promise<T> {
   const body = (await res.json().catch(() => null)) as {
     error?: { code?: string; description?: string };
   } | null;
-  if (!res.ok) {
-    // A 4xx is Razorpay refusing the request (state, deadline, shape); a 5xx is its fault.
-    throw new RazorpayDisputeError(
-      body?.error?.description ?? `Razorpay answered HTTP ${res.status}`,
-      res.status >= 500 ? "GATEWAY_ERROR" : "GATEWAY_REFUSED",
-      res.status >= 500 ? 502 : 409,
-    );
-  }
+  if (!res.ok) throw gatewayError(res.status, body?.error?.description);
   return body as T;
+}
+
+/** A 4xx is Razorpay refusing (the operator's to act on); 401/403 is our
+ *  keys and 5xx is Razorpay's — both 502 so the route pages them. */
+function gatewayError(status: number, description?: string) {
+  const message = description ?? `Razorpay answered HTTP ${status}`;
+  if (status === 401 || status === 403) {
+    return new RazorpayDisputeError(message, "GATEWAY_AUTH_FAILED", 502);
+  }
+  if (status >= 500) {
+    return new RazorpayDisputeError(message, "GATEWAY_ERROR", 502);
+  }
+  return new RazorpayDisputeError(message, "GATEWAY_REFUSED", 409);
 }
 
 /** Uploads one evidence file and answers its `doc_…` id. */

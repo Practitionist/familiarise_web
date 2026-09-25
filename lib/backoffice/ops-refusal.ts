@@ -7,7 +7,10 @@ import {
   CronLockHeldError,
   CronLockUnavailableError,
 } from "@/lib/cron/cron-lock-errors";
-import { RefundValidationError } from "@/lib/payments/operations/refund";
+import {
+  RefundGatewayError,
+  RefundValidationError,
+} from "@/lib/payments/operations/refund";
 import { IllegalEarningStatusTransitionError } from "@/lib/payments/payouts/earning-status";
 import { OpsRefusal } from "./ops-refusal-error";
 
@@ -24,6 +27,9 @@ export function refusalResponse(err: unknown): NextResponse | null {
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof RefundValidationError)
     return body(err.code, err.message, 409);
+  // Already paged inside refundPayment; the operator gets the code, not a 500.
+  if (err instanceof RefundGatewayError)
+    return body(err.code, err.message, 502);
   if (err instanceof IllegalTransitionError)
     return body(err.code, err.message, err.httpStatus);
   if (err instanceof IllegalEarningStatusTransitionError)

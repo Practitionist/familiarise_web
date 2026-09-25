@@ -190,8 +190,12 @@ export async function POST(req: NextRequest) {
     .json()
     .catch(() => null);
   if (peek && typeof peek === "object" && "action" in peek) {
-    return contestRazorpay(req, { params: Promise.resolve({} as never) });
+    return contestRazorpay(req, { params: Promise.resolve({}) });
   }
+  return submitStripeEvidence(req);
+}
+
+async function submitStripeEvidence(req: NextRequest) {
   try {
     const { session, error: authError } = await requireDisputesManager();
     if (authError) return authError;
@@ -445,6 +449,60 @@ async function uploadRazorpayEvidence(req: NextRequest) {
   }
 }
 
+/**
+ * Records a contest Razorpay already accepted. A local write failure pages and
+ * answers false, never a retry prompt: Razorpay's state has moved (PR #1824).
+ */
+async function stampContest(
+  dispute: EvidenceDispute,
+  body: {
+    action: "draft" | "submit";
+    summary: string;
+    amountPaise?: number;
+    evidence: unknown;
+  },
+  gatewayStatus: string,
+): Promise<boolean> {
+  const now = new Date();
+  const next = mapDisputeStatus(gatewayStatus);
+  const stamp = {
+    evidence: {
+      gateway: "RAZORPAY",
+      action: body.action,
+      summary: body.summary,
+      amountPaise: body.amountPaise ?? null,
+      documents: body.evidence,
+      savedAt: now.toISOString(),
+    } as Prisma.InputJsonValue,
+    ...(body.action === "submit" ? { evidenceSubmittedAt: now } : {}),
+  };
+  try {
+    // The status moves only from the state we read; a webhook that got
+    // there first keeps its word, and the evidence is stamped regardless.
+    const moves =
+      !!next &&
+      next !== dispute.status &&
+      isLegalDisputeTransition(dispute.status, next);
+    const moved = moves
+      ? await prisma.dispute.updateMany({
+          where: { id: dispute.id, status: dispute.status },
+          data: { ...stamp, status: next },
+        })
+      : { count: 0 };
+    if (moved.count === 0) {
+      await prisma.dispute.update({ where: { id: dispute.id }, data: stamp });
+    }
+    return true;
+  } catch (err) {
+    reportSentryError(err, {
+      subsystem: "payments",
+      op: "dispute-contest-stamp",
+      extra: { disputeId: dispute.id, action: body.action, gatewayStatus },
+    });
+    return false;
+  }
+}
+
 const docIds = z
   .array(z.string().regex(/^doc_\w+$/))
   .max(20)
@@ -489,41 +547,19 @@ const contestRazorpay = withOpsAction(
       }).catch((err: unknown) => {
         throw gatewayRefusal(err);
       });
-      const next = mapDisputeStatus(result.status);
-      const now = new Date();
-      const evidence = {
-        gateway: "RAZORPAY",
-        action: body.action,
-        summary: body.summary,
-        amountPaise: body.amountPaise ?? null,
-        documents: body.evidence,
-        savedAt: now.toISOString(),
-      } as Prisma.InputJsonValue;
-      const stamp = {
-        evidence,
-        ...(body.action === "submit" ? { evidenceSubmittedAt: now } : {}),
-      };
-      // The status moves only from the state we read; a webhook that got
-      // there first keeps its word, and the evidence is stamped regardless.
-      const moved =
-        next &&
-        next !== dispute.status &&
-        isLegalDisputeTransition(dispute.status, next)
-          ? await prisma.dispute.updateMany({
-              where: { id: dispute.id, status: dispute.status },
-              data: { ...stamp, status: next },
-            })
-          : { count: 0 };
-      if (moved.count === 0) {
-        await prisma.dispute.update({ where: { id: dispute.id }, data: stamp });
-      }
+      const stamped = await stampContest(dispute, body, result.status);
       return {
         target: { kind: "Dispute", id: dispute.id },
         before: { status: dispute.status },
-        after: { gatewayStatus: result.status, action: body.action },
+        after: {
+          gatewayStatus: result.status,
+          action: body.action,
+          localStampFailed: !stamped,
+        },
         response: {
           success: true,
           gatewayStatus: result.status,
+          localStampFailed: !stamped,
           message:
             body.action === "submit"
               ? "Evidence submitted to Razorpay"

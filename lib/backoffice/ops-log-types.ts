@@ -26,4 +26,6 @@ export interface OpsLogPage {
   total: number;
   page: number;
   pageSize: number;
+  /** When the page was read, so a seeded snapshot ages honestly. */
+  fetchedAt: string;
 }

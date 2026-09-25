@@ -54,10 +54,10 @@ A door is one of two shapes:
 - **A gateway door** — a Razorpay call, for instance — cannot sit inside a
   Postgres transaction, so its row is written immediately after the call
   returns, carrying `after.status` set to `SUCCEEDED` or to `FAILED` with the
-  refusal code either way. If the gateway call moved money before the
-  process could write the row, the write is retried and the failure paged to
-  Sentry rather than silently dropped, because a lost audit row for money
-  that already moved is worse than a noisy alert.
+  refusal code either way. The row is written once and never retried. If that
+  write fails after the gateway call, the failure is paged to Sentry and the
+  door still answers with the call's outcome, because a lost audit row for
+  money that already moved is worse than a noisy alert.
 
 Typed refusals (`lib/backoffice/ops-refusal.ts`) come back with their own
 codes instead of a generic 500, so the console can show "already contested"
