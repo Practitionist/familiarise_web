@@ -58,6 +58,7 @@ import {
   readOutageWindows,
 } from "@/lib/booking/session-outcome-sweep";
 import { reportSentryMessage } from "@/lib/observability/report";
+import { UNSETTLED_MISS } from "@/lib/booking/class-sessions";
 import { stampTrialEarningsHold } from "@/lib/trials/earnings-hold";
 import { IllegalTransitionError } from "@/lib/enterprise/transitions";
 
@@ -78,6 +79,26 @@ function allLiveOccurrencesEnded(
     some: { ...live, endsAt: { lt: bufferTime } },
     none: { ...live, endsAt: { gte: bufferTime } },
   };
+}
+
+// #1569 — a wrapper owing a make-up or refund, or holding a session the slot
+// pass has not decided, is not finished: completion would release its earnings.
+function endedAndSettled(
+  bufferTime: Date,
+): Prisma.AppointmentWhereInput["AND"] {
+  return [
+    { occurrences: allLiveOccurrencesEnded(bufferTime) },
+    { occurrences: { none: UNSETTLED_MISS } },
+    {
+      occurrences: {
+        none: {
+          completionStatus: OccurrenceCompletionStatus.SCHEDULED,
+          isTentative: false,
+          deletedAt: null,
+        },
+      },
+    },
+  ];
 }
 
 const AUTO_COMPLETE_REASON = "auto-complete";
@@ -127,7 +148,7 @@ async function completeWebinars(): Promise<{
   const webinarsToComplete = await prisma.webinar.findMany({
     where: {
       status: { in: [WebinarStatus.SCHEDULED, WebinarStatus.IN_PROGRESS] },
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       webinarPlan: { select: { title: true } },
@@ -203,7 +224,7 @@ async function completeClasses(): Promise<{
     where: {
       status: { in: [ClassStatus.SCHEDULED, ClassStatus.IN_PROGRESS] },
       // #1554 — one wrapper: at least one occurrence, and every live one ended.
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: { AND: endedAndSettled(bufferTime) },
     },
     include: {
       classPlan: { select: { title: true } },
@@ -279,7 +300,13 @@ async function completeConsultations(): Promise<{
   const consultationsToComplete = await prisma.consultation.findMany({
     where: {
       status: { in: [AppointmentStatus.APPROVED, AppointmentStatus.SCHEDULED] },
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      // A voided consultation is owed its make-up or refund first (#1569 D4).
+      appointment: {
+        AND: [
+          { occurrences: allLiveOccurrencesEnded(bufferTime) },
+          { occurrences: { none: UNSETTLED_MISS } },
+        ],
+      },
     },
     include: {
       consultationPlan: {
@@ -555,7 +582,18 @@ async function completeTrials(): Promise<{
   const trialsToComplete = await prisma.trial.findMany({
     where: {
       status: TrialStatus.SCHEDULED,
-      appointment: { occurrences: allLiveOccurrencesEnded(bufferTime) },
+      appointment: { AND: endedAndSettled(bufferTime) },
+      // #1569 D4 — a paid trial that was voided waits for ops; a free one is a record only.
+      OR: [
+        { paymentId: null },
+        {
+          appointment: {
+            occurrences: {
+              none: { completionStatus: OccurrenceCompletionStatus.VOIDED },
+            },
+          },
+        },
+      ],
     },
     include: {
       subscriptionPlan: { select: { title: true } },

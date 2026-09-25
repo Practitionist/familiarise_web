@@ -39,6 +39,39 @@ const DAY_MS = 86_400_000;
 export const occurrenceRefundKey = (occurrenceId: string, paymentId: string) =>
   `occ:${occurrenceId}:pay:${paymentId}`;
 
+/**
+ * #1569 — a miss is a host-cancelled session or a voided one. Either keeps its
+ * row, is owed a make-up within 14 days, or a refund; one row is never both.
+ */
+export const MISS_WHERE = {
+  OR: [
+    { completionStatus: "CANCELLED", hostCancelledAt: { not: null } },
+    { completionStatus: "VOIDED", voidedAt: { not: null } },
+  ],
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** A miss whose make-up or refund has not happened yet. */
+export const UNSETTLED_MISS = {
+  ...MISS_WHERE,
+  seatsSettledAt: null,
+  deletedAt: null,
+} satisfies Prisma.AppointmentOccurrenceWhereInput;
+
+/** When the session was lost; the make-up window runs from here. */
+export const missedAt = (o: {
+  hostCancelledAt?: Date | null;
+  voidedAt?: Date | null;
+}): Date | null => o.hostCancelledAt ?? o.voidedAt ?? null;
+
+const isMiss = (o: {
+  completionStatus: OccurrenceCompletionStatus;
+  hostCancelledAt: Date | null;
+  voidedAt: Date | null;
+}) =>
+  (o.completionStatus === OccurrenceCompletionStatus.CANCELLED &&
+    !!o.hostCancelledAt) ||
+  (o.completionStatus === OccurrenceCompletionStatus.VOIDED && !!o.voidedAt);
+
 const SEATED: Prisma.AppointmentParticipantWhereInput = {
   role: "CONSULTEE",
   status: { in: ["CONFIRMED", "ATTENDED"] },
@@ -260,24 +293,26 @@ export async function scheduleClassMakeUp(
           endsAt: true,
           completionStatus: true,
           hostCancelledAt: true,
+          voidedAt: true,
           seatsSettledAt: true,
           consultantProfileId: true,
         },
       });
-      const deadline = source?.hostCancelledAt
-        ? source.hostCancelledAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
+      // #1569 — a voided source is in the past; only the make-up must be ahead.
+      const lostAt = source ? missedAt(source) : null;
+      const deadline = lostAt
+        ? lostAt.getTime() + MAKEUP_WINDOW_DAYS * DAY_MS
         : 0;
       if (
         !source ||
-        source.completionStatus !== OccurrenceCompletionStatus.CANCELLED ||
-        !source.hostCancelledAt ||
+        !isMiss(source) ||
         source.seatsSettledAt ||
         (!bypass && startsAt.getTime() > deadline) ||
         startsAt <= now
       ) {
         throw new BookingRuleError(
           "MAKEUP_WINDOW_LAPSED",
-          `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the cancellation, and in the future.`,
+          `A make-up must be held within ${MAKEUP_WINDOW_DAYS} days of the missed session, and in the future.`,
         );
       }
       const endsAt = new Date(
@@ -351,8 +386,7 @@ export async function skipClassMakeUp(args: {
     where: {
       id: args.sourceOccurrenceId,
       appointmentId: args.appointmentId,
-      completionStatus: OccurrenceCompletionStatus.CANCELLED,
-      hostCancelledAt: { not: null },
+      ...MISS_WHERE,
       seatsSettledAt: null,
     },
     select: { ordinal: true, startsAt: true },

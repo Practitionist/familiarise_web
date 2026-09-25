@@ -596,12 +596,14 @@ async function missedUnmadeSessions(
       startsAt: true,
       completionStatus: true,
       hostCancelledAt: true,
+      voidedAt: true,
       seatsSettledAt: true,
     },
   });
   return rows.filter(
     (o) =>
-      o.hostCancelledAt &&
+      // #1569 — a voided session is a miss exactly like a host cancel.
+      (o.hostCancelledAt || o.voidedAt) &&
       !o.seatsSettledAt &&
       o.startsAt > joinedAt &&
       !rows.some(
