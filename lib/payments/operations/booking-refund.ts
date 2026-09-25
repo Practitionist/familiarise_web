@@ -577,7 +577,7 @@ async function restoredOn(refundId: string): Promise<number> {
   return typeof value === "number" ? value : 0;
 }
 
-const LIVE_SESSION = ["SCHEDULED", "COMPLETED", "UNVERIFIED"];
+const LIVE_SESSION = new Set<string>(["SCHEDULED", "COMPLETED", "UNVERIFIED"]);
 
 /**
  * #1771 owner decision — sessions a live seat may get credit back for: ones
@@ -608,7 +608,7 @@ async function missedUnmadeSessions(
         (m) =>
           m.id !== o.id &&
           m.ordinal === o.ordinal &&
-          LIVE_SESSION.includes(m.completionStatus),
+          LIVE_SESSION.has(m.completionStatus),
       ),
   ).length;
 }

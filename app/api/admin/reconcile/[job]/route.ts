@@ -42,7 +42,7 @@ export const POST = withOpsAction(
       const batch = batchOutcome(job, result);
       return {
         target: { kind: "ReconcileJob", id: job },
-        after: { job, ...(batch ?? {}) },
+        after: batch ? { job, ...batch } : { job },
         response: { job, result, batch },
         status: job === "ledgers" ? 202 : 200,
       };
