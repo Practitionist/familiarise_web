@@ -243,6 +243,18 @@ export function appointmentRaterRole(
   return null;
 }
 
+/** #1527 — which side(s) of this appointment a user is on (`/dashboard/go/auto`). */
+export function appointmentViewerSides(
+  userId: string,
+  detail: TAppointmentDetail,
+): { asConsultant: boolean; asConsultee: boolean } {
+  const { consulteeUserIds, consultantUserIds } = participantUserIds(detail);
+  return {
+    asConsultant: consultantUserIds.includes(userId),
+    asConsultee: consulteeUserIds.includes(userId),
+  };
+}
+
 export function canAccessAppointment(
   userId: string,
   detail: TAppointmentDetail,

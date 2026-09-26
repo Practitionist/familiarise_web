@@ -12,6 +12,7 @@ import {
   buildConsulteeNav,
   CONSULTEE_PAGE_LABELS,
 } from "@/lib/dashboard/nav/consultee";
+import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { fetchConsulteeDetails, fetchUserDetails } from "@/lib/user";
 import { UserProvider } from "./UserContext";
 
@@ -44,11 +45,13 @@ export default function ConsulteeLayout(props: Readonly<PageProps>) {
 function ConsulteeLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consulteeId } = use(params);
   const nav = useMemo(() => buildConsulteeNav(consulteeId), [consulteeId]);
+  const badges = usePersonalNavBadges({});
 
   return (
     <PersonalDashboardLayoutCore
       routeParam={consulteeId}
       nav={nav}
+      badges={badges}
       chipRole="Client"
       identityFallbackName="Client"
       pageLabels={CONSULTEE_PAGE_LABELS}

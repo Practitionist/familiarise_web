@@ -24,7 +24,7 @@ import {
   CONSULTANT_PAGE_LABELS,
   CONSULTANT_PATHLESS_SEGMENTS,
 } from "@/lib/dashboard/nav/consultant";
-import { useChatUnreadCount } from "@/hooks/useChatUnreadCount";
+import { usePersonalNavBadges } from "@/hooks/usePersonalNavBadges";
 import { verificationStatusBadge } from "@/lib/labels/session-labels";
 import {
   VerificationPendingOverlay,
@@ -296,12 +296,9 @@ function ConsultantLayoutInner({ children, params }: Readonly<PageProps>) {
   const { consultantId } = use(params);
   const nav = useMemo(() => buildConsultantNav(consultantId), [consultantId]);
 
-  // Unread badge count for the Messages nav item
-  const chatUnreadCount = useChatUnreadCount();
-  const badges = useMemo(
-    () => ({ messages: chatUnreadCount }),
-    [chatUnreadCount],
-  );
+  const badges = usePersonalNavBadges({
+    requestsForConsultantId: consultantId,
+  });
 
   return (
     <PersonalDashboardLayoutCore<ConsultantDetails>

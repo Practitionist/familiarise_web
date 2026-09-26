@@ -358,10 +358,10 @@ export function EventManagementDashboard({
     fetchTrialCounts();
   }, [fetchTrialCounts, subscriptionPlans]);
 
-  // Trials live on Appointments now (ADR 19 — a trial IS an appointment), so
-  // this deep-links to the tab rather than the retired standalone route.
+  // Trial requests are a type tab of the Requests inbox (#1775); the
+  // Appointments "Trial requests" tombstone tab is gone (#1527).
   // Prefetchable: threaded to the subscription card as a real link.
-  const trialsHref = `/dashboard/consultant/${consultantId}/appointments?tab=trials`;
+  const trialsHref = `/dashboard/consultant/${consultantId}/requests?type=trial`;
   const handleTrialsClick = () => {
     router.push(trialsHref);
   };
